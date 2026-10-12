@@ -1555,16 +1555,21 @@ incident lacked. Matching public Microsoft SDK-layer symbols narrowed the
 faulting thread to sampler creation rejecting a CPU descriptor handle.
 The receipt does not say why the handle became invalid, and another thread
 creating a heap is not proof of a race. Counting original attempts rather than
-only successful reruns exposed three exit-2173 failures in 94 completed
-Windows workspace-test attempts in the sampled period.
+only successful reruns exposed four exit-2173 failures in 95 completed
+Windows workspace-test attempts in the sampled period. The owner accepts this
+as an unresolved tracked residual rather than an indefinite blocker for
+unrelated exact-head-green changes; that disposition is not a repair.
 
 Bounded local sampler and mixed Direct2D/egui lifecycles did not reproduce
 the exception. The local SDK layer differs from CI, and an attempted app-local
 runtime comparison actually loaded the system runtime. A separate opt-in
 hosted diagnostic now runs those controls once with content-free native
-receipts, leaving required tests, concurrency, validation and build profiles
-unchanged. This is investigation automation, not a repair, native freeze
-acceptance, or permission to turn an unexplained red run green by retrying.
+receipts. Production behavior, the required workspace workload and its
+concurrency/build profiles remain unchanged; small deterministic launcher and
+bounds contracts do join required validation. Its first hosted run loaded the
+same SDK-layer identity as the captured fault and did not reproduce it. This is
+investigation automation and non-reproduction, not a repair or native freeze
+acceptance.
 See [the diagnostic contract](windows-test-diagnostics.md#opt-in-hosted-sampler-lifecycle-investigation).
 
 ## Retiring imported Direct2D targets before teardown

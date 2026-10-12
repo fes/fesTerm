@@ -6,7 +6,7 @@ default libtest concurrency, pixel assertions and nonzero failure behavior.
 There is no retry, debugger replay, global serialization, installed application,
 desktop input, registry/WER change, or process-name-based termination.
 
-## The still-open failure
+## The tracked residual failure
 
 [#330](https://github.com/fes/fesTerm/issues/330) recorded run `37250376126`,
 attempt 1, Windows job `111576603780`, at head
@@ -16,8 +16,10 @@ without an assertion or identified failing test. Artifact `11321066752`
 contained only 28 PNGs. Attempt 2 passed at the same head: that is neither a
 cause nor a repair. The separately diagnosed Direct2D `0xc0000005` wrapped-target
 retirement repair (#336, superseded by #329) is not a repair of exit 2173.
-**Causal reproduction and investigation remain required; do not close #330
-based on this runner or another green rerun.**
+The owner later accepted the intermittent exit as a separately tracked residual
+and closed #330 so unrelated exact-head-green changes would not remain blocked
+indefinitely. That disposition is not a causal diagnosis or repair; later
+occurrences and their receipts remain evidence for further investigation.
 
 ## Required CI and local execution
 
@@ -180,15 +182,21 @@ symbols and bounded disassembly narrow its faulting thread to
 distinguish a handle outside known heaps from an invalid/misaligned offset,
 and concurrent heap creation on another thread is not proof of a race.
 
-A sample of 100 CI run IDs created from October 7 through October 11, 2026,
-including original failed attempts behind two green reruns, contains three
-exit-2173 failures in 94 completed Windows workspace-test attempts; main has
+A sample of CI run IDs created from October 7 through October 12, 2026,
+including original failed attempts behind green reruns, contains four
+exit-2173 failures in 95 completed Windows workspace-test attempts; main has
 one in 20. The older two have no native receipt proving the same exception.
+The fourth, from PR #378, has the same SDK-layer module identity and captured
+`CreateSampler` stack as the retained main occurrence.
 These changing revisions/workloads are not a matched CI/local probability
 comparison. Local concurrent sampler and mixed Direct2D/egui stress have not
-reproduced the native fault. Hosted and local SDK-layer identities differ;
-an attempted app-local SDK control loaded the local OS runtime and is not
-matched evidence. Original findings remain in [#330](https://github.com/fes/fesTerm/issues/330#issuecomment-6114523822).
+reproduced the native fault. The [explicit hosted diagnostic run
+38186043227](https://github.com/fswiderski/fesTerm/actions/runs/38186043227)
+at `b3b5d92d57b3b765cb97f28b5eb9ddb165b63c95` also passed all four cases while
+loading the same D3D12Core and SDK-layer identities as the main fault. This
+removes the local module-identity mismatch for that bounded control, not the
+workspace/environment/workload mismatch. Original findings remain in
+[#330](https://github.com/fes/fesTerm/issues/330#issuecomment-6114523822).
 
 The ignored `windows_sampler_lifecycles` integration test is diagnostic, not
 a product repair or a replacement for the original workspace workload:
@@ -212,17 +220,20 @@ not pixel-equivalence, latency, or freeze acceptance.
 
 The existing native runner enforces a 600-second per-case deadline and
 retains original status/source/executable/module identity under
-`target\windows-sampler-diagnostics\<workload>-<topology>`. The launcher
+`target\windows-sampler-diagnostics\<run-id>\<workload>-<topology>`. The launcher
 restores its four parent settings, keeps the first failure nonzero while
-running the other distinct controls, and does not retry any case. Validation
-is always enabled and system runtime selection is not overridden. There is
-no desktop input, installed application, personal fixture, or persisted image.
-Only the existing content-free receipt JSONs are uploaded, with seven-day
-retention; ordinary console output is not added to that artifact.
+running the other distinct controls, gives each invocation a fresh run
+directory so old receipts cannot be confused with new ones, and does not retry
+any case.
+Validation is always enabled and system runtime selection is not overridden.
+There is no desktop input, installed application, personal fixture, or
+persisted image. Hosted execution writes to its fresh runner-temporary
+directory. Only the existing content-free receipt JSONs are uploaded, with
+seven-day retention; ordinary console output is not added to that artifact.
 
 To run on a reviewed diagnostic branch, manually dispatch the existing `CI`
 workflow with boolean input `windows_sampler_diagnostics=true`. Its separate
-45-minute Windows job uses the existing level-zero build profiles and non-GPU
+75-minute Windows job uses the existing level-zero build profiles and non-GPU
 runner calibration. The ordinary CI jobs still run unchanged. Ordinary PR,
 main-push and default manual runs do not opt in. Record loaded module GUIDs
 and each case's actual completion before claiming same-environment evidence;

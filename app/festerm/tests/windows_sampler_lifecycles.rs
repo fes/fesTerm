@@ -148,10 +148,10 @@ fn concurrent_sampler_device_lifecycles() {
             let barrier = barrier.clone();
             let shared_instance = &shared_instance;
             scope.spawn(move || {
+                barrier.wait();
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .build()
                     .expect("diagnostic runtime");
-                barrier.wait();
                 for round in 0..rounds {
                     let instance = shared_instance.clone().unwrap_or_else(instance);
                     let adapter = runtime

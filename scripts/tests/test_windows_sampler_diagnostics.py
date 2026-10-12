@@ -17,16 +17,26 @@ class WorkflowContractTests(unittest.TestCase):
     def test_hosted_diagnostics_are_dispatch_only_and_keep_content_free_artifacts(self):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         job = workflow.split("  windows-sampler-diagnostics:", 1)[1].split(
-            "  # Platform-independent checks:", 1
+            "\n  checks:", 1
+        )[0]
+        dispatch_input = workflow.split("      windows_sampler_diagnostics:", 1)[1].split(
+            "\n\npermissions:", 1
         )[0]
         self.assertIn(
             "if: github.event_name == 'workflow_dispatch' && inputs.windows_sampler_diagnostics",
             job,
         )
-        self.assertIn("default: false", workflow)
+        self.assertIn("default: false", dispatch_input)
         self.assertIn('CARGO_PROFILE_TEST_DEBUG: "0"', job)
-        self.assertIn("timeout-minutes: 45", job)
-        self.assertIn("path: target/windows-sampler-diagnostics/*/*.json", job)
+        self.assertIn("timeout-minutes: 75", job)
+        self.assertNotIn(
+            "FESTERM_RUN_OPTIONAL_VALIDATION", job.split("    steps:", 1)[0]
+        )
+        self.assertIn("id: sampler", job)
+        self.assertIn("if: always() && steps.sampler.outcome != 'skipped'", job)
+        self.assertIn(
+            "path: ${{ runner.temp }}/windows-sampler-diagnostics/*/*/*.json", job
+        )
         self.assertIn("retention-days: 7", job)
         self.assertIn("if-no-files-found: error", job)
         self.assertNotIn("continue-on-error", job)
@@ -35,7 +45,7 @@ class WorkflowContractTests(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == "win32", "Windows PowerShell launcher")
 class LauncherTests(unittest.TestCase):
-    def execute(self, opt_in=True, failure=0, threads=2, rounds=3):
+    def execute(self, opt_in=True, failure=0, threads=2, rounds=3, throwing=False):
         shell = shutil.which("pwsh")
         self.assertIsNotNone(shell, "PowerShell 7 required for Windows CI")
         environment = os.environ.copy()
@@ -47,10 +57,12 @@ class LauncherTests(unittest.TestCase):
         for name in ("THREADS", "ROUNDS", "INSTANCE", "WORKLOAD"):
             environment[f"FESTERM_SAMPLER_{name}"] = f"parent-{name}"
         environment["FESTERM_SAMPLER_FAKE_FAILURE"] = str(failure)
+        environment["FESTERM_SAMPLER_FAKE_THROW"] = "1" if throwing else "0"
         environment["FESTERM_SAMPLER_TEST_THREADS"] = str(threads)
         environment["FESTERM_SAMPLER_TEST_ROUNDS"] = str(rounds)
         with tempfile.TemporaryDirectory() as directory:
-            environment["FESTERM_SAMPLER_TEST_OUT"] = str(Path(directory) / "space in output")
+            output = Path(directory) / "space in output"
+            environment["FESTERM_SAMPLER_TEST_OUT"] = str(output)
             command = r"""
 $ErrorActionPreference = 'Stop'
 function cargo {
@@ -62,6 +74,7 @@ function cargo {
         workload = $env:FESTERM_SAMPLER_WORKLOAD
     }))
     if ($env:FESTERM_SAMPLER_INSTANCE -eq 'independent' -and $env:FESTERM_SAMPLER_WORKLOAD -eq 'sampler') {
+        if ($env:FESTERM_SAMPLER_FAKE_THROW -eq '1') { throw 'simulated launcher failure' }
         $global:LASTEXITCODE = [int]$env:FESTERM_SAMPLER_FAKE_FAILURE
     } else {
         $global:LASTEXITCODE = 0
@@ -116,9 +129,26 @@ exit $code
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout.count("CALL:"), 4)
 
+    def test_terminating_error_keeps_running_distinct_controls_and_restores_environment(self):
+        result = self.execute(throwing=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count("CALL:"), 4)
+        restored = next(
+            line.removeprefix("RESTORED:") for line in result.stdout.splitlines()
+            if line.startswith("RESTORED:")
+        )
+        self.assertEqual(json.loads(restored), [
+            "parent-THREADS", "parent-ROUNDS", "parent-INSTANCE", "parent-WORKLOAD",
+        ])
+
     def test_missing_opt_in_and_invalid_bounds_never_start_cargo(self):
-        for settings in ({"opt_in": False}, {"threads": 0}, {"threads": 33},
-                         {"rounds": 0}, {"rounds": 129}):
+        for settings in (
+            {"opt_in": False},
+            {"threads": 0},
+            {"threads": 33},
+            {"rounds": 0},
+            {"rounds": 129},
+        ):
             with self.subTest(settings=settings):
                 result = self.execute(**settings)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)

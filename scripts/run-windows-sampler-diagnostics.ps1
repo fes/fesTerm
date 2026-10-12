@@ -19,6 +19,7 @@ $names = @('FESTERM_SAMPLER_THREADS', 'FESTERM_SAMPLER_ROUNDS', 'FESTERM_SAMPLER
 $previous = @{}
 foreach ($name in $names) { $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 $failure = 0
+$runDirectory = Join-Path $OutputDirectory ([Guid]::NewGuid().ToString('N'))
 try {
     $env:FESTERM_SAMPLER_THREADS = "$Threads"
     $env:FESTERM_SAMPLER_ROUNDS = "$Rounds"
@@ -27,17 +28,22 @@ try {
             $env:FESTERM_SAMPLER_INSTANCE = $mode
             $env:FESTERM_SAMPLER_WORKLOAD = $workload
             Write-Host "sampler-diagnostic workload=$workload mode=$mode threads=$Threads rounds=$Rounds"
-            & "$PSScriptRoot\run-windows-tests.ps1" `
-                -OutputDirectory (Join-Path $OutputDirectory "$workload-$mode") `
-                -TimeoutSeconds 600 `
-                -CargoArguments @(
-                    'test', '--locked', '-p', 'festerm', '--test', 'windows_sampler_lifecycles',
-                    '--', 'concurrent_sampler_device_lifecycles', '--ignored', '--exact',
-                    '--nocapture', '--test-threads=1'
-                )
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warning "Sampler diagnostic $workload/$mode failed with exit code $LASTEXITCODE."
-                if ($failure -eq 0) { $failure = $LASTEXITCODE }
+            try {
+                & "$PSScriptRoot\run-windows-tests.ps1" `
+                    -OutputDirectory (Join-Path $runDirectory "$workload-$mode") `
+                    -TimeoutSeconds 600 `
+                    -CargoArguments @(
+                        'test', '--locked', '-p', 'festerm', '--test', 'windows_sampler_lifecycles',
+                        '--', 'concurrent_sampler_device_lifecycles', '--ignored', '--exact',
+                        '--nocapture', '--test-threads=1'
+                    )
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "Sampler diagnostic $workload/$mode failed with exit code $LASTEXITCODE."
+                    if ($failure -eq 0) { $failure = $LASTEXITCODE }
+                }
+            } catch {
+                Write-Warning "Sampler diagnostic $workload/$mode could not complete: $_"
+                if ($failure -eq 0) { $failure = 1 }
             }
         }
     }
