@@ -27,6 +27,11 @@ Local changes are deliberately limited to:
   decline the optimization. Callback preparation still runs every frame.
   Prefix and complete-frame signatures are distinct; complete frames also
   decline image-copy callbacks. Both modes share the same cache and budgets.
+  Hits compare current borrowed meshes and callback keys against the existing
+  exact signature before allocating an owned candidate. Only misses capture
+  mesh payloads; the cumulative `signature_captures` counter counts actual
+  capture attempts, including refusals. Texture ownership and epochs remain
+  checked, and ordinary preparation still runs.
 - `winit.rs`: when requested, negotiate COPY_DST only for capable opaque root
   surfaces without MSAA/depth. End the normal clear/UI pass, encode the validated
   copy, then use the same submission and presentation. Reconfiguration and

@@ -38,6 +38,13 @@ target/callback fallback, bounded signatures, and queued-image immutability.
 Those tests do not automate desktop interaction or prove the original freeze
 is repaired.
 
+`retained_hits_do_not_capture_owned_signatures` additionally exercises the live
+GPU path and requires 32 exact hits to leave the actual owned-capture counter
+unchanged, with new captures after geometry changes and explicit cache clearing.
+Borrowed exact comparisons preserve the same ownership, budgets and pixel
+oracle. This is deterministic preparation-work evidence, not a new process-CPU
+or native-latency measurement; the CP-18 residuals below remain open.
+
 Native evidence must compare `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` and `1`
 using the same frozen executable, owned fixture, physical viewport, DPI and
 adapter, in balanced order without concurrent builds/tests. Record process

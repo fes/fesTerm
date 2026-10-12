@@ -21,6 +21,20 @@ rendering or release acceptance. Workspace/package versions and the versioned
 Windows daemon resource advance together; installed apps and profiles are not
 modified by release preparation.
 
+## Comparing retained paint without cloning it again
+
+Retained WARP frames already avoided repeated rasterization, but every lookup
+first allocated an owned signature and cloned all mesh vertices and indices,
+only to discard that candidate on a hit. The same bounded cache now compares
+borrowed ordered paint inputs against its validated exact signature. Misses
+retain the original capture, budget checks, immutable image replacement and
+ordinary fallback; callbacks still prepare on every frame.
+
+A completed-render regression compares ordinary and retained pixels across
+32 consecutive hits, a geometry change and cache destruction, and counts actual
+owned-signature capture attempts. It proves removal of repeated capture work,
+not an unmeasured wall-clock improvement or native input-latency acceptance.
+
 ## Closing the safety-modal software-rendering gap
 
 The fresh merged-main UI baseline found that dirty-document, risky-paste and
