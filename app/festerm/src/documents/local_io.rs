@@ -150,16 +150,24 @@ impl Worker {
     }
 
     pub fn register(&self, build: impl FnOnce() -> Request) -> std::result::Result<(), SaveError> {
-        self.admitted
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                (count < CAPACITY).then_some(count + 1)
-            })
-            .map_err(|_| {
+        let mut count = self.admitted.load(Ordering::Acquire);
+        loop {
+            if count >= CAPACITY {
                 if !self.capacity_waiting.swap(true, Ordering::AcqRel) {
                     self.force();
                 }
-                error("The 16 local background document slots are occupied. Use Refresh or Save explicitly, or close another document.")
-            })?;
+                return Err(error("The 16 local background document slots are occupied. Use Refresh or Save explicitly, or close another document."));
+            }
+            match self.admitted.compare_exchange_weak(
+                count,
+                count + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(current) => count = current,
+            }
+        }
         // Reserve before cloning bounded document bytes, not after a refusal.
         let lease = Lease(Arc::clone(&self.admitted));
         let mut request = build();
