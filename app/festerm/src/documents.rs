@@ -16,7 +16,12 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{atomic::Ordering, Arc, Mutex, TryLockError};
 use std::time::{Duration, Instant};
+
+use eframe::egui;
+
+mod local_io;
 
 use festerm_document::{
     AutoSaveControl, Availability, DocumentBounds, DocumentId, DocumentKey, DocumentOrigin,
@@ -28,7 +33,7 @@ use festerm_syntax::{DocumentSyntax, SyntaxStatus};
 
 use crate::document_store::{
     self, ConfirmedDestination, DestinationExpectation, Freshness, Generation, LoadFailure,
-    LocalSourceAuthority, SaveExpectation, SaveFailure,
+    LocalSourceAuthority, RecoveryAuthority, SaveExpectation, SaveFailure,
 };
 
 /// How often an open local document is re-checked against its file. Short
@@ -50,6 +55,7 @@ const RELOAD_NOTICE: Duration = Duration::from_secs(8);
 const AUTO_SAVE_IDLE: Duration = Duration::from_millis(900);
 pub(crate) const MAX_PENDING_RECOVERY_NOTICES: usize = 16;
 pub(crate) const MAX_OVERFLOW_RECOVERY_NOTICES: usize = 64;
+const MAX_RECOVERY_PROTECTIONS: usize = 64;
 
 /// The application-scoped registry handle every window holds.
 pub(crate) type SharedDocuments = Rc<RefCell<DocumentRegistry>>;
@@ -89,6 +95,37 @@ pub(crate) struct OpenDocument {
     /// same content again: a failing write retried on a timer would bury the
     /// error under its own repetition (ADR 0034 §7).
     auto_save_blocked_at: Option<u64>,
+    io_epoch: u64,
+    background: Option<Registration>,
+    background_error: Option<SaveError>,
+    background_load_error: Option<LoadFailure>,
+}
+
+impl Drop for OpenDocument {
+    fn drop(&mut self) {
+        self.cancel_background();
+    }
+}
+
+#[derive(Debug)]
+struct Registration {
+    revision: u64,
+    auto_save: bool,
+    control: Arc<local_io::Control>,
+}
+
+impl OpenDocument {
+    fn cancel_background(&mut self) {
+        if let Some(background) = &self.background {
+            background.control.cancel();
+        }
+    }
+
+    fn invalidate_background(&mut self) {
+        self.cancel_background();
+        self.background = None;
+        self.io_epoch += 1;
+    }
 }
 
 impl OpenDocument {
@@ -100,7 +137,8 @@ impl OpenDocument {
         &self.text
     }
 
-    pub(crate) const fn text_mut(&mut self) -> &mut TextDocument {
+    pub(crate) fn text_mut(&mut self) -> &mut TextDocument {
+        self.cancel_background();
         &mut self.text
     }
 
@@ -131,7 +169,10 @@ impl OpenDocument {
         self.auto_save_requested
     }
 
-    pub(crate) const fn set_auto_save_requested(&mut self, requested: bool) {
+    pub(crate) fn set_auto_save_requested(&mut self, requested: bool) {
+        if self.auto_save_requested != requested {
+            self.cancel_background();
+        }
         self.auto_save_requested = requested;
     }
 
@@ -139,6 +180,7 @@ impl OpenDocument {
     /// decided their version is the one they want to keep for now (ADR 0034
     /// §6).
     pub(crate) fn keep_my_version(&mut self) {
+        self.invalidate_background();
         self.conflict = None;
     }
 
@@ -149,13 +191,34 @@ impl OpenDocument {
     /// The derived status every surface reads from, so the banner, the Save
     /// button, the chip, and the status bar cannot disagree.
     pub(crate) fn status(&self) -> DocumentStatus {
+        self.status_with_error(
+            self.last_error
+                .clone()
+                .or_else(|| self.background_error.clone())
+                .or_else(|| {
+                    self.background_load_error
+                        .as_ref()
+                        .map(|error| SaveError::new(error.headline(), error.detail()))
+                }),
+        )
+    }
+
+    fn status_with_error(&self, last_error: Option<SaveError>) -> DocumentStatus {
         DocumentStatus::derive(&StatusInputs {
             dirty: self.text.is_dirty(),
-            save: self.save,
+            save: if self
+                .background
+                .as_ref()
+                .is_some_and(|registration| registration.control.saving.load(Ordering::Acquire))
+            {
+                SaveProgress::InFlight
+            } else {
+                self.save
+            },
             availability: self.availability.clone(),
             conflict: self.conflict.clone(),
             auto_save_requested: self.auto_save_requested,
-            last_error: self.last_error.clone(),
+            last_error,
             recovery_error: self.recovery_error.clone(),
             remote: self.origin.is_remote(),
             has_save_target: !matches!(self.origin, DocumentOrigin::Untitled(_)),
@@ -186,7 +249,10 @@ impl OpenDocument {
 
     /// Whether a debounced auto-save should actually write right now.
     pub(crate) fn auto_save_should_write(&self) -> bool {
-        self.text.is_dirty() && self.status().auto_save() == AutoSaveControl::On
+        // Admission's own warning must not prevent a later eligible admission.
+        // Genuine save/availability errors still pause writes.
+        self.text.is_dirty()
+            && self.status_with_error(self.last_error.clone()).auto_save() == AutoSaveControl::On
     }
 }
 
@@ -230,6 +296,25 @@ impl OpenFailure {
     }
 }
 
+#[derive(Debug)]
+struct RecoveryProtection {
+    source: PathBuf,
+    authority: RecoveryAuthority,
+    breadcrumb: PathBuf,
+    error: SaveError,
+}
+
+impl RecoveryProtection {
+    fn matches(&self, path: &Path, authority: Option<&LocalSourceAuthority>) -> bool {
+        self.source == path
+            || self.authority.canonical_path() == path
+            || authority.is_some_and(|authority| {
+                self.authority.canonical_path() == authority.canonical_path()
+                    || self.authority.matches(authority)
+            })
+    }
+}
+
 /// Every open document, owned by the application rather than by a window.
 #[derive(Debug, Default)]
 pub(crate) struct DocumentRegistry {
@@ -241,7 +326,12 @@ pub(crate) struct DocumentRegistry {
     overflow_recovery_notices: VecDeque<(PathBuf, SaveError)>,
     recovery_notice_overflow_summary: Option<(usize, PathBuf, SaveError)>,
     active_recovery_notice: Option<(PathBuf, SaveError)>,
+    recovery_protections: Vec<RecoveryProtection>,
+    recovery_protection_overflow: Option<(PathBuf, SaveError)>,
     bounds: DocumentBounds,
+    worker: Option<local_io::Worker>,
+    worker_start_error: Option<SaveError>,
+    write_gate: Arc<Mutex<()>>,
 }
 
 impl DocumentRegistry {
@@ -265,6 +355,7 @@ impl DocumentRegistry {
     /// it. Aliasing is by origin, so two views of one path share one buffer,
     /// one undo history, and one dirty flag.
     pub(crate) fn open_local(&mut self, path: &Path) -> Result<DocumentId, OpenFailure> {
+        self.drain_background();
         let origin = LocalOrigin::new(path)
             .map(DocumentOrigin::Local)
             .map_err(OpenFailure::Origin)?;
@@ -386,6 +477,12 @@ impl DocumentRegistry {
         let id = DocumentId::from_raw(self.next_id);
         let syntax = DocumentSyntax::new(origin.file_name(), text.text());
         self.by_key.insert(origin.key(), id);
+        let recovery = match &origin {
+            DocumentOrigin::Local(origin) => {
+                self.recovery_protection(origin.path(), source_authority.as_ref())
+            }
+            _ => None,
+        };
         self.documents.insert(
             id,
             OpenDocument {
@@ -401,16 +498,85 @@ impl DocumentRegistry {
                 save: SaveProgress::Idle,
                 auto_save_requested: false,
                 last_error: None,
-                recovery_error: None,
-                recovery_path: None,
-                recovery_notice_queued: false,
+                recovery_error: recovery.as_ref().map(|(_, error)| error.clone()),
+                recovery_path: recovery.as_ref().map(|(path, _)| path.clone()),
+                recovery_notice_queued: recovery.is_some(),
                 checked: Instant::now(),
                 reloaded: None,
                 settled: None,
                 auto_save_blocked_at: None,
+                io_epoch: 0,
+                background: None,
+                background_error: None,
+                background_load_error: None,
             },
         );
         id
+    }
+
+    fn recovery_protection(
+        &self,
+        path: &Path,
+        authority: Option<&LocalSourceAuthority>,
+    ) -> Option<(PathBuf, SaveError)> {
+        self.recovery_protections
+            .iter()
+            .find(|protection| protection.matches(path, authority))
+            .map(|protection| (protection.breadcrumb.clone(), protection.error.clone()))
+            .or_else(|| self.recovery_protection_overflow.clone())
+    }
+
+    fn retain_recovery_protection(
+        &mut self,
+        source: PathBuf,
+        authority: RecoveryAuthority,
+        breadcrumb: PathBuf,
+        error: SaveError,
+    ) {
+        if self
+            .recovery_protections
+            .iter()
+            .any(|protection| protection.breadcrumb == breadcrumb)
+        {
+            return;
+        }
+        if self.recovery_protections.len() < MAX_RECOVERY_PROTECTIONS {
+            self.recovery_protections.push(RecoveryProtection {
+                source,
+                authority,
+                breadcrumb: breadcrumb.clone(),
+                error: error.clone(),
+            });
+        } else if self.recovery_protection_overflow.is_none() {
+            self.recovery_protection_overflow = Some((
+                breadcrumb.clone(),
+                SaveError::new(
+                    "Local recovery protection capacity exceeded",
+                    format!("The 64 unresolved local source protections are occupied. All local writes are refused for this application lifetime; acknowledgement does not resolve recovery. Preserve unsaved text and manually recover retained versions, including {}, before restarting fesTerm.", breadcrumb.display()),
+                ),
+            ));
+        }
+        // Protection is application-lifetime state, not a notification or view.
+        for document in self.documents.values_mut() {
+            let DocumentOrigin::Local(origin) = &document.origin else {
+                continue;
+            };
+            let recovery = self
+                .recovery_protections
+                .iter()
+                .find(|protection| {
+                    protection.matches(origin.path(), document.source_authority.as_ref())
+                })
+                .map(|protection| (protection.breadcrumb.clone(), protection.error.clone()))
+                .or_else(|| self.recovery_protection_overflow.clone());
+            if let Some((path, error)) = recovery {
+                document.invalidate_background();
+                document.recovery_path = Some(path);
+                document.recovery_error = Some(error);
+                document.recovery_notice_queued = true;
+            }
+        }
+        self.queue_recovery_notice_record(breadcrumb, error);
     }
 
     /// Records one more view of an already-open document.
@@ -459,6 +625,7 @@ impl DocumentRegistry {
         if document.views > 0 {
             return false;
         }
+        document.cancel_background();
         let recovery = (!document.recovery_notice_queued)
             .then(|| {
                 document
@@ -617,13 +784,10 @@ impl DocumentRegistry {
     /// is captured with it so Compare can open immediately and Reload can
     /// apply exactly the bytes the conflict was raised for.
     pub(crate) fn save(&mut self, id: DocumentId) -> Option<SaveOutcome> {
-        let bounds = self.bounds;
         let document = self.documents.get_mut(&id)?;
-        if let Some(error) = document.recovery_error.clone() {
-            return Some(SaveOutcome::Failed(error));
-        }
-        let DocumentOrigin::Local(origin) = &document.origin else {
-            if matches!(document.origin, DocumentOrigin::Untitled(_)) {
+        match &document.origin {
+            DocumentOrigin::Remote(_) => return None,
+            DocumentOrigin::Untitled(_) => {
                 let error = SaveError::new(
                     "Choose a destination first",
                     "This document is not on disk yet. Use Save As to choose where to write it.",
@@ -631,9 +795,45 @@ impl DocumentRegistry {
                 document.last_error = Some(error.clone());
                 return Some(SaveOutcome::Failed(error));
             }
-            // Remote saves travel through the SFTP worker and complete
-            // asynchronously; they do not run on this path.
-            return None;
+            DocumentOrigin::Local(_) => {}
+        }
+        self.drain_background();
+        let gate = Arc::clone(&self.write_gate);
+        for document in self.documents.values_mut() {
+            document.cancel_background();
+        }
+        let _guard = match gate.try_lock() {
+            Ok(guard) => guard,
+            Err(error) => {
+                return self
+                    .save_admission_error(id, matches!(error, TryLockError::Poisoned(_)))
+                    .map(SaveOutcome::Failed)
+            }
+        };
+        self.drain_background();
+        for document in self.documents.values_mut() {
+            document.invalidate_background();
+        }
+        let protection = self.documents.get(&id).and_then(|document| {
+            let DocumentOrigin::Local(origin) = &document.origin else {
+                return None;
+            };
+            self.recovery_protection(origin.path(), document.source_authority.as_ref())
+        });
+        if let Some((path, error)) = protection {
+            let document = self.documents.get_mut(&id)?;
+            document.recovery_path = Some(path);
+            document.recovery_error = Some(error.clone());
+            document.recovery_notice_queued = true;
+            return Some(SaveOutcome::Failed(error));
+        }
+        let bounds = self.bounds;
+        let document = self.documents.get_mut(&id)?;
+        if let Some(error) = document.recovery_error.clone() {
+            return Some(SaveOutcome::Failed(error));
+        }
+        let DocumentOrigin::Local(origin) = &document.origin else {
+            unreachable!("local save preflight");
         };
         let path = origin.path().to_path_buf();
         let bytes = document.text.to_bytes();
@@ -655,6 +855,7 @@ impl DocumentRegistry {
         let outcome = match document_store::save(&path, &bytes, expectation) {
             Ok(saved) => {
                 document.generation = Some(saved.generation);
+                document.background_load_error = None;
                 document.source_authority = Some(saved.source_authority);
                 document.read_only = saved.read_only;
                 document.text.mark_saved();
@@ -703,18 +904,15 @@ impl DocumentRegistry {
             None
         };
         if let Some((path, error)) = recovery {
-            let already_queued = self
-                .pending_recovery_notices
-                .iter()
-                .chain(&self.overflow_recovery_notices)
-                .any(|(queued, _)| queued == &path)
-                || self
-                    .active_recovery_notice
-                    .as_ref()
-                    .is_some_and(|(active, _)| active == &path);
-            if !already_queued {
-                self.queue_recovery_notice_record(path, error);
-            }
+            let authority = document
+                .source_authority
+                .clone()
+                .expect("loaded save authority");
+            let DocumentOrigin::Local(origin) = &document.origin else {
+                unreachable!()
+            };
+            let source = origin.path().to_path_buf();
+            self.retain_recovery_protection(source, authority.recovery_authority(), path, error);
         }
         Some(outcome)
     }
@@ -737,6 +935,39 @@ impl DocumentRegistry {
         path: &Path,
         confirmed: &ConfirmedDestination,
     ) -> Option<(SaveOutcome, Option<DocumentId>)> {
+        self.drain_background();
+        let gate = Arc::clone(&self.write_gate);
+        for document in self.documents.values_mut() {
+            document.cancel_background();
+        }
+        let _guard = match gate.try_lock() {
+            Ok(guard) => guard,
+            Err(error) => {
+                return self
+                    .save_admission_error(id, matches!(error, TryLockError::Poisoned(_)))
+                    .map(|error| (SaveOutcome::Failed(error), None))
+            }
+        };
+        self.drain_background();
+        for document in self.documents.values_mut() {
+            document.invalidate_background();
+        }
+        let protected = self
+            .recovery_protections
+            .iter()
+            .find(|protection| {
+                protection.source == path || protection.authority.matches_destination(confirmed)
+            })
+            .map(|protection| protection.error.clone())
+            .or_else(|| {
+                self.recovery_protection_overflow
+                    .as_ref()
+                    .map(|(_, error)| error.clone())
+            });
+        if let Some(error) = protected {
+            self.documents.get_mut(&id)?.last_error = Some(error.clone());
+            return Some((SaveOutcome::Failed(error), None));
+        }
         if !confirmed.matches_requested_path(path) {
             let error = SaveError::new(
                 "That destination changed after confirmation",
@@ -902,7 +1133,15 @@ impl DocumentRegistry {
                         document.recovery_error = Some(error.clone());
                     }
                     if let SaveFailure::RecoveryRequired(path) = failure {
-                        self.queue_recovery_notice_record(path, error.clone());
+                        let DocumentOrigin::Local(origin) = &origin else {
+                            unreachable!()
+                        };
+                        self.retain_recovery_protection(
+                            origin.path().to_path_buf(),
+                            confirmed.recovery_authority(),
+                            path,
+                            error.clone(),
+                        );
                     }
                     return Some((SaveOutcome::Failed(error), None));
                 }
@@ -928,6 +1167,7 @@ impl DocumentRegistry {
                 document.syntax = DocumentSyntax::new(origin.file_name(), reloaded.text());
                 document.origin = origin;
                 document.text = reloaded;
+                document.background_load_error = None;
                 document.generation = Some(saved.generation);
                 document.source_authority = Some(saved.source_authority);
                 document.read_only = saved.read_only;
@@ -961,6 +1201,9 @@ impl DocumentRegistry {
         Some((SaveOutcome::Saved, Some(new_id)))
     }
 
+    /// Legacy explicit-save transition oracle, not the production scheduler.
+    /// Real-worker scheduling is covered by the `background_*` regressions.
+    ///
     /// Writes every document whose Auto-save is on and whose typing has
     /// settled, and returns what happened to each one that was attempted.
     ///
@@ -970,6 +1213,7 @@ impl DocumentRegistry {
     /// the document stays dirty, keeps its error, and is only reconsidered
     /// once the user edits again, which is the only new information there is
     /// (ADR 0034 §7).
+    #[cfg(test)]
     pub(crate) fn auto_save(&mut self, now: Instant) -> Vec<(DocumentId, SaveOutcome)> {
         let mut due = Vec::new();
         for (id, document) in &mut self.documents {
@@ -1016,6 +1260,8 @@ impl DocumentRegistry {
         outcomes
     }
 
+    /// Legacy explicit-refresh transition oracle, not the production scheduler.
+    ///
     /// Re-checks every local document whose turn has come round, which is how
     /// an outside change is noticed without the user pressing anything.
     ///
@@ -1027,6 +1273,7 @@ impl DocumentRegistry {
     /// the check it triggers is exactly the one below. A bounded poll of the
     /// handful of files that are actually open behaves identically on every
     /// platform, and Refresh remains there for anyone who will not wait.
+    #[cfg(test)]
     pub(crate) fn poll(&mut self, now: Instant) -> Vec<(DocumentId, RefreshOutcome)> {
         let due: Vec<DocumentId> = self
             .documents
@@ -1054,9 +1301,12 @@ impl DocumentRegistry {
         changed
     }
 
+    /// Legacy focus/explicit-refresh oracle, not the production scheduler.
+    ///
     /// Re-checks everything now, whatever the poll clock says. Used when a
     /// window regains focus: the user has just come back from whatever
     /// changed the file.
+    #[cfg(test)]
     pub(crate) fn revalidate_all(&mut self) -> Vec<(DocumentId, RefreshOutcome)> {
         let ids: Vec<DocumentId> = self
             .documents
@@ -1082,8 +1332,22 @@ impl DocumentRegistry {
     /// Re-checks a local document against its source and applies ADR 0034 §6's
     /// table: a clean buffer follows the file, a dirty one never does silently.
     pub(crate) fn refresh(&mut self, id: DocumentId) -> Option<RefreshOutcome> {
+        if !matches!(self.documents.get(&id)?.origin, DocumentOrigin::Local(_)) {
+            return None;
+        }
+        self.drain_background();
+        let gate = Arc::clone(&self.write_gate);
+        let _guard = match gate.try_lock() {
+            Ok(guard) => guard,
+            Err(error) => {
+                self.save_admission_error(id, matches!(error, TryLockError::Poisoned(_)))?;
+                return Some(RefreshOutcome::Unreadable);
+            }
+        };
+        self.drain_background();
         let bounds = self.bounds;
         let document = self.documents.get_mut(&id)?;
+        document.invalidate_background();
         let DocumentOrigin::Local(origin) = &document.origin else {
             return None;
         };
@@ -1100,6 +1364,7 @@ impl DocumentRegistry {
                         document_store::source_authority_identity_is_current(authority, known)
                     });
                 if authority_current {
+                    document.background_load_error = None;
                     document.availability = Availability::Available;
                     RefreshOutcome::Unchanged
                 } else {
@@ -1115,6 +1380,7 @@ impl DocumentRegistry {
             }
             Freshness::Changed(_) => match document_store::load(&path, bounds) {
                 Ok(loaded) if !document.text.is_dirty() => {
+                    document.background_load_error = None;
                     document.text = loaded.document;
                     document.generation = Some(loaded.generation);
                     document.source_authority = Some(loaded.source_authority);
@@ -1125,6 +1391,7 @@ impl DocumentRegistry {
                     RefreshOutcome::Reloaded
                 }
                 Ok(loaded) => {
+                    document.background_load_error = None;
                     document.conflict = Some(
                         festerm_document::ConflictState::new(
                             "This file changed somewhere else while you were editing it.",
@@ -1169,8 +1436,22 @@ impl DocumentRegistry {
     /// changes. Only ever reached through an explicit Reload the user pressed
     /// on a conflict banner.
     pub(crate) fn reload_from_source(&mut self, id: DocumentId) -> Option<RefreshOutcome> {
+        if !matches!(self.documents.get(&id)?.origin, DocumentOrigin::Local(_)) {
+            return None;
+        }
+        self.drain_background();
+        let gate = Arc::clone(&self.write_gate);
+        let _guard = match gate.try_lock() {
+            Ok(guard) => guard,
+            Err(error) => {
+                self.save_admission_error(id, matches!(error, TryLockError::Poisoned(_)))?;
+                return Some(RefreshOutcome::Unreadable);
+            }
+        };
+        self.drain_background();
         let bounds = self.bounds;
         let document = self.documents.get_mut(&id)?;
+        document.invalidate_background();
         let DocumentOrigin::Local(origin) = &document.origin else {
             return None;
         };
@@ -1178,6 +1459,7 @@ impl DocumentRegistry {
         match document_store::load(&path, bounds) {
             Ok(loaded) => {
                 document.text = loaded.document;
+                document.background_load_error = None;
                 document.generation = Some(loaded.generation);
                 document.source_authority = Some(loaded.source_authority);
                 document.read_only = loaded.read_only;
@@ -1192,6 +1474,365 @@ impl DocumentRegistry {
             }
             Err(_) => Some(RefreshOutcome::Unreadable),
         }
+    }
+
+    fn save_admission_error(&mut self, id: DocumentId, poisoned: bool) -> Option<SaveError> {
+        let error = if poisoned {
+            SaveError::new(
+                "Local save coordination stopped",
+                "An unexpected local write failure stopped save coordination. Nothing new was written by this command. Preserve unsaved text and any recovery directory, then restart fesTerm before saving again.",
+            )
+        } else {
+            SaveError::new(
+                "A local save is still finishing",
+                "Nothing new was written by this command. Wait for the background save to finish, then try again.",
+            )
+        };
+        self.documents.get_mut(&id)?.last_error = Some(error.clone());
+        Some(error)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hold_next_background_io_for_test(
+        &mut self,
+        context: &egui::Context,
+        entered: std::sync::mpsc::SyncSender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+        completed: std::sync::mpsc::SyncSender<()>,
+    ) {
+        let context = context.clone();
+        let release = Mutex::new(release);
+        let first = std::sync::atomic::AtomicBool::new(true);
+        self.worker = Some(
+            local_io::Worker::start_with(
+                Arc::new(move || {
+                    context.request_repaint_of(egui::ViewportId::ROOT);
+                    let _ = completed.try_send(());
+                }),
+                Arc::clone(&self.write_gate),
+                Arc::new(move |request, save| {
+                    if first.swap(false, Ordering::AcqRel) {
+                        entered.send(()).unwrap();
+                        release
+                            .lock()
+                            .unwrap()
+                            .recv_timeout(Duration::from_secs(10))
+                            .unwrap();
+                    }
+                    local_io::execute(request, save)
+                }),
+            )
+            .unwrap(),
+        );
+    }
+
+    /// Reconciles immutable worker registrations, not files. The worker owns
+    /// its poll/debounce clock and wakes the UI only for observable results.
+    pub(crate) fn background_tick(
+        &mut self,
+        context: &egui::Context,
+        now: Instant,
+        regained_focus: bool,
+    ) -> bool {
+        let mut changed = self.drain_background();
+        if self.worker.is_none()
+            && self.worker_start_error.is_none()
+            && self.documents.values().any(Self::background_eligible)
+        {
+            let context = context.clone();
+            match local_io::Worker::start(
+                Arc::new(move || context.request_repaint_of(egui::ViewportId::ROOT)),
+                Arc::clone(&self.write_gate),
+            ) {
+                Ok(worker) => self.worker = Some(worker),
+                Err(error) => self.worker_start_error = Some(error),
+            }
+        }
+        for (id, document) in &mut self.documents {
+            if !Self::background_eligible(document) {
+                document.cancel_background();
+                document.background = None;
+                continue;
+            }
+            let revision = document.text.revision();
+            if document.settled.is_none_or(|(seen, _)| seen != revision) {
+                document.settled = Some((revision, now));
+            }
+            if document
+                .auto_save_blocked_at
+                .is_some_and(|blocked| blocked != revision)
+            {
+                document.auto_save_blocked_at = None;
+                document.last_error = None;
+            }
+            let auto_save = document.auto_save_should_write()
+                && document.background_load_error.is_none()
+                && document.auto_save_blocked_at != Some(revision);
+            if document.background.as_ref().is_some_and(|registration| {
+                registration.revision == revision
+                    && registration.auto_save == auto_save
+                    && !registration.control.cancelled.load(Ordering::Acquire)
+            }) {
+                if regained_focus {
+                    document
+                        .background
+                        .as_ref()
+                        .expect("checked above")
+                        .control
+                        .force
+                        .store(true, Ordering::Release);
+                }
+                continue;
+            }
+            document.cancel_background();
+            document.background = None;
+            let result = if let Some(worker) = &self.worker {
+                let DocumentOrigin::Local(origin) = &document.origin else {
+                    unreachable!()
+                };
+                let control = Arc::new(local_io::Control::default());
+                control.force.store(regained_focus, Ordering::Release);
+                worker
+                    .register(|| {
+                        let mut request = local_io::Request::new(
+                            *id,
+                            document.io_epoch,
+                            revision,
+                            document.generation.expect("eligible generation"),
+                            document
+                                .source_authority
+                                .clone()
+                                .expect("eligible authority"),
+                            origin.path().to_path_buf(),
+                            document.availability.clone(),
+                            document.background_load_error.clone(),
+                            auto_save.then(|| document.text.to_bytes()),
+                            if regained_focus {
+                                now
+                            } else {
+                                now + POLL_INTERVAL
+                            },
+                            auto_save.then(|| {
+                                document.settled.expect("settled above").1 + AUTO_SAVE_IDLE
+                            }),
+                            self.bounds,
+                            Arc::clone(&control),
+                        );
+                        request.save_point = auto_save.then(|| document.text.save_point());
+                        request
+                    })
+                    .map(|()| {
+                        document.background = Some(Registration {
+                            revision,
+                            auto_save,
+                            control,
+                        });
+                    })
+            } else {
+                Err(self
+                    .worker_start_error
+                    .clone()
+                    .expect("worker start attempted"))
+            };
+            let error = result.err();
+            changed |= document.background_error != error;
+            document.background_error = error;
+        }
+        if regained_focus {
+            if let Some(worker) = &self.worker {
+                worker.force();
+            }
+        }
+        changed
+    }
+
+    fn background_eligible(document: &OpenDocument) -> bool {
+        matches!(document.origin, DocumentOrigin::Local(_))
+            && document.generation.is_some()
+            && document.source_authority.is_some()
+            && document.save == SaveProgress::Idle
+            && document.conflict.is_none()
+            && document.recovery_error.is_none()
+    }
+
+    /// Only a short-lived notice needs a UI timer. Filesystem and debounce
+    /// deadlines belong to the worker, including when every view is idle.
+    pub(crate) fn notice_repaint_after(&self, now: Instant) -> Option<Duration> {
+        self.documents
+            .values()
+            .filter_map(|document| {
+                document
+                    .reloaded
+                    .map(|at| at + RELOAD_NOTICE)
+                    .filter(|deadline| *deadline > now)
+                    .map(|deadline| deadline.duration_since(now))
+            })
+            .min()
+    }
+
+    fn drain_background(&mut self) -> bool {
+        let Some(worker) = &self.worker else {
+            return false;
+        };
+        let completions = match worker.drain() {
+            Ok(completions) => completions,
+            Err(error) => {
+                let mut changed = false;
+                for document in self
+                    .documents
+                    .values_mut()
+                    .filter(|doc| Self::background_eligible(doc))
+                {
+                    document.cancel_background();
+                    document.background = None;
+                    changed |= document.background_error.as_ref() != Some(&error);
+                    document.background_error = Some(error.clone());
+                }
+                self.worker_start_error = Some(error);
+                self.worker = None;
+                return changed;
+            }
+        };
+        let mut changed = false;
+        for completion in completions {
+            changed |= self.apply_background(completion);
+        }
+        changed
+    }
+
+    fn apply_background(&mut self, completion: local_io::Completion) -> bool {
+        use local_io::{Check, Result};
+        let local_io::Completion { request, result } = completion;
+        // Recovery breadcrumbs survive closing, cancelling, or rebinding the
+        // view; an ambiguous publication is never an ignorable stale result.
+        let recovery = if let Result::Saved(Err(SaveFailure::RecoveryRequired(path)), _) = &result {
+            let failure = SaveFailure::RecoveryRequired(path.clone());
+            let error = SaveError::new(failure.headline(), failure.detail());
+            self.retain_recovery_protection(
+                request.path.clone(),
+                request.authority.recovery_authority(),
+                path.clone(),
+                error,
+            );
+            true
+        } else {
+            false
+        };
+        let Some(document) = self.documents.get_mut(&request.id) else {
+            return recovery;
+        };
+        if document.io_epoch != request.epoch
+            || document.generation != Some(request.generation)
+            || !matches!(&document.origin, DocumentOrigin::Local(origin) if origin.path() == request.path)
+        {
+            return recovery;
+        }
+        if document
+            .background
+            .as_ref()
+            .is_some_and(|registration| Arc::ptr_eq(&registration.control, &request.control))
+        {
+            document.background = None;
+        }
+        document.checked = Instant::now();
+        match result {
+            Result::Checked(_) if request.control.cancelled.load(Ordering::Acquire) => {
+                return false
+            }
+            Result::Checked(Check::Current(current)) => {
+                document.background_load_error = None;
+                document.availability = if current {
+                    Availability::Available
+                } else {
+                    Availability::Unavailable(UnavailableReason::Missing)
+                };
+            }
+            Result::Checked(Check::Loaded(loaded))
+                if !document.text.is_dirty() && document.text.revision() == request.revision =>
+            {
+                document.invalidate_background();
+                document.text = loaded.document;
+                document.background_load_error = None;
+                document.generation = Some(loaded.generation);
+                document.source_authority = Some(loaded.source_authority);
+                document.read_only = loaded.read_only;
+                document.availability = Availability::Available;
+                document.conflict = None;
+                document.reloaded = Some(Instant::now());
+            }
+            Result::Checked(Check::Loaded(loaded)) => {
+                document.background_load_error = None;
+                document.conflict = Some(
+                    festerm_document::ConflictState::new(
+                        "This file changed somewhere else while you were editing it.",
+                    )
+                    .with_source_text(loaded.document.text()),
+                );
+            }
+            Result::Checked(Check::Failed(error)) => {
+                let reason = match error {
+                    LoadFailure::NotFound => UnavailableReason::Missing,
+                    LoadFailure::PermissionDenied => UnavailableReason::PermissionDenied,
+                    LoadFailure::NotAFile | LoadFailure::Refused(_) => UnavailableReason::NotAFile,
+                    LoadFailure::Unreadable => {
+                        document.background_load_error = Some(error);
+                        return true;
+                    }
+                };
+                document.availability = Availability::Unavailable(reason);
+            }
+            Result::Saved(Ok(saved), _) => {
+                document.invalidate_background();
+                document.generation = Some(saved.generation);
+                document.background_load_error = None;
+                document.source_authority = Some(saved.source_authority);
+                document.read_only = saved.read_only;
+                document
+                    .text
+                    .mark_saved_at(request.save_point.expect("save request history point"));
+                document.conflict = None;
+                document.last_error = None;
+                document.availability = Availability::Available;
+            }
+            Result::Saved(Err(SaveFailure::Interrupted), _)
+                if request.control.cancelled.load(Ordering::Acquire) =>
+            {
+                return false
+            }
+            Result::Saved(Err(failure), conflict) => {
+                document.auto_save_blocked_at = Some(request.revision);
+                match failure {
+                    SaveFailure::Conflict(_) => {
+                        let mut state = festerm_document::ConflictState::new(
+                            "This file changed somewhere else while you were editing it.",
+                        );
+                        if let Some(loaded) = conflict {
+                            state = state.with_source_text(loaded.document.text());
+                        }
+                        document.conflict = Some(state);
+                    }
+                    SaveFailure::Gone => {
+                        document.availability =
+                            Availability::Unavailable(UnavailableReason::Missing)
+                    }
+                    SaveFailure::PermissionDenied => {
+                        document.availability =
+                            Availability::Unavailable(UnavailableReason::PermissionDenied)
+                    }
+                    SaveFailure::RecoveryRequired(ref path) => {
+                        document.recovery_path = Some(path.clone());
+                        document.recovery_notice_queued = true;
+                        document.recovery_error =
+                            Some(SaveError::new(failure.headline(), failure.detail()));
+                    }
+                    _ => {
+                        document.last_error =
+                            Some(SaveError::new(failure.headline(), failure.detail()))
+                    }
+                }
+            }
+        }
+        true
     }
 }
 
@@ -1223,11 +1864,15 @@ mod tests {
         fn new(label: &str) -> Self {
             use std::sync::atomic::{AtomicU64, Ordering};
             static NEXT: AtomicU64 = AtomicU64::new(0);
-            let path = std::env::temp_dir().join(format!(
-                "festerm-documents-{}-{label}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
+            let path = std::env::current_dir()
+                .unwrap()
+                .join("target")
+                .join("document-io-fixtures")
+                .join(format!(
+                    "festerm-documents-{}-{label}-{}",
+                    std::process::id(),
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                ));
             fs::create_dir_all(&path).unwrap();
             Self { path }
         }
@@ -1896,6 +2541,8 @@ mod tests {
         let directory = TemporaryDirectory::new("save-as-promotes-recovery");
         let source = directory.file("source.md", "source\n");
         let destination = directory.file("destination.md", "destination\n");
+        let alias = directory.path.join("destination-alias.md");
+        fs::hard_link(&destination, &alias).unwrap();
         let mut registry = DocumentRegistry::new();
         let source_id = registry.open_local(&source).unwrap();
         type_into(&mut registry, source_id, "edited\n");
@@ -1943,6 +2590,35 @@ mod tests {
             permissions.set_readonly(false);
             fs::set_permissions(&destination, permissions).unwrap();
         }
+        assert!(registry.acknowledge_recovery_notice(&notice_path));
+        assert!(registry.release(source_id));
+        let reopened_destination = registry.open_local(&destination).unwrap();
+        assert_eq!(
+            registry.get(reopened_destination).unwrap().recovery_path(),
+            Some(recovery.as_path())
+        );
+        assert!(matches!(
+            registry.save(reopened_destination),
+            Some(SaveOutcome::Failed(_))
+        ));
+        assert!(registry.release(reopened_destination));
+        let reopened_source = registry.open_local(&source).unwrap();
+        let confirmed = document_store::observe_destination(&destination).unwrap();
+        assert!(matches!(
+            registry.save_as(reopened_source, &destination, &confirmed),
+            Some((SaveOutcome::Failed(_), None))
+        ));
+        let aliased = registry.open_local(&alias).unwrap();
+        assert_eq!(
+            registry.get(aliased).unwrap().recovery_path(),
+            Some(recovery.as_path())
+        );
+        assert!(registry.release(aliased));
+        let confirmed_alias = document_store::observe_destination(&alias).unwrap();
+        assert!(matches!(
+            registry.save_as(reopened_source, &alias, &confirmed_alias),
+            Some((SaveOutcome::Failed(_), None))
+        ));
     }
 
     #[test]
@@ -2367,6 +3043,15 @@ mod tests {
             registry.take_recovery_notice().is_none(),
             "final-view release must not duplicate an acknowledged notice"
         );
+        let reopened = registry.open_local(&path).unwrap();
+        assert_eq!(
+            registry.get(reopened).unwrap().recovery_path(),
+            Some(recovery.as_path())
+        );
+        assert!(matches!(
+            registry.save(reopened),
+            Some(SaveOutcome::Failed(_))
+        ));
     }
 
     #[test]
@@ -2756,5 +3441,1129 @@ mod tests {
             vec![(id, RefreshOutcome::Unavailable(UnavailableReason::Missing))]
         );
         assert_eq!(documents.borrow().get(id).unwrap().text().text(), "first\n");
+    }
+
+    fn controlled_worker(
+        registry: &mut DocumentRegistry,
+        executor: impl Fn(&local_io::Request, bool) -> local_io::Result + Send + Sync + 'static,
+    ) -> std::sync::mpsc::Receiver<()> {
+        let (wake, woken) = std::sync::mpsc::sync_channel(64);
+        registry.worker = Some(
+            local_io::Worker::start_with(
+                Arc::new(move || {
+                    wake.try_send(()).unwrap();
+                }),
+                Arc::clone(&registry.write_gate),
+                Arc::new(executor),
+            )
+            .unwrap(),
+        );
+        woken
+    }
+
+    fn wait_completion(
+        registry: &mut DocumentRegistry,
+        woken: &std::sync::mpsc::Receiver<()>,
+    ) -> bool {
+        woken.recv_timeout(Duration::from_secs(10)).unwrap();
+        registry.drain_background()
+    }
+
+    fn controlled_saved(request: &local_io::Request) -> local_io::Result {
+        // Simulates completed publication on an owned fixture, not the
+        // platform security protocol (which has separate store tests).
+        fs::write(&request.path, request.bytes.as_ref().unwrap()).unwrap();
+        let loaded = document_store::load(&request.path, request.bounds).unwrap();
+        local_io::Result::Saved(
+            Ok(document_store::SavedDocument {
+                generation: loaded.generation,
+                source_authority: loaded.source_authority,
+                read_only: loaded.read_only,
+            }),
+            None,
+        )
+    }
+
+    #[test]
+    fn background_worker_fairly_services_overdue_freshness_and_autosave() {
+        let directory = TemporaryDirectory::new("background-queue-fairness");
+        let mut registry = DocumentRegistry::new();
+        let ids: Vec<_> = ["a.md", "b.md", "c.md", "d.md", "bootstrap.md"]
+            .into_iter()
+            .map(|name| {
+                registry
+                    .open_local(&directory.file(name, "owned\n"))
+                    .unwrap()
+            })
+            .collect();
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let blocked = Mutex::new(blocked);
+        let bootstrap = ids[4];
+        let woken = controlled_worker(&mut registry, move |request, save| {
+            entered.send((request.id, save)).unwrap();
+            blocked
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+            if request.id == bootstrap {
+                local_io::Result::Checked(local_io::Check::Current(false))
+            } else if save {
+                controlled_saved(request)
+            } else {
+                // Deterministically model checks remaining due after slow I/O,
+                // without depending on wall-clock sleeps or executor speed.
+                request.control.force.store(true, Ordering::Release);
+                local_io::Result::Checked(local_io::Check::Current(true))
+            }
+        });
+        let now = Instant::now();
+        let controls: Vec<_> = ids
+            .iter()
+            .map(|_| Arc::new(local_io::Control::default()))
+            .collect();
+        let worker = registry.worker.as_ref().unwrap();
+        let register = |index: usize| {
+            let document = registry.get(ids[index]).unwrap();
+            let DocumentOrigin::Local(origin) = &document.origin else {
+                unreachable!()
+            };
+            worker
+                .register(|| {
+                    local_io::Request::new(
+                        ids[index],
+                        0,
+                        document.text.revision(),
+                        document.generation.unwrap(),
+                        document.source_authority.clone().unwrap(),
+                        origin.path().to_path_buf(),
+                        Availability::Available,
+                        None,
+                        (index == 2).then(|| b"saved\n".to_vec()),
+                        now,
+                        (index == 2).then_some(now),
+                        registry.bounds,
+                        Arc::clone(&controls[index]),
+                    )
+                })
+                .unwrap();
+        };
+        register(4);
+        assert_eq!(
+            waiting.recv_timeout(Duration::from_secs(10)).unwrap(),
+            (bootstrap, false)
+        );
+        for index in 0..4 {
+            register(index);
+        }
+        release.send(()).unwrap();
+        let mut seen = vec![waiting.recv_timeout(Duration::from_secs(10)).unwrap()];
+        for _ in 1..4 {
+            release.send(()).unwrap();
+            seen.push(waiting.recv_timeout(Duration::from_secs(10)).unwrap());
+        }
+        for control in &controls {
+            control.cancel();
+        }
+        release.send(()).unwrap();
+        // Disconnect before asserting so a failing regression cannot leave a
+        // continuously due worker behind.
+        registry.worker = None;
+        assert_eq!(
+            seen,
+            vec![
+                (ids[0], false),
+                (ids[1], false),
+                (ids[2], true),
+                (ids[3], false)
+            ]
+        );
+        assert!(woken.recv_timeout(Duration::from_secs(10)).is_ok());
+        assert_eq!(
+            fs::read_to_string(directory.path.join("c.md")).unwrap(),
+            "saved\n"
+        );
+    }
+
+    #[test]
+    fn background_worker_accepts_commands_while_existing_freshness_is_continuously_due() {
+        let directory = TemporaryDirectory::new("background-command-fairness");
+        let mut registry = DocumentRegistry::new();
+        let first = registry
+            .open_local(&directory.file("first.md", "first\n"))
+            .unwrap();
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let (checked, next_checked) = std::sync::mpsc::sync_channel(1);
+        let blocked = Mutex::new(blocked);
+        let first_check = std::sync::atomic::AtomicBool::new(true);
+        let second_seen = std::sync::atomic::AtomicBool::new(false);
+        let woken = controlled_worker(&mut registry, move |request, save| {
+            assert!(!save);
+            if request.id == first {
+                if first_check.swap(false, Ordering::AcqRel) {
+                    entered.send(()).unwrap();
+                    blocked
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(10))
+                        .unwrap();
+                }
+                request
+                    .control
+                    .force
+                    .store(!second_seen.load(Ordering::Acquire), Ordering::Release);
+            } else {
+                second_seen.store(true, Ordering::Release);
+                checked.send(()).unwrap();
+            }
+            local_io::Result::Checked(local_io::Check::Current(true))
+        });
+        let context = egui::Context::default();
+        assert!(!registry.background_tick(&context, Instant::now(), true));
+        waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        let second = registry
+            .open_local(&directory.file("second.md", "second\n"))
+            .unwrap();
+        assert!(!registry.background_tick(&context, Instant::now(), true));
+        release.send(()).unwrap();
+        next_checked.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(registry.get(second).unwrap().text().text(), "second\n");
+        assert!(woken.try_recv().is_err());
+    }
+
+    #[test]
+    fn background_slow_freshness_and_reload_leave_frame_nonblocking() {
+        let directory = TemporaryDirectory::new("background-slow-read");
+        let path = directory.file("notes.md", "original\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let blocked = Mutex::new(blocked);
+        let woken = controlled_worker(&mut registry, move |request, save| {
+            assert!(!save);
+            entered.send(()).unwrap();
+            blocked
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+            local_io::Result::Checked(local_io::Check::Loaded(Box::new(
+                document_store::load(&request.path, request.bounds).unwrap(),
+            )))
+        });
+        fs::write(&path, "external longer text\n").unwrap();
+        let context = egui::Context::default();
+        assert!(!registry.background_tick(&context, Instant::now(), true));
+        waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        for _ in 0..5 {
+            assert!(!registry.background_tick(&context, Instant::now(), true));
+        }
+        assert_eq!(registry.get(id).unwrap().text().text(), "original\n");
+        assert!(woken.try_recv().is_err());
+        release.send(()).unwrap();
+        assert!(wait_completion(&mut registry, &woken));
+        let document = registry.get(id).unwrap();
+        assert_eq!(document.text().text(), "external longer text\n");
+        assert!(!document.text().is_dirty());
+        assert!(document.local_source_generation().is_some());
+        assert!(registry.notice_repaint_after(Instant::now()).is_some());
+    }
+
+    #[test]
+    fn background_unchanged_and_ineligible_documents_do_not_wake_or_time_repaint() {
+        let directory = TemporaryDirectory::new("background-idle");
+        let path = directory.file("notes.md", "original\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        let (checked, checks) = std::sync::mpsc::sync_channel(8);
+        let woken = controlled_worker(&mut registry, move |_, save| {
+            assert!(!save);
+            checked.send(()).unwrap();
+            local_io::Result::Checked(local_io::Check::Current(true))
+        });
+        let context = egui::Context::default();
+        registry.background_tick(&context, Instant::now(), true);
+        for _ in 0..3 {
+            checks.recv_timeout(Duration::from_secs(10)).unwrap();
+            assert!(woken.try_recv().is_err());
+            assert!(registry.notice_repaint_after(Instant::now()).is_none());
+            assert!(!registry.background_tick(&context, Instant::now(), true));
+        }
+        registry.get_mut(id).unwrap().conflict =
+            Some(festerm_document::ConflictState::new("owned conflict"));
+        registry.create_untitled("fixture", "owned fixture", b"untitled\n");
+        registry.background_tick(&context, Instant::now(), false);
+        assert!(registry.get(id).unwrap().background.is_none());
+        assert!(registry.notice_repaint_after(Instant::now()).is_none());
+        let mut untitled_only = DocumentRegistry::new();
+        untitled_only.create_untitled("fixture", "owned fixture", b"untitled\n");
+        assert!(!untitled_only.background_tick(&context, Instant::now(), true));
+        assert!(untitled_only.worker.is_none());
+        let remote = festerm_document::RemoteOrigin::new(
+            "fixture.invalid",
+            22,
+            festerm_document::RemoteOwner::username("fixture").unwrap(),
+            "SHA256:owned-fixture",
+            "owned-fixture.md",
+            1,
+        )
+        .unwrap();
+        untitled_only.adopt(
+            DocumentOrigin::Remote(remote),
+            TextDocument::from_bytes(b"owned remote fixture\n", DocumentBounds::DEFAULT).unwrap(),
+            false,
+        );
+        assert!(!untitled_only.background_tick(&context, Instant::now(), true));
+        assert!(untitled_only.worker.is_none());
+    }
+
+    #[test]
+    fn background_reload_cancelled_by_edit_rechecks_into_conflict_without_losing_text() {
+        let directory = TemporaryDirectory::new("background-edit-race");
+        let path = directory.file("notes.md", "original\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        fs::write(&path, "external version\n").unwrap();
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let blocked = Mutex::new(blocked);
+        let first = std::sync::atomic::AtomicBool::new(true);
+        let woken = controlled_worker(&mut registry, move |request, _| {
+            let loaded = document_store::load(&request.path, request.bounds).unwrap();
+            if first.swap(false, Ordering::AcqRel) {
+                entered.send(()).unwrap();
+                blocked
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(10))
+                    .unwrap();
+            }
+            local_io::Result::Checked(local_io::Check::Loaded(Box::new(loaded)))
+        });
+        let context = egui::Context::default();
+        registry.background_tick(&context, Instant::now(), true);
+        waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        type_into(&mut registry, id, "mine\n");
+        release.send(()).unwrap();
+        assert!(!wait_completion(&mut registry, &woken));
+        assert_eq!(registry.get(id).unwrap().text().text(), "original\nmine\n");
+        registry.background_tick(&context, Instant::now(), true);
+        assert!(wait_completion(&mut registry, &woken));
+        let document = registry.get(id).unwrap();
+        assert_eq!(document.text().text(), "original\nmine\n");
+        assert_eq!(
+            document.conflict().unwrap().source_text(),
+            Some("external version\n")
+        );
+        assert!(!document.auto_save_should_write());
+    }
+
+    #[test]
+    fn background_late_reload_cannot_mutate_closed_reopened_or_explicitly_reloaded_document() {
+        for reopen in [false, true] {
+            let directory = TemporaryDirectory::new("background-identity-race");
+            let path = directory.file("notes.md", "original\n");
+            let mut registry = DocumentRegistry::new();
+            let id = registry.open_local(&path).unwrap();
+            let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+            let (release, blocked) = std::sync::mpsc::sync_channel(1);
+            let blocked = Mutex::new(blocked);
+            let woken = controlled_worker(&mut registry, move |request, _| {
+                let loaded = document_store::load(&request.path, request.bounds).unwrap();
+                entered.send(()).unwrap();
+                blocked
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(10))
+                    .unwrap();
+                local_io::Result::Checked(local_io::Check::Loaded(Box::new(loaded)))
+            });
+            let context = egui::Context::default();
+            registry.background_tick(&context, Instant::now(), true);
+            waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+            fs::write(&path, "new identity bytes\n").unwrap();
+            let current = if reopen {
+                assert!(registry.release(id));
+                let reopened = registry.open_local(&path).unwrap();
+                assert_ne!(id, reopened);
+                reopened
+            } else {
+                assert_eq!(
+                    registry.reload_from_source(id),
+                    Some(RefreshOutcome::Reloaded)
+                );
+                id
+            };
+            release.send(()).unwrap();
+            assert!(!wait_completion(&mut registry, &woken));
+            assert_eq!(
+                registry.get(current).unwrap().text().text(),
+                "new identity bytes\n"
+            );
+        }
+    }
+
+    #[test]
+    fn background_capacity_covers_queued_running_and_completed_work_and_recovers_on_close() {
+        let directory = TemporaryDirectory::new("background-bound");
+        let mut registry = DocumentRegistry::new();
+        let mut ids = Vec::new();
+        for index in 0..=local_io::CAPACITY {
+            ids.push(
+                registry
+                    .open_local(&directory.file(&format!("{index}.txt"), "owned\n"))
+                    .unwrap(),
+            );
+        }
+        let woken = controlled_worker(&mut registry, |request, save| {
+            if save {
+                controlled_saved(request)
+            } else {
+                local_io::Result::Checked(local_io::Check::Current(true))
+            }
+        });
+        let context = egui::Context::default();
+        assert!(registry.background_tick(&context, Instant::now(), false));
+        assert_eq!(
+            registry.worker.as_ref().unwrap().admitted(),
+            local_io::CAPACITY
+        );
+        let refused = ids
+            .iter()
+            .copied()
+            .find(|id| registry.get(*id).unwrap().background_error.is_some())
+            .unwrap();
+        assert!(registry
+            .get(refused)
+            .unwrap()
+            .status()
+            .detail()
+            .contains("16"));
+        type_into(&mut registry, refused, "later\n");
+        registry
+            .get_mut(refused)
+            .unwrap()
+            .set_auto_save_requested(true);
+        let now = Instant::now();
+        let revision = registry.get(refused).unwrap().text().revision();
+        registry.get_mut(refused).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        let admitted = ids.into_iter().find(|id| *id != refused).unwrap();
+        registry.release(admitted);
+        registry.worker.as_ref().unwrap().force();
+        woken.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(registry.background_tick(&context, now, false));
+        assert!(registry.get(refused).unwrap().background.is_some());
+        assert!(
+            registry
+                .get(refused)
+                .unwrap()
+                .background
+                .as_ref()
+                .unwrap()
+                .auto_save,
+            "a capacity warning cannot create a paused-admission retry loop"
+        );
+        assert!(registry.get(refused).unwrap().background_error.is_none());
+        assert_eq!(
+            registry.worker.as_ref().unwrap().admitted(),
+            local_io::CAPACITY
+        );
+        assert!(wait_completion(&mut registry, &woken));
+        assert!(!registry.get(refused).unwrap().text().is_dirty());
+    }
+
+    #[test]
+    fn background_completed_slots_stay_bounded_until_app_consumption_even_after_close() {
+        let directory = TemporaryDirectory::new("background-completed-bound");
+        let mut registry = DocumentRegistry::new();
+        let mut ids = Vec::new();
+        for index in 0..=local_io::CAPACITY {
+            ids.push(
+                registry
+                    .open_local(&directory.file(&format!("{index}.txt"), "owned\n"))
+                    .unwrap(),
+            );
+        }
+        let woken = controlled_worker(&mut registry, |_, _| {
+            local_io::Result::Checked(local_io::Check::Current(false))
+        });
+        let context = egui::Context::default();
+        assert!(registry.background_tick(&context, Instant::now(), true));
+        for _ in 0..local_io::CAPACITY {
+            woken.recv_timeout(Duration::from_secs(10)).unwrap();
+        }
+        let refused = ids
+            .iter()
+            .copied()
+            .find(|id| registry.get(*id).unwrap().background_error.is_some())
+            .unwrap();
+        for id in ids.into_iter().filter(|id| *id != refused) {
+            assert!(registry.release(id));
+        }
+        let document = registry.get(refused).unwrap();
+        let DocumentOrigin::Local(origin) = &document.origin else {
+            unreachable!()
+        };
+        let request = local_io::Request::new(
+            refused,
+            document.io_epoch,
+            document.text.revision(),
+            document.generation.unwrap(),
+            document.source_authority.clone().unwrap(),
+            origin.path().to_path_buf(),
+            document.availability.clone(),
+            None,
+            None,
+            Instant::now() + POLL_INTERVAL,
+            None,
+            registry.bounds,
+            Arc::new(local_io::Control::default()),
+        );
+        let worker = registry.worker.as_ref().unwrap();
+        assert_eq!(worker.admitted(), local_io::CAPACITY);
+        let built = std::sync::atomic::AtomicBool::new(false);
+        assert!(
+            worker
+                .register(|| {
+                    built.store(true, Ordering::Release);
+                    request
+                })
+                .is_err(),
+            "completed slots remain charged even after all originating views close"
+        );
+        assert!(
+            !built.load(Ordering::Acquire),
+            "refusal must not clone document bytes"
+        );
+        assert!(registry.background_tick(&context, Instant::now(), false));
+        assert!(registry.get(refused).unwrap().background_error.is_none());
+        assert_eq!(registry.worker.as_ref().unwrap().admitted(), 1);
+    }
+
+    #[test]
+    fn background_autosave_is_nonblocking_debounced_and_preserves_newer_edit_save_point() {
+        let directory = TemporaryDirectory::new("background-save-race");
+        let path = directory.file("notes.md", "original\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        type_into(&mut registry, id, "first\n");
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let blocked = Mutex::new(blocked);
+        let woken = controlled_worker(&mut registry, move |request, save| {
+            assert!(save);
+            let result = controlled_saved(request);
+            entered.send(()).unwrap();
+            blocked
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+            result
+        });
+        let context = egui::Context::default();
+        let now = Instant::now();
+        let revision = registry.get(id).unwrap().text().revision();
+        registry.get_mut(id).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        assert!(!registry.background_tick(&context, now, false));
+        waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(!registry.background_tick(&context, Instant::now(), false));
+        assert!(registry
+            .get(id)
+            .unwrap()
+            .status()
+            .headline()
+            .contains("Saving"));
+        type_into(&mut registry, id, "second\n");
+        assert!(matches!(registry.save(id), Some(SaveOutcome::Failed(_))));
+        assert!(registry
+            .get(id)
+            .unwrap()
+            .status()
+            .detail()
+            .contains("try again"));
+        assert!(registry
+            .get(id)
+            .unwrap()
+            .status()
+            .actions()
+            .contains(&festerm_document::BannerAction::Retry));
+        let destination = directory.path.join("retry.txt");
+        let confirmed = document_store::observe_destination(&destination).unwrap();
+        assert!(matches!(
+            registry.save_as(id, &destination, &confirmed),
+            Some((SaveOutcome::Failed(_), None))
+        ));
+        assert!(!destination.exists());
+        release.send(()).unwrap();
+        assert!(wait_completion(&mut registry, &woken));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original\nfirst\n");
+        let document = registry.get_mut(id).unwrap();
+        assert_eq!(document.text().text(), "original\nfirst\nsecond\n");
+        assert!(document.text().is_dirty());
+        assert!(document.text_mut().undo());
+        assert!(
+            !document.text().is_dirty(),
+            "undo reaches the exact published save point"
+        );
+        assert!(document.text_mut().undo());
+        assert!(
+            document.text().is_dirty(),
+            "the original baseline is no longer what disk holds"
+        );
+        let confirmed = document_store::observe_destination(&destination).unwrap();
+        assert!(matches!(
+            registry.save_as(id, &destination, &confirmed),
+            Some((SaveOutcome::Saved, Some(_)))
+        ));
+        assert_eq!(fs::read_to_string(destination).unwrap(), "original\n");
+    }
+
+    #[test]
+    fn background_autosave_error_is_truthful_and_not_retried_for_the_same_revision() {
+        let directory = TemporaryDirectory::new("background-save-error");
+        let path = directory.file("notes.md", "original\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        type_into(&mut registry, id, "mine\n");
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let executed = Arc::clone(&calls);
+        let woken = controlled_worker(&mut registry, move |_, save| {
+            if save {
+                executed.fetch_add(1, Ordering::AcqRel);
+                local_io::Result::Saved(Err(SaveFailure::MetadataPreservation), None)
+            } else {
+                local_io::Result::Checked(local_io::Check::Current(true))
+            }
+        });
+        let now = Instant::now();
+        let revision = registry.get(id).unwrap().text().revision();
+        registry.get_mut(id).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        let context = egui::Context::default();
+        registry.background_tick(&context, now, false);
+        assert!(wait_completion(&mut registry, &woken));
+        assert!(registry.get(id).unwrap().text().is_dirty());
+        assert!(registry
+            .get(id)
+            .unwrap()
+            .status()
+            .detail()
+            .contains("Save As"));
+        registry.background_tick(&context, now + AUTO_SAVE_IDLE * 20, false);
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original\n");
+        type_into(&mut registry, id, "new information\n");
+        let now = Instant::now();
+        let revision = registry.get(id).unwrap().text().revision();
+        // The production tick normally notices the new revision itself.
+        registry.get_mut(id).unwrap().settled = Some((revision - 1, now - AUTO_SAVE_IDLE));
+        registry.background_tick(&context, now - AUTO_SAVE_IDLE, false);
+        registry.background_tick(&context, now, false);
+        assert!(wait_completion(&mut registry, &woken));
+        assert_eq!(calls.load(Ordering::Acquire), 2);
+        assert!(registry.get(id).unwrap().text().is_dirty());
+    }
+
+    #[test]
+    fn background_late_save_error_does_not_pause_already_registered_newer_edits() {
+        let directory = TemporaryDirectory::new("background-late-error");
+        let path = directory.file("notes.md", "original\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        type_into(&mut registry, id, "first\n");
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let blocked = Mutex::new(blocked);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let woken = controlled_worker(&mut registry, move |request, save| {
+            assert!(save);
+            let attempt = calls.fetch_add(1, Ordering::AcqRel);
+            entered.send(attempt).unwrap();
+            blocked
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+            if attempt == 0 {
+                local_io::Result::Saved(Err(SaveFailure::MetadataPreservation), None)
+            } else {
+                assert!(!request.control.cancelled.load(Ordering::Acquire));
+                controlled_saved(request)
+            }
+        });
+        let context = egui::Context::default();
+        let now = Instant::now();
+        let revision = registry.get(id).unwrap().text().revision();
+        registry.get_mut(id).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        registry.background_tick(&context, now, false);
+        assert_eq!(waiting.recv_timeout(Duration::from_secs(10)).unwrap(), 0);
+        type_into(&mut registry, id, "newer\n");
+        let now = Instant::now();
+        let revision = registry.get(id).unwrap().text().revision();
+        registry.get_mut(id).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        registry.background_tick(&context, now, false);
+        release.send(()).unwrap();
+        assert_eq!(waiting.recv_timeout(Duration::from_secs(10)).unwrap(), 1);
+        woken.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(registry.background_tick(&context, Instant::now(), false));
+        let document = registry.get(id).unwrap();
+        assert!(document.last_error.is_none());
+        assert!(document.auto_save_blocked_at.is_none());
+        assert!(!document
+            .background
+            .as_ref()
+            .unwrap()
+            .control
+            .cancelled
+            .load(Ordering::Acquire));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original\n");
+        release.send(()).unwrap();
+        assert!(wait_completion(&mut registry, &woken));
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "original\nfirst\nnewer\n"
+        );
+        assert!(!registry.get(id).unwrap().text().is_dirty());
+    }
+
+    #[test]
+    fn background_real_missing_source_reports_once_and_unchanged_missing_does_not_wake() {
+        let directory = TemporaryDirectory::new("background-gone");
+        let path = directory.file("notes.md", "owned\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        let (wake, woken) = std::sync::mpsc::sync_channel(8);
+        registry.worker = Some(
+            local_io::Worker::start(
+                Arc::new(move || {
+                    wake.try_send(()).unwrap();
+                }),
+                Arc::clone(&registry.write_gate),
+            )
+            .unwrap(),
+        );
+        fs::remove_file(&path).unwrap();
+        let context = egui::Context::default();
+        registry.background_tick(&context, Instant::now(), true);
+        assert!(wait_completion(&mut registry, &woken));
+        assert_eq!(
+            registry.get(id).unwrap().availability,
+            Availability::Unavailable(UnavailableReason::Missing)
+        );
+        assert_eq!(registry.get(id).unwrap().text().text(), "owned\n");
+        assert!(!registry.background_tick(&context, Instant::now(), true));
+        // A subsequent real change, rather than a timer repaint, wakes again.
+        fs::write(&path, "returned longer\n").unwrap();
+        registry.background_tick(&context, Instant::now(), true);
+        assert!(wait_completion(&mut registry, &woken));
+        assert_eq!(registry.get(id).unwrap().text().text(), "returned longer\n");
+    }
+
+    #[test]
+    fn background_recovery_drained_before_reopen_still_refuses_all_same_source_writes() {
+        let directory = TemporaryDirectory::new("background-closed-recovery");
+        let path = directory.file("notes.md", "original\n");
+        let alias = directory.path.join("original-alias.md");
+        fs::hard_link(&path, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        type_into(&mut registry, id, "mine\n");
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let blocked = Arc::new(Mutex::new(blocked));
+        let target = path.clone();
+        let replacement = directory.path.join("replacement.md");
+        let woken = controlled_worker(&mut registry, move |request, save| {
+            assert!(save);
+            let entered = entered.clone();
+            let blocked = Arc::clone(&blocked);
+            let target = target.clone();
+            let replacement = replacement.clone();
+            document_store::set_after_save_replacement_hook(move || {
+                entered.send(()).unwrap();
+                blocked
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(10))
+                    .unwrap();
+                #[cfg(not(windows))]
+                {
+                    fs::write(&replacement, "later\n").unwrap();
+                    fs::rename(&replacement, &target).unwrap();
+                }
+                #[cfg(windows)]
+                {
+                    let _ = replacement;
+                    let mut permissions = fs::metadata(&target).unwrap().permissions();
+                    permissions.set_readonly(true);
+                    fs::set_permissions(&target, permissions).unwrap();
+                }
+            });
+            local_io::execute(request, save)
+        });
+        let now = Instant::now();
+        let revision = registry.get(id).unwrap().text().revision();
+        registry.get_mut(id).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        registry.background_tick(&egui::Context::default(), now, false);
+        waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(registry.release(id));
+        release.send(()).unwrap();
+        assert!(wait_completion(&mut registry, &woken));
+        assert!(registry.is_empty());
+        let (recovery, error) = registry.take_recovery_notice().unwrap();
+        assert!(recovery.is_dir());
+        let original = fs::read(recovery.join("original")).unwrap();
+        let prepared = fs::read(recovery.join("prepared")).unwrap();
+        let reopened = registry.open_local(&path).unwrap();
+        assert!(registry.acknowledge_recovery_notice(&recovery));
+        assert!(!registry.has_recovery_notices());
+        type_into(&mut registry, reopened, "newer\n");
+        let before = fs::read(&path).unwrap();
+        assert_eq!(
+            registry.get(reopened).unwrap().recovery_path(),
+            Some(recovery.as_path())
+        );
+        assert_eq!(
+            registry.save(reopened),
+            Some(SaveOutcome::Failed(error.clone()))
+        );
+        let confirmed = document_store::observe_destination(&path).unwrap();
+        assert_eq!(
+            registry.save_as(reopened, &path, &confirmed),
+            Some((SaveOutcome::Failed(error.clone()), None))
+        );
+        registry
+            .get_mut(reopened)
+            .unwrap()
+            .set_auto_save_requested(true);
+        let revision = registry.get(reopened).unwrap().text().revision();
+        registry.get_mut(reopened).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        registry.background_tick(&egui::Context::default(), now, true);
+        assert!(registry.get(reopened).unwrap().background.is_none());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(registry.get(reopened).unwrap().recovery_error, Some(error));
+        let aliased = registry.open_local(&alias).unwrap();
+        assert_eq!(
+            registry.get(aliased).unwrap().recovery_path(),
+            Some(recovery.as_path())
+        );
+        assert!(matches!(
+            registry.save(aliased),
+            Some(SaveOutcome::Failed(_))
+        ));
+        assert!(registry.release(aliased));
+        let confirmed_alias = document_store::observe_destination(&alias).unwrap();
+        assert!(matches!(
+            registry.save_as(reopened, &alias, &confirmed_alias),
+            Some((SaveOutcome::Failed(_), None))
+        ));
+        assert_eq!(fs::read(recovery.join("original")).unwrap(), original);
+        assert_eq!(fs::read(recovery.join("prepared")).unwrap(), prepared);
+        assert!(recovery.is_dir());
+    }
+
+    #[test]
+    fn unresolved_recovery_protection_is_bounded_and_overflow_refuses_all_local_writes() {
+        let directory = TemporaryDirectory::new("recovery-protection-bound");
+        let unrelated = directory.file("unrelated.md", "untouched\n");
+        let mut registry = DocumentRegistry::new();
+        let existing = registry.open_local(&unrelated).unwrap();
+        for index in 0..=MAX_RECOVERY_PROTECTIONS {
+            let path = directory.file(&format!("source-{index}.md"), "owned\n");
+            let loaded = document_store::load(&path, registry.bounds()).unwrap();
+            let breadcrumb = directory.path.join(format!("recovery-{index}"));
+            let failure = SaveFailure::RecoveryRequired(breadcrumb.clone());
+            registry.retain_recovery_protection(
+                path,
+                loaded.source_authority.recovery_authority(),
+                breadcrumb.clone(),
+                SaveError::new(failure.headline(), failure.detail()),
+            );
+            assert_eq!(registry.take_recovery_notice().unwrap().0, breadcrumb);
+            assert!(registry.acknowledge_recovery_notice(&breadcrumb));
+        }
+        assert_eq!(
+            registry.recovery_protections.len(),
+            MAX_RECOVERY_PROTECTIONS
+        );
+        assert!(!registry.has_recovery_notices());
+        let overflow = registry.recovery_protection_overflow.clone().unwrap();
+        assert_eq!(overflow.0, directory.path.join("recovery-64"));
+        assert!(overflow.1.detail().contains("All local writes are refused"));
+        type_into(&mut registry, existing, "new\n");
+        assert_eq!(
+            registry.save(existing),
+            Some(SaveOutcome::Failed(overflow.1.clone()))
+        );
+        registry
+            .get_mut(existing)
+            .unwrap()
+            .set_auto_save_requested(true);
+        registry.background_tick(
+            &egui::Context::default(),
+            Instant::now() + AUTO_SAVE_IDLE,
+            true,
+        );
+        assert!(registry.get(existing).unwrap().background.is_none());
+        assert!(registry.release(existing));
+        let reopened = registry.open_local(&unrelated).unwrap();
+        assert_eq!(
+            registry.get(reopened).unwrap().recovery_error,
+            Some(overflow.1.clone())
+        );
+        let destination = directory.path.join("new.md");
+        let confirmed = document_store::observe_destination(&destination).unwrap();
+        assert_eq!(
+            registry.save_as(reopened, &destination, &confirmed),
+            Some((SaveOutcome::Failed(overflow.1), None))
+        );
+        assert!(!destination.exists());
+        assert_eq!(fs::read_to_string(&unrelated).unwrap(), "untouched\n");
+        let protected = registry
+            .open_local(&directory.path.join("source-0.md"))
+            .unwrap();
+        assert_eq!(
+            registry.get(protected).unwrap().recovery_path(),
+            Some(directory.path.join("recovery-0").as_path())
+        );
+    }
+
+    #[test]
+    fn background_recovery_completion_survives_close_and_is_not_silently_discarded() {
+        let directory = TemporaryDirectory::new("background-recovery");
+        let path = directory.file("notes.md", "original\n");
+        let recovery = directory.path.join("owned-recovery");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        type_into(&mut registry, id, "mine\n");
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let blocked = Mutex::new(blocked);
+        let returned_recovery = recovery.clone();
+        let woken = controlled_worker(&mut registry, move |_, save| {
+            assert!(save);
+            entered.send(()).unwrap();
+            blocked
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+            local_io::Result::Saved(
+                Err(SaveFailure::RecoveryRequired(returned_recovery.clone())),
+                None,
+            )
+        });
+        let now = Instant::now();
+        let revision = registry.get(id).unwrap().text().revision();
+        registry.get_mut(id).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        registry.background_tick(&egui::Context::default(), now, false);
+        waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(registry.release(id));
+        let reopened = registry.open_local(&path).unwrap();
+        release.send(()).unwrap();
+        assert!(wait_completion(&mut registry, &woken));
+        assert_eq!(registry.take_recovery_notice().unwrap().0, recovery);
+        assert!(registry.get(reopened).unwrap().recovery_error.is_some());
+        assert!(!registry.get(reopened).unwrap().status().can_save());
+    }
+
+    #[test]
+    fn background_poll_does_not_refuse_save_as_and_cancelled_queued_autosave_never_writes() {
+        let directory = TemporaryDirectory::new("background-manual");
+        let path = directory.file("blocking.txt", "read fixture\n");
+        let mut registry = DocumentRegistry::new();
+        registry.open_local(&path).unwrap();
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let blocked = Mutex::new(blocked);
+        let writes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let executed = Arc::clone(&writes);
+        let woken = controlled_worker(&mut registry, move |_, save| {
+            if save {
+                executed.fetch_add(1, Ordering::AcqRel);
+            }
+            assert!(!save, "cancelled queued work must not reach the executor");
+            entered.send(()).unwrap();
+            blocked
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+            local_io::Result::Checked(local_io::Check::Failed(LoadFailure::Unreadable))
+        });
+        let context = egui::Context::default();
+        registry.background_tick(&context, Instant::now(), true);
+        waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        let source = directory.file("source.txt", "original\n");
+        let id = registry.open_local(&source).unwrap();
+        type_into(&mut registry, id, "latest\n");
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        let now = Instant::now();
+        let revision = registry.get(id).unwrap().text().revision();
+        registry.get_mut(id).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        registry.background_tick(&context, now, false);
+        let destination = directory.path.join("new.txt");
+        let confirmed = document_store::observe_destination(&destination).unwrap();
+        let (_, new_id) = registry.save_as(id, &destination, &confirmed).unwrap();
+        assert!(new_id.is_some());
+        assert_eq!(
+            fs::read_to_string(&destination).unwrap(),
+            "original\nlatest\n"
+        );
+        assert_eq!(fs::read_to_string(&source).unwrap(), "original\n");
+        release.send(()).unwrap();
+        assert!(!wait_completion(&mut registry, &woken));
+        assert_eq!(writes.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn background_autosave_debounce_coalesces_edits_and_disable_cancels_a_running_prepare() {
+        let directory = TemporaryDirectory::new("background-cancel-save");
+        let path = directory.file("notes.md", "original\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        type_into(&mut registry, id, "first\n");
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        let (checked, checks) = std::sync::mpsc::sync_channel(2);
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let blocked = Mutex::new(blocked);
+        let woken = controlled_worker(&mut registry, move |request, save| {
+            if !save {
+                checked.send(()).unwrap();
+                return local_io::Result::Checked(local_io::Check::Current(true));
+            }
+            assert_eq!(
+                request.bytes.as_deref(),
+                Some(&b"original\nfirst\nlatest\n"[..])
+            );
+            entered.send(()).unwrap();
+            blocked
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+            assert!(request.control.cancelled.load(Ordering::Acquire));
+            local_io::Result::Saved(Err(SaveFailure::Interrupted), None)
+        });
+        let context = egui::Context::default();
+        registry.background_tick(&context, Instant::now() + Duration::from_secs(3600), true);
+        checks.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(
+            waiting.try_recv().is_err(),
+            "focus freshness does not bypass the typing debounce"
+        );
+        type_into(&mut registry, id, "latest\n");
+        let now = Instant::now();
+        let revision = registry.get(id).unwrap().text().revision();
+        registry.get_mut(id).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        registry.background_tick(&context, now, false);
+        waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        registry.get_mut(id).unwrap().set_auto_save_requested(false);
+        release.send(()).unwrap();
+        assert!(!wait_completion(&mut registry, &woken));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original\n");
+        assert!(registry.get(id).unwrap().text().is_dirty());
+        assert!(registry.get(id).unwrap().last_error.is_none());
+    }
+
+    #[test]
+    fn background_stable_unavailable_and_read_errors_do_not_repeat_repaints() {
+        for unreadable in [false, true] {
+            let directory = TemporaryDirectory::new("background-stable-error");
+            let path = directory.file("notes.md", "owned\n");
+            let mut registry = DocumentRegistry::new();
+            let id = registry.open_local(&path).unwrap();
+            if unreadable {
+                registry.get_mut(id).unwrap().background_load_error = Some(LoadFailure::Unreadable);
+            } else {
+                registry.get_mut(id).unwrap().availability =
+                    Availability::Unavailable(UnavailableReason::Missing);
+            }
+            let (checked, checks) = std::sync::mpsc::sync_channel(4);
+            let woken = controlled_worker(&mut registry, move |_, _| {
+                checked.send(()).unwrap();
+                local_io::Result::Checked(local_io::Check::Failed(if unreadable {
+                    LoadFailure::Unreadable
+                } else {
+                    LoadFailure::NotFound
+                }))
+            });
+            let context = egui::Context::default();
+            registry.background_tick(&context, Instant::now(), true);
+            for _ in 0..3 {
+                checks.recv_timeout(Duration::from_secs(10)).unwrap();
+                assert!(woken.try_recv().is_err());
+                assert!(!registry.background_tick(&context, Instant::now(), true));
+            }
+        }
+    }
+
+    #[test]
+    fn background_write_panic_refuses_explicit_save_with_truthful_coordination_error() {
+        let directory = TemporaryDirectory::new("background-write-panic");
+        let path = directory.file("notes.md", "owned\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        type_into(&mut registry, id, "edited\n");
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        let woken = controlled_worker(&mut registry, |_, save| {
+            assert!(save);
+            panic!("controlled publication failure");
+        });
+        let now = Instant::now();
+        let revision = registry.get(id).unwrap().text().revision();
+        registry.get_mut(id).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        registry.background_tick(&egui::Context::default(), now, false);
+        woken.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(registry.drain_background());
+        assert!(matches!(registry.save(id), Some(SaveOutcome::Failed(_))));
+        assert!(registry
+            .get(id)
+            .unwrap()
+            .last_error
+            .as_ref()
+            .unwrap()
+            .detail()
+            .contains("restart"));
+        let destination = directory.path.join("new.txt");
+        let confirmed = document_store::observe_destination(&destination).unwrap();
+        assert!(matches!(
+            registry.save_as(id, &destination, &confirmed),
+            Some((SaveOutcome::Failed(_), None))
+        ));
+        assert!(!destination.exists());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "owned\n");
+        assert_eq!(registry.get(id).unwrap().text().text(), "owned\nedited\n");
+        assert!(registry.get(id).unwrap().text().is_dirty());
+    }
+
+    #[test]
+    fn background_worker_failure_wakes_and_surfaces_an_error_instead_of_default_success() {
+        let directory = TemporaryDirectory::new("background-worker-failure");
+        let path = directory.file("notes.md", "owned\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        let woken = controlled_worker(&mut registry, |_, _| panic!("controlled worker failure"));
+        let context = egui::Context::default();
+        registry.background_tick(&context, Instant::now(), true);
+        woken.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(registry.drain_background());
+        assert!(registry
+            .get(id)
+            .unwrap()
+            .status()
+            .detail()
+            .contains("worker stopped"));
+        assert_eq!(registry.get(id).unwrap().text().text(), "owned\n");
+        assert!(!registry.background_tick(&context, Instant::now(), false));
     }
 }

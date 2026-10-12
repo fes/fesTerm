@@ -56,11 +56,6 @@ use crate::tabs::{
 };
 use crate::updates::{UpdateController, UpdateStatus};
 
-/// How often a window wakes purely to re-check the files it has open. Slower
-/// than the registry's own interval on purpose: waking is cheap, but waking
-/// more often than there is anything new to find is just heat.
-const DOCUMENT_POLL_REPAINT: Duration = Duration::from_millis(750);
-
 const APPLICATION_TITLE: &str = "fesTerm";
 const AI_AUTHORSHIP_SUMMARY: &str = "Entirely AI-written with human guidance.";
 const AI_AUTHORSHIP_DETAIL: &str =
@@ -5604,36 +5599,24 @@ impl FesTermApp {
     }
 
     /// Notices outside changes to open files without anybody pressing
-    /// Refresh. Every window runs this against the one shared registry; the
-    /// registry's own interval means the second window's call is a no-op
-    /// rather than a second stat.
+    /// Refresh. Every window reconciles the same immutable registrations and
+    /// drains worker results; none performs filesystem I/O or owns a poll timer.
     fn check_open_documents(&mut self, context: &egui::Context) {
         let documents = Rc::clone(self.state.documents());
-        if documents.borrow().is_empty() {
-            return;
-        }
         let regained_focus = context.input(|i| i.viewport().focused).unwrap_or(true);
-        let changed = if regained_focus && !self.window_was_focused {
-            // The user has just come back from whatever changed the file.
-            documents.borrow_mut().revalidate_all()
-        } else {
-            documents.borrow_mut().poll(Instant::now())
-        };
+        let now = Instant::now();
+        let changed = documents.borrow_mut().background_tick(
+            context,
+            now,
+            regained_focus && !self.window_was_focused,
+        );
         self.window_was_focused = regained_focus;
-        // Auto-save runs on the same beat as the freshness poll, after it, so
-        // a document that has just been found in conflict is not written a
-        // frame later by the debounce that was already counting down.
-        // A failure leaves its error on the document, where every view's
-        // banner already reads from, so there is nothing to route here beyond
-        // making the frame that shows it happen.
-        let written = documents.borrow_mut().auto_save(Instant::now());
-        if !changed.is_empty() || !written.is_empty() {
+        if changed {
             context.request_repaint();
         }
-        // Polling has to keep happening while the window sits idle, or an
-        // outside change would only be noticed the next time something else
-        // caused a repaint.
-        context.request_repaint_after(DOCUMENT_POLL_REPAINT);
+        if let Some(delay) = documents.borrow().notice_repaint_after(now) {
+            context.request_repaint_after(delay);
+        };
     }
 
     fn drive_native_smoke(&mut self, context: &egui::Context) {
@@ -6910,6 +6893,71 @@ mod tests {
 
     #[cfg(all(windows, target_arch = "x86_64"))]
     mod session_aging;
+
+    #[test]
+    fn background_document_io_leaves_real_frame_idle_until_completion_wake() {
+        let parent = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("document-io-fixtures");
+        fs::create_dir_all(&parent).unwrap();
+        let directory = tempfile::Builder::new()
+            .prefix("app-background-")
+            .tempdir_in(parent)
+            .unwrap();
+        let path = directory.path().join("notes.md");
+        fs::write(&path, "original\n").unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let documents = Rc::clone(app.state.documents());
+        let id = documents.borrow_mut().open_local(&path).unwrap();
+        let context = egui::Context::default();
+        for _ in 0..3 {
+            context
+                .run_ui(egui::RawInput::default(), |_| {})
+                .drop_without_applying_deltas();
+        }
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let (completed, woken) = std::sync::mpsc::sync_channel(1);
+        documents
+            .borrow_mut()
+            .hold_next_background_io_for_test(&context, entered, blocked, completed);
+        fs::write(&path, "external longer content\n").unwrap();
+        context
+            .run_ui(egui::RawInput::default(), |ui| {
+                app.check_open_documents(ui.ctx())
+            })
+            .drop_without_applying_deltas();
+        waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        for _ in 0..4 {
+            let output = context.run_ui(egui::RawInput::default(), |ui| {
+                app.check_open_documents(ui.ctx())
+            });
+            assert_eq!(
+                output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+                Duration::MAX,
+                "the application document-frame path has no poll/debounce repaint timer"
+            );
+            output.drop_without_applying_deltas();
+        }
+        assert_eq!(
+            documents.borrow().get(id).unwrap().text().text(),
+            "original\n"
+        );
+        assert!(woken.try_recv().is_err());
+        release.send(()).unwrap();
+        woken.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(context.has_requested_repaint());
+        let output = context.run_ui(egui::RawInput::default(), |ui| {
+            app.check_open_documents(ui.ctx())
+        });
+        assert_eq!(
+            documents.borrow().get(id).unwrap().text().text(),
+            "external longer content\n"
+        );
+        assert!(output.viewport_output[&egui::ViewportId::ROOT].repaint_delay < Duration::MAX);
+        output.drop_without_applying_deltas();
+    }
 
     #[test]
     fn external_document_activation_waits_for_modal_and_error_acknowledgement() {

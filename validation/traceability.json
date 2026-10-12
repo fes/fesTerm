@@ -1579,13 +1579,39 @@
       "requirements": [
         "docs/gui-design.md#approved-native-text-editing",
         "docs/text-editor-design.md",
-        "docs/adr/0034-shared-mutable-text-documents.md"
+        "docs/adr/0034-shared-mutable-text-documents.md",
+        "docs/adr/0047-bounded-local-document-background-io.md"
       ],
       "decisions": [
         "ADR-0034",
-        "ADR-0046"
+        "ADR-0046",
+        "ADR-0047"
       ],
       "automated_tests": [
+        "background_document_io_leaves_real_frame_idle_until_completion_wake",
+        "background_worker_accepts_commands_while_existing_freshness_is_continuously_due",
+        "background_worker_fairly_services_overdue_freshness_and_autosave",
+        "background_slow_freshness_and_reload_leave_frame_nonblocking",
+        "background_unchanged_and_ineligible_documents_do_not_wake_or_time_repaint",
+        "background_reload_cancelled_by_edit_rechecks_into_conflict_without_losing_text",
+        "background_late_reload_cannot_mutate_closed_reopened_or_explicitly_reloaded_document",
+        "background_capacity_covers_queued_running_and_completed_work_and_recovers_on_close",
+        "background_completed_slots_stay_bounded_until_app_consumption_even_after_close",
+        "background_autosave_is_nonblocking_debounced_and_preserves_newer_edit_save_point",
+        "background_autosave_error_is_truthful_and_not_retried_for_the_same_revision",
+        "background_late_save_error_does_not_pause_already_registered_newer_edits",
+        "background_poll_does_not_refuse_save_as_and_cancelled_queued_autosave_never_writes",
+        "background_autosave_debounce_coalesces_edits_and_disable_cancels_a_running_prepare",
+        "background_stable_unavailable_and_read_errors_do_not_repeat_repaints",
+        "background_real_missing_source_reports_once_and_unchanged_missing_does_not_wake",
+        "background_recovery_completion_survives_close_and_is_not_silently_discarded",
+        "background_recovery_drained_before_reopen_still_refuses_all_same_source_writes",
+        "unresolved_recovery_protection_is_bounded_and_overflow_refuses_all_local_writes",
+        "background_worker_failure_wakes_and_surfaces_an_error_instead_of_default_success",
+        "background_write_panic_refuses_explicit_save_with_truthful_coordination_error",
+        "background_cancelled_save_refuses_before_io_or_publication",
+        "background_save_point_marks_only_the_written_history_even_after_new_edits",
+        "background_save_point_cannot_mark_a_coalesced_newer_revision_clean",
         "document_retention_defaults_on_only_for_supported_route",
         "retained_document_frames_preserve_editor_preview_and_split_pixels",
         "retained_document_frames_invalidate_exact_inputs_and_texture_ownership",
@@ -2705,12 +2731,14 @@
       ],
       "requirements": [
         "docs/gui-design.md#approved-native-markdown-viewing",
-        "docs/markdown-viewer-design.md"
+        "docs/markdown-viewer-design.md",
+        "docs/adr/0047-bounded-local-document-background-io.md"
       ],
       "decisions": [
         "ADR-0030",
         "ADR-0035",
-        "ADR-0046"
+        "ADR-0046",
+        "ADR-0047"
       ],
       "automated_tests": [
         "document_retention_defaults_on_only_for_supported_route",

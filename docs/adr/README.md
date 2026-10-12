@@ -39,6 +39,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0039: Direct2D Terminal Composition on Supported Windows x64 WARP](0039-opt-in-direct2d-terminal-composition.md) - automatic supported-route policy and ownership; broader native qualification remains open
 - [ADR 0040: Automatic Final-Target Terminal Copy](0040-opt-in-final-target-terminal-copy.md) - owner-approved bounded WARP rollout without production switches
 - [ADR 0041: Automatic Retained Window Prefix](0041-opt-in-retained-window-prefix.md) - owner-approved exact immutable prefix reuse; resource/native/latency follow-ups remain in #282
+- [ADR 0047: Bounded Local Document Background I/O](0047-bounded-local-document-background-io.md) - owner accepted the bounded immutable worker, completion-only wake and nonblocking write admission on 2026-10-12; native qualification remains CP-15
 
 ## Superseded Decisions
 
