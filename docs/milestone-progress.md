@@ -1548,6 +1548,34 @@ fallbacks. The new evidence can support the next causal investigation; it does
 not identify the cause of 2173 or relabel the separate Direct2D lifetime repair.
 See [the runner's privacy boundary and limitations](windows-test-diagnostics.md).
 
+## Separating sampler-exit evidence from green reruns
+
+A later main failure supplied the native receipt the original exit-2173
+incident lacked. Matching public Microsoft SDK-layer symbols narrowed the
+faulting thread to sampler creation rejecting a CPU descriptor handle.
+The receipt does not say why the handle became invalid, and another thread
+creating a heap is not proof of a race. Counting original attempts rather than
+only successful reruns exposed five exit-2173 failures in 96 completed
+Windows workspace-test attempts in the sampled period. The owner accepts this
+as an unresolved tracked residual rather than an indefinite blocker for
+unrelated exact-head-green changes; that disposition is not a repair.
+
+Bounded local sampler and mixed Direct2D/egui lifecycles did not reproduce
+the exception. The local SDK layer differs from CI, and an attempted app-local
+runtime comparison actually loaded the system runtime. A separate opt-in
+hosted diagnostic now runs those controls once with content-free native
+receipts. Production behavior, the required workspace workload and its
+concurrency/build profiles remain unchanged; small deterministic launcher and
+bounds contracts do join required validation. Its first hosted run loaded the
+same SDK-layer identity as the captured fault and did not reproduce it. An
+exact repaired-head dispatch later reproduced the identical native exception
+in the shared-instance sampler-only control while the other three controls
+passed; its concurrent workspace job independently captured the fifth
+workspace occurrence. This narrows a repeatable investigation route without
+proving shared ownership causal, repairing the defect, or granting native
+freeze acceptance.
+See [the diagnostic contract](windows-test-diagnostics.md#opt-in-hosted-sampler-lifecycle-investigation).
+
 ## Retiring imported Direct2D targets before teardown
 
 The intermittent Windows crash investigation in #330 exposed a concrete
