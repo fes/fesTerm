@@ -3268,6 +3268,7 @@ fn spawn_shell(
 fn apply_terminal_environment(command: &mut CommandBuilder) {
     command.env("TERM", "xterm-256color");
     command.env("TERM_PROGRAM", "fesTerm");
+    command.env("COLORTERM", "truecolor");
     command.env_remove("TERM_SESSION_ID");
 }
 
@@ -5554,6 +5555,7 @@ mod tests {
         let mut command = CommandBuilder::new("shell");
         command.env("TERM", "stale");
         command.env("TERM_PROGRAM", "tmux");
+        command.env("COLORTERM", "stale");
         command.env("TERM_SESSION_ID", "stale-session");
 
         apply_terminal_environment(&mut command);
@@ -5565,6 +5567,10 @@ mod tests {
         assert_eq!(
             command.get_env("TERM_PROGRAM"),
             Some(std::ffi::OsStr::new("fesTerm"))
+        );
+        assert_eq!(
+            command.get_env("COLORTERM"),
+            Some(std::ffi::OsStr::new("truecolor"))
         );
         assert_eq!(command.get_env("TERM_SESSION_ID"), None);
     }

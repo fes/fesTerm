@@ -124,7 +124,7 @@ impl LocalProfile {
     }
 
     pub fn with_working_directory(mut self, working_directory: impl Into<PathBuf>) -> Self {
-        self.working_directory = Some(working_directory.into());
+        self.working_directory = Some(expand_home_directory(working_directory.into()));
         self
     }
 
@@ -367,7 +367,8 @@ fn search_working_directories_from_with_budget(
         return PathSearchResult::default();
     }
 
-    let query_path = Path::new(query);
+    let expanded_query = expand_home_directory(PathBuf::from(query));
+    let query_path = expanded_query.as_path();
     let ends_with_separator = query.ends_with(['/', '\\']);
     let parent = if ends_with_separator {
         query_path
@@ -1305,6 +1306,31 @@ impl Drop for LocalPtySession {
     }
 }
 
+/// Expands a leading `~` or `~/` to the user's home directory, as a shell
+/// would; the OS never does this for a `cwd`. `~user` and a missing home
+/// directory are left untouched.
+fn expand_home_directory(path: PathBuf) -> PathBuf {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .filter(|home| !home.is_empty());
+    expand_home_directory_with(path, home.as_deref().map(Path::new))
+}
+
+fn expand_home_directory_with(path: PathBuf, home: Option<&Path>) -> PathBuf {
+    let Some(home) = home else {
+        return path;
+    };
+    match path.strip_prefix("~") {
+        Ok(rest)
+            if path.to_str().is_some_and(|text| {
+                text == "~" || text.starts_with("~/") || text.starts_with("~\\")
+            }) =>
+        {
+            home.join(rest)
+        }
+        _ => path,
+    }
+}
+
 fn command_builder(profile: &LocalProfile) -> CommandBuilder {
     let mut command = CommandBuilder::new(&profile.executable);
     command.args(profile.arguments.iter());
@@ -1334,6 +1360,8 @@ fn command_builder(profile: &LocalProfile) -> CommandBuilder {
     // print "Restored session" in an otherwise fresh fesTerm shell. Identify
     // the actual terminal owner and clear the stale source-session ID.
     command.env("TERM_PROGRAM", "fesTerm");
+    // Advertise 24-bit color so TUIs choose their full-color layout.
+    command.env("COLORTERM", "truecolor");
     command.env_remove("TERM_SESSION_ID");
     command
 }
@@ -1672,6 +1700,20 @@ mod tests {
     }
 
     #[test]
+    fn working_directory_expands_leading_tilde_only() {
+        let home = Path::new("/home/u");
+        let expand = |text: &str| expand_home_directory_with(PathBuf::from(text), Some(home));
+        assert_eq!(expand("~"), PathBuf::from("/home/u"));
+        assert_eq!(expand("~/src"), PathBuf::from("/home/u/src"));
+        assert_eq!(expand("~other/src"), PathBuf::from("~other/src"));
+        assert_eq!(expand("/a/~/b"), PathBuf::from("/a/~/b"));
+        assert_eq!(
+            expand_home_directory_with(PathBuf::from("~/src"), None),
+            PathBuf::from("~/src")
+        );
+    }
+
+    #[test]
     fn profile_rejects_invalid_working_directory() {
         let profile =
             LocalProfile::new("shell").with_working_directory("definitely-not-a-directory");
@@ -1687,6 +1729,7 @@ mod tests {
 
         assert_eq!(command.get_env("TERM"), Some(OsStr::new("xterm-256color")));
         assert_eq!(command.get_env("TERM_PROGRAM"), Some(OsStr::new("fesTerm")));
+        assert_eq!(command.get_env("COLORTERM"), Some(OsStr::new("truecolor")));
         assert_eq!(command.get_env("TERM_SESSION_ID"), None);
     }
 
