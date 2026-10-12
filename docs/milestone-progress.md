@@ -36,6 +36,22 @@ shapes, accessibility and commands across width, font, scale, Find, scrolling
 and snapshot changes; deterministic counters prove that 400 warm lines stop
 rebuilding their formatting. Native latency and readability gates remain open.
 
+## Merging editor formatting boundaries without a third list
+
+The editor already sweeps ordered syntax and Find ranges, but each layout
+still collected their endpoints into a new vector, sorted and deduplicated
+it, then grew the copied text while appending runs. The two ordered boundary
+streams now merge directly, and the text allocation reserves the known
+source length. Layout, highlighting, Find, selection and widget ownership
+remain live; no galley or revision cache is introduced.
+
+A sorted-cut oracle compares the complete jobs across Unicode, empty text,
+empty ranges, coincident boundaries and stale or non-character-aligned
+endpoints. Existing syntax/Find and editor interaction controls remain.
+Eliminating preparation allocations and sorting is not cold-process startup,
+native latency or a fix for the unreproduced near-zero-CPU freeze; the
+source-bound construction record keeps those claims separate.
+
 ## Consolidating overlapping draft follow-ups on the repaired main line
 
 Seventeen draft branches carried cumulative variants of the same prerequisites,

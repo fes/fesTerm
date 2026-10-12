@@ -876,6 +876,13 @@ second dirty document open in multiple views; primary-window Quit and updater
 install/restart must include the secondary session and refuse the unresolved
 documents rather than closing the process.
 
+CP-15 editor formatting preparation: the streaming-boundary regression
+compares complete layout jobs with the sorted-cut oracle, including Unicode,
+empty text/ranges, coincident boundaries and stale endpoints after an edit.
+Syntax ink and Find backgrounds/underlines remain independent. These CPU
+controls automate formatting equivalence, not native caret, screen-reader,
+scroll/input latency, first-ready or cold-process startup acceptance.
+
 CP-06/CP-15 table preparation: ordinary/current CPU controls retain all 1600
 live cells in the 400-section Preview at normal/narrow widths, across cold/
 warm/scroll/Find and width/font/options/scale/theme/revision changes. They

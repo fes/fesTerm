@@ -235,6 +235,73 @@ timestamp-collision fixture prerequisite from the safety PR. The new fixture
 regression passes separately. Native readability, clipboard, screen-reader,
 physical latency and sustained resources remain unqualified.
 
+## 2026-10-11 streaming editor layout preparation
+
+The editor candidate streams the two already-ordered syntax/Find endpoint
+channels instead of allocating, sorting and deduplicating a third boundary
+vector, and reserves the known text length before copying runs. It introduces
+no galley/revision cache, changes no parser bound and retains live TextEdit
+layout and interaction. The complete-job sorted-cut regression independently
+covers Unicode, empty text/ranges, coincident boundaries and stale endpoints.
+
+Three alternating source-frozen process pairs execute all twelve original
+construction controls: before/after, after/before, before/after. Each scene
+retains its first call, eight warmups and forty steady construction/
+tessellation samples. All six actual native exits and all 72 reports pass
+source/tree/binary, sample-count, finite-value, percentile and scope checks.
+Every paired control has identical item, final shape and vertex counts;
+these counts alone are not an exact-pixel or accessibility oracle.
+
+| Source | Revision | Tree | Optimized test executable SHA-256 |
+| --- | --- | --- | --- |
+| Merged main | `ba74adfff153af981bfccfe338da61cf1cd4c1ec` | `6a2e53b3f86fa626bee3bc80977a19379246abc3` | `0952319bc038f9061645918d6cefa2c0a411988ec7723003bcf18a3d3bc36512` |
+| Editor candidate | `8d34fe32b81c54b09455523a1e6d93b29cfb046c` | `f030d2db3ddd6f336bd6b32551f39fc51e7a812d` | `9c0e64b15500db1105871a2cdba654961437cfbd69456db1f6b1c02036fab8ac` |
+
+Windows x64, optimized actual application test binaries, 1180 x 760 points,
+scale 1, default dark gallery visuals. The archived main binary runs only
+while the checkout is restored to its exact clean source, since the existing
+probe reads live Git provenance. Each candidate run likewise uses its clean
+source; there is no concurrent owned build/test/measurement work. The shared
+host is not independently isolated.
+
+| Actual editor control | Before steady UI medians ms | After steady UI medians ms | Ratio of mean process medians | After slower pairs |
+| --- | --- | --- | ---: | ---: |
+| Syntax, 2,000 lines | 0.3205 / 0.3237 / 0.3237 | 0.3044 / 0.3015 / 0.3053 | 0.9414 | 0/3 |
+| Find, 2,000 capped matches | 0.8613 / 0.8551 / 0.8458 | 0.7945 / 0.8084 / 0.8005 | 0.9380 | 0/3 |
+
+Steady syntax/Find construction observations are 5.9/6.2% lower, not a native
+latency or WARP draw claim. Syntax p95 ranges are 0.3794-0.4596 before and
+0.3409-0.4435 after; Find ranges are 0.9022-0.9274 and 0.8636-0.8968.
+Unchanged controls retain adverse movement: mixed Markdown Preview is 4.5%
+higher in all three pairs, headings 5.0% higher in all three, tables 5.5%
+higher in two, and the large SFTP list 2.5% higher in all three. Source/
+Source-Find are 3.7/5.0% lower despite unchanged source rendering. These
+observations establish neither a universal improvement nor a proven host
+cause or strict regression in unchanged code.
+
+**First-call improvement is not established.** Syntax first UI calls are
+75.81-81.66 ms before and 76.48-78.80 ms after; Find calls are 58.02-58.33 and
+57.62-58.68 ms. Full-text widget/font layout still dominates these fresh-context
+calls. They are not cold-process startup or first-ready latency. No new GPU,
+native presentation, physical input, idle CPU, sustained resource, hardware/
+DPI or near-zero-CPU freeze evidence is granted.
+
+```powershell
+cargo test --release --locked -p festerm --bin festerm --no-run --message-format=json
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:FESTERM_SURFACE_PROFILE_SCENES = 'original-controls'
+# Set a fresh absolute FESTERM_SURFACE_PROFILE_OUT for each process and
+# restore the exact clean source matching the frozen executable first.
+python scripts\windows_test_runner.py --output-root target\ui-performance-editor\measurement-native --timeout-seconds 1800 -- target\ui-performance-editor\frozen-candidate.exe surface_performance::profile_interactive_surfaces --ignored --exact --nocapture --test-threads=1
+```
+
+Owned artifacts under `target\ui-performance-editor` retain the six profiles,
+native receipts, frozen candidate, build receipt and `analysis.json`; the
+existing `ui-performance-ba74-20261011` directory retains the baseline binary.
+These local artifacts and measurements are historical, source-bound evidence;
+they do not qualify the later rebased review head and are not a durable public
+receipt. The evidence-only follow-up does not change measured production code.
+
 ## Bounded non-terminal surface matrix
 
 The existing optional `replay_warp_ui_surfaces` and
