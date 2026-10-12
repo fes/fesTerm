@@ -1004,7 +1004,8 @@
         "validation/terminal-performance/README.md#cpu-presentation-cache-allocation-oracle",
         "validation/terminal-performance/README.md#glyph-layout-retirement-oracle",
         "validation/terminal-performance/README.md#optional-owned-thread-identity-discriminator",
-        "validation/direct2d/README.md#native-quad-scratch-allocation-control"
+        "validation/direct2d/README.md#native-quad-scratch-allocation-control",
+        "validation/direct2d/README.md#unchanged-frame-preparation-work-control"
       ],
       "decisions": [
         "ADR-0012",
@@ -1093,6 +1094,11 @@
         "narrow_damage_includes_removed_triangles_and_falls_back_for_clip_changes",
         "narrow_retained_updates_match_full_pixels_with_overlap_erasure_and_dpi",
         "scattered_retained_damage_prepares_full_geometry_only_once",
+        "unchanged_retained_frames_skip_native_preparation_and_region_materialization",
+        "retained_source_is_exact_complete_and_payload_bounded",
+        "native_analysis_validates_unused_vertices_and_aggregate_geometry",
+        "retained_source_refuses_invalid_unused_geometry_and_recovers_after_admission_failure",
+        "retained_source_preserves_original_palette_and_texture_budget_refusals",
         "retained_geometry_and_raster_budgets_preserve_valid_frames",
         "raster_grid_normalization_is_independent_of_damage_origin",
         "retained_terminal_updates_preserve_pixels_across_dpi_and_clipping",

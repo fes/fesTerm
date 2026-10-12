@@ -68,6 +68,11 @@ The native renderer retains one frame's pixels and bounded presentation-region
 snapshots. Small changes redraw damaged regions and copy them into a new
 immutable frame; unchanged frames share their existing texture. This does not
 move terminal ownership or introduce a partial-present/window backend.
+An optional complete-source snapshot retains at most 1 MiB of CPU payload.
+After original-frame/texture admission, exact equality with a successfully
+prepared frame skips native conversion and region materialization. Oversized
+snapshots use ordinary preparation; changed sources keep complete native
+validation before damage comparison. This is not a peak/process-memory bound.
 
 Pinned egui-wgpu 0.36.1 supports automatic host-copy and retained-prefix
 composition on the Windows x64 DX12 CPU/BGRA gamma path. The owner approved

@@ -155,6 +155,8 @@ pub struct RenderTimings {
     pub texture_upload: Duration,
     pub geometry_prepare: Duration,
     pub geometry_prepare_calls: usize,
+    /// Region materialization attempts, including partitions that exceed cache budgets.
+    pub region_partition_calls: usize,
     pub native_draw: Duration,
     pub mesh_count: usize,
     pub vertex_count: usize,
@@ -190,6 +192,7 @@ const MAX_SURFACE_DIMENSION: u32 = 4_096;
 const MAX_RETAINED_TEXTURE_UPLOAD_PIXELS: usize = MAX_TEXTURE_PIXELS;
 const MAX_RETAINED_FRAME_VERTICES: usize = MAX_FRAME_VERTICES;
 const MAX_RETAINED_MESH_INPUTS: usize = MAX_PRIMITIVES;
+const MAX_RETAINED_SOURCE_BYTES: usize = 1024 * 1024;
 
 fn textures_equal(
     left: &HashMap<u64, Arc<ColorImage>>,
@@ -294,22 +297,29 @@ impl Renderer {
         timings: Option<&mut RenderTimings>,
     ) -> Result<Option<Surface>, Error> {
         let mut timings = timings;
-        let Some(bounds) = self.prepare(
+        let analysis = self.validate_and_upload(
             rect,
             pixels_per_point,
             background,
             primitives,
             textures,
             timings.as_deref_mut(),
-        )?
-        else {
+        )?;
+        let Some(bounds) = analysis.bounds else {
             return Ok(None);
         };
+        self.prepare_geometry(
+            pixels_per_point,
+            background,
+            primitives,
+            &analysis,
+            timings.as_deref_mut(),
+        )?;
         self.draw_prepared(bounds, pixels_per_point, None, timings)
             .map(Some)
     }
 
-    fn prepare(
+    fn validate_and_upload(
         &mut self,
         rect: Rect,
         pixels_per_point: f32,
@@ -317,7 +327,7 @@ impl Renderer {
         primitives: &[ClippedPrimitive],
         textures: &[(TextureId, Arc<ColorImage>)],
         timings: Option<&mut RenderTimings>,
-    ) -> Result<Option<Rect>, Error> {
+    ) -> Result<FrameAnalysis, Error> {
         let mut timings = timings;
         if !pixels_per_point.is_finite() || pixels_per_point <= 0.0 || background.a() != 255 {
             return Err(Error::unsupported(
@@ -341,7 +351,7 @@ impl Renderer {
             timings.texture_count = self.used_texture_ids.len();
         }
         let Some(bounds) = analysis.bounds else {
-            return Ok(None);
+            return Ok(analysis);
         };
         let width = bounds.width() as u32;
         let height = bounds.height() as u32;
@@ -363,6 +373,10 @@ impl Renderer {
                     (*texture_id == TextureId::Managed(id)).then_some(image)
                 })
                 .ok_or_else(|| Error::unsupported("captured texture pixels missing"))?;
+            let [w, h] = image.size;
+            if !texture_dimensions_supported([w, h]) || image.pixels.len() != w * h {
+                return Err(Error::unsupported("invalid texture dimensions"));
+            }
             texture_bytes = texture_bytes.saturating_add(image.pixels.len().saturating_mul(4));
             if texture_bytes > MAX_TEXTURE_BYTES {
                 return Err(Error::unsupported("native frame texture budget exceeded"));
@@ -375,10 +389,6 @@ impl Renderer {
                     previous.clone_from(image);
                     continue;
                 }
-            }
-            let [w, h] = image.size;
-            if !texture_dimensions_supported([w, h]) || image.pixels.len() != w * h {
-                return Err(Error::unsupported("invalid texture dimensions"));
             }
             self.texture_upload.clear();
             self.texture_upload
@@ -409,11 +419,22 @@ impl Renderer {
         self.checked("texture retirement", code)?;
         let used = &self.used_texture_ids;
         self.textures.retain(|id, _| used.binary_search(id).is_ok());
-        if let (Some(timings), Some(started)) = (timings.as_deref_mut(), texture_upload_started) {
+        if let (Some(timings), Some(started)) = (timings, texture_upload_started) {
             timings.texture_upload = started.elapsed();
             timings.uploaded_texture_count = uploaded_texture_count;
         }
+        Ok(analysis)
+    }
 
+    fn prepare_geometry(
+        &mut self,
+        pixels_per_point: f32,
+        background: Color32,
+        primitives: &[ClippedPrimitive],
+        analysis: &FrameAnalysis,
+        mut timings: Option<&mut RenderTimings>,
+    ) -> Result<(), Error> {
+        let bounds = analysis.bounds.expect("validated visible frame");
         let geometry_prepare_started = timings.as_ref().map(|_| Instant::now());
         self.mesh_vertices.clear();
         self.mesh_vertices.reserve(analysis.vertex_count);
@@ -426,9 +447,6 @@ impl Renderer {
             let TextureId::Managed(id) = mesh.texture_id else {
                 unreachable!()
             };
-            if mesh.vertices.len() > MAX_MESH_VERTICES || mesh.indices.len() > MAX_MESH_INDICES {
-                return Err(Error::unsupported("mesh exceeds supported bounds"));
-            }
             let start = self.mesh_vertices.len();
             self.mesh_vertices
                 .extend(mesh.vertices.iter().map(|vertex| Vertex {
@@ -440,7 +458,7 @@ impl Renderer {
                     color: Color(vertex.color.to_array()),
                 }));
             let clip = pixel_rect(primitive.clip_rect, pixels_per_point)
-                .intersect(pixel_rect(rect, pixels_per_point))
+                .intersect(analysis.canvas)
                 .intersect(bounds);
             self.mesh_inputs.push(MeshInput {
                 texture: id,
@@ -464,8 +482,8 @@ impl Renderer {
         let code = unsafe {
             festerm_d2d_prepare(
                 self.native.as_ptr(),
-                width,
-                height,
+                bounds.width() as u32,
+                bounds.height() as u32,
                 Color(background.to_array()),
                 true,
                 self.mesh_inputs.as_ptr(),
@@ -479,7 +497,7 @@ impl Renderer {
         if let (Some(timings), Some(started)) = (timings, geometry_prepare_started) {
             timings.geometry_prepare = started.elapsed();
         }
-        Ok(Some(bounds))
+        Ok(())
     }
 
     fn draw_prepared(
@@ -610,7 +628,27 @@ struct CachedFrame {
     background: Color32,
     textures: HashMap<u64, Arc<ColorImage>>,
     regions: Vec<Region>,
+    source: Option<Vec<ClippedPrimitive>>,
     surface: Surface,
+}
+
+impl CachedFrame {
+    fn compatible(
+        &self,
+        rect: Rect,
+        scale: f32,
+        background: Color32,
+        bounds: Rect,
+        textures: &HashMap<u64, Arc<ColorImage>>,
+    ) -> bool {
+        self.rect == rect
+            && self.scale == scale
+            && self.background == background
+            && self.surface.origin == [bounds.min.x as u32, bounds.min.y as u32]
+            && self.surface.texture.width() == bounds.width() as u32
+            && self.surface.texture.height() == bounds.height() as u32
+            && textures_equal(&self.textures, textures)
+    }
 }
 
 /// One immutable result; unchanged pixels may be copied from the preceding frame.
@@ -650,23 +688,76 @@ impl CachedRenderer {
         textures: &[(TextureId, Arc<ColorImage>)],
         timings: Option<&mut RenderTimings>,
     ) -> Result<Option<CachedSurface>, Error> {
+        let result = self.render_inner(
+            rect,
+            pixels_per_point,
+            background,
+            primitives,
+            textures,
+            timings,
+        );
+        if result.is_err() {
+            self.invalidate();
+        }
+        result
+    }
+
+    fn render_inner(
+        &mut self,
+        rect: Rect,
+        pixels_per_point: f32,
+        background: Color32,
+        primitives: &[ClippedPrimitive],
+        textures: &[(TextureId, Arc<ColorImage>)],
+        timings: Option<&mut RenderTimings>,
+    ) -> Result<Option<CachedSurface>, Error> {
         let mut timings = timings;
-        // Validate the complete original frame, including unused vertices and
-        // aggregate palette/texture/geometry budgets, before considering reuse.
-        let Some(bounds) = self.renderer.prepare(
+        let analysis = self.renderer.validate_and_upload(
             rect,
             pixels_per_point,
             background,
             primitives,
             textures,
             timings.as_deref_mut(),
-        )?
-        else {
+        )?;
+        let Some(bounds) = analysis.bounds else {
             self.previous = None;
             return Ok(None);
         };
+        // Exact complete-source equality with a successfully prepared frame
+        // also preserves native-only admission (palette, UVs, unused vertices).
+        // Texture equality is required: dimensions alone cannot certify content.
+        if let Some(previous) = self.previous.as_mut().filter(|previous| {
+            previous.compatible(
+                rect,
+                pixels_per_point,
+                background,
+                bounds,
+                &self.renderer.textures,
+            ) && previous
+                .source
+                .as_ref()
+                .is_some_and(|source| primitives_equal(source, primitives))
+        }) {
+            previous.textures.clone_from(&self.renderer.textures);
+            return Ok(Some(CachedSurface {
+                surface: previous.surface.clone(),
+                updated_regions: 0,
+                updated_pixels: 0,
+            }));
+        }
+        self.renderer.prepare_geometry(
+            pixels_per_point,
+            background,
+            primitives,
+            &analysis,
+            timings.as_deref_mut(),
+        )?;
         let current_textures = self.renderer.textures.clone();
         let regions = if current_textures.contains_key(&0) {
+            if let Some(timings) = timings.as_deref_mut() {
+                timings.region_partition_calls += 1;
+            }
             partition_regions(bounds, pixels_per_point, primitives)
         } else {
             None
@@ -686,14 +777,13 @@ impl CachedRenderer {
                 });
         };
         let compatible = self.previous.as_ref().filter(|previous| {
-            previous.rect == rect
-                && previous.scale == pixels_per_point
-                && previous.background == background
-                && previous.surface.origin == [bounds.min.x as u32, bounds.min.y as u32]
-                && previous.surface.texture.width() == bounds.width() as u32
-                && previous.surface.texture.height() == bounds.height() as u32
-                && textures_equal(&previous.textures, &current_textures)
-                && previous.regions.len() == regions.len()
+            previous.compatible(
+                rect,
+                pixels_per_point,
+                background,
+                bounds,
+                &current_textures,
+            ) && previous.regions.len() == regions.len()
         });
         let changed: Vec<_> = regions
             .iter()
@@ -717,6 +807,10 @@ impl CachedRenderer {
                 .as_mut()
                 .expect("unchanged compatible frame")
                 .textures = current_textures;
+            self.previous
+                .as_mut()
+                .expect("unchanged compatible frame")
+                .source = retained_source(primitives);
             return Ok(Some(CachedSurface {
                 surface,
                 updated_regions: 0,
@@ -831,6 +925,7 @@ impl CachedRenderer {
             background,
             textures: current_textures,
             regions,
+            source: retained_source(primitives),
             surface: surface.clone(),
         });
         Ok(Some(CachedSurface {
@@ -839,6 +934,39 @@ impl CachedRenderer {
             updated_pixels,
         }))
     }
+}
+
+fn primitives_equal(left: &[ClippedPrimitive], right: &[ClippedPrimitive]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.clip_rect == right.clip_rect
+                && matches!(
+                    (&left.primitive, &right.primitive),
+                    (Primitive::Mesh(left), Primitive::Mesh(right)) if left == right
+                )
+        })
+}
+
+fn retained_source(primitives: &[ClippedPrimitive]) -> Option<Vec<ClippedPrimitive>> {
+    let mut bytes = primitives
+        .len()
+        .checked_mul(size_of::<ClippedPrimitive>())?;
+    for primitive in primitives {
+        let Primitive::Mesh(mesh) = &primitive.primitive else {
+            return None;
+        };
+        bytes = bytes
+            .checked_add(
+                mesh.vertices
+                    .len()
+                    .checked_mul(size_of::<egui::epaint::Vertex>())?,
+            )?
+            .checked_add(mesh.indices.len().checked_mul(size_of::<u32>())?)?;
+        if bytes > MAX_RETAINED_SOURCE_BYTES {
+            return None;
+        }
+    }
+    (bytes <= MAX_RETAINED_SOURCE_BYTES).then(|| primitives.to_vec())
 }
 
 fn region_damage(left: &Region, right: &Region, scale: f32) -> Option<Rect> {
@@ -982,6 +1110,7 @@ impl Drop for Renderer {
 }
 
 struct FrameAnalysis {
+    canvas: Rect,
     bounds: Option<Rect>,
     vertex_count: usize,
     index_count: usize,
@@ -1024,10 +1153,18 @@ fn analyze_frame(
         let TextureId::Managed(id) = mesh.texture_id else {
             return Err(Error::unsupported("external texture"));
         };
+        if mesh.vertices.len() > MAX_MESH_VERTICES || mesh.indices.len() > MAX_MESH_INDICES {
+            return Err(Error::unsupported("mesh exceeds supported bounds"));
+        }
         vertex_count = vertex_count.saturating_add(mesh.vertices.len());
         index_count = index_count.saturating_add(mesh.indices.len());
         if vertex_count > MAX_FRAME_VERTICES || index_count > MAX_FRAME_INDICES {
             return Err(Error::unsupported("native frame geometry budget exceeded"));
+        }
+        for vertex in &mesh.vertices {
+            if !(vertex.pos * scale).is_finite() || !vertex.uv.is_finite() {
+                return Err(Error::unsupported("nonfinite vertex"));
+            }
         }
         used_texture_ids.push(id);
         let clipped = visible_mesh_bounds(mesh, primitive.clip_rect, scale, canvas)?;
@@ -1039,6 +1176,7 @@ fn analyze_frame(
     used_texture_ids.dedup();
 
     Ok(FrameAnalysis {
+        canvas,
         bounds: bounds
             .is_positive()
             .then(|| Rect::from_min_max(bounds.min.floor(), bounds.max.ceil()).intersect(canvas)),
@@ -1163,6 +1301,77 @@ mod tests {
 
         let too_many = vec![meshes[0].clone(); MAX_PRIMITIVES + 1];
         assert!(analyze_frame(canvas, 1.0, &too_many, &mut used).is_err());
+    }
+
+    #[test]
+    fn retained_source_is_exact_complete_and_payload_bounded() {
+        let mut scene = frame(Color32::RED);
+        let snapshot = retained_source(&scene).unwrap();
+        assert!(primitives_equal(&snapshot, &scene));
+        let Primitive::Mesh(mesh) = &mut scene[0].primitive else {
+            unreachable!()
+        };
+        mesh.vertices.push(mesh.vertices[0]);
+        assert!(
+            !primitives_equal(&snapshot, &scene),
+            "unused vertices count"
+        );
+        let snapshot = retained_source(&scene).unwrap();
+        let Primitive::Mesh(mesh) = &mut scene[0].primitive else {
+            unreachable!()
+        };
+        mesh.vertices.last_mut().unwrap().uv.x = 0.5;
+        assert!(!primitives_equal(&snapshot, &scene), "unused UVs count");
+        let Primitive::Mesh(mesh) = &mut scene[0].primitive else {
+            unreachable!()
+        };
+        mesh.vertices.resize(
+            MAX_RETAINED_SOURCE_BYTES / size_of::<egui::epaint::Vertex>(),
+            mesh.vertices[0],
+        );
+        assert!(retained_source(&scene).is_none());
+        let mut clipped = snapshot.clone();
+        clipped[0].clip_rect.max.x -= 1.0;
+        assert!(!primitives_equal(&snapshot, &clipped));
+        let mut reordered = snapshot.clone();
+        let Primitive::Mesh(mesh) = &mut reordered[0].primitive else {
+            unreachable!()
+        };
+        mesh.indices.rotate_left(3);
+        assert!(!primitives_equal(&snapshot, &reordered));
+    }
+
+    #[test]
+    fn native_analysis_validates_unused_vertices_and_aggregate_geometry() {
+        let canvas = Rect::from_min_size(Pos2::ZERO, egui::vec2(64.0, 64.0));
+        let mut used = Vec::new();
+        for (position, uv) in [
+            (egui::pos2(f32::NAN, 0.0), Pos2::ZERO),
+            (egui::pos2(f32::INFINITY, 0.0), Pos2::ZERO),
+            (Pos2::ZERO, egui::pos2(0.0, f32::NAN)),
+            (Pos2::ZERO, egui::pos2(0.0, f32::INFINITY)),
+        ] {
+            let mut invalid = frame(Color32::RED);
+            let Primitive::Mesh(mesh) = &mut invalid[0].primitive else {
+                unreachable!()
+            };
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: position,
+                uv,
+                color: Color32::WHITE,
+            });
+            assert!(analyze_frame(canvas, 1.0, &invalid, &mut used).is_err());
+        }
+        for (vertices, indices) in [(MAX_MESH_VERTICES, 0), (4, MAX_MESH_INDICES)] {
+            let mut large = frame(Color32::RED);
+            let Primitive::Mesh(mesh) = &mut large[0].primitive else {
+                unreachable!()
+            };
+            mesh.vertices.resize(vertices, mesh.vertices[0]);
+            mesh.indices.resize(indices, 0);
+            let aggregate = vec![large[0].clone(); 3];
+            assert!(analyze_frame(canvas, 1.0, &aggregate, &mut used).is_err());
+        }
     }
 
     #[test]
@@ -1361,6 +1570,8 @@ mod tests {
                 .unwrap();
             assert_eq!(timings.uploaded_texture_count, uploads);
             assert_eq!(surface.updated_pixels > 0, updated);
+            assert_eq!(timings.geometry_prepare_calls, usize::from(updated));
+            assert_eq!(timings.region_partition_calls, usize::from(updated));
             assert!(Arc::ptr_eq(
                 renderer.renderer.textures.get(&0).unwrap(),
                 image
@@ -1385,6 +1596,330 @@ mod tests {
             first_pixel(&state.device, &state.queue, &surfaces[4].texture),
             [0, 0, 0, 255]
         );
+    }
+
+    #[test]
+    fn unchanged_retained_frames_skip_native_preparation_and_region_materialization() {
+        let mut setup = default_wgpu_setup();
+        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+            unreachable!()
+        };
+        options.instance_descriptor.backends = wgpu::Backends::DX12;
+        let state = create_render_state(setup, Default::default());
+        let textures = [(
+            TextureId::Managed(0),
+            Arc::new(ColorImage::filled([1, 1], Color32::WHITE)),
+        )];
+        let pixels = |surface: &Surface| {
+            read_pixels(
+                &state.device,
+                &state.queue,
+                &surface.texture,
+                wgpu::Origin3d::ZERO,
+                [surface.texture.width(), surface.texture.height()],
+            )
+        };
+        for scale in [1.0, 1.25, 2.0] {
+            let mut cached =
+                CachedRenderer::new(state.device.clone(), state.queue.clone()).unwrap();
+            let mut reference = Renderer::new(state.device.clone(), state.queue.clone()).unwrap();
+            let canvas = Rect::from_min_size(egui::pos2(5.25, 7.75), egui::vec2(128.0, 256.0));
+            let mut mesh = egui::Mesh::default();
+            mesh.add_colored_rect(canvas, Color32::RED);
+            let mut scene = vec![ClippedPrimitive {
+                clip_rect: canvas,
+                primitive: Primitive::Mesh(mesh),
+            }];
+            let mut original = None;
+            for step in 0..7 {
+                let background = if step >= 4 {
+                    Color32::BLUE
+                } else {
+                    Color32::BLACK
+                };
+                let rect = if step >= 5 {
+                    canvas.expand(1.0)
+                } else {
+                    canvas
+                };
+                if step == 2 {
+                    let Primitive::Mesh(mesh) = &mut scene[0].primitive else {
+                        unreachable!()
+                    };
+                    // Unused but valid geometry must be admitted natively before
+                    // the same visible pixels become a new reuse certificate.
+                    mesh.vertices.push(mesh.vertices[0]);
+                }
+                if step == 6 {
+                    cached.invalidate();
+                }
+                let mut timings = RenderTimings::default();
+                let actual = cached
+                    .render(
+                        rect,
+                        scale,
+                        background,
+                        &scene,
+                        &textures,
+                        Some(&mut timings),
+                    )
+                    .unwrap()
+                    .unwrap();
+                let expected = reference
+                    .render(rect, scale, background, &scene, &textures, None)
+                    .unwrap()
+                    .unwrap();
+                let prepared = !matches!(step, 1 | 3);
+                assert_eq!(timings.geometry_prepare_calls, usize::from(prepared));
+                assert_eq!(timings.region_partition_calls, usize::from(prepared));
+                assert_eq!(actual.surface.origin, expected.origin);
+                assert_eq!(actual.surface.texture.size(), expected.texture.size());
+                assert_eq!(pixels(&actual.surface), pixels(&expected));
+                if step == 0 {
+                    original = Some((actual.surface.clone(), pixels(&actual.surface)));
+                } else if step <= 3 {
+                    assert_eq!(actual.surface.texture, original.as_ref().unwrap().0.texture);
+                    assert_eq!(actual.updated_pixels, 0);
+                } else {
+                    assert!(actual.updated_pixels > 0);
+                }
+            }
+            let (original, bytes) = original.unwrap();
+            assert_eq!(pixels(&original), bytes, "old surfaces remain immutable");
+
+            let Primitive::Mesh(mesh) = &mut scene[0].primitive else {
+                unreachable!()
+            };
+            mesh.vertices.resize(
+                MAX_RETAINED_SOURCE_BYTES / size_of::<egui::epaint::Vertex>(),
+                mesh.vertices[0],
+            );
+            for _ in 0..2 {
+                let mut timings = RenderTimings::default();
+                let actual = cached
+                    .render(
+                        canvas,
+                        scale,
+                        Color32::BLACK,
+                        &scene,
+                        &textures,
+                        Some(&mut timings),
+                    )
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(timings.geometry_prepare_calls, 1);
+                assert_eq!(timings.region_partition_calls, 1);
+                assert!(cached.previous.as_ref().unwrap().source.is_none());
+                let expected = reference
+                    .render(canvas, scale, Color32::BLACK, &scene, &textures, None)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(pixels(&actual.surface), pixels(&expected));
+            }
+        }
+    }
+
+    #[test]
+    fn retained_source_refuses_invalid_unused_geometry_and_recovers_after_admission_failure() {
+        let mut setup = default_wgpu_setup();
+        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+            unreachable!()
+        };
+        options.instance_descriptor.backends = wgpu::Backends::DX12;
+        let state = create_render_state(setup, Default::default());
+        let mut cached = CachedRenderer::new(state.device.clone(), state.queue.clone()).unwrap();
+        let canvas = Rect::from_min_size(Pos2::ZERO, egui::vec2(64.0, 64.0));
+        let textures = [(
+            TextureId::Managed(0),
+            Arc::new(ColorImage::filled([1, 1], Color32::WHITE)),
+        )];
+        let scene = frame(Color32::RED);
+        let mut invalid_frames = Vec::new();
+        for (pos, uv) in [
+            (egui::pos2(f32::NAN, 0.0), Pos2::ZERO),
+            (Pos2::ZERO, egui::pos2(f32::INFINITY, 0.0)),
+            (Pos2::ZERO, egui::pos2(-1.0, 0.0)),
+            (egui::pos2(2_000_000.0, 0.0), Pos2::ZERO),
+        ] {
+            let mut invalid = scene.clone();
+            let Primitive::Mesh(mesh) = &mut invalid[0].primitive else {
+                unreachable!()
+            };
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos,
+                uv,
+                color: Color32::WHITE,
+            });
+            invalid_frames.push(invalid);
+        }
+        let mut invalid_index = scene.clone();
+        let Primitive::Mesh(mesh) = &mut invalid_index[0].primitive else {
+            unreachable!()
+        };
+        mesh.indices[0] = 999;
+        invalid_frames.push(invalid_index);
+        for invalid in invalid_frames {
+            let original = cached
+                .render(canvas, 1.0, Color32::BLACK, &scene, &textures, None)
+                .unwrap()
+                .unwrap();
+            assert!(cached
+                .render(canvas, 1.0, Color32::BLACK, &invalid, &textures, None)
+                .is_err());
+            assert!(
+                cached.previous.is_none(),
+                "failure must retire the certificate"
+            );
+            let mut timings = RenderTimings::default();
+            let recovered = cached
+                .render(
+                    canvas,
+                    1.0,
+                    Color32::BLACK,
+                    &scene,
+                    &textures,
+                    Some(&mut timings),
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(timings.geometry_prepare_calls, 1);
+            assert_eq!(timings.region_partition_calls, 1);
+            assert!(recovered.updated_pixels > 0);
+            assert_ne!(original.surface.texture, recovered.surface.texture);
+            assert_eq!(
+                first_pixel(&state.device, &state.queue, &original.surface.texture),
+                [0, 0, 255, 255]
+            );
+        }
+        for invalid_textures in [
+            vec![],
+            vec![(
+                TextureId::Managed(0),
+                Arc::new(ColorImage {
+                    size: [2, 1],
+                    source_size: egui::vec2(2.0, 1.0),
+                    pixels: vec![Color32::WHITE],
+                }),
+            )],
+        ] {
+            cached
+                .render(canvas, 1.0, Color32::BLACK, &scene, &textures, None)
+                .unwrap();
+            let error = cached
+                .render(canvas, 1.0, Color32::BLACK, &scene, &invalid_textures, None)
+                .err()
+                .unwrap();
+            assert!(error.is_unsupported_frame());
+            assert!(cached.previous.is_none());
+        }
+    }
+
+    #[test]
+    fn retained_source_preserves_original_palette_and_texture_budget_refusals() {
+        let mut setup = default_wgpu_setup();
+        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+            unreachable!()
+        };
+        options.instance_descriptor.backends = wgpu::Backends::DX12;
+        let state = create_render_state(setup, Default::default());
+        let mut cached = CachedRenderer::new(state.device.clone(), state.queue.clone()).unwrap();
+        let canvas = Rect::from_min_size(Pos2::ZERO, egui::vec2(64.0, 64.0));
+        let textures = [(
+            TextureId::Managed(0),
+            Arc::new(ColorImage::filled([1, 1], Color32::WHITE)),
+        )];
+        let scene = frame(Color32::RED);
+        let original = cached
+            .render(canvas, 1.0, Color32::BLACK, &scene, &textures, None)
+            .unwrap()
+            .unwrap();
+        let mut too_many_colors = scene.clone();
+        let Primitive::Mesh(mesh) = &mut too_many_colors[0].primitive else {
+            unreachable!()
+        };
+        for index in 0..257 {
+            let start = mesh.vertices.len() as u32;
+            let color = Color32::from_rgb(index as u8, (index / 256) as u8, 40);
+            mesh.vertices.extend(
+                [
+                    (egui::pos2(12.0, 22.0), color),
+                    (egui::pos2(14.0, 22.0), color),
+                    (egui::pos2(12.0, 24.0), Color32::TRANSPARENT),
+                ]
+                .map(|(pos, color)| egui::epaint::Vertex {
+                    pos,
+                    uv: Pos2::ZERO,
+                    color,
+                }),
+            );
+            mesh.indices.extend([start, start + 1, start + 2]);
+        }
+        let mut timings = RenderTimings::default();
+        let error = cached
+            .render(
+                canvas,
+                1.0,
+                Color32::BLACK,
+                &too_many_colors,
+                &textures,
+                Some(&mut timings),
+            )
+            .err()
+            .unwrap();
+        assert!(error.is_unsupported_frame());
+        assert_eq!(timings.geometry_prepare_calls, 1);
+        assert_eq!(timings.region_partition_calls, 0);
+        assert!(cached.previous.is_none());
+
+        cached
+            .render(canvas, 1.0, Color32::BLACK, &scene, &textures, None)
+            .unwrap();
+        let large_image = Arc::new(ColorImage::filled([3000, 3000], Color32::WHITE));
+        let mut large_textures = Vec::new();
+        let mut many_textures = Vec::new();
+        for id in 0..3 {
+            let mut primitive = scene[0].clone();
+            let Primitive::Mesh(mesh) = &mut primitive.primitive else {
+                unreachable!()
+            };
+            mesh.texture_id = TextureId::Managed(id);
+            many_textures.push(primitive);
+            large_textures.push((TextureId::Managed(id), large_image.clone()));
+        }
+        let mut timings = RenderTimings::default();
+        let error = cached
+            .render(
+                canvas,
+                1.0,
+                Color32::BLACK,
+                &many_textures,
+                &large_textures,
+                Some(&mut timings),
+            )
+            .err()
+            .unwrap();
+        assert!(error.is_unsupported_frame());
+        assert_eq!(timings.geometry_prepare_calls, 0);
+        assert_eq!(timings.region_partition_calls, 0);
+        assert!(cached.previous.is_none());
+        assert_eq!(
+            first_pixel(&state.device, &state.queue, &original.surface.texture),
+            [0, 0, 255, 255],
+            "refusals cannot modify an already published surface"
+        );
+        let mut timings = RenderTimings::default();
+        cached
+            .render(
+                canvas,
+                1.0,
+                Color32::BLACK,
+                &scene,
+                &textures,
+                Some(&mut timings),
+            )
+            .unwrap();
+        assert_eq!(timings.geometry_prepare_calls, 1);
+        assert_eq!(timings.region_partition_calls, 1);
     }
 
     #[test]

@@ -82,7 +82,16 @@ hash-only match. Rect, scale, background, visible bounds or texture changes
 invalidate reuse. Region snapshots share the original frame's texture pixels
 and cap expanded geometry/primitive counts at the existing frame limits.
 Ineligible partitions and changes covering at least half the regions use
-ordinary full native drawing.
+ordinary full native drawing. Retain an optional exact complete-source snapshot
+with at most 1 MiB of primitive/vertex/index payload, including unused vertices.
+After original-frame analysis and texture admission, exact source, rect, scale,
+background and texture equality with a successfully prepared frame certifies
+its native-only checks (including the aggregate palette budget). That unchanged
+frame skips native geometry conversion/preparation and region materialization.
+No hashes, texture dimensions or visible-only geometry may substitute for this
+complete comparison. Nonfinite positions/UVs, including unused vertices, are
+refused during original-frame analysis. Oversized source snapshots simply keep
+the existing prepare/partition path; this is not a new frame-admission limit.
 
 For smaller changes, copy the preceding image into a fresh wgpu-owned texture,
 draw adjacent damaged regions together into fresh native surfaces, and copy
@@ -97,9 +106,13 @@ Keep the full frame's original raster origin and unsplit glyph geometry while
 clipping native painting and copying only the damage. Temporary targets include
 origin padding, whose aggregate pixel area must not exceed one full surface;
 otherwise use the full draw. The prepared extent remains independent of each
-temporary target's extent. Unchanged frames reuse the same immutable image
-after complete validation/preparation. Only the latest frame is retained by
-this cache; published callbacks retain their independent normal GPU lifetimes.
+temporary target's extent. Every source/texture mismatch still prepares the
+complete original frame before partitioning or visible-damage reuse, so an
+invalid unused vertex cannot hide behind equal region pixels. Failed admission,
+empty frames and explicit invalidation retire the source certificate along with
+the retained image. Only the latest frame is retained by this cache; published
+callbacks retain their independent normal GPU lifetimes. The 1-MiB source bound
+is additional CPU payload, not a process/peak-memory or GPU-retirement guarantee.
 
 An explicit local **Redraw Terminal** presentation hint invalidates that
 last-frame reuse candidate before drawing, including unchanged regions. The
@@ -184,6 +197,11 @@ because the supported WARP path now defaults on.
   `retained_frames_update_only_changed_regions_and_preserve_older_pixels`,
   `native_full_redraw_replaces_identical_terminal_pixels_once`,
   `scattered_retained_damage_prepares_full_geometry_only_once`,
+  `unchanged_retained_frames_skip_native_preparation_and_region_materialization`,
+  `retained_source_is_exact_complete_and_payload_bounded`,
+  `native_analysis_validates_unused_vertices_and_aggregate_geometry`,
+  `retained_source_refuses_invalid_unused_geometry_and_recovers_after_admission_failure`,
+  `retained_source_preserves_original_palette_and_texture_budget_refusals`,
   `retained_geometry_and_raster_budgets_preserve_valid_frames`,
   `raster_grid_normalization_is_independent_of_damage_origin`,
   `retained_terminal_updates_preserve_pixels_across_dpi_and_clipping`,
