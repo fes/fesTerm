@@ -70,7 +70,9 @@ After that publication boundary, existing verification/rollback/recovery must
 finish; cancellation cannot undo a committed write.
 
 All local writes are serialized by one private write admission gate. Worker
-writes hold it through completion enqueue. Explicit Save/Save As remain
+writes hold it through completion enqueue, then release it before notifying
+the app. A notified completed save therefore no longer occupies admission.
+Explicit Save/Save As remain
 synchronous when admitted, retaining their existing success/rebinding/close
 semantics. They cancel queued background work and use **nonblocking** gate
 admission; ordinary freshness reads do not occupy the gate. Only a genuinely
@@ -164,6 +166,7 @@ performance percentage is claimed by CPU controlled-worker tests.
   `background_autosave_debounce_coalesces_edits_and_disable_cancels_a_running_prepare`,
   `background_stable_unavailable_and_read_errors_do_not_repeat_repaints`,
   `background_real_missing_source_reports_once_and_unchanged_missing_does_not_wake`,
+  `background_completed_save_wakes_after_releasing_write_admission`,
   `background_recovery_completion_survives_close_and_is_not_silently_discarded`,
   `background_recovery_drained_before_reopen_still_refuses_all_same_source_writes`,
   `unresolved_recovery_protection_is_bounded_and_overflow_refuses_all_local_writes`,
