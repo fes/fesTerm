@@ -41,8 +41,12 @@ surfaces retain standard painting.
 Pixel-equivalence and adapter-policy tests accompany CP-16's native evidence;
 no discovery, unread-state or command-routing semantics change.
 Inspector's transparent outside-click catcher remains ordinary and consumes
-the first uncovered click. Small SFTP controls and its collision modal remain
-ordinary in this bounded coverage change. Exact full-widget framebuffer comparisons and
+the first uncovered click. Small SFTP controls remain ordinary. The Port Forward
+Manager (`SSH-06..08`) and SFTP collision decision (`SFTPG-03..04`) now share
+the same guarded modal backdrop/frame painter. Their widgets, focus, allowed
+choices, batch scope, command admission and Cancel/Escape remain live and
+unchanged; a frame extending beyond the viewport keeps ordinary frame painting.
+Exact full-widget framebuffer comparisons and
 balanced same-executable Windows WARP draw/readback measurements justify these
 routes; UI construction has a small measured absolute overhead. This is not
 shipping before/after or native presentation-latency evidence, and eligibility

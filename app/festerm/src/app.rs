@@ -4422,9 +4422,11 @@ impl FesTermApp {
         let mut remove_requested: Option<SshPortForwardRuntime> = None;
         let width = (content_rect.width() - 32.0).clamp(360.0, 520.0);
         let height = (content_rect.height() - 24.0).clamp(280.0, 520.0);
-        egui::Modal::new(egui::Id::new(("port_forward_manager", manager.tab)))
-            .backdrop_color(egui::Color32::from_black_alpha(128))
-            .show(ctx, |ui| {
+        crate::software_background::show_modal_with_nested_frame(
+            ctx,
+            egui::Modal::new(egui::Id::new(("port_forward_manager", manager.tab)))
+                .backdrop_color(egui::Color32::from_black_alpha(128)),
+            |ui| {
                 egui::Frame::popup(ui.style())
                     .inner_margin(egui::Margin::same(14))
                     .show(ui, |ui| {
@@ -4688,7 +4690,8 @@ impl FesTermApp {
                             }
                         });
                     });
-            });
+            },
+        );
 
         if close_requested {
             self.close_port_forward_manager(ctx);
@@ -11293,6 +11296,69 @@ mod tests {
             session.operations(),
             vec![crate::session_controller::fake::FakeSshOperation::Query]
         );
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn port_forward_modal_preserves_pixels_focus_and_close_with_shared_painting() {
+        use crate::software_background::{
+            set_picker_backdrops_enabled, set_picker_frames_enabled, PanelTestProbe,
+        };
+        use egui_kittest::wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer};
+
+        for scale in [1.0, 2.0] {
+            for width in [900.0, 480.0, 360.0] {
+                let state = create_render_state(default_wgpu_setup(), Default::default());
+                let probe = std::cell::OnceCell::new();
+                let (mut app, _tab, session) = FesTermApp::for_test_with_fake_ssh_session([]);
+                app.open_port_forward_manager(&egui::Context::default());
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(width, 700.0))
+                    .with_pixels_per_point(scale)
+                    .renderer(WgpuTestRenderer::from_render_state(state.clone()))
+                    .build_ui_state(
+                        |ui, app: &mut FesTermApp| {
+                            ui.ctx().all_styles_mut(|style| {
+                                style.animation_time = 0.0;
+                                style.visuals.text_cursor.blink = false;
+                            });
+                            probe.get_or_init(|| PanelTestProbe::install(ui.ctx(), &state));
+                            app.ui_content(ui);
+                        },
+                        app,
+                    );
+                set_picker_backdrops_enabled(&harness.ctx, false);
+                set_picker_frames_enabled(&harness.ctx, false);
+                harness.run();
+                let focused = harness.ctx.memory(|memory| memory.focused());
+                let before = probe.get().unwrap().paints();
+                let ordinary = harness.render().unwrap();
+                let ordinary_paints = probe.get().unwrap().paints() - before;
+                set_picker_backdrops_enabled(&harness.ctx, true);
+                set_picker_frames_enabled(&harness.ctx, true);
+                harness.run();
+                let before = probe.get().unwrap().paints();
+                let optimized = harness.render().unwrap();
+                assert_eq!(ordinary, optimized, "width={width}, scale={scale}");
+                assert_eq!(focused, harness.ctx.memory(|memory| memory.focused()));
+                assert_eq!(
+                    probe.get().unwrap().paints() - before,
+                    ordinary_paints + if width >= 480.0 { 2 } else { 1 },
+                    "width={width}, scale={scale}"
+                );
+                if width == 360.0 {
+                    harness.key_press(egui::Key::Escape);
+                } else {
+                    harness.query_all_by_label("Close").last().unwrap().click();
+                }
+                harness.run();
+                assert!(harness.state().overlays.port_forward_manager.is_none());
+                assert_eq!(
+                    session.operations(),
+                    vec![crate::session_controller::fake::FakeSshOperation::Query]
+                );
+            }
+        }
     }
 
     #[test]

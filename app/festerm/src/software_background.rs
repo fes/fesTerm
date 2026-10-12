@@ -620,6 +620,25 @@ pub(crate) fn show_modal<R>(
     modal: egui::Modal,
     contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> egui::ModalResponse<R> {
+    show_modal_impl(context, modal, false, contents)
+}
+
+/// Identify only the owned outer frame when content includes a nested popup.
+/// Nested frames remain ordinary; duplicate outer-frame candidates still refuse.
+pub(crate) fn show_modal_with_nested_frame<R>(
+    context: &egui::Context,
+    modal: egui::Modal,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::ModalResponse<R> {
+    show_modal_impl(context, modal, true, contents)
+}
+
+fn show_modal_impl<R>(
+    context: &egui::Context,
+    modal: egui::Modal,
+    nested_frame: bool,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::ModalResponse<R> {
     let Some(renderer) =
         context.data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()))
     else {
@@ -677,7 +696,14 @@ pub(crate) fn show_modal<R>(
                     .replace((egui::layers::ShapeIdx(index), shape.clone()))
                     .is_some();
             }
-            if frame_enabled && complete_opaque_window_frame(shape, viewport) {
+            let is_owned_frame = matches!(&shape.shape, egui::Shape::Vec(parts) if matches!(
+                parts.as_slice(),
+                [_, egui::Shape::Rect(rect)] if rect.rect == owned_frame_rect
+            ));
+            if frame_enabled
+                && complete_opaque_window_frame(shape, viewport)
+                && (!nested_frame || is_owned_frame)
+            {
                 ambiguous_frame |= frame
                     .replace((egui::layers::ShapeIdx(index), shape.clone()))
                     .is_some();
@@ -1006,7 +1032,7 @@ mod tests {
                 frame = context.run_ui(input.clone(), |ui| {
                     ui.label("Underlying content remains live");
                     let contents = |ui: &mut egui::Ui| {
-                        if case == "ambiguous" {
+                        if matches!(case, "ambiguous" | "nested-frame") {
                             ui.painter().add(egui::Frame::popup(ui.style()).paint(
                                 egui::Rect::from_min_size(
                                     egui::pos2(100.0, 80.0),
@@ -1016,6 +1042,10 @@ mod tests {
                         }
                         ui.heading("Save As");
                         let button = ui.button("Cancel");
+                        if case == "duplicate-outer" {
+                            ui.painter()
+                                .add(egui::Frame::popup(ui.style()).paint(ui.min_rect()));
+                        }
                         (button.id, button.rect, button.sense, button.enabled())
                     };
                     let mut modal = egui::Modal::new(id).backdrop_color(color);
@@ -1028,11 +1058,14 @@ mod tests {
                         modal =
                             modal.frame(egui::Frame::popup(ui.style()).shadow(egui::Shadow::NONE));
                     }
-                    let response = if optimized {
-                        show_modal(&context, modal, contents)
-                    } else {
-                        modal.show(&context, contents)
-                    };
+                    let response =
+                        if optimized && matches!(case, "nested-frame" | "duplicate-outer") {
+                            show_modal_with_nested_frame(&context, modal, contents)
+                        } else if optimized {
+                            show_modal(&context, modal, contents)
+                        } else {
+                            modal.show(&context, contents)
+                        };
                     observed = Some((
                         response.response.id,
                         response.response.rect,
@@ -1060,6 +1093,8 @@ mod tests {
                 "translucent",
                 "no-shadow",
                 "ambiguous",
+                "nested-frame",
+                "duplicate-outer",
                 #[cfg(all(windows, target_arch = "x86_64"))]
                 "frame-only",
                 #[cfg(all(windows, target_arch = "x86_64"))]
@@ -1075,7 +1110,7 @@ mod tests {
                 );
                 assert_eq!(ordinary, optimized, "scale={scale}, {case}");
                 let expected = match case {
-                    "normal" => 2,
+                    "normal" | "nested-frame" => 2,
                     "colored" | "translucent" | "no-shadow" | "frame-only" | "backdrop-only" => 1,
                     _ => 0,
                 };

@@ -1541,6 +1541,20 @@ the three representative prompts do not qualify every native/modal variant.
 AS/PS/FD/CP-15/CP-16/CP-17 native, accessibility, hardware, mixed-DPI and
 physical-latency evidence remains separate. No manual classification changes.
 
+Port Forward Manager and SFTP collision decisions also use that same guarded
+modal painter. `port_forward_modal_preserves_pixels_focus_and_close_with_shared_painting`
+and `sftp_collision_modal_preserves_pixels_focus_and_choices_with_shared_painting`
+compare ordinary/optimized full pixels at normal/narrow widths and scales 1/2,
+require executed backdrop/frame conversion (with ordinary frame fallback when
+the original frame extends beyond the viewport), preserve focus and exercise
+Close/Cancel/Escape, permitted choices and batch-only scope. The forwarding
+dialog's nested popup stays ordinary; the explicit outer-frame selector still
+rejects duplicate owned candidates and preserves the original strict ambiguity
+fallback. Existing admission and transfer-authority
+tests remain required. TI-11/SFTP-03/CP-16 native accessibility, adapter,
+mixed-DPI, input/display and resource evidence remains open; these controls are
+not new measured latency gains or native acceptance.
+
 The separate production successor now converts only the owned
 Open File/Save As complete opaque frame and original shadow on the installed
 eligible panel renderer. Device-free controls cover normal/narrow same-call
