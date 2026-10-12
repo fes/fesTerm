@@ -608,7 +608,7 @@ impl Painter {
                     label: Some("encoder"),
                 });
 
-        // Upload all resources for the GPU.
+        // Texture updates and callback preparation must run before surface acquisition.
         let screen_descriptor = renderer::ScreenDescriptor {
             size_in_pixels: [surface_state.width, surface_state.height],
             pixels_per_point,
@@ -628,7 +628,7 @@ impl Painter {
                 }
             }
 
-            renderer.update_buffers(
+            renderer.prepare_without_mesh_uploads(
                 &render_state.device,
                 &render_state.queue,
                 &mut encoder,
@@ -637,7 +637,7 @@ impl Painter {
             )
         };
 
-        let upload_done = timing.map(|start| start.elapsed().as_secs_f64());
+        let prepare_done = timing.map(|start| start.elapsed().as_secs_f64());
         let copy_requested = {
             let renderer = render_state.renderer.read();
             renderer.final_callback_copy_enabled || renderer.retained_frame_enabled
@@ -705,7 +705,7 @@ impl Painter {
         let acquire_done = timing.map(|start| start.elapsed().as_secs_f64());
         let mut capture_buffer = None;
         {
-            let renderer = render_state.renderer.read();
+            let mut renderer = render_state.renderer.write();
 
             let target_texture = if capture {
                 let capture_state = self.screen_capture_state.get_or_insert_with(|| {
@@ -735,26 +735,23 @@ impl Painter {
             };
             let retained = if !surface_state.callback_copy_supported {
                 self.retained_ui.clear();
+                renderer.update_mesh_buffers(
+                    &render_state.device,
+                    &render_state.queue,
+                    clipped_primitives,
+                );
                 None
-            } else if final_copy.is_some() {
-                self.retained_ui.try_render(
-                    &renderer,
-                    &render_state.device,
-                    &mut encoder,
-                    clipped_primitives,
-                    &screen_descriptor,
-                    target_texture,
-                    clear_color,
-                )
             } else {
-                self.retained_ui.try_render_frame(
-                    &renderer,
+                self.retained_ui.try_render_with_deferred_mesh_uploads(
+                    &mut renderer,
                     &render_state.device,
+                    &render_state.queue,
                     &mut encoder,
                     clipped_primitives,
                     &screen_descriptor,
                     target_texture,
                     clear_color,
+                    final_copy.is_none(),
                 )
             };
 
@@ -898,7 +895,7 @@ impl Painter {
         }
         if let (
             Some(start),
-            Some(upload),
+            Some(prepare),
             Some(configure),
             Some(acquire),
             Some(encode),
@@ -906,7 +903,7 @@ impl Painter {
             Some(release),
         ) = (
             timing,
-            upload_done,
+            prepare_done,
             configure_done,
             acquire_done,
             encode_done,
@@ -916,11 +913,11 @@ impl Painter {
             let total = start.elapsed().as_secs_f64();
             log::debug!(
                 target: "egui_wgpu::frame_timing",
-                "root_paint completed_frames={} primitives={} upload_ms={:.3} configure_ms={:.3} acquire_ms={:.3} encode_ms={:.3} submit_ms={:.3} release_ms={:.3} present_ms={:.3} total_ms={:.3}",
+                "root_paint completed_frames={} primitives={} prepare_ms={:.3} configure_ms={:.3} acquire_ms={:.3} encode_ms={:.3} submit_ms={:.3} release_ms={:.3} present_ms={:.3} total_ms={:.3}",
                 self.context.cumulative_frame_nr_for(viewport_id),
                 clipped_primitives.len(),
-                upload * 1000.0,
-                (configure - upload) * 1000.0,
+                prepare * 1000.0,
+                (configure - prepare) * 1000.0,
                 (acquire - configure) * 1000.0,
                 (encode - acquire) * 1000.0,
                 (submit - encode) * 1000.0,

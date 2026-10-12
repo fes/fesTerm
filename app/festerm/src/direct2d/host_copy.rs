@@ -319,6 +319,7 @@ fn retained_prefix_matches_host_copy_across_panels_dpi_and_terminal_movement() {
             let (copied, _) =
                 profile::draw_composed(&state, &texture, &screen, &primitives, clear, None);
             let reference = profile::read_image(&state, &texture);
+            let uploaded_before = state.renderer.read().mesh_upload_bytes();
             let candidate = profile::draw_composed(
                 &state,
                 &texture,
@@ -328,6 +329,12 @@ fn retained_prefix_matches_host_copy_across_panels_dpi_and_terminal_movement() {
                 Some(&mut cache),
             );
             assert_eq!(candidate.0, copied);
+            let uploaded = state.renderer.read().mesh_upload_bytes() - uploaded_before;
+            if candidate.1 == Some(true) {
+                assert_eq!(uploaded, 0, "prefix hits must not stage current meshes");
+            } else {
+                assert!(uploaded > 0, "rebuilds and refusals need current meshes");
+            }
             profile::assert_same_pixels(
                 &reference,
                 &profile::read_image(&state, &texture),
@@ -347,6 +354,7 @@ fn retained_prefix_matches_host_copy_across_panels_dpi_and_terminal_movement() {
                     "panel keys must enable retention at scale={scale}, frame={frame}: {:?}",
                     cache.stats(),
                 );
+                let uploaded_before = state.renderer.read().mesh_upload_bytes();
                 let repeated = profile::draw_composed(
                     &state,
                     &texture,
@@ -356,12 +364,14 @@ fn retained_prefix_matches_host_copy_across_panels_dpi_and_terminal_movement() {
                     Some(&mut cache),
                 );
                 assert_eq!(repeated, (true, Some(true)));
+                assert_eq!(state.renderer.read().mesh_upload_bytes(), uploaded_before);
                 profile::assert_same_pixels(
                     &reference,
                     &profile::read_image(&state, &texture),
                     "a retained prefix must preserve every reference pixel",
                 );
                 let mut capture = egui_wgpu::capture::CaptureState::new(&state.device, &texture);
+                let uploaded_before = state.renderer.read().mesh_upload_bytes();
                 assert_eq!(
                     profile::draw_composed(
                         &state,
@@ -373,6 +383,7 @@ fn retained_prefix_matches_host_copy_across_panels_dpi_and_terminal_movement() {
                     ),
                     (true, Some(true)),
                 );
+                assert_eq!(state.renderer.read().mesh_upload_bytes(), uploaded_before);
                 profile::assert_same_pixels(
                     &reference,
                     &profile::read_image(&state, &capture.texture),

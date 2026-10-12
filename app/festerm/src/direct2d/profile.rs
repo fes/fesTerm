@@ -53,7 +53,7 @@ pub(super) fn draw_composed(
 ) -> (bool, Option<bool>) {
     let mut renderer = state.renderer.write();
     let mut encoder = state.device.create_command_encoder(&Default::default());
-    let extra = renderer.update_buffers(
+    let extra = renderer.prepare_without_mesh_uploads(
         &state.device,
         &state.queue,
         &mut encoder,
@@ -66,29 +66,22 @@ pub(super) fn draw_composed(
     } else {
         primitives
     };
-    let retained = retained.and_then(|retained| {
-        if copy.is_some() {
-            retained.try_render(
-                &renderer,
-                &state.device,
-                &mut encoder,
-                primitives,
-                screen,
-                texture,
-                clear,
-            )
-        } else {
-            retained.try_render_frame(
-                &renderer,
-                &state.device,
-                &mut encoder,
-                primitives,
-                screen,
-                texture,
-                clear,
-            )
-        }
-    });
+    let retained = if let Some(retained) = retained {
+        retained.try_render_with_deferred_mesh_uploads(
+            &mut renderer,
+            &state.device,
+            &state.queue,
+            &mut encoder,
+            primitives,
+            screen,
+            texture,
+            clear,
+            copy.is_none(),
+        )
+    } else {
+        renderer.update_mesh_buffers(&state.device, &state.queue, primitives);
+        None
+    };
     let target = texture.create_view(&Default::default());
     if retained.is_none() {
         let mut pass = encoder

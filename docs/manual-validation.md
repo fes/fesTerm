@@ -45,6 +45,20 @@ Borrowed exact comparisons preserve the same ownership, budgets and pixel
 oracle. This is deterministic preparation-work evidence, not a new process-CPU
 or native-latency measurement; the CP-18 residuals below remain open.
 
+`retained_mesh_uploads_skip_hits_and_preserve_rebuild_and_refusal_pixels`
+requires zero actual vertex/index staging bytes on complete-frame hits, exact
+current geometry bytes on rebuild/refusal, live callback preparation and exact
+ordinary pixels. The same real-path regression also requires zero owned
+signature captures on warm hits and one full-geometry capture on admitted
+misses, preserving borrowed exact matching alongside deferred staging.
+The real terminal-prefix controls additionally require zero
+uploads on hits and screenshot targets while native terminal pixels keep
+changing. Preparation without an acquired surface preserves all prepare calls
+before all finish_prepare calls; the legacy ordinary buffer API remains live.
+This is automated work-count evidence, not timing or native acceptance.
+CP-18's resource, mixed-DPI, hardware, multi-window and device-loss residuals
+remain open.
+
 Native evidence must compare `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` and `1`
 using the same frozen executable, owned fixture, physical viewport, DPI and
 adapter, in balanced order without concurrent builds/tests. Record process

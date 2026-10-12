@@ -97,6 +97,159 @@ fn retained_hits_do_not_capture_owned_signatures() {
     assert_eq!(cache.stats().signature_captures, 3);
 }
 
+#[test]
+fn retained_mesh_uploads_skip_hits_and_preserve_rebuild_and_refusal_pixels() {
+    let (state, screen, mut jobs) = fixture();
+    let texture = target(&state, screen.size_in_pixels, state.target_format, true);
+    let mesh_bytes = |jobs: &[ClippedPrimitive]| {
+        jobs.iter()
+            .map(|job| match &job.primitive {
+                Primitive::Mesh(mesh) => {
+                    (mesh.vertices.len() * std::mem::size_of::<egui::epaint::Vertex>()
+                        + mesh.indices.len() * std::mem::size_of::<u32>())
+                        as u64
+                }
+                Primitive::Callback(_) => 0,
+            })
+            .sum::<u64>()
+    };
+    let prepares = Arc::new(AtomicUsize::new(0));
+    let finishes = Arc::new(AtomicUsize::new(0));
+    let paints = Arc::new(AtomicUsize::new(0));
+    jobs.push(observed_job(
+        Some(egui_wgpu::CallbackPaintKey {
+            namespace: Arc::new(()),
+            bytes: Arc::from([3]),
+        }),
+        None,
+        &prepares,
+        &finishes,
+        &paints,
+    ));
+    let mut cache = egui_wgpu::RetainedUi::default();
+    let mut check = |jobs: &[ClippedPrimitive], expected, expected_bytes, expected_captures| {
+        profile::draw_composed(&state, &texture, &screen, jobs, [0.0; 4], None);
+        let ordinary = profile::read_image(&state, &texture);
+        let before = state.renderer.read().mesh_upload_bytes();
+        let captures_before = cache.stats().signature_captures;
+        assert_eq!(
+            profile::draw_composed(&state, &texture, &screen, jobs, [0.0; 4], Some(&mut cache)),
+            (false, expected),
+        );
+        assert_eq!(
+            state.renderer.read().mesh_upload_bytes() - before,
+            expected_bytes,
+        );
+        assert_eq!(
+            cache.stats().signature_captures - captures_before,
+            expected_captures,
+        );
+        if expected == Some(false) {
+            assert!(cache.stats().signature_bytes as u64 >= mesh_bytes(jobs));
+        }
+        profile::assert_same_pixels(
+            &ordinary,
+            &profile::read_image(&state, &texture),
+            "deferred uploads preserve current-frame ordinary pixels",
+        );
+    };
+    check(&jobs, Some(false), mesh_bytes(&jobs), 1);
+    for _ in 0..16 {
+        check(&jobs, Some(true), 0, 0);
+    }
+    assert_eq!(prepares.load(Ordering::Relaxed), 34);
+    assert_eq!(finishes.load(Ordering::Relaxed), 34);
+    assert_eq!(paints.load(Ordering::Relaxed), 18);
+    let Primitive::Mesh(mesh) = &mut jobs[0].primitive else {
+        unreachable!()
+    };
+    for vertex in &mut mesh.vertices {
+        vertex.color = egui::Color32::RED;
+    }
+    check(&jobs, Some(false), mesh_bytes(&jobs), 1);
+    check(&jobs, Some(true), 0, 0);
+    state.renderer.write().retained_frame_enabled = false;
+    check(&jobs, None, mesh_bytes(&jobs), 0);
+    state.renderer.write().retained_frame_enabled = true;
+    check(&jobs, Some(false), mesh_bytes(&jobs), 1);
+    jobs[1] = observed_job(None, None, &prepares, &finishes, &paints);
+    check(&jobs, None, mesh_bytes(&jobs), 1);
+    let Primitive::Mesh(mesh) = &mut jobs[0].primitive else {
+        unreachable!()
+    };
+    mesh.vertices.resize(
+        1024 * 1024 / std::mem::size_of::<egui::epaint::Vertex>() + 1,
+        mesh.vertices[0],
+    );
+    jobs.pop();
+    check(&jobs, None, mesh_bytes(&jobs), 1);
+}
+
+#[test]
+fn retained_mesh_uploads_prepare_without_surface_preserves_callback_order() {
+    struct OrderedPaint {
+        id: usize,
+        order: Arc<std::sync::Mutex<Vec<usize>>>,
+    }
+    impl egui_wgpu::CallbackTrait for OrderedPaint {
+        fn prepare(
+            &self,
+            _: &wgpu::Device,
+            _: &wgpu::Queue,
+            _: &egui_wgpu::ScreenDescriptor,
+            _: &mut wgpu::CommandEncoder,
+            _: &mut egui_wgpu::CallbackResources,
+        ) -> Vec<wgpu::CommandBuffer> {
+            self.order.lock().unwrap().push(self.id);
+            Vec::new()
+        }
+        fn finish_prepare(
+            &self,
+            _: &wgpu::Device,
+            _: &wgpu::Queue,
+            _: &mut wgpu::CommandEncoder,
+            _: &mut egui_wgpu::CallbackResources,
+        ) -> Vec<wgpu::CommandBuffer> {
+            self.order.lock().unwrap().push(self.id + 10);
+            Vec::new()
+        }
+        fn paint(
+            &self,
+            _: egui::PaintCallbackInfo,
+            _: &mut wgpu::RenderPass<'static>,
+            _: &egui_wgpu::CallbackResources,
+        ) {
+            panic!("preparation without an acquired surface must not paint")
+        }
+    }
+    let (state, screen, mut jobs) = fixture();
+    let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+    for id in [1, 2] {
+        jobs.push(ClippedPrimitive {
+            clip_rect: jobs[0].clip_rect,
+            primitive: Primitive::Callback(egui_wgpu::Callback::new_paint_callback(
+                jobs[0].clip_rect,
+                OrderedPaint {
+                    id,
+                    order: order.clone(),
+                },
+            )),
+        });
+    }
+    let mut renderer = state.renderer.write();
+    let before = renderer.mesh_upload_bytes();
+    let mut encoder = state.device.create_command_encoder(&Default::default());
+    assert!(renderer
+        .prepare_without_mesh_uploads(&state.device, &state.queue, &mut encoder, &jobs, &screen)
+        .is_empty());
+    assert_eq!(*order.lock().unwrap(), vec![1, 2, 11, 12]);
+    assert_eq!(renderer.mesh_upload_bytes(), before);
+    order.lock().unwrap().clear();
+    renderer.update_buffers(&state.device, &state.queue, &mut encoder, &jobs, &screen);
+    assert_eq!(*order.lock().unwrap(), vec![1, 2, 11, 12]);
+    assert!(renderer.mesh_upload_bytes() > before);
+}
+
 fn document_frames(
     state: &egui_wgpu::RenderState,
     uploader: &mut WgpuTestRenderer,

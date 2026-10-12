@@ -19,6 +19,10 @@ Local changes are deliberately limited to:
   renderer; a missing-texture lookup does not export a resource.
   A separate default-disabled complete-frame flag shares these invariants and
   additionally checks actual target format, size, copy usage, MSAA and depth.
+  The ordinary `update_buffers` contract is preserved. Native hosts may instead
+  prepare uniforms/callbacks before acquisition and defer vertex/index staging
+  until retention needs geometry. `mesh_upload_bytes` counts actual staged
+  vertex/index bytes, not logical geometry or submitted GPU work.
 - `retained.rs` / `lib.rs`: one private immutable prefix or complete-frame image, capped at
   16,777,216 pixels, plus at most 1 MiB of exact paint signatures. A miss renders
   a fresh image; a hit copies existing pixels. Complete ordered geometry,
@@ -32,6 +36,10 @@ Local changes are deliberately limited to:
   mesh payloads; the cumulative `signature_captures` counter counts actual
   capture attempts, including refusals. Texture ownership and epochs remain
   checked, and ordinary preparation still runs.
+  Shared admission/planning and encoding serve both the existing already-uploaded
+  APIs and the deferred-mesh API. Exact hits do not stage meshes. Rebuilds and
+  refusals upload current geometry before rebuild or same-frame ordinary paint;
+  no speculative preflight duplicates signature capture.
 - `winit.rs`: when requested, negotiate COPY_DST only for capable opaque root
   surfaces without MSAA/depth. End the normal clear/UI pass, encode the validated
   copy, then use the same submission and presentation. Reconfiguration and
@@ -43,6 +51,13 @@ Local changes are deliberately limited to:
   acquisition failure, resize, viewport retirement and destruction.
   Eligible complete frames without a final terminal copy can reuse that same
   image; the terminal-prefix path retains precedence.
+  Texture updates and every callback's prepare/finish_prepare still run before
+  acquisition, including unavailable surfaces. Mesh uploads occur only after
+  acquisition and the real retention decision. Captures, final terminal copies,
+  unsupported targets, MSAA/depth fallback and queue/present order are preserved.
+  Opt-in frame timing names this pre-acquisition phase `prepare_ms`; post-acquire
+  `encode_ms` includes any required mesh staging. It no longer mislabels
+  callback/texture-only preparation as all mesh-upload time.
   The opt-in `egui_wgpu::frame_timing` debug target records content-free root
   paint begin/end frame numbers, surface policy, unavailable surface results,
   phase durations and primitive counts. Configuration is timed separately
