@@ -198,6 +198,19 @@ removes the local module-identity mismatch for that bounded control, not the
 workspace/environment/workload mismatch. Original findings remain in
 [#330](https://github.com/fes/fesTerm/issues/330#issuecomment-6114523822).
 
+Exact repaired-head dispatch
+[38194411645](https://github.com/fes/fesTerm/actions/runs/38194411645)
+then added a fifth exit-2173 failure in 96 completed Windows workspace-test
+attempts and the first bounded-control reproduction. The shared-instance,
+sampler-only case exited 2173 after 17.969 seconds; independent sampler-only
+and both mixed cases passed. Its exception has the exact SDK-layer frame
+offsets above, followed by symbolized `ID3D12Device::CreateSampler` and wgpu
+sampler creation, with the same D3D12Core and SDK-layer identities as the
+simultaneous workspace failure. One occurrence does not establish that shared
+instance ownership is causal or estimate a matched failure rate, but the
+focused suite is now a demonstrated reproduction route rather than only
+non-reproduction stress.
+
 The ignored `windows_sampler_lifecycles` integration test is diagnostic, not
 a product repair or a replacement for the original workspace workload:
 
