@@ -139,6 +139,25 @@ A completed-render regression compares ordinary and retained pixels across
 owned-signature capture attempts. It proves removal of repeated capture work,
 not an unmeasured wall-clock improvement or native input-latency acceptance.
 
+## Sharing bounded painting with forwarding and collision dialogs
+
+The cross-renderer audit found two remaining ordinary modal sites after the
+safety confirmations were repaired: live SSH forwarding management and SFTP
+collision decisions. Both now route their owned backdrop and outer frame
+through the existing qualified shared painter. The SFTP controller still owns
+transfer identity, permitted decisions and command admission; only its painting
+was extracted so the actual dialog can be tested without manufacturing backend
+authority tokens.
+
+Full-pixel, executed-paint and interaction controls cover both dialogs at two
+widths and two scales. Narrow geometry retains the ordinary frame when it
+cannot satisfy the existing viewport guard. Forwarding's nested popup remains
+ordinary: an explicit nested-frame route identifies only the owned outer
+rectangle, while duplicate outer candidates still refuse and the original
+strict ambiguity route remains unchanged. Focus, batch scope, safe Cancel
+and transport behavior are unchanged. This removes a renderer inconsistency;
+it is not a new timing measurement or native-latency acceptance.
+
 ## Closing the safety-modal software-rendering gap
 
 The fresh merged-main UI baseline found that dirty-document, risky-paste and

@@ -3456,118 +3456,15 @@ impl SftpFileManagerTab {
             return;
         }
         let collision = dialog.collision.clone();
-        let mut decision = None;
-        let mut close = false;
-        egui::Modal::new(egui::Id::new(("sftp_collision", self.label.as_str())))
-            .backdrop_color(egui::Color32::from_black_alpha(128))
-            .show(ctx, |ui| {
-                ui.set_width(510.0);
-                egui::Frame::new()
-                    .fill(theme::SURFACE_OVERLAY)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER_ACTIVE))
-                    .corner_radius(9.0)
-                    .inner_margin(egui::Margin::symmetric(17, 15))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            icon::paint(
-                                ui.painter(),
-                                Icon::Warning,
-                                egui::Rect::from_min_size(ui.cursor().min, egui::vec2(18.0, 18.0)),
-                                theme::STATUS_STARTING,
-                            );
-                            ui.add_space(24.0);
-                            ui.label(
-                                RichText::new("A file with this name already exists")
-                                    .font(font_for_text_role(SftpTextRole::DialogTitle))
-                                    .strong(),
-                            );
-                        });
-                        ui.add_space(8.0);
-                        ui.label(
-                            RichText::new(format!(
-                                "Choose what to do with {}. Nothing is overwritten until you choose Replace.",
-                                collision
-                                    .source
-                                    .path
-                                    .file_name()
-                                    .unwrap_or_else(|_| collision.source.path.display())
-                            ))
-                            .font(font_for_text_role(SftpTextRole::DialogBody))
-                            .color(theme::TEXT_SECONDARY),
-                        );
-                        ui.add_space(12.0);
-                        ui.columns(2, |columns| {
-                            for (column, (title, metadata)) in columns.iter_mut().zip([
-                                ("Source · Local", &collision.source),
-                                ("Destination · Remote", &collision.destination),
-                            ]) {
-                                egui::Frame::new()
-                                    .fill(theme::SURFACE_TAB_INACTIVE)
-                                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-                                    .corner_radius(6.0)
-                                    .inner_margin(egui::Margin::same(10))
-                                    .show(column, |ui| {
-                                        ui.label(
-                                            RichText::new(title)
-                                                .font(font_for_text_role(SftpTextRole::Footer))
-                                                .color(theme::TEXT_MUTED),
-                                        );
-                                        ui.label(
-                                            RichText::new(
-                                                metadata
-                                                    .path
-                                                    .file_name()
-                                                    .unwrap_or_else(|_| metadata.path.display()),
-                                            )
-                                                .font(font_for_text_role(SftpTextRole::DialogBody))
-                                                .color(theme::TEXT_PRIMARY),
-                                        );
-                                        ui.label(
-                                            RichText::new(format_size(metadata.size))
-                                                .font(font_for_text_role(SftpTextRole::DialogMeta))
-                                                .color(theme::TEXT_SECONDARY),
-                                        );
-                                        ui.label(
-                                            RichText::new(format_modified(metadata.modified_at))
-                                                .font(font_for_text_role(SftpTextRole::DialogMeta))
-                                                .color(theme::TEXT_SECONDARY),
-                                        );
-                                    });
-                            }
-                        });
-                        if collision.can_apply_to_all {
-                            ui.add_space(12.0);
-                            ui.checkbox(
-                                &mut dialog.apply_to_all,
-                                "Apply this choice to all conflicts in this batch",
-                            );
-                        }
-                        ui.add_space(12.0);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Cancel").clicked() {
-                                close = true;
-                            }
-                            for candidate in collision_decision_order().into_iter().rev() {
-                                if !collision.allowed_decisions.contains(&candidate) {
-                                    continue;
-                                }
-                                let label = match candidate {
-                                    SftpCollisionDecision::Skip => "Skip",
-                                    SftpCollisionDecision::Replace => "Replace",
-                                    SftpCollisionDecision::KeepBoth => "Keep Both",
-                                    SftpCollisionDecision::MergeFolders => "Merge folders",
-                                };
-                                let button = ui.button(label);
-                                if candidate == SftpCollisionDecision::Skip {
-                                    button.request_focus();
-                                }
-                                if button.clicked() {
-                                    decision = Some(candidate);
-                                }
-                            }
-                        });
-                    });
-            });
+        let (decision, close) = show_collision_modal(
+            ctx,
+            &self.label,
+            &collision.source,
+            &collision.destination,
+            &collision.allowed_decisions,
+            collision.can_apply_to_all,
+            &mut dialog.apply_to_all,
+        );
         if let Some(decision) = decision {
             let resolution = SftpCollisionResolution {
                 collision_id: collision.id,
@@ -3580,7 +3477,7 @@ impl SftpFileManagerTab {
             {
                 self.collision_dialog = None;
             }
-        } else if close || ctx.input(|input| input.key_pressed(Key::Escape)) {
+        } else if close {
             self.collision_dialog = None;
         }
     }
@@ -5833,6 +5730,130 @@ fn folder_rank(file_type: SftpEntryType) -> u8 {
     } else {
         1
     }
+}
+
+fn show_collision_modal(
+    ctx: &egui::Context,
+    label: &str,
+    source: &SftpPathMetadata,
+    destination: &SftpPathMetadata,
+    allowed_decisions: &[SftpCollisionDecision],
+    can_apply_to_all: bool,
+    apply_to_all: &mut bool,
+) -> (Option<SftpCollisionDecision>, bool) {
+    let mut decision = None;
+    let mut close = false;
+    crate::software_background::show_modal(
+        ctx,
+        egui::Modal::new(egui::Id::new(("sftp_collision", label)))
+            .backdrop_color(egui::Color32::from_black_alpha(128)),
+        |ui| {
+            ui.set_width(510.0);
+            egui::Frame::new()
+                .fill(theme::SURFACE_OVERLAY)
+                .stroke(egui::Stroke::new(1.0, theme::BORDER_ACTIVE))
+                .corner_radius(9.0)
+                .inner_margin(egui::Margin::symmetric(17, 15))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        icon::paint(
+                            ui.painter(),
+                            Icon::Warning,
+                            egui::Rect::from_min_size(ui.cursor().min, egui::vec2(18.0, 18.0)),
+                            theme::STATUS_STARTING,
+                        );
+                        ui.add_space(24.0);
+                        ui.label(
+                            RichText::new("A file with this name already exists")
+                                .font(font_for_text_role(SftpTextRole::DialogTitle))
+                                .strong(),
+                        );
+                    });
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Choose what to do with {}. Nothing is overwritten until you choose Replace.",
+                            source.path.file_name().unwrap_or_else(|_| source.path.display())
+                        ))
+                        .font(font_for_text_role(SftpTextRole::DialogBody))
+                        .color(theme::TEXT_SECONDARY),
+                    );
+                    ui.add_space(12.0);
+                    ui.columns(2, |columns| {
+                        for (column, (title, metadata)) in columns.iter_mut().zip([
+                            ("Source · Local", source),
+                            ("Destination · Remote", destination),
+                        ]) {
+                            egui::Frame::new()
+                                .fill(theme::SURFACE_TAB_INACTIVE)
+                                .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                                .corner_radius(6.0)
+                                .inner_margin(egui::Margin::same(10))
+                                .show(column, |ui| {
+                                    ui.label(
+                                        RichText::new(title)
+                                            .font(font_for_text_role(SftpTextRole::Footer))
+                                            .color(theme::TEXT_MUTED),
+                                    );
+                                    ui.label(
+                                        RichText::new(
+                                            metadata.path.file_name()
+                                                .unwrap_or_else(|_| metadata.path.display()),
+                                        )
+                                        .font(font_for_text_role(SftpTextRole::DialogBody))
+                                        .color(theme::TEXT_PRIMARY),
+                                    );
+                                    ui.label(
+                                        RichText::new(format_size(metadata.size))
+                                            .font(font_for_text_role(SftpTextRole::DialogMeta))
+                                            .color(theme::TEXT_SECONDARY),
+                                    );
+                                    ui.label(
+                                        RichText::new(format_modified(metadata.modified_at))
+                                            .font(font_for_text_role(SftpTextRole::DialogMeta))
+                                            .color(theme::TEXT_SECONDARY),
+                                    );
+                                });
+                        }
+                    });
+                    if can_apply_to_all {
+                        ui.add_space(12.0);
+                        ui.checkbox(
+                            apply_to_all,
+                            "Apply this choice to all conflicts in this batch",
+                        );
+                    }
+                    ui.add_space(12.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Cancel").clicked() {
+                            close = true;
+                        }
+                        for candidate in collision_decision_order().into_iter().rev() {
+                            if !allowed_decisions.contains(&candidate) {
+                                continue;
+                            }
+                            let label = match candidate {
+                                SftpCollisionDecision::Skip => "Skip",
+                                SftpCollisionDecision::Replace => "Replace",
+                                SftpCollisionDecision::KeepBoth => "Keep Both",
+                                SftpCollisionDecision::MergeFolders => "Merge folders",
+                            };
+                            let button = ui.button(label);
+                            if candidate == SftpCollisionDecision::Skip {
+                                button.request_focus();
+                            }
+                            if button.clicked() {
+                                decision = Some(candidate);
+                            }
+                        }
+                    });
+                });
+        },
+    );
+    (
+        decision,
+        close || ctx.input(|input| input.key_pressed(Key::Escape)),
+    )
 }
 
 fn collision_decision_order() -> [SftpCollisionDecision; 4] {
@@ -8353,6 +8374,117 @@ pub(crate) mod tests {
             SftpCollisionScope::RemainingConflictsInBatch
         );
         assert_eq!(collision_scope(false), SftpCollisionScope::ThisItem);
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn sftp_collision_modal_preserves_pixels_focus_and_choices_with_shared_painting() {
+        use crate::software_background::{
+            set_picker_backdrops_enabled, set_picker_frames_enabled, PanelTestProbe,
+        };
+        use egui_kittest::wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer};
+
+        let source = SftpPathMetadata {
+            path: SftpPath::local("owned-source.txt"),
+            file_type: SftpEntryType::File,
+            size: Some(1234),
+            modified_at: None,
+            permissions: Some(0o600),
+        };
+        let destination = SftpPathMetadata {
+            path: SftpPath::remote("/owned-destination.txt"),
+            ..source.clone()
+        };
+        let allowed = [
+            SftpCollisionDecision::Replace,
+            SftpCollisionDecision::Skip,
+            SftpCollisionDecision::KeepBoth,
+        ];
+        for scale in [1.0, 2.0] {
+            for width in [900.0, 480.0] {
+                let state = create_render_state(default_wgpu_setup(), Default::default());
+                let probe = std::cell::OnceCell::new();
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(width, 700.0))
+                    .with_pixels_per_point(scale)
+                    .renderer(WgpuTestRenderer::from_render_state(state.clone()))
+                    .build_ui_state(
+                        |ui, outcome: &mut (Option<SftpCollisionDecision>, bool, bool)| {
+                            if outcome.1 {
+                                return;
+                            }
+                            ui.ctx().all_styles_mut(|style| style.animation_time = 0.0);
+                            probe.get_or_init(|| PanelTestProbe::install(ui.ctx(), &state));
+                            let (decision, close) = show_collision_modal(
+                                ui.ctx(),
+                                "owned-collision",
+                                &source,
+                                &destination,
+                                &allowed,
+                                true,
+                                &mut outcome.2,
+                            );
+                            outcome.0 = decision.or(outcome.0);
+                            outcome.1 |= close;
+                        },
+                        (None, false, false),
+                    );
+                set_picker_backdrops_enabled(&harness.ctx, false);
+                set_picker_frames_enabled(&harness.ctx, false);
+                harness.run();
+                assert!(harness.get_by_label("Skip").is_focused());
+                assert!(harness.query_by_label("Merge folders").is_none());
+                let before = probe.get().unwrap().paints();
+                let ordinary = harness.render().unwrap();
+                let ordinary_paints = probe.get().unwrap().paints() - before;
+                set_picker_backdrops_enabled(&harness.ctx, true);
+                set_picker_frames_enabled(&harness.ctx, true);
+                harness.run();
+                let before = probe.get().unwrap().paints();
+                let optimized = harness.render().unwrap();
+                assert_eq!(ordinary, optimized, "width={width}, scale={scale}");
+                assert!(harness.get_by_label("Skip").is_focused());
+                assert_eq!(
+                    probe.get().unwrap().paints() - before,
+                    ordinary_paints + if width == 900.0 { 2 } else { 1 },
+                    "width={width}, scale={scale}"
+                );
+                harness
+                    .get_by_label("Apply this choice to all conflicts in this batch")
+                    .click();
+                harness.run();
+                assert!(harness.state().2);
+                assert_eq!(
+                    collision_scope(harness.state().2),
+                    SftpCollisionScope::RemainingConflictsInBatch
+                );
+                harness.get_by_label("Cancel").click();
+                harness.run();
+                assert!(harness.state().1);
+                assert!(
+                    harness.state().0.is_none(),
+                    "Cancel must never choose Replace"
+                );
+                for (label, expected) in [
+                    ("Replace", SftpCollisionDecision::Replace),
+                    ("Skip", SftpCollisionDecision::Skip),
+                    ("Keep Both", SftpCollisionDecision::KeepBoth),
+                ] {
+                    *harness.state_mut() = (None, false, false);
+                    harness.run();
+                    harness.get_by_label(label).click();
+                    harness.run();
+                    assert_eq!(harness.state().0, Some(expected));
+                    assert!(!harness.state().2);
+                }
+                *harness.state_mut() = (None, false, false);
+                harness.run();
+                harness.key_press(Key::Escape);
+                harness.run();
+                assert!(harness.state().1);
+                assert!(harness.state().0.is_none());
+            }
+        }
     }
 
     #[test]

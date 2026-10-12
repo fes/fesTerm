@@ -229,6 +229,13 @@ Never silently overwrite an existing file. A collision pauses only the affected 
 
 Escape/cancel returns the item to a paused state without choosing. For a same-name folder, use a distinct **Merge folders** decision: merging adds/updates descendants but never deletes destination-only content, and each descendant file collision still follows the policy above. If the destination changes after the prompt, revalidate immediately before commit and prompt again rather than using stale approval.
 
+On eligible Windows x64 WARP surfaces, the decision dialog uses the existing
+guarded shared modal painter for its owned dimming and opaque outer frame.
+Metadata, permitted decisions, Skip focus, batch-only scope and command
+admission stay in the ordinary dialog/controller path. Unsupported or
+out-of-viewport frame geometry retains ordinary painting; this changes no
+overwrite authority or transfer ownership.
+
 ## Drag/drop and input
 
 - Dragging selected rows across panes starts the same copy command as the transfer buttons; the drop target says **Copy to Remote** or **Copy to Local**. No modifier turns it into a move.
