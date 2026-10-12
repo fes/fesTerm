@@ -5787,3 +5787,22 @@ length of at most 256 units. The longer-label refusal reports a proven lower
 bound rather than pretending to know the full length. This bounds that managed
 copy, not the OS-allocated description buffer or transient thread/module API
 collections; those distinctions remain explicit in the validation record.
+
+### Uploading mesh buffers only when retained painting needs geometry
+
+The retained image paths could avoid drawing an unchanged document or terminal
+prefix while still staging all vertex and index bytes before making that
+decision. Native wgpu preparation now separates mandatory uniform/callback work
+from mesh uploads. Shared retention planning decides whether geometry is needed;
+exact hits copy the immutable image without staging meshes, while rebuilds and
+refusals upload current geometry before same-frame painting. The existing
+ordinary buffer API remains unchanged, and this opportunity is independent of
+the separate owned-signature comparison optimization.
+
+Live tests count actual staged vertex/index bytes and compare complete pixels.
+They require zero bytes on document and prefix hits, current geometry bytes on
+rebuilds/refusals, changing native terminal content and correct screenshot copies.
+All callback prepare calls still precede all finish_prepare calls without an
+acquired surface; preparation, queued images and ordinary fallback remain live.
+These are deterministic work-count reductions, not new timing measurements or
+native CP-18 acceptance, and they do not diagnose the exit-2173 sampler failure.

@@ -637,7 +637,7 @@ impl Painter {
             )
         };
 
-        let upload_done = timing.map(|start| start.elapsed().as_secs_f64());
+        let prepare_done = timing.map(|start| start.elapsed().as_secs_f64());
         let copy_requested = {
             let renderer = render_state.renderer.read();
             renderer.final_callback_copy_enabled || renderer.retained_frame_enabled
@@ -895,7 +895,7 @@ impl Painter {
         }
         if let (
             Some(start),
-            Some(upload),
+            Some(prepare),
             Some(configure),
             Some(acquire),
             Some(encode),
@@ -903,7 +903,7 @@ impl Painter {
             Some(release),
         ) = (
             timing,
-            upload_done,
+            prepare_done,
             configure_done,
             acquire_done,
             encode_done,
@@ -913,11 +913,11 @@ impl Painter {
             let total = start.elapsed().as_secs_f64();
             log::debug!(
                 target: "egui_wgpu::frame_timing",
-                "root_paint completed_frames={} primitives={} upload_ms={:.3} configure_ms={:.3} acquire_ms={:.3} encode_ms={:.3} submit_ms={:.3} release_ms={:.3} present_ms={:.3} total_ms={:.3}",
+                "root_paint completed_frames={} primitives={} prepare_ms={:.3} configure_ms={:.3} acquire_ms={:.3} encode_ms={:.3} submit_ms={:.3} release_ms={:.3} present_ms={:.3} total_ms={:.3}",
                 self.context.cumulative_frame_nr_for(viewport_id),
                 clipped_primitives.len(),
-                upload * 1000.0,
-                (configure - upload) * 1000.0,
+                prepare * 1000.0,
+                (configure - prepare) * 1000.0,
                 (acquire - configure) * 1000.0,
                 (encode - acquire) * 1000.0,
                 (submit - encode) * 1000.0,

@@ -177,6 +177,71 @@ fn retained_mesh_uploads_skip_hits_and_preserve_rebuild_and_refusal_pixels() {
     check(&jobs, None, mesh_bytes(&jobs));
 }
 
+#[test]
+fn retained_mesh_uploads_prepare_without_surface_preserves_callback_order() {
+    struct OrderedPaint {
+        id: usize,
+        order: Arc<std::sync::Mutex<Vec<usize>>>,
+    }
+    impl egui_wgpu::CallbackTrait for OrderedPaint {
+        fn prepare(
+            &self,
+            _: &wgpu::Device,
+            _: &wgpu::Queue,
+            _: &egui_wgpu::ScreenDescriptor,
+            _: &mut wgpu::CommandEncoder,
+            _: &mut egui_wgpu::CallbackResources,
+        ) -> Vec<wgpu::CommandBuffer> {
+            self.order.lock().unwrap().push(self.id);
+            Vec::new()
+        }
+        fn finish_prepare(
+            &self,
+            _: &wgpu::Device,
+            _: &wgpu::Queue,
+            _: &mut wgpu::CommandEncoder,
+            _: &mut egui_wgpu::CallbackResources,
+        ) -> Vec<wgpu::CommandBuffer> {
+            self.order.lock().unwrap().push(self.id + 10);
+            Vec::new()
+        }
+        fn paint(
+            &self,
+            _: egui::PaintCallbackInfo,
+            _: &mut wgpu::RenderPass<'static>,
+            _: &egui_wgpu::CallbackResources,
+        ) {
+            panic!("preparation without an acquired surface must not paint")
+        }
+    }
+    let (state, screen, mut jobs) = fixture();
+    let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+    for id in [1, 2] {
+        jobs.push(ClippedPrimitive {
+            clip_rect: jobs[0].clip_rect,
+            primitive: Primitive::Callback(egui_wgpu::Callback::new_paint_callback(
+                jobs[0].clip_rect,
+                OrderedPaint {
+                    id,
+                    order: order.clone(),
+                },
+            )),
+        });
+    }
+    let mut renderer = state.renderer.write();
+    let before = renderer.mesh_upload_bytes();
+    let mut encoder = state.device.create_command_encoder(&Default::default());
+    assert!(renderer
+        .prepare_without_mesh_uploads(&state.device, &state.queue, &mut encoder, &jobs, &screen)
+        .is_empty());
+    assert_eq!(*order.lock().unwrap(), vec![1, 2, 11, 12]);
+    assert_eq!(renderer.mesh_upload_bytes(), before);
+    order.lock().unwrap().clear();
+    renderer.update_buffers(&state.device, &state.queue, &mut encoder, &jobs, &screen);
+    assert_eq!(*order.lock().unwrap(), vec![1, 2, 11, 12]);
+    assert!(renderer.mesh_upload_bytes() > before);
+}
+
 fn document_frames(
     state: &egui_wgpu::RenderState,
     uploader: &mut WgpuTestRenderer,
