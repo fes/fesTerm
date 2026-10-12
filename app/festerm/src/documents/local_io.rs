@@ -288,7 +288,7 @@ fn run(
             let mut request = pending.remove(index);
             request.control.force.store(false, Ordering::Release);
             let save = request.save_at.is_some_and(|at| at <= now);
-            let _write_guard = if save {
+            let write_guard = if save {
                 let Ok(guard) = write_gate.lock() else {
                     wake();
                     return;
@@ -341,6 +341,9 @@ fn run(
             if results.try_send(Completion { request, result }).is_err() {
                 return;
             }
+            // Publish before releasing admission so a new writer's second
+            // drain sees this result; wake only after this write is finished.
+            drop(write_guard);
             wake();
             continue;
         }

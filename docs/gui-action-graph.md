@@ -1,5 +1,10 @@
 # GUI Exploration and Test Action Graph
 
+Local background save completion is enqueued while write admission is held,
+then admission is released before the app is notified. The regression
+`background_completed_save_wakes_after_releasing_write_admission` proves that
+a completed save's wake does not itself cause a busy-write refusal (ADR 0047).
+
 **Status:** Normative test-navigation companion to
 [`gui-design.md`](gui-design.md)
 

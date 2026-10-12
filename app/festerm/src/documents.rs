@@ -4063,7 +4063,8 @@ mod tests {
         // The production tick normally notices the new revision itself.
         registry.get_mut(id).unwrap().settled = Some((revision - 1, now - AUTO_SAVE_IDLE));
         registry.background_tick(&context, now - AUTO_SAVE_IDLE, false);
-        registry.background_tick(&context, now, false);
+        // The worker owns the deadline; another tick could consume its
+        // already-published error before this test drains the completion.
         assert!(wait_completion(&mut registry, &woken));
         assert_eq!(calls.load(Ordering::Acquire), 2);
         assert!(registry.get(id).unwrap().text().is_dirty());
@@ -4133,6 +4134,42 @@ mod tests {
     }
 
     #[test]
+    fn background_completed_save_wakes_after_releasing_write_admission() {
+        let directory = TemporaryDirectory::new("background-save-wake");
+        let path = directory.file("notes.md", "original\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        type_into(&mut registry, id, "mine\n");
+        let (wake, woken) = std::sync::mpsc::sync_channel(8);
+        let gate = Arc::clone(&registry.write_gate);
+        registry.worker = Some(
+            local_io::Worker::start_with(
+                Arc::new(move || {
+                    wake.try_send(gate.try_lock().is_ok()).unwrap();
+                }),
+                Arc::clone(&registry.write_gate),
+                Arc::new(|request, save| {
+                    assert!(save);
+                    controlled_saved(request)
+                }),
+            )
+            .unwrap(),
+        );
+        let now = Instant::now();
+        let revision = registry.get(id).unwrap().text().revision();
+        registry.get_mut(id).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        registry.background_tick(&egui::Context::default(), now, false);
+        assert!(
+            woken.recv_timeout(Duration::from_secs(10)).unwrap(),
+            "a completed save must release write admission before waking the app"
+        );
+        assert!(registry.drain_background());
+        assert!(!registry.get(id).unwrap().text().is_dirty());
+        assert_eq!(fs::read_to_string(path).unwrap(), "original\nmine\n");
+    }
+
+    #[test]
     fn background_real_missing_source_reports_once_and_unchanged_missing_does_not_wake() {
         let directory = TemporaryDirectory::new("background-gone");
         let path = directory.file("notes.md", "owned\n");
@@ -4160,7 +4197,8 @@ mod tests {
         assert!(!registry.background_tick(&context, Instant::now(), true));
         // A subsequent real change, rather than a timer repaint, wakes again.
         fs::write(&path, "returned longer\n").unwrap();
-        registry.background_tick(&context, Instant::now(), true);
+        // The preceding tick registered the missing source. Let its real
+        // worker publish the change before the app drains that completion.
         assert!(wait_completion(&mut registry, &woken));
         assert_eq!(registry.get(id).unwrap().text().text(), "returned longer\n");
     }

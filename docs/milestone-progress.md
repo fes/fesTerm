@@ -3,6 +3,27 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Releasing write admission before announcing completion
+
+Required merged-main Linux CI exposed a recovery regression whose immediate
+Save saw a busy write despite already consuming its completion. The worker
+enqueued the result and woke the app while still holding write admission.
+A deterministic wake callback reproduced the ordering error without sleeps.
+The worker now publishes under the gate, releases admission, and only then
+wakes the app; an admitted writer's second drain still sees the publication.
+Recovery protection and transactional verification remain unchanged.
+
+The missing-source regression also no longer runs an extra app tick between
+restoring the file and awaiting its completion. That tick could consume the
+reload before the test's own drain, falsely reporting no change. The real
+registered worker still discovers the return and the original reload and
+no-idle-wake assertions remain intact.
+
+The subsequent main run exposed the same redundant-drain race in the autosave
+error regression's second revision. Its single registration already sets a
+due worker deadline; removing the extra tick preserves the assertions that a
+new edit retries once and that the failed write never changes source bytes.
+
 ## Deferring native preparation for exact unchanged terminal frames
 
 The source audit found that retained Direct2D frames still converted every
