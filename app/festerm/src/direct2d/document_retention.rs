@@ -127,10 +127,11 @@ fn retained_mesh_uploads_skip_hits_and_preserve_rebuild_and_refusal_pixels() {
         &paints,
     ));
     let mut cache = egui_wgpu::RetainedUi::default();
-    let mut check = |jobs: &[ClippedPrimitive], expected, expected_bytes| {
+    let mut check = |jobs: &[ClippedPrimitive], expected, expected_bytes, expected_captures| {
         profile::draw_composed(&state, &texture, &screen, jobs, [0.0; 4], None);
         let ordinary = profile::read_image(&state, &texture);
         let before = state.renderer.read().mesh_upload_bytes();
+        let captures_before = cache.stats().signature_captures;
         assert_eq!(
             profile::draw_composed(&state, &texture, &screen, jobs, [0.0; 4], Some(&mut cache)),
             (false, expected),
@@ -139,15 +140,22 @@ fn retained_mesh_uploads_skip_hits_and_preserve_rebuild_and_refusal_pixels() {
             state.renderer.read().mesh_upload_bytes() - before,
             expected_bytes,
         );
+        assert_eq!(
+            cache.stats().signature_captures - captures_before,
+            expected_captures,
+        );
+        if expected == Some(false) {
+            assert!(cache.stats().signature_bytes as u64 >= mesh_bytes(jobs));
+        }
         profile::assert_same_pixels(
             &ordinary,
             &profile::read_image(&state, &texture),
             "deferred uploads preserve current-frame ordinary pixels",
         );
     };
-    check(&jobs, Some(false), mesh_bytes(&jobs));
+    check(&jobs, Some(false), mesh_bytes(&jobs), 1);
     for _ in 0..16 {
-        check(&jobs, Some(true), 0);
+        check(&jobs, Some(true), 0, 0);
     }
     assert_eq!(prepares.load(Ordering::Relaxed), 34);
     assert_eq!(finishes.load(Ordering::Relaxed), 34);
@@ -158,14 +166,14 @@ fn retained_mesh_uploads_skip_hits_and_preserve_rebuild_and_refusal_pixels() {
     for vertex in &mut mesh.vertices {
         vertex.color = egui::Color32::RED;
     }
-    check(&jobs, Some(false), mesh_bytes(&jobs));
-    check(&jobs, Some(true), 0);
+    check(&jobs, Some(false), mesh_bytes(&jobs), 1);
+    check(&jobs, Some(true), 0, 0);
     state.renderer.write().retained_frame_enabled = false;
-    check(&jobs, None, mesh_bytes(&jobs));
+    check(&jobs, None, mesh_bytes(&jobs), 0);
     state.renderer.write().retained_frame_enabled = true;
-    check(&jobs, Some(false), mesh_bytes(&jobs));
+    check(&jobs, Some(false), mesh_bytes(&jobs), 1);
     jobs[1] = observed_job(None, None, &prepares, &finishes, &paints);
-    check(&jobs, None, mesh_bytes(&jobs));
+    check(&jobs, None, mesh_bytes(&jobs), 1);
     let Primitive::Mesh(mesh) = &mut jobs[0].primitive else {
         unreachable!()
     };
@@ -174,7 +182,7 @@ fn retained_mesh_uploads_skip_hits_and_preserve_rebuild_and_refusal_pixels() {
         mesh.vertices[0],
     );
     jobs.pop();
-    check(&jobs, None, mesh_bytes(&jobs));
+    check(&jobs, None, mesh_bytes(&jobs), 1);
 }
 
 #[test]

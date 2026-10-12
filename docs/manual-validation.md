@@ -48,7 +48,10 @@ or native-latency measurement; the CP-18 residuals below remain open.
 `retained_mesh_uploads_skip_hits_and_preserve_rebuild_and_refusal_pixels`
 requires zero actual vertex/index staging bytes on complete-frame hits, exact
 current geometry bytes on rebuild/refusal, live callback preparation and exact
-ordinary pixels. The real terminal-prefix controls additionally require zero
+ordinary pixels. The same real-path regression also requires zero owned
+signature captures on warm hits and one full-geometry capture on admitted
+misses, preserving borrowed exact matching alongside deferred staging.
+The real terminal-prefix controls additionally require zero
 uploads on hits and screenshot targets while native terminal pixels keep
 changing. Preparation without an acquired surface preserves all prepare calls
 before all finish_prepare calls; the legacy ordinary buffer API remains live.
