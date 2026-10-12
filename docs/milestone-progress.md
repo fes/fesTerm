@@ -158,6 +158,12 @@ strict ambiguity route remains unchanged. Focus, batch scope, safe Cancel
 and transport behavior are unchanged. This removes a renderer inconsistency;
 it is not a new timing measurement or native-latency acceptance.
 
+Rebased macOS CI exposed a completion-consumption race in the preceding local
+document worker regression: its extra app tick could drain the real reload
+before the test waited for that same completion. The test now waits for the
+already-registered missing source to publish its real change before draining,
+without changing worker behavior or weakening the reload/no-idle-wake checks.
+
 ## Closing the safety-modal software-rendering gap
 
 The fresh merged-main UI baseline found that dirty-document, risky-paste and
