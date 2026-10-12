@@ -38,6 +38,26 @@ struct JobSignature {
     paint: PaintSignature,
 }
 
+impl JobSignature {
+    fn matches(&self, job: &ClippedPrimitive, whole_frame: bool) -> bool {
+        self.clip_rect == job.clip_rect
+            && match (&self.paint, &job.primitive) {
+                (PaintSignature::Mesh(saved), Primitive::Mesh(mesh)) => saved == mesh,
+                (PaintSignature::Callback { rect, key }, Primitive::Callback(callback)) => {
+                    *rect == callback.rect
+                        && callback
+                            .callback
+                            .downcast_ref::<Callback>()
+                            .is_some_and(|painter| {
+                                (!whole_frame || painter.0.texture_copy().is_none())
+                                    && painter.0.paint_key().as_ref() == Some(key)
+                            })
+                }
+                _ => false,
+            }
+    }
+}
+
 struct Signature {
     whole_frame: bool,
     size: [u32; 2],
@@ -136,14 +156,43 @@ impl Signature {
         })
     }
 
-    fn matches(&self, other: &Self) -> bool {
-        self.whole_frame == other.whole_frame
-            && self.size == other.size
-            && self.scale == other.scale
-            && self.format == other.format
-            && self.clear == other.clear
-            && Arc::ptr_eq(&self.textures, &other.textures)
-            && self.jobs == other.jobs
+    fn matches_inputs(
+        &self,
+        renderer: &Renderer,
+        jobs: &[ClippedPrimitive],
+        screen: &ScreenDescriptor,
+        format: wgpu::TextureFormat,
+        clear: [f32; 4],
+        whole_frame: bool,
+    ) -> bool {
+        renderer.retained_texture_epoch().is_some_and(|textures| {
+            self.matches_frame(screen, format, clear, whole_frame, textures)
+                && self.jobs.len() == jobs.len()
+                && self.jobs.iter().zip(jobs).all(|(saved, job)| {
+                    if let Primitive::Mesh(mesh) = &job.primitive
+                        && !renderer.retains_texture(mesh.texture_id)
+                    {
+                        return false;
+                    }
+                    saved.matches(job, whole_frame)
+                })
+        })
+    }
+
+    fn matches_frame(
+        &self,
+        screen: &ScreenDescriptor,
+        format: wgpu::TextureFormat,
+        clear: [f32; 4],
+        whole_frame: bool,
+        textures: &Arc<()>,
+    ) -> bool {
+        self.whole_frame == whole_frame
+            && self.size == screen.size_in_pixels
+            && self.scale == screen.pixels_per_point
+            && self.format == format
+            && self.clear == clear
+            && Arc::ptr_eq(&self.textures, textures)
     }
 }
 
@@ -157,6 +206,8 @@ struct CachedPrefix {
 pub struct RetainedUiStats {
     pub reused_frames: u64,
     pub rebuilt_frames: u64,
+    /// Attempts to materialize an owned signature, including declined candidates.
+    pub signature_captures: u64,
     pub texture_bytes: u64,
     pub signature_bytes: usize,
     pub decline_reason: Option<&'static str>,
@@ -173,6 +224,7 @@ pub struct RetainedUi {
     cached: Option<CachedPrefix>,
     reused_frames: u64,
     rebuilt_frames: u64,
+    signature_captures: u64,
     decline_reason: Option<&'static str>,
 }
 
@@ -187,6 +239,7 @@ impl RetainedUi {
         RetainedUiStats {
             reused_frames: self.reused_frames,
             rebuilt_frames: self.rebuilt_frames,
+            signature_captures: self.signature_captures,
             texture_bytes: self.cached.as_ref().map_or(0, |cached| {
                 u64::from(cached.texture.width()) * u64::from(cached.texture.height()) * 4
             }),
@@ -274,29 +327,36 @@ impl RetainedUi {
         clear: [f32; 4],
         whole_frame: bool,
     ) -> Option<bool> {
-        let signature = match Signature::capture(
-            renderer,
-            jobs,
-            screen,
-            target.format(),
-            clear,
-            whole_frame,
-        ) {
-            Ok(signature) => signature,
-            Err(reason) => {
-                self.clear();
-                self.decline_reason = Some(reason);
-                log::debug!(target: "egui_wgpu::retained_ui", "retained image declined: {reason}");
-                return None;
-            }
-        };
-        let reused = self
-            .cached
-            .as_ref()
-            .is_some_and(|cached| cached.signature.matches(&signature));
+        let reused = self.cached.as_ref().is_some_and(|cached| {
+            cached.signature.matches_inputs(
+                renderer,
+                jobs,
+                screen,
+                target.format(),
+                clear,
+                whole_frame,
+            )
+        });
         if reused {
             self.reused_frames = self.reused_frames.saturating_add(1);
         } else {
+            self.signature_captures = self.signature_captures.saturating_add(1);
+            let signature = match Signature::capture(
+                renderer,
+                jobs,
+                screen,
+                target.format(),
+                clear,
+                whole_frame,
+            ) {
+                Ok(signature) => signature,
+                Err(reason) => {
+                    self.clear();
+                    self.decline_reason = Some(reason);
+                    log::debug!(target: "egui_wgpu::retained_ui", "retained image declined: {reason}");
+                    return None;
+                }
+            };
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("egui immutable retained image"),
                 size: target.size(),
@@ -406,10 +466,123 @@ mod tests {
             jobs: Vec::new(),
             bytes: prefix.bytes,
         };
-        assert!(!prefix.matches(&frame));
+        let screen = ScreenDescriptor {
+            size_in_pixels: frame.size,
+            pixels_per_point: frame.scale,
+        };
+        let matches = |prefix: &Signature, frame: &Signature| {
+            prefix.matches_frame(
+                &screen,
+                frame.format,
+                frame.clear,
+                frame.whole_frame,
+                &frame.textures,
+            )
+        };
+        assert!(!matches(&prefix, &frame));
         prefix.whole_frame = true;
-        assert!(prefix.matches(&frame));
+        assert!(matches(&prefix, &frame));
         frame.textures = Arc::new(());
-        assert!(!prefix.matches(&frame));
+        assert!(!matches(&prefix, &frame));
+    }
+
+    #[test]
+    fn borrowed_mesh_matches_require_exact_geometry_clip_and_texture() {
+        let rect = Rect::from_min_max(epaint::emath::Pos2::ZERO, epaint::emath::pos2(20.0, 20.0));
+        let mut mesh = Mesh::with_texture(epaint::TextureId::Managed(7));
+        mesh.add_rect_with_uv(rect, rect, epaint::Color32::WHITE);
+        let saved = JobSignature {
+            clip_rect: rect,
+            paint: PaintSignature::Mesh(mesh.clone()),
+        };
+        let original = ClippedPrimitive {
+            clip_rect: rect,
+            primitive: Primitive::Mesh(mesh),
+        };
+        assert!(saved.matches(&original, true));
+        for change in 0..6 {
+            let mut job = original.clone();
+            let Primitive::Mesh(mesh) = &mut job.primitive else {
+                unreachable!()
+            };
+            match change {
+                0 => job.clip_rect = rect.shrink(1.0),
+                1 => mesh.texture_id = epaint::TextureId::Managed(8),
+                2 => mesh.vertices[0].color = epaint::Color32::RED,
+                3 => mesh.vertices[0].pos.x += 1.0,
+                4 => mesh.vertices[0].uv.x += 1.0,
+                5 => mesh.indices.swap(0, 1),
+                _ => unreachable!(),
+            }
+            assert!(!saved.matches(&job, true), "change {change}");
+        }
+    }
+
+    struct KeyedPaint(Option<CallbackPaintKey>);
+
+    impl crate::CallbackTrait for KeyedPaint {
+        fn paint_key(&self) -> Option<CallbackPaintKey> {
+            self.0.clone()
+        }
+
+        fn paint(
+            &self,
+            _info: epaint::PaintCallbackInfo,
+            _render_pass: &mut wgpu::RenderPass<'static>,
+            _callback_resources: &crate::CallbackResources,
+        ) {
+            unreachable!("signature comparison must not paint")
+        }
+    }
+
+    #[test]
+    fn borrowed_callback_matches_require_exact_key_clip_and_viewport() {
+        let rect = Rect::from_min_max(epaint::emath::Pos2::ZERO, epaint::emath::pos2(20.0, 20.0));
+        let key = CallbackPaintKey {
+            namespace: Arc::new(()),
+            bytes: Arc::from([1, 2]),
+        };
+        let saved = JobSignature {
+            clip_rect: rect,
+            paint: PaintSignature::Callback {
+                rect,
+                key: key.clone(),
+            },
+        };
+        let job = |rect, key| ClippedPrimitive {
+            clip_rect: rect,
+            primitive: Primitive::Callback(Callback::new_paint_callback(rect, KeyedPaint(key))),
+        };
+        assert!(saved.matches(&job(rect, Some(key.clone())), true));
+        assert!(!saved.matches(&job(rect.shrink(1.0), Some(key.clone())), true));
+        assert!(!saved.matches(&job(rect, None), true));
+        assert!(!saved.matches(
+            &job(
+                rect,
+                Some(CallbackPaintKey {
+                    namespace: Arc::clone(&key.namespace),
+                    bytes: Arc::from([1, 3]),
+                })
+            ),
+            true
+        ));
+        assert!(!saved.matches(
+            &job(
+                rect,
+                Some(CallbackPaintKey {
+                    namespace: Arc::new(()),
+                    bytes: Arc::clone(&key.bytes),
+                })
+            ),
+            true
+        ));
+        let unknown = ClippedPrimitive {
+            clip_rect: rect,
+            primitive: Primitive::Callback(epaint::PaintCallback {
+                rect,
+                callback: Arc::new(()),
+            }),
+        };
+        assert!(!saved.matches(&unknown, true));
     }
 }

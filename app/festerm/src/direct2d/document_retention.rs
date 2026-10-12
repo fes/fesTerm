@@ -73,6 +73,30 @@ fn fixture() -> (
     )
 }
 
+#[test]
+fn retained_hits_do_not_capture_owned_signatures() {
+    let (state, screen, mut jobs) = fixture();
+    let mut cache = egui_wgpu::RetainedUi::default();
+    assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(false));
+    assert_eq!(cache.stats().signature_captures, 1);
+    for _ in 0..32 {
+        assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(true));
+    }
+    assert_eq!(cache.stats().reused_frames, 32);
+    assert_eq!(cache.stats().signature_captures, 1);
+    let Primitive::Mesh(mesh) = &mut jobs[0].primitive else {
+        unreachable!()
+    };
+    mesh.vertices[0].color = egui::Color32::RED;
+    assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(false));
+    assert_eq!(cache.stats().signature_captures, 2);
+    assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(true));
+    assert_eq!(cache.stats().signature_captures, 2);
+    cache.clear();
+    assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(false));
+    assert_eq!(cache.stats().signature_captures, 3);
+}
+
 fn document_frames(
     state: &egui_wgpu::RenderState,
     uploader: &mut WgpuTestRenderer,
