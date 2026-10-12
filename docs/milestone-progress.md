@@ -63,6 +63,29 @@ rendezvous and a real post-publication ambiguous save cover the exact close,
 drain, reopen, acknowledge and write-refusal order; native CP-15 residuals and
 architectural acceptance are unchanged.
 
+## Reusing complete document preparation without virtualizing interaction
+
+The follow-up audit found two remaining repeated CPU costs: Preview rebuilt
+every table's nested cell jobs, natural widths and final wrapped rows, while
+TextEdit copied the complete document into a new layout job each time it
+called its layouter. The renderer-independent paths now keep bounded exact
+preparation: snapshot-owned final tables and one complete editor body per view.
+Find ranges, syntax viewport/roles, width and actual text are checked exactly;
+an ordinary tiny egui cache witness invalidates retained galleys even when an
+atlas reset keeps the same font definitions.
+
+The live 400-section Markdown oracle still constructs all 1,600 selectable
+cells while warm admitted tables perform no cell-job/text-copy/wrap preparation.
+Editor oracles likewise require zero warm full-job preparation, preserve
+same-pass typing/IME and offscreen full-document Copy, and reject stale
+revisions, Find ranges, widths and font/theme/atlas state. Capacity refusal
+keeps ordinary complete rendering and recovers after smaller replacements.
+No parser, resource/security policy, application ownership boundary or
+renderer-specific route changes. All blocks/widgets remain live; table-cell
+byte navigation is still an existing gap. These counters do not establish an
+end-to-end speedup, native clipboard/IME usability, screen-reader qualification,
+GPU savings or input-to-display latency.
+
 ## v0.10.2: bounded document preparation and native-exit evidence
 
 This patch release packages the merged performance and resource hardening since

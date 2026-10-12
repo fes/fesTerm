@@ -708,6 +708,13 @@ too, though still only partially covered.
 | `MD-06` | `EditorPreview/Viewer → Reloaded/Stale/Closed` | Modify, replace, delete, or conflict with source under the owning surface's freshness policy. | Local editor Preview follows ADR 0034's reload/conflict rules; read-only remote snapshots make no editing/conflict claim, and SSH loss/deletion preserve safe bounded state. | Restore fixture, reload baseline, then close to prior surface. | P,H,N,U; partial |
 | `MD-07` | `Desktop/CLI → Document/Error` | Choose fesTerm in Open With for one or more `.md`/`.markdown` files, cold and already running, or use `festerm --open -- <paths...>`. | The installed handler is optional and does not seize defaults. Native events and bounded user-scoped IPC converge on the document command, never terminal drops/uploads. New files open in Preview in the last-active window; existing files focus their view without losing unsaved edits. Blocking dialogs defer requests; malformed, missing and over-limit requests report errors. | Dismiss errors, close opened documents, or uninstall only fesTerm's association metadata. | H,N,U; partial |
 
+`MD-04` and `EDIT-03` additionally have complete-table/editor-body preparation
+oracles: exact dependency invalidation, warm preparation/copy counters, bounded
+ordinary fallback and live offscreen navigation, selection/Copy, accessibility
+and same-pass editor IME. All document widgets remain live; this does not add
+virtualization or implement table-cell byte navigation. Native/manual gates
+remain unchanged.
+
 `MD-04`'s outline oracle includes unchanged/scroll/resize/scale/font/revision
 controls: bounded cached geometry must preserve variable wrapping, all live
 heading identities/accessibility nodes and offscreen keyboard navigation.

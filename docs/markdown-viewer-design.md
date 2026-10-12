@@ -133,11 +133,42 @@ A one-versus-400 preparation count alone does not establish a speedup, and
 neither that experiment nor these regressions qualify native clipboard,
 screen-reader usability or input-to-display latency.
 
-Table columns are measured from unwrapped cell content before sharing the
-reading width. A cell whose measured galley fits the final, integer-normalized
-wrap constraint reuses it; only a squeezed cell needs another layout. This is
-frame-local reuse, not a persistent cache or block virtualization: every cell
-remains a selectable label with the same alignment, Find formatting and
+Preview now retains complete table preparation across frames, in both the
+standalone viewer and editor Preview/Split, independently of the native,
+software or GPU renderer. Immutable snapshot ownership plus clearing on each
+successful reload/reparse supplies exact document identity; no source hash or
+matching-text-ends heuristic is used. Table source offset, exact available
+width and complete inline style identify one prepared set of final cell
+galleys, column widths and row heights. Every Find range and current match
+are compared exactly; changing either retires the set.
+
+The shared layout epoch uses a tiny ordinary egui galley as a font-cache
+witness. Its retained Arc prevents address reuse. A different context,
+viewport, scale, theme text override/dark mode or witness retires preparation.
+Egui recreates that cache when definitions/text options change or a full
+atlas resets at begin-pass; witness eviction also conservatively invalidates.
+No atlas pixels or font-definition clones are retained. Reuse remains bounded
+to 512 tables, 8,192 cells and 16 MiB of accounted allocation capacities per
+view; the exact Find key separately admits at most 8,192 fixed-size matches.
+Job Strings/sections, row/cell vectors, glyphs and row meshes are charged,
+including spare capacity and repeated references conservatively. Bounded
+BTreeMap nodes, Arc/allocator overhead, the tiny witness, ordinary egui
+memoization and current frame/output ownership are not a total-memory claim.
+Unsupported or over-budget entries still prepare ordinarily.
+
+All blocks and all selectable cell widgets remain live, including offscreen
+ones. This is neither whole-document virtualization nor table-cell byte
+navigation (which remains unimplemented). Headings, code-byte navigation,
+Copy/selection, full accessibility information, image/resource policy and
+loading remain unchanged. CPU construction/copy counters and ordinary-versus-
+cached complete shape/accessibility/input oracles are deterministic evidence,
+not measured end-to-end speedups or native/GPU qualification.
+
+On a preparation miss, table columns are measured from unwrapped cell content
+before sharing the reading width. A cell whose measured galley fits the final,
+integer-normalized wrap constraint reuses it; only a squeezed cell needs another
+layout. This is frame-local measurement reuse within the persistent
+preparation: every cell remains a selectable label with the same alignment, Find formatting and
 source identity.
 
 The same fresh render invocation also shares identical unwrapped, plain-text
