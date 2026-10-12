@@ -1590,6 +1590,7 @@
       "automated_tests": [
         "background_document_io_leaves_real_frame_idle_until_completion_wake",
         "background_worker_accepts_commands_while_existing_freshness_is_continuously_due",
+        "background_worker_fairly_services_overdue_freshness_and_autosave",
         "background_slow_freshness_and_reload_leave_frame_nonblocking",
         "background_unchanged_and_ineligible_documents_do_not_wake_or_time_repaint",
         "background_reload_cancelled_by_edit_rechecks_into_conflict_without_losing_text",
@@ -1604,6 +1605,8 @@
         "background_stable_unavailable_and_read_errors_do_not_repeat_repaints",
         "background_real_missing_source_reports_once_and_unchanged_missing_does_not_wake",
         "background_recovery_completion_survives_close_and_is_not_silently_discarded",
+        "background_recovery_drained_before_reopen_still_refuses_all_same_source_writes",
+        "unresolved_recovery_protection_is_bounded_and_overflow_refuses_all_local_writes",
         "background_worker_failure_wakes_and_surfaces_an_error_instead_of_default_success",
         "background_write_panic_refuses_explicit_save_with_truthful_coordination_error",
         "background_cancelled_save_refuses_before_io_or_publication",

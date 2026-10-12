@@ -861,9 +861,17 @@ local freshness/reload/debounced saves into 16 bounded immutable work slots.
 Unchanged results have no UI repaint timer or completion wake; focus forces
 worker checks without waiting. The app alone applies identity/epoch/generation/
 revision-validated results, and saves retain the exact history point written
-when later edits exist. Close/cancellation cannot discard recovery evidence
-or allow a queued older autosave after a newer write. Save/Save As and explicit
-Refresh/Reload retain synchronous admitted semantics, but do not wait for a
+when later edits exist. Order-preserving removal and tail rotation of unchanged
+checks prevent overdue freshness peers from starving each other or autosave.
+Close/cancellation cannot discard recovery evidence or allow a queued older
+autosave after a newer write. Recovery protection is retained for up to 64
+source path/authority records independently of views/notices; completion drained
+while closed still protects a later Open and a closed Save As destination.
+Acknowledge dismisses the notice, not the write protection or exact breadcrumb.
+Protection overflow retains existing records and explicitly refuses all local
+writes for the application lifetime, rather than evicting protected sources.
+Save/Save As and explicit Refresh/Reload retain synchronous admitted semantics,
+but do not wait for a
 running background publication: its visible refusal says to wait for completion
 and **Retry** (or try Save As again). Ordinary background reads never occupy
 write admission. Controlled worker tests cover responsiveness, cancellations,

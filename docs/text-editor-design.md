@@ -102,6 +102,8 @@ UI repaint. Local poll/debounce deadlines do not repaint idle editor/Preview
 or unrelated surfaces. Untitled, remote, conflicted and recovery-pending
 documents have no local poll timer; a completed visible change wakes the
 shared window pass. Focus regain requests revalidation without waiting.
+Due requests preserve peer order and unchanged checks rotate to the tail, so
+continuously overdue freshness work cannot starve other documents or autosave.
 
 Sixteen work slots cover queued, running and completed local requests.
 Saturation or worker failure is an explicit document error, not silent missing
@@ -119,8 +121,15 @@ changed source identity. Autosave records the history point actually written:
 newer edits stay dirty, and undo to the old baseline is dirty if disk now holds
 the intervening save. Queued stale bytes are cancelled before newer explicit
 writes; once transactional publication starts, verification/recovery finishes
-even if the view closes. Exact recovery notices also protect a reopened
-same-source document.
+even if the view closes. Up to 64 unresolved recovery source path/authority
+records live independently of views and notification acknowledgement. Draining
+the ambiguous save while its last view is closed still protects a later Open
+and refuses same-source writes, including Save As to a closed protected
+destination. Acknowledgement dismisses only the notice, not the exact recovery
+breadcrumb or write protection. Recovery overflow retains existing records
+and explicitly refuses all local writes for the application lifetime. Manual
+recovery must precede a restart; there is no automatic resolution or startup
+recovery discovery.
 
 The editor never resolves a divergence silently.
 

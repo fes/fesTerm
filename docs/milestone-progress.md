@@ -47,6 +47,22 @@ errors and save-history/retry behavior using owned fixtures. Real slow-volume
 latency, packaged multi-window wake/focus, privileged secure replacement and
 crash/blocked-I/O teardown remain CP-15 native checks, not new acceptance.
 
+The owner reviewed and accepted ADR 0047 on 2026-10-12. This accepts the
+bounded scheduling, history and write-admission decision, not unmeasured
+native latency or the remaining CP-15 qualification. Independent source
+review and exact-head CI still gate the implementation merge.
+
+Reliability review reproduced two independent defects before repair: swapping
+the first due request to the queue tail reordered peers into perpetual A/D
+alternation, starving B's freshness and C's autosave; recovery drained with no
+open view retained a notice but lost subsequent-open write protection.
+Order-preserving queue removal fixes the first. A bounded application-lifetime
+source/authority recovery ledger fixes the second independently of view and
+notice lifetime, with fail-closed overflow rather than eviction. Real-worker
+rendezvous and a real post-publication ambiguous save cover the exact close,
+drain, reopen, acknowledge and write-refusal order; native CP-15 residuals and
+architectural acceptance are unchanged.
+
 ## v0.10.2: bounded document preparation and native-exit evidence
 
 This patch release packages the merged performance and resource hardening since

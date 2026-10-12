@@ -842,9 +842,18 @@ prove unchanged and ineligible documents do not schedule UI timer repaints,
 bound queued/running/completed work, preserve newer edits and exact undo saved
 points, cancel closed/reloaded/disabled work, report genuine worker/save errors
 once, retain recovery notices across reopen, and exercise exceptional manual
-Save/Save As retry. Controlled save completion writes only owned fixtures; it
-does not substitute for native transactional-publication evidence. Existing
-explicit-operation transition tests remain, separately from real-worker tests.
+Save/Save As retry. Three continuously due freshness requests and an autosave
+exercise fair queue rotation through real-worker rendezvous. A real owned
+transactional save is held after publication, its last view closes, ambiguity
+finishes and is drained **before** reopen/acknowledgement/edit: Save, same-source
+Save As and autosave still refuse, original identity aliases remain protected,
+and the exact private recovery directory/bytes remain unchanged. Synchronous
+Save/Save As also retain protection after close/acknowledgement. The 64-record
+recovery bound has a fail-closed overflow regression independent of notice
+acknowledgement. Controlled save completion otherwise writes only owned
+fixtures; it does not substitute for native transactional-publication evidence.
+Existing explicit-operation transition tests remain, separately from
+real-worker tests.
 
 Native evidence still required: use **test-owned** local files and a deliberately
 slow supported network/volume fixture; verify metadata revalidation, external

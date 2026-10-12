@@ -284,7 +284,8 @@ fn run(
                 || request.save_at.is_some_and(|at| at <= now)
         });
         if let Some(index) = due {
-            let mut request = pending.swap_remove(index);
+            // Unchanged work returns to the tail; keep its due peers ordered.
+            let mut request = pending.remove(index);
             request.control.force.store(false, Ordering::Release);
             let save = request.save_at.is_some_and(|at| at <= now);
             let _write_guard = if save {

@@ -33,7 +33,7 @@ use festerm_syntax::{DocumentSyntax, SyntaxStatus};
 
 use crate::document_store::{
     self, ConfirmedDestination, DestinationExpectation, Freshness, Generation, LoadFailure,
-    LocalSourceAuthority, SaveExpectation, SaveFailure,
+    LocalSourceAuthority, RecoveryAuthority, SaveExpectation, SaveFailure,
 };
 
 /// How often an open local document is re-checked against its file. Short
@@ -55,6 +55,7 @@ const RELOAD_NOTICE: Duration = Duration::from_secs(8);
 const AUTO_SAVE_IDLE: Duration = Duration::from_millis(900);
 pub(crate) const MAX_PENDING_RECOVERY_NOTICES: usize = 16;
 pub(crate) const MAX_OVERFLOW_RECOVERY_NOTICES: usize = 64;
+const MAX_RECOVERY_PROTECTIONS: usize = 64;
 
 /// The application-scoped registry handle every window holds.
 pub(crate) type SharedDocuments = Rc<RefCell<DocumentRegistry>>;
@@ -295,6 +296,25 @@ impl OpenFailure {
     }
 }
 
+#[derive(Debug)]
+struct RecoveryProtection {
+    source: PathBuf,
+    authority: RecoveryAuthority,
+    breadcrumb: PathBuf,
+    error: SaveError,
+}
+
+impl RecoveryProtection {
+    fn matches(&self, path: &Path, authority: Option<&LocalSourceAuthority>) -> bool {
+        self.source == path
+            || self.authority.canonical_path() == path
+            || authority.is_some_and(|authority| {
+                self.authority.canonical_path() == authority.canonical_path()
+                    || self.authority.matches(authority)
+            })
+    }
+}
+
 /// Every open document, owned by the application rather than by a window.
 #[derive(Debug, Default)]
 pub(crate) struct DocumentRegistry {
@@ -306,6 +326,8 @@ pub(crate) struct DocumentRegistry {
     overflow_recovery_notices: VecDeque<(PathBuf, SaveError)>,
     recovery_notice_overflow_summary: Option<(usize, PathBuf, SaveError)>,
     active_recovery_notice: Option<(PathBuf, SaveError)>,
+    recovery_protections: Vec<RecoveryProtection>,
+    recovery_protection_overflow: Option<(PathBuf, SaveError)>,
     bounds: DocumentBounds,
     worker: Option<local_io::Worker>,
     worker_start_error: Option<SaveError>,
@@ -333,6 +355,7 @@ impl DocumentRegistry {
     /// it. Aliasing is by origin, so two views of one path share one buffer,
     /// one undo history, and one dirty flag.
     pub(crate) fn open_local(&mut self, path: &Path) -> Result<DocumentId, OpenFailure> {
+        self.drain_background();
         let origin = LocalOrigin::new(path)
             .map(DocumentOrigin::Local)
             .map_err(OpenFailure::Origin)?;
@@ -454,6 +477,12 @@ impl DocumentRegistry {
         let id = DocumentId::from_raw(self.next_id);
         let syntax = DocumentSyntax::new(origin.file_name(), text.text());
         self.by_key.insert(origin.key(), id);
+        let recovery = match &origin {
+            DocumentOrigin::Local(origin) => {
+                self.recovery_protection(origin.path(), source_authority.as_ref())
+            }
+            _ => None,
+        };
         self.documents.insert(
             id,
             OpenDocument {
@@ -469,9 +498,9 @@ impl DocumentRegistry {
                 save: SaveProgress::Idle,
                 auto_save_requested: false,
                 last_error: None,
-                recovery_error: None,
-                recovery_path: None,
-                recovery_notice_queued: false,
+                recovery_error: recovery.as_ref().map(|(_, error)| error.clone()),
+                recovery_path: recovery.as_ref().map(|(path, _)| path.clone()),
+                recovery_notice_queued: recovery.is_some(),
                 checked: Instant::now(),
                 reloaded: None,
                 settled: None,
@@ -483,6 +512,71 @@ impl DocumentRegistry {
             },
         );
         id
+    }
+
+    fn recovery_protection(
+        &self,
+        path: &Path,
+        authority: Option<&LocalSourceAuthority>,
+    ) -> Option<(PathBuf, SaveError)> {
+        self.recovery_protections
+            .iter()
+            .find(|protection| protection.matches(path, authority))
+            .map(|protection| (protection.breadcrumb.clone(), protection.error.clone()))
+            .or_else(|| self.recovery_protection_overflow.clone())
+    }
+
+    fn retain_recovery_protection(
+        &mut self,
+        source: PathBuf,
+        authority: RecoveryAuthority,
+        breadcrumb: PathBuf,
+        error: SaveError,
+    ) {
+        if self
+            .recovery_protections
+            .iter()
+            .any(|protection| protection.breadcrumb == breadcrumb)
+        {
+            return;
+        }
+        if self.recovery_protections.len() < MAX_RECOVERY_PROTECTIONS {
+            self.recovery_protections.push(RecoveryProtection {
+                source,
+                authority,
+                breadcrumb: breadcrumb.clone(),
+                error: error.clone(),
+            });
+        } else if self.recovery_protection_overflow.is_none() {
+            self.recovery_protection_overflow = Some((
+                breadcrumb.clone(),
+                SaveError::new(
+                    "Local recovery protection capacity exceeded",
+                    format!("The 64 unresolved local source protections are occupied. All local writes are refused for this application lifetime; acknowledgement does not resolve recovery. Preserve unsaved text and manually recover retained versions, including {}, before restarting fesTerm.", breadcrumb.display()),
+                ),
+            ));
+        }
+        // Protection is application-lifetime state, not a notification or view.
+        for document in self.documents.values_mut() {
+            let DocumentOrigin::Local(origin) = &document.origin else {
+                continue;
+            };
+            let recovery = self
+                .recovery_protections
+                .iter()
+                .find(|protection| {
+                    protection.matches(origin.path(), document.source_authority.as_ref())
+                })
+                .map(|protection| (protection.breadcrumb.clone(), protection.error.clone()))
+                .or_else(|| self.recovery_protection_overflow.clone());
+            if let Some((path, error)) = recovery {
+                document.invalidate_background();
+                document.recovery_path = Some(path);
+                document.recovery_error = Some(error);
+                document.recovery_notice_queued = true;
+            }
+        }
+        self.queue_recovery_notice_record(breadcrumb, error);
     }
 
     /// Records one more view of an already-open document.
@@ -720,6 +814,19 @@ impl DocumentRegistry {
         for document in self.documents.values_mut() {
             document.invalidate_background();
         }
+        let protection = self.documents.get(&id).and_then(|document| {
+            let DocumentOrigin::Local(origin) = &document.origin else {
+                return None;
+            };
+            self.recovery_protection(origin.path(), document.source_authority.as_ref())
+        });
+        if let Some((path, error)) = protection {
+            let document = self.documents.get_mut(&id)?;
+            document.recovery_path = Some(path);
+            document.recovery_error = Some(error.clone());
+            document.recovery_notice_queued = true;
+            return Some(SaveOutcome::Failed(error));
+        }
         let bounds = self.bounds;
         let document = self.documents.get_mut(&id)?;
         if let Some(error) = document.recovery_error.clone() {
@@ -797,18 +904,15 @@ impl DocumentRegistry {
             None
         };
         if let Some((path, error)) = recovery {
-            let already_queued = self
-                .pending_recovery_notices
-                .iter()
-                .chain(&self.overflow_recovery_notices)
-                .any(|(queued, _)| queued == &path)
-                || self
-                    .active_recovery_notice
-                    .as_ref()
-                    .is_some_and(|(active, _)| active == &path);
-            if !already_queued {
-                self.queue_recovery_notice_record(path, error);
-            }
+            let authority = document
+                .source_authority
+                .clone()
+                .expect("loaded save authority");
+            let DocumentOrigin::Local(origin) = &document.origin else {
+                unreachable!()
+            };
+            let source = origin.path().to_path_buf();
+            self.retain_recovery_protection(source, authority.recovery_authority(), path, error);
         }
         Some(outcome)
     }
@@ -847,6 +951,22 @@ impl DocumentRegistry {
         self.drain_background();
         for document in self.documents.values_mut() {
             document.invalidate_background();
+        }
+        let protected = self
+            .recovery_protections
+            .iter()
+            .find(|protection| {
+                protection.source == path || protection.authority.matches_destination(confirmed)
+            })
+            .map(|protection| protection.error.clone())
+            .or_else(|| {
+                self.recovery_protection_overflow
+                    .as_ref()
+                    .map(|(_, error)| error.clone())
+            });
+        if let Some(error) = protected {
+            self.documents.get_mut(&id)?.last_error = Some(error.clone());
+            return Some((SaveOutcome::Failed(error), None));
         }
         if !confirmed.matches_requested_path(path) {
             let error = SaveError::new(
@@ -1013,7 +1133,15 @@ impl DocumentRegistry {
                         document.recovery_error = Some(error.clone());
                     }
                     if let SaveFailure::RecoveryRequired(path) = failure {
-                        self.queue_recovery_notice_record(path, error.clone());
+                        let DocumentOrigin::Local(origin) = &origin else {
+                            unreachable!()
+                        };
+                        self.retain_recovery_protection(
+                            origin.path().to_path_buf(),
+                            confirmed.recovery_authority(),
+                            path,
+                            error.clone(),
+                        );
                     }
                     return Some((SaveOutcome::Failed(error), None));
                 }
@@ -1580,22 +1708,11 @@ impl DocumentRegistry {
         let recovery = if let Result::Saved(Err(SaveFailure::RecoveryRequired(path)), _) = &result {
             let failure = SaveFailure::RecoveryRequired(path.clone());
             let error = SaveError::new(failure.headline(), failure.detail());
-            for document in self.documents.values_mut() {
-                let same_source = matches!(&document.origin, DocumentOrigin::Local(origin) if origin.path() == request.path)
-                    || document.source_authority.as_ref().is_some_and(|authority| {
-                        authority.canonical_path() == request.authority.canonical_path()
-                            || authority.matches(&request.authority)
-                    });
-                if same_source {
-                    document.invalidate_background();
-                    document.recovery_path = Some(path.clone());
-                    document.recovery_error = Some(error.clone());
-                    document.recovery_notice_queued = true;
-                }
-            }
-            self.queue_recovery_notice_record(
+            self.retain_recovery_protection(
+                request.path.clone(),
+                request.authority.recovery_authority(),
                 path.clone(),
-                SaveError::new(failure.headline(), failure.detail()),
+                error,
             );
             true
         } else {
@@ -2424,6 +2541,8 @@ mod tests {
         let directory = TemporaryDirectory::new("save-as-promotes-recovery");
         let source = directory.file("source.md", "source\n");
         let destination = directory.file("destination.md", "destination\n");
+        let alias = directory.path.join("destination-alias.md");
+        fs::hard_link(&destination, &alias).unwrap();
         let mut registry = DocumentRegistry::new();
         let source_id = registry.open_local(&source).unwrap();
         type_into(&mut registry, source_id, "edited\n");
@@ -2471,6 +2590,35 @@ mod tests {
             permissions.set_readonly(false);
             fs::set_permissions(&destination, permissions).unwrap();
         }
+        assert!(registry.acknowledge_recovery_notice(&notice_path));
+        assert!(registry.release(source_id));
+        let reopened_destination = registry.open_local(&destination).unwrap();
+        assert_eq!(
+            registry.get(reopened_destination).unwrap().recovery_path(),
+            Some(recovery.as_path())
+        );
+        assert!(matches!(
+            registry.save(reopened_destination),
+            Some(SaveOutcome::Failed(_))
+        ));
+        assert!(registry.release(reopened_destination));
+        let reopened_source = registry.open_local(&source).unwrap();
+        let confirmed = document_store::observe_destination(&destination).unwrap();
+        assert!(matches!(
+            registry.save_as(reopened_source, &destination, &confirmed),
+            Some((SaveOutcome::Failed(_), None))
+        ));
+        let aliased = registry.open_local(&alias).unwrap();
+        assert_eq!(
+            registry.get(aliased).unwrap().recovery_path(),
+            Some(recovery.as_path())
+        );
+        assert!(registry.release(aliased));
+        let confirmed_alias = document_store::observe_destination(&alias).unwrap();
+        assert!(matches!(
+            registry.save_as(reopened_source, &alias, &confirmed_alias),
+            Some((SaveOutcome::Failed(_), None))
+        ));
     }
 
     #[test]
@@ -2895,6 +3043,15 @@ mod tests {
             registry.take_recovery_notice().is_none(),
             "final-view release must not duplicate an acknowledged notice"
         );
+        let reopened = registry.open_local(&path).unwrap();
+        assert_eq!(
+            registry.get(reopened).unwrap().recovery_path(),
+            Some(recovery.as_path())
+        );
+        assert!(matches!(
+            registry.save(reopened),
+            Some(SaveOutcome::Failed(_))
+        ));
     }
 
     #[test]
@@ -3325,6 +3482,108 @@ mod tests {
             }),
             None,
         )
+    }
+
+    #[test]
+    fn background_worker_fairly_services_overdue_freshness_and_autosave() {
+        let directory = TemporaryDirectory::new("background-queue-fairness");
+        let mut registry = DocumentRegistry::new();
+        let ids: Vec<_> = ["a.md", "b.md", "c.md", "d.md", "bootstrap.md"]
+            .into_iter()
+            .map(|name| {
+                registry
+                    .open_local(&directory.file(name, "owned\n"))
+                    .unwrap()
+            })
+            .collect();
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let blocked = Mutex::new(blocked);
+        let bootstrap = ids[4];
+        let woken = controlled_worker(&mut registry, move |request, save| {
+            entered.send((request.id, save)).unwrap();
+            blocked
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+            if request.id == bootstrap {
+                local_io::Result::Checked(local_io::Check::Current(false))
+            } else if save {
+                controlled_saved(request)
+            } else {
+                // Deterministically model checks remaining due after slow I/O,
+                // without depending on wall-clock sleeps or executor speed.
+                request.control.force.store(true, Ordering::Release);
+                local_io::Result::Checked(local_io::Check::Current(true))
+            }
+        });
+        let now = Instant::now();
+        let controls: Vec<_> = ids
+            .iter()
+            .map(|_| Arc::new(local_io::Control::default()))
+            .collect();
+        let worker = registry.worker.as_ref().unwrap();
+        let register = |index: usize| {
+            let document = registry.get(ids[index]).unwrap();
+            let DocumentOrigin::Local(origin) = &document.origin else {
+                unreachable!()
+            };
+            worker
+                .register(|| {
+                    local_io::Request::new(
+                        ids[index],
+                        0,
+                        document.text.revision(),
+                        document.generation.unwrap(),
+                        document.source_authority.clone().unwrap(),
+                        origin.path().to_path_buf(),
+                        Availability::Available,
+                        None,
+                        (index == 2).then(|| b"saved\n".to_vec()),
+                        now,
+                        (index == 2).then_some(now),
+                        registry.bounds,
+                        Arc::clone(&controls[index]),
+                    )
+                })
+                .unwrap();
+        };
+        register(4);
+        assert_eq!(
+            waiting.recv_timeout(Duration::from_secs(10)).unwrap(),
+            (bootstrap, false)
+        );
+        for index in 0..4 {
+            register(index);
+        }
+        release.send(()).unwrap();
+        let mut seen = vec![waiting.recv_timeout(Duration::from_secs(10)).unwrap()];
+        for _ in 1..4 {
+            release.send(()).unwrap();
+            seen.push(waiting.recv_timeout(Duration::from_secs(10)).unwrap());
+        }
+        for control in &controls {
+            control.cancel();
+        }
+        release.send(()).unwrap();
+        // Disconnect before asserting so a failing regression cannot leave a
+        // continuously due worker behind.
+        registry.worker = None;
+        assert_eq!(
+            seen,
+            vec![
+                (ids[0], false),
+                (ids[1], false),
+                (ids[2], true),
+                (ids[3], false)
+            ]
+        );
+        assert!(woken.recv_timeout(Duration::from_secs(10)).is_ok());
+        assert_eq!(
+            fs::read_to_string(directory.path.join("c.md")).unwrap(),
+            "saved\n"
+        );
     }
 
     #[test]
@@ -3904,6 +4163,176 @@ mod tests {
         registry.background_tick(&context, Instant::now(), true);
         assert!(wait_completion(&mut registry, &woken));
         assert_eq!(registry.get(id).unwrap().text().text(), "returned longer\n");
+    }
+
+    #[test]
+    fn background_recovery_drained_before_reopen_still_refuses_all_same_source_writes() {
+        let directory = TemporaryDirectory::new("background-closed-recovery");
+        let path = directory.file("notes.md", "original\n");
+        let alias = directory.path.join("original-alias.md");
+        fs::hard_link(&path, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        type_into(&mut registry, id, "mine\n");
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel(1);
+        let blocked = Arc::new(Mutex::new(blocked));
+        let target = path.clone();
+        let replacement = directory.path.join("replacement.md");
+        let woken = controlled_worker(&mut registry, move |request, save| {
+            assert!(save);
+            let entered = entered.clone();
+            let blocked = Arc::clone(&blocked);
+            let target = target.clone();
+            let replacement = replacement.clone();
+            document_store::set_after_save_replacement_hook(move || {
+                entered.send(()).unwrap();
+                blocked
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(10))
+                    .unwrap();
+                #[cfg(not(windows))]
+                {
+                    fs::write(&replacement, "later\n").unwrap();
+                    fs::rename(&replacement, &target).unwrap();
+                }
+                #[cfg(windows)]
+                {
+                    let _ = replacement;
+                    let mut permissions = fs::metadata(&target).unwrap().permissions();
+                    permissions.set_readonly(true);
+                    fs::set_permissions(&target, permissions).unwrap();
+                }
+            });
+            local_io::execute(request, save)
+        });
+        let now = Instant::now();
+        let revision = registry.get(id).unwrap().text().revision();
+        registry.get_mut(id).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        registry.background_tick(&egui::Context::default(), now, false);
+        waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(registry.release(id));
+        release.send(()).unwrap();
+        assert!(wait_completion(&mut registry, &woken));
+        assert!(registry.is_empty());
+        let (recovery, error) = registry.take_recovery_notice().unwrap();
+        assert!(recovery.is_dir());
+        let original = fs::read(recovery.join("original")).unwrap();
+        let prepared = fs::read(recovery.join("prepared")).unwrap();
+        let reopened = registry.open_local(&path).unwrap();
+        assert!(registry.acknowledge_recovery_notice(&recovery));
+        assert!(!registry.has_recovery_notices());
+        type_into(&mut registry, reopened, "newer\n");
+        let before = fs::read(&path).unwrap();
+        assert_eq!(
+            registry.get(reopened).unwrap().recovery_path(),
+            Some(recovery.as_path())
+        );
+        assert_eq!(
+            registry.save(reopened),
+            Some(SaveOutcome::Failed(error.clone()))
+        );
+        let confirmed = document_store::observe_destination(&path).unwrap();
+        assert_eq!(
+            registry.save_as(reopened, &path, &confirmed),
+            Some((SaveOutcome::Failed(error.clone()), None))
+        );
+        registry
+            .get_mut(reopened)
+            .unwrap()
+            .set_auto_save_requested(true);
+        let revision = registry.get(reopened).unwrap().text().revision();
+        registry.get_mut(reopened).unwrap().settled = Some((revision, now - AUTO_SAVE_IDLE));
+        registry.background_tick(&egui::Context::default(), now, true);
+        assert!(registry.get(reopened).unwrap().background.is_none());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(registry.get(reopened).unwrap().recovery_error, Some(error));
+        let aliased = registry.open_local(&alias).unwrap();
+        assert_eq!(
+            registry.get(aliased).unwrap().recovery_path(),
+            Some(recovery.as_path())
+        );
+        assert!(matches!(
+            registry.save(aliased),
+            Some(SaveOutcome::Failed(_))
+        ));
+        assert!(registry.release(aliased));
+        let confirmed_alias = document_store::observe_destination(&alias).unwrap();
+        assert!(matches!(
+            registry.save_as(reopened, &alias, &confirmed_alias),
+            Some((SaveOutcome::Failed(_), None))
+        ));
+        assert_eq!(fs::read(recovery.join("original")).unwrap(), original);
+        assert_eq!(fs::read(recovery.join("prepared")).unwrap(), prepared);
+        assert!(recovery.is_dir());
+    }
+
+    #[test]
+    fn unresolved_recovery_protection_is_bounded_and_overflow_refuses_all_local_writes() {
+        let directory = TemporaryDirectory::new("recovery-protection-bound");
+        let unrelated = directory.file("unrelated.md", "untouched\n");
+        let mut registry = DocumentRegistry::new();
+        let existing = registry.open_local(&unrelated).unwrap();
+        for index in 0..=MAX_RECOVERY_PROTECTIONS {
+            let path = directory.file(&format!("source-{index}.md"), "owned\n");
+            let loaded = document_store::load(&path, registry.bounds()).unwrap();
+            let breadcrumb = directory.path.join(format!("recovery-{index}"));
+            let failure = SaveFailure::RecoveryRequired(breadcrumb.clone());
+            registry.retain_recovery_protection(
+                path,
+                loaded.source_authority.recovery_authority(),
+                breadcrumb.clone(),
+                SaveError::new(failure.headline(), failure.detail()),
+            );
+            assert_eq!(registry.take_recovery_notice().unwrap().0, breadcrumb);
+            assert!(registry.acknowledge_recovery_notice(&breadcrumb));
+        }
+        assert_eq!(
+            registry.recovery_protections.len(),
+            MAX_RECOVERY_PROTECTIONS
+        );
+        assert!(!registry.has_recovery_notices());
+        let overflow = registry.recovery_protection_overflow.clone().unwrap();
+        assert_eq!(overflow.0, directory.path.join("recovery-64"));
+        assert!(overflow.1.detail().contains("All local writes are refused"));
+        type_into(&mut registry, existing, "new\n");
+        assert_eq!(
+            registry.save(existing),
+            Some(SaveOutcome::Failed(overflow.1.clone()))
+        );
+        registry
+            .get_mut(existing)
+            .unwrap()
+            .set_auto_save_requested(true);
+        registry.background_tick(
+            &egui::Context::default(),
+            Instant::now() + AUTO_SAVE_IDLE,
+            true,
+        );
+        assert!(registry.get(existing).unwrap().background.is_none());
+        assert!(registry.release(existing));
+        let reopened = registry.open_local(&unrelated).unwrap();
+        assert_eq!(
+            registry.get(reopened).unwrap().recovery_error,
+            Some(overflow.1.clone())
+        );
+        let destination = directory.path.join("new.md");
+        let confirmed = document_store::observe_destination(&destination).unwrap();
+        assert_eq!(
+            registry.save_as(reopened, &destination, &confirmed),
+            Some((SaveOutcome::Failed(overflow.1), None))
+        );
+        assert!(!destination.exists());
+        assert_eq!(fs::read_to_string(&unrelated).unwrap(), "untouched\n");
+        let protected = registry
+            .open_local(&directory.path.join("source-0.md"))
+            .unwrap();
+        assert_eq!(
+            registry.get(protected).unwrap().recovery_path(),
+            Some(directory.path.join("recovery-0").as_path())
+        );
     }
 
     #[test]
