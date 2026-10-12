@@ -1544,6 +1544,16 @@ appearance/usability and CP-18 native resource/latency obligations remain open.
 
 ### Experimental Direct2D qualification
 
+`TERM-01` unchanged-frame preparation now has deterministic native work-count
+and exact-pixel controls at 100%, 125% and 200% scale. Within an additional
+1-MiB complete-source payload bound, exact warm frames skip native conversion
+and region materialization; atlas identity/equal replacements, unused vertices,
+aggregate budgets, refusal/recovery and explicit redraw remain covered.
+Over-budget snapshots keep ordinary preparation. See the
+[work control](../validation/direct2d/README.md#unchanged-frame-preparation-work-control).
+This automates avoided-work evidence only, not paired CPU/timing, total
+resources, native-window or physical-latency qualification. CP-18 remains open.
+
 `TERM-01` atlas preflight has automated copy-refusal, font-delta, replacement,
 snapshot-owner retirement and recovery evidence. Backend-owned admission
 preserves the existing single-texture/aggregate limits; eligible zero-retention

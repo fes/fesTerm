@@ -3,6 +3,24 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Deferring native preparation for exact unchanged terminal frames
+
+The source audit found that retained Direct2D frames still converted every
+original vertex and expanded triangles into 64-pixel regions before discovering
+that their pixels were unchanged. The renderer now retains an optional exact
+complete-source certificate, capped at 1 MiB of payload, from a successfully
+prepared frame. Original geometry/texture admission remains live; only exact
+source, texture and frame-metadata equality skips conversion and partitioning.
+Changed or oversized sources keep the existing complete native preparation
+before damage comparison, including unused-vertex and aggregate palette checks.
+
+Deterministic native controls reduce warm preparation/partition calls from one
+each to zero while comparing complete pixels at three scales, preserving older
+surfaces and testing refusal, recovery, atlas replacement, budget fallback and
+explicit redraw. This proves avoided work, not a CPU/timing speedup or total
+memory improvement. Native resource, presentation and hardware qualification
+remains open under CP-18; no composition or terminal ownership boundary changes.
+
 ## v0.10.2: bounded document preparation and native-exit evidence
 
 This patch release packages the merged performance and resource hardening since

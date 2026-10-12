@@ -51,6 +51,43 @@ drawing. Old callbacks' textures are never overwritten. egui-wgpu still owns
 window composition, so this is not a partial-present backend. Native frame
 counters count updated images; unchanged-image reuse is logged separately.
 
+### Unchanged-frame preparation work control
+
+The retained renderer admits original geometry and textures before considering
+reuse, including aggregate budgets and nonfinite unused positions/UVs.
+An optional exact complete-source snapshot (primitive/vertex/index payload
+capped at 1 MiB) certifies the remaining native-only checks only when rect,
+scale, background, every original mesh/index/vertex/clip, and immutable texture
+identity or complete pixels match a successfully prepared frame. It is not a
+hash or visible-region signature. Texture admission/upload/pruning still runs,
+and byte-equal atlas replacements become canonical Arcs without uploads.
+
+`unchanged_retained_frames_skip_native_preparation_and_region_materialization`
+compares full native pixels at 100%, 125% and 200% scale. The deterministic
+control requires one native preparation and one region partition for a cold
+frame, zero of both for an exact warm frame, and one of both for metadata,
+valid-unused-geometry or explicit redraw invalidation. Over-budget source
+snapshots retain ordinary preparation/partitioning with identical pixels.
+The existing scattered-damage test still requires exactly one complete native
+preparation for changed frames, independent of patch count.
+
+`retained_source_is_exact_complete_and_payload_bounded`,
+`native_analysis_validates_unused_vertices_and_aggregate_geometry`,
+`retained_source_refuses_invalid_unused_geometry_and_recovers_after_admission_failure`
+and `retained_source_preserves_original_palette_and_texture_budget_refusals`
+cover complete-source comparison, source retirement, invalid indices/unused
+vertices, aggregate geometry/texture budgets, palette refusal and recovery.
+The existing atlas identity test also requires zero preparation/partition calls
+for trusted identity and byte-equal replacement reuse. Admission failures
+publish no cached success; application regressions retain same-frame ordinary
+fallback. Already published surfaces stay immutable.
+
+This is work-count evidence, not paired process-CPU or timing evidence.
+The extra 1-MiB bound covers retained source payload, not allocator overhead,
+transient replacement overlap, region snapshots, total RSS/private bytes or
+GPU retirement. CP-18 native-window, sustained resources, mixed-DPI,
+multi-window, hardware/device-loss and physical-latency evidence remains open.
+
 The SDK implementation in `crates/festerm-windows-direct2d/native/renderer.cpp`
 is shared with the replay probe. Rust owns resource publication, budgets, and
 the application boundary. An older published surface is never overwritten by
