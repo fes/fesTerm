@@ -19,6 +19,11 @@ reload before the test's own drain, falsely reporting no change. The real
 registered worker still discovers the return and the original reload and
 no-idle-wake assertions remain intact.
 
+The subsequent main run exposed the same redundant-drain race in the autosave
+error regression's second revision. Its single registration already sets a
+due worker deadline; removing the extra tick preserves the assertions that a
+new edit retries once and that the failed write never changes source bytes.
+
 ## Deferring native preparation for exact unchanged terminal frames
 
 The source audit found that retained Direct2D frames still converted every

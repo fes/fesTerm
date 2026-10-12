@@ -4063,7 +4063,8 @@ mod tests {
         // The production tick normally notices the new revision itself.
         registry.get_mut(id).unwrap().settled = Some((revision - 1, now - AUTO_SAVE_IDLE));
         registry.background_tick(&context, now - AUTO_SAVE_IDLE, false);
-        registry.background_tick(&context, now, false);
+        // The worker owns the deadline; another tick could consume its
+        // already-published error before this test drains the completion.
         assert!(wait_completion(&mut registry, &woken));
         assert_eq!(calls.load(Ordering::Acquire), 2);
         assert!(registry.get(id).unwrap().text().is_dirty());
