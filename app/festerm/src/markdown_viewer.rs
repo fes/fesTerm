@@ -25,6 +25,7 @@ use festerm_markdown::{
 use festerm_ui_egui::{icon, icon::Icon, theme};
 use image::ImageDecoder;
 
+use crate::document_layout::{galley_payload_bytes, LayoutEpoch};
 use crate::document_store::{DirectoryIdentity, Generation};
 use crate::markdown_images::{
     DecodedImage, ImageLoadFailure, ImageMemoryBudget, ImageReservation, ImageRetry, ImageWorker,
@@ -123,6 +124,10 @@ const MAX_GEOMETRY_FONT_FAMILY_REFERENCES: usize = 256;
 const MAX_PREPARED_TABLE_CELLS: usize = 32;
 const MAX_PREPARED_TABLE_CELL_INPUT_BYTES: usize = 256;
 const MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES: usize = 64 * 1024;
+const MAX_PREPARED_TABLE_LAYOUTS: usize = 512;
+const MAX_PREPARED_TABLE_LAYOUT_CELLS: usize = 8192;
+const MAX_PREPARED_TABLE_LAYOUT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_LAYOUT_FIND_MATCHES: usize = 8192;
 /// Height reserved for the viewer's own footer, used only when the shared
 /// application status bar is hidden. Matches the status bar's own geometry
 /// so toggling it doesn't reflow the document.
@@ -475,6 +480,7 @@ pub struct MarkdownViewerTab {
     source_syntax: Option<Vec<festerm_syntax::Span>>,
     source_preparation: SourcePreparation,
     code_preparation: CodeLinePreparation,
+    table_layouts: TableLayoutPreparation,
     outline_preparation: OutlinePreparation,
     outline_keyboard_focus: bool,
     status_bar_visible: bool,
@@ -527,6 +533,7 @@ impl MarkdownViewerTab {
             source_syntax: None,
             source_preparation: SourcePreparation::default(),
             code_preparation: CodeLinePreparation::default(),
+            table_layouts: TableLayoutPreparation::default(),
             outline_preparation: OutlinePreparation::default(),
             outline_keyboard_focus: false,
             status_bar_visible: true,
@@ -588,6 +595,7 @@ impl MarkdownViewerTab {
             source_syntax: None,
             source_preparation: SourcePreparation::default(),
             code_preparation: CodeLinePreparation::default(),
+            table_layouts: TableLayoutPreparation::default(),
             outline_preparation: OutlinePreparation::default(),
             outline_keyboard_focus: false,
             status_bar_visible: true,
@@ -757,6 +765,7 @@ impl MarkdownViewerTab {
                                     source_syntax: &mut self.source_syntax,
                                     source_preparation: &mut self.source_preparation,
                                     code_preparation: &mut self.code_preparation,
+                                    table_layouts: &mut self.table_layouts,
                                     outline_preparation: &mut self.outline_preparation,
                                     outline_keyboard_focus: &mut self.outline_keyboard_focus,
                                     heading_tops: None,
@@ -825,6 +834,7 @@ impl MarkdownViewerTab {
                 self.source_syntax = None;
                 self.source_preparation.clear();
                 self.code_preparation.clear();
+                self.table_layouts.clear();
                 self.outline_preparation.clear();
                 self.document = Some(document);
                 self.error = None;
@@ -1616,11 +1626,129 @@ struct MarkdownRenderState<'a> {
     source_syntax: &'a mut Option<Vec<festerm_syntax::Span>>,
     source_preparation: &'a mut SourcePreparation,
     code_preparation: &'a mut CodeLinePreparation,
+    table_layouts: &'a mut TableLayoutPreparation,
     outline_preparation: &'a mut OutlinePreparation,
     outline_keyboard_focus: &'a mut bool,
     /// Shared Preview measures section positions; the standalone viewer has
     /// no consumer and does not collect them.
     heading_tops: Option<&'a mut Vec<(usize, f32)>>,
+}
+
+#[derive(Default)]
+struct TableLayoutPreparation {
+    epoch: LayoutEpoch,
+    find: Option<(Vec<TextMatch>, Option<usize>)>,
+    tables: BTreeMap<usize, Arc<PreparedTable>>,
+    cells: usize,
+    payload_bytes: usize,
+    #[cfg(test)]
+    ordinary: bool,
+    #[cfg(test)]
+    preparations: usize,
+}
+
+struct PreparedTable {
+    available_width: f32,
+    style: InlineRenderStyle,
+    widths: Vec<f32>,
+    rows: Vec<PreparedTableRow>,
+    cells: usize,
+    payload_bytes: usize,
+}
+
+struct PreparedTableRow {
+    galleys: Vec<Arc<egui::Galley>>,
+    height: f32,
+}
+
+impl TableLayoutPreparation {
+    fn clear(&mut self) {
+        self.find = None;
+        self.tables.clear();
+        self.cells = 0;
+        self.payload_bytes = 0;
+    }
+
+    fn begin(&mut self, ui: &egui::Ui, find: &MarkdownFindState) {
+        #[cfg(test)]
+        {
+            self.preparations = 0;
+        }
+        let epoch_current = self.epoch.refresh(ui);
+        let find_current = self.find.as_ref().is_some_and(|(matches, current)| {
+            matches == find.matches() && *current == find.current_index
+        });
+        if !epoch_current || !find_current {
+            self.clear();
+            if find.matches().len() <= MAX_LAYOUT_FIND_MATCHES {
+                self.find = Some((find.matches().to_vec(), find.current_index));
+            }
+        }
+    }
+
+    fn get(
+        &mut self,
+        start: usize,
+        available_width: f32,
+        style: InlineRenderStyle,
+    ) -> Option<Arc<PreparedTable>> {
+        #[cfg(test)]
+        if self.ordinary {
+            return None;
+        }
+        let table = self.tables.get(&start)?;
+        if table.available_width == available_width && table.style == style {
+            return Some(table.clone());
+        }
+        let previous = self.tables.remove(&start).unwrap();
+        self.cells -= previous.cells;
+        self.payload_bytes -= previous.payload_bytes;
+        None
+    }
+
+    fn retain(&mut self, start: usize, table: &Arc<PreparedTable>) {
+        #[cfg(test)]
+        if self.ordinary {
+            return;
+        }
+        if self.find.is_some()
+            && self.tables.len() < MAX_PREPARED_TABLE_LAYOUTS
+            && table.cells <= MAX_PREPARED_TABLE_LAYOUT_CELLS.saturating_sub(self.cells)
+            && table.payload_bytes
+                <= MAX_PREPARED_TABLE_LAYOUT_BYTES.saturating_sub(self.payload_bytes)
+        {
+            self.cells += table.cells;
+            self.payload_bytes += table.payload_bytes;
+            self.tables.insert(start, table.clone());
+        }
+    }
+}
+
+impl PreparedTable {
+    fn accounted_payload(&self) -> Option<usize> {
+        let mut bytes = std::mem::size_of::<Self>()
+            .checked_add(
+                self.widths
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<f32>())?,
+            )?
+            .checked_add(
+                self.rows
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<PreparedTableRow>())?,
+            )?;
+        for row in &self.rows {
+            bytes = bytes.checked_add(
+                row.galleys
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<Arc<egui::Galley>>())?,
+            )?;
+            for galley in &row.galleys {
+                bytes = bytes.checked_add(galley_payload_bytes(galley)?)?;
+            }
+        }
+        Some(bytes)
+    }
 }
 
 #[derive(Default)]
@@ -2522,46 +2650,7 @@ fn table_cell_payload_bytes(galley: &egui::Galley) -> Option<usize> {
     {
         return None;
     }
-    let mut bytes = std::mem::size_of::<egui::Galley>()
-        .checked_add(std::mem::size_of::<LayoutJob>())?
-        .checked_add(galley.job.text.capacity())?
-        .checked_add(
-            galley
-                .job
-                .sections
-                .capacity()
-                .checked_mul(std::mem::size_of::<egui::text::LayoutSection>())?,
-        )?
-        .checked_add(
-            galley
-                .rows
-                .capacity()
-                .checked_mul(std::mem::size_of::<egui::epaint::text::PlacedRow>())?,
-        )?;
-    for row in &galley.rows {
-        bytes = bytes
-            .checked_add(std::mem::size_of::<egui::epaint::text::Row>())?
-            .checked_add(
-                row.glyphs
-                    .capacity()
-                    .checked_mul(std::mem::size_of::<egui::epaint::text::Glyph>())?,
-            )?
-            .checked_add(
-                row.visuals
-                    .mesh
-                    .vertices
-                    .capacity()
-                    .checked_mul(std::mem::size_of::<egui::epaint::Vertex>())?,
-            )?
-            .checked_add(
-                row.visuals
-                    .mesh
-                    .indices
-                    .capacity()
-                    .checked_mul(std::mem::size_of::<u32>())?,
-            )?;
-    }
-    Some(bytes)
+    galley_payload_bytes(galley)
 }
 
 #[cfg(test)]
@@ -2938,6 +3027,7 @@ impl MarkdownRenderState<'_> {
         ui: &mut egui::Ui,
         document: &MarkdownDocument,
     ) -> MarkdownDocumentLayout {
+        self.table_layouts.begin(ui, self.find);
         let viewport_height = ui.available_height().max(120.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
@@ -3170,6 +3260,86 @@ impl MarkdownRenderState<'_> {
         }
     }
 
+    fn prepare_table(
+        &mut self,
+        ui: &egui::Ui,
+        block: &TableBlock,
+        document: &MarkdownDocument,
+        style: InlineRenderStyle,
+        column_count: usize,
+    ) -> PreparedTable {
+        #[cfg(test)]
+        {
+            self.table_layouts.preparations += 1;
+        }
+        let padding_x = f32::from(TABLE_CELL_PADDING_X);
+        let padding_y = f32::from(TABLE_CELL_PADDING_Y);
+        let font = FontId::proportional(BODY_TEXT_SIZE - 1.0);
+        // Natural measurements never feed last frame's wrapped widths back
+        // into layout. Final galleys and row heights share this exact key.
+        let mut cell_galleys = Vec::with_capacity(block.rows().len());
+        let mut natural = vec![0.0_f32; column_count];
+        for row in block.rows() {
+            let mut cells = Vec::with_capacity(row.cells().len());
+            for (column, cell) in row.cells().iter().enumerate() {
+                let unwrapped = self.table_cells.unwrapped(
+                    ui,
+                    cell.inlines(),
+                    document,
+                    self.find,
+                    font.clone(),
+                    if row.is_header() {
+                        style.with_strong()
+                    } else {
+                        style
+                    },
+                );
+                if let Some(slot) = natural.get_mut(column) {
+                    *slot = slot.max(unwrapped.size().x + padding_x * 2.0);
+                }
+                cells.push(unwrapped);
+            }
+            cell_galleys.push(cells);
+        }
+        let widths = table_column_widths(&natural, (ui.available_width() - 2.0).max(0.0));
+        let mut count = 0;
+        let rows = cell_galleys
+            .into_iter()
+            .map(|cells| {
+                let mut height = 0.0_f32;
+                let galleys = cells
+                    .into_iter()
+                    .enumerate()
+                    .map(|(column, unwrapped)| {
+                        let width = widths
+                            .get(column)
+                            .copied()
+                            .unwrap_or(TABLE_MIN_COLUMN_WIDTH);
+                        let galley = self.table_cells.constrained(
+                            ui,
+                            unwrapped,
+                            (width - padding_x * 2.0).max(1.0),
+                        );
+                        height = height.max(galley.size().y + padding_y * 2.0);
+                        count += 1;
+                        galley
+                    })
+                    .collect();
+                PreparedTableRow { galleys, height }
+            })
+            .collect();
+        let mut table = PreparedTable {
+            available_width: ui.available_width(),
+            style,
+            widths,
+            rows,
+            cells: count,
+            payload_bytes: 0,
+        };
+        table.payload_bytes = table.accounted_payload().unwrap_or(usize::MAX);
+        table
+    }
+
     fn render_table(
         &mut self,
         ui: &mut egui::Ui,
@@ -3187,44 +3357,20 @@ impl MarkdownRenderState<'_> {
             return;
         }
 
-        let font = FontId::proportional(BODY_TEXT_SIZE - 1.0);
         let padding_x = f32::from(TABLE_CELL_PADDING_X);
         let padding_y = f32::from(TABLE_CELL_PADDING_Y);
         self.table_cells.begin_table(ui);
-
-        // Measure unwrapped cells before assigning column widths; fitting cells
-        // reuse that galley. `egui::Grid` instead feeds last frame's wrapped
-        // widths back into the next layout, which made reference tables shrink
-        // every frame until they wrapped one character per line.
-        let mut cell_galleys = Vec::with_capacity(block.rows().len());
-        let mut natural = vec![0.0_f32; column_count];
-        for row in block.rows() {
-            let mut cells = Vec::with_capacity(column_count);
-            for (column, cell) in row.cells().iter().enumerate() {
-                let unwrapped = self.table_cells.unwrapped(
-                    ui,
-                    cell.inlines(),
-                    document,
-                    self.find,
-                    font.clone(),
-                    if row.is_header() {
-                        text_style.with_strong()
-                    } else {
-                        text_style
-                    },
-                );
-                let width = unwrapped.size().x;
-                if let Some(slot) = natural.get_mut(column) {
-                    *slot = slot.max(width + padding_x * 2.0);
-                }
-                cells.push(unwrapped);
-            }
-            cell_galleys.push(cells);
-        }
-
-        // The frame's 1px inner margin sits between the reading column and the
-        // cells, so the columns get to share what is left of it.
-        let widths = table_column_widths(&natural, (ui.available_width() - 2.0).max(0.0));
+        let start = block.span().byte_range().start;
+        let table = self
+            .table_layouts
+            .get(start, ui.available_width(), text_style)
+            .unwrap_or_else(|| {
+                let table =
+                    Arc::new(self.prepare_table(ui, block, document, text_style, column_count));
+                self.table_layouts.retain(start, &table);
+                table
+            });
+        let widths = &table.widths;
         let total_width: f32 = widths.iter().sum();
 
         egui::Frame::new()
@@ -3238,27 +3384,9 @@ impl MarkdownRenderState<'_> {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                         let mut cell_rects: Vec<Vec<egui::Rect>> =
-                            Vec::with_capacity(cell_galleys.len());
-                        for (row, cells) in block.rows().iter().zip(cell_galleys) {
-                            // A row is only as tall as its tallest wrapped
-                            // cell, so every cell has to be laid out before any
-                            // of them can be placed.
-                            let mut row_height = 0.0_f32;
-                            let mut galleys = Vec::with_capacity(cells.len());
-                            for (column, unwrapped) in cells.into_iter().enumerate() {
-                                let width = widths
-                                    .get(column)
-                                    .copied()
-                                    .unwrap_or(TABLE_MIN_COLUMN_WIDTH);
-                                let galley = self.table_cells.constrained(
-                                    ui,
-                                    unwrapped,
-                                    (width - padding_x * 2.0).max(1.0),
-                                );
-                                row_height = row_height.max(galley.size().y + padding_y * 2.0);
-                                galleys.push(galley);
-                            }
-
+                            Vec::with_capacity(table.rows.len());
+                        for (row, prepared) in block.rows().iter().zip(&table.rows) {
+                            let row_height = prepared.height;
                             let (row_rect, _) = ui.allocate_exact_size(
                                 vec2(total_width, row_height),
                                 egui::Sense::hover(),
@@ -3271,9 +3399,9 @@ impl MarkdownRenderState<'_> {
                                 );
                             }
 
-                            let mut row_rects = Vec::with_capacity(galleys.len());
+                            let mut row_rects = Vec::with_capacity(prepared.galleys.len());
                             let mut left = row_rect.left();
-                            for (column, galley) in galleys.into_iter().enumerate() {
+                            for (column, galley) in prepared.galleys.iter().enumerate() {
                                 let width = widths
                                     .get(column)
                                     .copied()
@@ -3304,7 +3432,7 @@ impl MarkdownRenderState<'_> {
                                         .layout(layout),
                                 );
                                 let response =
-                                    cell_ui.add(egui::Label::new(galley).selectable(true));
+                                    cell_ui.add(egui::Label::new(galley.clone()).selectable(true));
                                 #[cfg(test)]
                                 self.table_cells
                                     .record(row.cells()[column].span(), &response);
@@ -4834,6 +4962,7 @@ pub(crate) struct MarkdownPreviewPane {
     line_heading_indices: Vec<Option<usize>>,
     source_syntax: Option<Vec<festerm_syntax::Span>>,
     code_preparation: CodeLinePreparation,
+    table_layouts: TableLayoutPreparation,
     outline_keyboard_focus: bool,
     heading_tops: Vec<(usize, f32)>,
     visible_heading: Option<usize>,
@@ -4877,6 +5006,7 @@ impl MarkdownPreviewPane {
             line_heading_indices: Vec::new(),
             source_syntax: None,
             code_preparation: CodeLinePreparation::default(),
+            table_layouts: TableLayoutPreparation::default(),
             outline_keyboard_focus: false,
             heading_tops: Vec::new(),
             visible_heading: None,
@@ -5004,6 +5134,7 @@ impl MarkdownPreviewPane {
         ) {
             Ok(document) => {
                 self.code_preparation.clear();
+                self.table_layouts.clear();
                 let retained: HashSet<usize> = self
                     .document
                     .as_ref()
@@ -5109,10 +5240,12 @@ impl MarkdownPreviewPane {
             source_syntax: &mut self.source_syntax,
             source_preparation: &mut SourcePreparation::default(),
             code_preparation: &mut self.code_preparation,
+            table_layouts: &mut self.table_layouts,
             outline_preparation: &mut OutlinePreparation::default(),
             outline_keyboard_focus: &mut self.outline_keyboard_focus,
             heading_tops: Some(&mut heading_tops),
         };
+        state.table_layouts.begin(ui, state.find);
         #[cfg(test)]
         {
             state.table_cells.probe = self.table_cell_probe.take();
@@ -5784,6 +5917,7 @@ mod tests {
                     source_syntax: &mut None,
                     source_preparation: &mut SourcePreparation::default(),
                     code_preparation: &mut CodeLinePreparation::default(),
+                    table_layouts: &mut TableLayoutPreparation::default(),
                     outline_preparation: &mut OutlinePreparation::default(),
                     outline_keyboard_focus: &mut outline_keyboard_focus,
                     heading_tops: Some(&mut heading_tops),
@@ -7656,6 +7790,8 @@ mod tests {
                 ordinary: index == 0,
                 ..Default::default()
             });
+            // Older caption/cell oracles isolate their own frame-local seam.
+            pane.table_layouts.ordinary = true;
             pane.table_cell_probe = Some(TableCellProbe {
                 ordinary: index == 0,
                 ..Default::default()
@@ -7794,6 +7930,251 @@ mod tests {
         pair
     }
 
+    fn document_layout_pair(text: &str) -> [(egui::Context, MarkdownPreviewPane); 2] {
+        let mut pair = table_preparation_pair(text);
+        for (_, pane) in &mut pair {
+            pane.table_cell_probe.as_mut().unwrap().ordinary = false;
+            pane.code_preparation.probe.as_mut().unwrap().ordinary = false;
+        }
+        pair[1].1.table_layouts.ordinary = false;
+        pair
+    }
+
+    #[test]
+    fn document_layout_reuses_complete_live_tables_and_invalidates_exact_dependencies() {
+        let fixture = mixed_caption_fixture();
+        let mut pair = document_layout_pair(&fixture);
+        let wide = vec2(1180.0, 760.0);
+        for frame in 0..3 {
+            caption_oracle_frame(&mut pair, frame, wide, Vec::new());
+            assert_eq!(pair[0].1.table_layouts.preparations, 400);
+            assert_eq!(
+                pair[1].1.table_layouts.preparations,
+                if frame == 0 { 400 } else { 0 }
+            );
+            assert_eq!(
+                pair[1]
+                    .1
+                    .table_cell_probe
+                    .as_ref()
+                    .unwrap()
+                    .observations
+                    .len(),
+                1600
+            );
+            if frame != 0 {
+                let probe = pair[1].1.table_cell_probe.as_ref().unwrap();
+                assert_eq!(
+                    (
+                        probe.preparations,
+                        probe.prepared_text_bytes,
+                        probe.wrap_layouts
+                    ),
+                    (0, 0, 0)
+                );
+            }
+        }
+        for (index, control) in [
+            "width", "fonts", "options", "scale", "theme", "find", "current", "ranges", "revision",
+            "atlas",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let size = if control == "width" {
+                vec2(360.0, 760.0)
+            } else {
+                wide
+            };
+            for (context, pane) in &mut pair {
+                match control {
+                    "fonts" => {
+                        let mut fonts = egui::FontDefinitions::default();
+                        fonts.families.insert(
+                            egui::FontFamily::Proportional,
+                            fonts.families[&egui::FontFamily::Monospace].clone(),
+                        );
+                        context.set_fonts(fonts);
+                    }
+                    "options" => context.global_style_mut(|style| {
+                        style.visuals.text_options.font_hinting =
+                            !style.visuals.text_options.font_hinting;
+                    }),
+                    "scale" => context.set_pixels_per_point(1.25),
+                    "theme" => context.set_visuals(egui::Visuals::light()),
+                    "find" => pane
+                        .find
+                        .set_query(pane.document.as_ref().unwrap(), "Item".into()),
+                    "current" => {
+                        pane.find.next();
+                    }
+                    // Keep query, length and current index the same, changing
+                    // only an internal range: a query/count-only key is unsafe.
+                    "ranges" => {
+                        let ranges = pane.document.as_ref().unwrap().find_matches("synthetic");
+                        assert_eq!(ranges.len(), pane.find.matches.len());
+                        pane.find.matches = ranges;
+                    }
+                    "revision" => {
+                        pane.parse(fixture.replace("Item", "café 漢字"));
+                        pane.find
+                            .set_query(pane.document.as_ref().unwrap(), pane.find.query.clone());
+                    }
+                    "atlas" => crate::document_layout::exhaust_font_atlas(context),
+                    _ => {}
+                }
+            }
+            caption_oracle_frame(&mut pair, 3 + index * 2, size, Vec::new());
+            assert_eq!(pair[1].1.table_layouts.preparations, 400, "{control}");
+            caption_oracle_frame(&mut pair, 4 + index * 2, size, Vec::new());
+            assert_eq!(pair[1].1.table_layouts.preparations, 0, "{control}: warm");
+        }
+        // Retained geometry never removes offscreen heading or byte targets.
+        for (_, pane) in &mut pair {
+            pane.find.clear();
+            pane.scroll_to_heading(399);
+        }
+        for frame in 24..28 {
+            caption_oracle_frame(&mut pair, frame, wide, Vec::new());
+        }
+        assert_eq!(pair[1].1.visible_heading(), Some(399));
+        for (_, pane) in &mut pair {
+            let tail = pane
+                .document
+                .as_ref()
+                .unwrap()
+                .source_text()
+                .rfind("fn example")
+                .unwrap();
+            pane.pending_scroll = Some(PendingScroll::Byte(tail));
+        }
+        let output = caption_oracle_frame(&mut pair, 28, wide, Vec::new());
+        let text = output[1]
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text)
+                    if text.galley.job.text == "café 漢字"
+                        && shape.clip_rect.intersects(egui::Rect::from_min_size(
+                            text.pos,
+                            text.galley.size(),
+                        )) =>
+                {
+                    Some(text)
+                }
+                _ => None,
+            })
+            .expect("offscreen table navigation must expose its live selectable cell");
+        let start = text.pos
+            + text
+                .galley
+                .pos_from_cursor(text.galley.begin())
+                .center()
+                .to_vec2();
+        let end = text.pos
+            + text
+                .galley
+                .pos_from_cursor(text.galley.end())
+                .center()
+                .to_vec2();
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        caption_oracle_frame(
+            &mut pair,
+            29,
+            wide,
+            vec![egui::Event::PointerMoved(start), button(start, true)],
+        );
+        caption_oracle_frame(&mut pair, 30, wide, vec![egui::Event::PointerMoved(end)]);
+        caption_oracle_frame(&mut pair, 31, wide, vec![button(end, false)]);
+        let output = caption_oracle_frame(&mut pair, 32, wide, vec![egui::Event::Copy]);
+        assert!(output[1].platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyText(text) if text.trim() == "café 漢字")));
+    }
+
+    #[test]
+    fn document_layout_tables_bound_retention_and_release_replaced_snapshots() {
+        let fixture: String = (0..MAX_PREPARED_TABLE_LAYOUTS + 2)
+            .map(|index| format!("## Section {index}\n\n| A | B |\n| - | - |\n| **café** | long wrapped value {index} |\n\n"))
+            .collect();
+        let mut pair = document_layout_pair(&fixture);
+        let size = vec2(360.0, 760.0);
+        caption_oracle_frame(&mut pair, 0, size, Vec::new());
+        assert_eq!(
+            pair[1].1.table_layouts.tables.len(),
+            MAX_PREPARED_TABLE_LAYOUTS
+        );
+        assert!(pair[1].1.table_layouts.cells <= MAX_PREPARED_TABLE_LAYOUT_CELLS);
+        assert!(pair[1].1.table_layouts.payload_bytes <= MAX_PREPARED_TABLE_LAYOUT_BYTES);
+        caption_oracle_frame(&mut pair, 1, size, Vec::new());
+        assert_eq!(pair[1].1.table_layouts.preparations, 2);
+        let weak = Arc::downgrade(pair[1].1.table_layouts.tables.values().next().unwrap());
+        for (_, pane) in &mut pair {
+            pane.parse("| New | Table |\n| - | - |\n| new bytes | value |\n".into());
+        }
+        assert!(weak.upgrade().is_none());
+        assert!(pair[1].1.table_layouts.tables.is_empty());
+        caption_oracle_frame(&mut pair, 2, size, Vec::new());
+        caption_oracle_frame(&mut pair, 3, size, Vec::new());
+        assert_eq!(pair[1].1.table_layouts.preparations, 0);
+
+        // Charge actual spare capacities, including final wrapped glyph/mesh
+        // storage, rather than accepting a short input on its text length.
+        let table = pair[1].1.table_layouts.tables.values().next().unwrap();
+        let mut galley = (*table.rows[0].galleys[0]).clone();
+        let before = galley_payload_bytes(&galley).unwrap();
+        galley.rows.reserve_exact(
+            MAX_PREPARED_TABLE_LAYOUT_BYTES / std::mem::size_of::<egui::epaint::text::PlacedRow>()
+                + 1,
+        );
+        assert!(galley_payload_bytes(&galley).unwrap() > before + MAX_PREPARED_TABLE_LAYOUT_BYTES);
+        let mut excessive = PreparedTable {
+            available_width: table.available_width,
+            style: table.style,
+            widths: table.widths.clone(),
+            rows: vec![PreparedTableRow {
+                galleys: vec![Arc::new(galley)],
+                height: table.rows[0].height,
+            }],
+            cells: 1,
+            payload_bytes: 0,
+        };
+        excessive.payload_bytes = excessive.accounted_payload().unwrap();
+        let cache = &mut pair[1].1.table_layouts;
+        cache.clear();
+        cache.find = Some((Vec::new(), None));
+        cache.retain(0, &Arc::new(excessive));
+        assert!(cache.tables.is_empty());
+
+        let mut viewers = source_preparation_pair(&fixture);
+        for (index, (_, viewer)) in viewers.iter_mut().enumerate() {
+            viewer.mode = MarkdownViewerMode::Preview;
+            viewer.table_layouts.ordinary = index == 0;
+            viewer.table_cell_probe = Some(TableCellProbe::default());
+        }
+        for frame in 0..3 {
+            source_preparation_frame(&mut viewers, frame, size, Vec::new());
+            assert_eq!(viewers[0].1.table_layouts.preparations, 514);
+            assert_eq!(
+                viewers[1].1.table_layouts.preparations,
+                if frame == 0 { 514 } else { 2 },
+                "standalone live Preview"
+            );
+            assert_eq!(
+                viewers[0].1.table_cell_probe.as_ref().unwrap().observations,
+                viewers[1].1.table_cell_probe.as_ref().unwrap().observations
+            );
+        }
+        for (_, viewer) in &mut viewers {
+            viewer.set_find_query_for_test("café");
+        }
+        source_preparation_frame(&mut viewers, 3, size, Vec::new());
+        assert_eq!(viewers[1].1.table_layouts.preparations, 514);
+    }
+
     #[test]
     fn table_preparation_removes_repeated_work_across_the_live_400_section_preview() {
         for width in [1180.0, 360.0] {
@@ -7840,6 +8221,7 @@ mod tests {
             let mut viewers = source_preparation_pair(&mixed_caption_fixture());
             for (index, (_, viewer)) in viewers.iter_mut().enumerate() {
                 viewer.mode = MarkdownViewerMode::Preview;
+                viewer.table_layouts.ordinary = true;
                 viewer.table_cell_probe = Some(TableCellProbe {
                     ordinary: index == 0,
                     ..Default::default()
@@ -10325,6 +10707,7 @@ mod tests {
                         source_syntax: &mut None,
                         source_preparation: &mut SourcePreparation::default(),
                         code_preparation: &mut CodeLinePreparation::default(),
+                        table_layouts: &mut TableLayoutPreparation::default(),
                         outline_preparation: &mut OutlinePreparation::default(),
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: Some(&mut heading_tops),
@@ -10398,6 +10781,7 @@ mod tests {
                         source_syntax: &mut None,
                         source_preparation: &mut SourcePreparation::default(),
                         code_preparation: &mut CodeLinePreparation::default(),
+                        table_layouts: &mut TableLayoutPreparation::default(),
                         outline_preparation: &mut OutlinePreparation::default(),
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: Some(&mut heading_tops),

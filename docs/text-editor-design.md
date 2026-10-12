@@ -79,6 +79,36 @@ Auto-save sits beside Save rather than beside `Edit | Preview | Split`, because
 it belongs to the document every view shares, not to the view that happens to
 be showing it.
 
+### Bounded live text-layout preparation
+
+Each editor view retains at most one complete laid-out body, under a 16 MiB
+accounted capacity ceiling. Exact document ID/revision, actual widget text,
+wrap width, syntax viewport/ranges/roles and every Find range/current match
+are checked before reuse; the shared layout epoch additionally rejects changes
+to context, viewport, scale, fonts, text options, atlas generation and theme
+text override/dark mode. No hash-only source identity is used. Rebinding drops
+the view's entry immediately, and replacing an entry drops the old owner
+before constructing the next.
+
+The synchronous TextEdit layouter borrows the existing Find/syntax channels
+instead of collecting Find tuples and copying visible spans on every frame.
+Only admitted entries copy their keys (at most 8,192 ranges per channel).
+Allocation capacities of the complete job text/sections, placed rows, glyphs,
+row meshes and copied keys are charged, including conservative repeated shared
+row charges. The tiny font-cache witness, bounded Arc/allocator overhead,
+ordinary egui memoization and live output/widget ownership are separate.
+Over-budget/custom-family layouts remain ordinary and never truncate text.
+
+TextEdit still sees the full document. Selection, caret shape/blink, IME
+composition, accessibility, Find and byte navigation remain live. A same-pass
+keystroke or IME edit triggers the layouter again before the document revision
+can change, so the actual text comparison is essential; caret-only movement
+does not change formatting and paints against the reusable full galley.
+Syntax remains viewport-limited with its existing margin, not whole-document
+syntax preparation or text virtualization. All renderer routes share this CPU
+path. Deterministic preparation/text-copy counters and live ordinary/cached
+oracles are not native latency or end-to-end performance claims.
+
 ## State is legible without colour
 
 Every document state is carried by **shape and words**, never by colour alone.

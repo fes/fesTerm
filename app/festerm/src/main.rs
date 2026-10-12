@@ -13,6 +13,7 @@ mod direct2d;
 mod direct2d_probe;
 mod discovery;
 mod document_activation;
+mod document_layout;
 // Every entry point here is exercised by its own tests and is called for real
 // once the editor tab lands; the allowance goes with it.
 #[allow(dead_code)]

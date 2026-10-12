@@ -7,6 +7,7 @@
 //! without either of them being in charge.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use eframe::egui::{self, vec2, Align, FontId, Sense, WidgetInfo, WidgetType};
 use festerm_document::{
@@ -16,6 +17,7 @@ use festerm_document::{
 use festerm_markdown::{LocalMarkdownSource, MarkdownSource};
 use festerm_ui_egui::{chrome::ChipStatus, icon, icon::Icon, theme};
 
+use crate::document_layout::{galley_payload_bytes, LayoutEpoch};
 use crate::document_store::{DirectoryIdentity, Generation};
 use crate::documents::{OpenDocument, SharedDocuments};
 use crate::markdown_viewer::{
@@ -42,6 +44,8 @@ const GUTTER_MIN_DIGITS: usize = 2;
 /// The tighter gap inside one group of related toolbar controls.
 const TOOLBAR_GROUP_GAP: f32 = 6.0;
 const EDITOR_TEXT_SIZE: f32 = 13.0;
+const MAX_PREPARED_EDITOR_LAYOUT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PREPARED_EDITOR_RANGES: usize = 8192;
 const BAR_PADDING_X: i8 = 9;
 const BAR_PADDING_Y: i8 = 6;
 const BANNER_ACCENT_WIDTH: f32 = 3.0;
@@ -400,6 +404,153 @@ struct SavedLocalPreviewSource {
     parent_identity: DirectoryIdentity,
 }
 
+#[derive(Default)]
+struct EditorLayoutPreparation {
+    epoch: LayoutEpoch,
+    prepared: Option<PreparedEditorLayout>,
+    #[cfg(test)]
+    ordinary: bool,
+    #[cfg(test)]
+    preparations: usize,
+    #[cfg(test)]
+    prepared_text_bytes: usize,
+}
+
+struct EditorLayoutInputs<'a> {
+    document: DocumentId,
+    revision: u64,
+    syntax_viewport: Option<std::ops::Range<usize>>,
+    matches: &'a [MatchRange],
+    current: Option<usize>,
+    spans: &'a [festerm_syntax::Span],
+}
+
+struct PreparedEditorLayout {
+    document: DocumentId,
+    revision: u64,
+    syntax_viewport: Option<std::ops::Range<usize>>,
+    matches: Vec<MatchRange>,
+    current: Option<usize>,
+    spans: Vec<festerm_syntax::Span>,
+    width: f32,
+    galley: Arc<egui::Galley>,
+    payload_bytes: usize,
+}
+
+impl EditorLayoutPreparation {
+    fn begin(&mut self, ui: &egui::Ui) {
+        if !self.epoch.refresh(ui) {
+            self.prepared = None;
+        }
+        #[cfg(test)]
+        {
+            self.preparations = 0;
+            self.prepared_text_bytes = 0;
+        }
+    }
+
+    fn layout(
+        &mut self,
+        ui: &egui::Ui,
+        text: &str,
+        width: f32,
+        inputs: &EditorLayoutInputs<'_>,
+    ) -> Arc<egui::Galley> {
+        #[cfg(test)]
+        let ordinary = self.ordinary;
+        #[cfg(not(test))]
+        let ordinary = false;
+        if !ordinary {
+            if let Some(prepared) = &self.prepared {
+                debug_assert!(prepared.payload_bytes <= MAX_PREPARED_EDITOR_LAYOUT_BYTES);
+                if prepared.document == inputs.document
+                    && prepared.revision == inputs.revision
+                    && prepared.syntax_viewport == inputs.syntax_viewport
+                    && prepared.matches == inputs.matches
+                    && prepared.current == inputs.current
+                    && prepared.spans == inputs.spans
+                    && prepared.width == width
+                    // Revision alone is insufficient: TextEdit calls again
+                    // after edits/IME in this pass, before registry publication.
+                    && prepared.galley.job.text == text
+                {
+                    return prepared.galley.clone();
+                }
+            }
+        }
+        self.prepared = None;
+        let highlights = inputs
+            .matches
+            .iter()
+            .enumerate()
+            .filter(|(_, found)| !found.is_empty())
+            .map(|(index, found)| (found.start, found.end, Some(index) == inputs.current));
+        let mut job = editor_layout_job_from_matches(text, highlights, inputs.spans);
+        job.wrap.max_width = width;
+        #[cfg(test)]
+        {
+            self.preparations += 1;
+            self.prepared_text_bytes += job.text.len();
+        }
+        let galley = ui.ctx().fonts_mut(|fonts| fonts.layout_job(job));
+        if !ordinary
+            && inputs.matches.len() <= MAX_PREPARED_EDITOR_RANGES
+            && inputs.spans.len() <= MAX_PREPARED_EDITOR_RANGES
+        {
+            let payload = galley_payload_bytes(&galley).and_then(|bytes| {
+                bytes
+                    .checked_add(std::mem::size_of::<PreparedEditorLayout>())?
+                    .checked_add(
+                        inputs
+                            .matches
+                            .len()
+                            .checked_mul(std::mem::size_of::<MatchRange>())?,
+                    )?
+                    .checked_add(
+                        inputs
+                            .spans
+                            .len()
+                            .checked_mul(std::mem::size_of::<festerm_syntax::Span>())?,
+                    )
+            });
+            if payload.is_some_and(|bytes| bytes <= MAX_PREPARED_EDITOR_LAYOUT_BYTES) {
+                let matches = inputs.matches.to_vec();
+                let spans = inputs.spans.to_vec();
+                let payload_bytes = galley_payload_bytes(&galley).and_then(|bytes| {
+                    bytes
+                        .checked_add(std::mem::size_of::<PreparedEditorLayout>())?
+                        .checked_add(
+                            matches
+                                .capacity()
+                                .checked_mul(std::mem::size_of::<MatchRange>())?,
+                        )?
+                        .checked_add(
+                            spans
+                                .capacity()
+                                .checked_mul(std::mem::size_of::<festerm_syntax::Span>())?,
+                        )
+                });
+                if let Some(payload_bytes) =
+                    payload_bytes.filter(|bytes| *bytes <= MAX_PREPARED_EDITOR_LAYOUT_BYTES)
+                {
+                    self.prepared = Some(PreparedEditorLayout {
+                        document: inputs.document,
+                        revision: inputs.revision,
+                        syntax_viewport: inputs.syntax_viewport.clone(),
+                        matches,
+                        current: inputs.current,
+                        spans,
+                        width,
+                        galley: galley.clone(),
+                        payload_bytes,
+                    });
+                }
+            }
+        }
+        galley
+    }
+}
+
 pub(crate) struct TextEditorTab {
     document: DocumentId,
     title: String,
@@ -411,6 +562,7 @@ pub(crate) struct TextEditorTab {
     /// can own edits in; the document is told about them straight afterwards,
     /// so this never drifts by more than the inside of one frame.
     buffer: String,
+    layout: EditorLayoutPreparation,
     options: EditorViewOptions,
     options_state: OptionsState,
     options_pinned_open: bool,
@@ -604,6 +756,7 @@ impl TextEditorTab {
             remote: open.origin().is_remote(),
             untitled: matches!(open.origin(), festerm_document::DocumentOrigin::Untitled(_)),
             buffer: open.text().text().to_owned(),
+            layout: EditorLayoutPreparation::default(),
             options,
             options_state: OptionsState::from_options(options),
             options_pinned_open: false,
@@ -675,6 +828,7 @@ impl TextEditorTab {
         self.remote = open.origin().is_remote();
         self.untitled = matches!(open.origin(), festerm_document::DocumentOrigin::Untitled(_));
         self.buffer = open.text().text().to_owned();
+        self.layout.prepared = None;
         self.find = FindState::default();
         self.preview = None;
         self.compare = None;
@@ -2540,37 +2694,7 @@ impl TextEditorTab {
         let width = self.body_width(ui, ui.available_width());
         let body_id = self.body_id();
         self.route_undo_shortcuts(ui, documents, read_only);
-        // Taken out of `self` before the widget borrows the buffer mutably.
-        let highlights: Vec<(usize, usize, bool)> = if self.highlighting_matches() {
-            let current = self.find.current;
-            self.find
-                .matches()
-                .iter()
-                .enumerate()
-                .filter(|(_, found)| !found.is_empty())
-                .map(|(index, found)| (found.start, found.end, Some(index) == current))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        // Only what is on screen is coloured (ADR 0035 §2): the range the
-        // reader can see, plus a margin so a small scroll does not arrive
-        // ahead of its colour.
-        let spans: Vec<festerm_syntax::Span> = if self.options.syntax {
-            let range = visible_byte_range(&self.buffer, self.top_visible_offset, ui);
-            let mut registry = documents.borrow_mut();
-            registry
-                .get_mut(self.document)
-                .map(|open| open.syntax_spans(range).to_vec())
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
-            let mut job = editor_layout_job(text.as_str(), &highlights, &spans);
-            job.wrap.max_width = wrap_width;
-            ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
-        };
+        self.layout.begin(ui);
         // Normal and Visual mode draw their own block caret below, so the
         // widget's blinking bar is taken away for the duration of the widget
         // rather than left to flash inside the block.
@@ -2582,15 +2706,47 @@ impl TextEditorTab {
             hidden.preview = false;
             previous
         });
-        let output = egui::TextEdit::multiline(&mut self.buffer)
-            .id(body_id)
-            .font(FontId::monospace(EDITOR_TEXT_SIZE))
-            .desired_width(width)
-            .desired_rows(1)
-            .interactive(!read_only)
-            .margin(egui::Margin::symmetric(BODY_MARGIN_X as i8, 8))
-            .layouter(&mut layouter)
-            .show(ui);
+        let output = {
+            let matches = if self.highlighting_matches() {
+                self.find.matches()
+            } else {
+                &[]
+            };
+            let syntax_viewport = self
+                .options
+                .syntax
+                .then(|| visible_byte_range(&self.buffer, self.top_visible_offset, ui));
+            // Borrow the actual channels through the synchronous widget call;
+            // no per-frame Find tuples or visible syntax Vec are copied.
+            let mut registry = documents.borrow_mut();
+            let open = registry.get_mut(self.document);
+            let revision = open.as_ref().map_or(0, |open| open.text().revision());
+            let spans = match (open, &syntax_viewport) {
+                (Some(open), Some(range)) => open.syntax_spans(range.clone()),
+                _ => &[],
+            };
+            let inputs = EditorLayoutInputs {
+                document: self.document,
+                revision,
+                syntax_viewport,
+                matches,
+                current: self.find.current,
+                spans,
+            };
+            let layout = &mut self.layout;
+            let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+                layout.layout(ui, text.as_str(), wrap_width, &inputs)
+            };
+            egui::TextEdit::multiline(&mut self.buffer)
+                .id(body_id)
+                .font(FontId::monospace(EDITOR_TEXT_SIZE))
+                .desired_width(width)
+                .desired_rows(1)
+                .interactive(!read_only)
+                .margin(egui::Margin::symmetric(BODY_MARGIN_X as i8, 8))
+                .layouter(&mut layouter)
+                .show(ui)
+        };
         if let Some(previous) = widget_caret {
             ui.visuals_mut().text_cursor = previous;
         }
@@ -3123,9 +3279,18 @@ pub(crate) const fn role_colour(role: festerm_syntax::Role) -> egui::Color32 {
 /// The two are deliberately different channels. A match keeps its wash and its
 /// rule whatever the text under it is, so a keyword that matches the search is
 /// still legible as both (ADR 0034 §8, ADR 0035 §5).
+#[cfg(test)]
 fn editor_layout_job(
     text: &str,
     highlights: &[(usize, usize, bool)],
+    spans: &[festerm_syntax::Span],
+) -> egui::text::LayoutJob {
+    editor_layout_job_from_matches(text, highlights.iter().copied(), spans)
+}
+
+fn editor_layout_job_from_matches(
+    text: &str,
+    highlights: impl Iterator<Item = (usize, usize, bool)> + Clone,
     spans: &[festerm_syntax::Span],
 ) -> egui::text::LayoutJob {
     let font = FontId::monospace(EDITOR_TEXT_SIZE);
@@ -3137,8 +3302,8 @@ fn editor_layout_job(
     // directly rather than allocating, sorting and deduplicating a third list.
     let valid_boundary = |cut: &usize| *cut <= text.len() && text.is_char_boundary(*cut);
     let mut match_boundaries = highlights
-        .iter()
-        .flat_map(|&(start, end, _)| [start, end])
+        .clone()
+        .flat_map(|(start, end, _)| [start, end])
         .filter(valid_boundary)
         .peekable();
     let mut syntax_boundaries = spans
@@ -3146,7 +3311,7 @@ fn editor_layout_job(
         .flat_map(|span| [span.start, span.end])
         .filter(valid_boundary)
         .peekable();
-    let mut match_index = 0;
+    let mut highlights = highlights.peekable();
     let mut syntax_index = 0;
     let mut start = 0;
     while start < text.len() {
@@ -3170,10 +3335,10 @@ fn editor_layout_job(
             continue;
         }
         while highlights
-            .get(match_index)
+            .peek()
             .is_some_and(|(_, match_end, _)| *match_end <= start)
         {
-            match_index += 1;
+            highlights.next();
         }
         while spans
             .get(syntax_index)
@@ -3182,7 +3347,7 @@ fn editor_layout_job(
             syntax_index += 1;
         }
         let matched = highlights
-            .get(match_index)
+            .peek()
             .filter(|(match_start, match_end, _)| *match_start <= start && *match_end >= end);
         let (background, underline) = match matched {
             // The current match is filled; the rest are washed and ruled. The
@@ -3240,6 +3405,296 @@ mod tests {
     use crate::documents::DocumentRegistry;
 
     use super::*;
+
+    fn document_layout_editor_pair(
+        text: &str,
+    ) -> [(egui::Context, SharedDocuments, TextEditorTab); 2] {
+        let tab = TabId::next_for_test();
+        std::array::from_fn(|index| {
+            let documents = DocumentRegistry::shared();
+            let id =
+                documents
+                    .borrow_mut()
+                    .create_untitled("layout", "fixture.py", text.as_bytes());
+            let mut editor = TextEditorTab::new(id, &documents);
+            editor.tab = Some(tab);
+            editor.layout.ordinary = index == 0;
+            editor.options.line_numbers = false;
+            let context = egui::Context::default();
+            context.enable_accesskit();
+            context.set_visuals(theme::default_visuals());
+            context.all_styles_mut(|style| {
+                style.animation_time = 0.0;
+                style.scroll_animation = egui::style::ScrollAnimation::none();
+                style.visuals.text_cursor.blink = false;
+            });
+            (context, documents, editor)
+        })
+    }
+
+    fn document_layout_editor_frame(
+        pair: &mut [(egui::Context, SharedDocuments, TextEditorTab); 2],
+        frame: usize,
+        size: egui::Vec2,
+        events: Vec<egui::Event>,
+    ) -> [egui::FullOutput; 2] {
+        let output = std::array::from_fn(|index| {
+            let (context, documents, editor) = &mut pair[index];
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    time: Some(frame as f64 / 60.0),
+                    events: events.clone(),
+                    ..Default::default()
+                },
+                |ui| {
+                    editor.show(ui, editor.tab.unwrap(), documents);
+                },
+            );
+            output.textures_delta.clear();
+            output
+        });
+        assert_eq!(
+            output[0].shapes, output[1].shapes,
+            "frame {frame}: complete live editor shapes"
+        );
+        assert_eq!(
+            format!("{:?}", output[0].platform_output.accesskit_update),
+            format!("{:?}", output[1].platform_output.accesskit_update),
+            "frame {frame}: accessibility"
+        );
+        assert_eq!(
+            format!("{:?}", output[0].platform_output.commands),
+            format!("{:?}", output[1].platform_output.commands),
+            "frame {frame}: commands"
+        );
+        assert_eq!(pair[0].2.buffer, pair[1].2.buffer);
+        assert_eq!(pair[0].2.caret, pair[1].2.caret);
+        assert_eq!(pair[0].2.top_visible_offset, pair[1].2.top_visible_offset);
+        output
+    }
+
+    #[test]
+    fn document_layout_editor_reuses_live_jobs_and_invalidates_width_style_revision_and_find() {
+        let text = format!(
+            "#!/usr/bin/env python\n{}",
+            (0..300)
+                .map(|index| format!("def value_{index}(): return \"café 漢字 {index}\"\n"))
+                .collect::<String>()
+        );
+        let mut pair = document_layout_editor_pair(&text);
+        let wide = vec2(1180.0, 760.0);
+        for frame in 0..3 {
+            document_layout_editor_frame(&mut pair, frame, wide, Vec::new());
+        }
+        assert_eq!(pair[1].2.layout.preparations, 0);
+        assert_eq!(pair[1].2.layout.prepared_text_bytes, 0);
+        assert!(pair[0].2.layout.prepared_text_bytes >= text.len());
+        assert!(!pair[1].2.layout.prepared.as_ref().unwrap().spans.is_empty());
+        let first = pair[1].2.layout.prepared.as_ref().unwrap().galley.clone();
+        document_layout_editor_frame(&mut pair, 3, wide, Vec::new());
+        assert!(Arc::ptr_eq(
+            &first,
+            &pair[1].2.layout.prepared.as_ref().unwrap().galley
+        ));
+        for (index, control) in [
+            "width", "fonts", "options", "scale", "theme", "syntax", "find", "current", "ranges",
+            "revision", "atlas",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let size = if control == "width" {
+                vec2(480.0, 760.0)
+            } else {
+                wide
+            };
+            for (context, documents, editor) in &mut pair {
+                match control {
+                    "fonts" => {
+                        let mut fonts = egui::FontDefinitions::default();
+                        fonts.families.insert(
+                            egui::FontFamily::Monospace,
+                            fonts.families[&egui::FontFamily::Proportional].clone(),
+                        );
+                        context.set_fonts(fonts);
+                    }
+                    "options" => context.global_style_mut(|style| {
+                        style.visuals.text_options.font_hinting =
+                            !style.visuals.text_options.font_hinting;
+                    }),
+                    "scale" => context.set_pixels_per_point(1.25),
+                    "theme" => context.set_visuals(egui::Visuals::light()),
+                    "syntax" => editor.options.syntax = false,
+                    "find" => {
+                        editor.searching_with_vi = true;
+                        editor.find.query = "return".into();
+                    }
+                    "current" => {
+                        editor.find.current = Some(1);
+                    }
+                    "ranges" => {
+                        editor.find.outcome.as_mut().unwrap().matches[0].start += 1;
+                    }
+                    "revision" => {
+                        documents
+                            .borrow_mut()
+                            .get_mut(editor.document)
+                            .unwrap()
+                            .text_mut()
+                            .sync_from_view(&text.replace("café", "cafe"))
+                            .unwrap();
+                    }
+                    "atlas" => crate::document_layout::exhaust_font_atlas(context),
+                    _ => {}
+                }
+            }
+            document_layout_editor_frame(&mut pair, 4 + index * 3, size, Vec::new());
+            assert!(pair[1].2.layout.preparations > 0, "{control}");
+            document_layout_editor_frame(&mut pair, 5 + index * 3, size, Vec::new());
+            document_layout_editor_frame(&mut pair, 6 + index * 3, size, Vec::new());
+            assert_eq!(pair[1].2.layout.preparations, 0, "{control}: warm");
+        }
+        let weak = Arc::downgrade(&pair[1].2.layout.prepared.as_ref().unwrap().galley);
+        let mut rebound = None;
+        for (_, documents, editor) in &mut pair {
+            let id = documents.borrow_mut().create_untitled(
+                "layout",
+                "rebound",
+                b"same revision, different identity",
+            );
+            rebound = Some(id);
+            editor.rebind(id, documents);
+            assert!(editor.layout.prepared.is_none());
+        }
+        document_layout_editor_frame(&mut pair, 45, wide, Vec::new());
+        assert!(pair[1].2.layout.preparations > 0);
+        assert_eq!(
+            pair[1].2.layout.prepared.as_ref().unwrap().document,
+            rebound.unwrap()
+        );
+        // Egui may retain the prior galley in its ordinary cache; our view
+        // no longer owns it, regardless of the old renderer/output's lifetime.
+        assert!(!weak.ptr_eq(&Arc::downgrade(
+            &pair[1].2.layout.prepared.as_ref().unwrap().galley
+        )));
+    }
+
+    #[test]
+    fn document_layout_editor_keeps_live_ime_caret_offscreen_selection_and_copy() {
+        let text = (0..300)
+            .map(|index| format!("café 漢字 line {index}\n"))
+            .collect::<String>();
+        let mut pair = document_layout_editor_pair(&text);
+        let size = vec2(1180.0, 520.0);
+        for frame in 0..3 {
+            document_layout_editor_frame(&mut pair, frame, size, Vec::new());
+        }
+        let initial_viewport = pair[1]
+            .2
+            .layout
+            .prepared
+            .as_ref()
+            .unwrap()
+            .syntax_viewport
+            .clone();
+        for (context, _, editor) in &mut pair {
+            let mut state =
+                egui::text_edit::TextEditState::load(context, editor.body_id()).unwrap();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(
+                    egui::text::CCursor::new(text.chars().count()),
+                )));
+            state.store(context, editor.body_id());
+            context.memory_mut(|memory| memory.request_focus(editor.body_id()));
+            editor.pending_scroll_offset = Some(text.len());
+            editor.top_visible_offset = text.len();
+        }
+        document_layout_editor_frame(&mut pair, 3, size, Vec::new());
+        assert_ne!(
+            pair[1].2.layout.prepared.as_ref().unwrap().syntax_viewport,
+            initial_viewport
+        );
+        assert!(pair[1].2.layout.preparations > 0, "changed syntax viewport");
+        for frame in 4..6 {
+            document_layout_editor_frame(&mut pair, frame, size, Vec::new());
+        }
+        assert!(pair[1].2.top_visible_offset > 0);
+        document_layout_editor_frame(&mut pair, 6, size, vec![egui::Event::Text("Δ".into())]);
+        assert!(pair[1].2.buffer.ends_with('Δ'));
+        assert!(pair[1].2.layout.preparations > 0);
+        document_layout_editor_frame(
+            &mut pair,
+            7,
+            size,
+            vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "かな".into(),
+                active_range_chars: Some(0..2),
+            })],
+        );
+        assert!(pair[1].2.buffer.ends_with("Δかな"));
+        document_layout_editor_frame(
+            &mut pair,
+            8,
+            size,
+            vec![egui::Event::Ime(egui::ImeEvent::Commit("仮名".into()))],
+        );
+        assert!(pair[1].2.buffer.ends_with("Δ仮名"));
+        for frame in 9..12 {
+            document_layout_editor_frame(&mut pair, frame, size, Vec::new());
+        }
+        // A full-document offscreen selection is still supported by TextEdit:
+        // caching retains the full galley rather than clipping its source.
+        for (context, _, editor) in &mut pair {
+            let mut state =
+                egui::text_edit::TextEditState::load(context, editor.body_id()).unwrap();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(0),
+                    egui::text::CCursor::new(editor.buffer.chars().count()),
+                )));
+            state.store(context, editor.body_id());
+        }
+        let output = document_layout_editor_frame(&mut pair, 12, size, vec![egui::Event::Copy]);
+        assert!(output[1].platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyText(copy) if copy == &pair[1].2.buffer)));
+        assert_eq!(
+            pair[1].2.layout.preparations, 0,
+            "caret/selection paint remains live without preparing text again"
+        );
+    }
+
+    #[test]
+    fn document_layout_editor_refuses_payload_overflow_and_recovers_on_live_path() {
+        // A long supported text document expands well beyond the retained
+        // allowance once its final glyph and mesh capacities are charged.
+        let text = "abcd abcd abcd abcd\n".repeat(12_000);
+        let mut pair = document_layout_editor_pair(&text);
+        let size = vec2(700.0, 420.0);
+        for frame in 0..2 {
+            document_layout_editor_frame(&mut pair, frame, size, Vec::new());
+            assert!(pair[1].2.layout.prepared.is_none());
+            assert!(pair[1].2.layout.prepared_text_bytes >= text.len());
+        }
+        for (_, documents, editor) in &mut pair {
+            documents
+                .borrow_mut()
+                .get_mut(editor.document)
+                .unwrap()
+                .text_mut()
+                .sync_from_view("small replacement")
+                .unwrap();
+        }
+        for frame in 2..5 {
+            document_layout_editor_frame(&mut pair, frame, size, Vec::new());
+        }
+        assert_eq!(pair[1].2.layout.preparations, 0);
+        assert!(
+            pair[1].2.layout.prepared.as_ref().unwrap().payload_bytes
+                <= MAX_PREPARED_EDITOR_LAYOUT_BYTES
+        );
+    }
 
     struct TemporaryDirectory {
         path: PathBuf,
