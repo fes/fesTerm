@@ -3,6 +3,26 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## v0.10.3: bounded frame reuse and responsive document maintenance
+
+This patch release packages the merged performance and reliability work since
+v0.10.2. Retained frames compare borrowed signatures and skip unnecessary mesh
+uploads; unchanged Direct2D sources avoid repeated geometry preparation.
+Markdown tables and editor galleys reuse bounded exact layout preparation.
+Forwarding and SFTP collision dialogs use the shared guarded modal painter
+without changing consent, command authority or ordinary fallback behavior.
+
+Automatic local document freshness, reload and autosave run on one bounded
+worker under accepted ADR 0047. Fair scheduling prevents starvation, recovery
+protection survives closed views, and completed writes release admission before
+waking the app. Child shells receive `COLORTERM=truecolor`, and configured
+working directories expand a leading home-directory shorthand.
+
+Release preparation updates matching workspace, lockfile, package and versioned
+Windows-helper metadata only. Deterministic work counters do not establish a
+new timing speedup or resolve the outstanding native exit, resource, clipboard,
+IME, multi-window or blocked-I/O qualifications.
+
 ## Releasing write admission before announcing completion
 
 Required merged-main Linux CI exposed a recovery regression whose immediate
