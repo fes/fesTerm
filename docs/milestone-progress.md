@@ -23,6 +23,23 @@ Windows-helper metadata only. Deterministic work counters do not establish a
 new timing speedup or resolve the outstanding native exit, resource, clipboard,
 IME, multi-window or blocked-I/O qualifications.
 
+## Keeping multiline terminal paste in source order
+
+An owned native PowerShell 7/PSReadLine ConPTY reproduction showed that sending
+LF between pasted lines put the last line first, both in the editing buffer
+and in command output. The application's clipboard normalization preserved
+source order, and the bounded queues were FIFO; the defect was interpreting
+ordinary paste line breaks as LF control-key input instead of Enter.
+
+The terminal core now encodes CRLF, CR and LF as one CR per ordinary-mode line
+break, reusing the owned input allocation. Bracketed payload bytes and typed
+Ctrl+J remain unchanged. Exact encoded-length accounting admits a normalized
+payload at the queue ceiling without weakening atomic refusal. Application
+confirmation, captured text, counts and following-keyboard ordering remain
+unchanged. Core byte/boundary matrices, real headless clipboard delivery in
+both modes and a controlled native PowerShell output-order test cover the
+repair; OS clipboard gestures and confirmation usability remain separate.
+
 ## Releasing write admission before announcing completion
 
 Required merged-main Linux CI exposed a recovery regression whose immediate

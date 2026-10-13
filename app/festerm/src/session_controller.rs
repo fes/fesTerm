@@ -3264,6 +3264,77 @@ mod tests {
         ));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn conpty_powershell_multiline_paste_keeps_source_line_order() {
+        let directory = tempfile::Builder::new()
+            .prefix("festerm-paste-order-")
+            .tempdir()
+            .expect("isolated PowerShell history directory");
+        let history = directory.path().join("history.txt");
+        let setup = format!(
+            "Import-Module PSReadLine; \
+             Set-PSReadLineOption -HistorySaveStyle SaveNothing \
+             -HistorySavePath '{}' -BellStyle None; \
+             function global:prompt {{ 'PASTE_ORDER> ' }}",
+            history.to_string_lossy().replace('\'', "''")
+        );
+        let profile = LocalProfile::new("pwsh.exe")
+            .with_arguments(["-NoLogo", "-NoProfile", "-NoExit", "-Command", &setup])
+            .with_working_directory(directory.path());
+        let session = LocalPtySession::start(profile, TerminalSize::new(120, 40).unwrap())
+            .expect("controlled PowerShell 7 starts");
+        let mut controller = SessionController::with_session(session);
+        let mut terminal =
+            Terminal::new(Dimensions::new(120, 40).unwrap()).expect("terminal allocation");
+        pump_controlled_until(
+            &mut controller,
+            &mut terminal,
+            |terminal| smoke_row_contains(terminal, "PASTE_ORDER>"),
+            Duration::from_secs(15),
+            "controlled PowerShell prompt",
+        );
+        let text =
+            "Write-Output 'FIRST_MARK'\nWrite-Output 'SECOND_MARK'\nWrite-Output 'THIRD_MARK'";
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Paste(text.to_owned()),
+            &mut controller,
+        );
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Key(festerm_core::Key::Enter),
+            &mut controller,
+        );
+        pump_controlled_until(
+            &mut controller,
+            &mut terminal,
+            |terminal| {
+                (0..terminal.dimensions().rows()).any(|row| {
+                    terminal
+                        .row_text(row)
+                        .is_some_and(|text| text.trim() == "THIRD_MARK")
+                })
+            },
+            Duration::from_secs(15),
+            "ordered PowerShell paste output",
+        );
+        let order = (0..terminal.dimensions().rows())
+            .filter_map(|row| terminal.row_text(row))
+            .map(|row| row.trim().to_owned())
+            .filter(|row| matches!(row.as_str(), "FIRST_MARK" | "SECOND_MARK" | "THIRD_MARK"))
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            controller
+                .session()
+                .unwrap()
+                .shutdown(Duration::from_secs(2)),
+            Ok(festerm_session::ShutdownResult::Stopped)
+                | Ok(festerm_session::ShutdownResult::AlreadyStopped)
+        ));
+        assert_eq!(order, ["FIRST_MARK", "SECOND_MARK", "THIRD_MARK"]);
+    }
+
     // ─── Tier 6 native-platform smoke tests ─────────────────────────────────
     //
     // All tests below are marked `#[ignore]` and are NOT part of the PR-blocking

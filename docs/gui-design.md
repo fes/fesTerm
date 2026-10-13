@@ -2741,8 +2741,11 @@ explains that deliberate Paste releases waiting keyboard input afterward,
 whereas Cancel discards it. Mouse/focus reports and terminal replies retain
 their existing independent behavior.
 
-Normalize line endings for the session input representation without trimming
-whitespace, rewriting shell syntax, or claiming content is safe. A confirmed
+Normalize CRLF and CR to LF for preview, counting and captured application
+text. The core encodes each ordinary-mode line break as one Enter (CR), not
+LF control-key input; line order, blank lines and trailing breaks are retained.
+Bracketed mode wraps the captured text without rewriting its payload. Neither
+path trims whitespace, rewrites shell syntax, or claims content is safe. A confirmed
 paste sends the captured original text—not an escaped or truncated preview—as
 one ordered input operation and cannot interleave with ordinary keystrokes. If
 the session stops accepting input, submission becomes unavailable. There is no
