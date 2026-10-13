@@ -282,7 +282,18 @@ fn keypad_key_bytes(key: KeypadKey, application: bool) -> Option<Vec<u8>> {
 
 pub(crate) fn encode_paste(text: String, modes: TerminalModes) -> Option<Vec<u8>> {
     if !modes.bracketed_paste() {
-        return Some(text.into_bytes());
+        let mut bytes = text.into_bytes();
+        let mut previous_was_cr = false;
+        // Ordinary line breaks are Enter, not LF control-key input.
+        bytes.retain_mut(|byte| {
+            let crlf_end = previous_was_cr && *byte == b'\n';
+            previous_was_cr = *byte == b'\r';
+            if *byte == b'\n' {
+                *byte = b'\r';
+            }
+            !crlf_end
+        });
+        return Some(bytes);
     }
 
     const START: &[u8] = b"\x1b[200~";
@@ -302,7 +313,12 @@ pub(crate) fn paste_encoded_length(text: &str, modes: TerminalModes) -> Option<u
             .checked_add(b"\x1b[200~".len())?
             .checked_add(b"\x1b[201~".len())
     } else {
-        Some(text.len())
+        let crlf_pairs = text
+            .as_bytes()
+            .windows(2)
+            .filter(|pair| *pair == b"\r\n")
+            .count();
+        Some(text.len() - crlf_pairs)
     }
 }
 

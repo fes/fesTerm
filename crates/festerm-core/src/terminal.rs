@@ -1208,6 +1208,8 @@ impl Terminal {
     /// Paste is always queued as one atomic write. In bracketed-paste mode the
     /// delimiters and payload therefore either all enter the bounded queue or
     /// none do; marker-looking bytes inside the payload are preserved exactly.
+    /// Without bracketed paste, CRLF, CR and LF line breaks each encode one
+    /// Enter (CR), while other payload bytes and line order remain unchanged.
     pub fn handle_input(&mut self, event: InputEvent) -> InputEventOutcome {
         let encoded = match event {
             InputEvent::Key(key) => encode_key(key, self.modes),

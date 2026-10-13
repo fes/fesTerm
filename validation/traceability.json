@@ -1213,6 +1213,11 @@
       ],
       "decisions": [],
       "automated_tests": [
+        "unbracketed_paste_normalizes_each_line_break_to_one_enter",
+        "bracketed_paste_preserves_multiline_payload_and_marker_bytes",
+        "unbracketed_paste_admits_exact_normalized_length_atomically",
+        "keyboard_multiline_paste_preserves_source_order_in_both_terminal_modes",
+        "conpty_powershell_multiline_paste_keeps_source_line_order",
         "paste_policy_normalizes_endings_and_counts_trailing_lines_exactly",
         "paste_preview_is_bounded_and_escapes_non_whitespace_controls",
         "safety_modals_preserve_pixels_focus_and_cancel_with_shared_painting",

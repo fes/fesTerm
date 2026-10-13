@@ -569,12 +569,19 @@ used by the keyboard-routing entrypoint. See the
 | PS-02 | In ordinary mode paste multiline text; dialog title has exact line count and stable identity, warning explains execution, and preview preserves whitespace. | Functional + usability | Yes, with human wording review |
 | PS-03 | In bracketed mode paste ordinary multiline text; it is sent once with protocol markers and no dialog. | Functional | Yes: controlled PTY bytes |
 | PS-04 | In bracketed mode exceed either large-paste threshold; confirmation appears and accepted text is one ordered bracketed write. | Functional + usability | Yes |
-| PS-05 | Exercise tabs, spaces, CRLF/CR normalization, trailing newline, Unicode, and other control characters; exact counts and escaped preview remain truthful while submitted text is not trimmed or shell-rewritten. | Functional | Yes: fixture matrix |
+| PS-05 | Exercise tabs, spaces, CRLF/CR normalization, trailing newline, Unicode, and other control characters; exact counts and escaped preview remain truthful while submitted text is not trimmed or shell-rewritten. Ordinary-mode breaks send one Enter in source order; bracketed payload is unchanged by the core. | Functional | Core and headless clipboard matrices automated; native PowerShell 7/ConPTY order regression automated on Windows; other native applications and OS clipboard routes remain pending |
 | PS-06 | At narrow and scaled sizes inspect the bounded preview and exact omitted-line/character counts; all actions remain visible and keyboard reachable. | Native visual + usability | Screenshot automation plus human review |
 | PS-07 | Press Enter immediately; Cancel owns initial focus and no paste is submitted. Move focus deliberately to Paste and activate it once. | Native functional | Yes |
 | PS-08 | Escape or Cancel dismisses without terminal bytes; clicking outside does not dismiss or interact with terminal. | Native functional | Yes |
 | PS-09 | While dialog is open switch/close/disconnect/reconnect or transition the bound session; pending paste cancels and never follows another chip or transport generation. | Functional | Yes |
 | PS-10 | Exercise OS clipboard delivery from menu, shortcut, context menu, and accessibility action; only captured repository-owned text enters the target and no clipboard content is retained in artifacts. | Native functional + privacy | Yes with sanitized byte hash/count oracle |
+
+The PowerShell order regression launches `pwsh.exe -NoProfile` with an isolated,
+non-saving PSReadLine history path and verifies actual output from three owned
+commands. It does not read the desktop clipboard or exercise a GUI paste
+gesture. PowerShell 7 is provided by Windows CI and is required for that native
+test locally; native OS clipboard delivery and confirmation usability remain
+separate PS-02/07/10 evidence.
 
 ### File-drop path insertion
 

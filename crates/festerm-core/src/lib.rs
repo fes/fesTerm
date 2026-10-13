@@ -2012,6 +2012,78 @@ mod tests {
     }
 
     #[test]
+    fn unbracketed_paste_normalizes_each_line_break_to_one_enter() {
+        for (text, expected) in [
+            ("first\nsecond\nthird", "first\rsecond\rthird"),
+            ("first\r\nsecond\r\nthird", "first\rsecond\rthird"),
+            ("first\rsecond\rthird", "first\rsecond\rthird"),
+            ("first\r\n\nsecond\rthird\n", "first\r\rsecond\rthird\r"),
+            (
+                " first\t\u{03bb}\r\n\u{7b2c}\u{4e8c}\nthird ",
+                " first\t\u{03bb}\r\u{7b2c}\u{4e8c}\rthird ",
+            ),
+            ("first\x07\x1b[201~\nsecond", "first\x07\x1b[201~\rsecond"),
+        ] {
+            let mut terminal = terminal(8, 2);
+            assert_eq!(
+                terminal.handle_input(InputEvent::Paste(text.to_owned())),
+                InputEventOutcome::Encoded {
+                    bytes: expected.len()
+                },
+                "{text:?}"
+            );
+            assert_eq!(terminal.drain_input(), expected.as_bytes(), "{text:?}");
+            assert_eq!(
+                terminal.handle_input(InputEvent::Key(Key::Control('j'))),
+                InputEventOutcome::Encoded { bytes: 1 }
+            );
+            assert_eq!(terminal.drain_input(), b"\n");
+        }
+    }
+
+    #[test]
+    fn bracketed_paste_preserves_multiline_payload_and_marker_bytes() {
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"\x1b[?2004h");
+        let text = "first\r\nsecond\rthird\n\n\x1b[201~\t\u{03bb}";
+        let expected = format!("\x1b[200~{text}\x1b[201~");
+        assert_eq!(
+            terminal.handle_input(InputEvent::Paste(text.to_owned())),
+            InputEventOutcome::Encoded {
+                bytes: expected.len()
+            }
+        );
+        assert_eq!(terminal.drain_input(), expected.as_bytes());
+    }
+
+    #[test]
+    fn unbracketed_paste_admits_exact_normalized_length_atomically() {
+        let mut terminal = terminal(8, 2);
+        let text = format!("{}\r\n", "x".repeat(TRANSPORT_QUEUE_HIGH_WATERMARK - 1));
+        assert_eq!(
+            terminal.handle_input(InputEvent::Paste(text.clone())),
+            InputEventOutcome::Encoded {
+                bytes: TRANSPORT_QUEUE_HIGH_WATERMARK
+            }
+        );
+        let encoded = terminal.drain_input();
+        assert_eq!(encoded.len(), TRANSPORT_QUEUE_HIGH_WATERMARK);
+        assert!(encoded[..encoded.len() - 1]
+            .iter()
+            .all(|byte| *byte == b'x'));
+        assert_eq!(encoded.last(), Some(&b'\r'));
+        assert!(!terminal.take_input_queue_overflowed());
+
+        terminal.queue_input(b"prefix");
+        assert_eq!(
+            terminal.handle_input(InputEvent::Paste(text)),
+            InputEventOutcome::QueueOverflow
+        );
+        assert_eq!(terminal.drain_input(), b"prefix");
+        assert!(terminal.take_input_queue_overflowed());
+    }
+
+    #[test]
     fn mouse_modes_claim_selection_and_encode_sgr_coordinates_beyond_legacy_limits() {
         let mut terminal = terminal(8, 2);
         let press = MouseEvent {

@@ -7405,7 +7405,7 @@ mod tests {
         harness.run();
         assert_eq!(
             transport.sent().concat(),
-            b"controlled-one\ncontrolled-twofollowing\r"
+            b"controlled-one\rcontrolled-twofollowing\r"
         );
     }
 
@@ -7437,7 +7437,7 @@ mod tests {
         harness.run();
         assert_eq!(
             transport.sent().concat(),
-            b"controlled-one\ncontrolled-two\x06\r"
+            b"controlled-one\rcontrolled-two\x06\r"
         );
     }
 
@@ -7503,7 +7503,7 @@ mod tests {
             };
             assert_eq!(
                 transport.sent().concat(),
-                [b"controlled-one\ncontrolled-two".as_slice(), suffix].concat()
+                [b"controlled-one\rcontrolled-two".as_slice(), suffix].concat()
             );
         }
     }
@@ -7612,7 +7612,7 @@ mod tests {
             harness.run();
             assert_eq!(
                 transport.sent().concat(),
-                b"controlled-one\ncontrolled-two\r"
+                b"controlled-one\rcontrolled-two\r"
             );
         }
     }
@@ -7662,7 +7662,7 @@ mod tests {
             if confirm {
                 assert_eq!(
                     transport.sent().concat(),
-                    b"controlled-one\ncontrolled-two\r"
+                    b"controlled-one\rcontrolled-two\r"
                 );
             } else {
                 assert!(transport.sent().is_empty());
@@ -7821,6 +7821,56 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_multiline_paste_preserves_source_order_in_both_terminal_modes() {
+        for bracketed in [false, true] {
+            for text in [
+                "first\nsecond\nthird\n",
+                "first\r\nsecond\r\nthird\r\n",
+                "first\rsecond\nthird\r\n",
+            ] {
+                let (mut harness, transport) = keyboard_harness();
+                let context = harness.ctx.clone();
+                if bracketed {
+                    let tab = harness.state().state.active();
+                    harness
+                        .state_mut()
+                        .state
+                        .session_tab_mut(tab)
+                        .unwrap()
+                        .terminal
+                        .ingest(b"\x1b[?2004h");
+                }
+                let token = keyboard_clipboard_request(&mut harness);
+                keyboard_clipboard_reply(&context, token, text);
+                harness.run();
+                if bracketed {
+                    assert!(harness.state().overlays.pending_paste.is_none());
+                } else {
+                    assert!(transport.sent().is_empty());
+                    assert_eq!(
+                        harness
+                            .state()
+                            .overlays
+                            .pending_paste
+                            .as_ref()
+                            .unwrap()
+                            .text,
+                        "first\nsecond\nthird\n"
+                    );
+                    harness.get_by_label("Paste").click();
+                    harness.run();
+                }
+                let expected = if bracketed {
+                    b"\x1b[200~first\nsecond\nthird\n\x1b[201~".as_slice()
+                } else {
+                    b"first\rsecond\rthird\r"
+                };
+                assert_eq!(transport.sent(), vec![expected.to_vec()]);
+            }
+        }
+    }
+
+    #[test]
     fn keyboard_identified_paste_preserves_confirmation_and_generation_safety() {
         let (mut harness, transport) = keyboard_harness();
         let context = harness.ctx.clone();
@@ -7831,7 +7881,7 @@ mod tests {
         assert!(harness.state().overlays.pending_paste.is_some());
         harness.get_by_label("Paste").click();
         harness.run();
-        assert_eq!(transport.sent().concat(), b"controlled-one\ncontrolled-two");
+        assert_eq!(transport.sent().concat(), b"controlled-one\rcontrolled-two");
         let token = keyboard_clipboard_request(&mut harness);
         keyboard_clipboard_reply(&context, token, "discard-one\ndiscard-two");
         harness.run();
@@ -7845,7 +7895,7 @@ mod tests {
             .advance_lifecycle_generation();
         harness.run();
         assert!(harness.state().overlays.pending_paste.is_none());
-        assert_eq!(transport.sent().concat(), b"controlled-one\ncontrolled-two");
+        assert_eq!(transport.sent().concat(), b"controlled-one\rcontrolled-two");
         let token = keyboard_clipboard_request(&mut harness);
         keyboard_clipboard_reply(&context, token, "discard-round\ntrip");
         harness.run();
@@ -7859,7 +7909,7 @@ mod tests {
             harness.state().overlays.pending_paste.is_none(),
             "returning to the origin does not revive a confirmation"
         );
-        assert_eq!(transport.sent().concat(), b"controlled-one\ncontrolled-two");
+        assert_eq!(transport.sent().concat(), b"controlled-one\rcontrolled-two");
     }
 
     #[test]
