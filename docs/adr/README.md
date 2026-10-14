@@ -40,6 +40,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0040: Automatic Final-Target Terminal Copy](0040-opt-in-final-target-terminal-copy.md) - owner-approved bounded WARP rollout without production switches
 - [ADR 0041: Automatic Retained Window Prefix](0041-opt-in-retained-window-prefix.md) - owner-approved exact immutable prefix reuse; resource/native/latency follow-ups remain in #282
 - [ADR 0047: Bounded Local Document Background I/O](0047-bounded-local-document-background-io.md) - owner accepted the bounded immutable worker, completion-only wake and nonblocking write admission on 2026-10-12; native qualification remains CP-15
+- [ADR 0048: Bounded Native SVG and HTML Anchors in Markdown](0048-bounded-native-svg-and-html-anchors.md) - owner accepted 2026-10-14 after pre-parser marker refusal and actual named-target scrolling repairs; narrowly amends ADR 0030, native fidelity/accessibility/DPI qualification remains CP-06/CP-15
 
 ## Superseded Decisions
 
@@ -57,7 +58,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0027: SSH Port Forwarding for Profiles and Live Sessions](0027-ssh-port-forwarding-for-profiles-and-live-sessions.md) — see issue #38
 - [ADR 0028: Text-Mode SFTP Session Tabs via `russh-sftp`](0028-text-mode-sftp-session-tabs-via-russh-sftp.md)
 - [ADR 0029: GUI SFTP File Manager Surface](0029-gui-sftp-file-manager.md) — see `docs/sftp-ui-design.md`
-- [ADR 0030: Native Markdown Viewer as a First-Class Bounded Application Surface](0030-native-markdown-viewer.md) — amended by ADR 0034
+- [ADR 0030: Native Markdown Viewer as a First-Class Bounded Application Surface](0030-native-markdown-viewer.md) — amended by ADRs 0034 and 0048
 - [ADR 0031: Mobile (iOS/Android) Port Strategy](0031-mobile-ios-android-port-strategy.md) — exploratory design only; see `docs/mobile-port-plan.md`, `docs/mobile-layout-design.md`, and `docs/mobile-signing-and-release.md`
 - [ADR 0034: Shared Mutable Documents for Native Text Editing](0034-shared-mutable-text-documents.md) — amends ADR 0030's read-only snapshot boundary; see issue #166
 

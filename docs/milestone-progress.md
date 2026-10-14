@@ -39,6 +39,41 @@ Windows-helper metadata only. Deterministic work counters do not establish a
 new timing speedup or resolve the outstanding native exit, resource, clipboard,
 IME, multi-window or blocked-I/O qualifications.
 
+## Native SVG and HTML anchors without a browser
+
+Copilot-generated Markdown exposed two gaps: SVG diagrams were refused and
+ordinary HTML anchor links/targets remained raw text. The shared source model
+now projects complete inline SVG and a restricted native anchor subset while
+keeping exact Source/Find spans, code and other HTML inert. Static local SVG
+uses the existing capability-bound file path; inline XML owns only snapshot
+bytes, including in remote and untitled Preview.
+
+Native `resvg` work shares image workers, managed allowance and actual-owner
+retirement. XML/use/CSS/glyph and raster/layer admission, disabled resource
+resolvers and bundled-only fonts avoid introducing browser or filesystem
+authority. A combined node/glyph-pixel work ceiling also refuses repeated
+full-canvas overdraw before painting, rather than relying on independent
+node, area or memory bounds. A same-position XML edit invalidates stale images.
+Independent security review found a shared rooted/UNC link-opening gap; decoded
+targets and native activation now refuse it before any filesystem access.
+Parser, pixel, budget, actual viewer/editor-mode and link-command regressions
+cover these changes. Native fidelity, DPI, accessibility and usability evidence
+remain separately pending under ADR 0048 and CP-06/CP-15.
+
+Qualification then exposed two gaps in those tests: the SVG parser expanded
+markers per path vertex although preflight charged each reference only once,
+and a queued named-target request did not prove the viewport could reach it.
+A small repeated-vertex diagram was admitted despite expanding beyond the
+65,536-node policy. Markers now fail explicitly before parser admission,
+including inherited/CSS and nested definitions, pending bounded expansion.
+The shared renderer now consumes byte navigation using block and explicit
+zero-text anchor geometry, so empty and plain-containing anchors reach the
+actual offscreen target in standalone Preview and editor Preview/Split.
+Failing-first regressions cover the admitted marker and unmoved viewport;
+deterministic geometry/input tests cover UTF-8 positions and first-duplicate
+precedence without sleeps. The owner accepted ADR 0048 on 2026-10-14 after
+these repairs, not as native fidelity, accessibility or DPI acceptance.
+
 ## Keeping multiline terminal paste in source order
 
 An owned native PowerShell 7/PSReadLine ConPTY reproduction showed that sending

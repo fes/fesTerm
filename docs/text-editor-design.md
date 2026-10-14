@@ -339,7 +339,13 @@ closes. This keeps offscreen code reachable without changing per-view scroll,
 selection, source positions, or the original horizontal wrapping/targeting.
 
 Saved-local Preview and Split also use the viewer's bounded relative-image
-loader. The source is the real `DocumentOrigin::Local` path, never the origin
+loader, including static local SVG. Intrinsic inline SVG and safe HTML
+links/named targets follow the shared
+[ADR 0048](adr/0048-bounded-native-svg-and-html-anchors.md) projection policy.
+Inline SVG uses owned snapshot bytes even in untitled or remote Preview, without
+granting local-image authority. Changed XML invalidates completed images even
+when the reference's source position and descriptive target remain unchanged.
+The source is the real `DocumentOrigin::Local` path, never the origin
 label or a fallback filename. Remote, untitled and terminal-history documents
 cannot read local images, even when their labels resemble local paths. First
 Save and Save As/rebinding discard old image state and use the new real parent;
