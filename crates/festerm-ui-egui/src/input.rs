@@ -562,7 +562,8 @@ pub(crate) fn route_egui_events(
                 modifiers,
                 ..
             } if keyboard_focused && !keyboard.ime_composing => {
-                let translated = control_key(key, modifiers).or_else(|| translate_key(key));
+                let translated =
+                    control_key(key, modifiers).or_else(|| translate_key(key, modifiers));
                 if let Some(key) = translated {
                     terminal_key_routed = true;
                     let event = InputEvent::Key(key);
@@ -901,7 +902,7 @@ pub(crate) fn route_pointer_event(
     }
 }
 
-fn translate_key(key: egui::Key) -> Option<Key> {
+fn translate_key(key: egui::Key, modifiers: egui::Modifiers) -> Option<Key> {
     match key {
         egui::Key::Enter => Some(Key::Enter),
         egui::Key::Tab => Some(Key::Tab),
@@ -911,6 +912,8 @@ fn translate_key(key: egui::Key) -> Option<Key> {
         egui::Key::ArrowDown => Some(Key::ArrowDown),
         egui::Key::ArrowLeft => Some(Key::ArrowLeft),
         egui::Key::ArrowRight => Some(Key::ArrowRight),
+        egui::Key::PageUp if modifiers == egui::Modifiers::NONE => Some(Key::PageUp),
+        egui::Key::PageDown if modifiers == egui::Modifiers::NONE => Some(Key::PageDown),
         _ => None,
     }
 }

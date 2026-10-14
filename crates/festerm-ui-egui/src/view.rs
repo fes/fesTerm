@@ -2381,6 +2381,158 @@ mod tests {
     }
 
     #[test]
+    fn terminal_page_keys_route_plain_presses_repeats_and_not_releases() {
+        for alternate in [false, true] {
+            for application_cursor in [false, true] {
+                let mut state = HeadlessViewState::new();
+                if alternate {
+                    state.terminal.ingest(b"\x1b[?1049h");
+                }
+                if application_cursor {
+                    state.terminal.ingest(b"\x1b[?1h");
+                }
+                let mut harness = Harness::builder()
+                    .with_size(Vec2::new(800.0, 600.0))
+                    .build_ui_state(
+                        |ui, state: &mut HeadlessViewState| {
+                            state.view.show(ui, &mut state.terminal, &mut state.sink);
+                        },
+                        state,
+                    );
+                harness.get_by_label("Terminal viewport").click();
+                harness.run();
+                for (pressed, repeat) in [(true, false), (true, true), (false, false)] {
+                    for key in [egui::Key::PageUp, egui::Key::PageDown] {
+                        harness.event(egui::Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed,
+                            repeat,
+                            modifiers: egui::Modifiers::NONE,
+                        });
+                        harness.run();
+                    }
+                }
+                assert_eq!(
+                    harness.state().sink.0,
+                    vec![
+                        b"\x1b[5~".to_vec(),
+                        b"\x1b[6~".to_vec(),
+                        b"\x1b[5~".to_vec(),
+                        b"\x1b[6~".to_vec(),
+                    ],
+                    "alternate={alternate}, application_cursor={application_cursor}"
+                );
+                assert_eq!(harness.state().view.history_offset_rows(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_page_keys_preserve_shift_history_and_other_modified_chords() {
+        for alternate in [false, true] {
+            let mut state = HeadlessViewState::new();
+            for _ in 0..100 {
+                state.terminal.ingest(b"retained history\r\n");
+            }
+            if alternate {
+                state.terminal.ingest(b"\x1b[?1049h");
+            }
+            let mut harness = Harness::builder()
+                .with_size(Vec2::new(800.0, 600.0))
+                .build_ui_state(
+                    |ui, state: &mut HeadlessViewState| {
+                        state.view.show(ui, &mut state.terminal, &mut state.sink);
+                    },
+                    state,
+                );
+            harness.get_by_label("Terminal viewport").click();
+            harness.run();
+            harness.event(egui::Event::Key {
+                key: egui::Key::PageUp,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::SHIFT,
+            });
+            harness.run();
+            assert_eq!(harness.state().view.history_offset_rows() > 0, !alternate);
+            harness.event(egui::Event::Key {
+                key: egui::Key::PageDown,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::SHIFT,
+            });
+            harness.run();
+            assert_eq!(harness.state().view.history_offset_rows(), 0);
+            for modifiers in [
+                egui::Modifiers::CTRL,
+                egui::Modifiers::ALT,
+                egui::Modifiers::MAC_CMD,
+                egui::Modifiers::CTRL | egui::Modifiers::ALT,
+            ] {
+                for key in [egui::Key::PageUp, egui::Key::PageDown] {
+                    harness.event(egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    });
+                    harness.run();
+                }
+            }
+            assert!(harness.state().sink.0.is_empty());
+        }
+    }
+
+    #[test]
+    fn terminal_page_keys_obey_foreground_readonly_and_ime_suppression() {
+        for alternate in [false, true] {
+            for (terminal_input_enabled, keyboard_input_enabled, composing) in [
+                (false, true, false),
+                (true, false, false),
+                (true, true, true),
+            ] {
+                let mut state = HeadlessViewState::new();
+                if alternate {
+                    state.terminal.ingest(b"\x1b[?1049h");
+                }
+                let mut harness = Harness::builder()
+                    .with_size(Vec2::new(800.0, 600.0))
+                    .build_ui_state(
+                        move |ui, state: &mut HeadlessViewState| {
+                            state.view.show_with_options(
+                                ui,
+                                &mut state.terminal,
+                                &mut state.sink,
+                                TerminalViewOptions {
+                                    terminal_input_enabled,
+                                    keyboard_input_enabled,
+                                    ..TerminalViewOptions::default()
+                                },
+                            );
+                        },
+                        state,
+                    );
+                if composing {
+                    harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+                        text: "x".into(),
+                        active_range_chars: None,
+                    }));
+                    harness.run();
+                }
+                for key in [egui::Key::PageUp, egui::Key::PageDown] {
+                    harness.key_press(key);
+                    harness.run();
+                }
+                assert!(harness.state().sink.0.is_empty());
+            }
+        }
+    }
+
+    #[test]
     fn headless_harness_drives_terminal_view_input_resize_and_diagnostics() {
         let mut harness = Harness::builder()
             .with_size(Vec2::new(800.0, 600.0))

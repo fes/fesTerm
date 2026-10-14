@@ -7208,6 +7208,49 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_page_keys_reach_transport_and_preserve_clipboard_ordering() {
+        for alternate in [false, true] {
+            let (mut harness, transport) = keyboard_harness();
+            if alternate {
+                let tab = harness.state().state.active();
+                harness
+                    .state_mut()
+                    .state
+                    .session_tab_mut(tab)
+                    .unwrap()
+                    .terminal
+                    .ingest(b"\x1b[?1049h");
+                harness.run();
+            }
+            for key in [egui::Key::PageUp, egui::Key::PageDown] {
+                harness
+                    .input_mut()
+                    .events
+                    .push(keyboard_event(key, egui::Modifiers::NONE));
+            }
+            harness.step();
+            assert_eq!(transport.sent().concat(), b"\x1b[5~\x1b[6~");
+
+            let context = harness.ctx.clone();
+            let token = keyboard_clipboard_request(&mut harness);
+            for key in [egui::Key::PageUp, egui::Key::PageDown] {
+                harness
+                    .input_mut()
+                    .events
+                    .push(keyboard_event(key, egui::Modifiers::NONE));
+            }
+            harness.step();
+            assert_eq!(transport.sent().concat(), b"\x1b[5~\x1b[6~");
+            keyboard_clipboard_reply(&context, token, "controlled-marker");
+            harness.run();
+            assert_eq!(
+                transport.sent().concat(),
+                b"\x1b[5~\x1b[6~controlled-marker\x1b[5~\x1b[6~"
+            );
+        }
+    }
+
+    #[test]
     fn keyboard_ready_clipboard_precedes_current_frame_enter_and_text() {
         for (event, suffix) in [
             (

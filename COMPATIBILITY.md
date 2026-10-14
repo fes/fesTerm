@@ -116,6 +116,7 @@ reference-application acceptance; P5 remains a manual release gate.
 | Mouse coordinates | Use SGR coordinates beyond legacy limits | passing | Exact-byte core test |
 | Selection | Select locally when mouse reporting does not claim the interaction | passing | Core input-outcome and M4 routing/selection tests |
 | Keyboard modes | Encode cursor and keypad keys according to active modes | passing | Exact-byte core test |
+| Page keys | Plain Page Up/Down reach terminal programs; Shift paging retains local primary history | passing | Exact-byte core screen/mode/lock/queue tests, production view press/repeat/release/modifier/foreground/read-only/IME tests, and composition-to-transport clipboard ordering; native TUI interpretation remains TI-02 |
 | Tab stops | Set, clear, resize, and traverse explicit tab stops | passing | Core fixture |
 | Cursor styles | Apply DECSCUSR shapes without changing cell geometry | passing | Core fixture; renderer shape mapping |
 | Titles | Apply sanitized OSC 0/2 titles without affecting grid state | passing | Core fixture; application title mapping |
