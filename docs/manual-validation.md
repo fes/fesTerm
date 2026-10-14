@@ -867,6 +867,21 @@ These unprivileged checks do not establish audit-SACL preservation, ordinary
 Cloud Files hydration, crash/power-loss recovery, or native GUI acceptance;
 those platform prerequisites remain above.
 
+CP-06/CP-15 native SVG and HTML anchor additions (ADR 0048): in remote viewer
+snapshots, saved-local editor Preview/Split, and untitled Preview, check intrinsic
+SVG, transparency/viewBox, bundled-font substitution, and literal Source/Find.
+Saved-local `.svg` links must retain source-generation/directory authority;
+remote and untitled documents must never fetch relative or network image files.
+Navigate `<a id>`/`<a name>` using native links without phantom outline entries;
+blocked rooted/UNC links must explain refusal without filesystem/network access.
+Edit inline XML at the same source offset, reparse/reload/rebind/close while work
+runs, saturate the allowance, and explicitly retry a repaired failed image.
+Projection, exact pixel/source-span checks, unsafe XML/reference rejection,
+shared worker/budget ownership, fresh-payload invalidation, real editor mode
+transitions and link command/refusal tests are automated. Cross-renderer/DPI
+appearance, font fidelity, native external-link handoff, keyboard/screen-reader
+comprehension and usability remain pending; no native acceptance is claimed.
+
 CP-15 background-local-I/O additions (ADR 0047): controlled rendezvous tests
 block metadata/load/save execution while registry frame reconciliation returns,
 prove unchanged and ineligible documents do not schedule UI timer repaints,

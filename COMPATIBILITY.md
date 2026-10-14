@@ -220,6 +220,13 @@ SSH tests should use:
 
 The test environment must own its configuration and credentials and must not consume a developer's SSH setup.
 
+## Native document projection
+
+| Capability | Status | Evidence and remaining qualification |
+| --- | --- | --- |
+| Static local SVG and intrinsic SVG in Markdown | passing (deterministic); native validation pending | ADR 0048; `svg_projection_*`, `svg_*` decoder bounds/pixels, `native_svg_*` viewer/editor Preview/Split, authority and payload-retirement regressions. No browser, external resources or system-font reads; CP-06/CP-15 retain native renderer/DPI/font/accessibility/usability evidence |
+| Restricted HTML links and named targets | passing (deterministic); native validation pending | `html_anchors_*`, `markdown_and_html_links_reject_rooted_and_network_destinations`, `svg_and_anchor_markup_inside_opaque_html_stays_literal`, and `native_html_anchor_activation_uses_source_targets_and_existing_link_policy`. Source bytes and outline headings remain unchanged; rooted/UNC/control-character destinations are blocked. Native keyboard/screen-reader and external-handoff evidence remains CP-06/CP-15 |
+
 ## Compatibility Decisions Still Needed
 
 - Exact xterm feature or version references used for ambiguous behavior.

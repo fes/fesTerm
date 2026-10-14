@@ -1593,14 +1593,18 @@
         "docs/gui-design.md#approved-native-text-editing",
         "docs/text-editor-design.md",
         "docs/adr/0034-shared-mutable-text-documents.md",
-        "docs/adr/0047-bounded-local-document-background-io.md"
+        "docs/adr/0047-bounded-local-document-background-io.md",
+        "docs/adr/0048-bounded-native-svg-and-html-anchors.md"
       ],
       "decisions": [
         "ADR-0034",
         "ADR-0046",
-        "ADR-0047"
+        "ADR-0047",
+        "ADR-0048"
       ],
       "automated_tests": [
+        "native_svg_real_editor_preview_and_split_keep_images_and_document_text",
+        "native_svg_reparse_compares_payload_and_releases_actual_image_owners",
         "background_document_io_leaves_real_frame_idle_until_completion_wake",
         "background_worker_accepts_commands_while_existing_freshness_is_continuously_due",
         "background_worker_fairly_services_overdue_freshness_and_autosave",
@@ -2752,15 +2756,35 @@
       "requirements": [
         "docs/gui-design.md#approved-native-markdown-viewing",
         "docs/markdown-viewer-design.md",
-        "docs/adr/0047-bounded-local-document-background-io.md"
+        "docs/adr/0047-bounded-local-document-background-io.md",
+        "docs/adr/0048-bounded-native-svg-and-html-anchors.md"
       ],
       "decisions": [
         "ADR-0030",
         "ADR-0035",
         "ADR-0046",
-        "ADR-0047"
+        "ADR-0047",
+        "ADR-0048"
       ],
       "automated_tests": [
+        "svg_projection_preserves_source_spans_and_excludes_code",
+        "svg_projection_handles_quotes_lists_multiple_roots_and_malformed_markup",
+        "html_anchors_project_links_and_targets_without_phantom_headings",
+        "html_anchors_reject_unsupported_markup_and_keep_destination_policy",
+        "markdown_and_html_links_reject_rooted_and_network_destinations",
+        "svg_and_anchor_markup_inside_opaque_html_stays_literal",
+        "svg_and_named_anchor_projection_obey_exact_resource_limits",
+        "svg_decodes_static_pixels_transparency_and_view_box",
+        "svg_uses_bundled_fonts_and_internal_references",
+        "svg_rejects_executable_external_and_unsupported_content",
+        "svg_bounds_xml_references_stylesheets_and_raster_dimensions",
+        "svg_admits_exact_encoded_xml_node_css_and_texture_limits",
+        "svg_budget_failure_can_retry_and_retained_owner_releases_memory",
+        "native_svg_local_images_load_in_viewer_and_saved_preview",
+        "native_svg_inline_images_load_without_local_file_authority",
+        "native_svg_reparse_compares_payload_and_releases_actual_image_owners",
+        "native_html_anchor_activation_uses_source_targets_and_existing_link_policy",
+        "native_svg_real_editor_preview_and_split_keep_images_and_document_text",
         "document_retention_defaults_on_only_for_supported_route",
         "retained_document_frames_preserve_editor_preview_and_split_pixels",
         "retained_document_frames_invalidate_exact_inputs_and_texture_ownership",

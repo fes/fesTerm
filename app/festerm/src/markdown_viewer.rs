@@ -973,24 +973,26 @@ impl MarkdownImageState<'_> {
         let Some(reference) = document.resource_references().get(reference_index) else {
             return false;
         };
-        if self.resource_approvals.local_image_reads_blocked {
+        if reference.kind() != ResourceReferenceKind::Image {
+            return false;
+        }
+        let intrinsic = reference.class() == ResourceReferenceClass::IntrinsicSvg;
+        if !intrinsic && self.resource_approvals.local_image_reads_blocked {
             self.image_errors.insert(
                 reference_index,
                 "Only saved local Markdown documents can load local images.".to_owned(),
             );
             return false;
         }
-        let Some(local) = local_document_source(self.source) else {
+        let local = local_document_source(self.source);
+        if !intrinsic && local.is_none() {
             self.image_errors.insert(
                 reference_index,
                 "Only local Markdown documents can load local images.".to_owned(),
             );
             return false;
-        };
-        if reference.kind() != ResourceReferenceKind::Image {
-            return false;
         }
-        if reference.class() != ResourceReferenceClass::LocalRelative {
+        if !intrinsic && reference.class() != ResourceReferenceClass::LocalRelative {
             self.image_errors.insert(
                 reference_index,
                 resource_placeholder_action(reference.class()).to_owned(),
@@ -1013,7 +1015,16 @@ impl MarkdownImageState<'_> {
             }
         };
         let captured_bytes = reference.target().len() as u64
-            + local.path().as_os_str().as_encoded_bytes().len() as u64;
+            + if intrinsic {
+                reference.inline_svg().map_or(0, |xml| xml.len()) as u64
+            } else {
+                local
+                    .expect("local image source admitted")
+                    .path()
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .len() as u64
+            };
         let mut admission_bytes = IMAGE_READ_RESERVATION + captured_bytes;
         if automatic {
             if let Some(ImageRetry::Memory(required)) = self.image_retries.get(&reference_index) {
@@ -1028,7 +1039,9 @@ impl MarkdownImageState<'_> {
                 return false;
             }
         };
-        let markdown_path = local.path().clone();
+        let markdown_path =
+            (!intrinsic).then(|| local.expect("local image source admitted").path().clone());
+        let inline_svg = reference.inline_svg().cloned();
         let source_generation = self.source_generation;
         let source_parent_identity = self.source_parent_identity;
         let target = reference.target().to_owned();
@@ -1039,15 +1052,26 @@ impl MarkdownImageState<'_> {
             scratch,
             context.clone(),
             move |scratch, _, budget| {
-                read_local_image_with_budget(
-                    &markdown_path,
-                    source_generation,
-                    source_parent_identity,
-                    &target,
-                    budget,
-                    scratch,
-                    texture_side,
-                )
+                if let Some(xml) = inline_svg {
+                    crate::markdown_svg::decode(
+                        xml.as_bytes(),
+                        scratch,
+                        IMAGE_READ_RESERVATION + captured_bytes,
+                        texture_side,
+                    )
+                } else {
+                    read_local_image_with_budget(
+                        markdown_path
+                            .as_deref()
+                            .expect("local image source admitted"),
+                        source_generation,
+                        source_parent_identity,
+                        &target,
+                        budget,
+                        scratch,
+                        texture_side,
+                    )
+                }
             },
             |work| {
                 thread::Builder::new()
@@ -1091,27 +1115,12 @@ impl MarkdownImageState<'_> {
         self.image_errors.insert(index, error.message().to_owned());
     }
 
-    /// Starts loading the local images a local document references, without
-    /// waiting for the reader to click each placeholder.
-    ///
-    /// `docs/adr/0030-native-markdown-viewer.md` requires explicit
-    /// activation for resources, and that still holds for everything that
-    /// leaves the machine or escapes the document's own directory: remote
-    /// documents, absolute URLs and SFTP-origin references all keep their
-    /// placeholders. This narrow exception covers only images a *local*
-    /// document references *relatively* — files the reader already granted
-    /// access to by opening the document, read with the same byte and
-    /// raster-area limits as a manual load, and bounded by
-    /// `MAX_AUTOMATIC_IMAGE_LOADS` / `MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS`
-    /// so a hostile document cannot turn one open into unbounded work.
-    /// A document whose images are all placeholders is not a readable
-    /// document, which is the behaviour this restores.
+    /// Automatically loads only authorized relative files and intrinsic SVG
+    /// bytes. Neither path grants external-resource authority (ADRs 0030/0048);
+    /// all loads share the manual path's worker, reference and memory bounds.
     fn start_automatic_image_loads(&mut self, context: &egui::Context) {
-        if self.resource_approvals.local_image_reads_blocked
-            || local_document_source(self.source).is_none()
-        {
-            return;
-        }
+        let local_allowed = !self.resource_approvals.local_image_reads_blocked
+            && local_document_source(self.source).is_some();
         let Some(document) = self.document else {
             return;
         };
@@ -1126,7 +1135,9 @@ impl MarkdownImageState<'_> {
                 break;
             }
             if reference.kind() != ResourceReferenceKind::Image
-                || reference.class() != ResourceReferenceClass::LocalRelative
+                || !(reference.class() == ResourceReferenceClass::IntrinsicSvg
+                    || (local_allowed
+                        && reference.class() == ResourceReferenceClass::LocalRelative))
             {
                 continue;
             }
@@ -3630,6 +3641,17 @@ impl MarkdownRenderState<'_> {
     }
 }
 
+fn fragment_scroll(document: &MarkdownDocument, name: &str) -> Option<PendingScroll> {
+    if let Some(span) = document.named_anchor(name) {
+        return Some(PendingScroll::Byte(span.start().byte_offset()));
+    }
+    document
+        .headings()
+        .iter()
+        .position(|heading| heading.anchor() == name)
+        .map(PendingScroll::Heading)
+}
+
 fn pending_scroll_for_anchor(document: &MarkdownDocument, anchor: ScrollAnchor) -> PendingScroll {
     PendingScroll::Byte(byte_offset_for_anchor(document, anchor))
 }
@@ -3869,18 +3891,27 @@ fn read_local_image_with_budget(
         .and_then(|extension| extension.to_str())
         .map(|extension| extension.to_ascii_lowercase())
         .unwrap_or_default();
-    if extension == "svg" {
-        return Err(permanent(
-            "SVG images remain blocked in the Markdown viewer.",
-        ));
-    }
     if metadata.len() > MAX_IMAGE_BYTES {
         return Err(ImageLoadFailure::Permanent(format!(
             "Local images must not exceed {} bytes.",
             MAX_IMAGE_BYTES
         )));
     }
-    let bytes = read_bounded_image_bytes(file)?;
+    let bytes = if extension == "svg" {
+        read_bounded_image_bytes_with_limit(file, festerm_markdown::MAX_INLINE_SVG_BYTES)?
+    } else {
+        read_bounded_image_bytes(file)?
+    };
+    if extension == "svg" {
+        let captured_bytes =
+            target.len() as u64 + markdown_path.as_os_str().as_encoded_bytes().len() as u64;
+        return crate::markdown_svg::decode(
+            &bytes,
+            scratch,
+            IMAGE_READ_RESERVATION + captured_bytes,
+            texture_side,
+        );
+    }
     let mut reader = image::ImageReader::new(Cursor::new(bytes.as_slice()))
         .with_guessed_format()
         .map_err(|_| permanent("Only bounded local raster images can be loaded here."))?;
@@ -3941,8 +3972,14 @@ fn read_local_image_with_budget(
     })
 }
 
-fn read_bounded_image_bytes(mut reader: impl Read) -> Result<Vec<u8>, ImageLoadFailure> {
-    let limit = MAX_IMAGE_BYTES as usize;
+fn read_bounded_image_bytes(reader: impl Read) -> Result<Vec<u8>, ImageLoadFailure> {
+    read_bounded_image_bytes_with_limit(reader, MAX_IMAGE_BYTES as usize)
+}
+
+fn read_bounded_image_bytes_with_limit(
+    mut reader: impl Read,
+    limit: usize,
+) -> Result<Vec<u8>, ImageLoadFailure> {
     let mut bytes = Vec::new();
     let mut chunk = [0u8; 8192];
     loop {
@@ -3962,7 +3999,7 @@ fn read_bounded_image_bytes(mut reader: impl Read) -> Result<Vec<u8>, ImageLoadF
         if bytes.len() + read > limit {
             return Err(ImageLoadFailure::Permanent(format!(
                 "Local images must not exceed {} bytes.",
-                MAX_IMAGE_BYTES
+                limit
             )));
         }
         let needed = bytes.len() + read;
@@ -4261,6 +4298,13 @@ fn render_link(
     outline_selected: &mut Option<usize>,
 ) {
     let reference = &document.resource_references()[link.reference_index()];
+    let safe_local_target = reference.class() == ResourceReferenceClass::LocalRelative
+        && document.source().classify_target(reference.target())
+            == ResourceReferenceClass::LocalRelative
+        && Path::new(reference.target()).is_relative()
+        && !Path::new(reference.target()).has_root();
+    let enabled = reference.class() != ResourceReferenceClass::DangerousScheme
+        && (reference.class() != ResourceReferenceClass::LocalRelative || safe_local_target);
     let accessible_text = if link.plain_text().is_empty() {
         reference.target().to_owned()
     } else {
@@ -4271,11 +4315,22 @@ fn render_link(
     } else {
         inline_layout_job(link.inlines(), document, find, font, style.as_link())
     };
-    let response = ui.add(egui::Button::new(job).frame(false));
+    let response = ui.add_enabled(enabled, egui::Button::new(job).frame(false));
     response.widget_info(|| {
-        WidgetInfo::labeled(WidgetType::Button, true, format!("Link: {accessible_text}"))
+        WidgetInfo::labeled(
+            WidgetType::Button,
+            enabled,
+            format!("Link: {accessible_text}"),
+        )
     });
-    let response = response.on_hover_text(reference.target());
+    let response = if enabled {
+        response.on_hover_text(reference.target())
+    } else {
+        response.on_disabled_hover_text(format!(
+            "{}\nUnsafe or rooted destinations are blocked.",
+            reference.target()
+        ))
+    };
     if matches!(pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(link.span(), *target))
     {
         response.scroll_to_me(Some(Align::Center));
@@ -4285,13 +4340,11 @@ fn render_link(
         match reference.class() {
             ResourceReferenceClass::DocumentFragment => {
                 let anchor = reference.target().trim_start_matches('#');
-                *outline_selected = document
-                    .headings()
-                    .iter()
-                    .position(|heading| heading.anchor() == anchor);
-                if let Some(index) = *outline_selected {
-                    *pending_scroll = Some(PendingScroll::Heading(index));
-                }
+                *pending_scroll = fragment_scroll(document, anchor);
+                *outline_selected = match pending_scroll {
+                    Some(PendingScroll::Heading(index)) => Some(*index),
+                    _ => None,
+                };
             }
             ResourceReferenceClass::HttpsAbsolute => {
                 ui.ctx().memory_mut(|memory| {
@@ -4302,7 +4355,9 @@ fn render_link(
                 });
             }
             ResourceReferenceClass::LocalRelative => {
-                if reference.target().ends_with(".md") || reference.target().ends_with(".markdown")
+                if safe_local_target
+                    && (reference.target().ends_with(".md")
+                        || reference.target().ends_with(".markdown"))
                 {
                     if let Some(local) = local_document_source(document.source()) {
                         if let Some(parent) = local.path().parent() {
@@ -4316,7 +4371,8 @@ fn render_link(
                     }
                 }
             }
-            ResourceReferenceClass::RemoteRelativeViaSftpOrigin
+            ResourceReferenceClass::IntrinsicSvg
+            | ResourceReferenceClass::RemoteRelativeViaSftpOrigin
             | ResourceReferenceClass::DangerousScheme => {}
         }
     }
@@ -4389,7 +4445,7 @@ fn render_image(
                         );
                         if pending_image_loads.contains_key(&image.reference_index()) {
                             ui.label(
-                                RichText::new("Loading local image…")
+                                RichText::new("Loading image…")
                                     .small()
                                     .color(theme::TEXT_SECONDARY),
                             );
@@ -4407,11 +4463,23 @@ fn render_image(
                                 })
                                 .small(),
                             );
-                            if reference.class() == ResourceReferenceClass::LocalRelative
-                                && !blocked_local
+                            if matches!(
+                                reference.class(),
+                                ResourceReferenceClass::LocalRelative
+                                    | ResourceReferenceClass::IntrinsicSvg
+                            ) && !blocked_local
                                 && (!approvals.is_approved(image.reference_index())
                                     || image_errors.contains_key(&image.reference_index()))
-                                && ui.small_button("Load local image").clicked()
+                                && ui
+                                    .small_button(
+                                        if reference.class() == ResourceReferenceClass::IntrinsicSvg
+                                        {
+                                            "Load image"
+                                        } else {
+                                            "Load local image"
+                                        },
+                                    )
+                                    .clicked()
                             {
                                 ui.ctx().memory_mut(|memory| {
                                     memory.data.insert_temp(
@@ -5147,7 +5215,8 @@ impl MarkdownPreviewPane {
                             .filter_map(|(index, (old, new))| {
                                 (old.kind() == new.kind()
                                     && old.class() == new.class()
-                                    && old.target() == new.target())
+                                    && old.target() == new.target()
+                                    && old.inline_svg() == new.inline_svg())
                                 .then_some(index)
                             })
                             .collect()
@@ -5749,6 +5818,7 @@ fn build_line_heading_index_lookup(document: &MarkdownDocument) -> Vec<Option<us
 
 fn resource_class_label(class: ResourceReferenceClass) -> &'static str {
     match class {
+        ResourceReferenceClass::IntrinsicSvg => "Inline SVG",
         ResourceReferenceClass::DocumentFragment => "Document fragment",
         ResourceReferenceClass::LocalRelative => "Local resource",
         ResourceReferenceClass::RemoteRelativeViaSftpOrigin => "Remote resource",
@@ -5759,9 +5829,12 @@ fn resource_class_label(class: ResourceReferenceClass) -> &'static str {
 
 fn resource_placeholder_action(class: ResourceReferenceClass) -> &'static str {
     match class {
+        ResourceReferenceClass::IntrinsicSvg => {
+            "Load this bounded native SVG, without external resources."
+        }
         ResourceReferenceClass::DocumentFragment => "Document fragments do not load as images.",
         ResourceReferenceClass::LocalRelative => {
-            "Use Load local image to view this local raster image."
+            "Use Load local image to view this bounded local image."
         }
         ResourceReferenceClass::RemoteRelativeViaSftpOrigin => {
             "Remote image loading is deferred until the GUI SFTP browser lands."
@@ -9587,7 +9660,11 @@ mod tests {
         let moved = image_test_directory("image-directory-handle-moved");
         fs::remove_dir(&moved).unwrap();
         write_test_png(&directory.join("image.png"), 2, 2);
-        fs::write(directory.join("image.svg"), "<svg/>").unwrap();
+        fs::write(
+            directory.join("image.svg"),
+            "<svg width=\"2\" height=\"2\"><image href=\"file:///outside.png\"/></svg>",
+        )
+        .unwrap();
         assert!(read_local_image(&directory.join("readme.md"), "image.png").is_ok());
         for target in ["missing.png", "image.svg", "../outside.png"] {
             assert!(read_local_image(&directory.join("readme.md"), target).is_err());
@@ -10084,6 +10161,162 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         false
+    }
+
+    #[test]
+    fn native_svg_local_images_load_in_viewer_and_saved_preview() {
+        let directory = image_test_directory("native-svg-local");
+        fs::write(
+            directory.join("diagram.svg"),
+            "<svg width='4' height='3'><rect width='4' height='3' fill='red'/></svg>",
+        )
+        .unwrap();
+        let text = "![Diagram](diagram.svg)\n";
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, text).unwrap();
+        let context = egui::Context::default();
+        let mut viewer = MarkdownViewerTab::open_local(markdown.clone());
+        let mut preview = saved_local_preview(LocalMarkdownSource::new(markdown).unwrap(), text);
+        assert!(pump_image_loads(&mut viewer, &context, |viewer| viewer
+            .loaded_images
+            .len()
+            == 1));
+        assert!(pump_preview_images(&mut preview, &context, |pane| pane
+            .loaded_images
+            .len()
+            == 1));
+        assert_eq!(viewer.loaded_images[&0].size, [4, 3]);
+        assert_eq!(preview.loaded_images[&0].size, [4, 3]);
+        drop(viewer);
+        drop(preview);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn native_svg_inline_images_load_without_local_file_authority() {
+        let text = "<svg width='3' height='2'><rect width='3' height='2'/></svg>\n\n![Local](missing.svg)\n\n![Network](https://example.test/missing.svg)\n";
+        let context = egui::Context::default();
+        let mut viewer = MarkdownViewerTab::open_remote(
+            test_remote_source("/owned/svg.md"),
+            "SVG".into(),
+            text.as_bytes().to_vec(),
+        );
+        let mut preview =
+            MarkdownPreviewPane::new(LocalMarkdownSource::new("UNTITLED").unwrap().into(), text);
+        assert!(pump_image_loads(&mut viewer, &context, |viewer| viewer
+            .loaded_images
+            .len()
+            == 1));
+        assert!(pump_preview_images(&mut preview, &context, |pane| pane
+            .loaded_images
+            .len()
+            == 1));
+        for _ in 0..4 {
+            viewer.start_automatic_image_loads(&context);
+            preview.image_state().start_automatic_image_loads(&context);
+        }
+        assert_eq!(viewer.loaded_images[&0].size, [3, 2]);
+        assert_eq!(preview.loaded_images[&0].size, [3, 2]);
+        assert_eq!(viewer.automatic_image_loads, 1);
+        assert_eq!(preview.automatic_image_loads, 1);
+        assert!(viewer.pending_image_loads.is_empty());
+        assert!(preview.pending_image_loads.is_empty());
+        preview.load_local_image(1, &context);
+        assert!(preview.image_errors[&1].contains("saved local"));
+        assert!(!preview.loaded_images.contains_key(&1));
+    }
+
+    #[test]
+    fn native_svg_reparse_compares_payload_and_releases_actual_image_owners() {
+        let text = "<svg width='2' height='2'><rect width='2' height='2' fill='red'/></svg>";
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let mut preview =
+            MarkdownPreviewPane::new(LocalMarkdownSource::new("UNTITLED").unwrap().into(), text);
+        assert!(pump_preview_images(&mut preview, &context, |pane| pane
+            .loaded_images
+            .len()
+            == 1));
+        let texture = preview.loaded_images[&0].texture.id();
+        preview.parse(format!("{text}\n\nEdited prose"));
+        assert_eq!(preview.loaded_images[&0].texture.id(), texture);
+        assert_eq!(preview.automatic_image_loads, 1);
+        preview.parse(text.replace("red", "tan"));
+        assert!(preview.loaded_images.is_empty());
+        assert!(!preview.resource_approvals.is_approved(0));
+        assert_eq!(preview.automatic_image_loads, 0);
+        assert!(pump_preview_images(&mut preview, &context, |pane| pane
+            .loaded_images
+            .len()
+            == 1));
+        assert_ne!(preview.loaded_images[&0].texture.id(), texture);
+        drop(preview);
+        context.tex_manager().write().take_delta().clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+    }
+
+    #[test]
+    fn native_html_anchor_activation_uses_source_targets_and_existing_link_policy() {
+        use egui_kittest::kittest::Queryable;
+        let text = "<a id='spot' name='alias'></a>\n\n<a href='#spot'>Jump</a>\n\n<a href='javascript:alert(1)'>Unsafe</a>\n\n<a href='&#92;&#92;attacker.example&#92;share&#92;readme.md'>UNC</a>\n\n<a href='https://example.test'>Web</a>";
+        let document = MarkdownLoader::default()
+            .load(
+                LocalMarkdownSource::new("anchors.md").unwrap().into(),
+                text.len(),
+                text.as_bytes(),
+                &Default::default(),
+            )
+            .unwrap();
+        let target = document.named_anchor("spot").unwrap().start().byte_offset();
+        assert_eq!(
+            fragment_scroll(&document, "alias"),
+            Some(PendingScroll::Byte(target))
+        );
+        assert!(document.headings().is_empty());
+        let mut harness = Harness::builder().build_ui_state(
+            |ui,
+             state: &mut (
+                MarkdownDocument,
+                Option<PendingScroll>,
+                Option<usize>,
+                Vec<AppCommand>,
+            )| {
+                for block in state.0.blocks() {
+                    if let Block::Paragraph(block) = block {
+                        for inline in block.inlines() {
+                            if let Inline::Link(link) = inline {
+                                render_link(
+                                    ui,
+                                    link,
+                                    &state.0,
+                                    &Default::default(),
+                                    FontId::proportional(16.0),
+                                    InlineRenderStyle::body(),
+                                    &mut state.1,
+                                    &mut state.2,
+                                );
+                            }
+                        }
+                    }
+                }
+                state.3.extend(take_viewer_commands(ui.ctx()));
+            },
+            (document, None, Some(0), Vec::new()),
+        );
+        harness.get_by_label("Link: Jump").click();
+        harness.step();
+        assert_eq!(harness.state().1, Some(PendingScroll::Byte(target)));
+        assert_eq!(harness.state().2, None);
+        harness.get_by_label("Link: Unsafe").click();
+        harness.step();
+        assert!(harness.state().3.is_empty());
+        harness.get_by_label("Link: UNC").click();
+        harness.step();
+        assert!(harness.state().3.is_empty());
+        harness.get_by_label("Link: Web").click();
+        harness.step();
+        assert_eq!(harness.state().3.len(), 1);
     }
 
     /// Images a local document references relatively are loaded on open. A

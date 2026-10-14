@@ -9,6 +9,7 @@ description = "Bounded Markdown loading and document projection for fesTerm."
 
 [dependencies]
 pulldown-cmark = { version = "0.13.4", default-features = false }
+quick-xml = "0.41"
 festerm-syntax = { path = "../festerm-syntax" }
 
 [lints]

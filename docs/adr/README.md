@@ -47,6 +47,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0048: Bounded Native SVG and HTML Anchors in Markdown](0048-bounded-native-svg-and-html-anchors.md) - owner-approved feature scope; narrowly amends ADR 0030 without browser/resource authority, native qualification remains CP-06/CP-15
+
 - [ADR 0046: Retained Document Frame](0046-opt-in-retained-document-frame.md) - owner-authorized qualified-route WARP default with explicit opt-out; exact complete-frame reuse shares ADR 0041's bounded cache; independent architectural review remains pending
 
 - [ADR 0044: Bounded Ordinary Terminal Row Paint Cache](0044-bounded-ordinary-terminal-row-paint-cache.md) - issue #327's internal presentation repair; independent gates and 52-run cleanup qualification complete, owner accepts the residual shaped-heavy CPU tradeoff under #334; external PR review remains required
@@ -57,7 +59,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0027: SSH Port Forwarding for Profiles and Live Sessions](0027-ssh-port-forwarding-for-profiles-and-live-sessions.md) — see issue #38
 - [ADR 0028: Text-Mode SFTP Session Tabs via `russh-sftp`](0028-text-mode-sftp-session-tabs-via-russh-sftp.md)
 - [ADR 0029: GUI SFTP File Manager Surface](0029-gui-sftp-file-manager.md) — see `docs/sftp-ui-design.md`
-- [ADR 0030: Native Markdown Viewer as a First-Class Bounded Application Surface](0030-native-markdown-viewer.md) — amended by ADR 0034
+- [ADR 0030: Native Markdown Viewer as a First-Class Bounded Application Surface](0030-native-markdown-viewer.md) — amended by ADRs 0034 and 0048
 - [ADR 0031: Mobile (iOS/Android) Port Strategy](0031-mobile-ios-android-port-strategy.md) — exploratory design only; see `docs/mobile-port-plan.md`, `docs/mobile-layout-design.md`, and `docs/mobile-signing-and-release.md`
 - [ADR 0034: Shared Mutable Documents for Native Text Editing](0034-shared-mutable-text-documents.md) — amends ADR 0030's read-only snapshot boundary; see issue #166
 

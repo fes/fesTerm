@@ -198,7 +198,10 @@ accessibility and alignment. This is frame-local preparation reuse, not table
 virtualization, Find truncation, or a native/GPU performance claim.
 
 Inline and block raw HTML are displayed as inert source or an explicit
-`HTML not rendered` placeholder. They are never interpreted. Footnotes, math,
+`HTML not rendered` placeholder, except the bounded native SVG and HTML anchor
+projections defined by [ADR 0048](adr/0048-bounded-native-svg-and-html-anchors.md).
+This is not a browser, DOM, or general HTML renderer. Fenced/backtick code,
+comments, scripts and other opaque HTML blocks remain literal. Footnotes, math,
 Mermaid/diagrams, custom containers, includes, embedded web content, and
 Markdown extensions outside the declared contract are deferred. Unsupported
 constructs degrade to readable literal text rather than disappearing.
@@ -217,13 +220,16 @@ activation:
   does not become a generic file launcher.
 - Dangerous or unsupported schemes are inert and explained.
 
-Only bounded relative raster images of saved local documents load automatically,
+Bounded relative raster and static SVG images of saved local documents load automatically,
 up to 64 distinct references per snapshot; later references keep **Load local
 image**. Both standalone viewers and editor Preview share four actual running
 loads and the Settings **Image memory budget** (512 MiB default). Existing
 admissions survive lowering/saturation; additional growth is visibly refused,
 and temporary refusals recover when their required space or slot is available.
 Permanent failures do not retry every frame; explicit retry remains available.
+Complete inline `<svg>` fragments use the same image pipeline on every origin,
+including remote and untitled documents, without acquiring file authority.
+Their XML bytes are part of the snapshot, not a path, URL, or persisted approval.
 
 The complete canonical saved Markdown file identity grants reads, never its
 lexical symlink-file parent, a presentation label or a fallback path. A source
@@ -237,7 +243,8 @@ loaded generation, and resolves the canonical in-root image destination
 beneath the same handle. Source replacement, component rebinding and
 symlink/reparse-point escapes therefore cannot retarget a load; authorized
 in-root aliases remain readable. Directory capabilities belong only to active
-reads, not open tabs. Actual encoded input is bounded to 8 MiB, dimensions to
+reads, not open tabs. Actual encoded input is bounded to 8 MiB for raster files
+and 1 MiB for UTF-8 SVG, dimensions to
 16 Mi-pixels and the live texture-axis limit, before owned expansion. Opened
 metadata must identify a regular file, and Unix nonblocking opens reject
 special files without waiting for a FIFO writer. Reservations track actual
@@ -246,11 +253,47 @@ See ADR 0030 for the conservative envelope and bounded retirement traversal.
 
 Remote, untitled and terminal-history Preview never read local images. Remote
 resource fetch remains unimplemented and may only be added through the same
-verified SFTP origin/generation. Network images, data URLs, SVG, fonts, scripts,
-stylesheets, iframes, and includes never load. Approval is per snapshot/view,
+verified SFTP origin/generation. Network images, data URLs, external SVG
+dependencies, fonts, scripts, external stylesheets, iframes, and includes never
+load. Approval is per snapshot/view,
 not a persisted trust grant. The shared allowance is not a process-RAM/VRAM
 cap: decoder-private allocation, native renderer/GPU retirement and allocator
 fragmentation are outside it.
+
+### Native SVG and HTML anchors
+
+SVG is statically rasterized at its intrinsic dimensions on the existing image
+workers. Shapes, text, internal `defs`/`use`, gradients, clipping, markers and
+bounded embedded CSS are supported. Text substitutes the fixed bundled
+JetBrains Mono family; no system-font discovery or document-supplied fonts occur.
+DTDs, processing instructions, scripts/events, embedded images, external/data
+hrefs (including SVG hyperlink hrefs), foreign HTML, animation, filters, masks
+and patterns are refused. Resource resolvers are disabled independently.
+
+Admission bounds XML to 16,384 nodes, XML/reference depth to 64, expanded work
+to 65,536 nodes/4 MiB attribute-text bytes, text to 16,384 glyphs, and aggregate
+CSS to 16 KiB/128 rules. Output and temporary layers have a 16 Mi-pixel ceiling
+and output respects the current texture-axis limit. Parser, output, retained
+pixel copies and conservative layer/clip scratch must fit the shared allowance
+before their respective expansion/rendering stages. Malformed, incomplete or
+over-projection-limit inline SVG remains literal; projected but unsafe,
+unsupported or over-budget SVG has a visible failure with explicit retry.
+
+Restricted native `<a>` tags accept only `href`, `title`, `id` and `name`.
+Attribute names are case-insensitive; quoted/unquoted values decode XML named
+entities and numeric character references before destination classification.
+Duplicate/unknown attributes, unsupported entities and malformed/nested tags
+remain literal. Targets retain exact source byte spans; the first duplicate
+name wins, explicit named targets precede heading fallback, and targets never
+create outline headings. Other HTML styling is not interpreted.
+
+HTML and Markdown links share application-command routing and scheme policy.
+Decoded rooted paths, Windows UNC/device/drive destinations and control
+characters are blocked before any filesystem access; relative Markdown links
+remain supported. Blocked links are disabled with an explanatory tooltip.
+Ordinary reparsing retains completed inline images only when their XML payload
+as well as reference kind/class/target is unchanged. Changed XML retires the
+old image and admission even if its descriptive target and source offset match.
 
 ## Find, selection, Copy, and keyboard behavior
 
@@ -470,9 +513,10 @@ reading order, platform UI scaling, high contrast, and reduced motion.
    code block, and verify exact plain text.
 3. Find `security`, move between matches, and preserve the current section and
    match while changing editor modes.
-4. Verify the first 64 bounded relative raster references load automatically,
-   explicitly load an over-budget reference, and confirm network/data/SVG
-   resources remain blocked.
+4. Verify the first 64 eligible raster/local-SVG/inline-SVG references load
+   automatically, explicitly load a later reference, and confirm unsafe SVG,
+   network/data resources and rooted/UNC links remain blocked. Navigate HTML
+   named anchors without adding outline headings; repeat in Preview and Split.
 5. Preview a remote Markdown file from SFTP, disconnect, and verify the complete
    snapshot remains readable but visibly stale; reconnect/reload only against
    the same verified origin.

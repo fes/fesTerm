@@ -96,6 +96,12 @@ Linux AppImages require desktop integration to appear in Open With. Native
 association lifecycle qualification is tracked in `docs/manual-validation.md`
 CP-19; registration never changes the user's default Markdown application.
 
+Markdown Preview and editor Preview/Split support bounded static local and
+inline SVG, plus native HTML links and named anchors. Other HTML stays inert;
+SVG cannot fetch external resources or discover system fonts. See the
+[viewer design](docs/markdown-viewer-design.md#native-svg-and-html-anchors)
+for the supported subset and limits.
+
 ## Documentation
 
 - [Keyboard bindings and routing](docs/keyboard-shortcuts.md) — persistent

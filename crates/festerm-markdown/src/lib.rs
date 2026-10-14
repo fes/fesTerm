@@ -20,6 +20,8 @@ use std::{
 use festerm_syntax::{DocumentSyntax, Language, Role, Span};
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
+mod html;
+
 /// Maximum Markdown source size accepted for one snapshot.
 pub const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
 /// Maximum decoded line count accepted for one snapshot.
@@ -32,6 +34,8 @@ pub const MAX_TABLE_CELLS: usize = 8_192;
 pub const MAX_CODE_BLOCK_BYTES: usize = 256 * 1024;
 /// Maximum distinct non-fragment resource references accepted for one snapshot.
 pub const MAX_RESOURCE_REFERENCES: usize = 2_048;
+/// Maximum XML bytes accepted for one intrinsic SVG fragment.
+pub const MAX_INLINE_SVG_BYTES: usize = 1024 * 1024;
 
 const UTF8_BOM: &[u8; 3] = b"\xEF\xBB\xBF";
 const BINARY_HEURISTIC_SAMPLE_CHARS: usize = 4_096;
@@ -397,7 +401,11 @@ impl MarkdownLoader {
         )?;
         Ok(
             MarkdownDocument::new(source, source_text, parsed.blocks, parsed.headings)
-                .with_resources(parsed.resource_references, source_index),
+                .with_resources(
+                    parsed.resource_references,
+                    source_index,
+                    parsed.named_anchors,
+                ),
         )
     }
 }
@@ -417,6 +425,7 @@ pub struct MarkdownDocument {
     headings: Vec<Heading>,
     resource_references: Vec<ResourceReference>,
     source_index: SourceIndex,
+    named_anchors: BTreeMap<String, SourceSpan>,
 }
 
 impl MarkdownDocument {
@@ -432,6 +441,7 @@ impl MarkdownDocument {
             blocks,
             headings,
             resource_references: Vec::new(),
+            named_anchors: BTreeMap::new(),
             source_index: SourceIndex {
                 line_starts: vec![0],
                 line_char_offsets: vec![0],
@@ -444,9 +454,11 @@ impl MarkdownDocument {
         mut self,
         resource_references: Vec<ResourceReference>,
         source_index: SourceIndex,
+        named_anchors: BTreeMap<String, SourceSpan>,
     ) -> Self {
         self.resource_references = resource_references;
         self.source_index = source_index;
+        self.named_anchors = named_anchors;
         self
     }
 
@@ -469,6 +481,11 @@ impl MarkdownDocument {
 
     pub fn resource_references(&self) -> &[ResourceReference] {
         &self.resource_references
+    }
+
+    /// Explicit HTML targets, independently of generated heading anchors.
+    pub fn named_anchor(&self, name: &str) -> Option<SourceSpan> {
+        self.named_anchors.get(name).copied()
     }
 
     pub fn line_count(&self) -> usize {
@@ -1060,6 +1077,7 @@ pub struct ResourceReference {
     alt_text: Option<String>,
     span: SourceSpan,
     is_autolink: bool,
+    inline_svg: Option<Arc<str>>,
 }
 
 impl ResourceReference {
@@ -1094,6 +1112,11 @@ impl ResourceReference {
     pub const fn is_autolink(&self) -> bool {
         self.is_autolink
     }
+
+    /// Intrinsic document content, never a file path or a network resource.
+    pub fn inline_svg(&self) -> Option<&Arc<str>> {
+        self.inline_svg.as_ref()
+    }
 }
 
 /// Link or image reference kind.
@@ -1106,6 +1129,7 @@ pub enum ResourceReferenceKind {
 /// Policy class used by the future UI/resource-loading layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ResourceReferenceClass {
+    IntrinsicSvg,
     DocumentFragment,
     LocalRelative,
     RemoteRelativeViaSftpOrigin,
@@ -1253,6 +1277,7 @@ struct ParsedDocument {
     blocks: Vec<Block>,
     headings: Vec<Heading>,
     resource_references: Vec<ResourceReference>,
+    named_anchors: BTreeMap<String, SourceSpan>,
 }
 
 impl ParsedDocument {
@@ -1269,8 +1294,12 @@ impl ParsedDocument {
         options.insert(Options::ENABLE_STRIKETHROUGH);
         options.insert(Options::ENABLE_GFM);
 
-        let parser = Parser::new_ext(source_text, options).into_offset_iter();
+        let fragments = html::svg_fragments(source_text, options, bounds, cancellation)?;
+        let masked = html::mask_svg(source_text, &fragments);
+        let parser =
+            Parser::new_ext(masked.as_deref().unwrap_or(source_text), options).into_offset_iter();
         let mut builder = DocumentBuilder::new(source, source_text, source_index, bounds);
+        builder.svg_fragments = fragments;
         for (index, (event, range)) in parser.enumerate() {
             if index % 128 == 0 {
                 ensure_not_cancelled(cancellation)?;
@@ -1380,6 +1409,8 @@ struct DocumentBuilder<'a> {
         std::collections::BTreeSet<(ResourceReferenceKind, ResourceReferenceClass, String)>,
     table_cells: usize,
     current_block_depth: usize,
+    svg_fragments: Vec<html::SvgFragment>,
+    named_anchors: BTreeMap<String, SourceSpan>,
 }
 
 impl<'a> DocumentBuilder<'a> {
@@ -1402,6 +1433,8 @@ impl<'a> DocumentBuilder<'a> {
             distinct_resources: std::collections::BTreeSet::new(),
             table_cells: 0,
             current_block_depth: 0,
+            svg_fragments: Vec::new(),
+            named_anchors: BTreeMap::new(),
         }
     }
 
@@ -1416,10 +1449,16 @@ impl<'a> DocumentBuilder<'a> {
                 text: text.into_string(),
             })),
             Event::Html(text) => self.push_html_block_line(text.into_string(), range),
-            Event::InlineHtml(text) => self.push_inline(Inline::RawHtml(RawHtmlInline {
-                span: self.span(range),
-                literal: text.into_string(),
-            })),
+            Event::InlineHtml(text) => {
+                if let Some(image) = self.svg_inline(range.clone())? {
+                    self.push_inline(image)
+                } else {
+                    self.push_inline(Inline::RawHtml(RawHtmlInline {
+                        span: self.span(range),
+                        literal: text.into_string(),
+                    }))
+                }
+            }
             Event::SoftBreak => self.push_inline(Inline::SoftBreak {
                 span: self.span(range),
             }),
@@ -1472,6 +1511,7 @@ impl<'a> DocumentBuilder<'a> {
             blocks: self.root,
             headings: self.headings,
             resource_references: self.resource_references,
+            named_anchors: self.named_anchors,
         })
     }
 
@@ -1595,10 +1635,11 @@ impl<'a> DocumentBuilder<'a> {
     fn end_tag(&mut self, tag_end: TagEnd, range: Range<usize>) -> Result<(), MarkdownLoadError> {
         match tag_end {
             TagEnd::Paragraph => {
-                let Some(Frame::Paragraph(frame)) = self.stack.pop() else {
+                let Some(Frame::Paragraph(mut frame)) = self.stack.pop() else {
                     return Err(MarkdownLoadError::ParseModelInvariant);
                 };
                 self.exit_block();
+                self.project_anchors(&mut frame.inlines)?;
                 self.push_block(Block::Paragraph(TextBlock {
                     span: self.span(frame.start..range.end),
                     plain_text: frame.plain_text(),
@@ -1612,8 +1653,9 @@ impl<'a> DocumentBuilder<'a> {
                 self.exit_block();
                 let start = frame.start();
                 let level = frame.level;
-                let plain_text = frame.plain_text();
-                let inlines = frame.inlines();
+                let mut inlines = frame.inlines();
+                self.project_anchors(&mut inlines)?;
+                let plain_text = inline_plain_text(&inlines);
                 let span = self.span(start..range.end);
                 let heading_index = self.headings.len();
                 let parent_index = self
@@ -1677,10 +1719,7 @@ impl<'a> DocumentBuilder<'a> {
                     return Err(MarkdownLoadError::ParseModelInvariant);
                 };
                 self.exit_block();
-                self.push_block(Block::Html(RawHtmlBlock {
-                    span: self.span(frame.start..range.end),
-                    literal: frame.literal,
-                }))
+                self.project_html_block(frame.start..range.end, frame.literal)
             }
             TagEnd::List(is_ordered) => {
                 let Some(Frame::List(frame)) = self.stack.pop() else {
@@ -1745,10 +1784,11 @@ impl<'a> DocumentBuilder<'a> {
                 Ok(())
             }
             TagEnd::TableCell => {
-                let Some(Frame::TableCell(frame)) = self.stack.pop() else {
+                let Some(Frame::TableCell(mut frame)) = self.stack.pop() else {
                     return Err(MarkdownLoadError::ParseModelInvariant);
                 };
                 self.exit_block();
+                self.project_anchors(&mut frame.inlines)?;
                 let span = self.span(frame.start..range.end);
                 let Some(Frame::TableRow(row)) = self.stack.last_mut() else {
                     return Err(MarkdownLoadError::ParseModelInvariant);
@@ -1786,6 +1826,7 @@ impl<'a> DocumentBuilder<'a> {
                     alt_text: None,
                     span,
                     is_autolink,
+                    inline_svg: None,
                 })?;
                 self.push_inline(Inline::Link(LinkInline {
                     span,
@@ -1817,6 +1858,7 @@ impl<'a> DocumentBuilder<'a> {
                     alt_text: option_string(alt_text.clone()),
                     span,
                     is_autolink,
+                    inline_svg: None,
                 })?;
                 self.push_inline(Inline::Image(ImageInline {
                     span,
@@ -1971,9 +2013,10 @@ impl<'a> DocumentBuilder<'a> {
             };
             item.tight_paragraph.take()
         };
-        let Some(paragraph) = paragraph else {
+        let Some(mut paragraph) = paragraph else {
             return Ok(());
         };
+        self.project_anchors(&mut paragraph.inlines)?;
         let block = Block::Paragraph(TextBlock {
             span: self.span(paragraph.start..end_byte),
             plain_text: paragraph.plain_text(),
@@ -2136,10 +2179,6 @@ impl HeadingFrame {
             level,
             inline: TextContainerFrame::new(start),
         }
-    }
-
-    fn plain_text(&self) -> String {
-        self.inline.plain_text()
     }
 
     fn start(&self) -> usize {
@@ -2396,13 +2435,16 @@ fn slugify_heading(text: &str) -> String {
 }
 
 fn classify_target(source: &MarkdownSource, target: &str) -> ResourceReferenceClass {
+    if target.chars().any(char::is_control) || target.starts_with(['/', '\\']) {
+        return ResourceReferenceClass::DangerousScheme;
+    }
     if target.starts_with('#') {
         return ResourceReferenceClass::DocumentFragment;
     }
     if target.starts_with("https://") {
         return ResourceReferenceClass::HttpsAbsolute;
     }
-    if target.starts_with("//") || has_uri_scheme(target) {
+    if has_uri_scheme(target) {
         return ResourceReferenceClass::DangerousScheme;
     }
     match source {
@@ -2619,6 +2661,206 @@ mod tests {
         )
         .unwrap()
         .into()
+    }
+
+    #[test]
+    fn svg_projection_preserves_source_spans_and_excludes_code() {
+        let xml = "<svg width='2' height='2'>\n\n<rect width='2' height='2'/>\n</svg>";
+        let source =
+            format!("# Diagram\n\n{xml}\n\ninline {xml} end\n\n`<svg/>`\n\n```xml\n<svg/>\n```\n");
+        let document = local_document(&source);
+        assert_eq!(document.source_text(), source);
+        assert_eq!(document.headings().len(), 1);
+        let images: Vec<_> = document
+            .resource_references()
+            .iter()
+            .filter(|reference| reference.class() == ResourceReferenceClass::IntrinsicSvg)
+            .collect();
+        assert_eq!(images.len(), 2);
+        for reference in images {
+            assert_eq!(reference.inline_svg().unwrap().as_ref(), xml);
+            assert_eq!(&source[reference.span().byte_range()], xml);
+        }
+        assert_eq!(document.find_matches("<svg").len(), 4);
+    }
+
+    #[test]
+    fn svg_projection_handles_quotes_lists_multiple_roots_and_malformed_markup() {
+        for source in [
+            "> <svg width='2' height='2'>\n> \n> <rect width='2' height='2'/>\n> </svg>\n",
+            "- <svg width='2' height='2'>\n\n  <rect width='2' height='2'/>\n  </svg>\n",
+        ] {
+            let document = local_document(source);
+            assert_eq!(document.resource_references().len(), 1, "{source}");
+            assert!(!document.resource_references()[0]
+                .inline_svg()
+                .unwrap()
+                .contains("\n>"));
+            assert_eq!(document.source_text(), source);
+        }
+        for separator in ["\n\n", "\n", "", " "] {
+            let source =
+                format!("<svg width='2' height='2'/>{separator}<svg width='3' height='3'/>\n");
+            let document = local_document(&source);
+            assert_eq!(document.resource_references().len(), 2, "{source}");
+        }
+        for source in ["<svg><rect></svg>", "<svg>\n\nnever closed", "`<svg/>`"] {
+            assert!(
+                local_document(source).resource_references().is_empty(),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn html_anchors_project_links_and_targets_without_phantom_headings() {
+        let source = "# Intro\n\n<a id=\"start\" name='alias'></a>\n\n<a href=\"https://example.com/?a=1&amp;b=2\" title=\"A > B\">hello **world**</a>\n\n<a href='#start'>Back</a>\n";
+        let document = local_document(source);
+        assert_eq!(document.headings().len(), 1);
+        assert_eq!(
+            document.named_anchor("start"),
+            document.named_anchor("alias")
+        );
+        assert_eq!(
+            document
+                .named_anchor("start")
+                .unwrap()
+                .start()
+                .byte_offset(),
+            source.find("<a id").unwrap()
+        );
+        assert_eq!(document.resource_references().len(), 2);
+        assert_eq!(
+            document.resource_references()[0].target(),
+            "https://example.com/?a=1&b=2"
+        );
+        assert_eq!(document.resource_references()[0].title(), Some("A > B"));
+        assert_eq!(
+            document.resource_references()[1].class(),
+            ResourceReferenceClass::DocumentFragment
+        );
+        assert_eq!(document.source_text(), source);
+    }
+
+    #[test]
+    fn html_anchors_reject_unsupported_markup_and_keep_destination_policy() {
+        for text in [
+            "<a href='https://example.com' onclick='evil()'>bad</a>",
+            "<a href='x' HREF='y'>bad</a>",
+            "<a href='x'>missing",
+            "<a href='x'><a href='y'>nested</a></a>",
+            "<a href='x'><a href='y' onclick='bad()'>nested</a></a>",
+            "`<a href='x'>code</a>`",
+        ] {
+            assert!(
+                local_document(text).resource_references().is_empty(),
+                "{text}"
+            );
+        }
+        let document = local_document(
+            "<a href='javascript:evil()'>bad</a>\n\n<a id='same'></a>\n\n<a id='same'></a>",
+        );
+        assert_eq!(
+            document.resource_references()[0].class(),
+            ResourceReferenceClass::DangerousScheme
+        );
+        assert_eq!(
+            document.named_anchor("same").unwrap().start().byte_offset(),
+            document.source_text().find("<a id").unwrap()
+        );
+    }
+
+    #[test]
+    fn markdown_and_html_links_reject_rooted_and_network_destinations() {
+        let local: MarkdownSource = LocalMarkdownSource::new("readme.md").unwrap().into();
+        let remote = remote_source();
+        for target in [
+            r"\\attacker.example\share\readme.md",
+            r"\\?\UNC\attacker.example\share\readme.md",
+            r"\\.\device\readme.md",
+            r"\readme.md",
+            "//attacker.example/share/readme.md",
+            "/root/readme.md",
+            r"C:\readme.md",
+            "C:readme.md",
+            "notes\n.md",
+        ] {
+            for source in [&local, &remote] {
+                assert_eq!(
+                    source.classify_target(target),
+                    ResourceReferenceClass::DangerousScheme,
+                    "{target}"
+                );
+            }
+        }
+        for target in ["docs/readme.md", r"docs\readme.md", "../readme.md"] {
+            assert_eq!(
+                local.classify_target(target),
+                ResourceReferenceClass::LocalRelative
+            );
+        }
+        let document = local_document(
+            "<a href='&#92;&#92;attacker.example&#92;share&#92;readme.md'>Open local notes</a>",
+        );
+        assert_eq!(
+            document.resource_references()[0].target(),
+            r"\\attacker.example\share\readme.md"
+        );
+        assert_eq!(
+            document.resource_references()[0].class(),
+            ResourceReferenceClass::DangerousScheme
+        );
+        assert_eq!(
+            local_document("[Notes](/root/readme.md)").resource_references()[0].class(),
+            ResourceReferenceClass::DangerousScheme
+        );
+    }
+
+    #[test]
+    fn svg_and_named_anchor_projection_obey_exact_resource_limits() {
+        let loader = MarkdownLoader::new(MarkdownBounds {
+            max_resource_references: 1,
+            ..Default::default()
+        });
+        let source = LocalMarkdownSource::new("readme.md").unwrap();
+        for text in ["<svg/>", "<a id='one'></a>"] {
+            assert!(loader
+                .load(
+                    source.clone().into(),
+                    text.len(),
+                    text.as_bytes(),
+                    &Default::default()
+                )
+                .is_ok());
+        }
+        for text in ["<svg/><svg/>", "<a id='one'></a>\n\n<a id='two'></a>"] {
+            assert!(matches!(
+                loader.load(
+                    source.clone().into(),
+                    text.len(),
+                    text.as_bytes(),
+                    &Default::default()
+                ),
+                Err(MarkdownLoadError::TooManyResourceReferences {
+                    limit: 1,
+                    actual: 2
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn svg_and_anchor_markup_inside_opaque_html_stays_literal() {
+        for source in [
+            "<script>\n<svg width='2' height='2'/>\n<a href='https://example.test'>text</a>\n</script>",
+            "<!-- >\n<svg width='2' height='2'/>\n<a href='https://example.test'>text</a>\n-->",
+            "<div>\n<svg width='2' height='2'/>\n<a href='https://example.test'>text</a>\n</div>",
+        ] {
+            let document = local_document(source);
+            assert!(document.resource_references().is_empty(), "{source}");
+            assert_eq!(document.source_text(), source);
+            assert!(matches!(document.blocks()[0], Block::Html(_)));
+        }
     }
 
     #[test]

@@ -39,6 +39,25 @@ Windows-helper metadata only. Deterministic work counters do not establish a
 new timing speedup or resolve the outstanding native exit, resource, clipboard,
 IME, multi-window or blocked-I/O qualifications.
 
+## Native SVG and HTML anchors without a browser
+
+Copilot-generated Markdown exposed two gaps: SVG diagrams were refused and
+ordinary HTML anchor links/targets remained raw text. The shared source model
+now projects complete inline SVG and a restricted native anchor subset while
+keeping exact Source/Find spans, code and other HTML inert. Static local SVG
+uses the existing capability-bound file path; inline XML owns only snapshot
+bytes, including in remote and untitled Preview.
+
+Native `resvg` work shares image workers, managed allowance and actual-owner
+retirement. XML/use/CSS/glyph and raster/layer admission, disabled resource
+resolvers and bundled-only fonts avoid introducing browser or filesystem
+authority. A same-position XML edit now invalidates stale completed images.
+Independent security review found a shared rooted/UNC link-opening gap; decoded
+targets and native activation now refuse it before any filesystem access.
+Parser, pixel, budget, actual viewer/editor-mode and link-command regressions
+cover these changes. Native fidelity, DPI, accessibility and usability evidence
+remain separately pending under ADR 0048 and CP-06/CP-15.
+
 ## Keeping multiline terminal paste in source order
 
 An owned native PowerShell 7/PSReadLine ConPTY reproduction showed that sending
