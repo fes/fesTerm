@@ -2701,6 +2701,18 @@ terminal writer. Conservative cell/text/link/row admission is limited to
 reports a content-free reason. This is not a bound on the application's total
 renderer, font or process memory.
 
+Admission includes CompactString's minimum heap capacity for long graphemes,
+exact-capacity cell/row vectors and their metadata, and conservative hyperlink
+ownership overhead; it does not equate UTF-8 length with allocated capacity.
+The capture also pins the application-owned filesystem origin, verified host
+identity, transport/lifecycle generation, availability and trustworthy cwd.
+Any change cancels frozen mode before resolving another menu; a stale action
+cannot upgrade old or disconnected content to new transport authority.
+Local terminal-path resolution rejects UNC/network and device namespaces
+before filesystem access, including mixed separators and decoded file URIs.
+Ordinary local absolute/drive paths and `file://localhost` retain their policy;
+relative paths still require trustworthy cwd, never terminal-text inference.
+
 Click a character cell for the first corner and another for the opposite corner.
 Later clicks alternate updates to those two corners. Either corner order works,
 and two clicks on the same cell select that one cell. Selection is inclusive.
@@ -2739,6 +2751,10 @@ mouse reporting do not operate on the frozen grid. Copy/cancel consumes the rest
 of that input batch and terminating key repeats/releases or held mouse releases
 cannot become shell input. Foreground palettes/overlays retain their own input.
 Leaving the tab/view or resetting recovery layout cancels the mode.
+The same exit barrier discards the original batch's application-deferred
+shortcut suffix, including paired Paste and UI shortcuts, across later frames.
+Paired releases still reach held-input cleanup. A fresh independent authorized
+paste remains available after exit; normal live paste ordering is unchanged.
 
 Each selected physical screen row becomes one clipboard line, including blank
 rows; soft wraps are not joined. Interior spaces are retained. **Trim trailing

@@ -6037,6 +6037,7 @@ impl FesTermApp {
                             context_menu_action: session.terminal_context_menu_action(),
                             history_snapshot_actions: true,
                         };
+                        let rectangle_was_active = session.view.rectangle_copy_active();
                         session.view.show_with_options(
                             ui,
                             &mut session.terminal,
@@ -6069,6 +6070,26 @@ impl FesTermApp {
                         }
                         if session.update_terminal_context_menu() {
                             ui.ctx().request_repaint();
+                        }
+                        if rectangle_was_active && !session.view.rectangle_copy_active() {
+                            // The view consumes its batch on frozen exit. Its
+                            // application-deferred suffix belongs to that same
+                            // batch, not to the newly live terminal or UI.
+                            ui.ctx().data_mut(|data| {
+                                let id = egui::Id::new("ordered-keyboard-events");
+                                if let Some(mut events) = data.remove_temp::<Vec<egui::Event>>(id) {
+                                    events.retain(|event| {
+                                        matches!(
+                                            event,
+                                            egui::Event::Key { pressed: false, .. }
+                                                | egui::Event::PointerButton { pressed: false, .. }
+                                                | egui::Event::WindowFocused(_)
+                                                | egui::Event::PointerGone
+                                        )
+                                    });
+                                    data.insert_temp(id, events);
+                                }
+                            });
                         }
                         deferred_pastes = session.view.take_paste_requests();
                         clipboard_read_requested = session.view.take_clipboard_read_request();
@@ -12877,6 +12898,197 @@ mod tests {
         keyboard_clipboard_reply(&context, token, "controlled-palette");
         harness.run();
         assert_eq!(transport.sent().concat(), b"controlled-palette");
+    }
+
+    #[test]
+    fn rectangle_capture_before_reconnect_cannot_open_menu_with_new_authority() {
+        for disconnected in [false, true] {
+            let (mut harness, transport) = keyboard_harness();
+            let context = harness.ctx.clone();
+            let active = harness.state().state.active();
+            if disconnected {
+                transport.push_event(festerm_session::SessionEvent::Lifecycle(
+                    festerm_session::SessionLifecycle::Disconnected(
+                        festerm_session::SessionError::new(
+                            festerm_session::SessionErrorKind::Spawn,
+                            "controlled disconnect",
+                        ),
+                    ),
+                ));
+                harness.run();
+            }
+            harness
+                .state_mut()
+                .state
+                .session_tab_mut(active)
+                .unwrap()
+                .terminal
+                .ingest(b"\x1b[H/srv/captured/report.txt");
+            harness
+                .state_mut()
+                .state
+                .dispatch(AppCommand::BeginRectangleCopy(active), &context);
+            harness.run();
+            assert!(harness
+                .state()
+                .state
+                .session_tab(active)
+                .unwrap()
+                .view
+                .rectangle_copy_active());
+            harness
+                .state_mut()
+                .state
+                .dispatch(AppCommand::ReconnectSession(active), &context);
+            transport.push_event(festerm_session::SessionEvent::Lifecycle(
+                festerm_session::SessionLifecycle::Running,
+            ));
+            harness.run();
+            let grid = harness
+                .state()
+                .state
+                .session_tab(active)
+                .unwrap()
+                .view
+                .diagnostics()
+                .grid_rect
+                .unwrap();
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos: grid.min + egui::vec2(10.0, 10.0),
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.run();
+            }
+            assert!(
+                !harness
+                    .state()
+                    .state
+                    .session_tab(active)
+                    .unwrap()
+                    .view
+                    .rectangle_copy_active(),
+                "capture authority must not survive reconnect (disconnected={disconnected})"
+            );
+            assert!(transport.sent().is_empty());
+        }
+    }
+
+    #[test]
+    fn rectangle_copy_exit_discards_deferred_shortcuts_and_paired_paste() {
+        use festerm_config::{KeyboardAction, KeyboardBindings, KeyboardOverride};
+        for exit in [Some(egui::Key::Enter), Some(egui::Key::Escape), None] {
+            let (mut harness, transport) = keyboard_harness();
+            let context = harness.ctx.clone();
+            let active = harness.state().state.active();
+            harness.state_mut().adopt_broadcast_configuration(
+                Configuration::empty()
+                    .with_interface_settings(InterfaceSettings::DEFAULT.with_keyboard_bindings(
+                        KeyboardBindings(vec![KeyboardOverride {
+                            action: KeyboardAction::Paste,
+                            chord: "Primary+Shift+V".to_owned(),
+                        }]),
+                    ))
+                    .unwrap(),
+            );
+            harness.event(bound_event(KeyboardAction::RectangleCopy));
+            harness.run();
+            let session = harness.state().state.session_tab(active).unwrap();
+            let grid = session.view.diagnostics().grid_rect.unwrap();
+            let dimensions = session.terminal.dimensions();
+            let pos = grid.min
+                + egui::vec2(
+                    grid.width() / dimensions.columns() as f32 / 2.0,
+                    grid.height() / dimensions.rows() as f32 / 2.0,
+                );
+            for _ in 0..2 {
+                for pressed in [true, false] {
+                    harness.event(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                    harness.run();
+                }
+            }
+            let terminating = exit.map_or_else(
+                || bound_event(KeyboardAction::Copy),
+                |key| keyboard_event(key, egui::Modifiers::NONE),
+            );
+            let (modifiers, key) = crate::keyboard::chord("Primary+Shift+V").unwrap();
+            let paste = keyboard_event(key, modifiers);
+            let paste_release = egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                modifiers,
+                pressed: false,
+                repeat: false,
+            };
+            let release = match terminating.clone() {
+                egui::Event::Key {
+                    key,
+                    physical_key,
+                    modifiers,
+                    ..
+                } => egui::Event::Key {
+                    key,
+                    physical_key,
+                    modifiers,
+                    pressed: false,
+                    repeat: false,
+                },
+                _ => unreachable!(),
+            };
+            harness.input_mut().events.extend([
+                terminating,
+                paste.clone(),
+                egui::Event::Paste("stale-batch".to_owned()),
+                bound_event(KeyboardAction::NewSession),
+                paste_release,
+                release,
+            ]);
+            for _ in 0..5 {
+                harness.step();
+                assert!(transport.sent().is_empty(), "exit={exit:?}");
+                assert!(harness.state().clipboard_paste.is_none(), "exit={exit:?}");
+                assert!(egui_winit::clipboard_requests::take_request(
+                    &context,
+                    egui::ViewportId::ROOT
+                )
+                .is_none());
+                assert!(harness
+                    .output()
+                    .viewport_output
+                    .values()
+                    .flat_map(|output| &output.commands)
+                    .all(|command| !matches!(command, egui::ViewportCommand::RequestPaste)));
+                assert_eq!(harness.state().state.active(), active);
+            }
+            assert!(!harness
+                .state()
+                .state
+                .session_tab(active)
+                .unwrap()
+                .view
+                .rectangle_copy_active());
+            assert!(
+                harness.state().terminal_owns_input(),
+                "fresh owner exit={exit:?}"
+            );
+            harness
+                .input_mut()
+                .events
+                .extend([paste, egui::Event::Paste("fresh-independent".to_owned())]);
+            harness.run_steps(3);
+            assert_eq!(
+                transport.sent().concat(),
+                b"fresh-independent",
+                "exit={exit:?}"
+            );
+        }
     }
 
     #[test]

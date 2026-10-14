@@ -19,6 +19,67 @@ mod frozen_tests {
     use super::*;
 
     #[test]
+    fn rectangle_and_live_paths_refuse_network_and_device_namespaces_without_io() {
+        let origin = TerminalFilesystemOrigin::Local(LocalTerminalOrigin::default());
+        for text in [
+            r"\\attacker.example\share\report.txt",
+            r"//attacker.example/share/report.txt",
+            r"/\attacker.example/share/report.txt",
+            r"\/attacker.example/share/report.txt",
+            r"\\?\UNC\attacker.example\share\report.txt",
+            r"\\.\pipe\report.txt",
+            r"\??\UNC\attacker.example\share\report.txt",
+            "file:///%2Fattacker.example/share/report.txt",
+            "file://localhost/%5Cattacker.example/share/report.txt",
+            "file:///%5C%5C?%5CUNC%5Cattacker.example/share/report.txt",
+            "file:///%3F%3F/UNC/attacker.example/share/report.txt",
+        ] {
+            let capture = festerm_ui_egui::TerminalContextText {
+                text: text.to_owned(),
+                clicked_range: 2..3,
+            };
+            let frozen = resolve_frozen_context_menu_action(&capture, 1, Some(&origin));
+            let mut terminal =
+                Terminal::new(festerm_core::Dimensions::new(120, 2).unwrap()).unwrap();
+            terminal.ingest(text.as_bytes());
+            let live = resolve_context_menu_action(
+                &terminal,
+                TerminalContextTarget {
+                    content_position: ContentPosition {
+                        column: 2,
+                        absolute_row: 0,
+                    },
+                    generation: 1,
+                },
+                &origin,
+            );
+            // Resolution is pure: no test opens or probes any named path.
+            for menu in [frozen, live].into_iter().flatten() {
+                assert!(!menu.ui_action().enabled, "{text}");
+                assert!(menu.open_request().is_none(), "{text}");
+            }
+            assert!(
+                resolve_local_candidate(text, &LocalTerminalOrigin::default())
+                    .request
+                    .is_none(),
+                "{text}"
+            );
+        }
+        for text in [
+            "/safe/report.txt",
+            "file:///safe/report.txt",
+            "file://localhost/safe/report.txt",
+        ] {
+            assert!(
+                resolve_local_candidate(text, &LocalTerminalOrigin::default())
+                    .request
+                    .is_some(),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
     fn rectangle_frozen_context_reuses_url_and_path_destination_policy() {
         let capture = festerm_ui_egui::TerminalContextText {
             text: "https://example.com/report.md".to_owned(),
@@ -762,12 +823,18 @@ fn resolve_local_candidate(
     candidate: &str,
     origin: &LocalTerminalOrigin,
 ) -> TerminalResolvedPathAction {
+    if is_local_network_or_device_path(candidate) {
+        return disabled_local_namespace(candidate);
+    }
     let parsed = match parse_candidate_reference(candidate) {
         Ok(parsed) => parsed,
         Err(error) => return disabled_action(candidate.to_owned(), error.detail()),
     };
     match parsed {
         ParsedPathReference::FileUri(uri) => {
+            if is_local_network_or_device_path(&uri.path) {
+                return disabled_local_namespace(candidate);
+            }
             if let Some(host) = &uri.host {
                 if !host.eq_ignore_ascii_case("localhost") {
                     return disabled_action(
@@ -887,6 +954,9 @@ fn resolve_remote_candidate(
 }
 
 fn enabled_local_action(path: PathBuf) -> TerminalResolvedPathAction {
+    if is_local_network_or_device_path(&path.to_string_lossy()) {
+        return disabled_local_namespace(&path.to_string_lossy());
+    }
     let display_path = path.display().to_string();
     TerminalResolvedPathAction {
         ui: TerminalContextMenuAction {
@@ -900,6 +970,24 @@ fn enabled_local_action(path: PathBuf) -> TerminalResolvedPathAction {
             LocalTerminalPathOpenRequest { path, display_path },
         )),
     }
+}
+
+fn disabled_local_namespace(candidate: &str) -> TerminalResolvedPathAction {
+    disabled_action(
+        candidate.to_owned(),
+        "Network and device namespace paths cannot be opened from terminal output.",
+    )
+}
+
+fn is_local_network_or_device_path(candidate: &str) -> bool {
+    // Interpret both Windows separators even on Unix, including decoded file
+    // URIs. No filesystem probe may precede this network-authentication boundary.
+    let normalized = candidate.replace('\\', "/");
+    normalized.starts_with("//")
+        || normalized.starts_with("/??/")
+        || normalized.starts_with("??/")
+        || normalized.to_ascii_lowercase().starts_with("/device/")
+        || normalized.to_ascii_lowercase().starts_with("/global??/")
 }
 
 fn disabled_action(preview: String, reason: impl Into<String>) -> TerminalResolvedPathAction {

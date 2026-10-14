@@ -59,10 +59,11 @@ impl RectangleCopy {
         budget: usize,
     ) -> Result<Self, RectangleCopyError> {
         let dimensions = snapshot.dimensions();
-        let mut bytes = dimensions
-            .cell_count()
-            .checked_mul(size_of::<RenderedCell>())
-            .and_then(|bytes| bytes.checked_add(dimensions.rows().checked_mul(64)?))
+        let mut bytes = TerminalRenderCache::frozen_storage_bytes(dimensions)
+            .and_then(|bytes| bytes.checked_add(size_of::<Self>()))
+            .and_then(|bytes| {
+                bytes.checked_add(dimensions.rows().checked_mul(size_of::<FrozenRow>())?)
+            })
             .ok_or(RectangleCopyError::SnapshotTooLarge)?;
         if bytes > budget {
             return Err(RectangleCopyError::SnapshotTooLarge);
@@ -71,9 +72,17 @@ impl RectangleCopy {
             for column in 0..dimensions.columns() {
                 if let Some(cell) = snapshot.cell(column, row) {
                     bytes = bytes
-                        .checked_add(cell.text().len())
+                        .checked_add(
+                            RenderedCell::text_heap_bytes(cell.text())
+                                .ok_or(RectangleCopyError::SnapshotTooLarge)?,
+                        )
                         .and_then(|bytes| {
-                            bytes.checked_add(cell.hyperlink_target().map_or(0, |link| link.len()))
+                            // Charge each link independently, including Arc counters/alignment,
+                            // even though the cache normally shares the core's allocation.
+                            let link_bytes = cell.hyperlink_target().map_or(Some(0), |link| {
+                                link.len().checked_add(3 * size_of::<usize>() - 1)
+                            })?;
+                            bytes.checked_add(link_bytes)
                         })
                         .ok_or(RectangleCopyError::SnapshotTooLarge)?;
                     if bytes > budget {
@@ -82,6 +91,21 @@ impl RectangleCopy {
                 }
             }
         }
+        let mut rows = Vec::with_capacity(dimensions.rows());
+        rows.extend((0..dimensions.rows()).map(|row| {
+            let absolute_row = snapshot
+                .content_row_for_viewport_row(row)
+                .expect("visible row exists");
+            FrozenRow {
+                absolute_row,
+                soft_wrapped: snapshot
+                    .absolute_row_soft_wrapped(absolute_row)
+                    .expect("visible row retains wrap metadata"),
+                occupied_columns: snapshot
+                    .absolute_row_occupied_columns(absolute_row)
+                    .expect("visible row retains occupied-column metadata"),
+            }
+        }));
         Ok(Self {
             dimensions,
             corners: [None; 2],
@@ -90,22 +114,7 @@ impl RectangleCopy {
             trim_trailing_spaces,
             secondary_pressed: false,
             held_buttons: 0,
-            rows: (0..dimensions.rows())
-                .map(|row| {
-                    let absolute_row = snapshot
-                        .content_row_for_viewport_row(row)
-                        .expect("visible row exists");
-                    FrozenRow {
-                        absolute_row,
-                        soft_wrapped: snapshot
-                            .absolute_row_soft_wrapped(absolute_row)
-                            .expect("visible row retains wrap metadata"),
-                        occupied_columns: snapshot
-                            .absolute_row_occupied_columns(absolute_row)
-                            .expect("visible row retains occupied-column metadata"),
-                    }
-                })
-                .collect(),
+            rows,
         })
     }
 
@@ -573,12 +582,50 @@ mod tests {
     }
 
     #[test]
+    fn rectangle_copy_admission_counts_heap_backed_combining_grapheme_capacity() {
+        let dimensions = Dimensions::new(450, 450).unwrap();
+        let mut terminal = Terminal::new(dimensions).unwrap();
+        let grapheme = format!("a{}", "\u{301}".repeat(12));
+        assert_eq!(grapheme.len(), 25);
+        terminal.ingest(grapheme.repeat(dimensions.cell_count()).as_bytes());
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        let owned = RenderedCell::from_core(snapshot.cell(0, 0).unwrap());
+        assert!(owned.text.is_heap_allocated());
+        let actual_cells =
+            dimensions.cell_count() * (size_of::<RenderedCell>() + owned.text.capacity());
+        assert!(actual_cells > RECTANGLE_COPY_MAX_BYTES);
+        assert!(matches!(
+            RectangleCopy::capture(snapshot, true, RECTANGLE_COPY_MAX_BYTES),
+            Err(RectangleCopyError::SnapshotTooLarge)
+        ));
+        let mut terminal = Terminal::new(Dimensions::new(2, 1).unwrap()).unwrap();
+        terminal.ingest(grapheme.as_bytes());
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        let bytes = TerminalRenderCache::frozen_storage_bytes(snapshot.dimensions()).unwrap()
+            + size_of::<RectangleCopy>()
+            + size_of::<FrozenRow>()
+            + RenderedCell::text_heap_bytes(&grapheme).unwrap();
+        assert!(RectangleCopy::capture(snapshot, true, bytes).is_ok());
+        assert!(RectangleCopy::capture(snapshot, true, bytes + 1).is_ok());
+        assert!(matches!(
+            RectangleCopy::capture(snapshot, true, bytes - 1),
+            Err(RectangleCopyError::SnapshotTooLarge)
+        ));
+    }
+
+    #[test]
     fn rectangle_copy_admission_checks_exact_cell_text_and_link_budgets() {
         let mut terminal = Terminal::new(Dimensions::new(2, 1).unwrap()).unwrap();
         terminal.ingest(b"\x1b]8;;https://example.invalid/path\x1b\\A\x1b]8;;\x1b\\B");
         let snapshot = TerminalSnapshot::from_terminal(&terminal);
-        let bytes = 2 * size_of::<RenderedCell>() + 64 + 2 + "https://example.invalid/path".len();
+        let bytes = TerminalRenderCache::frozen_storage_bytes(snapshot.dimensions()).unwrap()
+            + size_of::<RectangleCopy>()
+            + size_of::<FrozenRow>()
+            + "https://example.invalid/path".len()
+            + 3 * size_of::<usize>()
+            - 1;
         assert!(RectangleCopy::capture(snapshot, true, bytes).is_ok());
+        assert!(RectangleCopy::capture(snapshot, true, bytes + 1).is_ok());
         assert!(matches!(
             RectangleCopy::capture(snapshot, true, bytes - 1),
             Err(RectangleCopyError::SnapshotTooLarge)

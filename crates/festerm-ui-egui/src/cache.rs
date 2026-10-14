@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{mem::size_of, sync::Arc};
 
 use compact_str::CompactString;
 use festerm_core::{Attributes, Cell, CellWidth, Color, ContentPosition, Dimensions, Terminal};
@@ -19,6 +19,21 @@ pub struct RenderedCell {
 }
 
 impl RenderedCell {
+    pub(crate) fn text_heap_bytes(text: &str) -> Option<usize> {
+        if text.len() <= size_of::<CompactString>() {
+            return Some(0);
+        }
+        // compact_str 0.9's new(&str) allocates at least four machine words,
+        // not merely len() bytes. On 32-bit it can also store capacity on heap.
+        text.len()
+            .max(size_of::<CompactString>() + size_of::<usize>())
+            .checked_add(if cfg!(target_pointer_width = "32") {
+                size_of::<usize>()
+            } else {
+                0
+            })
+    }
+
     pub(crate) fn from_core(cell: &Cell) -> Self {
         Self {
             text: CompactString::new(cell.text()),
@@ -120,6 +135,21 @@ pub struct TerminalRenderCache {
 }
 
 impl TerminalRenderCache {
+    pub(crate) fn frozen_storage_bytes(dimensions: Dimensions) -> Option<usize> {
+        dimensions
+            .cell_count()
+            .checked_mul(size_of::<RenderedCell>())?
+            .checked_add(
+                dimensions
+                    .rows()
+                    .checked_mul(size_of::<CachedRow>() + size_of::<usize>())?,
+            )?
+            .checked_add(size_of::<Self>())?
+            .checked_add(size_of::<Vec<usize>>())?
+            // One shared row revision, plus the initialization revision during update.
+            .checked_add(4 * size_of::<usize>())
+    }
+
     pub fn update(
         &mut self,
         snapshot: TerminalSnapshot<'_>,
@@ -152,6 +182,7 @@ impl TerminalRenderCache {
             for row in &rows {
                 let cells = &mut self.rows[*row].cells;
                 cells.clear();
+                cells.reserve_exact(dimensions.columns());
                 cells.extend((0..dimensions.columns()).map(|column| {
                     snapshot
                         .cell(column, *row)
@@ -252,6 +283,40 @@ impl ResizeTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rectangle_copy_allocation_estimate_covers_owned_cache_capacities() {
+        for (columns, rows) in [(2, 1), (2, 3), (80, 24)] {
+            let dimensions = Dimensions::new(columns, rows).unwrap();
+            let terminal = Terminal::new(dimensions).unwrap();
+            let mut cache = TerminalRenderCache::default();
+            let update = cache.update(TerminalSnapshot::from_terminal(&terminal), &[]);
+            let measured = size_of::<TerminalRenderCache>()
+                + cache.rows.capacity() * size_of::<CachedRow>()
+                + cache
+                    .rows
+                    .iter()
+                    .map(|row| row.cells.capacity() * size_of::<RenderedCell>())
+                    .sum::<usize>()
+                + 2 * size_of::<usize>()
+                + size_of::<Vec<usize>>()
+                + update.updated_rows.capacity() * size_of::<usize>();
+            assert!(measured <= TerminalRenderCache::frozen_storage_bytes(dimensions).unwrap());
+        }
+        for len in [0, 1, 12, 13, 24, 25, 31, 32, 33, 127, 1025] {
+            let text = "a".repeat(len);
+            let compact = CompactString::new(&text);
+            let actual = if compact.is_heap_allocated() {
+                compact.capacity()
+            } else {
+                0
+            };
+            assert!(
+                actual <= RenderedCell::text_heap_bytes(&text).unwrap(),
+                "len={len}"
+            );
+        }
+    }
 
     #[test]
     fn rendered_cache_dirty_rows_reuse_their_owned_cell_backing() {

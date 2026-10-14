@@ -5978,3 +5978,31 @@ All callback prepare calls still precede all finish_prepare calls without an
 acquired surface; preparation, queued images and ordinary fallback remain live.
 These are deterministic work-count reductions, not new timing measurements or
 native CP-18 acceptance, and they do not diagnose the exit-2173 sampler failure.
+
+### Keeping frozen rectangle data separate from live authority and input
+
+Review of PR #392 found four gaps in the bounded rectangle-copy contract.
+Local path detection could hand UNC/device spellings, including decoded file
+URIs, to filesystem operations that can initiate Windows network
+authentication. Both live and frozen terminal resolution now refuse those
+namespaces before I/O, interpreting mixed separators consistently.
+
+Frozen cells previously retained text but refreshed their filesystem authority
+when a menu opened. Capture now pins application-owned origin, verified
+identity, transport/lifecycle generation, availability and trustworthy cwd.
+Authority changes cancel the mode; stale opens fail closed instead of upgrading
+old or disconnected text after reconnect. No authority comes from prompt text.
+
+The 16 MiB admission calculation now charges CompactString heap capacity,
+exact-capacity vectors, row metadata and conservative link ownership overhead.
+A valid 450×450 grid of 25-byte combining graphemes demonstrates the old
+underestimate without claiming an RSS bound. Exact-budget and one-byte
+boundaries remain deterministic.
+
+Finally, Enter/Escape/reserved Copy could consume the view's input while
+leaving the application's deferred shortcut suffix for a newly live frame.
+Frozen exit now discards that original batch's shortcuts and paired payloads,
+retaining release cleanup. Application-harness tests prove no stale paste bytes,
+clipboard read or UI command across later frames, then authorize a fresh paste.
+These are regression repairs within existing ownership boundaries, not native
+clipboard, platform usability or milestone acceptance.

@@ -466,6 +466,17 @@ remain open; their classification is unchanged.
 | TI-17 | In live local/SSH, alternate-screen and disconnected/history viewports, enter **Bounded rectangle copy** using Primary+Shift+B and the palette. Verify FROZEN indication with the status bar hidden, alternating/reversed/same-cell corners, primary-button drag from either direction, same-cell clicks versus dragged single-cell rectangles, grid-edge clamping, click adjustment after drag, and release finishing drawing without copying. Exercise focus/pointer loss and foreground interruption during drag, Enter/keyboard Copy/Escape including while the primary button is held, and right-click opening a menu without copying. Verify menu Copy with a rectangle, a single corner, and no corner (whole frozen visible viewport); menu clicks must not redraw. Test wrapped local/remote paths, HTTP(S) URLs and OSC 8 metadata inside the rectangle, Copy-only outside it, original full-width wraps with no rectangle, continuing output after capture, and path/link Copy keeping the mode frozen. Exercise trim/preserve spaces, blank/soft-wrapped/wide/combining rows, live resize/full redraw, palette/overlay ownership, tab/recovery cancellation, held terminating keys/buttons, and delayed paste callbacks. Repeat across supported renderers, DPI and Windows/macOS/Linux native input. | Native functional + visual/accessibility + usability | Admission/extraction, frozen-cache stability, click/drag geometry, bounded frozen context capture, shared destination policy, menu/gesture ownership, typed commands, configuration and delayed-paste authorization are deterministic automated checks; native OS clipboard, renderer/DPI appearance, screen-reader delivery and user feel remain pending, not accepted |
 | TI-18 | In Copilot CLI and other mouse-aware TUIs, finish Shift-selection, release, then hover before Ctrl+Shift+C / Cmd+C or Shift+right-click Copy. Distinguish content genuinely overwritten by the TUI from idle mouse motion and native clipboard-write failure. | Native functional + compatibility + usability | Shift-drag/release/hover under modes 1000/1002/1003 and continued reporting are automated; actual Copilot mode, physical Windows gestures and OS clipboard failure/delivery remain unmeasured/manual pending |
 
+TI-14/TI-17 review hardening adds network-free raw/mixed/encoded UNC/device
+refusals, actual application capture-before-reconnect/menu-after-reconnect
+checks for running and disconnected captures, and measured owned-capacity
+admission tests using heap-backed combining graphemes near 16 MiB.
+Enter/Escape/reserved Copy followed by configured Paste/paired payload and UI
+shortcuts is checked across subsequent application frames: no shell bytes,
+clipboard reads or stale UI commands; a later independent paste remains live.
+These are deterministic security/reliability regressions, not RSS bounds,
+native Windows SMB experiments, OS clipboard delivery or usability acceptance.
+Native renderer/input/accessibility and user-feel evidence remains pending.
+
 Windows ConPTY prompt timing qualification is automated by
 `python scripts/check_windows_conpty_prompt.py --cycles 20` and the fixed
 `windows-conpty-prompt-stress` VM adapter mode. It repeats the exact

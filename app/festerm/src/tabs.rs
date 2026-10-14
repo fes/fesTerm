@@ -767,6 +767,13 @@ pub struct SshPasswordRetryState {
 struct TerminalPathState {
     origin: Option<TerminalFilesystemOrigin>,
     menu: Option<TerminalPathMenuState>,
+    frozen_authority: Option<FrozenTerminalAuthority>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FrozenTerminalAuthority {
+    origin: Option<TerminalFilesystemOrigin>,
+    lifecycle_generation: u64,
 }
 
 struct PendingTerminalPathOpen {
@@ -1387,6 +1394,18 @@ impl SessionTab {
     }
 
     pub(crate) fn update_terminal_context_menu(&mut self) -> bool {
+        if self.view.rectangle_copy_active()
+            && self.terminal_path.frozen_authority.as_ref()
+                != Some(&self.current_terminal_authority())
+        {
+            self.view.cancel_rectangle_copy();
+            self.terminal_path.menu = None;
+            self.terminal_path.frozen_authority = None;
+            return true;
+        }
+        if !self.view.rectangle_copy_active() {
+            self.terminal_path.frozen_authority = None;
+        }
         self.terminal_path.origin = self.terminal_filesystem_origin();
         let Some(target) = self.view.context_menu_target() else {
             let cleared = self.terminal_path.menu.take().is_some();
@@ -1415,10 +1434,36 @@ impl SessionTab {
     }
 
     fn terminal_path_open_request(&self) -> Option<TerminalPathOpenRequest> {
+        if self.view.rectangle_copy_active()
+            && self.terminal_path.frozen_authority.as_ref()
+                != Some(&self.current_terminal_authority())
+        {
+            return None;
+        }
         self.terminal_path
             .menu
             .as_ref()
             .and_then(TerminalPathMenuState::open_request)
+    }
+
+    fn current_terminal_authority(&self) -> FrozenTerminalAuthority {
+        FrozenTerminalAuthority {
+            origin: self.terminal_filesystem_origin(),
+            lifecycle_generation: self.controller.lifecycle_generation(),
+        }
+    }
+
+    fn begin_rectangle_copy(
+        &mut self,
+        trim: bool,
+    ) -> Result<(), festerm_ui_egui::RectangleCopyError> {
+        if self.view.rectangle_copy_active() {
+            return Ok(());
+        }
+        let authority = self.current_terminal_authority();
+        self.view.begin_rectangle_copy(&self.terminal, trim)?;
+        self.terminal_path.frozen_authority = Some(authority);
+        Ok(())
     }
 
     fn live_remote_file_requestor(&self) -> Option<LiveRemoteFileRequestor> {
@@ -3576,7 +3621,7 @@ impl AppState {
                     return;
                 };
                 if !session.view.rectangle_copy_active() {
-                    let result = session.view.begin_rectangle_copy(&session.terminal, trim);
+                    let result = session.begin_rectangle_copy(trim);
                     match result {
                         Ok(()) => {
                             self.input_ownership_epoch = self.input_ownership_epoch.wrapping_add(1);
@@ -7489,10 +7534,7 @@ mod tests {
             session
                 .terminal
                 .ingest(b"left https://examp zz\r\nleft le.com/a     zz");
-            session
-                .view
-                .begin_rectangle_copy(&session.terminal, true)
-                .unwrap();
+            session.begin_rectangle_copy(true).unwrap();
             session
                 .terminal
                 .ingest(b"\x1b[2J\x1b[Hhttps://wrong.example/live");

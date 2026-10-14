@@ -567,6 +567,15 @@ including terminal-owned/unreported motion; actual reports continue unchanged.
 | `TERM-12` | Frozen copy → selected rectangle | Click two cells, reverse corner order, repeat alternating updates, choose the same cell twice, or primary-button drag from either corner. | Drag starts a fresh inclusive rectangle, updates during motion, clamps owned movement/release to grid edges and finishes without copying on release; same-cell press/release stays an alternating click. After dragging, clicks update the anchor first. Focus/pointer loss or foreground blackout ends drag ownership; hover/orphan releases cannot redraw. The rectangle remains stable despite output, live resize/reflow, screen switches and full-redraw requests. Copy uses separate physical rows, preserves interior/blank rows, never exports URI/protocol data, and includes intersecting wide/combining graphemes once. Persisted trim-ASCII-row-ends preference defaults on and can preserve selected width. | `TERM-13`. | P,H,N,U |
 | `TERM-13` | Frozen copy → menu/live viewport | Enter/keyboard Copy after both corners; right-click for Copy and applicable path/URL/OSC 8 actions; Escape or relinquish/reset cancels. | Menu Copy always available, using current bounds or the full frozen visible viewport with no corner; keyboard incomplete Copy remains active. Detection is confined to the rectangle, joining cropped rows at its edges; without one, use frozen full-width soft-wrap/occupied metadata. Outside an existing rectangle offers only Copy. Shared 16-row/8-KiB capture and existing application destination/origin/transport policy apply; oversize detection still permits Copy. Path/URL/link Copy retains frozen mode, while rectangle Copy resumes. Menu interaction never redraws corners or rereads live content. No typing, paste, mouse-report or wheel input leaks; paired terminating keys/buttons stay local. Foreground overlays own input. Refresh current live state on exit; old paste callbacks remain invalid. | Begin another rectangle with `TERM-11`. | P,H,N,privacy,security |
 
+`TERM-09` rejects local UNC/network/device namespaces before filesystem access,
+including decoded URI and mixed-separator spellings. `TERM-11` admission counts
+heap capacity (including CompactString's minimum), vectors and metadata, not
+only text length. `TERM-13` pins capture-time origin/verified identity,
+generation, availability and trustworthy cwd; changing authority cancels the
+mode rather than upgrading old content. Its exit barrier also discards every
+shortcut and paired payload in the application-deferred original batch suffix,
+while preserving release cleanup and later independent live paste.
+
 ## J. Paste and drop safety
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |
