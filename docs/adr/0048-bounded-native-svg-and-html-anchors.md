@@ -87,7 +87,9 @@ also matches, not merely their descriptive target or source position.
 - **Automated tests required:** SVG source projection and code-fence exclusion;
   HTML href classification and named-anchor navigation; bounded SVG pixels,
   bundled text, malicious XML/resource rejection, memory/worker admission,
-  lifetime/reparse, and shared editor/viewer behavior.
+  lifetime/reparse, and shared editor/viewer behavior. Encoded input, XML nodes,
+  aggregate CSS bytes/rules, texture axes and resource admission require both
+  exact-limit success and limit-plus-one refusal.
 - **Native/manual evidence required:** Existing `MD-04`, `MD-05`, and editor
   Preview image scenarios gain SVG/anchor checks; complete native evidence
   remains pending.
