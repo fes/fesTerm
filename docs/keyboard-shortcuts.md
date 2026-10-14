@@ -28,7 +28,11 @@ continue. Deliberate terminal-owned gestures and typing still clear selection.
 Use **Bounded rectangle copy** (`Primary+Shift+B` by default) to freeze the visible
 grid and choose two corners. Clicks alternate corner updates, or primary-button
 drag draws a fresh rectangle. Releasing finishes drawing without copying;
-Enter/right-click or Copy copies and resumes, and Escape cancels. Incoming output continues.
+Enter or keyboard Copy copies a completed rectangle and resumes; right-click
+opens Copy plus applicable path/link actions, and Escape cancels. Menu Copy
+without any corner copies the frozen visible viewport. Path/URL detection
+wraps at the rectangle edges and is unavailable outside it; without a
+rectangle it uses the frozen full-width terminal wraps. Incoming output continues.
 The frozen border/badge remains visible with the status bar off. Settings'
 **Trim trailing spaces in rectangle copy** defaults on; disable it to preserve
 row-end spaces. The full bounds, Unicode and ownership contract is in

@@ -56,8 +56,9 @@ pub use rectangle_copy::RectangleCopyError;
 pub use renderer::{resolve_color, terminal_color_scheme, FontSettings};
 pub use selection::{normalize_selection_position, selection_text, Selection};
 pub use view::{
-    FrameDiagnostics, TerminalContextMenuAction, TerminalContextTarget, TerminalHistoryAction,
-    TerminalView, TerminalViewOptions,
+    FrameDiagnostics, TerminalContextMenuAction, TerminalContextTarget, TerminalContextText,
+    TerminalHistoryAction, TerminalView, TerminalViewOptions, TERMINAL_CONTEXT_MAX_BYTES,
+    TERMINAL_CONTEXT_MAX_ROWS,
 };
 
 /// A read-only, renderer-facing view of the currently visible terminal grid.

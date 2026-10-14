@@ -88,7 +88,7 @@ Bounded rectangle copy provides an explicit stable alternative for changing
 output: the application command freezes the visible, bounded UI presentation,
 not the live terminal or transport. Clicks alternate between two corners, or
 primary-button dragging draws a fresh rectangle from the press to the release;
-Enter/right-click/Copy resumes after extraction, and Escape cancels. A frozen
+Enter/Copy resumes after extraction, and Escape cancels. A frozen
 badge/border, physical-row extraction, whole intersecting graphemes and a
 persisted trim/preserve trailing-space choice make that contract visible.
 Input ownership blocks paste and invalidates old clipboard callbacks, while
@@ -102,6 +102,15 @@ while held; releasing only finishes drawing. Same-cell clicks still alternate,
 and later clicks adjust the dragged anchor first. Owned edge clamping, exact
 same-batch Copy, interruption, and held-button exit regressions preserve the
 frozen-input boundary rather than forwarding partial gestures to a TUI.
+
+A second refinement keeps right-click useful for navigation: it now opens Copy
+plus the existing path/URL/link actions instead of copying immediately. Path
+detection interprets cropped rows as wrapping at the rectangle edges, while
+clipboard extraction still preserves physical rows. No corner means full
+frozen-viewport Copy and original full-width wrap metadata; outside an existing
+rectangle offers only Copy. Bounded frozen text feeds the same application
+resolver as normal menus, and explicit link metadata stays tied to the frozen
+cells. Menu clicks cannot redraw the selection or leak a partial TUI gesture.
 
 ## Keeping multiline terminal paste in source order
 

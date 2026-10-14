@@ -1400,8 +1400,15 @@ impl SessionTab {
         {
             return false;
         }
-        let next =
-            resolve_context_menu_action(&self.terminal, target, self.terminal_path.origin.as_ref());
+        let next = if let Some(capture) = self.view.context_menu_text() {
+            crate::terminal_paths::resolve_frozen_context_menu_action(
+                capture,
+                target.generation,
+                self.terminal_path.origin.as_ref(),
+            )
+        } else {
+            resolve_context_menu_action(&self.terminal, target, self.terminal_path.origin.as_ref())
+        };
         let changed = self.terminal_path.menu != next;
         self.terminal_path.menu = next;
         changed
@@ -7443,6 +7450,104 @@ mod tests {
 
         assert_eq!(state.tabs().len(), tabs_after_first_open);
         assert_eq!(state.active(), tab_id);
+    }
+
+    #[test]
+    fn rectangle_frozen_context_menu_resolves_cropped_url_after_live_overwrite() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let mut state = AppState::for_test();
+        let tab_id = state.replace_active_with_test_ssh_session(
+            crate::session_controller::fake::FakeSshSession::new([]),
+            "deploy",
+            "ssh.example.test",
+            22,
+        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 600.0))
+            .build_ui_state(
+                move |ui, state: &mut AppState| {
+                    let session = state.session_tab_mut(tab_id).unwrap();
+                    let action = session.terminal_context_menu_action();
+                    session.view.show_with_options(
+                        ui,
+                        &mut session.terminal,
+                        &mut session.controller,
+                        festerm_ui_egui::TerminalViewOptions {
+                            context_menu_action: action,
+                            ..Default::default()
+                        },
+                    );
+                    session.update_terminal_context_menu();
+                },
+                state,
+            );
+        harness.run();
+        {
+            let session = harness.state_mut().session_tab_mut(tab_id).unwrap();
+            session.terminal = Terminal::new(Dimensions::new(24, 3).unwrap()).unwrap();
+            session
+                .terminal
+                .ingest(b"left https://examp zz\r\nleft le.com/a     zz");
+            session
+                .view
+                .begin_rectangle_copy(&session.terminal, true)
+                .unwrap();
+            session
+                .terminal
+                .ingest(b"\x1b[2J\x1b[Hhttps://wrong.example/live");
+        }
+        harness.run();
+        let grid = harness
+            .state()
+            .session_tab(tab_id)
+            .unwrap()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap();
+        let point = |column: f32, row: f32| {
+            grid.min
+                + egui::vec2(
+                    (column + 0.5) * grid.width() / 24.0,
+                    (row + 0.5) * grid.height() / 3.0,
+                )
+        };
+        for (column, row, button) in [
+            (5.0, 0.0, egui::PointerButton::Primary),
+            (17.0, 1.0, egui::PointerButton::Primary),
+            (7.0, 1.0, egui::PointerButton::Secondary),
+        ] {
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos: point(column, row),
+                    button,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.step();
+            }
+        }
+        harness.run();
+        let session = harness.state().session_tab(tab_id).unwrap();
+        assert!(matches!(session.terminal_path_open_request(),
+            Some(TerminalPathOpenRequest::Web(ref target)) if target == "https://example.com/a"));
+        assert!(harness.query_by_label("Go").is_some());
+        assert!(harness.query_by_label("Copy URL").is_some());
+        harness.get_by_label("Copy URL").click();
+        harness.run();
+        assert!(harness
+            .state()
+            .session_tab(tab_id)
+            .unwrap()
+            .view
+            .rectangle_copy_active());
+        assert!(!harness
+            .state_mut()
+            .session_tab_mut(tab_id)
+            .unwrap()
+            .view
+            .take_context_action_request());
     }
 
     #[test]

@@ -1,8 +1,11 @@
 use std::{fmt, mem::size_of};
 
-use festerm_core::{CellWidth, Dimensions};
+use festerm_core::{CellWidth, ContentPosition, Dimensions};
 
-use crate::{CellPosition, RenderedCell, TerminalRenderCache, TerminalSnapshot};
+use crate::{
+    CellPosition, RenderedCell, TerminalContextText, TerminalRenderCache, TerminalSnapshot,
+    TERMINAL_CONTEXT_MAX_BYTES, TERMINAL_CONTEXT_MAX_ROWS,
+};
 
 pub(crate) const RECTANGLE_COPY_MAX_BYTES: usize = 16 * 1024 * 1024;
 
@@ -35,6 +38,13 @@ pub(crate) struct RectangleCopy {
     trim_trailing_spaces: bool,
     pub(crate) secondary_pressed: bool,
     pub(crate) held_buttons: u8,
+    rows: Vec<FrozenRow>,
+}
+
+struct FrozenRow {
+    absolute_row: u64,
+    soft_wrapped: bool,
+    occupied_columns: usize,
 }
 
 struct PrimaryDrag {
@@ -80,6 +90,22 @@ impl RectangleCopy {
             trim_trailing_spaces,
             secondary_pressed: false,
             held_buttons: 0,
+            rows: (0..dimensions.rows())
+                .map(|row| {
+                    let absolute_row = snapshot
+                        .content_row_for_viewport_row(row)
+                        .expect("visible row exists");
+                    FrozenRow {
+                        absolute_row,
+                        soft_wrapped: snapshot
+                            .absolute_row_soft_wrapped(absolute_row)
+                            .expect("visible row retains wrap metadata"),
+                        occupied_columns: snapshot
+                            .absolute_row_occupied_columns(absolute_row)
+                            .expect("visible row retains occupied-column metadata"),
+                    }
+                })
+                .collect(),
         })
     }
 
@@ -145,7 +171,7 @@ impl RectangleCopy {
                 "Rectangle copy (frozen): click opposite corner or drag; Escape cancels."
             }
             [Some(_), Some(_)] => {
-                "Rectangle copy (frozen): Enter/right-click copies; Escape cancels."
+                "Rectangle copy (frozen): Enter copies; right-click opens Copy/path/link menu; Escape cancels."
             }
         }
     }
@@ -153,6 +179,109 @@ impl RectangleCopy {
     pub(crate) fn selected_text(&self, cache: &TerminalRenderCache) -> Option<String> {
         self.corners[1]?;
         let (first, last) = self.bounds()?;
+        Some(self.text_in_bounds(cache, first, last))
+    }
+
+    pub(crate) fn context_copy_text(&self, cache: &TerminalRenderCache) -> String {
+        let (first, last) = self.context_bounds();
+        self.text_in_bounds(cache, first, last)
+    }
+
+    fn context_bounds(&self) -> (CellPosition, CellPosition) {
+        self.bounds().unwrap_or((
+            CellPosition { column: 0, row: 0 },
+            CellPosition {
+                column: self.dimensions.columns() - 1,
+                row: self.dimensions.rows() - 1,
+            },
+        ))
+    }
+
+    pub(crate) fn contains(&self, position: CellPosition) -> bool {
+        let (first, last) = self.context_bounds();
+        position.column >= first.column
+            && position.column <= last.column
+            && position.row >= first.row
+            && position.row <= last.row
+    }
+
+    pub(crate) fn content_position(&self, position: CellPosition) -> ContentPosition {
+        ContentPosition {
+            column: position.column,
+            absolute_row: self.rows[position.row].absolute_row,
+        }
+    }
+
+    pub(crate) fn context_text(
+        &self,
+        cache: &TerminalRenderCache,
+        position: CellPosition,
+    ) -> Option<TerminalContextText> {
+        if !self.contains(position) {
+            return None;
+        }
+        let (mut first, mut last) = self.context_bounds();
+        let rectangle = self.bounds().is_some();
+        if !rectangle {
+            first.row = position.row;
+            last.row = position.row;
+            while first.row > 0 && self.rows[first.row - 1].soft_wrapped {
+                first.row -= 1;
+                if last.row - first.row + 1 > TERMINAL_CONTEXT_MAX_ROWS {
+                    return None;
+                }
+            }
+            while last.row + 1 < self.dimensions.rows() && self.rows[last.row].soft_wrapped {
+                last.row += 1;
+                if last.row - first.row + 1 > TERMINAL_CONTEXT_MAX_ROWS {
+                    return None;
+                }
+            }
+        }
+        if last.row - first.row + 1 > TERMINAL_CONTEXT_MAX_ROWS {
+            return None;
+        }
+        let mut text = String::new();
+        let mut clicked_range = None;
+        for row in first.row..=last.row {
+            let cells = cache.row(row)?;
+            let start = first.column.saturating_sub(usize::from(
+                cells[first.column].width() == CellWidth::Continuation,
+            ));
+            let end = if rectangle {
+                last.column + 1
+            } else {
+                self.rows[row].occupied_columns
+            };
+            for (column, cell) in cells.iter().enumerate().take(end).skip(start) {
+                if cell.width() == CellWidth::Continuation {
+                    continue;
+                }
+                let byte_start = text.len();
+                if byte_start + cell.text().len() > TERMINAL_CONTEXT_MAX_BYTES {
+                    return None;
+                }
+                text.push_str(cell.text());
+                if row == position.row
+                    && position.column >= column
+                    && position.column < column + cell.width().columns().max(1)
+                {
+                    clicked_range = Some(byte_start..text.len());
+                }
+            }
+        }
+        Some(TerminalContextText {
+            text,
+            clicked_range: clicked_range?,
+        })
+    }
+
+    fn text_in_bounds(
+        &self,
+        cache: &TerminalRenderCache,
+        first: CellPosition,
+        last: CellPosition,
+    ) -> String {
         let mut copied = String::new();
         for row in first.row..=last.row {
             if row != first.row {
@@ -178,7 +307,7 @@ impl RectangleCopy {
                 }
             }
         }
-        Some(copied)
+        copied
     }
 }
 
@@ -186,6 +315,106 @@ impl RectangleCopy {
 mod tests {
     use super::*;
     use festerm_core::Terminal;
+
+    #[test]
+    fn rectangle_context_capture_wraps_at_selected_edges_and_keeps_copy_rows_separate() {
+        let (mut terminal, cache, mut copy) = fixture(
+            24,
+            3,
+            b"left https://examp zz\r\nleft le.com/a     zz",
+            true,
+        );
+        copy.click(CellPosition { column: 5, row: 0 });
+        copy.click(CellPosition { column: 17, row: 1 });
+        terminal.ingest(b"\x1b[2J\x1b[Hhttps://wrong.example/");
+        let capture = copy
+            .context_text(&cache, CellPosition { column: 7, row: 1 })
+            .unwrap();
+        assert_eq!(capture.text, "https://example.com/a     ");
+        assert_eq!(&capture.text[capture.clicked_range], ".");
+        assert_eq!(
+            copy.selected_text(&cache).as_deref(),
+            Some("https://examp\nle.com/a")
+        );
+        assert!(copy
+            .context_text(&cache, CellPosition { column: 4, row: 0 })
+            .is_none());
+        assert!(copy
+            .context_text(&cache, CellPosition { column: 5, row: 2 })
+            .is_none());
+    }
+
+    #[test]
+    fn rectangle_context_capture_without_corners_uses_frozen_terminal_soft_wraps() {
+        let (terminal, cache, copy) = fixture(8, 3, b"abcdefghijk\r\nseparate", true);
+        let capture = copy
+            .context_text(&cache, CellPosition { column: 1, row: 1 })
+            .unwrap();
+        assert_eq!(capture.text, "abcdefghijk");
+        assert_eq!(&capture.text[capture.clicked_range], "j");
+        assert_eq!(copy.context_copy_text(&cache), "abcdefgh\nijk\nseparate");
+        assert_eq!(terminal.screen().row_soft_wrapped(0), Some(true));
+    }
+
+    #[test]
+    fn rectangle_context_capture_preserves_intersecting_unicode_graphemes() {
+        let (_, cache, mut copy) = fixture(8, 2, "\u{754c}e\u{301} text".as_bytes(), true);
+        copy.click(CellPosition { column: 1, row: 0 });
+        copy.click(CellPosition { column: 2, row: 0 });
+        let capture = copy
+            .context_text(&cache, CellPosition { column: 1, row: 0 })
+            .unwrap();
+        assert_eq!(capture.text, "\u{754c}e\u{301}");
+        assert_eq!(&capture.text[capture.clicked_range], "\u{754c}");
+    }
+
+    #[test]
+    fn rectangle_context_capture_limits_rows_and_bytes_without_limiting_copy() {
+        let (_, cache, mut copy) = fixture(2, TERMINAL_CONTEXT_MAX_ROWS, b"hi", true);
+        copy.click(CellPosition { column: 0, row: 0 });
+        copy.click(CellPosition {
+            column: 1,
+            row: TERMINAL_CONTEXT_MAX_ROWS - 1,
+        });
+        assert!(copy
+            .context_text(&cache, CellPosition { column: 0, row: 0 })
+            .is_some());
+        let (_, cache, mut copy) = fixture(2, TERMINAL_CONTEXT_MAX_ROWS + 1, b"hi", true);
+        copy.click(CellPosition { column: 0, row: 0 });
+        copy.click(CellPosition {
+            column: 1,
+            row: TERMINAL_CONTEXT_MAX_ROWS,
+        });
+        assert!(copy
+            .context_text(&cache, CellPosition { column: 0, row: 0 })
+            .is_none());
+        assert!(copy.selected_text(&cache).is_some());
+        let text = "x".repeat(TERMINAL_CONTEXT_MAX_BYTES);
+        let (_, cache, copy) = fixture(text.len(), 1, text.as_bytes(), true);
+        assert_eq!(
+            copy.context_text(&cache, CellPosition { column: 0, row: 0 })
+                .unwrap()
+                .text,
+            text
+        );
+        let text = "x".repeat(TERMINAL_CONTEXT_MAX_BYTES + 1);
+        let (_, cache, copy) = fixture(text.len(), 1, text.as_bytes(), true);
+        assert!(copy
+            .context_text(&cache, CellPosition { column: 0, row: 0 })
+            .is_none());
+        assert_eq!(copy.context_copy_text(&cache), text);
+    }
+
+    #[test]
+    fn rectangle_context_capture_menu_copy_uses_single_corner() {
+        let (_, cache, mut copy) = fixture(8, 2, b"first\r\nsecond", true);
+        copy.click(CellPosition { column: 1, row: 1 });
+        assert!(copy.selected_text(&cache).is_none());
+        assert_eq!(copy.context_copy_text(&cache), "e");
+        assert!(copy
+            .context_text(&cache, CellPosition { column: 0, row: 1 })
+            .is_none());
+    }
 
     fn fixture(
         columns: usize,

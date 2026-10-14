@@ -116,6 +116,16 @@ pub struct TerminalContextTarget {
     pub generation: u64,
 }
 
+pub const TERMINAL_CONTEXT_MAX_ROWS: usize = 16;
+pub const TERMINAL_CONTEXT_MAX_BYTES: usize = 8 * 1024;
+
+/// Bounded, frozen presentation text; destination policy remains application-owned.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalContextText {
+    pub text: String,
+    pub clicked_range: std::ops::Range<usize>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminalHistoryAction {
     OpenInEditor,
@@ -184,6 +194,7 @@ pub struct TerminalView {
     /// opens. It remains stable while the pointer moves through the popup.
     context_link: Option<Arc<str>>,
     context_target: Option<TerminalContextTarget>,
+    context_text: Option<TerminalContextText>,
     next_context_generation: u64,
     primary_link_gesture: Option<(Arc<str>, CellPosition)>,
     last_rendered_frame: Option<u64>,
@@ -436,8 +447,12 @@ impl TerminalView {
         self.scrollbar_dragging = false;
         self.context_link = None;
         self.context_target = None;
+        self.context_text = None;
         self.rectangle_copy = Some(copy);
         self.full_redraw_requested = true;
+        self.context_link = None;
+        self.context_target = None;
+        self.context_text = None;
         self.request_focus_on_next_frame();
         Ok(())
     }
@@ -579,6 +594,10 @@ impl TerminalView {
 
     pub const fn context_menu_target(&self) -> Option<TerminalContextTarget> {
         self.context_target
+    }
+
+    pub fn context_menu_text(&self) -> Option<&TerminalContextText> {
+        self.context_text.as_ref()
     }
 
     /// Takes terminal-history snapshot intents chosen from the local context
@@ -1277,6 +1296,7 @@ impl TerminalView {
         }
 
         if let Some(position) = local_context_release {
+            self.context_text = None;
             let snapshot =
                 TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
             self.context_target =
@@ -1314,51 +1334,11 @@ impl TerminalView {
                     ui,
                     options.context_menu_action.is_some() || self.context_link.is_some(),
                 );
-                let mut rendered_items = false;
-                if let Some(action) = options.context_menu_action.as_ref() {
-                    show_context_target(ui, &action.preview);
-                    let clicked = if action.enabled {
-                        ui.button(&action.label).clicked()
-                    } else {
-                        let response = ui
-                            .add_enabled(false, egui::Button::new(&action.label))
-                            .on_hover_text(action.disabled_reason.as_deref().unwrap_or_default());
-                        response.clicked()
-                    };
-                    rendered_items = true;
-                    if action.enabled && clicked {
-                        self.pending_context_action_request = true;
-                        ui.close();
-                    }
-                    if let Some((label, value)) = &action.copy {
-                        if ui.button(label).clicked() {
-                            ui.ctx().copy_text(value.clone());
-                            ui.close();
-                        }
-                    }
-                } else if self.context_target.is_some()
-                    && self.context_link.is_none()
-                    && selected_text.is_none()
-                    && !options.paste_available
-                {
-                    ui.add_enabled(false, egui::Button::new("Resolving path…"));
-                    rendered_items = true;
-                }
-                if let Some(link) = self.context_link.clone() {
-                    if rendered_items {
-                        ui.separator();
-                    }
-                    show_context_target(ui, link.as_ref());
-                    if ui.button("Open link").clicked() {
-                        self.pending_link_requests.push_back(link.clone());
-                        ui.close();
-                    }
-                    if ui.button("Copy link").clicked() {
-                        ui.ctx().copy_text(link.to_string());
-                        ui.close();
-                    }
-                    rendered_items = true;
-                }
+                let mut rendered_items = self.show_context_target_actions(
+                    ui,
+                    options.context_menu_action.as_ref(),
+                    selected_text.is_none() && !options.paste_available,
+                );
                 if let Some(text) = selected_text.clone() {
                     if rendered_items {
                         ui.separator();
@@ -1416,6 +1396,7 @@ impl TerminalView {
         if !context_menu_open {
             self.context_link = None;
             self.context_target = None;
+            self.context_text = None;
         }
         if options.defer_paste_to_application {
             // `response.has_focus()`/`clicked()` each read the egui context
@@ -1566,6 +1547,55 @@ impl TerminalView {
         }
     }
 
+    fn show_context_target_actions(
+        &mut self,
+        ui: &mut Ui,
+        action: Option<&TerminalContextMenuAction>,
+        resolving: bool,
+    ) -> bool {
+        let mut rendered_items = false;
+        if let Some(action) = action {
+            show_context_target(ui, &action.preview);
+            let clicked = if action.enabled {
+                ui.button(&action.label).clicked()
+            } else {
+                ui.add_enabled(false, egui::Button::new(&action.label))
+                    .on_hover_text(action.disabled_reason.as_deref().unwrap_or_default())
+                    .clicked()
+            };
+            rendered_items = true;
+            if action.enabled && clicked {
+                self.pending_context_action_request = true;
+                ui.close();
+            }
+            if let Some((label, value)) = &action.copy {
+                if ui.button(label).clicked() {
+                    ui.ctx().copy_text(value.clone());
+                    ui.close();
+                }
+            }
+        } else if resolving && self.context_target.is_some() && self.context_link.is_none() {
+            ui.add_enabled(false, egui::Button::new("Resolving path…"));
+            rendered_items = true;
+        }
+        if let Some(link) = self.context_link.clone() {
+            if rendered_items {
+                ui.separator();
+            }
+            show_context_target(ui, link.as_ref());
+            if ui.button("Open link").clicked() {
+                self.pending_link_requests.push_back(link.clone());
+                ui.close();
+            }
+            if ui.button("Copy link").clicked() {
+                ui.ctx().copy_text(link.to_string());
+                ui.close();
+            }
+            rendered_items = true;
+        }
+        rendered_items
+    }
+
     fn show_rectangle_copy(
         &mut self,
         ui: &mut Ui,
@@ -1580,6 +1610,9 @@ impl TerminalView {
         let mut cancel = false;
         let mut changed = false;
         let mut exit_key = None;
+        let mut context_release = None;
+        let menu_id = Popup::default_response_id(response);
+        let menu_was_open = Popup::is_id_open(ui.ctx(), menu_id);
         let mut owns_input = options.terminal_input_enabled && ui.input(|input| input.focused);
         let held_buttons = ui.input(|input| {
             [
@@ -1624,6 +1657,19 @@ impl TerminalView {
                     continue;
                 }
                 if !owns_input || copied.is_some() || cancel {
+                    continue;
+                }
+                if menu_was_open
+                    && !matches!(
+                        event,
+                        egui::Event::Key {
+                            key: egui::Key::Escape,
+                            pressed: true,
+                            ..
+                        }
+                    )
+                {
+                    input.events.push(event);
                     continue;
                 }
                 match event {
@@ -1678,7 +1724,8 @@ impl TerminalView {
                         } else if std::mem::take(&mut copy.secondary_pressed)
                             && viewport.contains(pos)
                         {
-                            copied = copy.selected_text(&self.cache);
+                            context_release = Some(pos);
+                            copy.primary_release();
                             changed = true;
                         }
                     }
@@ -1711,6 +1758,27 @@ impl TerminalView {
         });
         let status = copy.status();
         let bounds = copy.bounds();
+        if let Some(pos) = context_release {
+            let hit = cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, pos);
+            self.context_text = hit.and_then(|position| copy.context_text(&self.cache, position));
+            self.context_target =
+                self.context_text
+                    .as_ref()
+                    .and(hit)
+                    .map(|position| TerminalContextTarget {
+                        content_position: copy.content_position(position),
+                        generation: self.next_context_generation,
+                    });
+            self.next_context_generation = self.next_context_generation.saturating_add(1);
+            self.context_link =
+                hit.filter(|position| copy.contains(*position))
+                    .and_then(|position| {
+                        self.cache
+                            .row(position.row)
+                            .and_then(|row| row.get(position.column))
+                            .and_then(|cell| cell.hyperlink.clone())
+                    });
+        }
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, status));
         response.clone().on_hover_text(status);
         let reports = route_egui_events(
@@ -1735,6 +1803,40 @@ impl TerminalView {
         for report in reports.routes {
             self.diagnostics.last_input_outcome = Some(report.outcome);
             self.diagnostics.input_queue_depth = report.queue_depth;
+        }
+        let menu = Popup::context_menu(response)
+            .open_memory(context_release.map(|_| egui::SetOpenCommand::Bool(true)))
+            .show(|ui| {
+                style_context_menu(
+                    ui,
+                    options.context_menu_action.is_some() || self.context_link.is_some(),
+                );
+                if ui.button("Copy").clicked() {
+                    copied = Some(
+                        self.rectangle_copy
+                            .as_ref()
+                            .expect("frozen menu owns copy mode")
+                            .context_copy_text(&self.cache),
+                    );
+                    ui.close();
+                }
+                if self.context_target.is_some() || self.context_link.is_some() {
+                    ui.separator();
+                    self.show_context_target_actions(
+                        ui,
+                        if context_release.is_none() {
+                            options.context_menu_action.as_ref()
+                        } else {
+                            None
+                        },
+                        false,
+                    );
+                }
+            });
+        if menu.is_none() {
+            self.context_link = None;
+            self.context_target = None;
+            self.context_text = None;
         }
         let painter = ui.painter().with_clip_rect(viewport);
         let stats = paint_grid(
@@ -1809,8 +1911,10 @@ impl TerminalView {
         self.diagnostics.input_sink = sink.input_diagnostics();
         if let Some(text) = copied {
             ui.ctx().copy_text(text);
+            Popup::close_id(ui.ctx(), menu_id);
             self.cancel_rectangle_copy();
         } else if cancel {
+            Popup::close_id(ui.ctx(), menu_id);
             self.cancel_rectangle_copy();
         }
         if !self.rectangle_copy_active() {
@@ -3016,6 +3120,16 @@ mod tests {
                 .events
                 .push(egui::Event::Paste("must not paste".to_owned()));
             harness.step();
+            if copy {
+                assert!(
+                    harness.state().view.rectangle_copy_active(),
+                    "right-click opens a menu without copying"
+                );
+                assert!(harness.state().copied.is_empty());
+                assert!(harness.query_by_label("Paste").is_none());
+                harness.get_by_label("Copy").click();
+                harness.run();
+            }
             assert!(!harness.state().view.rectangle_copy_active());
             assert_eq!(harness.state().copied.len(), usize::from(copy));
             if !copy {
@@ -3060,10 +3174,103 @@ mod tests {
             .platform_output
             .commands
             .iter()
-            .all(|command| { !matches!(command, egui::OutputCommand::CopyText(_)) }));
+            .all(|command| !matches!(command, egui::OutputCommand::CopyText(_))));
         assert_eq!(harness.state().view.history.offset_rows, 0);
     }
 
+    #[test]
+    fn rectangle_copy_view_menu_copies_whole_frozen_viewport_without_corners() {
+        let mut harness = rectangle_copy_harness();
+        let expected = harness
+            .state()
+            .view
+            .rectangle_copy
+            .as_ref()
+            .unwrap()
+            .context_copy_text(&harness.state().view.cache);
+        harness
+            .state_mut()
+            .terminal
+            .ingest(b"\x1b[2J\x1b[Hnew live output");
+        let pos = rectangle_copy_point(&harness, 1, 0);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+        }
+        assert!(harness.state().view.rectangle_copy_active());
+        assert!(harness.state().copied.is_empty());
+        harness.get_by_label("Copy").click();
+        harness.run();
+        assert_eq!(harness.state().copied, vec![expected]);
+        assert!(!harness.state().view.rectangle_copy_active());
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn rectangle_copy_view_menu_limits_link_actions_to_frozen_rectangle() {
+        let mut harness = rectangle_copy_harness();
+        {
+            let state = harness.state_mut();
+            state.view.cancel_rectangle_copy();
+            state
+                .terminal
+                .ingest(b"\x1b[2J\x1b[H\x1b]8;;https://example.com/frozen\x1b\\link\x1b]8;;\x1b\\");
+            state
+                .view
+                .begin_rectangle_copy(&state.terminal, true)
+                .unwrap();
+            state
+                .terminal
+                .ingest(b"\x1b[2J\x1b[H\x1b]8;;https://wrong.example/live\x1b\\new!\x1b]8;;\x1b\\");
+        }
+        harness.run();
+        rectangle_copy_click(&mut harness, 0, 0);
+        rectangle_copy_click(&mut harness, 2, 0);
+        let pos = rectangle_copy_point(&harness, 1, 0);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+        }
+        assert!(harness.query_by_label("Copy").is_some());
+        assert!(harness.query_by_label("Open link").is_some());
+        harness.get_by_label("Copy link").click();
+        harness.run();
+        assert_eq!(harness.state().copied, vec!["https://example.com/frozen"]);
+        assert!(
+            harness.state().view.rectangle_copy_active(),
+            "Copy link does not copy the rectangle or resume"
+        );
+        let pos = rectangle_copy_point(&harness, 3, 0);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+        }
+        assert!(harness.query_by_label("Open link").is_none());
+        assert!(harness.query_by_label("Copy link").is_none());
+        assert!(harness.state().view.context_menu_target().is_none());
+        harness.get_by_label("Copy").click();
+        harness.run();
+        assert_eq!(
+            harness.state().copied.last().map(String::as_str),
+            Some("lin")
+        );
+        assert!(harness.state().sink.0.is_empty());
+    }
     #[test]
     fn rectangle_copy_view_cancels_when_relinquished_or_recovery_layout_resets() {
         for recovery in [false, true] {

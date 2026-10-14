@@ -337,8 +337,8 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                 "Trim trailing spaces in rectangle copy",
                                 "Bounded rectangle copy freezes the visible terminal while output \
                                  continues. Choose two corners or drag a rectangle, then Enter \
-                                 or right-click copies \
-                                 and resumes; Escape cancels. Turn this off to preserve the \
+                                 copies and resumes, or right-click opens Copy and path/link \
+                                 actions; Escape cancels. Turn this off to preserve the \
                                  selected width, including trailing spaces on every row.",
                                 rectangle_copy_trim_trailing_spaces,
                             ) {

@@ -2714,10 +2714,27 @@ After a drag, clicks update the anchor first, then the opposite corner.
 Losing focus/pointer or opening a foreground overlay ends the current drawing
 gesture without discarding the selected rectangle or letting later hover
 resume it.
-**Enter**, a complete **right-click**, or reserved **Copy** copies only after both
-corners exist, then resumes the live display. **Escape** cancels without copying.
-Incomplete Copy leaves the mode active with its instructions. Typing, Paste,
-wheel/history navigation, middle-click paste, hyperlink/path actions and TUI
+**Enter** or reserved **Copy** copies after both corners exist, then resumes the
+live display. A complete **right-click** instead opens a frozen context menu
+with **Copy** always available. Menu Copy uses the current inclusive bounds
+(a single first-corner cell is valid); with no corner it copies the entire
+frozen visible viewport. It then resumes. **Escape** cancels without copying.
+Incomplete keyboard Copy leaves the mode active with its instructions.
+
+Inside the current rectangle, the menu also offers the normal detected
+path/URL and explicit OSC 8 Open/Copy actions. Detection joins cropped rows at
+the rectangle's left/right edges, regardless of the original terminal soft-wrap
+flags; this does not join clipboard rows. With no rectangle, detection uses
+the frozen full-width terminal's original soft-wrap metadata and occupied
+extents. Clicking outside an existing rectangle offers only Copy. Captured
+text and OSC 8 targets come from the frozen cache, never changed live rows.
+Detection retains the shared 16-row/8-KiB limit and existing application-owned
+destination, local/remote-origin and verified-transport policy. Oversize
+detection leaves Copy available. Copy path/URL/link closes the menu but retains
+the frozen rectangle; opening uses the existing application commands.
+Menu clicks/keyboard navigation cannot redraw the rectangle.
+
+Typing, Paste, wheel/history navigation, middle-click paste and TUI
 mouse reporting do not operate on the frozen grid. Copy/cancel consumes the rest
 of that input batch and terminating key repeats/releases or held mouse releases
 cannot become shell input. Foreground palettes/overlays retain their own input.
