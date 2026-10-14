@@ -31,9 +31,15 @@ pub(crate) struct RectangleCopy {
     pub(crate) dimensions: Dimensions,
     corners: [Option<CellPosition>; 2],
     next_corner: usize,
+    primary_drag: Option<PrimaryDrag>,
     trim_trailing_spaces: bool,
     pub(crate) secondary_pressed: bool,
     pub(crate) held_buttons: u8,
+}
+
+struct PrimaryDrag {
+    anchor: CellPosition,
+    moved: bool,
 }
 
 impl RectangleCopy {
@@ -70,18 +76,49 @@ impl RectangleCopy {
             dimensions,
             corners: [None; 2],
             next_corner: 0,
+            primary_drag: None,
             trim_trailing_spaces,
             secondary_pressed: false,
             held_buttons: 0,
         })
     }
 
-    pub(crate) fn click(&mut self, position: CellPosition) {
+    fn click(&mut self, position: CellPosition) {
         debug_assert!(
             position.column < self.dimensions.columns() && position.row < self.dimensions.rows()
         );
         self.corners[self.next_corner] = Some(position);
         self.next_corner ^= 1;
+    }
+
+    pub(crate) fn primary_press(&mut self, position: CellPosition) {
+        self.click(position);
+        self.primary_drag = Some(PrimaryDrag {
+            anchor: position,
+            moved: false,
+        });
+    }
+
+    pub(crate) fn primary_move(&mut self, position: CellPosition) -> bool {
+        let Some(drag) = self.primary_drag.as_mut() else {
+            return false;
+        };
+        if !drag.moved && position == drag.anchor {
+            return false;
+        }
+        debug_assert!(
+            position.column < self.dimensions.columns() && position.row < self.dimensions.rows()
+        );
+        let corners = [Some(drag.anchor), Some(position)];
+        let changed = self.corners != corners;
+        self.corners = corners;
+        self.next_corner = 0;
+        drag.moved = true;
+        changed
+    }
+
+    pub(crate) fn primary_release(&mut self) {
+        self.primary_drag = None;
     }
 
     pub(crate) fn bounds(&self) -> Option<(CellPosition, CellPosition)> {
@@ -101,9 +138,11 @@ impl RectangleCopy {
 
     pub(crate) fn status(&self) -> &'static str {
         match self.corners {
-            [None, _] => "Rectangle copy (frozen): click the first corner; Escape cancels.",
+            [None, _] => {
+                "Rectangle copy (frozen): click a corner or drag a rectangle; Escape cancels."
+            }
             [Some(_), None] => {
-                "Rectangle copy (frozen): click the opposite corner; Escape cancels."
+                "Rectangle copy (frozen): click opposite corner or drag; Escape cancels."
             }
             [Some(_), Some(_)] => {
                 "Rectangle copy (frozen): Enter/right-click copies; Escape cancels."
@@ -177,6 +216,71 @@ mod tests {
         assert_eq!(copy.selected_text(&cache).as_deref(), Some("cde\n345"));
         copy.click(CellPosition { column: 4, row: 1 });
         assert_eq!(copy.selected_text(&cache).as_deref(), Some("5"));
+    }
+
+    #[test]
+    fn rectangle_copy_primary_clicks_preserve_alternating_corners() {
+        let (_, cache, mut copy) = fixture(8, 3, b"abcdefgh\r\n12345678\r\nABCDEFGH", true);
+        let first = CellPosition { column: 5, row: 2 };
+        copy.primary_press(first);
+        assert!(!copy.primary_move(first));
+        copy.primary_release();
+        assert_eq!(copy.selected_text(&cache), None);
+        copy.primary_press(CellPosition { column: 2, row: 0 });
+        copy.primary_release();
+        assert_eq!(
+            copy.selected_text(&cache).as_deref(),
+            Some("cdef\n3456\nCDEF")
+        );
+        copy.primary_press(CellPosition { column: 4, row: 1 });
+        copy.primary_release();
+        assert_eq!(copy.selected_text(&cache).as_deref(), Some("cde\n345"));
+    }
+
+    #[test]
+    fn rectangle_copy_drag_replaces_both_corners_and_restores_click_alternation() {
+        for existing_corners in 0..=2 {
+            let (_, cache, mut copy) = fixture(8, 3, b"abcdefgh\r\n12345678\r\nABCDEFGH", true);
+            for _ in 0..existing_corners {
+                copy.click(CellPosition { column: 7, row: 0 });
+            }
+            copy.primary_press(CellPosition { column: 5, row: 2 });
+            assert!(copy.primary_move(CellPosition { column: 2, row: 0 }));
+            assert_eq!(
+                copy.selected_text(&cache).as_deref(),
+                Some("cdef\n3456\nCDEF")
+            );
+            assert!(copy.primary_move(CellPosition { column: 3, row: 1 }));
+            copy.primary_release();
+            assert_eq!(copy.selected_text(&cache).as_deref(), Some("456\nDEF"));
+            copy.primary_press(CellPosition { column: 0, row: 0 });
+            copy.primary_release();
+            assert_eq!(copy.selected_text(&cache).as_deref(), Some("abcd\n1234"));
+            copy.primary_press(CellPosition { column: 0, row: 0 });
+            copy.primary_release();
+            assert_eq!(copy.selected_text(&cache).as_deref(), Some("a"));
+        }
+    }
+
+    #[test]
+    fn rectangle_copy_drag_can_return_to_anchor_and_ignores_unowned_motion() {
+        let (_, cache, mut copy) = fixture(8, 2, b"abcdefgh\r\n12345678", true);
+        let anchor = CellPosition { column: 1, row: 1 };
+        let other = CellPosition { column: 4, row: 0 };
+        assert!(!copy.primary_move(other));
+        assert!(copy.bounds().is_none());
+        copy.primary_press(anchor);
+        assert!(copy.primary_move(other));
+        assert!(copy.primary_move(anchor));
+        assert_eq!(copy.selected_text(&cache).as_deref(), Some("2"));
+        copy.primary_release();
+        assert!(!copy.primary_move(other));
+        assert_eq!(copy.selected_text(&cache).as_deref(), Some("2"));
+        copy.primary_press(other);
+        let bounds = copy.bounds();
+        copy.primary_release();
+        assert!(!copy.primary_move(anchor));
+        assert_eq!(copy.bounds(), bounds);
     }
 
     #[test]

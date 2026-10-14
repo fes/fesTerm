@@ -86,7 +86,8 @@ measurement of Copilot's actual mode or an OS clipboard-write failure.
 
 Bounded rectangle copy provides an explicit stable alternative for changing
 output: the application command freezes the visible, bounded UI presentation,
-not the live terminal or transport. Clicks alternate between two corners;
+not the live terminal or transport. Clicks alternate between two corners, or
+primary-button dragging draws a fresh rectangle from the press to the release;
 Enter/right-click/Copy resumes after extraction, and Escape cancels. A frozen
 badge/border, physical-row extraction, whole intersecting graphemes and a
 persisted trim/preserve trailing-space choice make that contract visible.
@@ -94,6 +95,13 @@ Input ownership blocks paste and invalidates old clipboard callbacks, while
 live output processing and resize/reflow continue. No second terminal writer
 or deferred-output queue was introduced. Native delivery and cross-renderer
 usability remain separately inventoried as pending `TI-17`/`TI-18` evidence.
+
+The first isolated native tryout prompted drag-to-draw as an alternative to two
+clicks. A cell-changing drag now replaces both corners and updates the overlay
+while held; releasing only finishes drawing. Same-cell clicks still alternate,
+and later clicks adjust the dragged anchor first. Owned edge clamping, exact
+same-batch Copy, interruption, and held-button exit regressions preserve the
+frozen-input boundary rather than forwarding partial gestures to a TUI.
 
 ## Keeping multiline terminal paste in source order
 

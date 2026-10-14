@@ -2704,6 +2704,16 @@ renderer, font or process memory.
 Click a character cell for the first corner and another for the opposite corner.
 Later clicks alternate updates to those two corners. Either corner order works,
 and two clicks on the same cell select that one cell. Selection is inclusive.
+Alternatively, press the primary mouse button on a cell and drag to the
+opposite corner. Moving into another cell starts a fresh rectangle anchored at
+the press, regardless of the previous corners. The rectangle updates during
+the drag; captured movement/release outside the grid clamps to its nearest
+cell. Releasing finishes drawing without copying or resuming live display.
+A press/release within one cell remains an ordinary alternating corner click.
+After a drag, clicks update the anchor first, then the opposite corner.
+Losing focus/pointer or opening a foreground overlay ends the current drawing
+gesture without discarding the selected rectangle or letting later hover
+resume it.
 **Enter**, a complete **right-click**, or reserved **Copy** copies only after both
 corners exist, then resumes the live display. **Escape** cancels without copying.
 Incomplete Copy leaves the mode active with its instructions. Typing, Paste,

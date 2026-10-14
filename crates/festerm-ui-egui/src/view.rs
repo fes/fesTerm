@@ -15,8 +15,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::{
     cache::{ResizeOutcome, ResizeTracker, TerminalRenderCache},
     geometry::{
-        cell_from_point, dimensions_from_viewport, viewport_layout, CellMetrics, CellPosition,
-        ViewSize,
+        cell_from_point, clamped_cell_from_point, dimensions_from_viewport, viewport_layout,
+        CellMetrics, CellPosition, ViewSize,
     },
     input::{
         route_egui_events, EncodedInputSink, InputAdapterState, InputSinkDiagnostics,
@@ -1599,8 +1599,9 @@ impl TerminalView {
             .as_mut()
             .expect("active rectangle-copy mode");
         copy.held_buttons = held_buttons;
-        if !options.terminal_input_enabled {
+        if !owns_input {
             copy.secondary_pressed = false;
+            copy.primary_release();
         }
         ui.input_mut(|input| {
             if !options.terminal_input_enabled {
@@ -1616,6 +1617,7 @@ impl TerminalView {
                         owns_input = focused && options.terminal_input_enabled;
                         if !focused {
                             copy.secondary_pressed = false;
+                            copy.primary_release();
                         }
                     }
                     input.events.push(event);
@@ -1634,10 +1636,37 @@ impl TerminalView {
                         if let Some(position) =
                             cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, pos)
                         {
-                            copy.click(position);
+                            copy.primary_press(position);
                             changed = true;
                         }
                     }
+                    egui::Event::PointerMoved(pos) => {
+                        if let Some(position) = clamped_cell_from_point(
+                            layout.rect.min,
+                            layout.dimensions,
+                            layout.metrics,
+                            pos,
+                        ) {
+                            changed |= copy.primary_move(position);
+                        }
+                    }
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        ..
+                    } => {
+                        if let Some(position) = clamped_cell_from_point(
+                            layout.rect.min,
+                            layout.dimensions,
+                            layout.metrics,
+                            pos,
+                        ) {
+                            changed |= copy.primary_move(position);
+                        }
+                        copy.primary_release();
+                    }
+                    egui::Event::PointerGone => copy.primary_release(),
                     egui::Event::PointerButton {
                         pos,
                         button: egui::PointerButton::Secondary,
@@ -2473,19 +2502,27 @@ mod tests {
         harness
     }
 
+    fn rectangle_copy_point(
+        harness: &Harness<'static, HeadlessViewState>,
+        column: usize,
+        row: usize,
+    ) -> egui::Pos2 {
+        let state = harness.state();
+        let grid = state.view.diagnostics.grid_rect.unwrap();
+        let dimensions = state.view.rectangle_copy.as_ref().unwrap().dimensions;
+        grid.min
+            + egui::vec2(
+                (column as f32 + 0.5) * grid.width() / dimensions.columns() as f32,
+                (row as f32 + 0.5) * grid.height() / dimensions.rows() as f32,
+            )
+    }
+
     fn rectangle_copy_click(
         harness: &mut Harness<'static, HeadlessViewState>,
         column: usize,
         row: usize,
     ) {
-        let state = harness.state();
-        let grid = state.view.diagnostics.grid_rect.unwrap();
-        let dimensions = state.view.rectangle_copy.as_ref().unwrap().dimensions;
-        let pos = grid.min
-            + egui::vec2(
-                (column as f32 + 0.5) * grid.width() / dimensions.columns() as f32,
-                (row as f32 + 0.5) * grid.height() / dimensions.rows() as f32,
-            );
+        let pos = rectangle_copy_point(harness, column, row);
         for pressed in [true, false] {
             harness.event(egui::Event::PointerButton {
                 pos,
@@ -2494,6 +2531,370 @@ mod tests {
                 modifiers: egui::Modifiers::NONE,
             });
             harness.step();
+        }
+    }
+
+    #[test]
+    fn rectangle_copy_view_drag_draws_across_frames_and_waits_for_copy() {
+        for reversed in [false, true] {
+            let mut harness = rectangle_copy_harness();
+            let mut points = [
+                rectangle_copy_point(&harness, 0, 0),
+                rectangle_copy_point(&harness, 6, 1),
+            ];
+            if reversed {
+                points.reverse();
+            }
+            harness.input_mut().events.push(egui::Event::PointerButton {
+                pos: points[0],
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+            assert!(harness
+                .state()
+                .view
+                .selected_text(&harness.state().terminal)
+                .is_none());
+            harness
+                .input_mut()
+                .events
+                .push(egui::Event::PointerMoved(points[1]));
+            harness.step();
+            assert_eq!(
+                harness
+                    .state()
+                    .view
+                    .selected_text(&harness.state().terminal)
+                    .as_deref(),
+                Some("first\nsecond")
+            );
+            {
+                let state = harness.state_mut();
+                state.terminal.ingest(b"\x1b[Hchanged\r\nlive");
+                state.view.request_full_redraw();
+            }
+            harness.input_mut().events.push(egui::Event::PointerButton {
+                pos: points[1],
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+            assert!(harness.state().view.rectangle_copy_active());
+            assert!(harness.state().copied.is_empty());
+            let hover = rectangle_copy_point(&harness, 1, 0);
+            harness
+                .input_mut()
+                .events
+                .push(egui::Event::PointerMoved(hover));
+            harness.step();
+            harness.input_mut().events.push(egui::Event::Copy);
+            harness.step();
+            assert_eq!(harness.state().copied, ["first\nsecond"]);
+            assert!(!harness.state().view.rectangle_copy_active());
+            assert!(harness.state().sink.0.is_empty());
+        }
+    }
+
+    #[test]
+    fn rectangle_copy_view_drag_and_copy_share_one_ordered_input_batch() {
+        let mut harness = rectangle_copy_harness();
+        let anchor = rectangle_copy_point(&harness, 6, 1);
+        let opposite = rectangle_copy_point(&harness, 0, 0);
+        harness.input_mut().events.extend([
+            egui::Event::PointerButton {
+                pos: anchor,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: opposite,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::Copy,
+        ]);
+        harness.step();
+        assert_eq!(harness.state().copied, ["first\nsecond"]);
+        assert!(!harness.state().view.rectangle_copy_active());
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn rectangle_copy_view_drag_clamps_owned_edges_and_ignores_outside_presses() {
+        let mut harness = rectangle_copy_harness();
+        let outside =
+            harness.state().view.diagnostics.grid_rect.unwrap().max + egui::vec2(50.0, 50.0);
+        let anchor = rectangle_copy_point(&harness, 0, 0);
+        harness.input_mut().events.extend([
+            egui::Event::PointerButton {
+                pos: outside,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerMoved(anchor),
+            egui::Event::PointerButton {
+                pos: anchor,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        harness.step();
+        assert!(harness
+            .state()
+            .view
+            .rectangle_copy
+            .as_ref()
+            .unwrap()
+            .bounds()
+            .is_none());
+        harness.input_mut().events.extend([
+            egui::Event::PointerButton {
+                pos: anchor,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerMoved(outside),
+            egui::Event::PointerButton {
+                pos: outside,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        harness.step();
+        let copy = harness.state().view.rectangle_copy.as_ref().unwrap();
+        assert_eq!(
+            copy.bounds(),
+            Some((
+                CellPosition { column: 0, row: 0 },
+                CellPosition {
+                    column: copy.dimensions.columns() - 1,
+                    row: copy.dimensions.rows() - 1,
+                },
+            ))
+        );
+        assert!(harness.state().copied.is_empty());
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn rectangle_copy_view_drag_ends_on_focus_or_pointer_loss() {
+        for loss in 0..3 {
+            let mut harness = rectangle_copy_harness();
+            let anchor = rectangle_copy_point(&harness, 6, 1);
+            let opposite = rectangle_copy_point(&harness, 4, 0);
+            harness.input_mut().events.extend([
+                egui::Event::PointerButton {
+                    pos: anchor,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerMoved(opposite),
+            ]);
+            harness.step();
+            let bounds = harness
+                .state()
+                .view
+                .rectangle_copy
+                .as_ref()
+                .unwrap()
+                .bounds();
+            if loss != 0 {
+                harness.input_mut().focused = false;
+                if loss == 1 {
+                    harness
+                        .input_mut()
+                        .events
+                        .push(egui::Event::WindowFocused(false));
+                }
+            } else {
+                harness.input_mut().events.push(egui::Event::PointerGone);
+            }
+            harness.step();
+            harness.input_mut().focused = true;
+            let later = rectangle_copy_point(&harness, 0, 0);
+            harness.input_mut().events.extend([
+                egui::Event::WindowFocused(true),
+                egui::Event::PointerMoved(later),
+                egui::Event::PointerButton {
+                    pos: later,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+            harness.step();
+            assert_eq!(
+                harness
+                    .state()
+                    .view
+                    .rectangle_copy
+                    .as_ref()
+                    .unwrap()
+                    .bounds(),
+                bounds
+            );
+            assert!(harness.state().copied.is_empty());
+            assert!(harness.state().sink.0.is_empty());
+        }
+    }
+
+    #[test]
+    fn rectangle_copy_view_foreground_blackout_ends_drag_without_clearing_rectangle() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, (state, blocked): &mut (HeadlessViewState, bool)| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            terminal_input_enabled: !*blocked,
+                            ..Default::default()
+                        },
+                    );
+                },
+                (HeadlessViewState::new(), false),
+            );
+        harness.run();
+        {
+            let state = &mut harness.state_mut().0;
+            state
+                .terminal
+                .ingest(b"\x1b[Hfirst\r\nsecond\x1b[?1003h\x1b[?1006h");
+            state
+                .view
+                .begin_rectangle_copy(&state.terminal, true)
+                .unwrap();
+        }
+        harness.run();
+        let grid = harness.state().0.view.diagnostics.grid_rect.unwrap();
+        let dimensions = harness
+            .state()
+            .0
+            .view
+            .rectangle_copy
+            .as_ref()
+            .unwrap()
+            .dimensions;
+        let point = |column: f32, row: f32| {
+            grid.min
+                + egui::vec2(
+                    (column + 0.5) * grid.width() / dimensions.columns() as f32,
+                    (row + 0.5) * grid.height() / dimensions.rows() as f32,
+                )
+        };
+        harness.input_mut().events.extend([
+            egui::Event::PointerButton {
+                pos: point(6.0, 1.0),
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerMoved(point(4.0, 0.0)),
+        ]);
+        harness.step();
+        let bounds = harness
+            .state()
+            .0
+            .view
+            .rectangle_copy
+            .as_ref()
+            .unwrap()
+            .bounds();
+        harness.state_mut().1 = true;
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(point(0.0, 0.0)));
+        harness.step();
+        assert_eq!(
+            harness
+                .state()
+                .0
+                .view
+                .rectangle_copy
+                .as_ref()
+                .unwrap()
+                .bounds(),
+            bounds
+        );
+        harness.state_mut().1 = false;
+        harness.input_mut().events.extend([
+            egui::Event::PointerMoved(point(0.0, 0.0)),
+            egui::Event::PointerButton {
+                pos: point(0.0, 0.0),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        harness.step();
+        assert_eq!(
+            harness
+                .state()
+                .0
+                .view
+                .rectangle_copy
+                .as_ref()
+                .unwrap()
+                .bounds(),
+            bounds
+        );
+        assert!(harness.state().0.view.rectangle_copy_active());
+        assert!(harness.state().0.sink.0.is_empty());
+    }
+
+    #[test]
+    fn rectangle_copy_view_drag_exit_keeps_held_mouse_input_local() {
+        for cancel in [false, true] {
+            let mut harness = rectangle_copy_harness();
+            let anchor = rectangle_copy_point(&harness, 6, 1);
+            let opposite = rectangle_copy_point(&harness, 0, 0);
+            harness.input_mut().events.extend([
+                egui::Event::PointerButton {
+                    pos: anchor,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerMoved(opposite),
+                egui::Event::Key {
+                    key: if cancel {
+                        egui::Key::Escape
+                    } else {
+                        egui::Key::Enter
+                    },
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+            harness.step();
+            assert!(!harness.state().view.rectangle_copy_active());
+            assert_eq!(harness.state().copied.len(), usize::from(!cancel));
+            harness.input_mut().events.extend([
+                egui::Event::PointerMoved(anchor),
+                egui::Event::PointerButton {
+                    pos: anchor,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+            harness.step();
+            assert!(harness.state().sink.0.is_empty());
         }
     }
 

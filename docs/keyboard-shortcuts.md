@@ -26,8 +26,9 @@ including unreported motion in button/drag modes; actual TUI mouse reports
 continue. Deliberate terminal-owned gestures and typing still clear selection.
 
 Use **Bounded rectangle copy** (`Primary+Shift+B` by default) to freeze the visible
-grid and choose two corners. Clicks alternate corner updates; Enter/right-click
-or Copy copies and resumes, and Escape cancels. Incoming output continues.
+grid and choose two corners. Clicks alternate corner updates, or primary-button
+drag draws a fresh rectangle. Releasing finishes drawing without copying;
+Enter/right-click or Copy copies and resumes, and Escape cancels. Incoming output continues.
 The frozen border/badge remains visible with the status bar off. Settings'
 **Trim trailing spaces in rectangle copy** defaults on; disable it to preserve
 row-end spaces. The full bounds, Unicode and ownership contract is in
