@@ -19,6 +19,8 @@ pub enum Key {
     ArrowDown,
     ArrowRight,
     ArrowLeft,
+    PageUp,
+    PageDown,
     Keypad(KeypadKey),
 }
 
@@ -162,6 +164,8 @@ pub(crate) fn encode_key(key: Key, modes: TerminalModes) -> Option<Vec<u8>> {
         Key::ArrowDown => cursor_key_bytes(b'B', modes.application_cursor()),
         Key::ArrowRight => cursor_key_bytes(b'C', modes.application_cursor()),
         Key::ArrowLeft => cursor_key_bytes(b'D', modes.application_cursor()),
+        Key::PageUp => b"\x1b[5~".to_vec(),
+        Key::PageDown => b"\x1b[6~".to_vec(),
         Key::Keypad(key) => keypad_key_bytes(key, modes.application_keypad())?,
     };
     Some(bytes)
@@ -381,6 +385,66 @@ pub(crate) fn encode_legacy_mouse(event: MouseEvent) -> Option<Vec<u8>> {
         event.column as u8 + 33,
         event.row as u8 + 33,
     ])
+}
+
+#[cfg(test)]
+mod page_key_tests {
+    use super::*;
+    use crate::{Dimensions, Terminal, TRANSPORT_QUEUE_HIGH_WATERMARK};
+
+    #[test]
+    fn page_keys_encode_exact_sequences_in_primary_alternate_and_cursor_modes() {
+        for alternate in [false, true] {
+            for (application_cursor, application_keypad) in
+                [(false, false), (true, false), (false, true), (true, true)]
+            {
+                let mut terminal = Terminal::new(Dimensions::new(20, 4).unwrap()).unwrap();
+                if alternate {
+                    terminal.ingest(b"\x1b[?1049h");
+                }
+                if application_cursor {
+                    terminal.ingest(b"\x1b[?1h");
+                }
+                if application_keypad {
+                    terminal.ingest(b"\x1b=");
+                }
+                for (key, expected) in [(Key::PageUp, b"\x1b[5~"), (Key::PageDown, b"\x1b[6~")] {
+                    assert_eq!(
+                        terminal.handle_input(InputEvent::Key(key)),
+                        InputEventOutcome::Encoded { bytes: 4 }
+                    );
+                    assert_eq!(terminal.drain_input(), expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn page_keys_obey_keyboard_lock_and_atomic_queue_limits() {
+        for (key, expected) in [(Key::PageUp, b"\x1b[5~"), (Key::PageDown, b"\x1b[6~")] {
+            let mut terminal = Terminal::new(Dimensions::new(20, 4).unwrap()).unwrap();
+            terminal.ingest(b"\x1b[2h");
+            assert_eq!(
+                terminal.handle_input(InputEvent::Key(key)),
+                InputEventOutcome::Rejected
+            );
+            assert!(terminal.drain_input().is_empty());
+            terminal.ingest(b"\x1b[2l");
+            for remaining in [3, 4] {
+                let mut prefix = vec![b'x'; TRANSPORT_QUEUE_HIGH_WATERMARK - remaining];
+                terminal.queue_input(&prefix);
+                let outcome = terminal.handle_input(InputEvent::Key(key));
+                if remaining == 4 {
+                    assert_eq!(outcome, InputEventOutcome::Encoded { bytes: 4 });
+                    prefix.extend_from_slice(expected);
+                } else {
+                    assert_eq!(outcome, InputEventOutcome::QueueOverflow);
+                    assert!(terminal.take_input_queue_overflowed());
+                }
+                assert_eq!(terminal.drain_input(), prefix);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

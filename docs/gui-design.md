@@ -2489,6 +2489,10 @@ Expected commands include:
   and optional secondary content and exposes applicable application commands.
 - Terminal-content search is a separate local operation over retained rendered
   text, not a command-palette mode.
+- Plain Page Up/Down belong to the terminal program (`ESC[5~` / `ESC[6~`),
+  including alternate-screen TUIs. Shift+Page Up/Down retain local primary
+  history navigation; other modified Page chords remain unsupported rather
+  than becoming unmodified paging.
 
 Application bindings must respect terminal-native editors. On Windows/Linux,
 avoid reserving plain `Ctrl+letter` chords whenever a Shift-modified or

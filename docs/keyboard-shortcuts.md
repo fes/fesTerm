@@ -225,12 +225,13 @@ No clipboard/typed contents are added to routing reports.
 | Ctrl+Space / `[` / `\` / `]` | `00` / `1b` / `1c` / `1d` |
 | Enter / Tab / Backspace / Escape | `0d` / `09` / `7f` / `1b` |
 | Arrows | `ESC [ A/B/C/D`; DECCKM changes to `ESC O A/B/C/D` |
+| Plain PageUp / PageDown | `ESC[5~` / `ESC[6~` to the terminal program in primary and alternate screens, independent of cursor/keypad modes; repeats send another sequence, releases send none |
 | Paste | UTF-8, bracketed by `ESC[200~`/`ESC[201~` only when mode 2004 is enabled; composition-owned confirmation can defer/cancel |
 | Focus reports | `ESC[I` / `ESC[O` only when mode 1004 is enabled |
-| Shift+PageUp / Shift+PageDown / Ctrl+End | Terminal-view local history navigation; captured, including alternate screen; not application-editor bindings |
+| Shift+PageUp / Shift+PageDown / Ctrl+End | Terminal-view local primary-history navigation; no terminal bytes on the alternate screen, which has no local history; not application-editor bindings |
 | Alt/Option | May produce layout/IME text. No implemented ESC-prefix Meta keyboard encoder; Ctrl+Alt text is protected rather than treated as a control letter |
 | Modified arrows / Shift+Tab | No distinct modified-key/backtab encoding: arrow/Tab encoding remains the implemented ordinary sequence |
-| Function keys, Home/End/Delete/Page keys otherwise | No GUI terminal encoding implemented. Core keypad API supports DECKPAM/DECKPNM, but GUI physical-keypad identity is not routed distinctly |
+| Function keys, Home/End/Delete and modified Page keys otherwise | No GUI terminal encoding implemented; modified Page chords are not silently collapsed into plain paging. Core keypad API supports DECKPAM/DECKPNM, but GUI physical-keypad identity is not routed distinctly |
 | Terminal protocols | No kitty keyboard, CSI-u or modifyOtherKeys support is claimed |
 | Launcher | Up/Down and Tab/Shift+Tab choose cards when a form is not focused; Enter activates; Escape leaves a form. Form fields own typing/editing and Enter submission |
 | Settings/Profiles/Inspector | egui text editing, Tab traversal, button Enter/Space, radio/slider/navigation controls; Inspector renders before the terminal and blacks out its input, so widget typing/activation cannot also reach the session; Escape restores prior focus |

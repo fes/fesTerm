@@ -3,6 +3,22 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Restoring terminal-program Page Up/Down
+
+The Copilot paging report exposed a general input gap: the desktop translator
+and terminal core had no Page key mapping. A production-view regression
+received Page presses and repeats but emitted no terminal bytes. Plain Page
+Up/Down now reach the existing bounded input path as `ESC[5~` / `ESC[6~`,
+independent of primary/alternate screens and cursor/keypad modes.
+
+Shift paging remains local primary history, releases emit nothing, and other
+modified Page chords keep their unsupported behavior rather than silently
+becoming plain paging. Core byte/keyboard-lock/exact-queue-boundary tests and
+headless production-view routing/ownership tests plus composition-to-transport
+clipboard-ordering coverage prove the repair without a renderer-specific
+branch. Native Copilot/pager interpretation and physical
+keyboard/layout usability remain TI-02 evidence, not inferred from unit tests.
+
 ## v0.10.3: bounded frame reuse and responsive document maintenance
 
 This patch release packages the merged performance and reliability work since

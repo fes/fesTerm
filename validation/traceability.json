@@ -906,6 +906,12 @@
       "decisions": [],
       "automated_tests": [
         "platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end",
+        "page_keys_encode_exact_sequences_in_primary_alternate_and_cursor_modes",
+        "page_keys_obey_keyboard_lock_and_atomic_queue_limits",
+        "terminal_page_keys_route_plain_presses_repeats_and_not_releases",
+        "terminal_page_keys_preserve_shift_history_and_other_modified_chords",
+        "terminal_page_keys_obey_foreground_readonly_and_ime_suppression",
+        "keyboard_page_keys_reach_transport_and_preserve_clipboard_ordering",
         "routing_uses_core_paste_and_focus_modes",
         "frame_keyboard_reads_do_not_snapshot_settings_for_one_or_six_sessions",
         "frame_keyboard_reads_apply_live_and_broadcast_binding_changes",
