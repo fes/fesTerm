@@ -2093,6 +2093,7 @@ pub enum AppCommand {
     OpenTerminalHistoryInEditor,
     /// Repaints this terminal's local presentation without protocol effects.
     RedrawTerminal(TabId),
+    BeginRectangleCopy(TabId),
     /// Opens a new independent terminal snapshot and immediately asks where
     /// to save it.
     SaveTerminalHistoryAs,
@@ -2256,6 +2257,7 @@ pub enum AppCommand {
     /// Selects a clickstop scaling how far one trackpad/wheel scroll step
     /// moves the scrollback viewport (feature request #67).
     SetScrollSpeed(festerm_config::ScrollSpeedPreference),
+    ToggleRectangleCopyTrimTrailingSpaces,
     /// Remembers how a text editor view was last set up, so the next one opens
     /// the way the reader works rather than the way the defaults do.
     SetEditorSettings(festerm_config::EditorSettings),
@@ -2547,6 +2549,7 @@ pub struct AppState {
     terminal_ligatures: bool,
     emoji_presentation: EmojiPresentationPreference,
     scroll_speed: ScrollSpeedPreference,
+    rectangle_copy_trim_trailing_spaces: bool,
     scrollback_limit: ScrollbackLimitPreference,
     image_memory_budget: ImageMemoryBudgetPreference,
     /// How the next text editor view starts out. Options stay per-view once a
@@ -2581,6 +2584,7 @@ pub struct AppState {
     /// A history snapshot that was honestly refused before an editor buffer
     /// was allocated. Drained by the composition root into a transient notice.
     history_snapshot_refusal: Option<TerminalTextSnapshotRefusal>,
+    rectangle_copy_refusal: Option<festerm_ui_egui::RectangleCopyError>,
     /// The last file that could not be opened, waiting to be shown to the
     /// reader. A refusal that nobody reports is indistinguishable from a
     /// click that did nothing.
@@ -2662,6 +2666,7 @@ impl AppState {
             terminal_ligatures: settings.terminal_ligatures(),
             emoji_presentation: settings.emoji_presentation(),
             scroll_speed: settings.scroll_speed(),
+            rectangle_copy_trim_trailing_spaces: settings.rectangle_copy_trim_trailing_spaces(),
             scrollback_limit: settings.scrollback_limit(),
             image_memory_budget: settings.image_memory_budget(),
             editor: settings.editor(),
@@ -2681,6 +2686,7 @@ impl AppState {
             window_open_requested: false,
             save_as_requested: false,
             history_snapshot_refusal: None,
+            rectangle_copy_refusal: None,
             open_refusal: None,
             pending_open_refusal_notices: VecDeque::new(),
             sftp_cleanup_sender,
@@ -2937,6 +2943,7 @@ impl AppState {
         self.terminal_ligatures = settings.terminal_ligatures();
         self.emoji_presentation = settings.emoji_presentation();
         self.scroll_speed = settings.scroll_speed();
+        self.rectangle_copy_trim_trailing_spaces = settings.rectangle_copy_trim_trailing_spaces();
         self.scrollback_limit = settings.scrollback_limit();
         self.image_memory_budget = settings.image_memory_budget();
         self.editor = settings.editor();
@@ -3127,6 +3134,14 @@ impl AppState {
         self.scroll_speed
     }
 
+    pub const fn rectangle_copy_trim_trailing_spaces(&self) -> bool {
+        self.rectangle_copy_trim_trailing_spaces
+    }
+
+    pub fn take_rectangle_copy_refusal(&mut self) -> Option<festerm_ui_egui::RectangleCopyError> {
+        self.rectangle_copy_refusal.take()
+    }
+
     pub const fn scrollback_limit(&self) -> ScrollbackLimitPreference {
         self.scrollback_limit
     }
@@ -3195,6 +3210,7 @@ impl AppState {
         .with_customize_local_shell(self.customize_local_shell)
         .with_emoji_presentation(self.emoji_presentation)
         .with_scroll_speed(self.scroll_speed)
+        .with_rectangle_copy_trim_trailing_spaces(self.rectangle_copy_trim_trailing_spaces)
         .with_editor(self.editor)
         .with_scrollback_limit(self.scrollback_limit)
         .with_image_memory_budget(self.image_memory_budget)
@@ -3542,6 +3558,31 @@ impl AppState {
                     tracing::warn!(target: "festerm::commands", "terminal redraw target is not a session");
                 }
             }
+            AppCommand::BeginRectangleCopy(id) => {
+                if id != self.active {
+                    tracing::warn!(target: "festerm::commands", "rectangle copy target is not active");
+                    return;
+                }
+                let trim = self.rectangle_copy_trim_trailing_spaces;
+                let Some(session) = self.session_tab_mut(id) else {
+                    tracing::warn!(target: "festerm::commands", "rectangle copy target is not a session");
+                    return;
+                };
+                if !session.view.rectangle_copy_active() {
+                    let result = session.view.begin_rectangle_copy(&session.terminal, trim);
+                    match result {
+                        Ok(()) => {
+                            self.input_ownership_epoch = self.input_ownership_epoch.wrapping_add(1);
+                            egui::Popup::close_all(context);
+                            context.request_repaint();
+                        }
+                        Err(error) => {
+                            tracing::warn!(target: "festerm::commands", %error, "rectangle copy refused");
+                            self.rectangle_copy_refusal = Some(error);
+                        }
+                    }
+                }
+            }
             AppCommand::ActivateNextTab => self.activate_relative(1),
             AppCommand::ActivatePreviousTab => self.activate_relative(-1),
             AppCommand::CloseTab(id) | AppCommand::DiscardAndCloseTab(id) => self.close(id),
@@ -3627,6 +3668,10 @@ impl AppState {
             }
             AppCommand::SetScrollSpeed(speed) => {
                 self.scroll_speed = speed;
+            }
+            AppCommand::ToggleRectangleCopyTrimTrailingSpaces => {
+                self.rectangle_copy_trim_trailing_spaces =
+                    !self.rectangle_copy_trim_trailing_spaces;
             }
             AppCommand::SetEditorSettings(editor) => {
                 self.editor = editor;
@@ -3739,6 +3784,8 @@ impl AppState {
                 self.terminal_ligatures = InterfaceSettings::DEFAULT.terminal_ligatures();
                 self.emoji_presentation = InterfaceSettings::DEFAULT.emoji_presentation();
                 self.scroll_speed = InterfaceSettings::DEFAULT.scroll_speed();
+                self.rectangle_copy_trim_trailing_spaces =
+                    InterfaceSettings::DEFAULT.rectangle_copy_trim_trailing_spaces();
                 self.scrollback_limit = InterfaceSettings::DEFAULT.scrollback_limit();
                 self.image_memory_budget = InterfaceSettings::DEFAULT.image_memory_budget();
                 self.editor = InterfaceSettings::DEFAULT.editor();
@@ -5405,6 +5452,9 @@ impl AppState {
     /// notify them about.
     fn set_active(&mut self, id: TabId) {
         if self.active != id {
+            if let Some(session) = self.session_tab_mut(self.active) {
+                session.view.cancel_rectangle_copy();
+            }
             self.remember_departing_tab();
         }
         self.active = id;

@@ -34,6 +34,7 @@ pub(crate) struct SettingsViewModel {
     pub terminal_ligatures: bool,
     pub emoji_presentation: EmojiPresentationPreference,
     pub scroll_speed: ScrollSpeedPreference,
+    pub rectangle_copy_trim_trailing_spaces: bool,
     pub scrollback_limit: ScrollbackLimitPreference,
     pub image_memory_budget: ImageMemoryBudgetPreference,
     pub image_memory_over_budget: bool,
@@ -72,6 +73,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         terminal_ligatures,
         emoji_presentation,
         scroll_speed,
+        rectangle_copy_trim_trailing_spaces,
         scrollback_limit,
         image_memory_budget,
         image_memory_over_budget,
@@ -329,6 +331,18 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                  stays with that program. Shift+drag selects terminal text. \
                                  These overrides work in local and SSH sessions.",
                             );
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Trim trailing spaces in rectangle copy",
+                                "Bounded rectangle copy freezes the visible terminal while output \
+                                 continues. Choose two corners, then Enter or right-click copies \
+                                 and resumes; Escape cancels. Turn this off to preserve the \
+                                 selected width, including trailing spaces on every row.",
+                                rectangle_copy_trim_trailing_spaces,
+                            ) {
+                                command = Some(AppCommand::ToggleRectangleCopyTrimTrailingSpaces);
+                            }
                         });
 
                         ui.add_space(12.0);
@@ -1011,6 +1025,7 @@ mod tests {
                             terminal_ligatures: false,
                             emoji_presentation: EmojiPresentationPreference::Color,
                             scroll_speed: ScrollSpeedPreference::Normal,
+                            rectangle_copy_trim_trailing_spaces: true,
                             scrollback_limit: ScrollbackLimitPreference::MiB64,
                             image_memory_budget: ImageMemoryBudgetPreference::MiB512,
                             image_memory_over_budget: false,
@@ -1677,6 +1692,7 @@ mod tests {
                             terminal_ligatures: false,
                             emoji_presentation: EmojiPresentationPreference::Color,
                             scroll_speed: ScrollSpeedPreference::Normal,
+                            rectangle_copy_trim_trailing_spaces: true,
                             scrollback_limit: ScrollbackLimitPreference::MiB64,
                             image_memory_budget: ImageMemoryBudgetPreference::MiB512,
                             image_memory_over_budget: false,

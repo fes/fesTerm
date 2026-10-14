@@ -74,6 +74,27 @@ deterministic geometry/input tests cover UTF-8 positions and first-duplicate
 precedence without sleeps. The owner accepted ADR 0048 on 2026-10-14 after
 these repairs, not as native fidelity, accessibility or DPI acceptance.
 
+## Stable terminal selection and bounded rectangle copy
+
+A completed Shift-selection could disappear simply by moving the mouse in a
+mouse-aware TUI. Even button/drag reporting modes, which emitted no hover bytes,
+returned terminal ownership; the UI incorrectly treated that as a reason to
+clear selection. A deterministic press/drag/release/hover regression now
+preserves completed local selection while keeping real TUI reports and
+deliberate clearing gestures intact. This establishes a fesTerm cause, not a
+measurement of Copilot's actual mode or an OS clipboard-write failure.
+
+Bounded rectangle copy provides an explicit stable alternative for changing
+output: the application command freezes the visible, bounded UI presentation,
+not the live terminal or transport. Clicks alternate between two corners;
+Enter/right-click/Copy resumes after extraction, and Escape cancels. A frozen
+badge/border, physical-row extraction, whole intersecting graphemes and a
+persisted trim/preserve trailing-space choice make that contract visible.
+Input ownership blocks paste and invalidates old clipboard callbacks, while
+live output processing and resize/reflow continue. No second terminal writer
+or deferred-output queue was introduced. Native delivery and cross-renderer
+usability remain separately inventoried as pending `TI-17`/`TI-18` evidence.
+
 ## Keeping multiline terminal paste in source order
 
 An owned native PowerShell 7/PSReadLine ConPTY reproduction showed that sending

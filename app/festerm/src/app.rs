@@ -363,7 +363,7 @@ struct NativeMenuShortcutCache {
     bindings: Option<festerm_config::KeyboardBindings>,
     overlays_block_terminal_input: bool,
     palette_open: bool,
-    terminal_owns_input: bool,
+    terminal_command_scope: bool,
     shortcuts: Vec<festerm_macos_window::NativeShortcut>,
 }
 
@@ -373,12 +373,12 @@ impl NativeMenuShortcutCache {
         bindings: &festerm_config::KeyboardBindings,
         overlays_block_terminal_input: bool,
         palette_open: bool,
-        terminal_owns_input: bool,
+        terminal_command_scope: bool,
     ) -> bool {
         self.bindings.as_ref() != Some(bindings)
             || self.overlays_block_terminal_input != overlays_block_terminal_input
             || self.palette_open != palette_open
-            || self.terminal_owns_input != terminal_owns_input
+            || self.terminal_command_scope != terminal_command_scope
     }
 
     fn store(
@@ -386,13 +386,13 @@ impl NativeMenuShortcutCache {
         bindings: &festerm_config::KeyboardBindings,
         overlays_block_terminal_input: bool,
         palette_open: bool,
-        terminal_owns_input: bool,
+        terminal_command_scope: bool,
         shortcuts: Vec<festerm_macos_window::NativeShortcut>,
     ) {
         self.bindings = Some(bindings.clone());
         self.overlays_block_terminal_input = overlays_block_terminal_input;
         self.palette_open = palette_open;
-        self.terminal_owns_input = terminal_owns_input;
+        self.terminal_command_scope = terminal_command_scope;
         self.shortcuts = shortcuts;
     }
 }
@@ -1047,6 +1047,11 @@ impl FesTermApp {
             NativeMenuCommand::Paste => {
                 if self.terminal_owns_input() {
                     self.paste_into_active_session(context);
+                } else if self.terminal_surface_owns_input()
+                    && matches!(&self.state.active_tab().content,
+                        TabContent::Session(session) if session.view.rectangle_copy_active())
+                {
+                    tracing::debug!(target: "festerm::input", "native paste ignored during rectangle copy");
                 } else {
                     context.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
                 }
@@ -1096,25 +1101,25 @@ impl FesTermApp {
         );
         let overlays_block_terminal_input = self.overlays.blocks_terminal_input();
         let palette_open = self.palette.is_open();
-        let terminal_owns_input = self.terminal_owns_input();
+        let terminal_command_scope = self.terminal_surface_owns_input();
         let bindings = self.state.keyboard_bindings();
         let rebuild_shortcuts = self.native_menu_shortcut_cache.needs_rebuild(
             bindings,
             overlays_block_terminal_input,
             palette_open,
-            terminal_owns_input,
+            terminal_command_scope,
         );
         if rebuild_shortcuts {
             let shortcuts = self.build_native_menu_shortcuts(
                 overlays_block_terminal_input,
                 palette_open,
-                terminal_owns_input,
+                terminal_command_scope,
             );
             self.native_menu_shortcut_cache.store(
                 bindings,
                 overlays_block_terminal_input,
                 palette_open,
-                terminal_owns_input,
+                terminal_command_scope,
                 shortcuts,
             );
         }
@@ -1128,7 +1133,7 @@ impl FesTermApp {
         &self,
         overlays_block_terminal_input: bool,
         palette_open: bool,
-        terminal_owns_input: bool,
+        terminal_command_scope: bool,
     ) -> Vec<festerm_macos_window::NativeShortcut> {
         #[cfg(test)]
         self.native_menu_shortcut_build_count
@@ -1152,7 +1157,8 @@ impl FesTermApp {
             if overlays_block_terminal_input || (palette_open && action != A::CommandPalette) {
                 return None;
             }
-            if action.scope() == festerm_config::KeyboardScope::Terminal && !terminal_owns_input {
+            if action.scope() == festerm_config::KeyboardScope::Terminal && !terminal_command_scope
+            {
                 return None;
             }
             let parsed = festerm_config::Chord::parse(
@@ -2667,6 +2673,13 @@ impl FesTermApp {
                     shortcut_label: None,
                 },
                 PaletteItem {
+                    id: 26,
+                    label: "Bounded rectangle copy".to_owned(),
+                    hint: binding_label(A::RectangleCopy),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
                     id: PASTE,
                     label: "Paste".to_owned(),
                     hint: binding_label(A::Paste),
@@ -2919,6 +2932,9 @@ impl FesTermApp {
                     .dispatch(AppCommand::RedrawTerminal(self.state.active()), context);
                 self.restore_active_terminal_focus();
             }
+            26 => self
+                .state
+                .dispatch(AppCommand::BeginRectangleCopy(self.state.active()), context),
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -2937,7 +2953,10 @@ impl FesTermApp {
     /// dispatch through the same `AppCommand` path as chip clicks and the
     /// palette.
     fn terminal_owns_input(&self) -> bool {
-        self.terminal_surface_owns_input() && !self.overlays.blocks_terminal_input()
+        self.terminal_surface_owns_input()
+            && !self.overlays.blocks_terminal_input()
+            && matches!(&self.state.active_tab().content,
+                TabContent::Session(session) if !session.view.rectangle_copy_active())
     }
 
     fn terminal_surface_owns_input(&self) -> bool {
@@ -3152,6 +3171,8 @@ impl FesTermApp {
                 } else if session.host_key_prompt().is_some() || session.password_prompt().is_some()
                 {
                     "authentication-widget"
+                } else if session.view.rectangle_copy_active() {
+                    "rectangle-copy"
                 } else {
                     "terminal"
                 });
@@ -3216,7 +3237,7 @@ impl FesTermApp {
             .flatten();
         let paste = consume(festerm_config::KeyboardAction::Paste)
             | consume(festerm_config::KeyboardAction::PasteAlternate);
-        if terminal_owns_input {
+        if scope.terminal_input {
             crate::keyboard::prepare_terminal_events(ctx);
         }
         if crate::keyboard::consume_exact(
@@ -3285,11 +3306,22 @@ impl FesTermApp {
         let open_markdown_file = ApplicationShortcut::OpenMarkdownFile.consume(ctx, scope);
         let copy = consume(festerm_config::KeyboardAction::Copy)
             | consume(festerm_config::KeyboardAction::CopyAlternate);
+        let rectangle_copy = consume(festerm_config::KeyboardAction::RectangleCopy);
         if copy {
-            self.copy_active_selection(ctx);
+            if matches!(&self.state.active_tab().content,
+                TabContent::Session(session) if session.view.rectangle_copy_active())
+            {
+                ctx.input_mut(|input| input.events.push(egui::Event::Copy));
+            } else {
+                self.copy_active_selection(ctx);
+            }
         }
         if paste {
             self.paste_into_active_session_with_text(ctx, paired_paste);
+        }
+        if rectangle_copy {
+            self.state
+                .dispatch(AppCommand::BeginRectangleCopy(self.state.active()), ctx);
         }
 
         if new_tab {
@@ -3397,6 +3429,7 @@ impl FesTermApp {
         } else if !authoritative {
             session.terminal.reset_to_initial_state();
         }
+        session.view.cancel_rectangle_copy();
         self.overlays.transient_notice = Some((
             "Terminal reset".to_owned(),
             Instant::now() + Duration::from_millis(1_500),
@@ -3427,6 +3460,7 @@ impl FesTermApp {
         } else if !authoritative {
             session.terminal.ingest(b"\x1b[2J\x1b[3J\x1b[H");
         }
+        session.view.cancel_rectangle_copy();
         self.overlays.transient_notice = Some((
             "Terminal cleared".to_owned(),
             Instant::now() + Duration::from_millis(1_500),
@@ -5193,7 +5227,7 @@ impl FesTermApp {
                         })
                         .flatten();
                     (
-                        None,
+                        session.view.rectangle_copy_status(),
                         session.view.dimensions_label(),
                         Some(std::borrow::Cow::Borrowed(session.system_label())),
                         status,
@@ -5701,7 +5735,9 @@ impl FesTermApp {
         self.handle_native_menu_commands(ui.ctx());
         self.handle_shortcuts(ui.ctx());
         let opening_clipboard_confirmation = self.clipboard_confirmation_opening(ui.ctx());
-        let terminal_input_target = (self.terminal_owns_input() || opening_clipboard_confirmation)
+        let terminal_input_target = ((self.terminal_surface_owns_input()
+            && !self.overlays.blocks_terminal_input())
+            || opening_clipboard_confirmation)
             .then_some(self.state.active());
         if let Some(smoke) = &mut self.native_smoke {
             smoke.observe_palette(self.palette.is_open());
@@ -5899,6 +5935,9 @@ impl FesTermApp {
                             terminal_ligatures: self.state.terminal_ligatures(),
                             emoji_presentation: self.state.emoji_presentation(),
                             scroll_speed: self.state.scroll_speed(),
+                            rectangle_copy_trim_trailing_spaces: self
+                                .state
+                                .rectangle_copy_trim_trailing_spaces(),
                             scrollback_limit: self.state.scrollback_limit(),
                             image_memory_budget: self.image_budget.preference(),
                             image_memory_over_budget: self.image_budget.is_over_budget(),
@@ -6250,6 +6289,7 @@ impl FesTermApp {
                 | AppCommand::ToggleDurableSessionInStatusBar
                 | AppCommand::ToggleCustomizeLocalShell
                 | AppCommand::SetScrollSpeed(_)
+                | AppCommand::ToggleRectangleCopyTrimTrailingSpaces
                 | AppCommand::SetEditorSettings(_)
                 | AppCommand::SetScrollbackLimit(_)
                 | AppCommand::SetDefaultSftpLocalDirectory(_)
@@ -6407,6 +6447,12 @@ impl FesTermApp {
         if let Some(refusal) = self.state.take_history_snapshot_refusal() {
             self.overlays.transient_notice = Some((
                 format!("Cannot snapshot terminal history. {}", refusal.detail()),
+                Instant::now() + Duration::from_secs(5),
+            ));
+        }
+        if let Some(refusal) = self.state.take_rectangle_copy_refusal() {
+            self.overlays.transient_notice = Some((
+                format!("Cannot start rectangle copy. {refusal}"),
                 Instant::now() + Duration::from_secs(5),
             ));
         }
@@ -7064,7 +7110,30 @@ mod tests {
         let (app, _, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
         let mut harness = Harness::builder()
             .with_size(egui::vec2(800.0, 600.0))
-            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+            .build_ui_state(
+                |ui, app: &mut FesTermApp| {
+                    app.ui_content(ui);
+                    let copied = ui.ctx().output(|output| {
+                        output
+                            .commands
+                            .iter()
+                            .filter_map(|command| match command {
+                                egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    if !copied.is_empty() {
+                        ui.ctx().data_mut(|data| {
+                            let receipts = data.get_temp_mut_or_default::<Vec<String>>(
+                                egui::Id::new("owned-keyboard-copy-receipts"),
+                            );
+                            receipts.extend(copied);
+                        });
+                    }
+                },
+                app,
+            );
         harness.run();
         (harness, transport)
     }
@@ -12808,6 +12877,259 @@ mod tests {
         keyboard_clipboard_reply(&context, token, "controlled-palette");
         harness.run();
         assert_eq!(transport.sent().concat(), b"controlled-palette");
+    }
+
+    #[test]
+    fn rectangle_copy_shortcut_and_palette_share_the_active_terminal_command() {
+        for palette in [false, true] {
+            let (mut harness, transport) = keyboard_harness();
+            let context = harness.ctx.clone();
+            let active = harness.state().state.active();
+            let epoch = harness.state().state.input_ownership_epoch();
+            let item = harness
+                .state()
+                .palette_items()
+                .into_iter()
+                .find(|item| item.label == "Bounded rectangle copy")
+                .unwrap();
+            assert_eq!(
+                item.hint,
+                crate::keyboard::label(
+                    harness.state().state.keyboard_bindings(),
+                    festerm_config::KeyboardAction::RectangleCopy,
+                )
+            );
+            if palette {
+                harness
+                    .state_mut()
+                    .dispatch_palette_selection(item.id, &context);
+            } else {
+                harness.event(bound_event(festerm_config::KeyboardAction::RectangleCopy));
+            }
+            harness.run();
+            assert!(harness
+                .state()
+                .state
+                .session_tab(active)
+                .unwrap()
+                .view
+                .rectangle_copy_active());
+            assert!(
+                !harness.state().terminal_owns_input(),
+                "frozen presentation cannot authorize paste"
+            );
+            assert!(
+                harness
+                    .state()
+                    .shortcut_context(&context, false)
+                    .terminal_input
+            );
+            assert_ne!(harness.state().state.input_ownership_epoch(), epoch);
+            harness
+                .state_mut()
+                .state
+                .dispatch(AppCommand::OpenLauncher, &context);
+            harness.run();
+            assert!(!harness
+                .state()
+                .state
+                .session_tab(active)
+                .unwrap()
+                .view
+                .rectangle_copy_active());
+            assert!(!harness
+                .state()
+                .palette_items()
+                .iter()
+                .any(|item| item.id == 26));
+            assert!(transport.sent().is_empty());
+        }
+    }
+
+    #[test]
+    fn rectangle_copy_cancels_pending_paste_and_never_revives_its_callback() {
+        let (mut harness, transport) = keyboard_harness();
+        let token = keyboard_clipboard_request(&mut harness);
+        let context = harness.ctx.clone();
+        let active = harness.state().state.active();
+        harness.event(egui::Event::Text("waiting behind the old read".to_owned()));
+        harness.event(bound_event(festerm_config::KeyboardAction::RectangleCopy));
+        harness.run_steps(3);
+        assert!(harness
+            .state()
+            .state
+            .session_tab(active)
+            .unwrap()
+            .view
+            .rectangle_copy_active());
+        assert!(harness.state().clipboard_paste.is_none());
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(3);
+        assert!(!harness
+            .state()
+            .state
+            .session_tab(active)
+            .unwrap()
+            .view
+            .rectangle_copy_active());
+        keyboard_clipboard_reply(&context, token, "must never be pasted");
+        harness.run_steps(2);
+        assert!(transport.sent().is_empty());
+        harness.event(egui::Event::Text("safe".to_owned()));
+        harness.run_steps(2);
+        assert_eq!(transport.sent().concat(), b"safe");
+    }
+
+    #[test]
+    fn rectangle_copy_rejects_native_palette_and_paired_keyboard_paste() {
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let active = harness.state().state.active();
+        harness.event(bound_event(festerm_config::KeyboardAction::RectangleCopy));
+        harness.run();
+        harness
+            .state_mut()
+            .dispatch_native_menu_command(festerm_macos_window::NativeMenuCommand::Paste, &context);
+        harness.state_mut().dispatch_palette_selection(14, &context);
+        harness.event(bound_event(festerm_config::KeyboardAction::Paste));
+        harness.event(egui::Event::Paste("must never be pasted".to_owned()));
+        harness.run();
+        assert!(harness
+            .state()
+            .state
+            .session_tab(active)
+            .unwrap()
+            .view
+            .rectangle_copy_active());
+        assert!(harness.state().clipboard_paste.is_none());
+        assert!(
+            egui_winit::clipboard_requests::take_request(&context, egui::ViewportId::ROOT)
+                .is_none()
+        );
+        assert!(harness
+            .output()
+            .viewport_output
+            .values()
+            .flat_map(|output| &output.commands)
+            .all(|command| !matches!(command, egui::ViewportCommand::RequestPaste)));
+        assert!(transport.sent().is_empty());
+    }
+
+    fn assert_rectangle_copy_same_frame(semantic_only: bool) {
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let active = harness.state().state.active();
+        harness
+            .state_mut()
+            .state
+            .session_tab_mut(active)
+            .unwrap()
+            .terminal
+            .ingest(b"\x1b[Hfirst  \r\nsecond ");
+        harness.event(bound_event(festerm_config::KeyboardAction::RectangleCopy));
+        harness.run();
+        let session = harness.state().state.session_tab(active).unwrap();
+        let grid = session.view.diagnostics().grid_rect.unwrap();
+        let dimensions = session.terminal.dimensions();
+        for (column, row) in [(0, 0), (6, 1)] {
+            let pos = grid.min
+                + egui::vec2(
+                    (column as f32 + 0.5) * grid.width() / dimensions.columns() as f32,
+                    (row as f32 + 0.5) * grid.height() / dimensions.rows() as f32,
+                );
+            for pressed in [true, false] {
+                harness.input_mut().events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
+        if !semantic_only {
+            harness
+                .input_mut()
+                .events
+                .push(bound_event(festerm_config::KeyboardAction::Copy));
+        }
+        harness.input_mut().events.extend([
+            egui::Event::Copy,
+            egui::Event::Text("must remain local".to_owned()),
+            egui::Event::Paste("must remain local".to_owned()),
+        ]);
+        harness.step();
+        assert_eq!(
+            context
+                .data(|data| data
+                    .get_temp::<Vec<String>>(egui::Id::new("owned-keyboard-copy-receipts"),))
+                .unwrap_or_default(),
+            ["first\nsecond"],
+        );
+        assert!(!harness
+            .state()
+            .state
+            .session_tab(active)
+            .unwrap()
+            .view
+            .rectangle_copy_active());
+        assert!(transport.sent().is_empty());
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::ToggleRectangleCopyTrimTrailingSpaces, &context);
+        assert!(!harness
+            .state()
+            .state
+            .interface_settings()
+            .rectangle_copy_trim_trailing_spaces());
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(harness.state().state.rectangle_copy_trim_trailing_spaces());
+    }
+
+    #[test]
+    fn rectangle_copy_shortcut_copies_corners_selected_in_the_same_frame() {
+        assert_rectangle_copy_same_frame(false);
+    }
+
+    #[test]
+    fn rectangle_copy_semantic_copy_copies_corners_selected_in_the_same_frame() {
+        assert_rectangle_copy_same_frame(true);
+    }
+
+    #[test]
+    fn rectangle_copy_palette_keeps_foreground_keyboard_ownership() {
+        let (mut harness, transport) = keyboard_harness();
+        let active = harness.state().state.active();
+        harness.event(bound_event(festerm_config::KeyboardAction::RectangleCopy));
+        harness.run();
+        harness.event(bound_event(festerm_config::KeyboardAction::CommandPalette));
+        harness.run();
+        assert!(harness.state().palette.is_open());
+        harness.event(egui::Event::Text("Redraw Terminal".to_owned()));
+        harness.run();
+        harness.get_by_label_contains("Redraw Terminal").click();
+        harness.run();
+        assert!(!harness.state().palette.is_open());
+        assert!(harness
+            .state()
+            .state
+            .session_tab(active)
+            .unwrap()
+            .view
+            .rectangle_copy_active());
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(!harness
+            .state()
+            .state
+            .session_tab(active)
+            .unwrap()
+            .view
+            .rectangle_copy_active());
+        assert!(transport.sent().is_empty());
     }
 
     #[test]

@@ -21,6 +21,21 @@ state; opening the menu never sends half a click to the terminal.
 These fixed mouse conventions are also explained in Settings under
 **Terminal mouse**, separately from configurable keyboard bindings.
 
+Completed local selection survives no-button hover under mouse reporting,
+including unreported motion in button/drag modes; actual TUI mouse reports
+continue. Deliberate terminal-owned gestures and typing still clear selection.
+
+Use **Bounded rectangle copy** (`Primary+Shift+B` by default) to freeze the visible
+grid and choose two corners. Clicks alternate corner updates; Enter/right-click
+or Copy copies and resumes, and Escape cancels. Incoming output continues.
+The frozen border/badge remains visible with the status bar off. Settings'
+**Trim trailing spaces in rectangle copy** defaults on; disable it to preserve
+row-end spaces. The full bounds, Unicode and ownership contract is in
+[the GUI design](gui-design.md#bounded-rectangle-copy). Beginning this mode
+cancels an outstanding terminal clipboard read and changes its ownership epoch;
+neither a paste started during the mode nor an old callback after cancellation
+can deliver terminal input.
+
 Use the command palette's **Redraw Terminal** for a full local repaint,
 including unchanged native-renderer regions. It has no shortcut and does not
 claim Ctrl+L, Ctrl+R, or other TUI keys. Unlike **Reset Terminal**, it does not
@@ -165,6 +180,7 @@ fixed fallback.
 | Port forward manager | Cmd+Shift+M | Ctrl+Shift+M | Eligible live SSH terminal |
 | Find in terminal | Cmd+F | Ctrl+Shift+F | Terminal |
 | Copy terminal selection | Cmd+C | Ctrl+Shift+C | Terminal; no selection means no operation |
+| Bounded rectangle copy | Cmd+Shift+B | Ctrl+Shift+B | Terminal; freezes the visible grid, never pauses output |
 | Paste into terminal | Cmd+V | Ctrl+Shift+V | Terminal; shared risky-paste policy |
 | Copy / Paste alternate | None | Windows Ctrl+Insert / Shift+Insert; none on Linux | Terminal; separately configurable |
 | Markdown find / reload | Cmd+F / Cmd+R | Ctrl+F / Ctrl+R | Markdown |

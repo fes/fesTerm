@@ -2681,6 +2681,50 @@ disable them.
   and right-click-to-paste are not defaults.
 - Clipboard contents are never logged, persisted, or included in diagnostics.
 
+### Bounded rectangle copy
+
+**Bounded rectangle copy** is a terminal-scoped application command, available
+from the palette and by configurable **Ctrl+Shift+B** on Windows/Linux or
+**Cmd+Shift+B** on macOS. It also works on retained disconnected/exited content.
+Release mouse buttons before starting; a gesture already in progress is refused
+visibly rather than split between owners.
+
+The command freezes the **currently visible cell grid**, including a scrolled
+history viewport, in the UI-owned presentation cache. A persistent border and
+**FROZEN** badge indicate the mode even with the status bar hidden. The status
+bar, hover instructions and accessible viewport label describe the next action.
+There is no added layout row or activation-time terminal resize. Incoming
+output, terminal parsing/replies, bounded transport queues and ordinary live
+resize/reflow continue; freezing never creates an output backlog or a second
+terminal writer. Conservative cell/text/link/row admission is limited to
+**16 MiB** before materialization; a refusal preserves ordinary selection and
+reports a content-free reason. This is not a bound on the application's total
+renderer, font or process memory.
+
+Click a character cell for the first corner and another for the opposite corner.
+Later clicks alternate updates to those two corners. Either corner order works,
+and two clicks on the same cell select that one cell. Selection is inclusive.
+**Enter**, a complete **right-click**, or reserved **Copy** copies only after both
+corners exist, then resumes the live display. **Escape** cancels without copying.
+Incomplete Copy leaves the mode active with its instructions. Typing, Paste,
+wheel/history navigation, middle-click paste, hyperlink/path actions and TUI
+mouse reporting do not operate on the frozen grid. Copy/cancel consumes the rest
+of that input batch and terminating key repeats/releases or held mouse releases
+cannot become shell input. Foreground palettes/overlays retain their own input.
+Leaving the tab/view or resetting recovery layout cancels the mode.
+
+Each selected physical screen row becomes one clipboard line, including blank
+rows; soft wraps are not joined. Interior spaces are retained. **Trim trailing
+spaces in rectangle copy**, enabled by default under Settings' **Terminal
+mouse** card, removes only ASCII spaces at each row end; disable it to preserve
+the selected width. The policy is captured on entry. Wide/combining graphemes
+remain indivisible: touching either half of a wide glyph copies the whole
+grapheme once, potentially extending that row's copied width beyond an edge.
+Visible text never exports hyperlink targets or terminal protocol sequences.
+On exit the next paint refreshes from current live state; a resized window may
+clip the frozen grid until that refresh. Native clipboard delivery and
+cross-renderer/DPI/keyboard usability remain pending under `TI-17`.
+
 ### IME and composed input
 
 IME pre-edit text is a transient local overlay anchored to the terminal cursor.

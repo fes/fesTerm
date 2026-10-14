@@ -2716,6 +2716,22 @@ schema_version = 99
     }
 
     #[test]
+    fn rectangle_copy_whitespace_preference_defaults_and_round_trips() {
+        let configuration = Configuration::parse("schema_version = 1\n").unwrap();
+        assert!(configuration
+            .interface_settings()
+            .rectangle_copy_trim_trailing_spaces());
+        let settings = InterfaceSettings::DEFAULT.with_rectangle_copy_trim_trailing_spaces(false);
+        let configuration = configuration.with_interface_settings(settings).unwrap();
+        let serialized = configuration.to_toml().unwrap();
+        assert!(serialized.contains("rectangle_copy_trim_trailing_spaces = false"));
+        assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+        assert!(!InterfaceSettings::DEFAULT
+            .with_rectangle_copy_trim_trailing_spaces(false)
+            .rectangle_copy_trim_trailing_spaces());
+    }
+
+    #[test]
     fn default_sftp_local_directory_round_trips_through_toml() {
         let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
             .canonicalize()

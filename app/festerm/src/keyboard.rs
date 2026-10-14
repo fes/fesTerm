@@ -162,6 +162,7 @@ impl ShortcutContext {
         Action::ALL.into_iter().any(|action| {
             self.allows(action)
                 && (!global_only
+                    || action == Action::RectangleCopy
                     || matches!(
                         action.scope(),
                         festerm_config::KeyboardScope::Global

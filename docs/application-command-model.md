@@ -149,6 +149,13 @@ physical-event identities. Keyboard/menu/UI actions retain their ordinary
 dispatch policy. See [the keyboard routing inventory](keyboard-shortcuts.md).
 
 Terminal-local selection Copy and Paste contents remain UI/input operations.
+Starting bounded rectangle copy converges on `BeginRectangleCopy(TabId)` from
+its configurable binding and palette entry. The command admits the active
+viewport, refuses an in-progress pointer gesture or oversized presentation,
+and invalidates pending terminal paste authorization. Corner updates, frozen
+cell extraction and Copy/cancel remain UI-local; live terminal/session ownership
+and output processing do not change. Its whitespace preference is a typed
+interface-settings toggle using the existing persistence/broadcast path.
 Explicit OSC 8 activation emits an application `OpenExternalLink` intent so
 URL parsing, scheme/host policy, safe rejection feedback, and OS launch remain
 centralized and testable. Copy Link Address remains a local clipboard action.

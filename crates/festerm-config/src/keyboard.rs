@@ -28,6 +28,7 @@ pub enum KeyboardAction {
     OpenMarkdownFile,
     Find,
     Copy,
+    RectangleCopy,
     Paste,
     CopyAlternate,
     PasteAlternate,
@@ -75,7 +76,7 @@ impl KeyboardScope {
 }
 
 impl KeyboardAction {
-    pub const ALL: [Self; 36] = [
+    pub const ALL: [Self; 37] = [
         Self::CommandPalette,
         Self::NewSession,
         Self::NewWindow,
@@ -100,6 +101,7 @@ impl KeyboardAction {
         Self::OpenMarkdownFile,
         Self::Find,
         Self::Copy,
+        Self::RectangleCopy,
         Self::Paste,
         Self::CopyAlternate,
         Self::PasteAlternate,
@@ -140,6 +142,7 @@ impl KeyboardAction {
             Self::OpenMarkdownFile => "Open file",
             Self::Find => "Find in terminal",
             Self::Copy => "Copy terminal selection",
+            Self::RectangleCopy => "Bounded rectangle copy",
             Self::Paste => "Paste into terminal",
             Self::CopyAlternate => "Copy terminal selection (Windows alternate)",
             Self::PasteAlternate => "Paste into terminal (Windows alternate)",
@@ -183,6 +186,7 @@ impl KeyboardAction {
             Self::OpenMarkdownFile => "Open a Markdown file in a new tab.",
             Self::Find => "Find text in the terminal.",
             Self::Copy => "Copy the terminal selection to the clipboard.",
+            Self::RectangleCopy => "Freeze the visible terminal and choose two corners to copy.",
             Self::Paste => "Paste clipboard contents into the terminal.",
             Self::CopyAlternate => "Copy using the Windows Ctrl+Insert convention.",
             Self::PasteAlternate => "Paste using the Windows Shift+Insert convention.",
@@ -210,6 +214,7 @@ impl KeyboardAction {
             | Self::PortForwardManager
             | Self::Find
             | Self::Copy
+            | Self::RectangleCopy
             | Self::Paste => KeyboardScope::Terminal,
             Self::CopyAlternate | Self::PasteAlternate => KeyboardScope::Terminal,
             Self::MarkdownFind
@@ -261,6 +266,7 @@ impl KeyboardAction {
             (Self::OpenMarkdownFile, _) => "Primary+O",
             (Self::Copy, true) => "Primary+C",
             (Self::Copy, false) => "Primary+Shift+C",
+            (Self::RectangleCopy, _) => "Primary+Shift+B",
             (Self::Paste, true) => "Primary+V",
             (Self::Paste, false) => "Primary+Shift+V",
             (Self::CopyAlternate, false) if cfg!(windows) => "Ctrl+Insert",

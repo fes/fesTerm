@@ -69,6 +69,11 @@ pub struct InterfaceSettings {
     /// relative to fesTerm's original fixed pixel-to-row mapping.
     #[serde(default, skip_serializing_if = "ScrollSpeedPreference::is_default")]
     scroll_speed: ScrollSpeedPreference,
+    #[serde(
+        default = "default_rectangle_copy_trim_trailing_spaces",
+        skip_serializing_if = "is_true"
+    )]
+    rectangle_copy_trim_trailing_spaces: bool,
     /// Retained primary-history payload budget for newly created sessions.
     #[serde(default, skip_serializing_if = "ScrollbackLimitPreference::is_default")]
     scrollback_limit: ScrollbackLimitPreference,
@@ -168,6 +173,7 @@ impl InterfaceSettings {
         terminal_ligatures: true,
         emoji_presentation: EmojiPresentationPreference::Color,
         scroll_speed: ScrollSpeedPreference::Normal,
+        rectangle_copy_trim_trailing_spaces: true,
         scrollback_limit: ScrollbackLimitPreference::MiB64,
         image_memory_budget: ImageMemoryBudgetPreference::MiB512,
         quick_switch_overlay: true,
@@ -230,6 +236,15 @@ impl InterfaceSettings {
     pub const fn with_scroll_speed(mut self, scroll_speed: ScrollSpeedPreference) -> Self {
         self.scroll_speed = scroll_speed;
         self
+    }
+
+    pub const fn with_rectangle_copy_trim_trailing_spaces(mut self, trim: bool) -> Self {
+        self.rectangle_copy_trim_trailing_spaces = trim;
+        self
+    }
+
+    pub const fn rectangle_copy_trim_trailing_spaces(&self) -> bool {
+        self.rectangle_copy_trim_trailing_spaces
     }
 
     /// Sets the retained primary-history budget for newly created sessions.
@@ -585,6 +600,10 @@ impl Default for InterfaceSettings {
     fn default() -> Self {
         Self::DEFAULT
     }
+}
+
+fn default_rectangle_copy_trim_trailing_spaces() -> bool {
+    InterfaceSettings::DEFAULT.rectangle_copy_trim_trailing_spaces
 }
 
 /// Shared managed Markdown-image storage and reservation allowance.
