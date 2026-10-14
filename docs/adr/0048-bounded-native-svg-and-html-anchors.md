@@ -54,6 +54,10 @@ and conservative isolated-layer/clip scratch are reserved before the respective
 decoder stages. Filters, masks, patterns, embedded images and external/data
 hrefs, including SVG hyperlink hrefs, are unsupported. Rendering uses intrinsic
 dimensions; native fidelity and DPI remain qualification items.
+Before raster allocation/painting, expanded XML nodes plus glyphs multiplied
+by output pixels must also fit 512 Mi pixel-work units. Separate node/area
+limits alone would still admit excessive repeated full-canvas overdraw.
+This conservative work bound may refuse complex otherwise-valid diagrams.
 
 ## Alternatives considered
 
@@ -90,6 +94,8 @@ also matches, not merely their descriptive target or source position.
   lifetime/reparse, and shared editor/viewer behavior. Encoded input, XML nodes,
   aggregate CSS bytes/rules, texture axes and resource admission require both
   exact-limit success and limit-plus-one refusal.
+  Paint-work admission also requires inclusive boundary/+1 checks and actual
+  overdraw/glyph SVG refusal before rasterization.
 - **Native/manual evidence required:** Existing `MD-04`, `MD-05`, and editor
   Preview image scenarios gain SVG/anchor checks; complete native evidence
   remains pending.

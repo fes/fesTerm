@@ -18,9 +18,19 @@ const MAX_GLYPHS: u64 = 16_384;
 const MAX_CSS_BYTES: usize = 16 * 1024;
 const MAX_CSS_RULES: usize = 128;
 const MAX_PIXELS: u64 = 16 * 1024 * 1024;
+const MAX_RASTER_WORK: u64 = 512 * 1024 * 1024;
 
 fn refusal(message: &str) -> ImageLoadFailure {
     ImageLoadFailure::Permanent(format!("SVG: {message}"))
+}
+
+fn check_raster_work(cost: Cost, pixels: u64) -> Result<(), ImageLoadFailure> {
+    if (cost.nodes + cost.glyphs) * pixels > MAX_RASTER_WORK {
+        return Err(refusal(
+            "Raster work exceeds the expanded node/glyph pixel limit.",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Default)]
@@ -401,6 +411,7 @@ pub(crate) fn decode(
             "Output exceeds the texture-axis or raster-area limit.",
         ));
     }
+    check_raster_work(cost, count)?;
     let rgba_bytes = count * 4;
     let retained_bytes = RETAINED_IMAGE_OVERHEAD + 2 * rgba_bytes;
     scratch.resize(
@@ -596,6 +607,52 @@ mod tests {
         .is_err());
         assert!(render("<svg width='32' height='32'/>", 32).is_ok());
         assert!(render("<svg width='33' height='32'/>", 32).is_err());
+    }
+
+    #[test]
+    fn svg_bounds_overdraw_and_glyph_raster_work_before_painting() {
+        let cost = Cost {
+            nodes: 1,
+            glyphs: 31,
+            ..Default::default()
+        };
+        assert!(check_raster_work(cost, MAX_PIXELS).is_ok());
+        assert!(check_raster_work(Cost { glyphs: 32, ..cost }, MAX_PIXELS).is_err());
+        assert!(check_raster_work(
+            Cost {
+                nodes: 32,
+                ..Default::default()
+            },
+            MAX_PIXELS
+        )
+        .is_ok());
+        assert!(check_raster_work(
+            Cost {
+                nodes: 33,
+                ..Default::default()
+            },
+            MAX_PIXELS
+        )
+        .is_err());
+        for content in [
+            "<rect width='4096' height='4096'/>".repeat(33),
+            format!(
+                "<text x='0' y='4096' font-size='4096'>{}</text>",
+                "W".repeat(33)
+            ),
+        ] {
+            let error = render(
+                &format!("<svg width='4096' height='4096'>{content}</svg>"),
+                4096,
+            )
+            .err()
+            .expect("overdraw must be refused before allocating or painting the raster");
+            assert!(
+                error.message().contains("Raster work"),
+                "{}",
+                error.message()
+            );
+        }
     }
 
     #[test]

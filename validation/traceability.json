@@ -2779,6 +2779,7 @@
         "svg_rejects_executable_external_and_unsupported_content",
         "svg_bounds_xml_references_stylesheets_and_raster_dimensions",
         "svg_admits_exact_encoded_xml_node_css_and_texture_limits",
+        "svg_bounds_overdraw_and_glyph_raster_work_before_painting",
         "svg_budget_failure_can_retry_and_retained_owner_releases_memory",
         "native_svg_local_images_load_in_viewer_and_saved_preview",
         "native_svg_inline_images_load_without_local_file_authority",

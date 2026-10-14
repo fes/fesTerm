@@ -877,6 +877,7 @@ blocked rooted/UNC links must explain refusal without filesystem/network access.
 Edit inline XML at the same source offset, reparse/reload/rebind/close while work
 runs, saturate the allowance, and explicitly retry a repaired failed image.
 Projection, exact pixel/source-span checks, unsafe XML/reference rejection,
+inclusive/+1 admission limits and overdraw/glyph-work refusal before painting,
 shared worker/budget ownership, fresh-payload invalidation, real editor mode
 transitions and link command/refusal tests are automated. Cross-renderer/DPI
 appearance, font fidelity, native external-link handoff, keyboard/screen-reader

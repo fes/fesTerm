@@ -51,7 +51,9 @@ bytes, including in remote and untitled Preview.
 Native `resvg` work shares image workers, managed allowance and actual-owner
 retirement. XML/use/CSS/glyph and raster/layer admission, disabled resource
 resolvers and bundled-only fonts avoid introducing browser or filesystem
-authority. A same-position XML edit now invalidates stale completed images.
+authority. A combined node/glyph-pixel work ceiling also refuses repeated
+full-canvas overdraw before painting, rather than relying on independent
+node, area or memory bounds. A same-position XML edit invalidates stale images.
 Independent security review found a shared rooted/UNC link-opening gap; decoded
 targets and native activation now refuse it before any filesystem access.
 Parser, pixel, budget, actual viewer/editor-mode and link-command regressions

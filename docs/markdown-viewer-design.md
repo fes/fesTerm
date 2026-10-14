@@ -275,7 +275,10 @@ to 65,536 nodes/4 MiB attribute-text bytes, text to 16,384 glyphs, and aggregate
 CSS to 16 KiB/128 rules. Output and temporary layers have a 16 Mi-pixel ceiling
 and output respects the current texture-axis limit. Parser, output, retained
 pixel copies and conservative layer/clip scratch must fit the shared allowance
-before their respective expansion/rendering stages. Malformed, incomplete or
+before their respective expansion/rendering stages. Expanded nodes plus glyphs
+times output pixels additionally obey a 512 Mi pixel-work ceiling before
+raster allocation/painting, conservatively refusing excessive overdraw even
+when its memory would fit. Malformed, incomplete or
 over-projection-limit inline SVG remains literal; projected but unsafe,
 unsupported or over-budget SVG has a visible failure with explicit retry.
 
