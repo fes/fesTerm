@@ -2708,6 +2708,10 @@ The capture also pins the application-owned filesystem origin, verified host
 identity, transport/lifecycle generation, availability and trustworthy cwd.
 Any change cancels frozen mode before resolving another menu; a stale action
 cannot upgrade old or disconnected content to new transport authority.
+Cancellation also retires frozen context text/target/link metadata and queued
+Open/link activation, and closes that view's owned popup. An already-open
+frozen menu cannot migrate into live resolution after cancellation. Ordinary
+live context menus are not invalidated by a no-op frozen cancellation.
 Local terminal-path resolution rejects UNC/network and device namespaces
 before filesystem access, including mixed separators and decoded file URIs.
 Ordinary local absolute/drive paths and `file://localhost` retain their policy;

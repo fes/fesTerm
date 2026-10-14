@@ -476,6 +476,12 @@ clipboard reads or stale UI commands; a later independent paste remains live.
 These are deterministic security/reliability regressions, not RSS bounds,
 native Windows SMB experiments, OS clipboard delivery or usability acceptance.
 Native renderer/input/accessibility and user-feel evidence remains pending.
+The open-menu-across-authority-change gap is covered separately: actual
+application tests keep a frozen popup open across disconnected-to-connected,
+generation, fingerprint and trustworthy-cwd changes, run several frames, then
+attempt its real Open action or replay its old button hit. No stale application
+open/refusal is dispatched. A view regression also retires queued activation,
+context metadata and popup ownership while preserving ordinary live menus.
 
 Windows ConPTY prompt timing qualification is automated by
 `python scripts/check_windows_conpty_prompt.py --cycles 20` and the fixed

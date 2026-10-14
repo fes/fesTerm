@@ -575,6 +575,10 @@ generation, availability and trustworthy cwd; changing authority cancels the
 mode rather than upgrading old content. Its exit barrier also discards every
 shortcut and paired payload in the application-deferred original batch suffix,
 while preserving release cleanup and later independent live paste.
+`TERM-13` authority cancellation retires an already-open frozen popup, captured
+text/target/link metadata and pending activation together; no later live frame
+may resolve or activate its old content against replacement authority.
+Only the frozen view's owned popup is closed; ordinary live menus remain usable.
 
 ## J. Paste and drop safety
 

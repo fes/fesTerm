@@ -6006,3 +6006,12 @@ retaining release cleanup. Application-harness tests prove no stale paste bytes,
 clipboard read or UI command across later frames, then authorize a fresh paste.
 These are regression repairs within existing ownership boundaries, not native
 clipboard, platform usability or milestone acceptance.
+
+Follow-up qualification found that cancelling the mode alone left an already
+open frozen popup and its captured text alive. A later live frame could resolve
+that text under replacement authority. Cancellation now retires text, target,
+link metadata and pending activation together and closes only the owned popup;
+context-free cancellation closes it before the next render. Actual application
+tests fail first on stale Open dispatch across availability, generation,
+fingerprint and cwd changes, then pass after the repair. Ordinary live menus
+remain usable; this adds no native or usability acceptance claim.

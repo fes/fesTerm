@@ -446,7 +446,7 @@ impl ApplicationSession {
             }),
             Self::Local(_) | Self::Persistent(_) | Self::Ssh(_) | Self::Serial(_) => None,
             #[cfg(test)]
-            Self::TestSsh(_) => None,
+            Self::TestSsh(session) => session.terminal_file_cwd().map(|cwd| (cwd, PathBuf::new())),
         }
     }
 
@@ -456,7 +456,7 @@ impl ApplicationSession {
             Self::Sftp(session) => session.verified_host_key_fingerprint(),
             Self::Local(_) | Self::Persistent(_) | Self::Serial(_) => None,
             #[cfg(test)]
-            Self::TestSsh(_) => None,
+            Self::TestSsh(session) => session.terminal_file_fingerprint(),
         }
     }
 
@@ -1393,12 +1393,12 @@ impl SessionTab {
             .map(TerminalPathMenuState::ui_action)
     }
 
-    pub(crate) fn update_terminal_context_menu(&mut self) -> bool {
-        if self.view.rectangle_copy_active()
+    pub(crate) fn update_terminal_context_menu(&mut self, context: &egui::Context) -> bool {
+        if (self.view.rectangle_copy_active() || self.terminal_path.frozen_authority.is_some())
             && self.terminal_path.frozen_authority.as_ref()
                 != Some(&self.current_terminal_authority())
         {
-            self.view.cancel_rectangle_copy();
+            self.view.cancel_rectangle_copy_with_context(context);
             self.terminal_path.menu = None;
             self.terminal_path.frozen_authority = None;
             return true;
@@ -1434,7 +1434,7 @@ impl SessionTab {
     }
 
     fn terminal_path_open_request(&self) -> Option<TerminalPathOpenRequest> {
-        if self.view.rectangle_copy_active()
+        if (self.view.rectangle_copy_active() || self.terminal_path.frozen_authority.is_some())
             && self.terminal_path.frozen_authority.as_ref()
                 != Some(&self.current_terminal_authority())
         {
@@ -7523,7 +7523,7 @@ mod tests {
                             ..Default::default()
                         },
                     );
-                    session.update_terminal_context_menu();
+                    session.update_terminal_context_menu(ui.ctx());
                 },
                 state,
             );

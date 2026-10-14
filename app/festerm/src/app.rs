@@ -6068,7 +6068,7 @@ impl FesTermApp {
                                 "terminal row paint diagnostics"
                             );
                         }
-                        if session.update_terminal_context_menu() {
+                        if session.update_terminal_context_menu(ui.ctx()) {
                             ui.ctx().request_repaint();
                         }
                         if rectangle_was_active && !session.view.rectangle_copy_active() {
@@ -12898,6 +12898,152 @@ mod tests {
         keyboard_clipboard_reply(&context, token, "controlled-palette");
         harness.run();
         assert_eq!(transport.sent().concat(), b"controlled-palette");
+    }
+
+    #[test]
+    fn rectangle_frozen_popup_retires_disconnected_capture_before_live_open() {
+        assert_rectangle_frozen_popup_authority_retired("availability");
+    }
+
+    #[test]
+    fn rectangle_frozen_popup_retires_generation_before_live_open() {
+        assert_rectangle_frozen_popup_authority_retired("generation");
+    }
+
+    #[test]
+    fn rectangle_frozen_popup_retires_fingerprint_before_live_open() {
+        assert_rectangle_frozen_popup_authority_retired("fingerprint");
+    }
+
+    #[test]
+    fn rectangle_frozen_popup_retires_cwd_before_live_open() {
+        assert_rectangle_frozen_popup_authority_retired("cwd");
+    }
+
+    fn assert_rectangle_frozen_popup_authority_retired(change: &str) {
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let active = harness.state().state.active();
+        transport.set_terminal_file_identity("SHA256:captured", "/captured");
+        harness
+            .state_mut()
+            .state
+            .session_tab_mut(active)
+            .unwrap()
+            .inspector_transport = crate::tabs::InspectorTransport::Sftp {
+            username: "deploy".to_owned(),
+            host: "ssh.example.test".to_owned(),
+            port: 22,
+        };
+        if change == "availability" {
+            transport.push_event(festerm_session::SessionEvent::Lifecycle(
+                festerm_session::SessionLifecycle::Disconnected(
+                    festerm_session::SessionError::new(
+                        festerm_session::SessionErrorKind::Spawn,
+                        "controlled disconnect",
+                    ),
+                ),
+            ));
+        }
+        harness.run();
+        harness
+            .state_mut()
+            .state
+            .session_tab_mut(active)
+            .unwrap()
+            .terminal
+            .ingest(b"\x1b[H./captured-report.txt");
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::BeginRectangleCopy(active), &context);
+        harness.run();
+        let grid = harness
+            .state()
+            .state
+            .session_tab(active)
+            .unwrap()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap();
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: grid.min + egui::vec2(10.0, 10.0),
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run();
+        }
+        let old_open = harness.get_by_label("Open in viewer").rect().center();
+        assert!(harness
+            .state()
+            .state
+            .session_tab(active)
+            .unwrap()
+            .view
+            .context_menu_text()
+            .is_some());
+        match change {
+            "availability" => transport.push_event(festerm_session::SessionEvent::Lifecycle(
+                festerm_session::SessionLifecycle::Running,
+            )),
+            "generation" => {
+                harness
+                    .state_mut()
+                    .state
+                    .dispatch(AppCommand::ReconnectSession(active), &context);
+                transport.push_event(festerm_session::SessionEvent::Lifecycle(
+                    festerm_session::SessionLifecycle::Running,
+                ));
+            }
+            "fingerprint" => {
+                transport.set_terminal_file_identity("SHA256:replacement", "/captured")
+            }
+            "cwd" => transport.set_terminal_file_identity("SHA256:captured", "/replacement"),
+            _ => unreachable!(),
+        }
+        harness.run_steps(5);
+        let stale_popup_open = egui::Popup::is_any_open(&context);
+        // Exercise the real Open widget if it survives, otherwise replay the
+        // old button hit. Neither may issue an application open/refusal.
+        if harness.query_by_label("Open in viewer").is_some() {
+            harness.get_by_label("Open in viewer").click();
+        } else {
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos: old_open,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
+        harness.run_steps(4);
+        assert!(
+            harness.state().overlays.open_refusal.is_none(),
+            "stale Open dispatched after {change}"
+        );
+        assert!(!stale_popup_open, "frozen popup survived {change}");
+        assert!(
+            harness
+                .state_mut()
+                .state
+                .take_open_refusal_notice()
+                .is_none(),
+            "{change}"
+        );
+        let session = harness.state().state.session_tab(active).unwrap();
+        assert!(session.view.context_menu_text().is_none(), "{change}");
+        assert!(session.view.context_menu_target().is_none(), "{change}");
+        assert!(session.terminal_context_menu_action().is_none(), "{change}");
+        assert!(
+            harness.query_by_label("Open in viewer").is_none(),
+            "{change}"
+        );
+        assert_eq!(harness.state().state.active(), active);
+        assert!(transport.sent().is_empty());
     }
 
     #[test]

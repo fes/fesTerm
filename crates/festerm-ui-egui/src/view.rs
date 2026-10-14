@@ -180,6 +180,8 @@ pub struct TerminalView {
     rectangle_copy: Option<RectangleCopy>,
     rectangle_copy_exit_key: Option<egui::Key>,
     rectangle_copy_held_buttons: u8,
+    rectangle_copy_popup_id: Option<egui::Id>,
+    retired_rectangle_popup_id: Option<egui::Id>,
     pub(crate) resize: ResizeTracker,
     pub(crate) diagnostics: FrameDiagnostics,
     pub(crate) keyboard: KeyboardOwnership,
@@ -470,6 +472,26 @@ impl TerminalView {
             self.rectangle_copy_held_buttons |= copy.held_buttons;
             self.cache = TerminalRenderCache::default();
             self.full_redraw_requested = true;
+            self.context_link = None;
+            self.context_target = None;
+            self.context_text = None;
+            self.pending_context_action_request = false;
+            self.pending_link_requests.clear();
+            if let Some(id) = self.rectangle_copy_popup_id.take() {
+                self.retired_rectangle_popup_id = Some(id);
+            }
+        }
+    }
+
+    /// Retires frozen input and its owned popup immediately when authority changes.
+    pub fn cancel_rectangle_copy_with_context(&mut self, context: &egui::Context) {
+        self.cancel_rectangle_copy();
+        self.close_retired_rectangle_popup(context);
+    }
+
+    fn close_retired_rectangle_popup(&mut self, context: &egui::Context) {
+        if let Some(id) = self.retired_rectangle_popup_id.take() {
+            Popup::close_id(context, id);
         }
     }
 
@@ -762,6 +784,7 @@ impl TerminalView {
         sink: &mut impl EncodedInputSink,
         options: TerminalViewOptions,
     ) {
+        self.close_retired_rectangle_popup(ui.ctx());
         let frame = ui.ctx().cumulative_frame_nr();
         if self
             .last_rendered_frame
@@ -1833,6 +1856,7 @@ impl TerminalView {
                     );
                 }
             });
+        self.rectangle_copy_popup_id = menu.as_ref().map(|_| menu_id);
         if menu.is_none() {
             self.context_link = None;
             self.context_target = None;
@@ -3271,6 +3295,49 @@ mod tests {
         );
         assert!(harness.state().sink.0.is_empty());
     }
+    #[test]
+    fn rectangle_copy_cancel_retires_popup_targets_and_pending_activation_only() {
+        let mut harness = rectangle_copy_harness();
+        let context = harness.ctx.clone();
+        let pos = rectangle_copy_point(&harness, 1, 0);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+        }
+        assert!(Popup::is_any_open(&context));
+        assert!(harness.state().view.context_menu_text().is_some());
+        {
+            let view = &mut harness.state_mut().view;
+            view.pending_context_action_request = true;
+            view.pending_link_requests
+                .push_back(Arc::from("https://example.com/frozen"));
+            view.cancel_rectangle_copy();
+            assert!(view.context_menu_text().is_none());
+            assert!(view.context_menu_target().is_none());
+            assert!(!view.take_context_action_request());
+            assert!(view.take_link_requests().is_empty());
+        }
+        harness.run_steps(3);
+        assert!(!Popup::is_any_open(&context));
+        harness.state_mut().terminal.ingest(b"\x1b[?1003l");
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+        assert!(Popup::is_any_open(&context));
+        assert!(harness.state().view.context_menu_target().is_some());
+        harness.state_mut().view.cancel_rectangle_copy();
+        harness.run();
+        assert!(
+            Popup::is_any_open(&context),
+            "ordinary live menu is not a frozen owner"
+        );
+        assert!(harness.state().view.context_menu_target().is_some());
+    }
+
     #[test]
     fn rectangle_copy_view_cancels_when_relinquished_or_recovery_layout_resets() {
         for recovery in [false, true] {
