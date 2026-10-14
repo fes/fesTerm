@@ -3752,6 +3752,56 @@ mod tests {
     }
 
     #[test]
+    fn native_html_real_editor_preview_and_split_scroll_to_named_targets() {
+        for mode in [EditorMode::Preview, EditorMode::Split] {
+            for anchor in [
+                "<a id='spot'></a>\n\nArrival café 漢字",
+                "<a id='spot'>Arrival café 漢字</a>",
+            ] {
+                let text = format!(
+                    "<a href='#spot'>Jump</a>\n\n{}\n\n{anchor}\n\n{}",
+                    "Before café 漢字\n\n".repeat(100),
+                    "After\n\n".repeat(100),
+                );
+                let directory = TemporaryDirectory::new("named-anchor-editor");
+                let path = directory.file("anchors.md", &text);
+                let (documents, mut editor) = opened_editor_for(&path);
+                editor.mode = mode;
+                let tab = TabId::next_for_test();
+                let mut harness = Harness::builder()
+                    .with_size(vec2(1000.0, 800.0))
+                    .build_ui_state(
+                        move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                            ui.ctx().all_styles_mut(|style| {
+                                style.scroll_animation = egui::style::ScrollAnimation::none();
+                            });
+                            state.1.show(ui, tab, &state.0);
+                        },
+                        (documents, editor),
+                    );
+                harness.step();
+                let before = harness.get_by_label("Arrival café 漢字").rect();
+                assert!(before.top() > 800.0);
+                harness.get_by_label("Link: Jump").click();
+                for _ in 0..4 {
+                    harness.step();
+                }
+                let after = harness.get_by_label("Arrival café 漢字").rect();
+                assert!(
+                    after.top() >= 0.0 && after.bottom() < 800.0,
+                    "{mode:?}: {after:?}"
+                );
+                assert!(after.top() < before.top());
+                assert!(harness.get_by_label("Link: Jump").rect().bottom() < 0.0);
+                assert_eq!(
+                    harness.state().1.preview.as_ref().unwrap().rendered_text(),
+                    text
+                );
+            }
+        }
+    }
+
+    #[test]
     fn native_svg_real_editor_preview_and_split_keep_images_and_document_text() {
         let directory = TemporaryDirectory::new("native-svg-editor");
         directory.file(

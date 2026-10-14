@@ -882,6 +882,13 @@ shared worker/budget ownership, fresh-payload invalidation, real editor mode
 transitions and link command/refusal tests are automated. Cross-renderer/DPI
 appearance, font fidelity, native external-link handoff, keyboard/screen-reader
 comprehension and usability remain pending; no native acceptance is claimed.
+The owner accepted ADR 0048 on 2026-10-14 after resource-policy and navigation
+repairs. Deterministic regressions now also refuse repeated-vertex markers
+before parser admission (direct/inherited/CSS/nested definitions) and prove
+actual offscreen empty/plain-anchor target visibility and request consumption
+in shared standalone/editor rendering, with real editor Preview/Split link
+activation. Markers remain unsupported pending bounded expansion; native
+fidelity, accessibility and DPI checks above are still pending.
 
 CP-15 background-local-I/O additions (ADR 0047): controlled rendezvous tests
 block metadata/load/save execution while registry frame reconciliation returns,

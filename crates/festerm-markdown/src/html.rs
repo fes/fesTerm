@@ -392,6 +392,7 @@ impl DocumentBuilder<'_> {
                     .byte_end
             };
             let span = self.span(inline.span().byte_start..end);
+            let has_named_target = !tag.names.is_empty();
             for name in tag.names {
                 if !self.named_anchors.contains_key(&name)
                     && self.named_anchors.len() >= self.bounds.max_resource_references
@@ -423,12 +424,15 @@ impl DocumentBuilder<'_> {
                     inlines: children,
                 }));
             } else {
-                if children.is_empty() {
-                    children.push(Inline::Text(TextInline {
-                        span,
-                        text_span: span,
-                        text: String::new(),
-                    }));
+                if has_named_target || children.is_empty() {
+                    children.insert(
+                        0,
+                        Inline::Text(TextInline {
+                            span: inline.span(),
+                            text_span: inline.span(),
+                            text: String::new(),
+                        }),
+                    );
                 }
                 inlines.extend(children);
             }

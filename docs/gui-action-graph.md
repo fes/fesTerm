@@ -721,6 +721,11 @@ too, though still only partially covered.
 native HTML anchor projection. Source/Find retain exact document bytes.
 Named targets navigate by source byte without phantom headings; local SVG and
 inline SVG appear in actual editor Preview/Split and standalone views.
+Empty and plain-containing named targets consume navigation requests and bring
+the actual offscreen target into view, retaining UTF-8 byte positions and
+first-duplicate precedence. SVG marker elements are explicitly refused before
+parser admission, including inherited/CSS/nested cases, pending bounded
+per-vertex expansion. ADR 0048 was owner accepted 2026-10-14 after these repairs.
 Reparsing retains an inline image only if its owned XML is also unchanged.
 Native DPI, readability, browser/font differences, link handoff and accessibility
 remain CP-06/CP-15 evidence rather than inferred from headless tests.

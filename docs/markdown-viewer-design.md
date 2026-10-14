@@ -263,12 +263,16 @@ fragmentation are outside it.
 ### Native SVG and HTML anchors
 
 SVG is statically rasterized at its intrinsic dimensions on the existing image
-workers. Shapes, text, internal `defs`/`use`, gradients, clipping, markers and
+workers. Shapes, text, internal `defs`/`use`, gradients, clipping and
 bounded embedded CSS are supported. Text substitutes the fixed bundled
 JetBrains Mono family; no system-font discovery or document-supplied fonts occur.
 DTDs, processing instructions, scripts/events, embedded images, external/data
 hrefs (including SVG hyperlink hrefs), foreign HTML, animation, filters, masks
-and patterns are refused. Resource resolvers are disabled independently.
+and patterns are refused. Markers are unsupported pending bounded per-vertex
+expansion: any `marker` element, including nested/unused definitions and
+direct/inherited/CSS applications, fails explicitly during XML preflight before
+the SVG parser can multiply it at path vertices. Worker/reference caps are not
+per-image expansion limits. Resource resolvers are disabled independently.
 
 Admission bounds XML to 16,384 nodes, XML/reference depth to 64, expanded work
 to 65,536 nodes/4 MiB attribute-text bytes, text to 16,384 glyphs, and aggregate
@@ -289,6 +293,11 @@ Duplicate/unknown attributes, unsupported entities and malformed/nested tags
 remain literal. Targets retain exact source byte spans; the first duplicate
 name wins, explicit named targets precede heading fallback, and targets never
 create outline headings. Other HTML styling is not interpreted.
+Source-byte navigation consumes the request and scrolls to actual shared
+block/anchor geometry, including empty anchors and anchors containing plain
+text, in standalone Preview and editor Preview/Split. The owner accepted
+ADR 0048 on 2026-10-14 after these resource/navigation repairs; native fidelity,
+accessibility and DPI qualification remain pending.
 
 HTML and Markdown links share application-command routing and scheme policy.
 Decoded rooted paths, Windows UNC/device/drive destinations and control

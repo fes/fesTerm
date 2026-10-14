@@ -126,6 +126,10 @@ amends this baseline: static local/intrinsic SVG and restricted native HTML
 links/named targets are projected without a browser or secondary resource
 authority. All other HTML remains inert; the original raster-only restriction
 below describes the pre-amendment policy.
+The owner accepted ADR 0048 on 2026-10-14 after pre-parser marker refusal and
+actual named-target viewport navigation were repaired. SVG markers remain
+unsupported pending bounded per-vertex expansion; native fidelity,
+accessibility and DPI qualification remain pending under CP-06/CP-15.
 
 For syntax highlighting, fesTerm will add `syntect` behind a small adapter in
 `festerm-markdown` and will document a bounded language allowlist for v1.

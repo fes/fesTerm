@@ -2986,7 +2986,19 @@ impl MarkdownRenderState<'_> {
             {
                 ui.add_space(inter_block_spacing(previous, block));
             }
+            let pending = *self.pending_scroll;
+            let top = ui.cursor().min;
             self.render_block(ui, block, document, text_style);
+            if pending == *self.pending_scroll
+                && matches!(pending, Some(PendingScroll::Byte(target)) if byte_range_contains(block.span(), target))
+            {
+                let bottom = egui::pos2(
+                    ui.max_rect().right(),
+                    ui.cursor().top().max(top.y + BODY_TEXT_SIZE),
+                );
+                ui.scroll_to_rect(egui::Rect::from_min_max(top, bottom), Some(Align::Center));
+                *self.pending_scroll = None;
+            }
         }
     }
 
@@ -4109,6 +4121,17 @@ fn render_inline_flow(
     outline_selected: &mut Option<usize>,
 ) {
     for inline in inlines {
+        if matches!(
+            inline,
+            Inline::Text(_) | Inline::Code(_) | Inline::RawHtml(_)
+        ) && matches!(*pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(inline.span(), target))
+        {
+            // Named targets retain an empty source-spanned run even when
+            // their opening tag has no painted text or widget of its own.
+            let target = egui::Rect::from_min_size(ui.cursor().min, vec2(1.0, font.size));
+            ui.scroll_to_rect(target, Some(Align::Center));
+            *pending_scroll = None;
+        }
         match inline {
             Inline::Text(text) => {
                 render_text_run(ui, text.text(), text.text_span(), find, font.clone(), style);
@@ -10254,6 +10277,79 @@ mod tests {
         context.tex_manager().write().take_delta().clear();
         budget.generation();
         assert_eq!(budget.usage_for_test(), (0, 0));
+    }
+
+    #[test]
+    fn native_html_named_anchors_scroll_offscreen_targets_and_consume_requests() {
+        for anchor in [
+            "<a id='spot' name='alias'></a>\n\nArrival café 漢字".to_owned(),
+            "<a id='spot' name='alias'>Arrival café 漢字</a>".to_owned(),
+            format!(
+                "{}<a id='spot' name='alias'>Arrival café 漢字</a> {}",
+                "Wrapped café 漢字 ".repeat(1000),
+                "Following words ".repeat(1000),
+            ),
+        ] {
+            let text = format!(
+                "{}\n\n{anchor}\n\n{}\n\n<a id='spot'>Duplicate target</a>",
+                "Before café 漢字\n\n".repeat(100),
+                "After\n\n".repeat(100),
+            );
+            for standalone in [false, true] {
+                let context = code_navigation_context();
+                let mut viewer = MarkdownViewerTab::open_remote(
+                    test_remote_source("/docs/anchors.md"),
+                    "/docs/anchors.md".into(),
+                    text.as_bytes().to_vec(),
+                );
+                viewer.outline_open = false;
+                let mut pane = MarkdownPreviewPane::new(
+                    LocalMarkdownSource::new("UNTITLED").unwrap().into(),
+                    &text,
+                );
+                let tab = crate::tabs::AppState::for_test().active();
+                let mut show = |ui: &mut egui::Ui| {
+                    if standalone {
+                        viewer.show(ui, tab);
+                    } else {
+                        pane.show(ui);
+                    }
+                };
+                let before = code_navigation_frame(&context, 0, Vec::new(), &mut show);
+                assert!(visible_code_geometry(&before, "Arrival café 漢字").is_none());
+                let document = viewer.document.as_ref().unwrap();
+                assert!(document.headings().is_empty());
+                let target = document.named_anchor("spot").unwrap().start().byte_offset();
+                assert_eq!(target, text.find("<a id='spot'").unwrap());
+                assert!(text.is_char_boundary(target));
+                let request = fragment_scroll(document, "alias");
+                assert_eq!(request, Some(PendingScroll::Byte(target)));
+                if standalone {
+                    viewer.pending_scroll = request;
+                } else {
+                    pane.pending_scroll = request;
+                }
+                let mut output = before;
+                for frame in 1..5 {
+                    output = code_navigation_frame(&context, frame, Vec::new(), |ui| {
+                        if standalone {
+                            viewer.show(ui, tab);
+                        } else {
+                            pane.show(ui);
+                        }
+                    });
+                }
+                let (rect, clip) = visible_code_geometry(&output, "Arrival café 漢字")
+                    .expect("navigation must move the actual viewport to the first named target");
+                assert!(clip.contains(rect.center()));
+                assert!(visible_code_geometry(&output, "Duplicate target").is_none());
+                assert!(if standalone {
+                    viewer.pending_scroll.is_none()
+                } else {
+                    pane.pending_scroll.is_none()
+                });
+            }
+        }
     }
 
     #[test]

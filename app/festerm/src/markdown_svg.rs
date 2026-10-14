@@ -130,6 +130,11 @@ fn preflight(document: &roxmltree::Document<'_>) -> Result<Cost, ImageLoadFailur
         {
             return Err(refusal("Foreign XML/HTML content is not supported."));
         }
+        if node.tag_name().name() == "marker" {
+            return Err(refusal(
+                "Markers are not supported pending bounded per-vertex expansion.",
+            ));
+        }
         if !matches!(
             node.tag_name().name(),
             "svg"
@@ -154,7 +159,6 @@ fn preflight(document: &roxmltree::Document<'_>) -> Result<Cost, ImageLoadFailur
                 | "radialGradient"
                 | "stop"
                 | "clipPath"
-                | "marker"
                 | "style"
                 | "a"
                 | "switch"
@@ -457,6 +461,30 @@ mod tests {
         let budget = ImageMemoryBudget::for_context(&context, Default::default());
         let mut scratch = budget.reserve(1024, None)?;
         decode(xml.as_bytes(), &mut scratch, 1024, side)
+    }
+
+    #[test]
+    fn svg_rejects_marker_vertex_expansion_before_parser_admission() {
+        let points = (0..2002)
+            .map(|index| format!("{},{}", index % 2, (index / 2) % 2))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let marker = format!(
+            "<defs><marker id='m' markerWidth='1' markerHeight='1'>{}</marker></defs>",
+            "<rect width='1' height='1'/>".repeat(40)
+        );
+        for content in [
+            format!("{marker}<polyline points='{points}' marker-mid='url(#m)'/>"),
+            format!("{marker}<g marker-mid='url(#m)'><polyline points='{points}'/></g>"),
+            format!("{marker}<style>polyline{{marker-mid:url(#m)}}</style><polyline points='{points}'/>"),
+            format!("<defs><g>{marker}</g></defs><rect width='1' height='1'/>"),
+        ] {
+            let xml = format!("<svg width='64' height='64'>{content}</svg>");
+            let error = render(&xml, 256)
+                .err()
+                .expect("markers must be refused, not silently dropped or expanded per vertex");
+            assert!(error.message().contains("Markers"), "{}", error.message());
+        }
     }
 
     #[test]

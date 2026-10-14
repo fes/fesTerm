@@ -1,7 +1,10 @@
 # ADR 0048: Bounded Native SVG and HTML Anchors in Markdown
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-14
+- **Acceptance:** Owner accepted 2026-10-14 after the resource-policy and
+  named-target navigation repairs below; native fidelity, accessibility and DPI
+  qualification remain pending under CP-06/CP-15.
 - **Supersedes:** None; narrowly amends ADR 0030's inert-HTML and raster-only policies
 
 ## Context
@@ -38,6 +41,10 @@ links; dangerous schemes remain inert. Named anchors navigate by source byte
 without introducing phantom outline headings. Attribute values are decoded
 before policy classification. No event handlers, CSS, DOM, or browser execution
 are introduced.
+The shared renderer consumes source-byte requests using block geometry and
+explicit zero-text anchor runs. Empty anchors and plain-containing anchors
+therefore move the actual viewport in standalone Preview and editor
+Preview/Split, including offscreen targets; they do not add headings.
 
 Both Markdown and HTML links refuse decoded rooted/UNC/device/drive targets and
 control characters before file operations; native activation independently
@@ -54,6 +61,12 @@ and conservative isolated-layer/clip scratch are reserved before the respective
 decoder stages. Filters, masks, patterns, embedded images and external/data
 hrefs, including SVG hyperlink hrefs, are unsupported. Rendering uses intrinsic
 dimensions; native fidelity and DPI remain qualification items.
+Markers are also unsupported pending bounded per-vertex expansion. Reject every
+`marker` element during XML preflight, before `usvg` parsing, including unused or
+nested definitions and markers applied directly, through inheritance or CSS.
+Charging a marker reference once does not bound the parser's expansion at every
+path vertex; neither the four-worker nor 64-reference cap bounds one image.
+Refusal is an explicit permanent image error, never successful marker dropping.
 Before raster allocation/painting, expanded XML nodes plus glyphs multiplied
 by output pixels must also fit 512 Mi pixel-work units. Separate node/area
 limits alone would still admit excessive repeated full-canvas overdraw.
@@ -96,6 +109,13 @@ also matches, not merely their descriptive target or source position.
   exact-limit success and limit-plus-one refusal.
   Paint-work admission also requires inclusive boundary/+1 checks and actual
   overdraw/glyph SVG refusal before rasterization.
+  `svg_rejects_marker_vertex_expansion_before_parser_admission` must refuse the
+  repeated-vertex marker fixture and direct/inherited/CSS/nested variants.
+  `native_html_named_anchors_scroll_offscreen_targets_and_consume_requests` and
+  `native_html_real_editor_preview_and_split_scroll_to_named_targets` must prove
+  actual viewport movement/target visibility, not only request creation.
+  Empty/plain-containing anchors, UTF-8 byte positions, first-duplicate
+  precedence, and request consumption are covered without timed sleeps.
 - **Native/manual evidence required:** Existing `MD-04`, `MD-05`, and editor
   Preview image scenarios gain SVG/anchor checks; complete native evidence
   remains pending.
