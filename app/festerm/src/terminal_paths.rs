@@ -11,8 +11,143 @@ use festerm_ui_egui::{TerminalContextMenuAction, TerminalContextTarget, Terminal
 
 use crate::overlay_state::OpenRefusalNotice;
 
-const MAX_LOGICAL_ROWS: usize = 16;
-const MAX_LOGICAL_BYTES: usize = 8 * 1024;
+const MAX_LOGICAL_ROWS: usize = festerm_ui_egui::TERMINAL_CONTEXT_MAX_ROWS;
+const MAX_LOGICAL_BYTES: usize = festerm_ui_egui::TERMINAL_CONTEXT_MAX_BYTES;
+
+#[cfg(test)]
+mod frozen_tests {
+    use super::*;
+
+    #[test]
+    fn rectangle_and_live_paths_refuse_network_and_device_namespaces_without_io() {
+        let origin = TerminalFilesystemOrigin::Local(LocalTerminalOrigin::default());
+        for text in [
+            r"\\attacker.example\share\report.txt",
+            r"//attacker.example/share/report.txt",
+            r"/\attacker.example/share/report.txt",
+            r"\/attacker.example/share/report.txt",
+            r"\\?\UNC\attacker.example\share\report.txt",
+            r"\\.\pipe\report.txt",
+            r"\??\UNC\attacker.example\share\report.txt",
+            "file:///%2Fattacker.example/share/report.txt",
+            "file://localhost/%5Cattacker.example/share/report.txt",
+            "file:///%5C%5C?%5CUNC%5Cattacker.example/share/report.txt",
+            "file:///%3F%3F/UNC/attacker.example/share/report.txt",
+        ] {
+            let capture = festerm_ui_egui::TerminalContextText {
+                text: text.to_owned(),
+                clicked_range: 2..3,
+            };
+            let frozen = resolve_frozen_context_menu_action(&capture, 1, Some(&origin));
+            let mut terminal =
+                Terminal::new(festerm_core::Dimensions::new(120, 2).unwrap()).unwrap();
+            terminal.ingest(text.as_bytes());
+            let live = resolve_context_menu_action(
+                &terminal,
+                TerminalContextTarget {
+                    content_position: ContentPosition {
+                        column: 2,
+                        absolute_row: 0,
+                    },
+                    generation: 1,
+                },
+                &origin,
+            );
+            // Resolution is pure: no test opens or probes any named path.
+            for menu in [frozen, live].into_iter().flatten() {
+                assert!(!menu.ui_action().enabled, "{text}");
+                assert!(menu.open_request().is_none(), "{text}");
+            }
+            assert!(
+                resolve_local_candidate(text, &LocalTerminalOrigin::default())
+                    .request
+                    .is_none(),
+                "{text}"
+            );
+        }
+        for text in [
+            "/safe/report.txt",
+            "file:///safe/report.txt",
+            "file://localhost/safe/report.txt",
+        ] {
+            assert!(
+                resolve_local_candidate(text, &LocalTerminalOrigin::default())
+                    .request
+                    .is_some(),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn rectangle_frozen_context_reuses_url_and_path_destination_policy() {
+        let capture = festerm_ui_egui::TerminalContextText {
+            text: "https://example.com/report.md".to_owned(),
+            clicked_range: 12..13,
+        };
+        let menu = resolve_frozen_context_menu_action(&capture, 42, None).unwrap();
+        assert_eq!(menu.generation(), 42);
+        assert_eq!(
+            menu.ui_action().copy,
+            Some(("Copy URL".to_owned(), capture.text))
+        );
+        assert!(matches!(
+            menu.open_request(),
+            Some(TerminalPathOpenRequest::Web(_))
+        ));
+
+        let capture = festerm_ui_egui::TerminalContextText {
+            text: "~/report.md".to_owned(),
+            clicked_range: 3..4,
+        };
+        let origin = TerminalFilesystemOrigin::Local(LocalTerminalOrigin {
+            home_directory: Some(std::env::temp_dir()),
+        });
+        let menu = resolve_frozen_context_menu_action(&capture, 43, Some(&origin)).unwrap();
+        assert!(menu.ui_action().enabled);
+        assert!(matches!(
+            menu.open_request(),
+            Some(TerminalPathOpenRequest::Local(_))
+        ));
+    }
+
+    #[test]
+    fn rectangle_frozen_context_rejects_invalid_ranges_and_unsafe_destinations() {
+        let origin = TerminalFilesystemOrigin::Local(LocalTerminalOrigin {
+            home_directory: Some(std::env::temp_dir()),
+        });
+        for (text, range) in [
+            ("https://example.com", 99..100),
+            ("https://example.com", 1..1),
+            ("\u{754c}", 1..2),
+        ] {
+            let capture = festerm_ui_egui::TerminalContextText {
+                text: text.to_owned(),
+                clicked_range: range,
+            };
+            assert!(resolve_frozen_context_menu_action(&capture, 0, Some(&origin)).is_none());
+        }
+        for text in [
+            "javascript:alert(1)",
+            "data:text/html,hello",
+            "file:///a%00b",
+        ] {
+            let capture = festerm_ui_egui::TerminalContextText {
+                text: text.to_owned(),
+                clicked_range: 1..2,
+            };
+            if let Some(menu) = resolve_frozen_context_menu_action(&capture, 0, Some(&origin)) {
+                assert!(!menu.ui_action().enabled);
+                assert!(menu.open_request().is_none());
+            }
+        }
+        let capture = festerm_ui_egui::TerminalContextText {
+            text: "x".repeat(MAX_LOGICAL_BYTES + 1),
+            clicked_range: 0..1,
+        };
+        assert!(resolve_frozen_context_menu_action(&capture, 0, None).is_none());
+    }
+}
 
 #[derive(Debug)]
 pub(crate) enum TerminalFilesystemOrigin {
@@ -187,6 +322,37 @@ pub(crate) fn resolve_context_menu_action<'a>(
 ) -> Option<TerminalPathMenuState> {
     let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, 0);
     let capture = capture_logical_line(snapshot, target.content_position)?;
+    resolve_captured_context_menu_action(capture, target.generation, origin.into())
+}
+
+pub(crate) fn resolve_frozen_context_menu_action(
+    capture: &festerm_ui_egui::TerminalContextText,
+    generation: u64,
+    origin: Option<&TerminalFilesystemOrigin>,
+) -> Option<TerminalPathMenuState> {
+    if capture.text.len() > MAX_LOGICAL_BYTES
+        || capture.clicked_range.start >= capture.clicked_range.end
+        || capture.clicked_range.end > capture.text.len()
+        || !capture.text.is_char_boundary(capture.clicked_range.start)
+        || !capture.text.is_char_boundary(capture.clicked_range.end)
+    {
+        return None;
+    }
+    resolve_captured_context_menu_action(
+        CapturedLogicalLine {
+            text: capture.text.clone(),
+            clicked_range: capture.clicked_range.clone(),
+        },
+        generation,
+        origin,
+    )
+}
+
+fn resolve_captured_context_menu_action(
+    capture: CapturedLogicalLine,
+    generation: u64,
+    origin: Option<&TerminalFilesystemOrigin>,
+) -> Option<TerminalPathMenuState> {
     let action = if let Some((display, target)) = web_url_candidate(&capture) {
         TerminalResolvedPathAction {
             ui: TerminalContextMenuAction {
@@ -200,7 +366,7 @@ pub(crate) fn resolve_context_menu_action<'a>(
         }
     } else {
         let hit = candidate_from_line(&capture.text, capture.clicked_range)?;
-        let origin = origin.into()?;
+        let origin = origin?;
         let mut action = resolve_candidate(
             TerminalPathHit {
                 text: hit.text.clone(),
@@ -215,10 +381,7 @@ pub(crate) fn resolve_context_menu_action<'a>(
         action.ui.copy = Some(("Copy path".to_owned(), copy_path));
         action
     };
-    Some(TerminalPathMenuState {
-        generation: target.generation,
-        action,
-    })
+    Some(TerminalPathMenuState { generation, action })
 }
 
 pub(crate) fn open_local_command(
@@ -660,12 +823,18 @@ fn resolve_local_candidate(
     candidate: &str,
     origin: &LocalTerminalOrigin,
 ) -> TerminalResolvedPathAction {
+    if is_local_network_or_device_path(candidate) {
+        return disabled_local_namespace(candidate);
+    }
     let parsed = match parse_candidate_reference(candidate) {
         Ok(parsed) => parsed,
         Err(error) => return disabled_action(candidate.to_owned(), error.detail()),
     };
     match parsed {
         ParsedPathReference::FileUri(uri) => {
+            if is_local_network_or_device_path(&uri.path) {
+                return disabled_local_namespace(candidate);
+            }
             if let Some(host) = &uri.host {
                 if !host.eq_ignore_ascii_case("localhost") {
                     return disabled_action(
@@ -785,6 +954,9 @@ fn resolve_remote_candidate(
 }
 
 fn enabled_local_action(path: PathBuf) -> TerminalResolvedPathAction {
+    if is_local_network_or_device_path(&path.to_string_lossy()) {
+        return disabled_local_namespace(&path.to_string_lossy());
+    }
     let display_path = path.display().to_string();
     TerminalResolvedPathAction {
         ui: TerminalContextMenuAction {
@@ -798,6 +970,24 @@ fn enabled_local_action(path: PathBuf) -> TerminalResolvedPathAction {
             LocalTerminalPathOpenRequest { path, display_path },
         )),
     }
+}
+
+fn disabled_local_namespace(candidate: &str) -> TerminalResolvedPathAction {
+    disabled_action(
+        candidate.to_owned(),
+        "Network and device namespace paths cannot be opened from terminal output.",
+    )
+}
+
+fn is_local_network_or_device_path(candidate: &str) -> bool {
+    // Interpret both Windows separators even on Unix, including decoded file
+    // URIs. No filesystem probe may precede this network-authentication boundary.
+    let normalized = candidate.replace('\\', "/");
+    normalized.starts_with("//")
+        || normalized.starts_with("/??/")
+        || normalized.starts_with("??/")
+        || normalized.to_ascii_lowercase().starts_with("/device/")
+        || normalized.to_ascii_lowercase().starts_with("/global??/")
 }
 
 fn disabled_action(preview: String, reason: impl Into<String>) -> TerminalResolvedPathAction {

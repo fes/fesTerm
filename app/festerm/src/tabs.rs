@@ -446,7 +446,7 @@ impl ApplicationSession {
             }),
             Self::Local(_) | Self::Persistent(_) | Self::Ssh(_) | Self::Serial(_) => None,
             #[cfg(test)]
-            Self::TestSsh(_) => None,
+            Self::TestSsh(session) => session.terminal_file_cwd().map(|cwd| (cwd, PathBuf::new())),
         }
     }
 
@@ -456,7 +456,7 @@ impl ApplicationSession {
             Self::Sftp(session) => session.verified_host_key_fingerprint(),
             Self::Local(_) | Self::Persistent(_) | Self::Serial(_) => None,
             #[cfg(test)]
-            Self::TestSsh(_) => None,
+            Self::TestSsh(session) => session.terminal_file_fingerprint(),
         }
     }
 
@@ -767,6 +767,13 @@ pub struct SshPasswordRetryState {
 struct TerminalPathState {
     origin: Option<TerminalFilesystemOrigin>,
     menu: Option<TerminalPathMenuState>,
+    frozen_authority: Option<FrozenTerminalAuthority>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FrozenTerminalAuthority {
+    origin: Option<TerminalFilesystemOrigin>,
+    lifecycle_generation: u64,
 }
 
 struct PendingTerminalPathOpen {
@@ -1386,7 +1393,19 @@ impl SessionTab {
             .map(TerminalPathMenuState::ui_action)
     }
 
-    pub(crate) fn update_terminal_context_menu(&mut self) -> bool {
+    pub(crate) fn update_terminal_context_menu(&mut self, context: &egui::Context) -> bool {
+        if (self.view.rectangle_copy_active() || self.terminal_path.frozen_authority.is_some())
+            && self.terminal_path.frozen_authority.as_ref()
+                != Some(&self.current_terminal_authority())
+        {
+            self.view.cancel_rectangle_copy_with_context(context);
+            self.terminal_path.menu = None;
+            self.terminal_path.frozen_authority = None;
+            return true;
+        }
+        if !self.view.rectangle_copy_active() {
+            self.terminal_path.frozen_authority = None;
+        }
         self.terminal_path.origin = self.terminal_filesystem_origin();
         let Some(target) = self.view.context_menu_target() else {
             let cleared = self.terminal_path.menu.take().is_some();
@@ -1400,18 +1419,51 @@ impl SessionTab {
         {
             return false;
         }
-        let next =
-            resolve_context_menu_action(&self.terminal, target, self.terminal_path.origin.as_ref());
+        let next = if let Some(capture) = self.view.context_menu_text() {
+            crate::terminal_paths::resolve_frozen_context_menu_action(
+                capture,
+                target.generation,
+                self.terminal_path.origin.as_ref(),
+            )
+        } else {
+            resolve_context_menu_action(&self.terminal, target, self.terminal_path.origin.as_ref())
+        };
         let changed = self.terminal_path.menu != next;
         self.terminal_path.menu = next;
         changed
     }
 
     fn terminal_path_open_request(&self) -> Option<TerminalPathOpenRequest> {
+        if (self.view.rectangle_copy_active() || self.terminal_path.frozen_authority.is_some())
+            && self.terminal_path.frozen_authority.as_ref()
+                != Some(&self.current_terminal_authority())
+        {
+            return None;
+        }
         self.terminal_path
             .menu
             .as_ref()
             .and_then(TerminalPathMenuState::open_request)
+    }
+
+    fn current_terminal_authority(&self) -> FrozenTerminalAuthority {
+        FrozenTerminalAuthority {
+            origin: self.terminal_filesystem_origin(),
+            lifecycle_generation: self.controller.lifecycle_generation(),
+        }
+    }
+
+    fn begin_rectangle_copy(
+        &mut self,
+        trim: bool,
+    ) -> Result<(), festerm_ui_egui::RectangleCopyError> {
+        if self.view.rectangle_copy_active() {
+            return Ok(());
+        }
+        let authority = self.current_terminal_authority();
+        self.view.begin_rectangle_copy(&self.terminal, trim)?;
+        self.terminal_path.frozen_authority = Some(authority);
+        Ok(())
     }
 
     fn live_remote_file_requestor(&self) -> Option<LiveRemoteFileRequestor> {
@@ -2093,6 +2145,7 @@ pub enum AppCommand {
     OpenTerminalHistoryInEditor,
     /// Repaints this terminal's local presentation without protocol effects.
     RedrawTerminal(TabId),
+    BeginRectangleCopy(TabId),
     /// Opens a new independent terminal snapshot and immediately asks where
     /// to save it.
     SaveTerminalHistoryAs,
@@ -2256,6 +2309,7 @@ pub enum AppCommand {
     /// Selects a clickstop scaling how far one trackpad/wheel scroll step
     /// moves the scrollback viewport (feature request #67).
     SetScrollSpeed(festerm_config::ScrollSpeedPreference),
+    ToggleRectangleCopyTrimTrailingSpaces,
     /// Remembers how a text editor view was last set up, so the next one opens
     /// the way the reader works rather than the way the defaults do.
     SetEditorSettings(festerm_config::EditorSettings),
@@ -2547,6 +2601,7 @@ pub struct AppState {
     terminal_ligatures: bool,
     emoji_presentation: EmojiPresentationPreference,
     scroll_speed: ScrollSpeedPreference,
+    rectangle_copy_trim_trailing_spaces: bool,
     scrollback_limit: ScrollbackLimitPreference,
     image_memory_budget: ImageMemoryBudgetPreference,
     /// How the next text editor view starts out. Options stay per-view once a
@@ -2581,6 +2636,7 @@ pub struct AppState {
     /// A history snapshot that was honestly refused before an editor buffer
     /// was allocated. Drained by the composition root into a transient notice.
     history_snapshot_refusal: Option<TerminalTextSnapshotRefusal>,
+    rectangle_copy_refusal: Option<festerm_ui_egui::RectangleCopyError>,
     /// The last file that could not be opened, waiting to be shown to the
     /// reader. A refusal that nobody reports is indistinguishable from a
     /// click that did nothing.
@@ -2662,6 +2718,7 @@ impl AppState {
             terminal_ligatures: settings.terminal_ligatures(),
             emoji_presentation: settings.emoji_presentation(),
             scroll_speed: settings.scroll_speed(),
+            rectangle_copy_trim_trailing_spaces: settings.rectangle_copy_trim_trailing_spaces(),
             scrollback_limit: settings.scrollback_limit(),
             image_memory_budget: settings.image_memory_budget(),
             editor: settings.editor(),
@@ -2681,6 +2738,7 @@ impl AppState {
             window_open_requested: false,
             save_as_requested: false,
             history_snapshot_refusal: None,
+            rectangle_copy_refusal: None,
             open_refusal: None,
             pending_open_refusal_notices: VecDeque::new(),
             sftp_cleanup_sender,
@@ -2937,6 +2995,7 @@ impl AppState {
         self.terminal_ligatures = settings.terminal_ligatures();
         self.emoji_presentation = settings.emoji_presentation();
         self.scroll_speed = settings.scroll_speed();
+        self.rectangle_copy_trim_trailing_spaces = settings.rectangle_copy_trim_trailing_spaces();
         self.scrollback_limit = settings.scrollback_limit();
         self.image_memory_budget = settings.image_memory_budget();
         self.editor = settings.editor();
@@ -3127,6 +3186,14 @@ impl AppState {
         self.scroll_speed
     }
 
+    pub const fn rectangle_copy_trim_trailing_spaces(&self) -> bool {
+        self.rectangle_copy_trim_trailing_spaces
+    }
+
+    pub fn take_rectangle_copy_refusal(&mut self) -> Option<festerm_ui_egui::RectangleCopyError> {
+        self.rectangle_copy_refusal.take()
+    }
+
     pub const fn scrollback_limit(&self) -> ScrollbackLimitPreference {
         self.scrollback_limit
     }
@@ -3195,6 +3262,7 @@ impl AppState {
         .with_customize_local_shell(self.customize_local_shell)
         .with_emoji_presentation(self.emoji_presentation)
         .with_scroll_speed(self.scroll_speed)
+        .with_rectangle_copy_trim_trailing_spaces(self.rectangle_copy_trim_trailing_spaces)
         .with_editor(self.editor)
         .with_scrollback_limit(self.scrollback_limit)
         .with_image_memory_budget(self.image_memory_budget)
@@ -3542,6 +3610,31 @@ impl AppState {
                     tracing::warn!(target: "festerm::commands", "terminal redraw target is not a session");
                 }
             }
+            AppCommand::BeginRectangleCopy(id) => {
+                if id != self.active {
+                    tracing::warn!(target: "festerm::commands", "rectangle copy target is not active");
+                    return;
+                }
+                let trim = self.rectangle_copy_trim_trailing_spaces;
+                let Some(session) = self.session_tab_mut(id) else {
+                    tracing::warn!(target: "festerm::commands", "rectangle copy target is not a session");
+                    return;
+                };
+                if !session.view.rectangle_copy_active() {
+                    let result = session.begin_rectangle_copy(trim);
+                    match result {
+                        Ok(()) => {
+                            self.input_ownership_epoch = self.input_ownership_epoch.wrapping_add(1);
+                            egui::Popup::close_all(context);
+                            context.request_repaint();
+                        }
+                        Err(error) => {
+                            tracing::warn!(target: "festerm::commands", %error, "rectangle copy refused");
+                            self.rectangle_copy_refusal = Some(error);
+                        }
+                    }
+                }
+            }
             AppCommand::ActivateNextTab => self.activate_relative(1),
             AppCommand::ActivatePreviousTab => self.activate_relative(-1),
             AppCommand::CloseTab(id) | AppCommand::DiscardAndCloseTab(id) => self.close(id),
@@ -3627,6 +3720,10 @@ impl AppState {
             }
             AppCommand::SetScrollSpeed(speed) => {
                 self.scroll_speed = speed;
+            }
+            AppCommand::ToggleRectangleCopyTrimTrailingSpaces => {
+                self.rectangle_copy_trim_trailing_spaces =
+                    !self.rectangle_copy_trim_trailing_spaces;
             }
             AppCommand::SetEditorSettings(editor) => {
                 self.editor = editor;
@@ -3739,6 +3836,8 @@ impl AppState {
                 self.terminal_ligatures = InterfaceSettings::DEFAULT.terminal_ligatures();
                 self.emoji_presentation = InterfaceSettings::DEFAULT.emoji_presentation();
                 self.scroll_speed = InterfaceSettings::DEFAULT.scroll_speed();
+                self.rectangle_copy_trim_trailing_spaces =
+                    InterfaceSettings::DEFAULT.rectangle_copy_trim_trailing_spaces();
                 self.scrollback_limit = InterfaceSettings::DEFAULT.scrollback_limit();
                 self.image_memory_budget = InterfaceSettings::DEFAULT.image_memory_budget();
                 self.editor = InterfaceSettings::DEFAULT.editor();
@@ -5405,6 +5504,9 @@ impl AppState {
     /// notify them about.
     fn set_active(&mut self, id: TabId) {
         if self.active != id {
+            if let Some(session) = self.session_tab_mut(self.active) {
+                session.view.cancel_rectangle_copy();
+            }
             self.remember_departing_tab();
         }
         self.active = id;
@@ -7393,6 +7495,101 @@ mod tests {
 
         assert_eq!(state.tabs().len(), tabs_after_first_open);
         assert_eq!(state.active(), tab_id);
+    }
+
+    #[test]
+    fn rectangle_frozen_context_menu_resolves_cropped_url_after_live_overwrite() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let mut state = AppState::for_test();
+        let tab_id = state.replace_active_with_test_ssh_session(
+            crate::session_controller::fake::FakeSshSession::new([]),
+            "deploy",
+            "ssh.example.test",
+            22,
+        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 600.0))
+            .build_ui_state(
+                move |ui, state: &mut AppState| {
+                    let session = state.session_tab_mut(tab_id).unwrap();
+                    let action = session.terminal_context_menu_action();
+                    session.view.show_with_options(
+                        ui,
+                        &mut session.terminal,
+                        &mut session.controller,
+                        festerm_ui_egui::TerminalViewOptions {
+                            context_menu_action: action,
+                            ..Default::default()
+                        },
+                    );
+                    session.update_terminal_context_menu(ui.ctx());
+                },
+                state,
+            );
+        harness.run();
+        {
+            let session = harness.state_mut().session_tab_mut(tab_id).unwrap();
+            session.terminal = Terminal::new(Dimensions::new(24, 3).unwrap()).unwrap();
+            session
+                .terminal
+                .ingest(b"left https://examp zz\r\nleft le.com/a     zz");
+            session.begin_rectangle_copy(true).unwrap();
+            session
+                .terminal
+                .ingest(b"\x1b[2J\x1b[Hhttps://wrong.example/live");
+        }
+        harness.run();
+        let grid = harness
+            .state()
+            .session_tab(tab_id)
+            .unwrap()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap();
+        let point = |column: f32, row: f32| {
+            grid.min
+                + egui::vec2(
+                    (column + 0.5) * grid.width() / 24.0,
+                    (row + 0.5) * grid.height() / 3.0,
+                )
+        };
+        for (column, row, button) in [
+            (5.0, 0.0, egui::PointerButton::Primary),
+            (17.0, 1.0, egui::PointerButton::Primary),
+            (7.0, 1.0, egui::PointerButton::Secondary),
+        ] {
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos: point(column, row),
+                    button,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.step();
+            }
+        }
+        harness.run();
+        let session = harness.state().session_tab(tab_id).unwrap();
+        assert!(matches!(session.terminal_path_open_request(),
+            Some(TerminalPathOpenRequest::Web(ref target)) if target == "https://example.com/a"));
+        assert!(harness.query_by_label("Go").is_some());
+        assert!(harness.query_by_label("Copy URL").is_some());
+        harness.get_by_label("Copy URL").click();
+        harness.run();
+        assert!(harness
+            .state()
+            .session_tab(tab_id)
+            .unwrap()
+            .view
+            .rectangle_copy_active());
+        assert!(!harness
+            .state_mut()
+            .session_tab_mut(tab_id)
+            .unwrap()
+            .view
+            .take_context_action_request());
     }
 
     #[test]

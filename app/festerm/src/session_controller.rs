@@ -1671,6 +1671,7 @@ pub(crate) mod fake {
         events: Mutex<VecDeque<SessionEvent>>,
         operations: Mutex<Vec<FakeSshOperation>>,
         add_port_forward_error: Mutex<Option<SshPortForwardRequestError>>,
+        terminal_file_identity: Mutex<(Option<String>, Option<String>)>,
         #[cfg(all(windows, target_arch = "x86_64"))]
         notifier: Mutex<Option<Arc<dyn festerm_session::SessionEventNotifier>>>,
     }
@@ -1690,6 +1691,7 @@ pub(crate) mod fake {
                     events: Mutex::new(events.into_iter().collect()),
                     operations: Mutex::new(Vec::new()),
                     add_port_forward_error: Mutex::new(None),
+                    terminal_file_identity: Mutex::new((None, None)),
                     #[cfg(all(windows, target_arch = "x86_64"))]
                     notifier: Mutex::new(None),
                 }),
@@ -1702,6 +1704,19 @@ pub(crate) mod fake {
                 .lock()
                 .expect("fake ssh operations lock")
                 .clone()
+        }
+
+        pub fn set_terminal_file_identity(&self, fingerprint: &str, cwd: &str) {
+            *self.inner.terminal_file_identity.lock().unwrap() =
+                (Some(fingerprint.to_owned()), Some(cwd.to_owned()));
+        }
+
+        pub fn terminal_file_fingerprint(&self) -> Option<String> {
+            self.inner.terminal_file_identity.lock().unwrap().0.clone()
+        }
+
+        pub fn terminal_file_cwd(&self) -> Option<String> {
+            self.inner.terminal_file_identity.lock().unwrap().1.clone()
         }
 
         pub fn set_add_port_forward_error(&self, error: SshPortForwardRequestError) {

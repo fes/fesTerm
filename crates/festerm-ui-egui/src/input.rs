@@ -215,8 +215,10 @@ fn route_mouse_input_with_policy(
             }
         }
         InputEventOutcome::SelectionClaimed | InputEventOutcome::Encoded { .. } => {
-            selection.clear();
-            sink.observe_local_selection("cleared-terminal-owns-mouse");
+            if !matches!(event.kind, MouseEventKind::Move { button: None }) {
+                selection.clear();
+                sink.observe_local_selection("cleared-terminal-owns-mouse");
+            }
         }
         InputEventOutcome::QueueOverflow | InputEventOutcome::Rejected => {}
     }
@@ -814,15 +816,17 @@ pub(crate) fn route_pointer_event(
             modifiers,
         } => {
             let local_selection = pointer.local_selection_owned(button);
+            if !pointer.button_captured(button) {
+                pointer.release(button, position, modifiers);
+                return None;
+            }
             let cell = layout.cell_geometry().hit_test(position).or_else(|| {
-                (pointer.button_captured(button) || selection.is_active()).then(|| {
-                    clamped_cell_from_point(
-                        layout.rect.min,
-                        layout.dimensions,
-                        layout.metrics,
-                        position,
-                    )
-                })?
+                clamped_cell_from_point(
+                    layout.rect.min,
+                    layout.dimensions,
+                    layout.metrics,
+                    position,
+                )
             });
             let route = cell.map(|position| {
                 route_mouse_input_with_policy(
@@ -1372,6 +1376,139 @@ mod tests {
                 CellPosition { column: 3, row: 0 },
             ))
         );
+    }
+
+    #[test]
+    fn terminal_mouse_hover_preserves_finished_shift_selection_and_mouse_reports() {
+        for mode in [1000, 1002, 1003] {
+            let mut terminal = terminal(8, 2);
+            terminal.ingest(format!("select me\x1b[?{mode}h\x1b[?1006h").as_bytes());
+            let mut selection = Selection::default();
+            let mut pointer = TerminalPointerState::default();
+            let mut sink = Sink::default();
+            let layout = grid_layout(8, 2);
+            for event in [
+                PointerInputEvent::Button {
+                    position: Pos2::new(6.0, 8.0),
+                    button: MouseButton::Left,
+                    pressed: true,
+                    modifiers: Modifiers::SHIFT,
+                },
+                PointerInputEvent::Moved {
+                    position: Pos2::new(36.0, 8.0),
+                },
+                PointerInputEvent::Button {
+                    position: Pos2::new(36.0, 8.0),
+                    button: MouseButton::Left,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                },
+                PointerInputEvent::Moved {
+                    position: Pos2::new(46.0, 8.0),
+                },
+            ] {
+                route_pointer_event(
+                    event,
+                    layout,
+                    &mut terminal,
+                    &mut selection,
+                    &mut pointer,
+                    &mut sink,
+                    0,
+                );
+            }
+            assert_eq!(
+                selection_text(TerminalSnapshot::from_terminal(&terminal), &selection).as_deref(),
+                Some("sele"),
+                "mouse mode {mode}"
+            );
+            assert_eq!(sink.0.len(), usize::from(mode == 1003));
+            if mode == 1003 {
+                assert_eq!(sink.0[0], b"\x1b[<35;5;1M");
+            }
+            route_mouse_input(
+                &mut terminal,
+                MouseEvent {
+                    kind: MouseEventKind::Press(MouseButton::Left),
+                    column: 4,
+                    row: 0,
+                    modifiers: Modifiers::NONE,
+                },
+                &mut selection,
+                &mut sink,
+            );
+            assert_eq!(
+                selection.range(),
+                None,
+                "a new terminal-owned press still clears selection"
+            );
+        }
+    }
+
+    #[test]
+    fn orphan_pointer_releases_after_rectangle_copy_remain_local() {
+        for mode in [1000, 1002, 1003] {
+            for outside_press in [false, true] {
+                let mut terminal = terminal(8, 2);
+                terminal.ingest(format!("\x1b[?{mode}h\x1b[?1006h").as_bytes());
+                let mut selection = Selection::default();
+                let mut pointer = TerminalPointerState::default();
+                let mut sink = Sink::default();
+                let layout = grid_layout(8, 2);
+                if outside_press {
+                    assert!(route_pointer_event(
+                        PointerInputEvent::Button {
+                            position: Pos2::new(-1.0, -1.0),
+                            button: MouseButton::Right,
+                            pressed: true,
+                            modifiers: Modifiers::NONE,
+                        },
+                        layout,
+                        &mut terminal,
+                        &mut selection,
+                        &mut pointer,
+                        &mut sink,
+                        0,
+                    )
+                    .is_none());
+                }
+                assert!(route_pointer_event(
+                    PointerInputEvent::Button {
+                        position: Pos2::new(6.0, 8.0),
+                        button: MouseButton::Right,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                    layout,
+                    &mut terminal,
+                    &mut selection,
+                    &mut pointer,
+                    &mut sink,
+                    0,
+                )
+                .is_none());
+                assert!(sink.0.is_empty());
+                assert!(pointer.held_button().is_none());
+                for pressed in [true, false] {
+                    assert!(route_pointer_event(
+                        PointerInputEvent::Button {
+                            position: Pos2::new(6.0, 8.0),
+                            button: MouseButton::Right,
+                            pressed,
+                            modifiers: Modifiers::NONE,
+                        },
+                        layout,
+                        &mut terminal,
+                        &mut selection,
+                        &mut pointer,
+                        &mut sink,
+                        0,
+                    )
+                    .is_some());
+                }
+                assert_eq!(sink.0.concat(), b"\x1b[<2;1;1M\x1b[<2;1;1m");
+            }
+        }
     }
 
     #[test]

@@ -18,6 +18,7 @@ mod input;
 mod native_painter;
 pub mod overlay;
 pub mod palette;
+mod rectangle_copy;
 mod renderer;
 pub mod routing_trace;
 mod selection;
@@ -51,11 +52,13 @@ pub use native_painter::{
     install_root_terminal_painter_with_options, remove_root_terminal_painter, FontAtlasCapture,
     NativePainterOptions, TerminalPaintFrame,
 };
+pub use rectangle_copy::RectangleCopyError;
 pub use renderer::{resolve_color, terminal_color_scheme, FontSettings};
 pub use selection::{normalize_selection_position, selection_text, Selection};
 pub use view::{
-    FrameDiagnostics, TerminalContextMenuAction, TerminalContextTarget, TerminalHistoryAction,
-    TerminalView, TerminalViewOptions,
+    FrameDiagnostics, TerminalContextMenuAction, TerminalContextTarget, TerminalContextText,
+    TerminalHistoryAction, TerminalView, TerminalViewOptions, TERMINAL_CONTEXT_MAX_BYTES,
+    TERMINAL_CONTEXT_MAX_ROWS,
 };
 
 /// A read-only, renderer-facing view of the currently visible terminal grid.

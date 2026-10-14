@@ -619,6 +619,7 @@ pub(crate) struct GridPaint<'a> {
     pub(crate) fonts: &'a FontSettings,
     pub(crate) shape_cell_runs: bool,
     pub(crate) focused: bool,
+    pub(crate) suppress_cursor: bool,
     pub(crate) full_redraw: bool,
 }
 
@@ -1033,7 +1034,7 @@ fn paint_grid_with_clip_override(
         }
     }
 
-    if paint.snapshot.modes().cursor_visible() {
+    if !paint.suppress_cursor && paint.snapshot.modes().cursor_visible() {
         let cursor = paint.snapshot.cursor_in_viewport();
         if let Some((cursor_column, cursor_row)) = cursor
             .filter(|(column, row)| *column < dimensions.columns() && *row < dimensions.rows())
@@ -2242,6 +2243,7 @@ mod tests {
                         selection,
                         fonts,
                         focused: options.focused,
+                        suppress_cursor: false,
                         full_redraw: options.full_redraw,
                         shape_cell_runs: options.shaped,
                     },
@@ -3111,6 +3113,7 @@ mod tests {
                         selection: &Selection::default(),
                         fonts: &FontSettings::default(),
                         focused: true,
+                        suppress_cursor: false,
                         full_redraw: false,
                         shape_cell_runs,
                     },
@@ -3310,6 +3313,7 @@ mod tests {
                     fonts: &fonts,
                     shape_cell_runs: scenario.shape_cell_runs,
                     focused: false,
+                    suppress_cursor: false,
                     full_redraw: false,
                 },
                 &mut glyphs,

@@ -74,6 +74,44 @@ deterministic geometry/input tests cover UTF-8 positions and first-duplicate
 precedence without sleeps. The owner accepted ADR 0048 on 2026-10-14 after
 these repairs, not as native fidelity, accessibility or DPI acceptance.
 
+## Stable terminal selection and bounded rectangle copy
+
+A completed Shift-selection could disappear simply by moving the mouse in a
+mouse-aware TUI. Even button/drag reporting modes, which emitted no hover bytes,
+returned terminal ownership; the UI incorrectly treated that as a reason to
+clear selection. A deterministic press/drag/release/hover regression now
+preserves completed local selection while keeping real TUI reports and
+deliberate clearing gestures intact. This establishes a fesTerm cause, not a
+measurement of Copilot's actual mode or an OS clipboard-write failure.
+
+Bounded rectangle copy provides an explicit stable alternative for changing
+output: the application command freezes the visible, bounded UI presentation,
+not the live terminal or transport. Clicks alternate between two corners, or
+primary-button dragging draws a fresh rectangle from the press to the release;
+Enter/Copy resumes after extraction, and Escape cancels. A frozen
+badge/border, physical-row extraction, whole intersecting graphemes and a
+persisted trim/preserve trailing-space choice make that contract visible.
+Input ownership blocks paste and invalidates old clipboard callbacks, while
+live output processing and resize/reflow continue. No second terminal writer
+or deferred-output queue was introduced. Native delivery and cross-renderer
+usability remain separately inventoried as pending `TI-17`/`TI-18` evidence.
+
+The first isolated native tryout prompted drag-to-draw as an alternative to two
+clicks. A cell-changing drag now replaces both corners and updates the overlay
+while held; releasing only finishes drawing. Same-cell clicks still alternate,
+and later clicks adjust the dragged anchor first. Owned edge clamping, exact
+same-batch Copy, interruption, and held-button exit regressions preserve the
+frozen-input boundary rather than forwarding partial gestures to a TUI.
+
+A second refinement keeps right-click useful for navigation: it now opens Copy
+plus the existing path/URL/link actions instead of copying immediately. Path
+detection interprets cropped rows as wrapping at the rectangle edges, while
+clipboard extraction still preserves physical rows. No corner means full
+frozen-viewport Copy and original full-width wrap metadata; outside an existing
+rectangle offers only Copy. Bounded frozen text feeds the same application
+resolver as normal menus, and explicit link metadata stays tied to the frozen
+cells. Menu clicks cannot redraw the selection or leak a partial TUI gesture.
+
 ## Keeping multiline terminal paste in source order
 
 An owned native PowerShell 7/PSReadLine ConPTY reproduction showed that sending
@@ -5940,3 +5978,40 @@ All callback prepare calls still precede all finish_prepare calls without an
 acquired surface; preparation, queued images and ordinary fallback remain live.
 These are deterministic work-count reductions, not new timing measurements or
 native CP-18 acceptance, and they do not diagnose the exit-2173 sampler failure.
+
+### Keeping frozen rectangle data separate from live authority and input
+
+Review of PR #392 found four gaps in the bounded rectangle-copy contract.
+Local path detection could hand UNC/device spellings, including decoded file
+URIs, to filesystem operations that can initiate Windows network
+authentication. Both live and frozen terminal resolution now refuse those
+namespaces before I/O, interpreting mixed separators consistently.
+
+Frozen cells previously retained text but refreshed their filesystem authority
+when a menu opened. Capture now pins application-owned origin, verified
+identity, transport/lifecycle generation, availability and trustworthy cwd.
+Authority changes cancel the mode; stale opens fail closed instead of upgrading
+old or disconnected text after reconnect. No authority comes from prompt text.
+
+The 16 MiB admission calculation now charges CompactString heap capacity,
+exact-capacity vectors, row metadata and conservative link ownership overhead.
+A valid 450×450 grid of 25-byte combining graphemes demonstrates the old
+underestimate without claiming an RSS bound. Exact-budget and one-byte
+boundaries remain deterministic.
+
+Finally, Enter/Escape/reserved Copy could consume the view's input while
+leaving the application's deferred shortcut suffix for a newly live frame.
+Frozen exit now discards that original batch's shortcuts and paired payloads,
+retaining release cleanup. Application-harness tests prove no stale paste bytes,
+clipboard read or UI command across later frames, then authorize a fresh paste.
+These are regression repairs within existing ownership boundaries, not native
+clipboard, platform usability or milestone acceptance.
+
+Follow-up qualification found that cancelling the mode alone left an already
+open frozen popup and its captured text alive. A later live frame could resolve
+that text under replacement authority. Cancellation now retires text, target,
+link metadata and pending activation together and closes only the owned popup;
+context-free cancellation closes it before the next render. Actual application
+tests fail first on stale Open dispatch across availability, generation,
+fingerprint and cwd changes, then pass after the repair. Ordinary live menus
+remain usable; this adds no native or usability acceptance claim.
