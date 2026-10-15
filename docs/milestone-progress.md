@@ -19,6 +19,20 @@ clipboard-ordering coverage prove the repair without a renderer-specific
 branch. Native Copilot/pager interpretation and physical
 keyboard/layout usability remain TI-02 evidence, not inferred from unit tests.
 
+## v0.10.4: bounded terminal workflows and native Markdown
+
+This patch release packages the merged input, rendering, and selection work
+since v0.10.3. Plain Page Up/Down now reach terminal applications while Shift
+paging remains local history. Ordinary multiline paste preserves Enter ordering,
+while bracketed paste retains its payload bytes. Markdown adds bounded inline
+and local SVG plus native anchor navigation without introducing a browser or
+external-resource access.
+
+Frozen rectangle copy extracts a bounded, stable view of live terminal output,
+and completed local selections survive TUI mouse motion. Release preparation
+updates matching workspace, lockfile, package, and versioned Windows-helper
+metadata only; runtime behavior is unchanged by the preparation itself.
+
 ## v0.10.3: bounded frame reuse and responsive document maintenance
 
 This patch release packages the merged performance and reliability work since
