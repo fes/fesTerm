@@ -3,6 +3,28 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## v0.10.4: stable copying, native diagrams and terminal input repairs
+
+This patch release packages the merged fixes and capabilities since v0.10.3.
+Ordinary multiline paste preserves PowerShell input order, plain Page Up/Down
+reach terminal programs, and completed local selections survive mouse-aware
+TUI hover. Bounded rectangle copy freezes presentation rather than transport,
+with click or drag selection, explicit copy/cancel and trailing-space policy.
+Its allocation accounting and deferred-input barrier preserve the capture
+budget and keep frozen-batch input from replaying into the live terminal.
+
+Markdown Preview gains bounded native SVG and restricted HTML anchors under
+accepted ADR 0048. Marker definitions are explicitly refused before parser
+expansion; named targets navigate the actual viewport in standalone Preview
+and editor Preview/Split. Local network/device path namespaces are refused
+before filesystem access, and frozen context menus retain captured authority
+or retire completely when the connection identity changes.
+
+Release preparation changes only synchronized workspace, lockfile, packaging
+and versioned Windows-helper metadata plus this narrative. It does not claim
+the separately pending native fidelity, accessibility, DPI, clipboard or
+physical-keyboard usability qualifications.
+
 ## Restoring terminal-program Page Up/Down
 
 The Copilot paging report exposed a general input gap: the desktop translator
