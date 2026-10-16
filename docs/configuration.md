@@ -258,6 +258,19 @@ preferences. See [keyboard syntax, defaults and recovery](keyboard-shortcuts.md)
 The Session Inspector's opt-in input recorder is RAM-only and has no
 configuration representation.
 
+`terminal_font` remains the desired family across upgrades. JetBrains Mono is
+embedded; Iosevka Term, JuliaMono, and Maple Mono are verified downloads from
+the matching fesTerm release, automatically reconciled at startup without
+reselection. Missing/corrupt faces temporarily use JetBrains, with visible
+progress/failure and Settings > Terminal typography > Retry font download.
+Neither fallback nor acquisition failure changes the saved family, ligature,
+or emoji preference. Verified cache entries work offline. The native
+application data directory contains `fonts/v1/festerm-font-<sha256>.ttf`;
+unchanged hashes are reused across versions. Close fesTerm before removing
+that directory to reclaim historical fonts; a subsequent non-default startup
+downloads the needed faces again. See [ADR 0049](adr/0049-downloadable-terminal-fonts.md)
+for bounds, request metadata, and the release-asset prerequisite.
+
 The optional `[settings]` table includes these interface preferences:
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
 `"single-row-scroll"`), `status_bar_visible` (default `true`),

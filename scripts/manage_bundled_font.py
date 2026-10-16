@@ -18,6 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "assets/fonts/jetbrains-mono/manifest.json"
 USER_AGENT = "fesTerm bundled-font update checker"
+OPTIONAL_FAMILIES = ("iosevka-term", "julia-mono", "maple-mono")
 
 
 class FontError(Exception):
@@ -33,6 +34,129 @@ def load_manifest(path: Path) -> dict[str, object]:
 
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def optional_downloads(root: Path) -> list[dict[str, object]]:
+    """Derive release assets from the checked-in catalog, never upstream archives."""
+    assets = []
+    for family in OPTIONAL_FAMILIES:
+        manifest = load_manifest(root / "assets/fonts" / family / "manifest.json")
+        verify(root, manifest)
+        for entry in manifest["files"]:
+            source = Path(entry["path"])
+            if source.suffix.lower() == ".ttf":
+                suffix = ".ttf"
+            elif source.name.startswith("LICENSE"):
+                suffix = ".license.txt"
+            else:
+                continue
+            checksum = entry.get("sha256")
+            size = entry.get("size_bytes")
+            if not isinstance(checksum, str) or not re.fullmatch("[0-9a-f]{64}", checksum):
+                raise FontError(f"download asset requires exact SHA256: {source}")
+            if type(size) is not int or size <= 0:
+                raise FontError(f"download asset requires exact size_bytes: {source}")
+            assets.append({
+                "family": manifest["family"],
+                "path": entry["path"],
+                "name": f"festerm-font-{checksum}{suffix}",
+                "sha256": checksum,
+                "size_bytes": size,
+            })
+    return sorted(assets, key=lambda asset: asset["name"])
+
+
+def runtime_rust_source(source: str) -> str:
+    """Ignore comments and cfg(test) items when checking production embeddings."""
+    tokens = re.compile(
+        r'//[^\n]*|/\*.*?\*/|r(?P<hashes>#+)".*?"(?P=hashes)|'
+        r'r".*?"|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])\'',
+        re.DOTALL,
+    )
+    masked = tokens.sub(lambda match: " " * len(match[0]), source)
+    result = list(source)
+    for match in re.finditer(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]", masked):
+        start = match.end()
+        depth = 0
+        # Skip any further attributes, then consume the complete item.
+        while start < len(masked):
+            if masked[start].isspace():
+                start += 1
+            elif masked.startswith("#[", start):
+                end = masked.find("]", start)
+                start = len(masked) if end < 0 else end + 1
+            else:
+                break
+        end = start
+        while end < len(masked):
+            char = masked[end]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    end += 1
+                    break
+            elif char == ";" and depth == 0:
+                end += 1
+                break
+            end += 1
+        result[match.start():end] = " " * (end - match.start())
+    # Comments must not masquerade as embeddings, but retain string arguments.
+    uncommented = "".join(result)
+    return tokens.sub(
+        lambda match: " " * len(match[0])
+        if match[0].startswith(("//", "/*")) else match[0],
+        uncommented,
+    )
+
+
+def verify_runtime_embed_exclusion(root: Path) -> None:
+    violations = []
+    optional_path = "|".join(re.escape(family) for family in OPTIONAL_FAMILIES)
+    embedding = re.compile(
+        rf'include_bytes!\s*\(\s*(?:r#*)?"[^"]*assets/fonts/'
+        rf'(?:{optional_path})/[^"]*\.ttf"',
+        re.IGNORECASE,
+    )
+    for directory in ("app", "crates"):
+        for path in sorted((root / directory).glob("*/src/**/*.rs")):
+            if embedding.search(runtime_rust_source(path.read_text(encoding="utf-8"))):
+                violations.append(str(path.relative_to(root)))
+    if violations:
+        raise FontError("optional fonts embedded in runtime: " + ", ".join(violations))
+
+
+def stage_downloads(root: Path, destination: Path) -> dict[str, object]:
+    assets = optional_downloads(root)
+    names = {asset["name"] for asset in assets}
+    if destination.exists():
+        unexpected = sorted(path.name for path in destination.iterdir() if path.name not in names)
+        if unexpected:
+            raise FontError(f"unexpected files in download staging directory: {unexpected}")
+    # Preflight every existing asset before writing anything; never clobber bad bytes.
+    for asset in assets:
+        target = destination / asset["name"]
+        if target.is_symlink() or (target.exists() and (
+            not target.is_file()
+            or target.stat().st_size != asset["size_bytes"]
+            or digest(target.read_bytes()) != asset["sha256"]
+        )):
+            raise FontError(f"staged download differs; refusing to overwrite: {target}")
+    destination.mkdir(parents=True, exist_ok=True)
+    for asset in assets:
+        target = destination / asset["name"]
+        if not target.exists():
+            with target.open("xb") as output:
+                output.write((root / asset["path"]).read_bytes())
+    faces = [asset for asset in assets if asset["name"].endswith(".ttf")]
+    return {
+        "schema_version": 1,
+        "face_count": len(faces),
+        "font_size_bytes": sum(asset["size_bytes"] for asset in faces),
+        "total_size_bytes": sum(asset["size_bytes"] for asset in assets),
+        "assets": assets,
+    }
 
 
 def verify(root: Path, manifest: dict[str, object]) -> None:
@@ -65,7 +189,11 @@ def verify(root: Path, manifest: dict[str, object]) -> None:
             errors.append(f"missing archive_path for {relative}")
         if source_kind == "direct" and not source_url.startswith("https://"):
             errors.append(f"invalid source_url for {relative}")
-        if not relative.startswith("assets/fonts/"):
+        if (
+            not relative.startswith("assets/fonts/")
+            or "\\" in relative
+            or not (root / relative).resolve().is_relative_to((root / "assets/fonts").resolve())
+        ):
             errors.append(f"font destination escapes owned directory: {relative}")
             continue
         path = root / relative
@@ -261,8 +389,29 @@ def main() -> int:
     parser.add_argument("--verify-archives", action="store_true")
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--report", type=Path)
+    parser.add_argument(
+        "--stage-downloads", type=Path,
+        help="stage optional TTFs and license notices under content-addressed release names",
+    )
+    parser.add_argument(
+        "--downloads-report", type=Path,
+        help="write deterministic JSON asset hashes, sizes and totals (requires --stage-downloads)",
+    )
     args = parser.parse_args()
+    if args.downloads_report and not args.stage_downloads:
+        parser.error("--downloads-report requires --stage-downloads")
+    if args.stage_downloads and (
+        args.manifest or args.check_upstream or args.update_latest or args.verify_archives
+    ):
+        parser.error("--stage-downloads requires the complete local catalog only")
     try:
+        if args.stage_downloads:
+            report = stage_downloads(ROOT, args.stage_downloads)
+            serialized = json.dumps(report, indent=2) + "\n"
+            if args.downloads_report:
+                args.downloads_report.write_text(serialized, encoding="utf-8")
+            print(serialized, end="")
+            return 0
         manifest_path = (args.manifest or DEFAULT_MANIFEST).resolve()
         root = ROOT if manifest_path.is_relative_to(ROOT) else manifest_path.parents[3]
         manifest = load_manifest(manifest_path)
@@ -277,6 +426,8 @@ def main() -> int:
                 candidate = load_manifest(path)
                 verify(ROOT, candidate)
                 summaries.append(f"{candidate['family']} {candidate['pinned_version']}")
+            optional_downloads(ROOT)
+            verify_runtime_embed_exclusion(ROOT)
             print(f"bundled fonts: PASS ({', '.join(summaries)})")
             return 0
         if args.verify_archives:

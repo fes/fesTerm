@@ -74,6 +74,18 @@ jobs:
       - run: cargo test --workspace
       - run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - run: python3 scripts/manage_bundled_font.py
+      - name: Stage release-specific optional font assets
+        run: python3 scripts/manage_bundled_font.py --stage-downloads font-downloads --downloads-report font-downloads.json
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: optional-font-downloads
+          path: font-downloads/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: optional-font-downloads-report
+          path: font-downloads.json
+          if-no-files-found: error
       - run: python3 scripts/generate_windows_icon.py --check
       - run: python3 scripts/check_packaging.py
       - run: python3 scripts/check_validation_traceability.py
@@ -454,6 +466,12 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: optional-font-downloads
+          path: font-downloads
+      - name: Verify optional font assets against this release's catalog
+        run: python3 scripts/manage_bundled_font.py --stage-downloads font-downloads
       - name: Verify release payload
         run: |
           set -euo pipefail
@@ -502,5 +520,6 @@ jobs:
             --title "fesTerm $TAG" \
             --notes-file release-notes.md
           gh release upload "$TAG" dist/*
+          gh release upload "$TAG" font-downloads/*
           gh release upload "$TAG" festerm-update.json
           gh release edit "$TAG" --draft=false --latest

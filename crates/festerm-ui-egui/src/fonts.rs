@@ -1,4 +1,4 @@
-//! Bundled terminal font registration.
+//! Terminal font registration. Only the default family is embedded.
 //!
 //! Application chrome typography is a separate concern. Terminal cell
 //! geometry is measured from the selected primary face; fallback and shaping
@@ -129,7 +129,7 @@ fn single_character(text: &str) -> Option<char> {
     characters.next().is_none().then_some(character)
 }
 
-/// A bundled primary terminal family. These identifiers are independent of
+/// A primary terminal family. These identifiers are independent of
 /// platform font discovery and remain stable across operating systems.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum TerminalFontFamily {
@@ -208,89 +208,63 @@ impl TerminalFontSet {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct FontAssets {
-    regular: &'static [u8],
-    bold: &'static [u8],
-    italic: &'static [u8],
-    bold_italic: &'static [u8],
+    regular: Arc<FontData>,
+    bold: Arc<FontData>,
+    italic: Arc<FontData>,
+    bold_italic: Arc<FontData>,
     ligature_faces: Option<FontFaces>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct FontFaces {
-    regular: &'static [u8],
-    bold: &'static [u8],
-    italic: &'static [u8],
-    bold_italic: &'static [u8],
+    regular: Arc<FontData>,
+    bold: Arc<FontData>,
+    italic: Arc<FontData>,
+    bold_italic: Arc<FontData>,
 }
 
-fn font_assets(family: TerminalFontFamily) -> FontAssets {
-    match family {
-        TerminalFontFamily::JetBrainsMono => FontAssets {
-            regular: include_bytes!(
-                "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNL-Regular.ttf"
-            ),
-            bold: include_bytes!("../../../assets/fonts/jetbrains-mono/JetBrainsMonoNL-Bold.ttf"),
-            italic: include_bytes!(
-                "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNL-Italic.ttf"
-            ),
-            bold_italic: include_bytes!(
-                "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNL-BoldItalic.ttf"
-            ),
-            ligature_faces: Some(FontFaces {
-                regular: include_bytes!(
-                    "../../../assets/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf"
-                ),
-                bold: include_bytes!("../../../assets/fonts/jetbrains-mono/JetBrainsMono-Bold.ttf"),
-                italic: include_bytes!(
-                    "../../../assets/fonts/jetbrains-mono/JetBrainsMono-Italic.ttf"
-                ),
-                bold_italic: include_bytes!(
-                    "../../../assets/fonts/jetbrains-mono/JetBrainsMono-BoldItalic.ttf"
-                ),
-            }),
-        },
-        TerminalFontFamily::IosevkaTerm => FontAssets {
-            regular: include_bytes!(
-                "../../../assets/fonts/iosevka-term/FesTermIosevka-Regular.ttf"
-            ),
-            bold: include_bytes!("../../../assets/fonts/iosevka-term/FesTermIosevka-Bold.ttf"),
-            italic: include_bytes!("../../../assets/fonts/iosevka-term/FesTermIosevka-Italic.ttf"),
-            bold_italic: include_bytes!(
-                "../../../assets/fonts/iosevka-term/FesTermIosevka-BoldItalic.ttf"
-            ),
-            ligature_faces: None,
-        },
-        TerminalFontFamily::JuliaMono => FontAssets {
-            regular: include_bytes!("../../../assets/fonts/julia-mono/JuliaMono-Regular.ttf"),
-            bold: include_bytes!("../../../assets/fonts/julia-mono/JuliaMono-Bold.ttf"),
-            italic: include_bytes!("../../../assets/fonts/julia-mono/JuliaMono-RegularItalic.ttf"),
-            bold_italic: include_bytes!(
-                "../../../assets/fonts/julia-mono/JuliaMono-BoldItalic.ttf"
-            ),
-            ligature_faces: None,
-        },
-        TerminalFontFamily::MapleMono => FontAssets {
-            regular: include_bytes!("../../../assets/fonts/maple-mono/MapleMono-Regular.ttf"),
-            bold: include_bytes!("../../../assets/fonts/maple-mono/MapleMono-Bold.ttf"),
-            italic: include_bytes!("../../../assets/fonts/maple-mono/MapleMono-Italic.ttf"),
-            bold_italic: include_bytes!(
-                "../../../assets/fonts/maple-mono/MapleMono-BoldItalic.ttf"
-            ),
-            ligature_faces: None,
-        },
+fn embedded_font_assets() -> FontAssets {
+    let face = |bytes: &'static [u8]| Arc::new(FontData::from_static(bytes));
+    FontAssets {
+        regular: face(include_bytes!(
+            "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNL-Regular.ttf"
+        )),
+        bold: face(include_bytes!(
+            "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNL-Bold.ttf"
+        )),
+        italic: face(include_bytes!(
+            "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNL-Italic.ttf"
+        )),
+        bold_italic: face(include_bytes!(
+            "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNL-BoldItalic.ttf"
+        )),
+        ligature_faces: Some(FontFaces {
+            regular: face(include_bytes!(
+                "../../../assets/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf"
+            )),
+            bold: face(include_bytes!(
+                "../../../assets/fonts/jetbrains-mono/JetBrainsMono-Bold.ttf"
+            )),
+            italic: face(include_bytes!(
+                "../../../assets/fonts/jetbrains-mono/JetBrainsMono-Italic.ttf"
+            )),
+            bold_italic: face(include_bytes!(
+                "../../../assets/fonts/jetbrains-mono/JetBrainsMono-BoldItalic.ttf"
+            )),
+        }),
     }
 }
 
-fn terminal_font_definitions(family: TerminalFontFamily) -> FontDefinitions {
+fn terminal_font_definitions(assets: FontAssets) -> FontDefinitions {
     let mut definitions = FontDefinitions::default();
     let fallback = definitions
         .families
         .get(&FontFamily::Monospace)
         .cloned()
         .expect("egui provides a default monospace fallback family");
-    let assets = font_assets(family);
+    let has_ligature_faces = assets.ligature_faces.is_some();
     definitions.font_data.insert(
         EMOJI_DATA.to_owned(),
         Arc::new(FontData::from_static(include_bytes!(
@@ -298,27 +272,23 @@ fn terminal_font_definitions(family: TerminalFontFamily) -> FontDefinitions {
         ))),
     );
 
-    for (name, bytes) in [
+    for (name, face) in [
         (REGULAR_DATA, assets.regular),
         (BOLD_DATA, assets.bold),
         (ITALIC_DATA, assets.italic),
         (BOLD_ITALIC_DATA, assets.bold_italic),
     ] {
-        definitions
-            .font_data
-            .insert(name.to_owned(), Arc::new(FontData::from_static(bytes)));
+        definitions.font_data.insert(name.to_owned(), face);
     }
 
     if let Some(ligature_faces) = assets.ligature_faces {
-        for (name, bytes) in [
+        for (name, face) in [
             (LIGATURE_REGULAR_DATA, ligature_faces.regular),
             (LIGATURE_BOLD_DATA, ligature_faces.bold),
             (LIGATURE_ITALIC_DATA, ligature_faces.italic),
             (LIGATURE_BOLD_ITALIC_DATA, ligature_faces.bold_italic),
         ] {
-            definitions
-                .font_data
-                .insert(name.to_owned(), Arc::new(FontData::from_static(bytes)));
+            definitions.font_data.insert(name.to_owned(), face);
         }
     }
 
@@ -337,7 +307,7 @@ fn terminal_font_definitions(family: TerminalFontFamily) -> FontDefinitions {
             .insert(FontFamily::Name(font_family.into()), chain);
     }
 
-    let ligature_names = if assets.ligature_faces.is_some() {
+    let ligature_names = if has_ligature_faces {
         [
             LIGATURE_REGULAR_DATA,
             LIGATURE_BOLD_DATA,
@@ -371,12 +341,32 @@ fn terminal_font_definitions(family: TerminalFontFamily) -> FontDefinitions {
     definitions
 }
 
-/// Installs one exact bundled primary family and its monospace fallbacks.
+/// Installs an already registered primary family and its monospace fallbacks.
+/// Optional faces must first be supplied with `install_terminal_font_faces`.
+///
+/// # Panics
+/// Panics if an optional family has not been registered on this context.
 pub fn install_terminal_font_family(
     context: &egui::Context,
     family: TerminalFontFamily,
 ) -> TerminalFontGeneration {
-    context.set_fonts(terminal_font_definitions(family));
+    let assets = if family == TerminalFontFamily::JetBrainsMono {
+        embedded_font_assets()
+    } else {
+        context
+            .data(|data| data.get_temp::<FontAssets>(egui::Id::new(("terminal faces", family))))
+            .unwrap_or_else(|| {
+                #[cfg(test)]
+                {
+                    test_font_assets(family)
+                }
+                #[cfg(not(test))]
+                {
+                    panic!("optional terminal faces must be registered before installation")
+                }
+            })
+    };
+    context.set_fonts(terminal_font_definitions(assets));
     context.data_mut(|data| {
         let generation = data
             .get_temp::<u64>(egui::Id::new(GENERATION_MARKER))
@@ -386,6 +376,95 @@ pub fn install_terminal_font_family(
         data.insert_temp(egui::Id::new(INSTALLATION_MARKER), family);
         TerminalFontGeneration(generation)
     })
+}
+
+/// Accepts application-verified downloaded faces without doing filesystem or
+/// network I/O in the renderer. Invalid font data leaves the current atlas intact.
+pub fn install_terminal_font_faces(
+    context: &egui::Context,
+    family: TerminalFontFamily,
+    faces: [Vec<u8>; 4],
+) -> Result<TerminalFontGeneration, &'static str> {
+    if family == TerminalFontFamily::JetBrainsMono
+        || faces.iter().any(|bytes| {
+            bytes.len() > 32 * 1024 * 1024 || swash::FontRef::from_index(bytes, 0).is_none()
+        })
+    {
+        return Err("Invalid optional terminal font faces.");
+    }
+    let [regular, bold, italic, bold_italic] =
+        faces.map(|bytes| Arc::new(FontData::from_owned(bytes)));
+    context.data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new(("terminal faces", family)),
+            FontAssets {
+                regular,
+                bold,
+                italic,
+                bold_italic,
+                ligature_faces: None,
+            },
+        );
+    });
+    Ok(install_terminal_font_family(context, family))
+}
+
+#[cfg(test)]
+fn test_font_assets(family: TerminalFontFamily) -> FontAssets {
+    if family == TerminalFontFamily::JetBrainsMono {
+        return embedded_font_assets();
+    }
+    let (directory, names) = match family {
+        TerminalFontFamily::IosevkaTerm => (
+            "iosevka-term",
+            [
+                "FesTermIosevka-Regular.ttf",
+                "FesTermIosevka-Bold.ttf",
+                "FesTermIosevka-Italic.ttf",
+                "FesTermIosevka-BoldItalic.ttf",
+            ],
+        ),
+        TerminalFontFamily::JuliaMono => (
+            "julia-mono",
+            [
+                "JuliaMono-Regular.ttf",
+                "JuliaMono-Bold.ttf",
+                "JuliaMono-RegularItalic.ttf",
+                "JuliaMono-BoldItalic.ttf",
+            ],
+        ),
+        TerminalFontFamily::MapleMono => (
+            "maple-mono",
+            [
+                "MapleMono-Regular.ttf",
+                "MapleMono-Bold.ttf",
+                "MapleMono-Italic.ttf",
+                "MapleMono-BoldItalic.ttf",
+            ],
+        ),
+        TerminalFontFamily::JetBrainsMono => unreachable!(),
+    };
+    let [regular, bold, italic, bold_italic] = names.map(|name| {
+        Arc::new(FontData::from_owned(
+            std::fs::read(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("..")
+                    .join("assets")
+                    .join("fonts")
+                    .join(directory)
+                    .join(name),
+            )
+            .expect("repository font fixture is available"),
+        ))
+    });
+    FontAssets {
+        regular,
+        bold,
+        italic,
+        bold_italic,
+        ligature_faces: None,
+    }
 }
 
 /// Installs the default family for direct UI-crate consumers.
@@ -422,6 +501,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn supplied_optional_faces_preserve_styles_fallbacks_and_generation() {
+        let context = egui::Context::default();
+        let mut previous = install_terminal_fonts(&context);
+        for family in [
+            TerminalFontFamily::IosevkaTerm,
+            TerminalFontFamily::JuliaMono,
+            TerminalFontFamily::MapleMono,
+        ] {
+            let assets = test_font_assets(family);
+            let faces = [
+                &assets.regular,
+                &assets.bold,
+                &assets.italic,
+                &assets.bold_italic,
+            ]
+            .map(|data| data.font.to_vec());
+            let generation = install_terminal_font_faces(&context, family, faces).unwrap();
+            assert_ne!(generation, previous);
+            assert!(terminal_font_family_installed(&context, family));
+            let registered = context.data(|data| {
+                data.get_temp::<FontAssets>(egui::Id::new(("terminal faces", family)))
+                    .unwrap()
+            });
+            let definitions = terminal_font_definitions(registered);
+            for (name, expected) in [
+                (REGULAR_DATA, &assets.regular),
+                (BOLD_DATA, &assets.bold),
+                (ITALIC_DATA, &assets.italic),
+                (BOLD_ITALIC_DATA, &assets.bold_italic),
+            ] {
+                assert_eq!(definitions.font_data[name].font, expected.font);
+            }
+            for name in [REGULAR_FAMILY, LIGATURE_REGULAR_FAMILY, BOLD_ITALIC_FAMILY] {
+                assert_eq!(
+                    definitions.families[&FontFamily::Name(name.into())][1],
+                    EMOJI_DATA
+                );
+            }
+            previous = generation;
+        }
+        let generation = install_terminal_font_family(&context, TerminalFontFamily::IosevkaTerm);
+        assert_ne!(
+            generation, previous,
+            "previously supplied families remain usable"
+        );
+    }
+
+    #[test]
+    fn invalid_supplied_faces_leave_the_current_atlas_unchanged() {
+        let context = egui::Context::default();
+        let generation = install_terminal_fonts(&context);
+        assert!(install_terminal_font_faces(
+            &context,
+            TerminalFontFamily::JuliaMono,
+            std::array::from_fn(|_| b"not a font".to_vec())
+        )
+        .is_err());
+        assert!(terminal_font_family_installed(
+            &context,
+            TerminalFontFamily::JetBrainsMono
+        ));
+        assert_eq!(
+            context.data(|data| data.get_temp::<u64>(egui::Id::new(GENERATION_MARKER))),
+            Some(generation.0)
+        );
+    }
+
+    #[test]
     fn bundled_terminal_faces_lead_independent_fallback_chains() {
         for selected in [
             TerminalFontFamily::JetBrainsMono,
@@ -429,7 +576,7 @@ mod tests {
             TerminalFontFamily::JuliaMono,
             TerminalFontFamily::MapleMono,
         ] {
-            let definitions = terminal_font_definitions(selected);
+            let definitions = terminal_font_definitions(test_font_assets(selected));
             for (family, primary) in [
                 (REGULAR_FAMILY, REGULAR_DATA),
                 (BOLD_FAMILY, BOLD_DATA),

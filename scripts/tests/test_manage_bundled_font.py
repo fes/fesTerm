@@ -14,6 +14,181 @@ import manage_bundled_font as fonts
 
 
 class BundledFontTests(unittest.TestCase):
+    def scratch(self):
+        directory = tempfile.TemporaryDirectory(dir=fonts.ROOT, prefix=".font-test-")
+        self.addCleanup(directory.cleanup)
+        return Path(directory.name)
+
+    def catalog(self):
+        root = self.scratch()
+        for family in fonts.OPTIONAL_FAMILIES:
+            directory = root / "assets/fonts" / family
+            directory.mkdir(parents=True)
+            files = []
+            for name in ("Regular.ttf", "Bold.ttf", "Italic.ttf", "BoldItalic.ttf", "LICENSE"):
+                data = f"{family}/{name}".encode()
+                (directory / name).write_bytes(data)
+                files.append({
+                    "archive_path": name,
+                    "path": f"assets/fonts/{family}/{name}",
+                    "sha256": fonts.digest(data),
+                    "size_bytes": len(data),
+                })
+            (directory / "manifest.json").write_text(json.dumps({
+                "schema_version": 1,
+                "family": family,
+                "pinned_release": "v1.0",
+                "pinned_version": "1.0",
+                "archive_url": "https://example.test/v1.0/fonts.zip",
+                "files": files,
+            }), encoding="utf-8")
+        return root
+
+    def test_stage_exact_repository_assets_hashes_sizes_and_exclusions(self):
+        destination = self.scratch() / "downloads"
+        report = fonts.stage_downloads(fonts.ROOT, destination)
+        expected = []
+        for family in fonts.OPTIONAL_FAMILIES:
+            manifest = fonts.load_manifest(fonts.ROOT / "assets/fonts" / family / "manifest.json")
+            for entry in manifest["files"]:
+                path = Path(entry["path"])
+                if path.suffix == ".ttf" or path.name.startswith("LICENSE"):
+                    suffix = ".ttf" if path.suffix == ".ttf" else ".license.txt"
+                    name = f"festerm-font-{entry['sha256']}{suffix}"
+                    expected.append(name)
+                    data = (destination / name).read_bytes()
+                    self.assertEqual(len(data), entry["size_bytes"])
+                    self.assertEqual(fonts.digest(data), entry["sha256"])
+                    self.assertEqual(data, (fonts.ROOT / entry["path"]).read_bytes())
+        self.assertEqual(sorted(path.name for path in destination.iterdir()), sorted(expected))
+        self.assertEqual(len(expected), 15)
+        self.assertEqual(report["face_count"], 12)
+        self.assertEqual(
+            report["font_size_bytes"],
+            sum(asset["size_bytes"] for asset in report["assets"] if asset["name"].endswith(".ttf")),
+        )
+        self.assertEqual(
+            report["total_size_bytes"], sum(path.stat().st_size for path in destination.iterdir())
+        )
+        for asset in report["assets"]:
+            self.assertNotRegex(asset["path"], "jetbrains|noto|inter")
+        self.assertEqual(fonts.stage_downloads(fonts.ROOT, destination), report)
+
+    def test_stage_refuses_tampered_input_before_creating_output(self):
+        root = self.catalog()
+        (root / "assets/fonts/iosevka-term/Regular.ttf").write_bytes(b"tampered")
+        with self.assertRaisesRegex(fonts.FontError, "checksum differs"):
+            fonts.stage_downloads(root, root / "downloads")
+        self.assertFalse((root / "downloads").exists())
+
+    def test_stage_uses_updated_manifest_catalog_without_pinned_asset_names(self):
+        root = self.catalog()
+        path = root / "assets/fonts/iosevka-term/manifest.json"
+        manifest = fonts.load_manifest(path)
+        entry = manifest["files"][0]
+        old_name = f"festerm-font-{entry['sha256']}.ttf"
+        data = b"new reviewed custom build"
+        (root / entry["path"]).write_bytes(data)
+        entry["sha256"] = fonts.digest(data)
+        entry["size_bytes"] = len(data)
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        report = fonts.stage_downloads(root, root / "downloads")
+        names = {asset["name"] for asset in report["assets"]}
+        self.assertNotIn(old_name, names)
+        self.assertIn(f"festerm-font-{fonts.digest(data)}.ttf", names)
+        self.assertEqual(report["face_count"], 12)
+
+    def test_stage_requires_sizes_and_validates_exact_sizes(self):
+        for size in (None, 0, True, 123456):
+            with self.subTest(size=size):
+                root = self.catalog()
+                path = root / "assets/fonts/iosevka-term/manifest.json"
+                manifest = fonts.load_manifest(path)
+                manifest["files"][0]["size_bytes"] = size
+                path.write_text(json.dumps(manifest), encoding="utf-8")
+                with self.assertRaisesRegex(fonts.FontError, "size"):
+                    fonts.stage_downloads(root, root / "downloads")
+                self.assertFalse((root / "downloads").exists())
+
+    def test_stage_never_overwrites_wrong_bytes_or_partially_populates(self):
+        root = self.catalog()
+        destination = root / "downloads"
+        destination.mkdir()
+        asset = fonts.optional_downloads(root)[-1]
+        target = destination / asset["name"]
+        wrong = b"x" * asset["size_bytes"]
+        target.write_bytes(wrong)
+        with self.assertRaisesRegex(fonts.FontError, "refusing to overwrite"):
+            fonts.stage_downloads(root, destination)
+        self.assertEqual(target.read_bytes(), wrong)
+        self.assertEqual(list(destination.iterdir()), [target])
+
+    def test_stage_rejects_stale_assets_from_another_catalog(self):
+        root = self.catalog()
+        destination = root / "downloads"
+        fonts.stage_downloads(root, destination)
+        (destination / "stale.ttf").write_bytes(b"old version")
+        with self.assertRaisesRegex(fonts.FontError, "unexpected files"):
+            fonts.stage_downloads(root, destination)
+
+    def test_embed_exclusion_ignores_test_items_and_notices_but_rejects_runtime_fonts(self):
+        root = self.scratch()
+        path = root / "crates/example/src/fonts.rs"
+        path.parent.mkdir(parents=True)
+        path.write_text('''
+const LICENSE: &str = include_str!("../../../assets/fonts/iosevka-term/LICENSE.md");
+#[cfg(test)]
+const FIXTURE: &[u8] = include_bytes!("../../../assets/fonts/iosevka-term/Regular.ttf");
+#[cfg(test)]
+mod tests {
+    const FIXTURE: &[u8] = include_bytes!("../../../assets/fonts/julia-mono/Regular.ttf");
+    fn example() { let braces = "}"; }
+}
+// include_bytes!("../../../assets/fonts/maple-mono/Regular.ttf");
+''', encoding="utf-8")
+        fonts.verify_runtime_embed_exclusion(root)
+        with path.open("a", encoding="utf-8") as output:
+            output.write('const LIVE: &[u8] = include_bytes!(\n"../../../assets/fonts/maple-mono/Regular.ttf");')
+        with self.assertRaisesRegex(fonts.FontError, "optional fonts embedded in runtime"):
+            fonts.verify_runtime_embed_exclusion(root)
+
+    def test_normal_verification_checks_embed_exclusion(self):
+        with mock.patch.object(sys, "argv", ["manage_bundled_font.py"]), \
+             mock.patch.object(fonts, "verify_runtime_embed_exclusion") as exclusion, \
+             mock.patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(fonts.main(), 0)
+        exclusion.assert_called_once_with(fonts.ROOT)
+
+    def test_staging_cli_writes_machine_report_without_network(self):
+        root = self.catalog()
+        report_path = root / "report.json"
+        with mock.patch.object(fonts, "ROOT", root), \
+             mock.patch.object(sys, "argv", [
+                 "manage_bundled_font.py", "--stage-downloads", str(root / "downloads"),
+                 "--downloads-report", str(report_path),
+             ]), mock.patch("sys.stdout", new_callable=io.StringIO) as stdout, \
+             mock.patch.object(fonts, "download") as download:
+            self.assertEqual(fonts.main(), 0)
+        self.assertEqual(json.loads(stdout.getvalue()), json.loads(report_path.read_text()))
+        download.assert_not_called()
+
+    def test_release_stages_and_publishes_version_specific_assets_separately(self):
+        workflow = (fonts.ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        validation = workflow.split("\n  macos:", 1)[0]
+        self.assertIn("--stage-downloads font-downloads --downloads-report font-downloads.json", validation)
+        self.assertIn("name: optional-font-downloads\n", validation)
+        publish = workflow.split("\n  publish:", 1)[1]
+        self.assertIn("environment: release", publish)
+        self.assertIn("if: needs.validate.outputs.publish == 'true'", publish)
+        self.assertIn("name: optional-font-downloads\n", publish)
+        self.assertIn("--stage-downloads font-downloads", publish)
+        self.assertIn('gh release upload "$TAG" font-downloads/*', publish)
+        self.assertLess(
+            publish.index('gh release upload "$TAG" font-downloads/*'),
+            publish.index('gh release edit "$TAG" --draft=false'),
+        )
+        self.assertNotIn("--clobber", publish)
+
     def test_version_comparison_is_numeric(self):
         self.assertTrue(fonts.update_available("2.304", "2.1000"))
         self.assertFalse(fonts.update_available("2.304", "2.304"))

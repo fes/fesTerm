@@ -35,7 +35,8 @@ and eviction feedback.
 
 The application now provides local PTY, native SSH, and serial sessions;
 independent session chips; Launcher, Profiles, and Settings surfaces; command
-palette and native macOS menus; focus mode; selectable bundled terminal fonts
+palette and native macOS menus; focus mode; embedded JetBrains Mono with
+automatically downloaded optional terminal fonts
 and opt-in ligatures; deterministic UAX #29 grapheme-width allocation with
 pinned monochrome/color emoji fallback ([ADR 0026](/fes/fesTerm/blob/main/docs/adr/0026-grapheme-width-and-color-emoji-fallback.md));
 autosaved versioned TOML profiles/interface settings; metadata-only workspace

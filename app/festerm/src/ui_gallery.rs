@@ -1301,6 +1301,8 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         customize_local_shell: false,
         restore_workspace: false,
         terminal_font: TerminalFontPreference::JetBrainsMono,
+        font_download_status: None,
+        font_download_failed: false,
         terminal_ligatures: false,
         emoji_presentation: EmojiPresentationPreference::Color,
         scroll_speed: ScrollSpeedPreference::Normal,

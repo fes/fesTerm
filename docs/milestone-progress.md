@@ -3,6 +3,32 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Optional terminal fonts without the embedded payload
+
+Issue #398 separates font availability from the saved font choice. JetBrains
+Mono stays embedded; Iosevka Term, JuliaMono, and Maple Mono retain their
+reviewed repository manifests and provenance but move 46,363,464 bytes of
+optional faces out of production embeds into separately published release
+assets. This also preserves the reproducible Iosevka ligature build instead
+of substituting an upstream download with different shaping.
+
+Same-toolchain Windows debug builds measured 178,309,120 bytes at the
+unmodified v0.10.4 base (`54b50769`) and 132,207,104 bytes after migration:
+46,102,016 bytes smaller (25.86%), including the new downloader's overhead.
+Direct byte inspection of the built executable confirmed the embedded
+JetBrains regular face and absence of all twelve optional payloads. These are
+executable measurements, not a claim about compressed release installer size.
+
+The application now reconciles a saved optional choice automatically after
+upgrade, using a bounded worker, exact size/hash checks, a process-safe cache,
+and atomic publication. The renderer receives verified faces rather than
+owning network or filesystem policy. Missing fonts use an explicitly temporary
+JetBrains fallback with progress and Retry, never a silently rewritten
+preference. Offline reuse, corruption repair, cancellation, generation-safe
+activation, and retry have deterministic coverage. ADR 0049 records the new
+asset boundary; released-endpoint, proxy, native DPI and usability evidence
+remain pending under TYPE-02/NP-05 until a matching release publishes assets.
+
 ## v0.10.4: stable copying, native diagrams and terminal input repairs
 
 This patch release packages the merged fixes and capabilities since v0.10.3.
