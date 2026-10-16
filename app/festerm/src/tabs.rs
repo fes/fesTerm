@@ -7048,6 +7048,48 @@ mod tests {
     }
 
     #[test]
+    fn stored_credential_profile_connect_reuses_profiles_for_ssh_and_sftp() {
+        let context = egui::Context::default();
+        let profile = festerm_config::Profile::ssh(
+            "stored",
+            "192.0.2.1",
+            22,
+            "user",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_credential_reference(festerm_secret_store::SecretReference::generate())
+        .unwrap();
+        let configuration = Configuration::new(vec![profile]).unwrap();
+        for transport in 0..3 {
+            let mut state = AppState::for_test_with_configuration(configuration.clone());
+            state.dispatch(AppCommand::OpenProfiles, &context);
+            let profiles = state.active();
+            let store: Arc<dyn SecretStore> =
+                Arc::new(festerm_secret_store::MemorySecretStore::new());
+            assert!(match transport {
+                0 => state.start_stored_password_ssh_profile(
+                    "stored",
+                    store,
+                    SshSessionOptions::new(),
+                    &context,
+                ),
+                1 => state.start_stored_password_sftp_profile("stored", store, &context),
+                _ => state.start_stored_sftp_file_manager_profile("stored", store, &context),
+            });
+            assert_eq!(state.active(), profiles);
+            assert_eq!(state.tabs().len(), 2);
+            assert!(matches!(
+                state.active_tab().content,
+                TabContent::Session(_) | TabContent::SftpFileManager(_)
+            ));
+            state.dispatch(AppCommand::CloseTab(profiles), &context);
+        }
+    }
+
+    #[test]
     fn configured_interactive_ssh_profile_records_its_profile_identifier() {
         let context = egui::Context::default();
         let configuration = Configuration::new(vec![festerm_config::Profile::ssh(

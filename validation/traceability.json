@@ -2347,6 +2347,7 @@
         "ad_hoc_session_does_not_consume_profiles_and_other_surfaces_are_preserved",
         "failed_or_missing_profile_launch_keeps_profiles_available",
         "configured_interactive_ssh_connect_consumes_profiles_in_place",
+        "stored_credential_profile_connect_reuses_profiles_for_ssh_and_sftp",
         "gui_sftp_profile_connect_replaces_profiles_and_can_cancel_in_place",
         "profiles_authentication_can_cancel_without_connecting_and_clears_credentials",
         "profiles_repaints_reuse_the_composition_root_provider_default",
