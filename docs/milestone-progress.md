@@ -3,6 +3,18 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Connecting from Profiles without leaving a spent tab
+
+Profiles Connect used the same commands as Launcher, but placement only
+recognized Launcher as a reusable surface. Saved-profile terminal and GUI
+SFTP launches now consume Profiles in place too, preserving chip identity
+and order. Ad-hoc launches still add a tab, and a synchronous terminal startup
+failure preserves Profiles beside the existing error-bearing session.
+GUI SFTP's credential step keeps a Back/Escape path to Profiles and clears
+transient credentials when cancelled. Deterministic placement, command, and
+credential-form tests cover the policy; native focus and usability remain
+classified under CP-10 rather than claimed as completed.
+
 ## v0.10.4: stable copying, native diagrams and terminal input repairs
 
 This patch release packages the merged fixes and capabilities since v0.10.3.
