@@ -97,8 +97,16 @@ impl Selection {
         };
         let first = &smart.rows[0];
         let last = smart.rows.last().expect("nonempty inference");
+        let viewport_row = |content_row| {
+            (0..snapshot.dimensions().rows())
+                .find(|row| snapshot.content_row_for_viewport_row(*row) == Some(content_row))
+                .expect("inference contains visible rows")
+        };
         self.begin_at(
-            hit,
+            CellPosition {
+                column: first.first,
+                row: viewport_row(first.row),
+            },
             ContentPosition {
                 column: first.first,
                 absolute_row: first.row,
@@ -110,7 +118,7 @@ impl Selection {
         });
         self.head = Some(CellPosition {
             column: last.last,
-            row: hit.row + usize::try_from(last.row.saturating_sub(first.row)).unwrap_or(0),
+            row: viewport_row(last.row),
         });
         self.active = false;
         self.smart = Some(smart);

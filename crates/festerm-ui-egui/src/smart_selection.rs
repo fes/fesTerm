@@ -25,6 +25,7 @@ pub(crate) struct SmartRow {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SmartSelection {
     pub rows: Vec<SmartRow>,
+    pub conservative: bool,
     dimensions: festerm_core::Dimensions,
     alternate: bool,
 }
@@ -43,9 +44,10 @@ impl SmartSelection {
             }
             let mut current = String::new();
             for column in row.first..=row.last {
-                let cell = snapshot.absolute_cell(column, row.row)?;
-                if !cell.is_continuation() {
-                    current.push_str(cell.text());
+                match snapshot.absolute_cell(column, row.row) {
+                    Some(cell) if !cell.is_continuation() => current.push_str(cell.text()),
+                    Some(_) => {}
+                    None => current.push(' '),
                 }
             }
             // Repaint/eviction must never silently change the text about to be copied.
@@ -102,14 +104,15 @@ fn row(
     let mut cells = Vec::new();
     for column in 0..width {
         *budget = budget.checked_sub(1)?;
-        let cell = snapshot.cell(column, y)?;
-        if cell.text().len() > *byte_budget {
+        let cell = snapshot.cell(column, y);
+        let text = cell.map_or(" ", |cell| cell.text());
+        if text.len() > *byte_budget {
             *byte_budget = 0;
             return None;
         }
-        *byte_budget -= cell.text().len();
-        if !cell.is_continuation() {
-            cells.push((column, cell.text().to_owned()));
+        *byte_budget -= text.len();
+        if !cell.is_some_and(|cell| cell.is_continuation()) {
+            cells.push((column, text.to_owned()));
         }
     }
     let hit = cells.iter().rposition(|(column, _)| *column <= x)?;
@@ -182,6 +185,7 @@ pub(crate) fn infer(
     let mut budget = MAX_CELLS;
     let mut byte_budget = MAX_BYTES;
     let center = row(snapshot, hit.row, hit.column, &mut budget, &mut byte_budget)?;
+    let conservative = center.bounded;
     let mut first = hit.row;
     let mut last = hit.row;
     let mut rows = vec![(hit.row, center)];
@@ -310,6 +314,7 @@ pub(crate) fn infer(
     }
     (!selected.is_empty()).then_some(SmartSelection {
         rows: selected,
+        conservative,
         dimensions: snapshot.dimensions(),
         alternate: snapshot.modes().alternate_screen(),
     })
@@ -345,6 +350,13 @@ mod tests {
         assert_eq!(
             selection_text(snapshot, &sentence).as_deref(),
             Some("First line wraps.")
+        );
+        assert_eq!(
+            sentence.range(),
+            Some(crate::CellRange::new(
+                CellPosition { column: 0, row: 0 },
+                CellPosition { column: 4, row: 1 },
+            ))
         );
         assert_eq!(sentence.smart.as_ref().unwrap().rows[0].first, 0);
         assert_eq!(sentence.smart.as_ref().unwrap().rows[1].last, 4);
@@ -443,6 +455,32 @@ mod tests {
         );
         assert_eq!(selection.smart.as_ref().unwrap().rows[0].last, 4);
         assert_eq!(selection.smart.as_ref().unwrap().rows[1].last, 3);
+    }
+
+    #[test]
+    fn smart_selection_invalidation_tracks_wrap_resize_and_screen_identity() {
+        let mut terminal = make_terminal(8, 3, "12345678more");
+        let selection = select(&terminal, 1, 0, SmartSelectionScope::Sentence);
+        terminal.ingest(b"\x1b[H\n");
+        assert_eq!(
+            selection_text(TerminalSnapshot::from_terminal(&terminal), &selection),
+            None
+        );
+
+        let mut terminal = make_terminal(20, 3, "same text");
+        let selection = select(&terminal, 1, 0, SmartSelectionScope::Sentence);
+        terminal.ingest(b"\x1b[?1049hsame text");
+        assert_eq!(
+            selection_text(TerminalSnapshot::from_terminal(&terminal), &selection),
+            None
+        );
+        terminal.ingest(b"\x1b[?1049l");
+        let selection = select(&terminal, 1, 0, SmartSelectionScope::Sentence);
+        terminal.resize(Dimensions::new(21, 3).unwrap()).unwrap();
+        assert_eq!(
+            selection_text(TerminalSnapshot::from_terminal(&terminal), &selection),
+            None
+        );
     }
 
     #[test]

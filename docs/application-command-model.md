@@ -195,6 +195,14 @@ There is deliberately no keyboard action/default chord for this command.
 
 ## State Ownership
 
+Smart terminal selection (`TERM-14`) remains a low-level presentation operation,
+like ordinary drag selection, not a session-management command. Context-menu
+and fixed keyboard targeting gestures converge on
+`TerminalView::request_smart_selection`; all inferred text is read through the
+same `Selection`/`selection_text` path used by application Copy. No clipboard
+read, transport write or backend ownership is added. Copy remains a separate
+existing semantic operation, including native Edit and palette Copy.
+
 Command execution should follow the ownership boundaries in `ARCHITECTURE.md`:
 
 - application state and workspace/session policy belong to the application layer;
