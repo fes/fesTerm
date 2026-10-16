@@ -12,6 +12,13 @@ optional faces out of production embeds into separately published release
 assets. This also preserves the reproducible Iosevka ligature build instead
 of substituting an upstream download with different shaping.
 
+Same-toolchain Windows debug builds measured 178,309,120 bytes at the
+unmodified v0.10.4 base (`54b50769`) and 132,207,104 bytes after migration:
+46,102,016 bytes smaller (25.86%), including the new downloader's overhead.
+Direct byte inspection of the built executable confirmed the embedded
+JetBrains regular face and absence of all twelve optional payloads. These are
+executable measurements, not a claim about compressed release installer size.
+
 The application now reconciles a saved optional choice automatically after
 upgrade, using a bounded worker, exact size/hash checks, a process-safe cache,
 and atomic publication. The renderer receives verified faces rather than
