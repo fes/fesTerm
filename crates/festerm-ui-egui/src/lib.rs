@@ -22,6 +22,7 @@ mod rectangle_copy;
 mod renderer;
 pub mod routing_trace;
 mod selection;
+mod smart_selection;
 pub mod statusbar;
 pub mod theme;
 mod view;
@@ -55,6 +56,7 @@ pub use native_painter::{
 pub use rectangle_copy::RectangleCopyError;
 pub use renderer::{resolve_color, terminal_color_scheme, FontSettings};
 pub use selection::{normalize_selection_position, selection_text, Selection};
+pub use smart_selection::SmartSelectionScope;
 pub use view::{
     FrameDiagnostics, TerminalContextMenuAction, TerminalContextTarget, TerminalContextText,
     TerminalHistoryAction, TerminalView, TerminalViewOptions, TERMINAL_CONTEXT_MAX_BYTES,

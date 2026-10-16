@@ -13,6 +13,7 @@ pub struct Selection {
     content_anchor: Option<ContentPosition>,
     content_head: Option<ContentPosition>,
     active: bool,
+    pub(crate) smart: Option<crate::smart_selection::SmartSelection>,
 }
 
 impl Selection {
@@ -27,6 +28,7 @@ impl Selection {
     }
 
     pub(crate) fn begin_at(&mut self, position: CellPosition, content: ContentPosition) {
+        self.smart = None;
         self.anchor = Some(position);
         self.head = Some(position);
         self.content_anchor = Some(content);
@@ -82,6 +84,81 @@ impl Selection {
 
     pub fn range(&self) -> Option<CellRange> {
         Some(CellRange::new(self.anchor?, self.head?))
+    }
+
+    pub(crate) fn infer_smart(
+        &mut self,
+        snapshot: TerminalSnapshot<'_>,
+        hit: CellPosition,
+        scope: crate::SmartSelectionScope,
+    ) -> bool {
+        let Some(smart) = crate::smart_selection::infer(snapshot, hit, scope) else {
+            return false;
+        };
+        let first = &smart.rows[0];
+        let last = smart.rows.last().expect("nonempty inference");
+        let viewport_row = |content_row| {
+            (0..snapshot.dimensions().rows())
+                .find(|row| snapshot.content_row_for_viewport_row(*row) == Some(content_row))
+                .expect("inference contains visible rows")
+        };
+        self.begin_at(
+            CellPosition {
+                column: first.first,
+                row: viewport_row(first.row),
+            },
+            ContentPosition {
+                column: first.first,
+                absolute_row: first.row,
+            },
+        );
+        self.content_head = Some(ContentPosition {
+            column: last.last,
+            absolute_row: last.row,
+        });
+        self.head = Some(CellPosition {
+            column: last.last,
+            row: viewport_row(last.row),
+        });
+        self.active = false;
+        self.smart = Some(smart);
+        true
+    }
+
+    pub(crate) fn is_smart(&self) -> bool {
+        self.smart.is_some()
+    }
+
+    pub(crate) fn invalidate_smart(&mut self, snapshot: TerminalSnapshot<'_>) {
+        if self
+            .smart
+            .as_ref()
+            .is_some_and(|smart| smart.text(snapshot).is_none())
+        {
+            self.clear();
+        }
+    }
+
+    pub(crate) fn row_range(
+        &self,
+        snapshot: TerminalSnapshot<'_>,
+        row: usize,
+    ) -> Option<CellRange> {
+        if let Some(smart) = &self.smart {
+            let content = snapshot.content_row_for_viewport_row(row)?;
+            let span = smart.rows.iter().find(|span| span.row == content)?;
+            return Some(CellRange::new(
+                CellPosition {
+                    column: span.first,
+                    row,
+                },
+                CellPosition {
+                    column: span.last,
+                    row,
+                },
+            ));
+        }
+        self.range_in_snapshot(snapshot)
     }
 
     pub(crate) fn content_endpoints(&self) -> Option<(ContentPosition, ContentPosition, bool)> {
@@ -181,6 +258,9 @@ pub fn normalize_selection_position(
 /// Returns selected terminal text without interpreting terminal OSC clipboard
 /// sequences. Width-two continuation cells do not add a second character.
 pub fn selection_text(snapshot: TerminalSnapshot<'_>, selection: &Selection) -> Option<String> {
+    if let Some(smart) = &selection.smart {
+        return smart.text(snapshot);
+    }
     let (start, end) = content_range(selection)?;
     if !snapshot.contains_content_row(start.absolute_row)
         || !snapshot.contains_content_row(end.absolute_row)
