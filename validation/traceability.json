@@ -2488,9 +2488,24 @@
       ],
       "decisions": [
         "ADR-0012",
-        "ADR-0026"
+        "ADR-0026",
+        "ADR-0049"
       ],
       "automated_tests": [
+        "restored_optional_font_reconciles_without_reselection_or_preference_changes",
+        "failed_optional_font_can_retry_without_losing_the_saved_family",
+        "settings_font_download_failure_offers_an_explicit_typed_retry",
+        "optional_font_catalog_is_pinned_to_twelve_bounded_release_faces",
+        "font_reconciliation_downloads_once_then_works_offline",
+        "font_reconciliation_repairs_corruption_and_fetches_only_missing_pins",
+        "failed_interrupted_or_invalid_fonts_never_publish_partial_files",
+        "font_download_reader_enforces_exact_size_hash_and_cancellation",
+        "concurrent_font_reconciliation_coalesces_under_the_store_lock",
+        "unavailable_font_store_reports_failure_without_automatic_retry",
+        "completed_font_download_never_overrides_a_newer_preference",
+        "font_cache_write_failure_is_actionable_and_not_a_success",
+        "supplied_optional_faces_preserve_styles_fallbacks_and_generation",
+        "invalid_supplied_faces_leave_the_current_atlas_unchanged",
         "wide_cells_use_one_two_column_paint_and_selection_span",
         "applies_compact_colon_true_color_sgr_to_spaces",
         "compact_colon_background_padding_matches_reviewed_snapshot",
@@ -2542,7 +2557,8 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "native four-family ligature/emoji/DPI review and bundled application font"
+        "native four-family ligature/emoji/DPI review and bundled application font",
+        "published matching-version font assets for live upgrade/offline/proxy/store qualification"
       ]
     },
     {

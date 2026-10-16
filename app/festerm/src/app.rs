@@ -449,6 +449,7 @@ pub struct FesTermApp {
     /// from merely having it.
     window_was_focused: bool,
     terminal_font_generation: TerminalFontGeneration,
+    font_downloads: crate::font_downloads::FontDownloads,
     about_icon: Option<egui::TextureHandle>,
     updates: UpdateController,
     /// A verified updater install has handed replacement and relaunch off to
@@ -814,10 +815,7 @@ impl FesTermApp {
         // One semantic blue-graphite default for application surfaces and
         // widgets. Terminal ANSI and explicit RGB colors remain independent.
         context.set_visuals(theme::default_visuals());
-        let terminal_font_generation = festerm_ui_egui::install_terminal_font_family(
-            context,
-            terminal_font_family(configuration.interface_settings().terminal_font()),
-        );
+        let terminal_font_generation = festerm_ui_egui::install_terminal_fonts(context);
         // fesTerm owns the standard zoom chords as per-session terminal
         // commands. Letting egui also process them at end-of-frame would scale
         // application chrome and violate the documented zoom boundary.
@@ -893,6 +891,7 @@ impl FesTermApp {
             focus_mode: false,
             terminal_fonts_installed: true,
             terminal_font_generation,
+            font_downloads: crate::font_downloads::FontDownloads::native(),
             about_icon: Some(about_icon),
             updates,
             update_exit_requested: false,
@@ -1906,17 +1905,36 @@ impl FesTermApp {
     }
 
     fn reinstall_terminal_font(&mut self, context: &egui::Context) {
-        self.terminal_font_generation = festerm_ui_egui::install_terminal_font_family(
-            context,
-            terminal_font_family(self.state.terminal_font()),
-        );
-        self.apply_terminal_font_policy();
-        context.request_repaint();
+        if let Some(ready) = self
+            .font_downloads
+            .update(self.state.terminal_font(), context)
+        {
+            self.terminal_font_generation = match ready {
+                crate::font_downloads::ReadyFont::Default => {
+                    festerm_ui_egui::install_terminal_fonts(context)
+                }
+                crate::font_downloads::ReadyFont::Optional(family, faces) => {
+                    match festerm_ui_egui::install_terminal_font_faces(
+                        context,
+                        terminal_font_family(family),
+                        faces,
+                    ) {
+                        Ok(generation) => generation,
+                        Err(error) => {
+                            self.font_downloads.installation_failed(error);
+                            festerm_ui_egui::install_terminal_fonts(context)
+                        }
+                    }
+                }
+            };
+            self.apply_terminal_font_policy();
+            context.request_repaint();
+        }
     }
 
     fn terminal_font_set(&self) -> TerminalFontSet {
         TerminalFontSet::new(
-            terminal_font_family(self.state.terminal_font()),
+            terminal_font_family(self.font_downloads.active()),
             self.state.terminal_ligatures(),
             self.terminal_font_generation,
         )
@@ -5695,10 +5713,7 @@ impl FesTermApp {
             self.state.image_memory_budget(),
         );
         if !self.terminal_fonts_installed {
-            self.terminal_font_generation = festerm_ui_egui::install_terminal_font_family(
-                ui.ctx(),
-                terminal_font_family(self.state.terminal_font()),
-            );
+            self.terminal_font_generation = festerm_ui_egui::install_terminal_fonts(ui.ctx());
             self.terminal_fonts_installed = true;
             // `set_fonts` rebuilds egui's atlas after this pass. A test app
             // can begin directly on a terminal surface (unlike production,
@@ -5707,6 +5722,7 @@ impl FesTermApp {
             ui.ctx().request_repaint();
             return;
         }
+        self.reinstall_terminal_font(ui.ctx());
         self.process_pending_password_store(ui.ctx());
         self.poll_automatic_update_check();
         self.updates.poll();
@@ -5897,6 +5913,17 @@ impl FesTermApp {
         // Taken before the active tab is borrowed mutably: an editor tab reads
         // and writes the shared registry while it draws.
         let documents = Rc::clone(self.state.documents());
+        if self.state.terminal_font() != TerminalFontPreference::JetBrainsMono
+            && self.font_downloads.active() == TerminalFontPreference::JetBrainsMono
+        {
+            if let Some(status) = self.font_downloads.status() {
+                ui.label(
+                    egui::RichText::new(format!("{status} See Settings > Terminal typography."))
+                        .small()
+                        .color(theme::TEXT_SECONDARY),
+                );
+            }
+        }
         {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
@@ -5932,6 +5959,8 @@ impl FesTermApp {
                             customize_local_shell: self.state.customize_local_shell(),
                             restore_workspace: self.state.restore_workspace(),
                             terminal_font: self.state.terminal_font(),
+                            font_download_status: self.font_downloads.status(),
+                            font_download_failed: self.font_downloads.failed(),
                             terminal_ligatures: self.state.terminal_ligatures(),
                             emoji_presentation: self.state.emoji_presentation(),
                             scroll_speed: self.state.scroll_speed(),
@@ -6343,6 +6372,11 @@ impl FesTermApp {
                         .dispatch(AppCommand::SetTerminalFont(font), &context);
                     self.reinstall_terminal_font(&context);
                     self.persist_interface_settings();
+                }
+                AppCommand::RetryTerminalFontDownload => {
+                    self.font_downloads.retry();
+                    self.reinstall_terminal_font(ui.ctx());
+                    ui.ctx().request_repaint();
                 }
                 AppCommand::ToggleRestoreWorkspace => {
                     let context = ui.ctx().clone();
@@ -6898,6 +6932,7 @@ impl FesTermApp {
             terminal_fonts_installed: false,
             window_was_focused: true,
             terminal_font_generation: TerminalFontGeneration::default(),
+            font_downloads: crate::font_downloads::FontDownloads::unavailable_for_test(),
             about_icon: None,
             updates: UpdateController::unavailable_for_test(),
             update_exit_requested: false,
@@ -9611,6 +9646,108 @@ mod tests {
         assert_eq!(
             app.state.interface_settings().terminal_font(),
             TerminalFontPreference::JuliaMono
+        );
+        assert_eq!(
+            app.font_downloads.active(),
+            TerminalFontPreference::JetBrainsMono
+        );
+        assert!(app.font_downloads.failed());
+    }
+
+    fn await_preferred_font(app: &mut FesTermApp, context: &egui::Context) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while app.font_downloads.active() != app.state.terminal_font() {
+            app.reinstall_terminal_font(context);
+            assert!(
+                !app.font_downloads.failed(),
+                "{:?}",
+                app.font_downloads.status()
+            );
+            assert!(
+                Instant::now() < deadline,
+                "cached font worker did not complete"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn restored_optional_font_reconciles_without_reselection_or_preference_changes() {
+        let context = egui::Context::default();
+        let directory = tempfile::tempdir().unwrap();
+        let configuration = Configuration::parse(
+            "schema_version = 1\n[settings]\nterminal_font = 'julia-mono'\nterminal_ligatures = false\nemoji_presentation = 'monochrome'\n",
+        ).unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
+        let saved = app.state.interface_settings();
+        app.font_downloads = crate::font_downloads::FontDownloads::cached_for_test(
+            directory.path(),
+            TerminalFontPreference::JuliaMono,
+        );
+        app.reinstall_terminal_font(&context);
+        assert_eq!(
+            app.font_downloads.active(),
+            TerminalFontPreference::JetBrainsMono
+        );
+        let fallback_generation = app.terminal_font_generation;
+        await_preferred_font(&mut app, &context);
+        assert_eq!(app.state.interface_settings(), saved);
+        assert_eq!(
+            app.terminal_font_set().family(),
+            TerminalFontFamily::JuliaMono
+        );
+        assert_ne!(app.terminal_font_generation, fallback_generation);
+        assert!(app
+            .font_downloads
+            .status()
+            .unwrap()
+            .contains("available offline"));
+    }
+
+    #[test]
+    fn failed_optional_font_can_retry_without_losing_the_saved_family() {
+        let context = egui::Context::default();
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("font-store");
+        std::fs::write(&root, b"not a directory").unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.state.dispatch(
+            AppCommand::SetTerminalFont(TerminalFontPreference::IosevkaTerm),
+            &context,
+        );
+        let saved = app.state.interface_settings();
+        app.font_downloads = crate::font_downloads::FontDownloads::with_root(Some(root.clone()));
+        app.reinstall_terminal_font(&context);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !app.font_downloads.failed() {
+            app.reinstall_terminal_font(&context);
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(app.state.interface_settings(), saved);
+        assert_eq!(
+            app.font_downloads.active(),
+            TerminalFontPreference::JetBrainsMono
+        );
+        std::fs::remove_file(&root).unwrap();
+        let _ = crate::font_downloads::FontDownloads::cached_for_test(
+            &root,
+            TerminalFontPreference::IosevkaTerm,
+        );
+        app.state.dispatch(AppCommand::OpenSettings, &context);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1400.0, 5200.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        harness.get_by_label("Retry font download").click();
+        harness.step();
+        let context = harness.ctx.clone();
+        await_preferred_font(harness.state_mut(), &context);
+        assert_eq!(harness.state().state.interface_settings(), saved);
+        assert_eq!(
+            harness.state().font_downloads.active(),
+            TerminalFontPreference::IosevkaTerm
         );
     }
 

@@ -29,6 +29,32 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 - **Pass / Fail / Not run:** result for one specific platform and commit. Not run
   always includes a reason and never counts as pass.
 
+### Downloadable terminal fonts (TYPE-02 / NP-05)
+
+**Automated:** pinned catalog and release staging, production embed exclusion,
+exact-size/hash and interrupted-read rejection, atomic publication/corruption
+repair, concurrent installation, stale completion cancellation, cached offline
+reconciliation, restored preference activation, failure/retry, and supplied
+renderer faces/generation are deterministic tests. They do not prove the live
+release endpoint, native proxy handling, or subjective typography quality.
+
+**Native/manual pending (Windows, macOS, Linux):** upgrade an installation
+whose settings select each optional family with no font cache; confirm
+automatic acquisition without reselection, responsive sessions, temporary
+fallback disclosure, and subsequent preferred metrics/styles/ligatures and
+emoji/selection/cursor alignment. Restart offline with verified cache.
+Remove/corrupt one face; test offline, interrupted/proxied downloads, read-only
+and full stores, explicit Retry after repair, and a changed preference while
+work is pending. Exercise two processes/windows requesting the same family,
+then different families; no duplicate partial publication or stale activation.
+Confirm About notices and that default-only operation sends no font requests.
+
+**Prerequisite:** a published matching-version release with all twelve pinned
+font assets (and licenses). Existing v0.10.4 assets are not retroactively
+changed; live-endpoint upgrade evidence is blocked until the next normal
+release. Native DPI/appearance/usability review remains NP-05, not a unit-test
+acceptance claim.
+
 ### ADR 0046 document-frame experiment (CP-18)
 
 The WARP document-frame implementation adds an automated exact-pixel

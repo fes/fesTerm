@@ -1743,8 +1743,14 @@ configuration. Reset restores 512 MiB without evicting existing images.
 This allowance excludes decoder-private/native-GPU allocations and is not a
 process-RAM cap (ADR 0030).
 
-The **Terminal typography** card exposes the bundled terminal-family selector
-plus the default-on ligature toggle. The **Quick switch** card currently
+The **Terminal typography** card exposes the terminal-family selector plus the
+default-on ligature toggle. JetBrains Mono is embedded; other families download
+automatically on selection or restoration of a saved preference after upgrade.
+While preparing or unavailable, use an explicitly temporary JetBrains fallback
+without changing that preference. Show progress/failure here and above tab
+content, with an explicit **Retry font download** control on failure. Verified
+cached faces work offline. See ADR 0049 for release, privacy, and cache policy.
+The **Quick switch** card currently
 exposes the on-by-default quick-switch-number overlay preference; it no
 longer restates the Command palette/Open Settings chords the **Keyboard
 bindings** card below owns, so a customized binding is never shown twice with
@@ -2361,7 +2367,8 @@ Terminal typography may use separate font and shaping rules from application chr
 
 The terminal renderer defaults to bundled **JetBrains Mono NL 2.304** at `14`
 pt and lets Settings select JetBrains Mono, Iosevka Term, JuliaMono, or Maple
-Mono. Each family includes regular, bold, italic, and bold-italic static
+Mono. Only JetBrains Mono is embedded; the other families are pinned downloads
+with automatic startup reconciliation (ADR 0049). Each family includes regular, bold, italic, and bold-italic static
 faces; missing glyphs continue through an owned Noto Emoji monochrome face and
 then the separate monospace fallback chain. Emoji-presentation graphemes use
 the pinned Noto Color Emoji renderer path, while VS15 requests monochrome text
@@ -2419,7 +2426,7 @@ remain hard shaping boundaries.
 
 ### User control
 
-Users can configure the bundled terminal family, ligature preference, and
+Users can configure the terminal family, ligature preference, and
 deterministic color-versus-monochrome emoji presentation through versioned
 configuration and GUI Settings. Font size remains per-session runtime zoom;
 configurable fallback ordering, arbitrary font paths, and line height are
