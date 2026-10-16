@@ -741,6 +741,7 @@ pub struct SftpAuthenticationRequiredTab {
 /// live authenticated subsystem yet.
 pub struct SftpFileManagerAuthenticationRequiredTab {
     pub target: SftpFileManagerLaunchTarget,
+    pub return_to_profiles: bool,
 }
 
 /// Maximum number of in-connection password reprompts before falling back
@@ -2876,6 +2877,7 @@ impl AppState {
                         .expect("validated GUI SFTP workspace profile reference");
                     TabContent::SftpFileManagerAuthenticationRequired(
                         SftpFileManagerAuthenticationRequiredTab {
+                            return_to_profiles: false,
                             target: SftpFileManagerLaunchTarget {
                                 label: ssh.identifier().to_owned(),
                                 username: ssh.username().to_owned(),
@@ -3927,7 +3929,22 @@ impl AppState {
             .iter()
             .find(|tab| matches!(tab.content, TabContent::Profiles))
         {
-            self.set_active(existing.id);
+            let existing_id = existing.id;
+            if matches!(
+                &self.active_tab().content,
+                TabContent::SftpFileManagerAuthenticationRequired(tab) if tab.return_to_profiles
+            ) {
+                self.close(self.active);
+            }
+            self.set_active(existing_id);
+            self.workspace_dirty = true;
+            return;
+        }
+        if matches!(
+            &self.active_tab().content,
+            TabContent::SftpFileManagerAuthenticationRequired(tab) if tab.return_to_profiles
+        ) {
+            self.active_tab_mut().content = TabContent::Profiles;
             self.workspace_dirty = true;
             return;
         }
@@ -4997,7 +5014,7 @@ impl AppState {
     /// Sends the given tab back to the pre-connect authentication surface
     /// with the same (possibly about-to-be-edited) destination, replacing
     /// its content in place regardless of what it currently holds -- unlike
-    /// `open_sftp_file_manager`, which only replaces a `Launcher` tab and
+    /// `open_sftp_file_manager`, which only replaces a launch surface and
     /// otherwise opens a brand new one, this always targets one specific
     /// existing tab (the failed connection the user is looking at) so
     /// retrying never leaves behind an orphaned duplicate tab.
@@ -5012,7 +5029,10 @@ impl AppState {
             .is_some();
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
             tab.content = TabContent::SftpFileManagerAuthenticationRequired(
-                SftpFileManagerAuthenticationRequiredTab { target },
+                SftpFileManagerAuthenticationRequiredTab {
+                    target,
+                    return_to_profiles: false,
+                },
             );
             self.workspace_dirty = true;
         }
@@ -5025,9 +5045,14 @@ impl AppState {
             .is_some();
         self.workspace_dirty = true;
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
-            if matches!(tab.content, TabContent::Launcher) {
+            if matches!(tab.content, TabContent::Launcher)
+                || (target.profile_id.is_some() && matches!(tab.content, TabContent::Profiles))
+            {
                 tab.content = TabContent::SftpFileManagerAuthenticationRequired(
-                    SftpFileManagerAuthenticationRequiredTab { target },
+                    SftpFileManagerAuthenticationRequiredTab {
+                        target,
+                        return_to_profiles: matches!(tab.content, TabContent::Profiles),
+                    },
                 );
                 return;
             }
@@ -5036,7 +5061,10 @@ impl AppState {
         self.tabs.push(Tab {
             id,
             content: TabContent::SftpFileManagerAuthenticationRequired(
-                SftpFileManagerAuthenticationRequiredTab { target },
+                SftpFileManagerAuthenticationRequiredTab {
+                    target,
+                    return_to_profiles: false,
+                },
             ),
         });
         self.set_active(id);
@@ -5318,18 +5346,24 @@ impl AppState {
     fn place_session(&mut self, mut session: SessionTab) {
         session.apply_frontend_terminal_configuration(self.scrollback_limit);
         self.workspace_dirty = true;
+        // Starting a configured profile also consumes the active Profiles
+        // surface, but a synchronous startup failure leaves it available.
         // Starting a session from the active Launcher or restored
         // authentication-required tab replaces that surface in place (same
         // position, same identity) rather than leaving it behind alongside
         // a new session tab.
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
-            if matches!(
-                tab.content,
-                TabContent::Launcher
-                    | TabContent::SshAuthenticationRequired(_)
-                    | TabContent::SftpAuthenticationRequired(_)
-                    | TabContent::SftpFileManagerAuthenticationRequired(_)
-            ) {
+            if (session.profile_identifier.is_some()
+                && session.controller.start_error().is_none()
+                && matches!(tab.content, TabContent::Profiles))
+                || matches!(
+                    tab.content,
+                    TabContent::Launcher
+                        | TabContent::SshAuthenticationRequired(_)
+                        | TabContent::SftpAuthenticationRequired(_)
+                        | TabContent::SftpFileManagerAuthenticationRequired(_)
+                )
+            {
                 match &tab.content {
                     TabContent::SshAuthenticationRequired(saved)
                         if session.profile_identifier.as_deref()
@@ -5345,7 +5379,7 @@ impl AppState {
                     }
                     _ => {}
                 }
-                if matches!(tab.content, TabContent::Launcher) {
+                if matches!(tab.content, TabContent::Launcher | TabContent::Profiles) {
                     session.seed_native_alias(&self.configuration);
                 }
                 tab.content = TabContent::Session(Box::new(session));
@@ -5365,10 +5399,13 @@ impl AppState {
         tab_content.set_cleanup_reporter(self.sftp_cleanup_sender.clone());
         self.workspace_dirty = true;
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
-            if matches!(
-                tab.content,
-                TabContent::Launcher | TabContent::SftpFileManagerAuthenticationRequired(_)
-            ) {
+            if (tab_content.profile_identifier.is_some()
+                && matches!(tab.content, TabContent::Profiles))
+                || matches!(
+                    tab.content,
+                    TabContent::Launcher | TabContent::SftpFileManagerAuthenticationRequired(_)
+                )
+            {
                 tab.content = TabContent::SftpFileManager(Box::new(tab_content));
                 return;
             }
@@ -6770,6 +6807,244 @@ mod tests {
 
         assert_eq!(state.active(), launcher_id);
         assert!(matches!(state.active_tab().content, TabContent::Launcher));
+    }
+
+    #[test]
+    fn profile_session_placement_reuses_profiles_position_identity_and_workspace() {
+        let context = egui::Context::default();
+        for profile_id in ["local", "ssh", "sftp", "serial"] {
+            let mut state = AppState::for_test();
+            let launcher = state.active();
+            state.dispatch(AppCommand::OpenProfiles, &context);
+            let profiles = state.active();
+            state.dispatch(AppCommand::OpenSettings, &context);
+            let settings = state.active();
+            state.dispatch(AppCommand::ActivateTab(profiles), &context);
+            state.take_workspace_dirty();
+            let mut session = SessionTab::for_test_ssh(
+                crate::session_controller::fake::FakeSshSession::new([]),
+                "user",
+                "example.test",
+                22,
+            );
+            session.profile_identifier = Some(profile_id.to_owned());
+
+            state.place_session(session);
+
+            assert_eq!(state.active(), profiles);
+            assert_eq!(
+                state.tabs().iter().map(|tab| tab.id).collect::<Vec<_>>(),
+                [launcher, profiles, settings]
+            );
+            assert!(matches!(state.tabs()[0].content, TabContent::Launcher));
+            assert!(matches!(state.tabs()[2].content, TabContent::Settings));
+            assert_eq!(
+                state
+                    .session_tab(profiles)
+                    .unwrap()
+                    .profile_identifier
+                    .as_deref(),
+                Some(profile_id)
+            );
+            assert!(state.take_workspace_dirty());
+            state.dispatch(AppCommand::OpenProfiles, &context);
+            assert_ne!(state.active(), profiles, "Profiles can be reopened");
+            assert_eq!(state.tabs().len(), 4);
+        }
+    }
+
+    #[test]
+    fn ad_hoc_session_does_not_consume_profiles_and_other_surfaces_are_preserved() {
+        let context = egui::Context::default();
+        for configured in [false, true] {
+            let mut state = AppState::for_test();
+            state.dispatch(AppCommand::OpenProfiles, &context);
+            let profiles = state.active();
+            if configured {
+                state.dispatch(AppCommand::OpenSettings, &context);
+            }
+            let prior = state.active();
+            let count = state.tabs().len();
+            let mut session = SessionTab::for_test_ssh(
+                crate::session_controller::fake::FakeSshSession::new([]),
+                "user",
+                "example.test",
+                22,
+            );
+            session.profile_identifier = configured.then(|| "saved".to_owned());
+
+            state.place_session(session);
+
+            assert_eq!(state.tabs().len(), count + 1);
+            assert_ne!(state.active(), prior);
+            assert!(matches!(
+                state
+                    .tabs()
+                    .iter()
+                    .find(|tab| tab.id == profiles)
+                    .unwrap()
+                    .content,
+                TabContent::Profiles
+            ));
+            if configured {
+                assert!(matches!(
+                    state
+                        .tabs()
+                        .iter()
+                        .find(|tab| tab.id == prior)
+                        .unwrap()
+                        .content,
+                    TabContent::Settings
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn failed_or_missing_profile_launch_keeps_profiles_available() {
+        let context = egui::Context::default();
+        let configuration = Configuration::new(vec![
+            festerm_config::Profile::local(
+                "missing-shell",
+                "festerm-profile-connect-command-that-does-not-exist",
+                Vec::new(),
+                None,
+            )
+            .unwrap(),
+            festerm_config::Profile::serial_with_defaults(
+                "missing-device",
+                "festerm-profile-connect-device-that-does-not-exist",
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        for command in [
+            AppCommand::StartConfiguredLocalProfile {
+                profile_id: "missing-shell".to_owned(),
+            },
+            AppCommand::StartConfiguredSerialProfile {
+                profile_id: "missing-device".to_owned(),
+            },
+        ] {
+            let mut state = AppState::for_test_with_configuration(configuration.clone());
+            state.dispatch(AppCommand::OpenProfiles, &context);
+            let profiles = state.active();
+            state.dispatch(
+                AppCommand::StartConfiguredLocalProfile {
+                    profile_id: "unknown".to_owned(),
+                },
+                &context,
+            );
+            assert_eq!(state.active(), profiles);
+            assert_eq!(state.tabs().len(), 2);
+            state.dispatch(command, &context);
+            assert_eq!(state.tabs().len(), 3);
+            assert!(state
+                .session_tab(state.active())
+                .unwrap()
+                .controller
+                .start_error()
+                .is_some());
+            state.dispatch(AppCommand::OpenProfiles, &context);
+            assert_eq!(state.active(), profiles);
+            assert_eq!(state.tabs().len(), 3);
+        }
+    }
+
+    #[test]
+    fn configured_interactive_ssh_connect_consumes_profiles_in_place() {
+        let context = egui::Context::default();
+        let configuration = Configuration::new(vec![festerm_config::Profile::ssh(
+            "remote",
+            "192.0.2.1",
+            22,
+            "user",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()])
+        .unwrap();
+        for sftp in [false, true] {
+            let mut state = AppState::for_test_with_configuration(configuration.clone());
+            state.dispatch(AppCommand::OpenProfiles, &context);
+            let profiles = state.active();
+            if sftp {
+                assert!(state.start_configured_sftp_profile_interactive("remote", &context));
+            } else {
+                state
+                    .start_configured_ssh_profile_interactive("remote", &context)
+                    .unwrap();
+            }
+            assert_eq!(state.active(), profiles);
+            assert_eq!(state.tabs().len(), 2);
+            assert_eq!(
+                state
+                    .session_tab(profiles)
+                    .unwrap()
+                    .profile_identifier
+                    .as_deref(),
+                Some("remote")
+            );
+            state.dispatch(AppCommand::CloseTab(profiles), &context);
+        }
+    }
+
+    #[test]
+    fn gui_sftp_profile_connect_replaces_profiles_and_can_cancel_in_place() {
+        let context = egui::Context::default();
+        let configuration = Configuration::new(vec![festerm_config::Profile::ssh(
+            "files",
+            "192.0.2.1",
+            22,
+            "user",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()])
+        .unwrap();
+        let mut state = AppState::for_test_with_configuration(configuration);
+        state.dispatch(AppCommand::OpenProfiles, &context);
+        let profiles = state.active();
+        state.dispatch(
+            AppCommand::OpenConfiguredSftpFileManagerProfile {
+                profile_id: "files".to_owned(),
+            },
+            &context,
+        );
+        assert_eq!(state.active(), profiles);
+        assert_eq!(state.tabs().len(), 2);
+        assert!(matches!(
+            &state.active_tab().content,
+            TabContent::SftpFileManagerAuthenticationRequired(tab) if tab.return_to_profiles
+        ));
+        state.dispatch(AppCommand::OpenProfiles, &context);
+        assert_eq!(state.active(), profiles);
+        assert_eq!(state.tabs().len(), 2);
+        assert!(matches!(state.active_tab().content, TabContent::Profiles));
+
+        state.dispatch(
+            AppCommand::OpenConfiguredSftpFileManagerProfile {
+                profile_id: "files".to_owned(),
+            },
+            &context,
+        );
+        let target = state.sftp_file_manager_target_for_profile("files").unwrap();
+        state.dispatch(
+            AppCommand::StartSftpFileManager {
+                target,
+                authentication: SftpFileManagerAuthentication::Password("test-only".to_owned()),
+            },
+            &context,
+        );
+        assert_eq!(state.active(), profiles);
+        assert_eq!(state.tabs().len(), 2);
+        assert!(matches!(
+            state.active_tab().content,
+            TabContent::SftpFileManager(_)
+        ));
+        state.dispatch(AppCommand::CloseTab(profiles), &context);
     }
 
     #[test]

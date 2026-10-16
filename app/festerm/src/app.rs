@@ -5997,6 +5997,7 @@ impl FesTermApp {
                         ui,
                         active_tab_id,
                         &tab.target,
+                        tab.return_to_profiles,
                     );
                 }
                 TabContent::SftpFileManager(tab) => {
