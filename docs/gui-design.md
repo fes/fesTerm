@@ -42,6 +42,8 @@ inference with ordinary adjustable selection; Escape cancels inferred selection.
 An unavailable result leaves an existing selection intact and explains that
 ordinary drag is available. There is intentionally no immediate **Smart Copy**:
 it would skip the inspection step on unqualified layout inference.
+Escape dismisses refusal/targeting feedback without discarding a prior
+ordinary selection; only an actual inferred selection is cancelled.
 
 Keyboard-only: focus the terminal and use **Ctrl+Alt+Shift+S/P/B** for
 sentence/paragraph/block (also Control+Option+Shift on macOS). The target is

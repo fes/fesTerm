@@ -1457,7 +1457,9 @@ impl TerminalView {
                             return false;
                         }
                         if *key == egui::Key::Escape && (self.selection.is_smart() || self.smart_keyboard_hit.is_some() || self.smart_selection_feedback.is_some()) {
-                            self.selection.clear();
+                            if self.selection.is_smart() {
+                                self.selection.clear();
+                            }
                             self.smart_selection_feedback = None;
                             self.smart_keyboard_hit = None;
                             self.smart_held_keys.push(*key);
@@ -1622,6 +1624,8 @@ impl TerminalView {
                 });
             });
         }
+        let smart_before_routing = self.selection.is_smart();
+        let selection_before_routing = self.selection.content_endpoints();
         let reports = route_egui_events(
             ui,
             &response,
@@ -1644,7 +1648,8 @@ impl TerminalView {
             },
         );
         if !self.selection.is_smart()
-            && (self.selection.range().is_some() || selected_text.is_some())
+            && (smart_before_routing
+                || self.selection.content_endpoints() != selection_before_routing)
         {
             self.smart_selection_feedback = None;
             self.smart_keyboard_hit = None;
@@ -2975,6 +2980,85 @@ mod tests {
         harness.event(egui::Event::Text("s".to_owned()));
         harness.run();
         assert_eq!(harness.state().sink.0.concat(), b"s");
+        assert!(harness.state().copied.is_empty());
+    }
+
+    #[test]
+    fn smart_selection_refusal_and_cancel_preserve_ordinary_selection() {
+        let mut harness = smart_selection_harness();
+        {
+            let state = harness.state_mut();
+            state
+                .view
+                .selection
+                .begin(CellPosition { column: 0, row: 0 });
+            state
+                .view
+                .selection
+                .extend(CellPosition { column: 4, row: 0 });
+            state.view.selection.finish();
+            state.view.request_smart_selection(
+                TerminalSnapshot::from_terminal(&state.terminal),
+                Some(CellPosition { column: 1, row: 5 }),
+                crate::SmartSelectionScope::Paragraph,
+            );
+            assert_eq!(
+                state.view.selected_text(&state.terminal).as_deref(),
+                Some("First")
+            );
+        }
+        harness.event(egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert_eq!(
+            harness
+                .state()
+                .view
+                .selected_text(&harness.state().terminal)
+                .as_deref(),
+            Some("First")
+        );
+        harness.event(egui::Event::Copy);
+        harness.run();
+        assert_eq!(harness.state().copied, vec!["First"]);
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn smart_selection_keyboard_target_can_leave_an_ordinary_selection() {
+        let mut harness = smart_selection_harness();
+        {
+            let state = harness.state_mut();
+            state
+                .view
+                .selection
+                .begin(CellPosition { column: 0, row: 0 });
+            state
+                .view
+                .selection
+                .extend(CellPosition { column: 4, row: 0 });
+            state.view.selection.finish();
+        }
+        smart_key(&mut harness, egui::Key::ArrowDown);
+        assert_eq!(
+            harness.state().view.smart_keyboard_hit,
+            Some(CellPosition { column: 4, row: 1 })
+        );
+        smart_key(&mut harness, egui::Key::B);
+        assert_eq!(
+            harness
+                .state()
+                .view
+                .selected_text(&harness.state().terminal)
+                .as_deref(),
+            Some("Second paragraph.")
+        );
+        assert!(harness.state().sink.0.is_empty());
         assert!(harness.state().copied.is_empty());
     }
 
