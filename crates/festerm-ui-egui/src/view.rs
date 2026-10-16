@@ -214,6 +214,8 @@ pub struct TerminalView {
     smart_selection_feedback: Option<String>,
     smart_keyboard_hit: Option<CellPosition>,
     smart_held_keys: Vec<egui::Key>,
+    /// Native key text can arrive in a later egui frame than its consumed key.
+    smart_payload_key: Option<egui::Key>,
     pending_link_requests: VecDeque<Arc<str>>,
     pending_context_action_request: bool,
     pending_history_actions: VecDeque<TerminalHistoryAction>,
@@ -609,6 +611,9 @@ impl TerminalView {
     /// The returned focus event belongs on the terminal's ordered input path.
     pub fn relinquish_transient_input(&mut self) -> Option<FocusEvent> {
         self.cancel_rectangle_copy();
+        self.smart_held_keys.clear();
+        self.smart_payload_key = None;
+        self.smart_keyboard_hit = None;
         if self.selection.is_active() {
             self.selection.finish();
         }
@@ -1398,8 +1403,13 @@ impl TerminalView {
         let mut smart_request = None;
         if options.terminal_input_enabled && response.has_focus() {
             ui.input_mut(|input| {
-                let mut consumed_key = None;
+                let mut consumed_key = self.smart_payload_key.take();
                 input.events.retain(|event| {
+                    if matches!(event, egui::Event::Ime(_) | egui::Event::WindowFocused(_) |
+                        egui::Event::Paste(_) | egui::Event::Copy |
+                        egui::Event::PointerButton { pressed: true, .. }) {
+                        consumed_key = None;
+                    }
                     if let egui::Event::Text(text) = event {
                         if matches!((consumed_key.take(), text.as_str()),
                             (Some(egui::Key::S), "s" | "S") |
@@ -1457,6 +1467,7 @@ impl TerminalView {
                     }
                     true
                 });
+                self.smart_payload_key = consumed_key;
             });
         }
         if let Some(scope) = smart_request {
@@ -2939,9 +2950,31 @@ mod tests {
             });
             harness.event(egui::Event::Text("\u{1b}".to_owned()));
             harness.step();
+            assert!(
+                harness.state().sink.0.is_empty(),
+                "pressed={pressed}, repeat={repeat}, encoded={:?}",
+                harness.state().sink.0
+            );
         }
         assert!(harness.state().view.selection.range().is_none());
         assert!(harness.state().sink.0.is_empty());
+        assert!(harness.state().copied.is_empty());
+    }
+
+    #[test]
+    fn smart_selection_payload_capture_does_not_swallow_fresh_typing() {
+        let mut harness = smart_selection_harness();
+        smart_key(&mut harness, egui::Key::S);
+        harness.event(egui::Event::Key {
+            key: egui::Key::S,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::Text("s".to_owned()));
+        harness.run();
+        assert_eq!(harness.state().sink.0.concat(), b"s");
         assert!(harness.state().copied.is_empty());
     }
 

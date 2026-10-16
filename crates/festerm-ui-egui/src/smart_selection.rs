@@ -96,7 +96,7 @@ fn border(text: &str) -> bool {
 fn row(
     snapshot: TerminalSnapshot<'_>,
     y: usize,
-    x: usize,
+    x: Option<usize>,
     budget: &mut usize,
     byte_budget: &mut usize,
 ) -> Option<Row> {
@@ -115,7 +115,10 @@ fn row(
             cells.push((column, text.to_owned()));
         }
     }
-    let hit = cells.iter().rposition(|(column, _)| *column <= x)?;
+    let hit = match x {
+        Some(x) => cells.iter().rposition(|(column, _)| *column <= x)?,
+        None => cells.iter().position(|(_, text)| !text.trim().is_empty())?,
+    };
     if border(&cells[hit].1) || cells[hit].1.trim().is_empty() {
         return None;
     }
@@ -184,10 +187,17 @@ pub(crate) fn infer(
     }
     let mut budget = MAX_CELLS;
     let mut byte_budget = MAX_BYTES;
-    let center = row(snapshot, hit.row, hit.column, &mut budget, &mut byte_budget)?;
+    let center = row(
+        snapshot,
+        hit.row,
+        Some(hit.column),
+        &mut budget,
+        &mut byte_budget,
+    )?;
     let conservative = center.bounded;
     let mut first = hit.row;
     let mut last = hit.row;
+    let mut examined_rows = 1;
     let mut rows = vec![(hit.row, center)];
     // Pane inference intentionally stops at one visual row: wrap metadata only
     // describes the entire terminal, not individual TUI panes.
@@ -200,9 +210,10 @@ pub(crate) fn infer(
                     (last + 1 < snapshot.dimensions().rows()).then_some(last + 1)
                 };
                 let Some(y) = y else { break };
-                if rows.len() == MAX_ROWS {
+                if examined_rows == MAX_ROWS {
                     return None;
                 }
+                examined_rows += 1;
                 let edge = if upwards {
                     &rows[0].1
                 } else {
@@ -214,14 +225,7 @@ pub(crate) fn infer(
                 if budget < snapshot.dimensions().columns() {
                     return None;
                 }
-                let candidate_hit = (0..snapshot.dimensions().columns()).find(|column| {
-                    snapshot
-                        .cell(*column, y)
-                        .is_some_and(|cell| !cell.text().trim().is_empty())
-                });
-                let Some(candidate) =
-                    candidate_hit.and_then(|x| row(snapshot, y, x, &mut budget, &mut byte_budget))
-                else {
+                let Some(candidate) = row(snapshot, y, None, &mut budget, &mut byte_budget) else {
                     if byte_budget == 0 {
                         return None;
                     }

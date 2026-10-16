@@ -1035,6 +1035,7 @@
         "smart_selection_wide_wrap_excludes_synthetic_padding",
         "smart_selection_invalidation_tracks_wrap_resize_and_screen_identity",
         "smart_selection_held_cancel_never_leaks_repeat_or_release",
+        "smart_selection_payload_capture_does_not_swallow_fresh_typing",
         "smart_selection_rejects_blank_border_and_excessive_context",
         "smart_selection_keyboard_is_local_deliberate_and_cancellable",
         "smart_selection_context_menu_respects_mouse_override_and_copy",
