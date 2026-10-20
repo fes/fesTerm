@@ -6049,3 +6049,26 @@ context-free cancellation closes it before the next render. Actual application
 tests fail first on stale Open dispatch across availability, generation,
 fingerprint and cwd changes, then pass after the repair. Ordinary live menus
 remain usable; this adds no native or usability acceptance claim.
+
+## Smart selection starts with layout, not a model
+
+The owner explicitly requested #397 as a separate feature. Flattening terminal
+text before sentence segmentation would accidentally join adjacent TUI panes,
+and copying immediately would hide those mistakes. The first implementation
+therefore uses bounded cell-grid inference, conservative border/gap regions,
+authoritative soft wraps and explicit sentence/paragraph/indented-block scopes.
+It highlights the actual cells and retains deliberate existing Copy; ordinary
+selection and Shift's mouse-reporting override stay intact. Keyboard-only
+targeting and refusal feedback make the operation discoverable without a new
+click convention. Live output is not frozen: absolute selected cells survive
+unrelated output, but changed text, wraps, dimensions or eviction invalidate
+inference before Copy.
+
+Regression fixtures cover supported layouts rather than asserting universal
+semantic quality. Bordered/gapped pane results intentionally stop at one visual
+row, and unmarked columns, abbreviations and arbitrary repainting TUIs remain
+limits. No OCR, network, content logging or model dependency was needed.
+Prospective model accuracy/resource/distribution gates are documented before
+any adoption, alongside TI-19's remaining native/accessibility/usability checks.
+This is an additive presentation feature, not a crate-boundary change, M6
+acceptance or evidence that a language model would improve selection.
