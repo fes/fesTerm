@@ -2343,6 +2343,13 @@
       ],
       "automated_tests": [
         "open_profiles_is_a_singleton_and_reactivates_the_existing_tab",
+        "profile_session_placement_reuses_profiles_position_identity_and_workspace",
+        "ad_hoc_session_does_not_consume_profiles_and_other_surfaces_are_preserved",
+        "failed_or_missing_profile_launch_keeps_profiles_available",
+        "configured_interactive_ssh_connect_consumes_profiles_in_place",
+        "stored_credential_profile_connect_reuses_profiles_for_ssh_and_sftp",
+        "gui_sftp_profile_connect_replaces_profiles_and_can_cancel_in_place",
+        "profiles_authentication_can_cancel_without_connecting_and_clears_credentials",
         "profiles_repaints_reuse_the_composition_root_provider_default",
         "textureless_bordered_panels_match_pixels_across_dpi",
         "textureless_panel_fill_preserves_opacity_and_srgb_fallback",
@@ -2442,6 +2449,7 @@
       ],
       "manual_scenarios": [
         "CP-05",
+        "CP-10",
         "CP-11",
         "TI-09"
       ],

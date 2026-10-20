@@ -519,6 +519,7 @@ pub(crate) fn show_authentication_required(
     ui: &mut Ui,
     tab_id: crate::tabs::TabId,
     target: &SftpFileManagerLaunchTarget,
+    return_to_profiles: bool,
 ) -> Option<crate::tabs::AppCommand> {
     let state_id = ui.id().with(("gui_sftp_auth_state", tab_id));
     let mut state = ui.data(|data| {
@@ -675,6 +676,15 @@ pub(crate) fn show_authentication_required(
                             authentication,
                         });
                     }
+                }
+                if return_to_profiles
+                    && (ui.button("Back to Profiles").clicked()
+                        || ui.input_mut(|input| {
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                        }))
+                {
+                    state = AuthenticationFormState::default();
+                    command = Some(crate::tabs::AppCommand::OpenProfiles);
                 }
             });
         });
@@ -7830,6 +7840,56 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn profiles_authentication_can_cancel_without_connecting_and_clears_credentials() {
+        let target = test_launch_target(Some("production"));
+        let tab_id = crate::tabs::AppState::for_test().active();
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, state: &mut (Option<crate::tabs::AppCommand>, bool)| {
+                if let Some(command) = show_authentication_required(ui, tab_id, &target, true) {
+                    state.0 = Some(command);
+                }
+                let draft = ui.data(|data| {
+                    data.get_temp::<AuthenticationFormState>(
+                        ui.id().with(("gui_sftp_auth_state", tab_id)),
+                    )
+                    .unwrap()
+                });
+                state.1 = draft.password.is_empty()
+                    && draft.private_key.is_empty()
+                    && draft.passphrase.is_empty();
+            },
+            (None, false),
+        );
+        harness.run();
+        harness.get_by_label("Open SFTP file manager").click();
+        harness.run();
+        assert!(
+            harness.state().0.is_none(),
+            "invalid authentication stays on the form"
+        );
+        harness
+            .get_by_role(egui::accesskit::Role::PasswordInput)
+            .focus();
+        harness.run();
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text("unsubmitted-secret".to_owned()));
+        harness.run();
+        assert!(!harness.state().1);
+        harness.get_by_label("Back to Profiles").click();
+        harness.run();
+        assert!(matches!(
+            harness.state().0,
+            Some(crate::tabs::AppCommand::OpenProfiles)
+        ));
+        assert!(
+            harness.state().1,
+            "cancel must discard transient authentication"
+        );
+    }
+
+    #[test]
     fn authentication_surface_offers_the_saved_credential_for_gui_sftp() {
         let target = SftpFileManagerLaunchTarget {
             label: "production".to_owned(),
@@ -7843,7 +7903,7 @@ pub(crate) mod tests {
         let tab_id = crate::tabs::AppState::for_test().active();
         let mut harness = Harness::builder().build_ui_state(
             move |ui, command: &mut Option<crate::tabs::AppCommand>| {
-                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
+                if let Some(next) = show_authentication_required(ui, tab_id, &target, false) {
                     *command = Some(next);
                 }
             },
@@ -7876,7 +7936,7 @@ pub(crate) mod tests {
         let tab_id = crate::tabs::AppState::for_test().active();
         let mut harness = Harness::builder().build_ui_state(
             move |ui, command: &mut Option<crate::tabs::AppCommand>| {
-                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
+                if let Some(next) = show_authentication_required(ui, tab_id, &target, false) {
                     *command = Some(next);
                 }
             },
@@ -7914,7 +7974,7 @@ pub(crate) mod tests {
                         },
                     );
                 });
-                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
+                if let Some(next) = show_authentication_required(ui, tab_id, &target, false) {
                     *command = Some(next);
                 }
             },
@@ -7945,7 +8005,7 @@ pub(crate) mod tests {
         let tab_id = crate::tabs::AppState::for_test().active();
         let mut harness = Harness::builder().build_ui_state(
             move |ui, command: &mut Option<crate::tabs::AppCommand>| {
-                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
+                if let Some(next) = show_authentication_required(ui, tab_id, &target, false) {
                     *command = Some(next);
                 }
             },
@@ -7996,7 +8056,7 @@ pub(crate) mod tests {
         let mut harness = Harness::builder().build_ui_state(
             move |ui, state: &mut ReentryState| {
                 if state.visible {
-                    show_authentication_required(ui, tab_id, &target);
+                    show_authentication_required(ui, tab_id, &target, false);
                 } else {
                     // Stands in for the connecting/failed surface the tab
                     // swaps in while the form is away.
@@ -8046,7 +8106,7 @@ pub(crate) mod tests {
         let tab_id = crate::tabs::AppState::for_test().active();
         let mut harness = Harness::builder().build_ui_state(
             move |ui, command: &mut Option<crate::tabs::AppCommand>| {
-                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
+                if let Some(next) = show_authentication_required(ui, tab_id, &target, false) {
                     *command = Some(next);
                 }
             },
