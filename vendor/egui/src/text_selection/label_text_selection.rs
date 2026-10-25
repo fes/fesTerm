@@ -110,6 +110,7 @@ struct ViewportLabelSelectionState {
     /// Accumulated text to copy.
     text_to_copy: String,
     last_copied_galley_rect: Option<Rect>,
+    selected_labels: Vec<(Id, std::ops::Range<usize>)>,
 
     /// Painted selections this frame.
     ///
@@ -129,6 +130,7 @@ impl Default for ViewportLabelSelectionState {
             has_reached_secondary: Default::default(),
             text_to_copy: Default::default(),
             last_copied_galley_rect: Default::default(),
+            selected_labels: Default::default(),
             painted_selections: Default::default(),
         }
     }
@@ -157,6 +159,43 @@ impl Plugin for LabelSelectionState {
 }
 
 impl LabelSelectionState {
+    /// Plain label-selection payload queued during this pass, before end-of-pass.
+    pub fn pending_copy_text(&self, viewport: crate::ViewportId) -> Option<&str> {
+        self.states
+            .get(&viewport)
+            .map(|state| state.text_to_copy.as_str())
+            .filter(|text| !text.is_empty())
+    }
+
+    /// Current-pass range for a label just rendered; endpoints are validated
+    /// by [`Self::selected_label_ranges`] after rendering the containing UI.
+    pub fn selected_label_range(
+        &self,
+        viewport: crate::ViewportId,
+        widget: Id,
+    ) -> Option<std::ops::Range<usize>> {
+        self.states
+            .get(&viewport)?
+            .selected_labels
+            .iter()
+            .rev()
+            .find(|(id, _)| *id == widget)
+            .map(|(_, range)| range.clone())
+    }
+
+    /// Selected character ranges from labels seen in the current viewport pass.
+    /// Returns nothing if either selection endpoint is no longer present.
+    pub fn selected_label_ranges(
+        &self,
+        viewport: crate::ViewportId,
+    ) -> Vec<(Id, std::ops::Range<usize>)> {
+        self.states
+            .get(&viewport)
+            .filter(|state| state.has_reached_primary && state.has_reached_secondary)
+            .map(|state| state.selected_labels.clone())
+            .unwrap_or_default()
+    }
+
     /// Is there a label text selection in any viewport?
     pub fn has_selection(&self) -> bool {
         self.states
@@ -211,6 +250,7 @@ impl ViewportLabelSelectionState {
         self.has_reached_secondary = false;
         self.text_to_copy.clear();
         self.last_copied_galley_rect = None;
+        self.selected_labels.clear();
         self.painted_selections.clear();
     }
 
@@ -260,7 +300,7 @@ impl ViewportLabelSelectionState {
         }
 
         let pressed_escape = ui.input(|i| i.key_pressed(crate::Key::Escape));
-        let clicked_something_else = ui.input(|i| i.pointer.any_pressed()) && !self.any_hovered;
+        let clicked_something_else = ui.input(|i| i.pointer.primary_pressed()) && !self.any_hovered;
         let delected_everything = pressed_escape || clicked_something_else;
 
         if delected_everything {
@@ -549,6 +589,7 @@ impl ViewportLabelSelectionState {
         }
 
         let cursor_at_press = super::text_cursor_state::pressed_pointer_pos(ui)
+            .filter(|_| ui.input(|i| i.pointer.primary_pressed()))
             .filter(|_| {
                 response.enabled()
                     && (response.hovered()
@@ -562,7 +603,8 @@ impl ViewportLabelSelectionState {
             })
             .map(|pos| galley.cursor_from_pos((galley_from_global * pos).to_vec2()));
         self.any_hovered |= response.hovered() || cursor_at_press.is_some();
-        self.is_dragging |= response.is_pointer_button_down_on(); // we don't want the initial latency of drag vs click decision
+        self.is_dragging |=
+            response.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
 
         let old_selection = self.selection;
 
@@ -608,6 +650,11 @@ impl ViewportLabelSelectionState {
 
         // Look for changes due to keyboard and/or mouse interaction:
         let new_range = cursor_state.range(galley);
+        if let Some(range) = new_range.filter(|range| !range.is_empty()) {
+            let range = range.as_sorted_char_range();
+            self.selected_labels
+                .push((response.id, range.start.0..range.end.0));
+        }
         let selection_changed = old_range != new_range;
 
         if let (true, Some(range)) = (selection_changed, new_range) {

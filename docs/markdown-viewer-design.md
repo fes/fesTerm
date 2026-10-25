@@ -442,10 +442,30 @@ inside a horizontal-only viewport. The original row choice, horizontal target,
 wrapping, selection and raw code Copy remain unchanged. Table cells do not yet
 handle byte targets; this separate gap is not covered by the code-row fix.
 
-Text selection and Copy produce plain text by default. Code-block Copy copies
-only code content, excluding the language label and line numbers. A future
-**Copy as Markdown** command may be added only with a precise source-range
-mapping; v1 does not reconstruct Markdown from rendered selections.
+Preview selection Copy publishes restricted semantic HTML with the existing
+plain-text selection as its fallback. This applies to the standalone viewer
+and editor Preview/Split. Right-click preserves the selection and offers
+**Copy rich text**; holding Shift while right-clicking additionally offers
+**Copy Markdown source**, using parser-owned byte spans from the selected
+snapshot, not searching for repeated text or reconstructing Markdown.
+Fully selected inline formatting includes its original delimiters; partial
+selections retain only their mapped source bytes. When a partial transformed
+run cannot be mapped exactly, the source action is disabled with guidance to
+select the complete run or use Source mode.
+
+The rich exporter escapes literal HTML and permits only HTTPS link targets;
+it does not embed images, SVG, document CSS, executable HTML, or local/remote
+resource authority. A selection containing unsupported rendered widgets or
+exceeding the 16 MiB rich-output limit retains plain-text Copy instead of
+publishing incomplete rich content. Clipboard export does not fetch resources
+or read the clipboard. Menus retain only a bounded selected snapshot and retire
+on reparse or loss of their visible viewport owner. Native HTML delivery uses
+the existing clipboard backend; unsupported/failed HTML writes explicitly log
+and fall back to text. The current Wayland backend is text-only.
+
+Source-mode Copy and code-block Copy remain plain text; code-block Copy copies
+only code content, excluding fences, language labels and line numbers.
+Code-only keyboard selections also retain their existing plain-text behavior.
 
 Keyboard paths:
 

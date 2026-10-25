@@ -564,11 +564,11 @@ pub(crate) fn route_egui_events(
                 modifiers,
                 ..
             } if keyboard_focused && !keyboard.ime_composing => {
-                let translated =
-                    control_key(key, modifiers).or_else(|| translate_key(key, modifiers));
-                if let Some(key) = translated {
+                let translated = control_key(key, modifiers)
+                    .map(InputEvent::Key)
+                    .or_else(|| translate_key(key, modifiers));
+                if let Some(event) = translated {
                     terminal_key_routed = true;
-                    let event = InputEvent::Key(key);
                     let mut metadata = crate::routing_trace::Metadata::from_input(&event);
                     metadata.modifiers = u8::from(modifiers.shift)
                         | (u8::from(modifiers.alt) << 1)
@@ -906,7 +906,13 @@ pub(crate) fn route_pointer_event(
     }
 }
 
-fn translate_key(key: egui::Key, modifiers: egui::Modifiers) -> Option<Key> {
+fn translate_key(key: egui::Key, modifiers: egui::Modifiers) -> Option<InputEvent> {
+    if key == egui::Key::Tab && modifiers == egui::Modifiers::SHIFT {
+        return Some(InputEvent::ModifiedKey {
+            key: Key::Tab,
+            modifiers: Modifiers::SHIFT,
+        });
+    }
     match key {
         egui::Key::Enter => Some(Key::Enter),
         egui::Key::Tab => Some(Key::Tab),
@@ -920,6 +926,7 @@ fn translate_key(key: egui::Key, modifiers: egui::Modifiers) -> Option<Key> {
         egui::Key::PageDown if modifiers == egui::Modifiers::NONE => Some(Key::PageDown),
         _ => None,
     }
+    .map(InputEvent::Key)
 }
 
 /// Maps a Ctrl-held key press to the terminal's C0 control-byte encoding

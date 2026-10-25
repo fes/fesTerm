@@ -3,6 +3,25 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Backward terminal navigation and portable Markdown copying
+
+Shift+Tab was losing its modifier before reaching the terminal encoder.
+Exact Shift+Tab now remains typed through the existing input path and emits
+Backtab (`ESC[Z`), preserving plain Tab, Ctrl+Tab navigation, repeats, keyboard
+lock, foreground ownership and atomic queue admission.
+
+Preview Copy now supplies restricted semantic HTML alongside its exact
+plain-text fallback in standalone views and editor Preview/Split.
+Shift+right-click additionally offers original selected Markdown, mapped from
+parser byte spans rather than reconstructed from rendered text. Menus retain
+only the selected snapshot and retire on reparse or hidden ownership; literal
+HTML stays escaped and copying grants no resource access. Source-mode and
+explicit code Copy remain plain text. Wayland's current clipboard backend
+honestly degrades to text. Deterministic key routing, Unicode/duplicate/fenced
+selection, safe export and stale-menu checks do not establish native
+Copilot navigation, rich-paste interoperability or clipboard usability;
+TI-02 and CP-06/CP-15 retain those native checks.
+
 ## Connecting from Profiles without leaving a spent tab
 
 Profiles Connect used the same commands as Launcher, but placement only
