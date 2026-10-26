@@ -479,7 +479,7 @@ the worker connects and verifies the host key first (see
 [Host-key verification](#host-key-verification)), and only once
 authentication is actually needed does an in-terminal, pty-styled password
 prompt appear (`user@host's password:`, `show_ssh_live_password_prompt`),
-rendered in the bundled terminal font in place of the terminal view with no
+rendered in the selected terminal font in place of the terminal view with no
 textbox or button — typed characters are never echoed, matching real `ssh`,
 and Enter submits. A rejected password appends "Permission denied, please try
 again." plus a fresh prompt line below (matching `ssh`'s own
@@ -1600,7 +1600,7 @@ the byte stream.
 ![Host-key verification target](images/gui-mockups/host-key-verification.png)
 
 Host-key verification is an in-tab decision that blocks only the affected
-connection, rendered pty-style (bundled terminal font, terminal background)
+connection, rendered pty-style (selected terminal font, terminal background)
 in place of the terminal view, mimicking `ssh`'s own prompt text rather than
 a dialog. It shows the canonical `host:port`, key algorithm, and full SHA-256
 fingerprint. It does not claim that the host is safe; it asks the user to

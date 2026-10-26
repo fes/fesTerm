@@ -144,9 +144,9 @@ for the supported subset and limits.
   signing, notarization, updater keys, publication, and credential rotation.
 - [Icon system](docs/icon-system.md) — first-party SVG sources, semantic Rust
   names, accessibility rules, color/state policy, and validation pipeline.
-- [Bundled terminal fonts](assets/fonts/) — pinned JetBrains Mono, Iosevka
-  Term, JuliaMono, and Maple Mono provenance, licensing, checksums, and
-  reproducible selection/ligature policy.
+- [Terminal font assets](assets/fonts/) — embedded JetBrains Mono plus pinned
+  optional Iosevka Term, JuliaMono, and Maple Mono provenance, licensing,
+  checksums, and reproducible selection/ligature policy.
 - [UI and platform test plan](docs/ui-test-plan.md) — layered compatibility,
   interaction, rendering, PTY, and platform validation strategy.
 - [Manual and usability validation registry](docs/manual-validation.md) — the

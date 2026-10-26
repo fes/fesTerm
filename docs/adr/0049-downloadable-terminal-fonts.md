@@ -1,6 +1,6 @@
 # ADR 0049: Downloadable Optional Terminal Fonts
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-15
 - **Supersedes:** None
 

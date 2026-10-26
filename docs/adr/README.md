@@ -41,14 +41,13 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0041: Automatic Retained Window Prefix](0041-opt-in-retained-window-prefix.md) - owner-approved exact immutable prefix reuse; resource/native/latency follow-ups remain in #282
 - [ADR 0047: Bounded Local Document Background I/O](0047-bounded-local-document-background-io.md) - owner accepted the bounded immutable worker, completion-only wake and nonblocking write admission on 2026-10-12; native qualification remains CP-15
 - [ADR 0048: Bounded Native SVG and HTML Anchors in Markdown](0048-bounded-native-svg-and-html-anchors.md) - owner accepted 2026-10-14 after pre-parser marker refusal and actual named-target scrolling repairs; narrowly amends ADR 0030, native fidelity/accessibility/DPI qualification remains CP-06/CP-15
+- [ADR 0049: Downloadable Optional Terminal Fonts](0049-downloadable-terminal-fonts.md) - application-owned pinned acquisition and automatic upgrade reconciliation; native released-asset qualification pending
 
 ## Superseded Decisions
 
 - [ADR 0008: Versioned TOML Configuration with Safe Hot Reload](0008-versioned-toml-configuration.md) — superseded by ADR 0015
 
 ## Proposed Decisions
-
-- [ADR 0049: Downloadable Optional Terminal Fonts](0049-downloadable-terminal-fonts.md) - application-owned pinned acquisition and automatic upgrade reconciliation; native released-asset qualification pending
 
 - [ADR 0046: Retained Document Frame](0046-opt-in-retained-document-frame.md) - owner-authorized qualified-route WARP default with explicit opt-out; exact complete-frame reuse shares ADR 0041's bounded cache; independent architectural review remains pending
 

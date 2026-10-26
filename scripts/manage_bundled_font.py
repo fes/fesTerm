@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify and monitor fesTerm's bundled terminal fonts."""
+"""Verify and monitor fesTerm's embedded and optional terminal fonts."""
 
 from __future__ import annotations
 

@@ -12,12 +12,18 @@ optional faces out of production embeds into separately published release
 assets. This also preserves the reproducible Iosevka ligature build instead
 of substituting an upstream download with different shaping.
 
-Same-toolchain Windows debug builds measured 178,309,120 bytes at the
-unmodified v0.10.4 base (`54b50769`) and 132,207,104 bytes after migration:
-46,102,016 bytes smaller (25.86%), including the new downloader's overhead.
-Direct byte inspection of the built executable confirmed the embedded
-JetBrains regular face and absence of all twelve optional payloads. These are
-executable measurements, not a claim about compressed release installer size.
+Fresh same-toolchain macOS arm64 development builds with debug information
+disabled measured 208,988,672 bytes at the current integration base
+`14eae97cb1e50067ad2f638087f18e5933c6b376` (artifact SHA-256
+`2d454a0dbaf50d4d345f4cd89873f41c1943518b6e60b866dabaa4586fd557b7`) and
+162,694,416 bytes at reviewed feature head
+`ee6fe3e377d7d3ae7dc0149e3df5e9e169fcf1bb` (artifact SHA-256
+`90f0c78a5c39058e2a233a0c965a53bbe67854ff620d67a5b86cffc33689972b`):
+46,294,256 bytes smaller (22.15%), including downloader and embedded-notice
+overhead. Both used Rust 1.97.1 and `CARGO_PROFILE_DEV_DEBUG=0`. Direct byte
+inspection of the reviewed executable found all eight JetBrains Mono faces and
+none of the twelve optional faces. These are executable measurements, not a
+claim about compressed release installer size or another platform's binary.
 
 The application now reconciles a saved optional choice automatically after
 upgrade, using a bounded worker, exact size/hash checks, a process-safe cache,

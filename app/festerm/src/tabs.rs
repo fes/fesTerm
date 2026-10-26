@@ -2304,7 +2304,7 @@ pub enum AppCommand {
     /// restarts (`docs/gui-design.md` "Workspace restore" - explicit
     /// opt-in, off by default).
     ToggleRestoreWorkspace,
-    /// Selects the bundled primary terminal face without changing
+    /// Selects the supported primary terminal face without changing
     /// application-chrome typography.
     SetTerminalFont(TerminalFontPreference),
     SetKeyboardBindings(festerm_config::KeyboardBindings),
