@@ -816,6 +816,7 @@ impl FesTermApp {
         // One semantic blue-graphite default for application surfaces and
         // widgets. Terminal ANSI and explicit RGB colors remain independent.
         context.set_visuals(theme::default_visuals());
+        crate::markdown_viewer::install_clipboard(context);
         let desired_terminal_font =
             terminal_font_family(configuration.interface_settings().terminal_font());
         festerm_ui_egui::reconcile_terminal_font_preference(context, desired_terminal_font);

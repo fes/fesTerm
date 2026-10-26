@@ -37,7 +37,9 @@ allowing a right-click context menu to act on that range. Labels outside that
 bracket retain upstream secondary-click behavior, and primary, middle and
 extra-button presses remain unchanged. The added ranges and opt-in reset at
 begin-pass, capture-only plain text is consumed at end-of-pass, and neither
-retains document bytes beyond its pass.
+retains document bytes beyond its pass. Current-pass selected-label lookup is
+indexed by widget ID so one bounded copy frame does not rescan all preceding
+selected labels for every rendered run.
 
 Deterministic application regressions cover forward/reverse/Shift selection,
 Unicode and translated layers, separate and combined within-widget batches,

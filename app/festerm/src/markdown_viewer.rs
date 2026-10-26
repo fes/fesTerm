@@ -35,6 +35,10 @@ use crate::tabs::{AppCommand, ExternalLinkTarget, TabId};
 
 mod clipboard;
 
+pub(crate) fn install_clipboard(context: &egui::Context) {
+    clipboard::install(context);
+}
+
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_IMAGE_PIXELS: u64 = 16 * 1024 * 1024;
 /// How many images a local document may load without the reader asking
@@ -462,6 +466,7 @@ pub struct MarkdownViewerTab {
     outline_open: bool,
     outline_selected: Option<usize>,
     document: Option<MarkdownDocument>,
+    clipboard_owner: u64,
     document_revision: u64,
     error: Option<MarkdownViewerErrorState>,
     stale_snapshot: bool,
@@ -521,6 +526,7 @@ impl MarkdownViewerTab {
             outline_open: true,
             outline_selected: None,
             document: None,
+            clipboard_owner: clipboard::new_surface_owner(),
             document_revision: 0,
             error: None,
             stale_snapshot: false,
@@ -584,6 +590,7 @@ impl MarkdownViewerTab {
             outline_open: true,
             outline_selected: None,
             document: None,
+            clipboard_owner: clipboard::new_surface_owner(),
             document_revision: 0,
             error: None,
             stale_snapshot: false,
@@ -781,7 +788,12 @@ impl MarkdownViewerTab {
                                 }
                                 document_rect = Some(
                                     render_state
-                                        .show_document(ui, document, self.document_revision)
+                                        .show_document(
+                                            ui,
+                                            document,
+                                            self.clipboard_owner,
+                                            self.document_revision,
+                                        )
                                         .document_rect,
                                 );
                                 #[cfg(test)]
@@ -3058,6 +3070,7 @@ impl MarkdownRenderState<'_> {
         &mut self,
         ui: &mut egui::Ui,
         document: &MarkdownDocument,
+        clipboard_owner: u64,
         document_revision: u64,
     ) -> MarkdownDocumentLayout {
         if self.mode == MarkdownViewerMode::Preview {
@@ -3139,7 +3152,13 @@ impl MarkdownRenderState<'_> {
             })
             .inner;
         if self.mode == MarkdownViewerMode::Preview {
-            clipboard::finish(ui, document, document_revision, layout.document_rect);
+            clipboard::finish(
+                ui,
+                document,
+                clipboard_owner,
+                document_revision,
+                layout.document_rect,
+            );
         }
         layout
     }
@@ -5121,6 +5140,7 @@ pub(crate) struct MarkdownPreviewPane {
     source_generation: Option<Generation>,
     source_parent_identity: Option<DirectoryIdentity>,
     document: Option<MarkdownDocument>,
+    clipboard_owner: u64,
     document_revision: u64,
     error: Option<String>,
     /// The text the current parse was made from, so an unchanged frame costs
@@ -5166,6 +5186,7 @@ impl MarkdownPreviewPane {
             source_generation: None,
             source_parent_identity: None,
             document: None,
+            clipboard_owner: clipboard::new_surface_owner(),
             document_revision: 0,
             error: None,
             parsed: String::new(),
@@ -5469,6 +5490,7 @@ impl MarkdownPreviewPane {
         clipboard::finish(
             ui,
             &document,
+            self.clipboard_owner,
             self.document_revision,
             egui::Rect::from_min_size(
                 egui::pos2(ui.min_rect().left(), viewport_top),
@@ -11381,7 +11403,7 @@ mod tests {
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: Some(&mut heading_tops),
                     };
-                    layout = Some(render_state.show_document(ui, &document, 0));
+                    layout = Some(render_state.show_document(ui, &document, 1, 0));
                 });
             },
         );
@@ -11455,7 +11477,7 @@ mod tests {
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: Some(&mut heading_tops),
                     };
-                    layout = Some(render_state.show_document(ui, &document, 0));
+                    layout = Some(render_state.show_document(ui, &document, 1, 0));
                 });
             },
         );

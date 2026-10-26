@@ -18,8 +18,9 @@ only the selected snapshot, retain source bytes solely for an exact
 Shift-requested source action, and retire on reparse or hidden ownership.
 Parser-owned soft/hard breaks preserve semantic separators independently of
 widget placement; context-menu and keyboard rich Copy share egui's exact plain
-fallback, monotonic document revisions prevent stale-menu reuse, and root
-passes reclaim payloads for closed child viewports. Secondary-click selection
+fallback, unique surface owners plus monotonic document revisions prevent
+stale-menu reuse across reparses or viewer replacement, and root passes reclaim
+payloads for closed child viewports. Secondary-click selection
 preservation is scoped to labels rendered inside the Markdown surface, so
 ordinary selectable labels retain upstream behavior. Literal HTML stays
 escaped and copying grants no resource access. Source-mode and explicit code

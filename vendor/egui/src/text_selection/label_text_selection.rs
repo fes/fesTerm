@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use emath::TSTransform;
 
@@ -115,6 +115,7 @@ struct ViewportLabelSelectionState {
     preserve_secondary_for_labels: bool,
     preserved_secondary_this_pass: bool,
     selected_labels: Vec<(Id, std::ops::Range<usize>)>,
+    selected_label_lookup: HashMap<Id, std::ops::Range<usize>>,
 
     /// Painted selections this frame.
     ///
@@ -139,6 +140,7 @@ impl Default for ViewportLabelSelectionState {
             preserve_secondary_for_labels: Default::default(),
             preserved_secondary_this_pass: Default::default(),
             selected_labels: Default::default(),
+            selected_label_lookup: Default::default(),
             painted_selections: Default::default(),
         }
     }
@@ -177,9 +179,14 @@ impl LabelSelectionState {
     }
 
     /// End a label range protected from secondary-click selection changes.
-    pub fn end_preserve_selection_on_secondary_press(&mut self, viewport: crate::ViewportId) {
+    pub fn end_preserve_selection_on_secondary_press(
+        &mut self,
+        viewport: crate::ViewportId,
+        preserve_background_press: bool,
+    ) {
         if let Some(state) = self.states.get_mut(&viewport) {
             state.preserve_secondary_for_labels = false;
+            state.preserved_secondary_this_pass |= preserve_background_press;
         }
     }
 
@@ -209,11 +216,9 @@ impl LabelSelectionState {
     ) -> Option<std::ops::Range<usize>> {
         self.states
             .get(&viewport)?
-            .selected_labels
-            .iter()
-            .rev()
-            .find(|(id, _)| *id == widget)
-            .map(|(_, range)| range.clone())
+            .selected_label_lookup
+            .get(&widget)
+            .cloned()
     }
 
     /// Selected character ranges from labels seen in the current viewport pass.
@@ -288,6 +293,7 @@ impl ViewportLabelSelectionState {
         self.preserve_secondary_for_labels = false;
         self.preserved_secondary_this_pass = false;
         self.selected_labels.clear();
+        self.selected_label_lookup.clear();
         self.painted_selections.clear();
     }
 
@@ -703,8 +709,9 @@ impl ViewportLabelSelectionState {
         let new_range = cursor_state.range(galley);
         if let Some(range) = new_range.filter(|range| !range.is_empty()) {
             let range = range.as_sorted_char_range();
-            self.selected_labels
-                .push((response.id, range.start.0..range.end.0));
+            let range = range.start.0..range.end.0;
+            self.selected_labels.push((response.id, range.clone()));
+            self.selected_label_lookup.insert(response.id, range);
         }
         let selection_changed = old_range != new_range;
 

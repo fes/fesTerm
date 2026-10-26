@@ -2,12 +2,16 @@ use eframe::egui;
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use super::{Inline, InlineRenderStyle, MarkdownDocument, SourceSpan};
 
 const MAX_COPY_BYTES: usize = 16 * 1024 * 1024;
+static NEXT_SURFACE_OWNER: AtomicU64 = AtomicU64::new(1);
 
 #[cfg(test)]
 thread_local! {
@@ -39,7 +43,10 @@ struct MenuSelection {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-struct DocumentRevision(u64);
+struct DocumentRevision {
+    owner: u64,
+    generation: u64,
+}
 
 #[derive(Default)]
 struct ClipboardSelection {
@@ -106,6 +113,18 @@ impl egui::Plugin for ClipboardSelection {
             }
         }
     }
+}
+
+pub(super) fn install(context: &egui::Context) {
+    context.plugin_or_default::<ClipboardSelection>();
+}
+
+pub(super) fn new_surface_owner() -> u64 {
+    NEXT_SURFACE_OWNER
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |owner| {
+            owner.checked_add(1)
+        })
+        .expect("Markdown clipboard surface owner exhausted")
 }
 
 pub(super) fn begin(ui: &egui::Ui) {
@@ -691,15 +710,29 @@ fn rich_blocks(blocks: &[super::Block], pieces: &[&(Range<usize>, String)]) -> S
 pub(super) fn finish(
     ui: &mut egui::Ui,
     document: &MarkdownDocument,
-    revision: u64,
+    owner: u64,
+    generation: u64,
     rect: egui::Rect,
 ) {
+    let (secondary_pressed, pointer_pos) = ui.input(|input| {
+        (
+            input.pointer.button_pressed(egui::PointerButton::Secondary),
+            input.pointer.interact_pos(),
+        )
+    });
+    let preserve_background_press = secondary_pressed
+        && pointer_pos.is_some_and(|pos| {
+            rect.contains(pos) && ui.ctx().layer_id_at(pos) == Some(ui.layer_id())
+        });
     ui.ctx()
         .plugin::<egui::text_selection::LabelSelectionState>()
         .lock()
-        .end_preserve_selection_on_secondary_press(ui.ctx().viewport_id());
+        .end_preserve_selection_on_secondary_press(
+            ui.ctx().viewport_id(),
+            preserve_background_press,
+        );
     let plugin = ui.ctx().plugin::<ClipboardSelection>();
-    let id = ui.id().with("markdown-selection-copy");
+    let id = ui.id().with(("markdown-selection-copy", owner));
     let viewport = ui.ctx().viewport_id();
     if !plugin.lock().capturing && !egui::Popup::is_id_open(ui.ctx(), id) {
         return;
@@ -771,7 +804,7 @@ pub(super) fn finish(
         }
         return;
     }
-    let revision = DocumentRevision(revision);
+    let revision = DocumentRevision { owner, generation };
     if opening {
         let mut source = selection.source;
         let payload = if owns_selection && html.len() <= MAX_COPY_BYTES {
@@ -1005,7 +1038,10 @@ mod tests {
 
         let menu = |label: &str| {
             Arc::new(MenuSelection {
-                revision: DocumentRevision(label.len() as u64),
+                revision: DocumentRevision {
+                    owner: 1,
+                    generation: label.len() as u64,
+                },
                 html: format!("<b>{label}</b>"),
                 markdown: None,
                 text: label.to_owned(),
@@ -1096,6 +1132,19 @@ mod tests {
     }
 
     #[test]
+    fn markdown_selection_survives_secondary_press_on_document_whitespace() {
+        let mut harness = CopyHarness::new("selected text\n");
+        harness.select("selected text");
+        let output = harness.menu(egui::pos2(850.0, 550.0), false);
+        assert!(menu_button(&output, "Copy rich text").is_some());
+        assert!(harness
+            .context
+            .plugin::<egui::text_selection::LabelSelectionState>()
+            .lock()
+            .has_selection());
+    }
+
+    #[test]
     fn markdown_rich_copy_uses_parser_breaks_not_widget_geometry_for_separators() {
         for (source, separator) in [
             ("**bold**_italic_\n", ""),
@@ -1179,6 +1228,29 @@ mod tests {
             let output = harness.step(vec![button(copy, false, egui::PointerButton::Primary)]);
             assert!(output.platform_output.commands.is_empty());
         }
+    }
+
+    #[test]
+    fn replacing_markdown_surface_retires_prior_menu_payload() {
+        let mut harness = CopyHarness::new("**old secret selection**\n");
+        let end = harness.select("old secret selection");
+        let output = harness.menu(end, true);
+        assert!(menu_button(&output, "Copy Markdown source").is_some());
+
+        harness.pane = MarkdownPreviewPane::new(
+            LocalMarkdownSource::new("/owned/replacement.md")
+                .unwrap()
+                .into(),
+            "**new public selection**\n",
+        );
+        let output = harness.step(Vec::new());
+        assert!(menu_button(&output, "Copy Markdown source").is_none());
+        assert!(harness
+            .context
+            .plugin::<ClipboardSelection>()
+            .lock()
+            .menus
+            .is_empty());
     }
 
     #[test]

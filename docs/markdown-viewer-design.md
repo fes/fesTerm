@@ -464,9 +464,11 @@ or read the clipboard. Rich inline boundaries and soft/hard breaks come from
 the parsed document rather than widget placement, so wrapping cannot add or
 remove semantic separators; keyboard and context-menu rich Copy both carry
 egui's exact plain selection rather than a second geometry heuristic. Menus
-retain only a bounded selected snapshot and retire per viewport on a monotonic
-document revision, hidden owner, or closed viewport; source bytes are retained
-only for an exact Shift-requested source action. Native HTML delivery uses the existing clipboard
+retain only a bounded selected snapshot and bind it to a process-unique surface
+owner plus that surface's monotonic document revision. They retire on
+replacement, reparse, hidden ownership, or a closed viewport; source bytes are
+retained only for an exact Shift-requested source action. Native HTML delivery
+uses the existing clipboard
 backend; unsupported/failed HTML writes explicitly log and fall back to text.
 The current Wayland backend is text-only.
 
