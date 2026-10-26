@@ -116,6 +116,16 @@ connection attempt, directory snapshots, transfer queue, and disconnect state.
 It does not become a child lifecycle of the shell tab, and the shell tab does
 not become a hidden owner of the GUI transfer queue.
 
+Transient authentication drafts belong to one exact GUI authentication
+surface and immutable launch target, not to the reusable tab identity. Back,
+Escape, global navigation, content replacement, and target replacement retire
+the drafts and toolkit edit history together. After validated submission, only
+the transport owners required by that connection attempt may retain credential
+material; those repository-controlled owners use zeroizing storage and redact
+diagnostic output. Native input infrastructure, allocator history, abrupt
+termination, and third-party cryptographic internals remain outside that
+normal-lifecycle erasure boundary.
+
 ### `festerm-ssh` keeps the transport boundary and grows new GUI-oriented APIs
 
 The existing `SftpSession` remains the transport-facing owner of one live SFTP
@@ -445,6 +455,10 @@ core transfer workflow.
   through copy, collision, cancellation and exceptional-capacity retirement.
   Remote-derived local names, including selected roots, are admitted as safe
   single filenames before joining and verified as immediate local children.
+  GUI authentication drafts and toolkit edit state are bound to one immutable
+  launch target and retire on every navigation, replacement, cancellation,
+  successful handoff, or failed handoff that leaves the authentication
+  surface.
 - **GUI/action edges affected:** `LAUNCH-10` opens a GUI SFTP tab from a
   saved SSH profile or live SSH tab. `SFTPG-01/02/03` cover browsing,
   transfer/cancel/history and collision decisions; `SFTPG-04` retains deferred
@@ -456,6 +470,8 @@ core transfer workflow.
   Name admission refines `SFTPG-02/03/08`: unsafe roots fail before collision
   or output creation; they require no partial cleanup and leave unrelated work
   and owner cancellation intact.
+  `PROF-07` additionally requires reused Profiles tabs to start every GUI SFTP
+  authentication target with empty drafts and no recoverable toolkit history.
 - **Automated tests required:** Planned coverage includes
   `sftp_directory_snapshot_contains_sortable_metadata`,
   `sftp_transfer_manager_emits_progress_and_completion`,
@@ -522,6 +538,14 @@ core transfer workflow.
   `remote_local_name_admission_covers_windows_alias_families_and_near_misses`;
   backend event saturation is covered by
   `progress_saturation_coalesces_without_losing_terminal_events`.
+  Credential ownership is covered by
+  `profiles_authentication_back_and_escape_clear_all_credential_drafts`,
+  `authentication_state_fails_closed_if_reused_for_a_different_target`,
+  `global_open_profiles_drops_gui_sftp_credentials_before_reusing_the_tab_for_another_profile`,
+  `secret_text_preserves_unicode_across_insert_delete_growth_and_take`,
+  `sensitive_private_key_rejects_copy_and_scrubs_cut_payload`,
+  `sensitive_private_key_ime_commit_replaces_unicode_preedit`, and
+  `sensitive_password_enter_submits_the_authentication_form`.
 - **Native/manual evidence required:** Manual evidence is required for
   cross-pane drag/drop, external OS-file drop to the remote pane, stale remote
   listing presentation, keyboard navigation, collision safety defaults, and

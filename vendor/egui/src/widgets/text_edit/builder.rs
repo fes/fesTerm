@@ -78,6 +78,7 @@ pub struct TextEdit<'t> {
     text_color: Option<Color32>,
     layouter: Option<LayouterFn<'t>>,
     password: bool,
+    sensitive: bool,
     frame: Option<Frame>,
     margin: Margin,
     multiline: bool,
@@ -132,6 +133,7 @@ impl<'t> TextEdit<'t> {
             text_color: None,
             layouter: None,
             password: false,
+            sensitive: false,
             frame: None,
             margin: Margin::symmetric(4, 2),
             multiline: true,
@@ -237,6 +239,17 @@ impl<'t> TextEdit<'t> {
     #[inline]
     pub fn password(mut self, password: bool) -> Self {
         self.password = password;
+        self
+    }
+
+    /// Avoid retaining text snapshots for sensitive input.
+    ///
+    /// This disables local undo/redo and scrubs any previously retained
+    /// history. Callers should also use a backing [`TextBuffer`] that wipes
+    /// removed and reallocated storage.
+    #[inline]
+    pub fn sensitive(mut self, sensitive: bool) -> Self {
+        self.sensitive = sensitive;
         self
     }
 
@@ -445,6 +458,7 @@ impl TextEdit<'_> {
             text_color,
             layouter,
             password,
+            sensitive,
             frame,
             margin,
             multiline,
@@ -466,7 +480,11 @@ impl TextEdit<'_> {
             // .unwrap_or_else(|| ui.style().interact(&response).text_color()); // too bright
             .unwrap_or_else(|| ui.visuals().widgets.inactive.text_color());
 
-        let prev_text = text.as_str().to_owned();
+        let prev_text = if sensitive {
+            mask_if_password(true, text.as_str())
+        } else {
+            text.as_str().to_owned()
+        };
         let hint_text_str = hint_text.text().unwrap_or_default().to_string();
 
         let font_id = font_selection.resolve(ui.style());
@@ -482,7 +500,7 @@ impl TextEdit<'_> {
 
         let font_id_clone = font_id.clone();
         let mut default_layouter = move |ui: &Ui, text: &dyn TextBuffer, wrap_width: f32| {
-            let text = mask_if_password(password, text.as_str());
+            let text = mask_if_password(password || sensitive, text.as_str());
             let mut layout_job = if multiline {
                 LayoutJob::simple(text, font_id_clone.clone(), text_color, wrap_width)
             } else {
@@ -532,6 +550,10 @@ impl TextEdit<'_> {
         };
 
         let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
+        if sensitive {
+            use zeroize::Zeroize as _;
+            state.clear_undoer_with(|(_, text)| text.zeroize());
+        }
         let mut cursor_range = None;
         let mut prev_cursor_range = None;
 
@@ -572,7 +594,8 @@ impl TextEdit<'_> {
                         id,
                         wrap_width,
                         multiline,
-                        password,
+                        password: password || sensitive,
+                        sensitive,
                         default_cursor_range,
                         owns_ime_events,
                         char_limit,
@@ -962,7 +985,7 @@ impl TextEdit<'_> {
                             .unwrap_or_default();
                         ui.output_mut(|o| {
                             o.ime = Some(crate::output::IMEOutput {
-                                purpose: if password {
+                                purpose: if password || sensitive {
                                     IMEPurpose::Password
                                 } else {
                                     IMEPurpose::Normal
@@ -983,8 +1006,8 @@ impl TextEdit<'_> {
             response.widget_info(|| {
                 WidgetInfo::text_edit(
                     ui.is_enabled(),
-                    mask_if_password(password, prev_text.as_str()),
-                    mask_if_password(password, text.as_str()),
+                    mask_if_password(password || sensitive, prev_text.as_str()),
+                    mask_if_password(password || sensitive, text.as_str()),
                     hint_text_str.as_str(),
                 )
             });
@@ -993,15 +1016,15 @@ impl TextEdit<'_> {
             let info = WidgetInfo::text_selection_changed(
                 ui.is_enabled(),
                 char_range,
-                mask_if_password(password, text.as_str()),
+                mask_if_password(password || sensitive, text.as_str()),
             );
             response.output_event(OutputEvent::TextSelectionChanged(info));
         } else {
             response.widget_info(|| {
                 WidgetInfo::text_edit(
                     ui.is_enabled(),
-                    mask_if_password(password, prev_text.as_str()),
-                    mask_if_password(password, text.as_str()),
+                    mask_if_password(password || sensitive, prev_text.as_str()),
+                    mask_if_password(password || sensitive, text.as_str()),
                     hint_text_str.as_str(),
                 )
             });
@@ -1037,17 +1060,42 @@ impl TextEdit<'_> {
 
 fn mask_if_password(is_password: bool, text: &str) -> String {
     fn mask_password(text: &str) -> String {
-        std::iter::repeat_n(
-            epaint::text::PASSWORD_REPLACEMENT_CHAR,
-            text.chars().count(),
-        )
-        .collect::<String>()
+        text.chars()
+            .map(|character| match character {
+                '\r' | '\n' => character,
+                _ => epaint::text::PASSWORD_REPLACEMENT_CHAR,
+            })
+            .collect()
     }
 
     if is_password {
         mask_password(text)
     } else {
         text.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod password_mask_tests {
+    use super::mask_if_password;
+
+    #[test]
+    fn masking_preserves_multiline_structure_without_exposing_text() {
+        let masked = mask_if_password(true, "first\r\nsecond\nthird");
+
+        assert_eq!(masked.matches('\r').count(), 1);
+        assert_eq!(masked.matches('\n').count(), 2);
+        assert_eq!(
+            masked
+                .lines()
+                .map(str::chars)
+                .map(Iterator::count)
+                .collect::<Vec<_>>(),
+            [5, 6, 5]
+        );
+        assert!(!masked.contains("first"));
+        assert!(!masked.contains("second"));
+        assert!(!masked.contains("third"));
     }
 }
 
@@ -1060,6 +1108,7 @@ struct EventsOptions {
     wrap_width: f32,
     multiline: bool,
     password: bool,
+    sensitive: bool,
     default_cursor_range: CCursorRange,
     owns_ime_events: bool,
     char_limit: usize,
@@ -1081,6 +1130,7 @@ fn events(
         wrap_width,
         multiline,
         password,
+        sensitive,
         default_cursor_range,
         owns_ime_events,
         char_limit,
@@ -1094,10 +1144,12 @@ fn events(
 
     // We feed state to the undoer both before and after handling input
     // so that the undoer creates automatic saves even when there are no events for a while.
-    state.undoer.lock().feed_state(
-        ui.input(|i| i.time),
-        &(cursor_range, text.as_str().to_owned()),
-    );
+    if !sensitive {
+        state.undoer.lock().feed_state(
+            ui.input(|i| i.time),
+            &(cursor_range, text.as_str().to_owned()),
+        );
+    }
 
     let copy_if_not_password = |ui: &Ui, text: String| {
         if !password {
@@ -1107,7 +1159,11 @@ fn events(
 
     let mut any_change = false;
 
-    let events = ui.input(|i| i.filtered_events(&event_filter));
+    let mut events = if sensitive {
+        ui.input_mut(|i| i.take_sensitive_filtered_events(&event_filter))
+    } else {
+        ui.input(|i| i.filtered_events(&event_filter))
+    };
 
     enum CursorMutation {
         Selection(CCursorRange),
@@ -1124,7 +1180,7 @@ fn events(
             event if cursor_range.on_event(os, event, galley, id) => None,
 
             Event::Copy => {
-                if !cursor_range.is_empty() {
+                if !sensitive && !cursor_range.is_empty() {
                     copy_if_not_password(ui, cursor_range.slice_str(text.as_str()).to_owned());
                 }
                 None
@@ -1133,7 +1189,9 @@ fn events(
                 if cursor_range.is_empty() {
                     None
                 } else {
-                    copy_if_not_password(ui, cursor_range.slice_str(text.as_str()).to_owned());
+                    if !sensitive {
+                        copy_if_not_password(ui, cursor_range.slice_str(text.as_str()).to_owned());
+                    }
                     Some(CursorMutation::Selection(CCursorRange::one(
                         text.delete_selected(&cursor_range),
                     )))
@@ -1146,6 +1204,19 @@ fn events(
                     let mut ccursor = text.delete_selected(&cursor_range);
                     if multiline {
                         text.insert_text_at(&mut ccursor, text_to_insert, char_limit);
+                    } else if sensitive {
+                        for character in text_to_insert.chars() {
+                            if matches!(character, '\r' | '\n') {
+                                text.insert_text_at(&mut ccursor, " ", char_limit);
+                            } else {
+                                let mut encoded = [0; 4];
+                                text.insert_text_at(
+                                    &mut ccursor,
+                                    character.encode_utf8(&mut encoded),
+                                    char_limit,
+                                );
+                            }
+                        }
                     } else {
                         let single_line = text_to_insert.replace(['\r', '\n'], " ");
                         text.insert_text_at(&mut ccursor, &single_line, char_limit);
@@ -1206,9 +1277,10 @@ fn events(
                 pressed: true,
                 modifiers,
                 ..
-            } if (modifiers.matches_logically(Modifiers::COMMAND) && *key == Key::Y)
-                || (modifiers.matches_logically(Modifiers::SHIFT | Modifiers::COMMAND)
-                    && *key == Key::Z) =>
+            } if !sensitive
+                && ((modifiers.matches_logically(Modifiers::COMMAND) && *key == Key::Y)
+                    || (modifiers.matches_logically(Modifiers::SHIFT | Modifiers::COMMAND)
+                        && *key == Key::Z)) =>
             {
                 if let Some((redo_ccursor_range, redo_txt)) = state
                     .undoer
@@ -1227,7 +1299,7 @@ fn events(
                 pressed: true,
                 modifiers,
                 ..
-            } if modifiers.matches_logically(Modifiers::COMMAND) => {
+            } if modifiers.matches_logically(Modifiers::COMMAND) && !sensitive => {
                 if let Some((undo_ccursor_range, undo_txt)) = state
                     .undoer
                     .lock()
@@ -1384,10 +1456,18 @@ fn events(
 
     state.cursor.set_char_range(Some(cursor_range));
 
-    state.undoer.lock().feed_state(
-        ui.input(|i| i.time),
-        &(cursor_range, text.as_str().to_owned()),
-    );
+    if sensitive {
+        for event in &mut events {
+            crate::input_state::zeroize_event_text(event);
+        }
+    }
+
+    if !sensitive {
+        state.undoer.lock().feed_state(
+            ui.input(|i| i.time),
+            &(cursor_range, text.as_str().to_owned()),
+        );
+    }
 
     (any_change, cursor_range)
 }

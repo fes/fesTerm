@@ -68,8 +68,8 @@ use crate::documents::{DocumentRegistry, OpenFailure, SharedDocuments};
 use crate::markdown_viewer::MarkdownViewerTab;
 use crate::session_controller::{seed_session_startup_failure, terminal_size, SessionController};
 use crate::sftp_file_manager::{
-    local_home_directory, SftpFileManagerAuthentication, SftpFileManagerLaunchTarget,
-    SftpFileManagerTab,
+    local_home_directory, AuthenticationFormState, SftpFileManagerAuthentication,
+    SftpFileManagerLaunchTarget, SftpFileManagerTab,
 };
 use crate::terminal_paths::{
     bind_live_remote_request, open_local_command, open_remote_request, resolve_context_menu_action,
@@ -738,10 +738,23 @@ pub struct SftpAuthenticationRequiredTab {
 }
 
 /// A GUI SFTP file-manager launch surface that has destination metadata but no
-/// live authenticated subsystem yet.
+/// live authenticated subsystem yet. Its transient authentication draft is
+/// owned by this exact content instance, so replacing or closing the surface
+/// drops the draft even when the surrounding [`TabId`] is preserved.
 pub struct SftpFileManagerAuthenticationRequiredTab {
     pub target: SftpFileManagerLaunchTarget,
     pub return_to_profiles: bool,
+    pub(crate) authentication: AuthenticationFormState,
+}
+
+impl SftpFileManagerAuthenticationRequiredTab {
+    fn new(target: SftpFileManagerLaunchTarget, return_to_profiles: bool) -> Self {
+        Self {
+            target,
+            return_to_profiles,
+            authentication: AuthenticationFormState::default(),
+        }
+    }
 }
 
 /// Maximum number of in-connection password reprompts before falling back
@@ -1844,7 +1857,7 @@ pub enum TabContent {
     SftpAuthenticationRequired(SftpAuthenticationRequiredTab),
     MarkdownViewer(Box<MarkdownViewerTab>),
     TextEditor(Box<TextEditorTab>),
-    SftpFileManagerAuthenticationRequired(SftpFileManagerAuthenticationRequiredTab),
+    SftpFileManagerAuthenticationRequired(Box<SftpFileManagerAuthenticationRequiredTab>),
     SftpFileManager(Box<SftpFileManagerTab>),
     Session(Box<SessionTab>),
 }
@@ -2875,10 +2888,9 @@ impl AppState {
                         .profile(tab.profile_id())
                         .and_then(festerm_config::Profile::as_ssh)
                         .expect("validated GUI SFTP workspace profile reference");
-                    TabContent::SftpFileManagerAuthenticationRequired(
-                        SftpFileManagerAuthenticationRequiredTab {
-                            return_to_profiles: false,
-                            target: SftpFileManagerLaunchTarget {
+                    TabContent::SftpFileManagerAuthenticationRequired(Box::new(
+                        SftpFileManagerAuthenticationRequiredTab::new(
+                            SftpFileManagerLaunchTarget {
                                 label: ssh.identifier().to_owned(),
                                 username: ssh.username().to_owned(),
                                 host: ssh.host().to_owned(),
@@ -2892,8 +2904,9 @@ impl AppState {
                                     .known_host_fingerprint(ssh.host(), ssh.port())
                                     .is_some(),
                             },
-                        },
-                    )
+                            false,
+                        ),
+                    ))
                 }
                 WorkspaceTab::SerialSession(tab) => {
                     let serial = configuration
@@ -5028,12 +5041,9 @@ impl AppState {
             .known_host_fingerprint(&target.host, target.port)
             .is_some();
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
-            tab.content = TabContent::SftpFileManagerAuthenticationRequired(
-                SftpFileManagerAuthenticationRequiredTab {
-                    target,
-                    return_to_profiles: false,
-                },
-            );
+            tab.content = TabContent::SftpFileManagerAuthenticationRequired(Box::new(
+                SftpFileManagerAuthenticationRequiredTab::new(target, false),
+            ));
             self.workspace_dirty = true;
         }
     }
@@ -5048,24 +5058,21 @@ impl AppState {
             if matches!(tab.content, TabContent::Launcher)
                 || (target.profile_id.is_some() && matches!(tab.content, TabContent::Profiles))
             {
-                tab.content = TabContent::SftpFileManagerAuthenticationRequired(
-                    SftpFileManagerAuthenticationRequiredTab {
+                tab.content = TabContent::SftpFileManagerAuthenticationRequired(Box::new(
+                    SftpFileManagerAuthenticationRequiredTab::new(
                         target,
-                        return_to_profiles: matches!(tab.content, TabContent::Profiles),
-                    },
-                );
+                        matches!(tab.content, TabContent::Profiles),
+                    ),
+                ));
                 return;
             }
         }
         let id = TabId::next();
         self.tabs.push(Tab {
             id,
-            content: TabContent::SftpFileManagerAuthenticationRequired(
-                SftpFileManagerAuthenticationRequiredTab {
-                    target,
-                    return_to_profiles: false,
-                },
-            ),
+            content: TabContent::SftpFileManagerAuthenticationRequired(Box::new(
+                SftpFileManagerAuthenticationRequiredTab::new(target, false),
+            )),
         });
         self.set_active(id);
     }

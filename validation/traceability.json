@@ -2339,6 +2339,7 @@
       "decisions": [
         "ADR-0002",
         "ADR-0025",
+        "ADR-0029",
         "ADR-0038"
       ],
       "automated_tests": [
@@ -2349,7 +2350,13 @@
         "configured_interactive_ssh_connect_consumes_profiles_in_place",
         "stored_credential_profile_connect_reuses_profiles_for_ssh_and_sftp",
         "gui_sftp_profile_connect_replaces_profiles_and_can_cancel_in_place",
-        "profiles_authentication_can_cancel_without_connecting_and_clears_credentials",
+        "secret_text_preserves_unicode_across_insert_delete_growth_and_take",
+        "sensitive_private_key_rejects_copy_and_scrubs_cut_payload",
+        "sensitive_private_key_ime_commit_replaces_unicode_preedit",
+        "sensitive_password_enter_submits_the_authentication_form",
+        "profiles_authentication_back_and_escape_clear_all_credential_drafts",
+        "authentication_state_fails_closed_if_reused_for_a_different_target",
+        "global_open_profiles_drops_gui_sftp_credentials_before_reusing_the_tab_for_another_profile",
         "profiles_repaints_reuse_the_composition_root_provider_default",
         "textureless_bordered_panels_match_pixels_across_dpi",
         "textureless_panel_fill_preserves_opacity_and_srgb_fallback",
