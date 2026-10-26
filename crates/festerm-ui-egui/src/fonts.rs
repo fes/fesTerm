@@ -14,6 +14,7 @@ use icu_properties::{
 
 const INSTALLATION_MARKER: &str = "fesTerm bundled terminal font installation";
 const GENERATION_MARKER: &str = "fesTerm bundled terminal font generation";
+const DESIRED_FAMILY_MARKER: &str = "fesTerm desired terminal font family";
 
 const REGULAR_DATA: &str = "fesTerm Selected Terminal Regular";
 const BOLD_DATA: &str = "fesTerm Selected Terminal Bold";
@@ -378,6 +379,60 @@ pub fn install_terminal_font_family(
     })
 }
 
+/// Returns the family and generation installed in this shared egui context.
+pub fn terminal_font_installation(
+    context: &egui::Context,
+) -> Option<(TerminalFontFamily, TerminalFontGeneration)> {
+    context.data(|data| {
+        Some((
+            data.get_temp::<TerminalFontFamily>(egui::Id::new(INSTALLATION_MARKER))?,
+            TerminalFontGeneration(data.get_temp::<u64>(egui::Id::new(GENERATION_MARKER))?),
+        ))
+    })
+}
+
+/// Coordinates the desired family and temporary fallback once per egui
+/// context, rather than once per window.
+///
+/// Re-reporting the same preference is idempotent. An optional family already
+/// installed by a sibling window is retained while another window is still
+/// pending or has failed.
+pub fn reconcile_terminal_font_preference(
+    context: &egui::Context,
+    desired: TerminalFontFamily,
+) -> TerminalFontGeneration {
+    context.data_mut(|data| {
+        data.insert_temp(egui::Id::new(DESIRED_FAMILY_MARKER), desired);
+    });
+    let installed = terminal_font_installation(context);
+    let needs_default = match installed {
+        None => true,
+        Some((family, _)) if desired == TerminalFontFamily::JetBrainsMono => {
+            family != TerminalFontFamily::JetBrainsMono
+        }
+        Some((family, _)) => family != desired && family != TerminalFontFamily::JetBrainsMono,
+    };
+    if needs_default {
+        install_terminal_font_family(context, TerminalFontFamily::JetBrainsMono)
+    } else {
+        installed
+            .expect("an installation exists when no default installation is needed")
+            .1
+    }
+}
+
+/// Returns whether a completed optional acquisition still matches the
+/// context-scoped desired family.
+pub fn terminal_font_family_is_desired(
+    context: &egui::Context,
+    family: TerminalFontFamily,
+) -> bool {
+    context.data(|data| {
+        data.get_temp::<TerminalFontFamily>(egui::Id::new(DESIRED_FAMILY_MARKER))
+            .is_none_or(|desired| desired == family)
+    })
+}
+
 /// Accepts application-verified downloaded faces without doing filesystem or
 /// network I/O in the renderer. Invalid font data leaves the current atlas intact.
 pub fn install_terminal_font_faces(
@@ -481,16 +536,11 @@ pub fn terminal_font(size_points: f32) -> egui::FontId {
 }
 
 pub fn terminal_fonts_installed(context: &egui::Context) -> bool {
-    context.data(|data| {
-        data.get_temp::<TerminalFontFamily>(egui::Id::new(INSTALLATION_MARKER))
-            .is_some()
-    })
+    terminal_font_installation(context).is_some()
 }
 
-pub(crate) fn terminal_font_family_installed(
-    context: &egui::Context,
-    family: TerminalFontFamily,
-) -> bool {
+#[cfg(test)]
+fn terminal_font_family_installed(context: &egui::Context, family: TerminalFontFamily) -> bool {
     context.data(|data| {
         data.get_temp::<TerminalFontFamily>(egui::Id::new(INSTALLATION_MARKER)) == Some(family)
     })
@@ -763,6 +813,37 @@ mod tests {
 
         assert_ne!(first, second);
         assert!(terminal_fonts_installed(&context));
+    }
+
+    #[test]
+    fn context_preference_keeps_a_successful_optional_installation_stable() {
+        let context = egui::Context::default();
+        let fallback = reconcile_terminal_font_preference(&context, TerminalFontFamily::MapleMono);
+        assert_eq!(
+            terminal_font_installation(&context),
+            Some((TerminalFontFamily::JetBrainsMono, fallback))
+        );
+        let assets = test_font_assets(TerminalFontFamily::MapleMono);
+        let faces = [
+            &assets.regular,
+            &assets.bold,
+            &assets.italic,
+            &assets.bold_italic,
+        ]
+        .map(|data| data.font.to_vec());
+        let installed =
+            install_terminal_font_faces(&context, TerminalFontFamily::MapleMono, faces).unwrap();
+
+        for _ in 0..8 {
+            assert_eq!(
+                reconcile_terminal_font_preference(&context, TerminalFontFamily::MapleMono),
+                installed
+            );
+            assert_eq!(
+                terminal_font_installation(&context),
+                Some((TerminalFontFamily::MapleMono, installed))
+            );
+        }
     }
 
     #[test]

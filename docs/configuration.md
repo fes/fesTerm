@@ -270,6 +270,13 @@ unchanged hashes are reused across versions. Close fesTerm before removing
 that directory to reclaim historical fonts; a subsequent non-default startup
 downloads the needed faces again. See [ADR 0049](adr/0049-downloadable-terminal-fonts.md)
 for bounds, request metadata, and the release-asset prerequisite.
+All windows in one process share the effective installed family and atlas
+generation: a pending or failed sibling cannot replace a family another window
+installed successfully. This also relies on successful configuration writes
+being broadcast synchronously to every sibling before its next frame; delayed
+or out-of-process preference propagation is outside that invariant. About
+embeds complete notices for bundled JetBrains Mono and Noto Emoji as well as
+all three optional families, including in packaged/offline applications.
 
 The optional `[settings]` table includes these interface preferences:
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default

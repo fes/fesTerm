@@ -21,6 +21,52 @@ use sha2::{Digest, Sha256};
 const MAX_FACE_BYTES: u64 = 32 * 1024 * 1024;
 const LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 
+pub(crate) struct FontLicenseNotice {
+    pub(crate) family: &'static str,
+    pub(crate) version: &'static str,
+    pub(crate) notice: &'static str,
+    pub(crate) text: &'static str,
+}
+
+pub(crate) const FONT_LICENSE_NOTICES: &[FontLicenseNotice] = &[
+    FontLicenseNotice {
+        family: "JetBrains Mono",
+        version: "2.304",
+        notice: "SIL Open Font License 1.1",
+        text: include_str!("../../../assets/fonts/jetbrains-mono/OFL.txt"),
+    },
+    FontLicenseNotice {
+        family: "JetBrains Mono",
+        version: "2.304",
+        notice: "Project authors",
+        text: include_str!("../../../assets/fonts/jetbrains-mono/AUTHORS.txt"),
+    },
+    FontLicenseNotice {
+        family: "Noto Emoji",
+        version: "3.002",
+        notice: "SIL Open Font License 1.1",
+        text: include_str!("../../../assets/fonts/noto-emoji/OFL.txt"),
+    },
+    FontLicenseNotice {
+        family: "Iosevka Term",
+        version: "34.8.1",
+        notice: "SIL Open Font License 1.1",
+        text: include_str!("../../../assets/fonts/iosevka-term/LICENSE.md"),
+    },
+    FontLicenseNotice {
+        family: "JuliaMono",
+        version: "0.63.2",
+        notice: "SIL Open Font License 1.1",
+        text: include_str!("../../../assets/fonts/julia-mono/LICENSE"),
+    },
+    FontLicenseNotice {
+        family: "Maple Mono",
+        version: "7.9",
+        notice: "SIL Open Font License 1.1",
+        text: include_str!("../../../assets/fonts/maple-mono/LICENSE.txt"),
+    },
+];
+
 #[derive(Clone, Deserialize)]
 struct FontFile {
     path: String,
@@ -322,6 +368,9 @@ pub(crate) enum ReadyFont {
     Optional(TerminalFontPreference, [Vec<u8>; 4]),
 }
 
+#[cfg(test)]
+type TestCompletion = mpsc::SyncSender<Result<[Vec<u8>; 4], String>>;
+
 impl FontDownloads {
     pub(crate) fn native() -> Self {
         Self::with_root(
@@ -362,6 +411,23 @@ impl FontDownloads {
         Self::with_root(Some(root.to_owned()))
     }
 
+    #[cfg(test)]
+    pub(crate) fn pending_for_test(family: TerminalFontPreference) -> (Self, TestCompletion) {
+        let mut controller = Self::unavailable_for_test();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        controller.desired = Some(family);
+        controller.attempted = true;
+        controller.job = Some(Job {
+            family,
+            receiver,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(AtomicU64::new(0)),
+            total: 128,
+        });
+        (controller, sender)
+    }
+
+    #[cfg(test)]
     pub(crate) fn active(&self) -> TerminalFontPreference {
         self.active
     }
@@ -374,6 +440,14 @@ impl FontDownloads {
     pub(crate) fn installation_failed(&mut self, error: &str) {
         self.active = TerminalFontPreference::JetBrainsMono;
         self.error = Some(format!("{error} Retry the preferred font download."));
+    }
+
+    pub(crate) fn installation_superseded(&mut self) {
+        self.active = TerminalFontPreference::JetBrainsMono;
+        self.error = Some(
+            "A newer terminal font preference superseded this installation. Retry if this family is still preferred."
+                .into(),
+        );
     }
 
     pub(crate) fn status(&self) -> Option<String> {
@@ -774,6 +848,51 @@ mod tests {
             Some(ReadyFont::Optional(TerminalFontPreference::JuliaMono, _))
         ));
         assert_eq!(controller.active(), TerminalFontPreference::JuliaMono);
+    }
+
+    #[test]
+    fn superseded_font_installation_is_quiescent_retryable_and_reconciles_changed_preference() {
+        let context = egui::Context::default();
+        let mut controller = FontDownloads::unavailable_for_test();
+        let sender = pending(&mut controller, TerminalFontPreference::JuliaMono);
+        sender.send(Ok(fixtures().1)).unwrap();
+        assert!(matches!(
+            controller.update(TerminalFontPreference::JuliaMono, &context),
+            Some(ReadyFont::Optional(TerminalFontPreference::JuliaMono, _))
+        ));
+
+        controller.installation_superseded();
+        assert_eq!(controller.active(), TerminalFontPreference::JetBrainsMono);
+        assert!(controller.failed());
+        assert!(controller.job.is_none());
+        assert!(controller.attempted);
+        let status = controller.status().unwrap();
+        assert!(status.contains("superseded"));
+        assert!(status.contains("Retry"));
+        assert!(!status.contains("downloaded and verified"));
+
+        for _ in 0..4 {
+            assert!(controller
+                .update(TerminalFontPreference::JuliaMono, &context)
+                .is_none());
+            assert!(controller.job.is_none(), "supersession must not auto-loop");
+        }
+
+        controller.retry();
+        assert!(!controller.attempted);
+        controller.update(TerminalFontPreference::JuliaMono, &context);
+        assert!(
+            controller.failed(),
+            "an explicit retry reaches a fresh attempt even when this test has no native store"
+        );
+        assert!(controller.attempted);
+
+        assert!(matches!(
+            controller.update(TerminalFontPreference::JetBrainsMono, &context),
+            Some(ReadyFont::Default)
+        ));
+        assert!(!controller.failed());
+        assert!(controller.status().is_none());
     }
 
     #[test]

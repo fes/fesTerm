@@ -155,9 +155,143 @@ mod tests {
     def test_normal_verification_checks_embed_exclusion(self):
         with mock.patch.object(sys, "argv", ["manage_bundled_font.py"]), \
              mock.patch.object(fonts, "verify_runtime_embed_exclusion") as exclusion, \
+             mock.patch.object(fonts, "verify_runtime_license_embeddings") as licenses, \
              mock.patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(fonts.main(), 0)
         exclusion.assert_called_once_with(fonts.ROOT)
+        licenses.assert_called_once_with(fonts.ROOT)
+
+    def test_production_embeds_every_complete_runtime_and_optional_font_notice(self):
+        fonts.verify_runtime_license_embeddings(fonts.ROOT)
+        root = self.catalog()
+        source = root / "app/example/src/licenses.rs"
+        source.parent.mkdir(parents=True)
+        source.write_text(
+            '\n'.join(
+                'FontLicenseNotice { '
+                f'family: "{manifest["family"]}", '
+                f'version: "{manifest["pinned_version"]}", '
+                'notice: "complete notice", '
+                f'text: include_str!("../../../{entry["path"]}"), '
+                '}'
+                for family in fonts.OPTIONAL_FAMILIES
+                for manifest in [
+                    fonts.load_manifest(root / "assets/fonts" / family / "manifest.json")
+                ]
+                for entry in fonts.manifest_notice_entries(manifest)
+            ),
+            encoding="utf-8",
+        )
+        fonts.verify_runtime_license_embeddings(root)
+        source.write_text(
+            source.read_text(encoding="utf-8").replace(
+                'include_str!("../../../assets/fonts/maple-mono/LICENSE")',
+                '"not embedded"',
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(fonts.FontError, "maple-mono"):
+            fonts.verify_runtime_license_embeddings(root)
+
+    def test_runtime_embedded_families_require_every_manifest_notice(self):
+        root = self.catalog()
+        notices = []
+        runtime = root / "crates/example/src/fonts.rs"
+        runtime.parent.mkdir(parents=True)
+        for slug, family, version, notice_names in [
+            ("jetbrains-mono", "JetBrains Mono", "2.304", ("OFL.txt", "AUTHORS.txt")),
+            ("noto-emoji", "Noto Emoji", "3.002", ("OFL.txt",)),
+        ]:
+            directory = root / "assets/fonts" / slug
+            directory.mkdir(parents=True)
+            files = []
+            font = directory / "Regular.ttf"
+            font.write_bytes(slug.encode())
+            files.append({
+                "path": f"assets/fonts/{slug}/Regular.ttf",
+                "sha256": fonts.digest(font.read_bytes()),
+                "size_bytes": font.stat().st_size,
+            })
+            for name in notice_names:
+                path = directory / name
+                path.write_text(f"{family} {name}", encoding="utf-8")
+                entry = {
+                    "path": f"assets/fonts/{slug}/{name}",
+                    "sha256": fonts.digest(path.read_bytes()),
+                    "size_bytes": path.stat().st_size,
+                }
+                files.append(entry)
+                notices.append(
+                    'FontLicenseNotice { '
+                    f'family: "{family}", version: "{version}", '
+                    f'notice: "{name}", text: include_str!("../../../{entry["path"]}"), '
+                    '}'
+                )
+            (directory / "manifest.json").write_text(json.dumps({
+                "schema_version": 1,
+                "family": family,
+                "pinned_version": version,
+                "files": files,
+            }), encoding="utf-8")
+        optional_notices = []
+        for family in fonts.OPTIONAL_FAMILIES:
+            manifest = fonts.load_manifest(root / "assets/fonts" / family / "manifest.json")
+            optional_notices.extend(
+                'FontLicenseNotice { '
+                f'family: "{manifest["family"]}", '
+                f'version: "{manifest["pinned_version"]}", '
+                'notice: "complete notice", '
+                f'text: include_str!("../../../{entry["path"]}"), '
+                '}'
+                for entry in fonts.manifest_notice_entries(manifest)
+            )
+        runtime.write_text(
+            '\n'.join([
+                'const JETBRAINS: &[u8] = include_bytes!("../../../assets/fonts/jetbrains-mono/Regular.ttf");',
+                'const NOTO: &[u8] = include_bytes!("../../../assets/fonts/noto-emoji/Regular.ttf");',
+                *notices,
+                *optional_notices,
+            ]),
+            encoding="utf-8",
+        )
+        fonts.verify_runtime_license_embeddings(root)
+        runtime.write_text(
+            runtime.read_text(encoding="utf-8").replace(
+                'text: include_str!("../../../assets/fonts/jetbrains-mono/AUTHORS.txt"),',
+                'text: "missing",',
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(fonts.FontError, "AUTHORS.txt"):
+            fonts.verify_runtime_license_embeddings(root)
+
+    def test_runtime_font_notice_versions_match_manifests(self):
+        root = self.catalog()
+        source = root / "app/example/src/licenses.rs"
+        source.parent.mkdir(parents=True)
+        entries = []
+        for family in fonts.OPTIONAL_FAMILIES:
+            manifest = fonts.load_manifest(root / "assets/fonts" / family / "manifest.json")
+            entries.extend(
+                'FontLicenseNotice { '
+                f'family: "{manifest["family"]}", '
+                f'version: "{manifest["pinned_version"]}", '
+                'notice: "complete notice", '
+                f'text: include_str!("../../../{entry["path"]}"), '
+                '}'
+                for entry in fonts.manifest_notice_entries(manifest)
+            )
+        source.write_text("\n".join(entries), encoding="utf-8")
+        fonts.verify_runtime_license_embeddings(root)
+        source.write_text(
+            source.read_text(encoding="utf-8").replace(
+                'family: "maple-mono", version: "1.0"',
+                'family: "maple-mono", version: "9.9"',
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(fonts.FontError, "label drift.*9.9.*expected.*1.0"):
+            fonts.verify_runtime_license_embeddings(root)
 
     def test_staging_cli_writes_machine_report_without_network(self):
         root = self.catalog()

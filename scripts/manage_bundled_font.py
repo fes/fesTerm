@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "assets/fonts/jetbrains-mono/manifest.json"
 USER_AGENT = "fesTerm bundled-font update checker"
 OPTIONAL_FAMILIES = ("iosevka-term", "julia-mono", "maple-mono")
+NOTICE_NAME = re.compile(
+    r"^(?:LICENSE(?:\..*)?|OFL(?:\..*)?|AUTHORS(?:\..*)?|NOTICE(?:\..*)?|COPYRIGHT(?:\..*)?)$",
+    re.IGNORECASE,
+)
 
 
 class FontError(Exception):
@@ -125,6 +129,85 @@ def verify_runtime_embed_exclusion(root: Path) -> None:
                 violations.append(str(path.relative_to(root)))
     if violations:
         raise FontError("optional fonts embedded in runtime: " + ", ".join(violations))
+
+
+def production_rust_source(root: Path) -> str:
+    return "\n".join(
+        runtime_rust_source(path.read_text(encoding="utf-8"))
+        for directory in ("app", "crates")
+        for path in sorted((root / directory).glob("*/src/**/*.rs"))
+    )
+
+
+def runtime_embedded_font_families(production: str) -> set[str]:
+    embedding = re.compile(
+        r'include_bytes!\s*\(\s*(?:r#*)?"[^"]*assets/fonts/'
+        r'(?P<family>[^/"]+)/[^"]*\.ttf"',
+        re.IGNORECASE,
+    )
+    return {match.group("family") for match in embedding.finditer(production)}
+
+
+def manifest_notice_entries(manifest: dict[str, object]) -> list[dict[str, object]]:
+    return [
+        entry
+        for entry in manifest["files"]
+        if isinstance(entry, dict) and NOTICE_NAME.fullmatch(Path(str(entry["path"])).name)
+    ]
+
+
+def embedded_font_notices(production: str) -> dict[str, tuple[str, str]]:
+    notice = re.compile(
+        r'FontLicenseNotice\s*\{\s*'
+        r'family:\s*"(?P<family>[^"]+)",\s*'
+        r'version:\s*"(?P<version>[^"]+)",\s*'
+        r'notice:\s*"[^"]+",\s*'
+        r'text:\s*include_str!\s*\(\s*(?:r#*)?"[^"]*'
+        r'(?P<path>assets/fonts/[^"]+)"\s*\),\s*\}',
+        re.DOTALL,
+    )
+    notices: dict[str, tuple[str, str]] = {}
+    for match in notice.finditer(production):
+        path = match.group("path")
+        if path in notices:
+            raise FontError(f"font notice embedded more than once: {path}")
+        notices[path] = (match.group("family"), match.group("version"))
+    return notices
+
+
+def verify_runtime_license_embeddings(root: Path) -> None:
+    production = production_rust_source(root)
+    manifests = {
+        path.parent.name: load_manifest(path)
+        for path in sorted((root / "assets/fonts").glob("*/manifest.json"))
+    }
+    required_families = set(OPTIONAL_FAMILIES)
+    required_families.update(runtime_embedded_font_families(production))
+    embedded = embedded_font_notices(production)
+    errors = []
+    for family in sorted(required_families):
+        manifest = manifests.get(family)
+        if manifest is None:
+            errors.append(f"runtime font family lacks a manifest: {family}")
+            continue
+        notices = manifest_notice_entries(manifest)
+        if not notices:
+            errors.append(f"font manifest lacks a complete notice: {family}")
+            continue
+        for entry in notices:
+            relative = str(entry["path"])
+            label = embedded.get(relative)
+            if label is None:
+                errors.append(f"font notice is not embedded in production: {relative}")
+                continue
+            expected = (str(manifest["family"]), str(manifest["pinned_version"]))
+            if label != expected:
+                errors.append(
+                    f"runtime font notice label drift for {relative}: "
+                    f"{label[0]} {label[1]}, expected {expected[0]} {expected[1]}"
+                )
+    if errors:
+        raise FontError("\n".join(errors))
 
 
 def stage_downloads(root: Path, destination: Path) -> dict[str, object]:
@@ -428,6 +511,7 @@ def main() -> int:
                 summaries.append(f"{candidate['family']} {candidate['pinned_version']}")
             optional_downloads(ROOT)
             verify_runtime_embed_exclusion(ROOT)
+            verify_runtime_license_embeddings(ROOT)
             print(f"bundled fonts: PASS ({', '.join(summaries)})")
             return 0
         if args.verify_archives:

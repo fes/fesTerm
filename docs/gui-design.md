@@ -1750,6 +1750,10 @@ While preparing or unavailable, use an explicitly temporary JetBrains fallback
 without changing that preference. Show progress/failure here and above tab
 content, with an explicit **Retry font download** control on failure. Verified
 cached faces work offline. See ADR 0049 for release, privacy, and cache policy.
+The effective family and atlas generation belong to the shared egui context,
+not an individual window. A successful window therefore wins over a sibling
+that is still pending or has failed, and every terminal keeps painting while
+adopting that shared installation.
 The **Quick switch** card currently
 exposes the on-by-default quick-switch-number overlay preference; it no
 longer restates the Command palette/Open Settings chords the **Keyboard
@@ -3439,7 +3443,8 @@ requires a different sequence:
 4. **Initial About and update surface implemented:** the compact
    application-owned modal
    exposes exact version/platform information, a bounded privacy-safe Copy
-   summary, the canonical source link, and repository/asset license notices;
+   summary, the canonical source link, and complete embedded optional-font
+   license notices that remain available in packaged/offline applications;
    configured packaged builds additionally expose the explicit signed-update
    state machine from ADR 0021. Developer/incomplete builds fail closed without
    a network action. Native update, link handoff, accessibility, and visual

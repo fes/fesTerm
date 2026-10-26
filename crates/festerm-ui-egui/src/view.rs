@@ -793,22 +793,32 @@ impl TerminalView {
             self.primary_link_gesture = None;
         }
         self.last_rendered_frame = Some(frame);
-        if !crate::fonts::terminal_font_family_installed(ui.ctx(), self.fonts.font_set().family()) {
-            let generation =
-                crate::install_terminal_font_family(ui.ctx(), self.fonts.font_set().family());
+        let Some((installed_family, installed_generation)) =
+            crate::terminal_font_installation(ui.ctx())
+        else {
+            let generation = crate::install_terminal_fonts(ui.ctx());
             self.set_font_set(
                 crate::TerminalFontSet::new(
-                    self.fonts.font_set().family(),
+                    crate::TerminalFontFamily::JetBrainsMono,
                     self.fonts.font_set().ligatures(),
                     generation,
                 )
                 .with_color_emoji(self.fonts.font_set().color_emoji()),
             );
-            // The named families become available after egui rebuilds its
-            // atlas at the pass boundary. Direct TerminalView users can
-            // bypass the application composition root, so yield safely.
             ui.ctx().request_repaint();
             return;
+        };
+        if self.fonts.font_set().family() != installed_family
+            || self.fonts.font_set().generation() != installed_generation
+        {
+            self.set_font_set(
+                crate::TerminalFontSet::new(
+                    installed_family,
+                    self.fonts.font_set().ligatures(),
+                    installed_generation,
+                )
+                .with_color_emoji(self.fonts.font_set().color_emoji()),
+            );
         }
         let frame_started = Instant::now();
         let glyph = ui.painter().layout_no_wrap(

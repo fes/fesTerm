@@ -98,8 +98,10 @@ must fail closed when its protected signing environment is incomplete.
 JetBrains Mono remains embedded. Iosevka Term, JuliaMono, and Maple Mono are
 optional downloads, not resources installed by the default native packages.
 The pinned emoji and chrome fonts are not part of this download catalog.
-The app embeds the optional families' authoritative manifest metadata and small
-license notices, but not their TTF bytes.
+The app embeds the optional families' authoritative manifest metadata and
+complete license notices for offline About display, but not their TTF bytes.
+It also embeds the complete manifest notices for runtime-bundled JetBrains Mono
+and Noto Emoji. Runtime notice family/version labels must match the manifests.
 
 Stage the checked-in optional faces without network access or extraction:
 
@@ -117,13 +119,18 @@ and total byte counts. Future pinned versions are derived from the manifests,
 not hard-coded into the release workflow. Iosevka must use the repository's
 custom-built TTFs, never substitute files from an upstream release archive.
 Normal `python scripts/manage_bundled_font.py` verification also rejects
-production Rust embeddings of optional faces, ignoring `cfg(test)` fixtures.
+production Rust embeddings of optional faces, ignores `cfg(test)` fixtures,
+requires every complete optional notice to remain embedded in production, and
+requires every runtime-embedded font family to have all manifest notice files
+embedded with the manifest family/version label.
 
 Every tagged Release run stages these assets and uploads them alongside the
 native installers in the protected `release` publishing job before making
 the draft public. Dispatch-only packaging retains the same assets and JSON
 report as workflow artifacts without publishing a release. Font payloads
 are kept separate from installers and the signed application update manifest.
+The published license assets mirror the complete notices embedded in the app;
+runtime font acquisition does not download or cache those sidecars.
 The runtime download contract is strictly:
 
 ```text

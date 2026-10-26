@@ -47,13 +47,18 @@ Remove/corrupt one face; test offline, interrupted/proxied downloads, read-only
 and full stores, explicit Retry after repair, and a changed preference while
 work is pending. Exercise two processes/windows requesting the same family,
 then different families; no duplicate partial publication or stale activation.
-Confirm About notices and that default-only operation sends no font requests.
+Confirm a superseded completion shows Retry rather than downloaded success and
+does not retry by itself. Confirm About shows complete embedded notices for
+bundled JetBrains Mono and Noto Emoji plus all three optional families while
+offline, with versions matching their manifests, and that default-only
+operation sends no font requests.
 
 **Prerequisite:** a published matching-version release with all twelve pinned
-font assets (and licenses). Existing v0.10.4 assets are not retroactively
-changed; live-endpoint upgrade evidence is blocked until the next normal
-release. Native DPI/appearance/usability review remains NP-05, not a unit-test
-acceptance claim.
+font assets. The three separately published license assets mirror notices
+already embedded in the application and are not a runtime prerequisite.
+Existing v0.10.4 assets are not retroactively changed; live-endpoint upgrade
+evidence is blocked until the next normal release. Native DPI/appearance/
+usability review remains NP-05, not a unit-test acceptance claim.
 
 ### ADR 0046 document-frame experiment (CP-18)
 

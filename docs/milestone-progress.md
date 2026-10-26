@@ -28,6 +28,15 @@ preference. Offline reuse, corruption repair, cancellation, generation-safe
 activation, and retry have deterministic coverage. ADR 0049 records the new
 asset boundary; released-endpoint, proxy, native DPI and usability evidence
 remain pending under TYPE-02/NP-05 until a matching release publishes assets.
+The effective family/generation is now context-scoped across all windows, so a
+pending or failed sibling cannot fight a successful installation or blank its
+terminal through reinstall/repaint oscillation. Superseded completion is now a
+quiescent Retry state, while stale-window protection is explicitly bounded to
+the composition root's synchronous same-pass configuration broadcast. About
+embeds complete manifest-versioned notices for bundled JetBrains Mono and Noto
+Emoji plus Iosevka Term, JuliaMono, and Maple Mono for packaged/offline use;
+the separately staged optional license assets remain publication mirrors rather
+than runtime cache inputs.
 
 ## v0.10.4: stable copying, native diagrams and terminal input repairs
 
