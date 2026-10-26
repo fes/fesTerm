@@ -216,8 +216,6 @@ pub struct TerminalView {
     smart_selection_feedback_expires_at: Option<Instant>,
     smart_keyboard_hit: Option<CellPosition>,
     smart_held_keys: Vec<egui::Key>,
-    smart_payload_pending: bool,
-    smart_ime_ownership: SmartImeOwnership,
     pending_link_requests: VecDeque<Arc<str>>,
     pending_context_action_request: bool,
     pending_history_actions: VecDeque<TerminalHistoryAction>,
@@ -389,21 +387,6 @@ enum SecondaryGestureOwnership {
     Terminal,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum SmartPayloadOwnership {
-    #[default]
-    None,
-    Awaiting,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum SmartImeOwnership {
-    #[default]
-    None,
-    Active,
-    AwaitingCommit,
-}
-
 impl TerminalView {
     fn request_smart_selection(
         &mut self,
@@ -413,18 +396,13 @@ impl TerminalView {
     ) {
         let selected = !self.pointer.pressed.iter().any(|pressed| *pressed)
             && hit.is_some_and(|hit| self.selection.infer_smart(snapshot, hit, scope));
-        self.set_smart_selection_feedback(if selected && self.selection.smart.as_ref().is_some_and(|smart| smart.conservative) {
+        self.set_transient_smart_selection_feedback(if selected && self.selection.smart.as_ref().is_some_and(|smart| smart.conservative) {
             "Smart selection: conservative row segment (pane/column boundary). Inspect; Copy separately. Drag replaces; Escape cancels."
         } else if selected {
             "Smart selection: inspect highlight; Copy is separate. Drag to replace; Escape cancels. Ctrl+Alt+Shift+S/P/B selects sentence/paragraph/block."
         } else {
             "Smart selection unavailable here (blank/border or context limit). Existing selection unchanged; use ordinary drag."
         });
-    }
-
-    fn set_smart_selection_feedback(&mut self, feedback: impl Into<String>) {
-        self.smart_selection_feedback = Some(feedback.into());
-        self.smart_selection_feedback_expires_at = None;
     }
 
     fn set_transient_smart_selection_feedback(&mut self, feedback: impl Into<String>) {
@@ -511,23 +489,14 @@ impl TerminalView {
             return Err(RectangleCopyError::PointerGestureInProgress);
         }
         self.history.sync(terminal);
-        let was_smart = self.selection.is_smart();
-        self.selection
-            .invalidate_smart(TerminalSnapshot::from_terminal_viewport(
-                terminal,
-                self.history.offset_rows,
-            ));
-        if was_smart && !self.selection.is_smart() {
-            self.set_transient_smart_selection_feedback(
-                "Smart selection cancelled: selected content, wrapping or dimensions changed.",
-            );
-        }
         let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
         let copy =
             RectangleCopy::capture(snapshot, trim_trailing_spaces, RECTANGLE_COPY_MAX_BYTES)?;
         self.cache = TerminalRenderCache::default();
         self.cache.update(snapshot, &[]);
         self.selection.clear();
+        self.clear_smart_selection_feedback();
+        self.smart_keyboard_hit = None;
         self.pointer = TerminalPointerState::default();
         self.primary_link_gesture = None;
         self.secondary_gesture = SecondaryGestureOwnership::default();
@@ -563,6 +532,8 @@ impl TerminalView {
             self.context_text = None;
             self.pending_context_action_request = false;
             self.pending_link_requests.clear();
+            self.clear_smart_selection_feedback();
+            self.smart_keyboard_hit = None;
             if let Some(id) = self.rectangle_copy_popup_id.take() {
                 self.retired_rectangle_popup_id = Some(id);
             }
@@ -665,8 +636,6 @@ impl TerminalView {
     pub fn relinquish_transient_input(&mut self) -> Option<FocusEvent> {
         self.cancel_rectangle_copy();
         self.smart_held_keys.clear();
-        self.smart_payload_pending = false;
-        self.smart_ime_ownership = SmartImeOwnership::None;
         self.smart_keyboard_hit = None;
         if self.selection.is_active() {
             self.selection.finish();
@@ -884,8 +853,6 @@ impl TerminalView {
         {
             self.primary_link_gesture = None;
             self.smart_held_keys.clear();
-            self.smart_payload_pending = false;
-            self.smart_ime_ownership = SmartImeOwnership::None;
         }
         self.last_rendered_frame = Some(frame);
         if !crate::fonts::terminal_font_family_installed(ui.ctx(), self.fonts.font_set().family()) {
@@ -983,8 +950,6 @@ impl TerminalView {
                 .any(|event| matches!(event, egui::Event::WindowFocused(false)))
         }) {
             self.smart_held_keys.clear();
-            self.smart_payload_pending = false;
-            self.smart_ime_ownership = SmartImeOwnership::None;
         }
 
         if self.rectangle_copy_active() {
@@ -1491,74 +1456,27 @@ impl TerminalView {
         );
         if !terminal_owns_keyboard {
             self.smart_held_keys.clear();
-            self.smart_payload_pending = false;
-            self.smart_ime_ownership = SmartImeOwnership::None;
         }
         ui.input_mut(|input| {
-            let mut smart_payload = SmartPayloadOwnership::None;
             let mut ime_composing = self.keyboard.ime_composing();
-            let awaiting_commit_at_batch_start =
-                self.smart_ime_ownership == SmartImeOwnership::AwaitingCommit;
-            let mut empty_owned_preedit_seen = false;
             input.events.retain_mut(|event| {
                 if matches!(event, egui::Event::WindowFocused(false)) {
                     self.smart_held_keys.clear();
-                    self.smart_payload_pending = false;
-                    self.smart_ime_ownership = SmartImeOwnership::None;
                     return true;
                 }
                 if !terminal_owns_keyboard {
                     return true;
                 }
                 match event {
-                    egui::Event::Text(_)
-                        if smart_payload != SmartPayloadOwnership::None
-                            || self.smart_payload_pending =>
-                    {
-                        smart_payload = SmartPayloadOwnership::None;
-                        self.smart_payload_pending = false;
-                        return false;
-                    }
                     egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
-                        if smart_payload == SmartPayloadOwnership::None
-                            && !self.smart_payload_pending
-                            && self.smart_ime_ownership == SmartImeOwnership::None
-                        {
-                            ime_composing = !text.is_empty();
-                            return true;
-                        }
-                        if text.is_empty() {
-                            if self.smart_ime_ownership != SmartImeOwnership::AwaitingCommit {
-                                empty_owned_preedit_seen = true;
-                            }
-                            self.smart_payload_pending = false;
-                            self.smart_ime_ownership = SmartImeOwnership::AwaitingCommit;
-                            smart_payload = SmartPayloadOwnership::None;
-                            ime_composing = false;
-                            return true;
-                        }
-                        self.smart_payload_pending = false;
-                        self.smart_ime_ownership = SmartImeOwnership::Active;
-                        smart_payload = SmartPayloadOwnership::None;
-                        return false;
-                    }
-                    egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
-                        ime_composing = false;
-                        if smart_payload != SmartPayloadOwnership::None
-                            || self.smart_payload_pending
-                            || self.smart_ime_ownership != SmartImeOwnership::None
-                        {
-                            smart_payload = SmartPayloadOwnership::None;
-                            self.smart_payload_pending = false;
-                            self.smart_ime_ownership = SmartImeOwnership::None;
-                            text.clear();
-                        }
+                        ime_composing = !text.is_empty();
                         return true;
                     }
-                    egui::Event::Ime(_) if self.smart_ime_ownership != SmartImeOwnership::None => {
-                        self.smart_ime_ownership = SmartImeOwnership::None;
-                        smart_payload = SmartPayloadOwnership::None;
-                        self.smart_payload_pending = false;
+                    egui::Event::Ime(egui::ImeEvent::Commit(_)) => {
+                        ime_composing = false;
+                        return true;
+                    }
+                    egui::Event::Ime(_) => {
                         ime_composing = false;
                         return true;
                     }
@@ -1585,27 +1503,16 @@ impl TerminalView {
                         if held && !repeatable_arrow {
                             if !*pressed {
                                 self.smart_held_keys.retain(|held| held != key);
-                                smart_payload = SmartPayloadOwnership::None;
-                                self.smart_payload_pending = false;
-                            } else {
-                                smart_payload = if ime_composing {
-                                    SmartPayloadOwnership::None
-                                } else {
-                                    SmartPayloadOwnership::Awaiting
-                                };
-                                self.smart_payload_pending = true;
                             }
                             return false;
                         }
 
-                        smart_payload = SmartPayloadOwnership::None;
                         if !*pressed {
                             return true;
                         }
                         if ime_composing {
                             return true;
                         }
-                        self.smart_payload_pending = false;
                         if modifiers.ctrl && modifiers.alt && modifiers.shift {
                             let mut target = self.smart_keyboard_hit.or(keyboard_hit).unwrap_or(
                                 CellPosition {
@@ -1644,10 +1551,8 @@ impl TerminalView {
                             if !held {
                                 self.smart_held_keys.push(*key);
                             }
-                            smart_payload = SmartPayloadOwnership::Awaiting;
-                            self.smart_payload_pending = true;
                             if smart_request.is_none() {
-                                self.set_smart_selection_feedback(format!(
+                                self.set_transient_smart_selection_feedback(format!(
                                     "Smart target row {}, column {}. Ctrl+Alt+Shift+S/P/B selects; arrows move target; Escape cancels.",
                                     target.row + 1,
                                     target.column + 1
@@ -1657,8 +1562,7 @@ impl TerminalView {
                         }
                         if *key == egui::Key::Escape
                             && (self.selection.is_smart()
-                                || self.smart_keyboard_hit.is_some()
-                                || self.smart_selection_feedback.is_some())
+                                || self.smart_keyboard_hit.is_some())
                         {
                             if self.selection.is_smart() {
                                 self.selection.clear();
@@ -1666,29 +1570,16 @@ impl TerminalView {
                             self.clear_smart_selection_feedback();
                             self.smart_keyboard_hit = None;
                             self.smart_held_keys.push(*key);
-                            smart_payload = SmartPayloadOwnership::Awaiting;
-                            self.smart_payload_pending = true;
                             return false;
                         }
-                    }
-                    egui::Event::Paste(_)
-                    | egui::Event::Copy
-                    | egui::Event::PointerButton { pressed: true, .. } => {
-                        smart_payload = SmartPayloadOwnership::None;
                     }
                     _ => {}
                 }
                 true
             });
-            if awaiting_commit_at_batch_start
-                && !empty_owned_preedit_seen
-                && self.smart_ime_ownership == SmartImeOwnership::AwaitingCommit
-            {
-                self.smart_ime_ownership = SmartImeOwnership::None;
-            }
         });
         if let Some(scope) = smart_request {
-            self.request_smart_selection(snapshot, keyboard_hit, scope);
+            self.request_smart_selection(snapshot, self.smart_keyboard_hit.or(keyboard_hit), scope);
         }
         let selected_text = selection_text(
             TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows),
@@ -3162,7 +3053,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_selection_held_cancel_never_leaks_repeat_or_release() {
+    fn smart_selection_held_cancel_never_leaks_key_repeat_or_release() {
         let mut harness = smart_selection_harness();
         smart_key(&mut harness, egui::Key::S);
         for (pressed, repeat) in [(true, false), (true, true), (false, false)] {
@@ -3173,9 +3064,6 @@ mod tests {
                 repeat,
                 modifiers: egui::Modifiers::NONE,
             });
-            if pressed {
-                harness.event(egui::Event::Text("\u{1b}".to_owned()));
-            }
             harness.step();
             assert!(
                 harness.state().sink.0.is_empty(),
@@ -3189,7 +3077,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_selection_payload_capture_does_not_swallow_fresh_typing() {
+    fn smart_selection_shortcuts_never_claim_text_or_ime_payloads() {
         let mut harness = smart_selection_harness();
         harness.input_mut().events.extend([
             egui::Event::Key {
@@ -3207,7 +3095,11 @@ mod tests {
             egui::Event::Text("ß".to_owned()),
         ]);
         harness.step();
-        assert!(harness.state().sink.0.is_empty(), "AltGr/Option payload");
+        assert_eq!(
+            harness.state().sink.0.concat(),
+            "ß".as_bytes(),
+            "AltGr/Option payload"
+        );
 
         harness.event(egui::Event::Key {
             key: egui::Key::S,
@@ -3245,7 +3137,11 @@ mod tests {
             egui::Event::Ime(egui::ImeEvent::Commit("ṕ".to_owned())),
         ]);
         harness.step();
-        assert!(harness.state().sink.0.is_empty(), "IME/dead-key payload");
+        assert_eq!(
+            harness.state().sink.0.concat(),
+            "ßṕ".as_bytes(),
+            "IME/dead-key payload"
+        );
 
         harness.input_mut().events.extend([
             egui::Event::Key {
@@ -3272,8 +3168,8 @@ mod tests {
         harness.step();
         assert_eq!(
             harness.state().sink.0.concat(),
-            "β".as_bytes(),
-            "key release ends payload ownership before unrelated text"
+            "ßṕβ".as_bytes(),
+            "same-batch text remains terminal input"
         );
 
         harness.input_mut().events.extend([
@@ -3287,7 +3183,7 @@ mod tests {
             egui::Event::Text("s".to_owned()),
         ]);
         harness.step();
-        assert_eq!(harness.state().sink.0.concat(), "βs".as_bytes());
+        assert_eq!(harness.state().sink.0.concat(), "ßṕβs".as_bytes());
         assert!(harness.state().copied.is_empty());
     }
 
@@ -3358,7 +3254,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_selection_owned_ime_survives_native_termination_order_without_eating_later_input() {
+    fn smart_selection_shortcut_ime_termination_order_reaches_terminal_input() {
         let smart_modifiers = egui::Modifiers {
             ctrl: true,
             alt: true,
@@ -3400,11 +3296,7 @@ mod tests {
 
         commit.event(egui::Event::Ime(egui::ImeEvent::Commit("测试".to_owned())));
         commit.run();
-        assert_eq!(commit.state().sink.0.concat(), "β".as_bytes());
-        assert_eq!(
-            commit.state().view.smart_ime_ownership,
-            SmartImeOwnership::None
-        );
+        assert_eq!(commit.state().sink.0.concat(), "β测试".as_bytes());
 
         let mut cancelled = smart_selection_harness();
         cancelled.input_mut().events.extend([
@@ -3421,17 +3313,13 @@ mod tests {
         ]);
         cancelled.step();
         cancelled.run();
-        assert_eq!(
-            cancelled.state().view.smart_ime_ownership,
-            SmartImeOwnership::None
-        );
         cancelled.event(egui::Event::Ime(egui::ImeEvent::Commit("界".to_owned())));
         cancelled.run();
         assert_eq!(cancelled.state().sink.0.concat(), "界".as_bytes());
     }
 
     #[test]
-    fn smart_selection_pending_payload_crosses_batches_only_while_key_is_held() {
+    fn smart_selection_shortcut_ime_payload_crosses_batches_as_terminal_input() {
         let mut harness = smart_selection_harness();
         harness.event(egui::Event::Key {
             key: egui::Key::P,
@@ -3462,15 +3350,11 @@ mod tests {
         harness.event(egui::Event::Ime(egui::ImeEvent::Commit("ṕ".to_owned())));
         harness.run();
 
-        assert!(harness.state().sink.0.is_empty());
-        assert_eq!(
-            harness.state().view.smart_ime_ownership,
-            SmartImeOwnership::None
-        );
+        assert_eq!(harness.state().sink.0.concat(), "ṕ".as_bytes());
     }
 
     #[test]
-    fn smart_selection_unrelated_keypress_retires_pending_payload_ownership() {
+    fn smart_selection_unrelated_keypress_and_text_reach_terminal_input() {
         for same_batch in [true, false] {
             let mut harness = smart_selection_harness();
             harness.event(egui::Event::Key {
@@ -3508,7 +3392,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_selection_duplicate_empty_preedits_do_not_renew_cancelled_ownership() {
+    fn smart_selection_duplicate_empty_preedits_do_not_claim_later_composition() {
         let mut harness = smart_selection_harness();
         harness.input_mut().events.extend([
             egui::Event::Key {
@@ -3545,10 +3429,6 @@ mod tests {
             active_range_chars: None,
         }));
         harness.run();
-        assert_eq!(
-            harness.state().view.smart_ime_ownership,
-            SmartImeOwnership::None
-        );
 
         harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
             text: "xin".to_owned(),
@@ -3561,22 +3441,15 @@ mod tests {
     }
 
     #[test]
-    fn smart_selection_render_gap_clears_pending_and_ime_ownership() {
+    fn smart_selection_render_gap_clears_held_shortcut_ownership() {
         let mut harness = smart_selection_harness();
         {
             let view = &mut harness.state_mut().view;
             view.smart_held_keys.push(egui::Key::P);
-            view.smart_payload_pending = true;
-            view.smart_ime_ownership = SmartImeOwnership::Active;
             view.last_rendered_frame = Some(0);
         }
         harness.run();
         assert!(harness.state().view.smart_held_keys.is_empty());
-        assert!(!harness.state().view.smart_payload_pending);
-        assert_eq!(
-            harness.state().view.smart_ime_ownership,
-            SmartImeOwnership::None
-        );
 
         harness.event(egui::Event::Text("x".to_owned()));
         harness.run();
@@ -3584,7 +3457,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_selection_payload_ownership_expires_before_unmapped_text() {
+    fn smart_selection_shortcut_release_does_not_claim_later_text() {
         let mut harness = smart_selection_harness();
         harness.event(egui::Event::Key {
             key: egui::Key::S,
@@ -3694,7 +3567,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_selection_focus_loss_releases_held_and_pending_ownership() {
+    fn smart_selection_focus_loss_releases_held_shortcut_ownership() {
         let mut harness = smart_selection_harness();
         harness.event(egui::Event::Key {
             key: egui::Key::S,
@@ -3727,7 +3600,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_selection_refusal_and_cancel_preserve_ordinary_selection() {
+    fn smart_selection_refusal_is_transient_and_does_not_hijack_escape() {
         let mut harness = smart_selection_harness();
         {
             let state = harness.state_mut();
@@ -3749,6 +3622,7 @@ mod tests {
                 state.view.selected_text(&state.terminal).as_deref(),
                 Some("First")
             );
+            assert!(state.view.smart_selection_feedback_expires_at.is_some());
         }
         harness.event(egui::Event::Key {
             key: egui::Key::Escape,
@@ -3758,18 +3632,7 @@ mod tests {
             modifiers: egui::Modifiers::NONE,
         });
         harness.run();
-        assert_eq!(
-            harness
-                .state()
-                .view
-                .selected_text(&harness.state().terminal)
-                .as_deref(),
-            Some("First")
-        );
-        harness.event(egui::Event::Copy);
-        harness.run();
-        assert_eq!(harness.state().copied, vec!["First"]);
-        assert!(harness.state().sink.0.is_empty());
+        assert_eq!(harness.state().sink.0.concat(), b"\x1b");
     }
 
     #[test]
@@ -3803,6 +3666,71 @@ mod tests {
         );
         assert!(harness.state().sink.0.is_empty());
         assert!(harness.state().copied.is_empty());
+    }
+
+    #[test]
+    fn smart_selection_same_batch_move_selects_the_moved_target() {
+        let mut harness = smart_selection_harness();
+        harness.state_mut().view.smart_keyboard_hit = Some(CellPosition { column: 4, row: 0 });
+        let modifiers = egui::Modifiers {
+            ctrl: true,
+            alt: true,
+            shift: true,
+            ..Default::default()
+        };
+        harness.input_mut().events.extend([
+            egui::Event::Key {
+                key: egui::Key::ArrowDown,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            },
+            egui::Event::Key {
+                key: egui::Key::B,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            },
+        ]);
+        harness.step();
+
+        assert_eq!(
+            harness
+                .state()
+                .view
+                .selected_text(&harness.state().terminal)
+                .as_deref(),
+            Some("Second paragraph.")
+        );
+        assert_eq!(
+            harness.state().view.smart_keyboard_hit,
+            Some(CellPosition { column: 4, row: 1 })
+        );
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn rectangle_copy_retires_smart_feedback_and_keyboard_target() {
+        let terminal = terminal(8, 2);
+        let mut view = TerminalView::default();
+        view.request_smart_selection(
+            TerminalSnapshot::from_terminal(&terminal),
+            Some(CellPosition { column: 0, row: 0 }),
+            crate::SmartSelectionScope::Sentence,
+        );
+        view.smart_keyboard_hit = Some(CellPosition { column: 0, row: 0 });
+
+        view.begin_rectangle_copy(&terminal, true).unwrap();
+
+        assert!(view.smart_selection_feedback.is_none());
+        assert!(view.smart_selection_feedback_expires_at.is_none());
+        assert!(view.smart_keyboard_hit.is_none());
+
+        view.cancel_rectangle_copy();
+        assert!(view.smart_selection_feedback.is_none());
+        assert!(view.smart_keyboard_hit.is_none());
     }
 
     #[test]

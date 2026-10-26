@@ -42,8 +42,9 @@ inference with ordinary adjustable selection; Escape cancels inferred selection.
 An unavailable result leaves an existing selection intact and explains that
 ordinary drag is available. There is intentionally no immediate **Smart Copy**:
 it would skip the inspection step on unqualified layout inference.
-Escape dismisses refusal/targeting feedback without discarding a prior
-ordinary selection; only an actual inferred selection is cancelled.
+Instruction and refusal feedback expires automatically. Escape is consumed
+only while cancelling an inferred selection or keyboard target; otherwise it
+continues to the terminal normally.
 
 Keyboard-only: focus the terminal and use **Ctrl+Alt+Shift+S/P/B** for
 sentence/paragraph/block (also Control+Option+Shift on macOS). The target is
@@ -52,27 +53,19 @@ in scrolled history it starts at the viewport's upper-left cell.
 **Ctrl+Alt+Shift+arrows** move that target one cell, with an outline and
 row/column feedback.
 Escape clears the target. These fixed, local presentation gestures do not
-enter the application shortcut dispatcher or send terminal keys. They use the
+enter the application shortcut dispatcher or send their key events. They use the
 same application-owned terminal-input predicate as ordinary terminal routing,
-not transient widget-focus bookkeeping. Native Text/IME payload ownership is
-explicitly bounded to the consumed shortcut's held-key lifetime. A payload
-arriving in a later event batch is still local only while that recognized key
-remains held; key release or any unrelated keypress ends ordinary Text
-ownership immediately. An IME
-composition that begins while the shortcut is owned remains owned through its
-terminating commit. Native empty-preedit termination may retain that explicit
-composition for one following event batch so a split commit remains local;
-duplicate empty preedits do not renew the grace, and absent a commit it expires
-before a later unrelated composition. Capture cannot otherwise suppress an
-unrelated same-batch character after release. IME dismissal and unrelated
-commits still reach terminal keyboard state. Window focus loss, terminal-input
-blackout and a presentation gap all clear held, pending and IME ownership so a
-hidden view cannot suppress input when it returns. Held arrow repeats move
-the target while duplicate non-repeat shortcut presses remain local. Window
-focus loss clears held-key ownership. Instructions and refusal feedback are
-visible and accessible without the application status bar; passive
-overwrite/resize/eviction cancellation notices expire automatically. Ordinary
-clicks, drags, Copy and application shortcuts retain their meaning.
+not transient widget-focus bookkeeping. Native Text and IME payloads remain
+terminal-owned even when emitted alongside a recognized gesture, so AltGr,
+Option, dead-key, and non-US layout characters are never silently discarded.
+Window focus loss, terminal-input blackout and a presentation gap clear held
+shortcut ownership. Held arrow repeats move the target while duplicate
+non-repeat shortcut presses remain local. Instructions, refusal feedback and
+passive overwrite/resize/eviction cancellation notices are visible and
+accessible without the application status bar, then expire automatically.
+Entering or leaving rectangle-copy mode also retires smart targeting and
+feedback. Ordinary clicks, drags, Copy and application shortcuts retain their
+meaning.
 
 Layout precedes segmentation. A vertical box/ASCII border or internal run of
 two spaces bounds the clicked row's text segment. Such layouts conservatively
