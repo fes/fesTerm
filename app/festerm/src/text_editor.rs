@@ -5177,7 +5177,12 @@ mod tests {
                         copy.events.push(egui::Event::Copy);
                         let output = render(copy);
                         let copied = output.platform_output.commands.iter().find_map(|command| {
-                            if let egui::OutputCommand::CopyText(text) = command {
+                            if let egui::OutputCommand::CopyHtml { html, text } = command {
+                                assert!(html.contains(if target == "delta zeta theta" {
+                                    "<table>"
+                                } else {
+                                    "<p>"
+                                }));
                                 Some(text.as_str())
                             } else {
                                 None

@@ -33,6 +33,12 @@ use crate::markdown_images::{
 };
 use crate::tabs::{AppCommand, ExternalLinkTarget, TabId};
 
+mod clipboard;
+
+pub(crate) fn install_clipboard(context: &egui::Context) {
+    clipboard::install(context);
+}
+
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_IMAGE_PIXELS: u64 = 16 * 1024 * 1024;
 /// How many images a local document may load without the reader asking
@@ -460,6 +466,8 @@ pub struct MarkdownViewerTab {
     outline_open: bool,
     outline_selected: Option<usize>,
     document: Option<MarkdownDocument>,
+    clipboard_owner: u64,
+    document_revision: u64,
     error: Option<MarkdownViewerErrorState>,
     stale_snapshot: bool,
     find: MarkdownFindState,
@@ -518,6 +526,8 @@ impl MarkdownViewerTab {
             outline_open: true,
             outline_selected: None,
             document: None,
+            clipboard_owner: clipboard::new_surface_owner(),
+            document_revision: 0,
             error: None,
             stale_snapshot: false,
             find: MarkdownFindState::default(),
@@ -580,6 +590,8 @@ impl MarkdownViewerTab {
             outline_open: true,
             outline_selected: None,
             document: None,
+            clipboard_owner: clipboard::new_surface_owner(),
+            document_revision: 0,
             error: None,
             stale_snapshot: false,
             find: MarkdownFindState::default(),
@@ -774,8 +786,16 @@ impl MarkdownViewerTab {
                                 {
                                     render_state.table_cells.probe = self.table_cell_probe.take();
                                 }
-                                document_rect =
-                                    Some(render_state.show_document(ui, document).document_rect);
+                                document_rect = Some(
+                                    render_state
+                                        .show_document(
+                                            ui,
+                                            document,
+                                            self.clipboard_owner,
+                                            self.document_revision,
+                                        )
+                                        .document_rect,
+                                );
                                 #[cfg(test)]
                                 {
                                     self.table_cell_probe = render_state.table_cells.probe.take();
@@ -837,6 +857,7 @@ impl MarkdownViewerTab {
                 self.table_layouts.clear();
                 self.outline_preparation.clear();
                 self.document = Some(document);
+                self.document_revision = self.document_revision.wrapping_add(1);
                 self.error = None;
                 self.stale_snapshot = false;
                 self.resource_approvals.clear();
@@ -3049,80 +3070,97 @@ impl MarkdownRenderState<'_> {
         &mut self,
         ui: &mut egui::Ui,
         document: &MarkdownDocument,
+        clipboard_owner: u64,
+        document_revision: u64,
     ) -> MarkdownDocumentLayout {
+        if self.mode == MarkdownViewerMode::Preview {
+            clipboard::begin(ui);
+        }
         self.table_layouts.begin(ui, self.find);
         let viewport_height = ui.available_height().max(120.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            ui.set_height(viewport_height);
-            let mut outline_rect = None;
-            // Below this the outline would starve the reading column (at 400
-            // logical points the 216pt outline left a 184pt well, which wraps
-            // prose to two or three words a row). Collapse it for the frame
-            // without disturbing the user's own toggle.
-            if self.outline_open
-                && ui.available_width() >= OUTLINE_WIDTH + OUTLINE_MIN_DOCUMENT_WIDTH
-            {
-                outline_rect = Some(self.show_outline(ui, document, viewport_height));
-            }
-            let document_width = ui.available_width();
-            let mut document_rect = egui::Rect::NOTHING;
-            ui.allocate_ui_with_layout(
-                vec2(document_width, viewport_height),
-                egui::Layout::top_down(Align::Min),
-                |ui| {
-                    document_rect = ui.max_rect();
-                    egui::ScrollArea::vertical()
-                        .id_salt("markdown-document")
-                        .max_height(viewport_height)
-                        .min_scrolled_height(viewport_height)
-                        // Without this the scroll area shrinks to the width
-                        // of its content, which parks the scrollbar against
-                        // the reading column instead of the right edge of
-                        // the well.
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            // The reading column is centred in the well, as
-                            // `.fmd-document { margin: 0 auto }` does. Laying
-                            // it out top-down from the left edge left the
-                            // whole right half of a wide window empty.
-                            let column_width = READING_WIDTH
-                                .min(ui.available_width() - READING_COLUMN_SIDE_GUTTER * 2.0)
-                                .max(160.0);
-                            let leading = ((ui.available_width() - column_width) / 2.0).max(0.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 0.0;
-                                ui.add_space(leading);
-                                ui.allocate_ui_with_layout(
-                                    vec2(column_width, 0.0),
-                                    egui::Layout::top_down(Align::Min),
-                                    |ui| {
-                                        ui.set_max_width(column_width);
-                                        ui.add_space(READING_COLUMN_TOP_PADDING);
-                                        match self.mode {
-                                            MarkdownViewerMode::Preview => self.render_blocks(
-                                                ui,
-                                                document.blocks(),
-                                                document,
-                                                InlineRenderStyle::body(),
-                                            ),
-                                            MarkdownViewerMode::Source => {
-                                                self.render_source(ui, document);
+        let layout = ui
+            .horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.set_height(viewport_height);
+                let mut outline_rect = None;
+                // Below this the outline would starve the reading column (at 400
+                // logical points the 216pt outline left a 184pt well, which wraps
+                // prose to two or three words a row). Collapse it for the frame
+                // without disturbing the user's own toggle.
+                if self.outline_open
+                    && ui.available_width() >= OUTLINE_WIDTH + OUTLINE_MIN_DOCUMENT_WIDTH
+                {
+                    outline_rect = Some(self.show_outline(ui, document, viewport_height));
+                }
+                let document_width = ui.available_width();
+                let mut document_rect = egui::Rect::NOTHING;
+                ui.allocate_ui_with_layout(
+                    vec2(document_width, viewport_height),
+                    egui::Layout::top_down(Align::Min),
+                    |ui| {
+                        document_rect = ui.max_rect();
+                        egui::ScrollArea::vertical()
+                            .id_salt("markdown-document")
+                            .max_height(viewport_height)
+                            .min_scrolled_height(viewport_height)
+                            // Without this the scroll area shrinks to the width
+                            // of its content, which parks the scrollbar against
+                            // the reading column instead of the right edge of
+                            // the well.
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                // The reading column is centred in the well, as
+                                // `.fmd-document { margin: 0 auto }` does. Laying
+                                // it out top-down from the left edge left the
+                                // whole right half of a wide window empty.
+                                let column_width = READING_WIDTH
+                                    .min(ui.available_width() - READING_COLUMN_SIDE_GUTTER * 2.0)
+                                    .max(160.0);
+                                let leading =
+                                    ((ui.available_width() - column_width) / 2.0).max(0.0);
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 0.0;
+                                    ui.add_space(leading);
+                                    ui.allocate_ui_with_layout(
+                                        vec2(column_width, 0.0),
+                                        egui::Layout::top_down(Align::Min),
+                                        |ui| {
+                                            ui.set_max_width(column_width);
+                                            ui.add_space(READING_COLUMN_TOP_PADDING);
+                                            match self.mode {
+                                                MarkdownViewerMode::Preview => self.render_blocks(
+                                                    ui,
+                                                    document.blocks(),
+                                                    document,
+                                                    InlineRenderStyle::body(),
+                                                ),
+                                                MarkdownViewerMode::Source => {
+                                                    self.render_source(ui, document);
+                                                }
                                             }
-                                        }
-                                        ui.add_space(READING_COLUMN_BOTTOM_PADDING);
-                                    },
-                                );
+                                            ui.add_space(READING_COLUMN_BOTTOM_PADDING);
+                                        },
+                                    );
+                                });
                             });
-                        });
-                },
+                    },
+                );
+                MarkdownDocumentLayout {
+                    outline_rect,
+                    document_rect,
+                }
+            })
+            .inner;
+        if self.mode == MarkdownViewerMode::Preview {
+            clipboard::finish(
+                ui,
+                document,
+                clipboard_owner,
+                document_revision,
+                layout.document_rect,
             );
-            MarkdownDocumentLayout {
-                outline_rect,
-                document_rect,
-            }
-        })
-        .inner
+        }
+        layout
     }
 
     fn render_block(
@@ -3180,7 +3218,7 @@ impl MarkdownRenderState<'_> {
             }
             Block::List(block) => self.render_list(ui, block, document, text_style),
             Block::Table(block) => self.render_table(ui, block, document, text_style),
-            Block::CodeBlock(block) => self.render_code_block(ui, block),
+            Block::CodeBlock(block) => self.render_code_block(ui, block, document),
             Block::Html(block) => self.render_html_block(ui, block),
             Block::Rule { .. } => {
                 ui.separator();
@@ -3210,6 +3248,14 @@ impl MarkdownRenderState<'_> {
             },
         );
         let response = ui.add(egui::Label::new(job).selectable(true).wrap());
+        clipboard::inlines(
+            ui,
+            &response,
+            document,
+            block.inlines(),
+            text_style.with_strong(),
+            Some(block.span()),
+        );
         response.widget_info(|| {
             WidgetInfo::labeled(
                 WidgetType::Label,
@@ -3456,6 +3502,14 @@ impl MarkdownRenderState<'_> {
                                 );
                                 let response =
                                     cell_ui.add(egui::Label::new(galley.clone()).selectable(true));
+                                clipboard::inlines(
+                                    &cell_ui,
+                                    &response,
+                                    document,
+                                    row.cells()[column].inlines(),
+                                    text_style,
+                                    Some(row.cells()[column].span()),
+                                );
                                 #[cfg(test)]
                                 self.table_cells
                                     .record(row.cells()[column].span(), &response);
@@ -3505,7 +3559,12 @@ impl MarkdownRenderState<'_> {
             });
     }
 
-    fn render_code_block(&mut self, ui: &mut egui::Ui, block: &CodeBlock) {
+    fn render_code_block(
+        &mut self,
+        ui: &mut egui::Ui,
+        block: &CodeBlock,
+        document: &MarkdownDocument,
+    ) {
         // The mockup separates the language/Copy head from the code with a
         // hairline (`.fmd-code-head { border-bottom }`) instead of stacking
         // both inside one padded box, which is what made the label look like
@@ -3527,11 +3586,11 @@ impl MarkdownRenderState<'_> {
                         .max_rect(head_rect.shrink2(vec2(CODE_BLOCK_PADDING_X as f32, 0.0)))
                         .layout(egui::Layout::left_to_right(Align::Center)),
                 );
-                head.label(
-                    RichText::new(block.language().unwrap_or("text"))
+                head.add(
+                    egui::Label::new(RichText::new(block.language().unwrap_or("text"))
                         .size(BODY_TEXT_SIZE - 4.0)
                         .monospace()
-                        .color(theme::TEXT_SECONDARY),
+                        .color(theme::TEXT_SECONDARY)).selectable(false),
                 );
                 head.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                     let response = self.code_copy_caption.button(ui);
@@ -3559,6 +3618,7 @@ impl MarkdownRenderState<'_> {
                             .id_salt(("markdown-code", block.span().byte_range().start))
                             .show(ui, |ui| {
                                 ui.spacing_mut().item_spacing.y = CODE_LINE_SPACING;
+                                let mut code_offset = 0;
                                 for (index, line) in block.highlighted_lines().iter().enumerate() {
                                     let job = self.code_preparation.line(
                                         block.span().start().byte_offset(),
@@ -3568,6 +3628,9 @@ impl MarkdownRenderState<'_> {
                                     let response = ui.add(
                                         egui::Label::new(job).selectable(true).wrap(),
                                     );
+                                    let text = trim_line_ending(line.text());
+                                    clipboard::code_line(ui, &response, document, block, text, code_offset);
+                                    code_offset += line.text().len();
                                     if matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(block.span(), target))
                                     {
                                         response.scroll_to_me(Some(Align::Center));
@@ -4134,10 +4197,18 @@ fn render_inline_flow(
         }
         match inline {
             Inline::Text(text) => {
-                render_text_run(ui, text.text(), text.text_span(), find, font.clone(), style);
+                render_text_run(
+                    ui,
+                    text.text(),
+                    text.text_span(),
+                    find,
+                    font.clone(),
+                    style,
+                    document,
+                );
             }
             Inline::Code(text) => {
-                ui.add(
+                let response = ui.add(
                     egui::Label::new(text_job(
                         text.text(),
                         text.text_span(),
@@ -4147,6 +4218,14 @@ fn render_inline_flow(
                     ))
                     .selectable(true)
                     .wrap(),
+                );
+                clipboard::text(
+                    ui,
+                    &response,
+                    document,
+                    text.text(),
+                    text.text_span(),
+                    style.as_inline_code(),
                 );
             }
             Inline::Emphasis(container) => render_inline_flow(
@@ -4218,7 +4297,7 @@ fn render_inline_flow(
                 );
             }
             Inline::RawHtml(html) => {
-                ui.add(
+                let response = ui.add(
                     egui::Label::new(text_job(
                         html.literal(),
                         html.span(),
@@ -4228,6 +4307,14 @@ fn render_inline_flow(
                     ))
                     .selectable(true)
                     .wrap(),
+                );
+                clipboard::text(
+                    ui,
+                    &response,
+                    document,
+                    html.literal(),
+                    html.span(),
+                    style.as_inline_code(),
                 );
             }
             // CommonMark: a single newline inside a paragraph is a *soft*
@@ -4271,7 +4358,7 @@ fn render_struck_inline_flow(
         match inline {
             Inline::Text(text) | Inline::Code(text) => {
                 let mono = matches!(inline, Inline::Code(_));
-                ui.add(
+                let response = ui.add(
                     egui::Label::new(text_job(
                         text.text(),
                         text.text_span(),
@@ -4289,6 +4376,18 @@ fn render_struck_inline_flow(
                     ))
                     .selectable(true)
                     .wrap(),
+                );
+                clipboard::text(
+                    ui,
+                    &response,
+                    document,
+                    text.text(),
+                    text.text_span(),
+                    if mono {
+                        style.as_inline_code().with_strikethrough()
+                    } else {
+                        style.with_strikethrough()
+                    },
                 );
             }
             _ => render_inline_flow(
@@ -4338,7 +4437,13 @@ fn render_link(
     } else {
         inline_layout_job(link.inlines(), document, find, font, style.as_link())
     };
-    let response = ui.add_enabled(enabled, egui::Button::new(job).frame(false));
+    let response = ui.add_enabled(
+        enabled,
+        egui::Label::new(job)
+            .selectable(true)
+            .sense(Sense::click_and_drag()),
+    );
+    clipboard::link(ui, &response, document, link, style.as_link());
     response.widget_info(|| {
         WidgetInfo::labeled(
             WidgetType::Button,
@@ -4701,6 +4806,7 @@ fn render_text_run(
     find: &MarkdownFindState,
     font: FontId,
     style: InlineRenderStyle,
+    document: &MarkdownDocument,
 ) {
     if text.is_empty() {
         return;
@@ -4717,7 +4823,8 @@ fn render_text_run(
     }
     let mut job = LayoutJob::default();
     append_text_segments_from(&mut job, text, span, find, font, style, skip);
-    ui.add(egui::Label::new(job).selectable(true).wrap());
+    let response = ui.add(egui::Label::new(job).selectable(true).wrap());
+    clipboard::text(ui, &response, document, &text[skip..], span, style);
 }
 
 /// Owned by the loaded snapshot, and cleared only when a new document replaces it.
@@ -5033,6 +5140,8 @@ pub(crate) struct MarkdownPreviewPane {
     source_generation: Option<Generation>,
     source_parent_identity: Option<DirectoryIdentity>,
     document: Option<MarkdownDocument>,
+    clipboard_owner: u64,
+    document_revision: u64,
     error: Option<String>,
     /// The text the current parse was made from, so an unchanged frame costs
     /// nothing.
@@ -5077,6 +5186,8 @@ impl MarkdownPreviewPane {
             source_generation: None,
             source_parent_identity: None,
             document: None,
+            clipboard_owner: clipboard::new_surface_owner(),
+            document_revision: 0,
             error: None,
             parsed: String::new(),
             settling: None,
@@ -5261,6 +5372,7 @@ impl MarkdownPreviewPane {
                 self.source_syntax = None;
                 self.outline_selected = document.headings().first().map(|_| 0);
                 self.document = Some(document);
+                self.document_revision = self.document_revision.wrapping_add(1);
                 self.error = None;
             }
             Err(error) => {
@@ -5345,6 +5457,7 @@ impl MarkdownPreviewPane {
         }
         let viewport_height = ui.available_height().max(120.0);
         let viewport_top = ui.cursor().top();
+        clipboard::begin(ui);
         egui::ScrollArea::vertical()
             .id_salt("markdown-preview-pane")
             .max_height(viewport_height)
@@ -5374,6 +5487,17 @@ impl MarkdownPreviewPane {
                     );
                 });
             });
+        clipboard::finish(
+            ui,
+            &document,
+            self.clipboard_owner,
+            self.document_revision,
+            egui::Rect::from_min_size(
+                egui::pos2(ui.min_rect().left(), viewport_top),
+                vec2(ui.available_width(), viewport_height),
+            )
+            .intersect(ui.clip_rect()),
+        );
         #[cfg(test)]
         {
             self.table_cell_probe = state.table_cells.probe.take();
@@ -8188,7 +8312,7 @@ mod tests {
         caption_oracle_frame(&mut pair, 30, wide, vec![egui::Event::PointerMoved(end)]);
         caption_oracle_frame(&mut pair, 31, wide, vec![button(end, false)]);
         let output = caption_oracle_frame(&mut pair, 32, wide, vec![egui::Event::Copy]);
-        assert!(output[1].platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyText(text) if text.trim() == "café 漢字")));
+        assert!(output[1].platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyHtml {text, html} if text.trim() == "café 漢字" && html.contains("<table>"))));
     }
 
     #[test]
@@ -8420,7 +8544,7 @@ mod tests {
         caption_oracle_frame(&mut pair, 13, wide, vec![button(end, false)]);
         let output = caption_oracle_frame(&mut pair, 14, wide, vec![egui::Event::Copy]);
         assert!(output[1].platform_output.commands.iter().any(|command| {
-            matches!(command, egui::OutputCommand::CopyText(text) if text.trim() == "café 漢字")
+            matches!(command, egui::OutputCommand::CopyHtml {text, html} if text.trim() == "café 漢字" && html.contains("<table>"))
         }));
         for (_, pane) in &mut pair {
             pane.scroll_to_heading(399);
@@ -8889,6 +9013,244 @@ mod tests {
     }
 
     #[test]
+    fn preview_selection_copies_rich_text_and_shift_menu_markdown_source() {
+        for (source, start_text, start_index, end_text, end_index, plain, markdown, tags) in [
+            (
+                "Before **café & bold** and `code` after.\n",
+                "Before ",
+                0,
+                "after.",
+                usize::MAX,
+                "Before café & bold and code after.",
+                "Before **café & bold** and `code` after.",
+                vec!["<strong>café &amp; bold</strong>", "<code>code</code>"],
+            ),
+            (
+                "Before *italic* ~~strike~~ [Web](https://example.test/?a=1&b=2) after.\n",
+                "Before ",
+                0,
+                "after.",
+                usize::MAX,
+                "Before italic strike Web after.",
+                "Before *italic* ~~strike~~ [Web](https://example.test/?a=1&b=2) after.",
+                vec![
+                    "<em>italic</em>",
+                    "<s>strike</s>",
+                    "<a href=\"https://example.test/?a=1&amp;b=2\">Web</a>",
+                ],
+            ),
+            (
+                "Before **café 漢字 e\u{301}** after.\n",
+                "café 漢字 e\u{301}",
+                2,
+                "café 漢字 e\u{301}",
+                6,
+                "fé 漢",
+                "fé 漢",
+                vec!["<strong>fé 漢</strong>"],
+            ),
+            (
+                "Before same **same** and same after.\n",
+                "Before same ",
+                0,
+                "and same after.",
+                usize::MAX,
+                "Before same same and same after.",
+                "Before same **same** and same after.",
+                vec!["<strong>same</strong>"],
+            ),
+            (
+                "Before **bold**\n\n```text\ncafé\n```\n\nAfter end.\n",
+                "Before ",
+                0,
+                "After end.",
+                usize::MAX,
+                "Before bold\n\ncafé\n\nAfter end.",
+                "Before **bold**\n\n```text\ncafé\n```\n\nAfter end.",
+                vec!["<strong>bold</strong>", "<pre>", "<code>café</code>"],
+            ),
+            (
+                "Before **bold**\n\n```text\nfirst\n\nsecond\n\n\nthird\n```\n\nAfter end.\n",
+                "Before ",
+                0,
+                "After end.",
+                usize::MAX,
+                "Before bold\n\nfirst\n\nsecond\n\nthird\n\nAfter end.",
+                "Before **bold**\n\n```text\nfirst\n\nsecond\n\n\nthird\n```\n\nAfter end.",
+                vec!["<code>first</code>\n\n<code>second</code>\n\n\n<code>third</code>"],
+            ),
+            (
+                "Before **bold**\n\n```text\nif (x) {\n  foo();\n}\n```\n\nAfter end.\n",
+                "Before ",
+                0,
+                "After end.",
+                usize::MAX,
+                "Before bold\n\nif (x) {\n  foo();\n}\n\nAfter end.",
+                "Before **bold**\n\n```text\nif (x) {\n  foo();\n}\n```\n\nAfter end.",
+                vec!["<code>if (x) {</code>\n<code>  foo();</code>\n<code>}</code>"],
+            ),
+        ] {
+            for standalone in [false, true] {
+                let [(context, mut viewer), _] = source_preparation_pair(source);
+                viewer.mode = MarkdownViewerMode::Preview;
+                viewer.outline_open = false;
+                let mut pane = MarkdownPreviewPane::new(
+                    LocalMarkdownSource::new("/docs/copy.md").unwrap().into(),
+                    source,
+                );
+                let tab = crate::tabs::AppState::for_test().active();
+                let mut frame = 0;
+                let mut render = |mut events: Vec<egui::Event>, modifiers| {
+                    frame += 1;
+                    events.insert(0, egui::Event::ModifiersChanged(modifiers));
+                    let mut output = context.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                vec2(1180.0, 760.0),
+                            )),
+                            time: Some(frame as f64 / 60.0),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            if standalone {
+                                viewer.show(ui, tab);
+                            } else {
+                                pane.show(ui);
+                            }
+                        },
+                    );
+                    output.textures_delta.clear();
+                    output
+                };
+                render(Vec::new(), egui::Modifiers::NONE);
+                let output = render(Vec::new(), egui::Modifiers::NONE);
+                let cursor = |text: &str, index: usize| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(label) if label.galley.job.text == text => {
+                                let cursor =
+                                    egui::text::CCursor::new(index.min(text.chars().count()));
+                                Some(
+                                    label.pos
+                                        + label.galley.pos_from_cursor(cursor).center().to_vec2(),
+                                )
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| panic!("missing selectable {text:?}"))
+                };
+                let start = cursor(start_text, start_index);
+                let end = cursor(end_text, end_index);
+                let button = |pos, pressed, button, modifiers| egui::Event::PointerButton {
+                    pos,
+                    pressed,
+                    button,
+                    modifiers,
+                };
+                render(
+                    vec![
+                        egui::Event::PointerMoved(start),
+                        button(
+                            start,
+                            true,
+                            egui::PointerButton::Primary,
+                            egui::Modifiers::NONE,
+                        ),
+                    ],
+                    egui::Modifiers::NONE,
+                );
+                render(vec![egui::Event::PointerMoved(end)], egui::Modifiers::NONE);
+                render(
+                    vec![button(
+                        end,
+                        false,
+                        egui::PointerButton::Primary,
+                        egui::Modifiers::NONE,
+                    )],
+                    egui::Modifiers::NONE,
+                );
+                let output = render(vec![egui::Event::Copy], egui::Modifiers::NONE);
+                let (html, text) = output
+                    .platform_output
+                    .commands
+                    .iter()
+                    .find_map(|command| match command {
+                        egui::OutputCommand::CopyHtml { html, text } => Some((html, text)),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "no rich clipboard command: {:?}",
+                            output.platform_output.commands
+                        )
+                    });
+                assert_eq!(text, plain);
+                for tag in &tags {
+                    assert!(html.contains(tag), "{html} missing {tag}");
+                }
+                assert!(!html.contains("**"));
+                render(
+                    vec![button(
+                        end,
+                        true,
+                        egui::PointerButton::Secondary,
+                        egui::Modifiers::SHIFT,
+                    )],
+                    egui::Modifiers::SHIFT,
+                );
+                render(
+                    vec![button(
+                        end,
+                        false,
+                        egui::PointerButton::Secondary,
+                        egui::Modifiers::SHIFT,
+                    )],
+                    egui::Modifiers::SHIFT,
+                );
+                let output = render(Vec::new(), egui::Modifiers::NONE);
+                let copy = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(label)
+                            if label.galley.job.text == "Copy Markdown source" =>
+                        {
+                            Some(label.galley.rect.translate(label.pos.to_vec2()).center())
+                        }
+                        _ => None,
+                    })
+                    .expect("Shift-right-click exposes source copying");
+                render(
+                    vec![
+                        egui::Event::PointerMoved(copy),
+                        button(
+                            copy,
+                            true,
+                            egui::PointerButton::Primary,
+                            egui::Modifiers::NONE,
+                        ),
+                    ],
+                    egui::Modifiers::NONE,
+                );
+                let output = render(
+                    vec![button(
+                        copy,
+                        false,
+                        egui::PointerButton::Primary,
+                        egui::Modifiers::NONE,
+                    )],
+                    egui::Modifiers::NONE,
+                );
+                assert!(output.platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyText(text) if text == markdown)), "{:?}", output.platform_output.commands);
+            }
+        }
+    }
+
+    #[test]
     fn code_copy_caption_preserves_selection_scroll_hover_and_exact_fence_payloads() {
         let mut pair = caption_oracle_pair(&mixed_caption_fixture());
         let size = vec2(1180.0, 760.0);
@@ -8944,7 +9306,7 @@ mod tests {
         caption_oracle_frame(&mut pair, 4, size, vec![pointer_button(end, false)]);
         let output = caption_oracle_frame(&mut pair, 5, size, vec![egui::Event::Copy]);
         assert!(output[1].platform_output.commands.iter().any(|command| {
-            matches!(command, egui::OutputCommand::CopyText(text) if text.trim() == expected_selection.trim())
+            matches!(command, egui::OutputCommand::CopyHtml {text, ..} if text.trim() == expected_selection.trim())
         }), "the actual mixed paragraph remains selectable and copyable");
 
         let mut frame = 6;
@@ -11041,7 +11403,7 @@ mod tests {
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: Some(&mut heading_tops),
                     };
-                    layout = Some(render_state.show_document(ui, &document));
+                    layout = Some(render_state.show_document(ui, &document, 1, 0));
                 });
             },
         );
@@ -11115,7 +11477,7 @@ mod tests {
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: Some(&mut heading_tops),
                     };
-                    layout = Some(render_state.show_document(ui, &document));
+                    layout = Some(render_state.show_document(ui, &document, 1, 0));
                 });
             },
         );

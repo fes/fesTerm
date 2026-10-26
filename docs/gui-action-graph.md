@@ -182,6 +182,12 @@ Session availability uses egui's single-pass wake API rather than its zero-delay
 two-pass widget-settling policy. Every event still requests a wake, including
 events arriving during a frame; no output/frame-rate budget is introduced.
 
+For `KEY-01` and `TERM-01`, exact Shift+Tab remains a typed modified key and
+emits Backtab (`ESC[Z`) through the ordinary bounded terminal queue. Presses
+and repeats encode; releases do not. Plain Tab, Ctrl+Tab session switching,
+keyboard lock, foreground/read-only/IME and frozen-rectangle suppression
+retain their existing ownership. Native program interpretation stays TI-02.
+
 For `KEY-01/02`, `CHIP-01` and `SET-05`, frame-time binding reads borrow live
 application preferences instead of reconstructing persistable interface settings
 for every chip or input/menu check. Local edits and `WINDOW-02` committed
@@ -738,6 +744,17 @@ too, though still only partially covered.
 | `MD-05` | `Viewer/Preview → SafePrompt/Error` | Exercise raw HTML, scripts, local/inline SVG, safe HTML anchors, external/local/remote images, data URLs, includes, math/diagram features, malformed/huge resources, rooted/UNC links, traversal/symlink escapes, loaded-source/root/final/intermediate name rebinding, hard-link parent replacement, Windows junctions/name surrogates and Unix FIFOs. Saturate the shared budget, reparse and close/rebind while work runs. | Nothing executes. Saved-local relative raster/static-SVG files and intrinsic inline SVG load automatically, up to 64 eligible distinct references per snapshot. File reads remain inside the complete canonical file identity's original parent directory and require both that parent identity and the Markdown handle to match the exact loaded authority/generation, under actual 8 MiB raster/1 MiB SVG reading and pre-expansion 16 Mi-pixel/texture-axis limits. Inline SVG grants no file/network authority and additionally obeys ADR 0048's XML/reference/CSS/glyph and temporary-layer bounds. Safe HTML anchors share ordinary link commands; decoded rooted/UNC/control-character destinations are disabled before filesystem access. All other HTML stays inert. Canonical final-name checks, no-follow root acquisition and directory-handle-contained final resolution reject changed aliases without suppressing ordinary Windows Cloud Files hydration; supported in-root image aliases still work, and completed/refused reads retain no directory capability. Reload/save generation changes retire old image state before reparse. Unix special files cannot wait for a writer. All manual/automatic panes share four actual workers and `SET-13`'s managed allowance; reservations follow actual worker/result/texture/CPU-upload owners and reclamation uses rotating 128-entry scans. Permanent failures need explicit retry; temporary refusals retry only when their whole required space/slot is available. Remote/untitled/history origins gain no local authority. Other resource classes remain blocked; saturation preserves admitted images and visibly refuses growth. See ADRs 0030/0048 for decoder-private/native-GPU/RSS exclusions. | Close fixtures, restore allowance, or explicitly retry a repaired failed resource. | P,H,N,security; partial |
 | `MD-06` | `EditorPreview/Viewer → Reloaded/Stale/Closed` | Modify, replace, delete, or conflict with source under the owning surface's freshness policy. | Local editor Preview follows ADR 0034's reload/conflict rules; read-only remote snapshots make no editing/conflict claim, and SSH loss/deletion preserve safe bounded state. | Restore fixture, reload baseline, then close to prior surface. | P,H,N,U; partial |
 | `MD-07` | `Desktop/CLI → Document/Error` | Choose fesTerm in Open With for one or more `.md`/`.markdown` files, cold and already running, or use `festerm --open -- <paths...>`. | The installed handler is optional and does not seize defaults. Native events and bounded user-scoped IPC converge on the document command, never terminal drops/uploads. New files open in Preview in the last-active window; existing files focus their view without losing unsaved edits. Blocking dialogs defer requests; malformed, missing and over-limit requests report errors. | Dismiss errors, close opened documents, or uninstall only fesTerm's association metadata. | H,N,U; partial |
+
+`MD-04`, `MD-05` and `EDIT-09` also share restricted rich selection Copy with
+the original plain-text fallback. Right-click preserves selection and offers
+rich Copy; Shift at menu opening adds exact selected Markdown source from
+parser spans. Partial transformed spans without an exact mapping explicitly
+disable source Copy. HTML is escaped, only HTTPS links stay active, no image
+or resource authority is exported, and unsupported/over-limit selections
+fall back to plain text. Snapshot reparse and hidden/closed viewport ownership
+retire menu payloads. Source-mode and explicit code-block Copy stay plain.
+Native format delivery and paste interoperability remain CP-06/CP-15 evidence;
+the current Wayland backend publishes only text.
 
 `MD-04`, `MD-05`, `EDIT-09` and `EDIT-18` share ADR 0048's static SVG and
 native HTML anchor projection. Source/Find retain exact document bytes.

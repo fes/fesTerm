@@ -39,6 +39,15 @@ and non-Windows clipboard writes are unchanged. The workspace regression
 `windows_clipboard_newlines_preserve_multiline_source_order` covers mixed,
 blank, trailing and already-normalized line endings plus idempotence.
 
+`src/lib.rs` and `src/clipboard.rs` also carry restricted HTML plus its plain
+fallback as one output command. Native arboard backends publish both formats;
+an HTML-write failure retries plain text, Smithay/Wayland remains explicitly
+text-only, and a missing Smithay route uses the ordinary plain clipboard
+fallback instead of silently publishing through an unrelated rich backend.
+Disconnected fallback storage retains only the plain value.
+Windows normalizes that plain alternative through the same `CF_UNICODETEXT`
+boundary before either the combined write or its fallback.
+
 The app depends directly on this same pinned egui-winit package to use that
 small seam; no second clipboard implementation or registry source edit is used.
 Native clipboard key payloads already delivered alongside their key are used

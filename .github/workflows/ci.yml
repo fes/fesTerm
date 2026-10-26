@@ -156,6 +156,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Check the excluded vendored text-selection library
         run: cargo test -p egui --lib
+      - name: Check the excluded vendored clipboard integration
+        run: cargo test -p egui-winit --lib clipboard::tests
       - name: Check the excluded vendored SSH authentication library
         run: cargo test --locked --manifest-path vendor/russh/Cargo.toml --lib
       - name: Check native Windows extended-attribute probing

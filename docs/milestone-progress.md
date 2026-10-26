@@ -3,6 +3,33 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Backward terminal navigation and portable Markdown copying
+
+Shift+Tab was losing its modifier before reaching the terminal encoder.
+Exact Shift+Tab now remains typed through the existing input path and emits
+Backtab (`ESC[Z`), preserving plain Tab, Ctrl+Tab navigation, repeats, keyboard
+lock, foreground ownership and atomic queue admission.
+
+Preview Copy now supplies restricted semantic HTML alongside its exact
+plain-text fallback in standalone views and editor Preview/Split.
+Shift+right-click additionally offers original selected Markdown, mapped from
+parser byte spans rather than reconstructed from rendered text. Menus retain
+only the selected snapshot, retain source bytes solely for an exact
+Shift-requested source action, and retire on reparse or hidden ownership.
+Parser-owned soft/hard breaks preserve semantic separators independently of
+widget placement; context-menu and keyboard rich Copy share egui's exact plain
+fallback, unique surface owners plus monotonic document revisions prevent
+stale-menu reuse across reparses or viewer replacement, and root passes reclaim
+payloads for closed child viewports. Secondary-click selection
+preservation is scoped to labels rendered inside the Markdown surface, so
+ordinary selectable labels retain upstream behavior. Literal HTML stays
+escaped and copying grants no resource access. Source-mode and explicit code
+Copy remain plain text. Wayland's current clipboard backend honestly degrades
+to text. Deterministic key routing,
+Unicode/duplicate/fenced selection, safe export and stale-menu checks do not
+establish native Copilot navigation, rich-paste interoperability or clipboard
+usability; TI-02 and CP-06/CP-15 retain those native checks.
+
 ## Optional terminal fonts without the embedded payload
 
 Issue #398 separates font availability from the saved font choice. JetBrains

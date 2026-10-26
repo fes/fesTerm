@@ -251,7 +251,8 @@ No clipboard/typed contents are added to routing reports.
 | Focus reports | `ESC[I` / `ESC[O` only when mode 1004 is enabled |
 | Shift+PageUp / Shift+PageDown / Ctrl+End | Terminal-view local primary-history navigation; no terminal bytes on the alternate screen, which has no local history; not application-editor bindings |
 | Alt/Option | May produce layout/IME text. No implemented ESC-prefix Meta keyboard encoder; Ctrl+Alt text is protected rather than treated as a control letter |
-| Modified arrows / Shift+Tab | No distinct modified-key/backtab encoding: arrow/Tab encoding remains the implemented ordinary sequence |
+| Shift+Tab | Exact Shift-only Tab emits backtab `ESC[Z` through the typed core encoder in primary/alternate screens, independent of cursor/keypad modes; repeats emit another sequence, releases emit none. Plain Tab remains `09`. Keyboard lock, bounded atomic queue admission, IME, foreground/read-only suppression and frozen rectangle-copy ownership still apply |
+| Modified arrows / other modified Tab chords | No additional desktop modified-key encoding: existing ordinary arrow/Tab fallback remains unless an application binding captures the chord (including Ctrl+Tab / Ctrl+Shift+Tab session navigation). The typed core API rejects Shift+Ctrl/Alt+Tab rather than inventing an encoding |
 | Function keys, Home/End/Delete and modified Page keys otherwise | No GUI terminal encoding implemented; modified Page chords are not silently collapsed into plain paging. Core keypad API supports DECKPAM/DECKPNM, but GUI physical-keypad identity is not routed distinctly |
 | Terminal protocols | No kitty keyboard, CSI-u or modifyOtherKeys support is claimed |
 | Launcher | Up/Down and Tab/Shift+Tab choose cards when a form is not focused; Enter activates; Escape leaves a form. Form fields own typing/editing and Enter submission |

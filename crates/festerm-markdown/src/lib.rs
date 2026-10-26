@@ -783,9 +783,65 @@ pub struct CodeBlock {
     language: Option<String>,
     code_text: String,
     highlighted_lines: Vec<HighlightedCodeLine>,
+    source_segments: Vec<(Range<usize>, Range<usize>, bool)>,
 }
 
 impl CodeBlock {
+    /// Exact original bytes behind a decoded payload range, excluding fences.
+    pub fn code_source_range(
+        &self,
+        selected: Range<usize>,
+        source_text: &str,
+    ) -> Option<Range<usize>> {
+        if selected.is_empty() || self.code_text.get(selected.clone()).is_none() {
+            return None;
+        }
+        let mut source: Option<Range<usize>> = None;
+        let first = self
+            .source_segments
+            .partition_point(|(payload, _, _)| payload.end <= selected.start);
+        for (payload, raw, exact) in self.source_segments[first..]
+            .iter()
+            .take_while(|(payload, _, _)| payload.start < selected.end)
+        {
+            let start = selected.start.max(payload.start);
+            let end = selected.end.min(payload.end);
+            if start >= end {
+                continue;
+            }
+            let range = if *exact {
+                raw.start + start - payload.start..raw.start + end - payload.start
+            } else {
+                let raw_text = source_text.get(raw.clone())?;
+                let decoded = self.code_text.get(payload.clone())?;
+                if raw_text.replace("\r\n", "\n").replace('\r', "\n") != decoded {
+                    return None;
+                }
+                let boundary = |target| {
+                    let mut decoded_offset = 0;
+                    let mut chars = raw_text.char_indices().peekable();
+                    while let Some((index, ch)) = chars.next() {
+                        if decoded_offset == target {
+                            return index;
+                        }
+                        if ch == '\r' && chars.peek().is_some_and(|(_, ch)| *ch == '\n') {
+                            chars.next();
+                        }
+                        decoded_offset += if ch == '\r' { 1 } else { ch.len_utf8() };
+                    }
+                    raw_text.len()
+                };
+                raw.start + boundary(start - payload.start)
+                    ..raw.start + boundary(end - payload.start)
+            };
+            if let Some(source) = &mut source {
+                source.end = range.end;
+            } else {
+                source = Some(range);
+            }
+        }
+        source
+    }
     pub fn span(&self) -> SourceSpan {
         self.span
     }
@@ -1712,6 +1768,7 @@ impl<'a> DocumentBuilder<'a> {
                     language,
                     code_text,
                     highlighted_lines,
+                    source_segments: frame.source_segments,
                 }))
             }
             TagEnd::HtmlBlock => {
@@ -1911,7 +1968,12 @@ impl<'a> DocumentBuilder<'a> {
         if text.is_empty() {
             return Ok(());
         }
+        let exact = self.source_slice(range.clone()) == text;
         if let Some(Frame::CodeBlock(frame)) = self.stack.last_mut() {
+            let start = frame.code_text.len();
+            frame
+                .source_segments
+                .push((start..start + text.len(), range, exact));
             frame.code_text.push_str(&text);
             return Ok(());
         }
@@ -2291,6 +2353,7 @@ struct CodeBlockFrame {
     start: usize,
     kind: Option<String>,
     code_text: String,
+    source_segments: Vec<(Range<usize>, Range<usize>, bool)>,
 }
 
 impl CodeBlockFrame {
@@ -2302,6 +2365,7 @@ impl CodeBlockFrame {
                 CodeBlockKind::Fenced(info) => Some(info.into_string()),
             },
             code_text: String::new(),
+            source_segments: Vec::new(),
         }
     }
 }
@@ -2661,6 +2725,36 @@ mod tests {
         )
         .unwrap()
         .into()
+    }
+
+    #[test]
+    fn code_copy_source_ranges_preserve_duplicate_fences_indentation_and_crlf() {
+        for source in [
+            "```text\ncafé\nsecond\n```\n\n```text\ncafé\nsecond\n```\n",
+            "```text\r\ncafé\r\nsecond\r\n```\r\n\r\n```text\r\ncafé\r\nsecond\r\n```\r\n",
+            "    café\n    second\n\n    café\n    second\n",
+        ] {
+            let document = load_local(source.as_bytes()).unwrap();
+            for block in document.blocks() {
+                if let Block::CodeBlock(code) = block {
+                    let payload = code.code_text();
+                    let index = payload.find("second").unwrap();
+                    let raw = code
+                        .code_source_range(index..index + "second".len(), source)
+                        .unwrap();
+                    assert_eq!(&source[raw.clone()], "second");
+                    assert!(raw.start >= code.span().byte_range().start);
+                    assert!(raw.end <= code.span().byte_range().end);
+                    let unicode = payload.find('é').unwrap();
+                    let raw = code
+                        .code_source_range(unicode..unicode + 'é'.len_utf8(), source)
+                        .unwrap();
+                    assert_eq!(&source[raw], "é");
+                    assert_eq!(code.code_source_range(unicode..unicode + 1, source), None);
+                    assert_eq!(code.code_source_range(0..payload.len() + 1, source), None);
+                }
+            }
+        }
     }
 
     #[test]

@@ -182,6 +182,9 @@ pub(crate) fn encode_modified_key(
     if modifiers == Modifiers::NONE {
         return encode_key(key, modes);
     }
+    if key == Key::Tab && modifiers == Modifiers::SHIFT {
+        return Some(b"\x1b[Z".to_vec());
+    }
     let cursor_final = match key {
         Key::ArrowUp => Some('A'),
         Key::ArrowDown => Some('B'),
@@ -197,8 +200,8 @@ pub(crate) fn encode_modified_key(
         return Some(format!("\x1b[1;{parameter}{final_byte}").into_bytes());
     }
     if modifiers.contains(Modifiers::SHIFT) && !matches!(key, Key::Character(_) | Key::Control(_)) {
-        // Non-character Shift chords other than cursor keys are not part of
-        // this additive API yet. Do not silently turn Shift-Tab into Tab.
+        // Other non-character Shift chords are not part of this additive API.
+        // Do not silently turn unsupported chords into unmodified keys.
         return None;
     }
     let key = if modifiers.contains(Modifiers::CONTROL) {
@@ -450,7 +453,101 @@ mod page_key_tests {
 #[cfg(test)]
 mod modified_key_tests {
     use super::*;
-    use crate::{Dimensions, Terminal};
+    use crate::{Dimensions, Terminal, TRANSPORT_QUEUE_HIGH_WATERMARK};
+
+    #[test]
+    fn shift_tab_encodes_backtab_without_changing_plain_or_unsupported_chords() {
+        for alternate in [false, true] {
+            for application_modes in [false, true] {
+                let mut terminal = Terminal::new(Dimensions::new(20, 4).unwrap()).unwrap();
+                if alternate {
+                    terminal.ingest(b"\x1b[?1049h");
+                }
+                if application_modes {
+                    terminal.ingest(b"\x1b[?1h\x1b=");
+                }
+                for (modifiers, expected) in [
+                    (Modifiers::SHIFT, b"\x1b[Z".as_slice()),
+                    (Modifiers::NONE, b"\t".as_slice()),
+                ] {
+                    assert_eq!(
+                        terminal.handle_input(InputEvent::ModifiedKey {
+                            key: Key::Tab,
+                            modifiers,
+                        }),
+                        InputEventOutcome::Encoded {
+                            bytes: expected.len()
+                        }
+                    );
+                    assert_eq!(terminal.drain_input(), expected);
+                }
+                assert_eq!(
+                    terminal.handle_input(InputEvent::Key(Key::Tab)),
+                    InputEventOutcome::Encoded { bytes: 1 }
+                );
+                assert_eq!(terminal.drain_input(), b"\t");
+                assert_eq!(
+                    terminal.handle_input(InputEvent::ModifiedKey {
+                        key: Key::Tab,
+                        modifiers: Modifiers::ALT,
+                    }),
+                    InputEventOutcome::Encoded { bytes: 2 }
+                );
+                assert_eq!(terminal.drain_input(), b"\x1b\t");
+                for modifiers in [
+                    Modifiers::CONTROL,
+                    Modifiers::SHIFT.with(Modifiers::CONTROL),
+                    Modifiers::SHIFT.with(Modifiers::ALT),
+                    Modifiers::SHIFT
+                        .with(Modifiers::ALT)
+                        .with(Modifiers::CONTROL),
+                ] {
+                    assert_eq!(
+                        terminal.handle_input(InputEvent::ModifiedKey {
+                            key: Key::Tab,
+                            modifiers,
+                        }),
+                        InputEventOutcome::Rejected
+                    );
+                    assert!(terminal.drain_input().is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shift_tab_obeys_keyboard_lock_and_atomic_queue_limits() {
+        let mut terminal = Terminal::new(Dimensions::new(20, 4).unwrap()).unwrap();
+        let backtab = InputEvent::ModifiedKey {
+            key: Key::Tab,
+            modifiers: Modifiers::SHIFT,
+        };
+        terminal.ingest(b"\x1b[2h");
+        assert_eq!(
+            terminal.handle_input(backtab.clone()),
+            InputEventOutcome::Rejected
+        );
+        assert!(terminal.drain_input().is_empty());
+        terminal.ingest(b"\x1b[2l");
+        for remaining in [2, 3] {
+            let mut prefix = vec![b'x'; TRANSPORT_QUEUE_HIGH_WATERMARK - remaining];
+            terminal.queue_input(&prefix);
+            if remaining == 3 {
+                assert_eq!(
+                    terminal.handle_input(backtab.clone()),
+                    InputEventOutcome::Encoded { bytes: 3 }
+                );
+                prefix.extend_from_slice(b"\x1b[Z");
+            } else {
+                assert_eq!(
+                    terminal.handle_input(backtab.clone()),
+                    InputEventOutcome::QueueOverflow
+                );
+                assert!(terminal.take_input_queue_overflowed());
+            }
+            assert_eq!(terminal.drain_input(), prefix);
+        }
+    }
 
     #[test]
     fn explicit_modifiers_encode_control_meta_and_cursor_chords_atomically() {

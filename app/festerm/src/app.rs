@@ -816,6 +816,7 @@ impl FesTermApp {
         // One semantic blue-graphite default for application surfaces and
         // widgets. Terminal ANSI and explicit RGB colors remain independent.
         context.set_visuals(theme::default_visuals());
+        crate::markdown_viewer::install_clipboard(context);
         let desired_terminal_font =
             terminal_font_family(configuration.interface_settings().terminal_font());
         festerm_ui_egui::reconcile_terminal_font_preference(context, desired_terminal_font);
@@ -7549,6 +7550,79 @@ mod tests {
                 22,
             );
         (tab, transport)
+    }
+
+    #[test]
+    fn keyboard_shift_tab_reaches_transport_in_order_without_release_bytes() {
+        for alternate in [false, true] {
+            let (mut harness, transport) = keyboard_harness();
+            let tab = harness.state().state.active();
+            if alternate {
+                harness
+                    .state_mut()
+                    .state
+                    .session_tab_mut(tab)
+                    .unwrap()
+                    .terminal
+                    .ingest(b"\x1b[?1049h\x1b[?1h\x1b=");
+            }
+            harness.run();
+            harness
+                .input_mut()
+                .events
+                .push(egui::Event::Text("before".into()));
+            for (pressed, repeat) in [(true, false), (true, true), (false, false)] {
+                harness.input_mut().events.push(egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: Some(egui::Key::Tab),
+                    pressed,
+                    repeat,
+                    modifiers: egui::Modifiers::SHIFT,
+                });
+            }
+            harness
+                .input_mut()
+                .events
+                .push(keyboard_event(egui::Key::Tab, egui::Modifiers::NONE));
+            harness
+                .input_mut()
+                .events
+                .push(egui::Event::Text("after".into()));
+            harness.step();
+            assert_eq!(transport.sent().concat(), b"before\x1b[Z\x1b[Z\tafter");
+            assert_eq!(harness.state().state.active(), tab);
+        }
+    }
+
+    #[test]
+    fn keyboard_shift_tab_preserves_control_tab_session_navigation() {
+        let (mut harness, first_transport) = keyboard_harness();
+        let first = harness.state().state.active();
+        let (second, second_transport) = keyboard_second_session(&mut harness);
+        harness.run();
+        let press_tab = |harness: &mut Harness<'static, FesTermApp>, modifiers| {
+            for pressed in [true, false] {
+                harness.input_mut().events.push(egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: Some(egui::Key::Tab),
+                    pressed,
+                    repeat: false,
+                    modifiers,
+                });
+            }
+            harness.step();
+        };
+        press_tab(&mut harness, egui::Modifiers::CTRL | egui::Modifiers::SHIFT);
+        assert_eq!(harness.state().state.active(), first);
+        assert!(first_transport.sent().is_empty());
+        assert!(second_transport.sent().is_empty());
+        press_tab(&mut harness, egui::Modifiers::SHIFT);
+        assert_eq!(first_transport.sent().concat(), b"\x1b[Z");
+        press_tab(&mut harness, egui::Modifiers::CTRL);
+        assert_eq!(harness.state().state.active(), second);
+        press_tab(&mut harness, egui::Modifiers::SHIFT);
+        assert_eq!(first_transport.sent().concat(), b"\x1b[Z");
+        assert_eq!(second_transport.sent().concat(), b"\x1b[Z");
     }
 
     #[test]

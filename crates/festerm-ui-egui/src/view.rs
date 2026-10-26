@@ -5055,6 +5055,148 @@ mod tests {
     }
 
     #[test]
+    fn terminal_shift_tab_routes_backtab_presses_repeats_and_not_releases() {
+        for alternate in [false, true] {
+            for application_modes in [false, true] {
+                let mut state = HeadlessViewState::new();
+                if alternate {
+                    state.terminal.ingest(b"\x1b[?1049h");
+                }
+                if application_modes {
+                    state.terminal.ingest(b"\x1b[?1h\x1b=");
+                }
+                let mut harness = Harness::builder()
+                    .with_size(Vec2::new(800.0, 600.0))
+                    .build_ui_state(
+                        |ui, state: &mut HeadlessViewState| {
+                            state.view.show(ui, &mut state.terminal, &mut state.sink);
+                        },
+                        state,
+                    );
+                harness.run();
+                for (pressed, repeat) in [(true, false), (true, true), (false, false)] {
+                    harness.event(egui::Event::Key {
+                        key: egui::Key::Tab,
+                        physical_key: Some(egui::Key::Tab),
+                        pressed,
+                        repeat,
+                        modifiers: egui::Modifiers::SHIFT,
+                    });
+                    harness.run();
+                }
+                for modifiers in [
+                    egui::Modifiers::NONE,
+                    egui::Modifiers::CTRL,
+                    egui::Modifiers::ALT,
+                    egui::Modifiers::MAC_CMD,
+                    egui::Modifiers::SHIFT | egui::Modifiers::CTRL,
+                    egui::Modifiers::SHIFT | egui::Modifiers::ALT,
+                    egui::Modifiers::SHIFT | egui::Modifiers::MAC_CMD,
+                ] {
+                    harness.event(egui::Event::Key {
+                        key: egui::Key::Tab,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    });
+                    harness.run();
+                }
+                assert_eq!(
+                    harness.state().sink.0.concat(),
+                    b"\x1b[Z\x1b[Z\t\t\t\t\t\t\t",
+                    "alternate={alternate}, application_modes={application_modes}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_shift_tab_obeys_foreground_readonly_ime_lock_and_rectangle_suppression() {
+        for suppression in ["blackout", "readonly", "ime", "lock", "rectangle"] {
+            let mut state = HeadlessViewState::new();
+            if suppression == "lock" {
+                state.terminal.ingest(b"\x1b[2h");
+            }
+            if suppression == "rectangle" {
+                state
+                    .view
+                    .begin_rectangle_copy(&state.terminal, true)
+                    .unwrap();
+            }
+            let mut harness = Harness::builder()
+                .with_size(Vec2::new(800.0, 600.0))
+                .build_ui_state(
+                    move |ui, state: &mut HeadlessViewState| {
+                        state.view.show_with_options(
+                            ui,
+                            &mut state.terminal,
+                            &mut state.sink,
+                            TerminalViewOptions {
+                                terminal_input_enabled: suppression != "blackout",
+                                keyboard_input_enabled: suppression != "readonly",
+                                ..TerminalViewOptions::default()
+                            },
+                        );
+                    },
+                    state,
+                );
+            harness.run();
+            if suppression == "ime" {
+                harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "x".into(),
+                    active_range_chars: None,
+                }));
+                harness.run();
+            }
+            for (pressed, repeat) in [(true, false), (true, true), (false, false)] {
+                harness.event(egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: None,
+                    pressed,
+                    repeat,
+                    modifiers: egui::Modifiers::SHIFT,
+                });
+                harness.run();
+            }
+            assert!(harness.state().sink.0.is_empty(), "{suppression}");
+            assert_eq!(
+                harness.state().view.rectangle_copy_active(),
+                suppression == "rectangle"
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_shift_tab_preserves_focus_reports_without_duplicate_input() {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"\x1b[?1004h");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        harness.state_mut().sink.0.clear();
+        harness.event(egui::Event::WindowFocused(false));
+        harness.run();
+        harness.event(egui::Event::WindowFocused(true));
+        harness.run();
+        harness.event(egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::SHIFT,
+        });
+        harness.run();
+        assert_eq!(harness.state().sink.0.concat(), b"\x1b[O\x1b[I\x1b[Z");
+    }
+
+    #[test]
     fn terminal_page_keys_route_plain_presses_repeats_and_not_releases() {
         for alternate in [false, true] {
             for application_cursor in [false, true] {

@@ -1166,6 +1166,9 @@ impl State {
                 egui::OutputCommand::CopyText(text) => {
                     self.clipboard.set_text(text);
                 }
+                egui::OutputCommand::CopyHtml { html, text } => {
+                    self.clipboard.set_html(html, text);
+                }
                 egui::OutputCommand::CopyImage(image) => {
                     self.clipboard.set_image(&image);
                 }

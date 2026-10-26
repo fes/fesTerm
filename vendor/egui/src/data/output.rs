@@ -124,6 +124,11 @@ pub enum OutputCommand {
     /// This is often a response to [`crate::Event::Copy`] or [`crate::Event::Cut`].
     CopyText(String),
 
+    /// Put HTML and its plain-text alternative on the system clipboard.
+    ///
+    /// Integrations without rich clipboard support should copy `text` instead.
+    CopyHtml { html: String, text: String },
+
     /// Put this image to the system clipboard.
     CopyImage(crate::ColorImage),
 
