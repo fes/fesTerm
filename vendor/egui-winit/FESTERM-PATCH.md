@@ -32,6 +32,13 @@ existing paste safety policy, never through an unowned widget Paste event.
 The mailbox temporarily transports the same clipboard text that ordinary
 egui Paste delivery transports, without logging or persisting it.
 
+`src/clipboard.rs` normalizes LF, lone CR and existing CRLF to exactly one CRLF
+at the Windows clipboard-write boundary, as required by `CF_UNICODETEXT`.
+Logical row order, Unicode and trailing separators are preserved; internal text
+and non-Windows clipboard writes are unchanged. The workspace regression
+`windows_clipboard_newlines_preserve_multiline_source_order` covers mixed,
+blank, trailing and already-normalized line endings plus idempotence.
+
 The app depends directly on this same pinned egui-winit package to use that
 small seam; no second clipboard implementation or registry source edit is used.
 Native clipboard key payloads already delivered alongside their key are used
