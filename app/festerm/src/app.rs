@@ -8169,6 +8169,32 @@ mod tests {
     }
 
     #[test]
+    fn windows_clipboard_newlines_preserve_multiline_source_order() {
+        for (text, expected) in [
+            ("", ""),
+            ("single line", "single line"),
+            ("first\nsecond\nthird", "first\r\nsecond\r\nthird"),
+            ("first\r\nsecond\r\nthird", "first\r\nsecond\r\nthird"),
+            ("first\rsecond\nthird\r\n", "first\r\nsecond\r\nthird\r\n"),
+            ("first\n\nthird", "first\r\n\r\nthird"),
+        ] {
+            let normalized =
+                egui_winit::clipboard::normalize_windows_clipboard_text(text.to_owned());
+            assert_eq!(normalized, expected);
+            assert_eq!(
+                normalized.lines().collect::<Vec<_>>(),
+                expected.lines().collect::<Vec<_>>()
+            );
+            let without_crlf = normalized.replace("\r\n", "");
+            assert!(!without_crlf.contains('\r') && !without_crlf.contains('\n'));
+            assert_eq!(
+                egui_winit::clipboard::normalize_windows_clipboard_text(normalized.clone()),
+                normalized
+            );
+        }
+    }
+
+    #[test]
     fn keyboard_identified_paste_preserves_confirmation_and_generation_safety() {
         let (mut harness, transport) = keyboard_harness();
         let context = harness.ctx.clone();

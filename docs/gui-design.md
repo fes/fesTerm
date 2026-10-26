@@ -2668,8 +2668,10 @@ disable them.
 - Copy reads selected cells from fesTerm's model and remains available for any
   retained selectable buffer. It joins soft-wrapped rows, preserves real line
   breaks, omits unused trailing cells, and preserves displayed wide/combining
-  Unicode. Copying a selection clears it afterward, matching other terminal
-  programs.
+  Unicode. At the native Windows clipboard boundary, text line breaks are
+  normalized to the CRLF representation required by `CF_UNICODETEXT`; internal
+  selection text and non-Windows clipboards retain their native representation.
+  Copying a selection clears it afterward, matching other terminal programs.
 - Paste reads the OS clipboard and uses the ordered bounded session input path.
   It remains available whenever a live session accepts input and compatible
   clipboard text exists. A terminal program cannot disable it.
@@ -2768,6 +2770,9 @@ the selected width. The policy is captured on entry. Wide/combining graphemes
 remain indivisible: touching either half of a wide glyph copies the whole
 grapheme once, potentially extending that row's copied width beyond an edge.
 Visible text never exports hyperlink targets or terminal protocol sequences.
+On Windows, the shared clipboard boundary converts those top-to-bottom logical
+rows to CRLF without changing their order, including when pasted into another
+terminal application.
 On exit the next paint refreshes from current live state; a resized window may
 clip the frozen grid until that refresh. Native clipboard delivery and
 cross-renderer/DPI/keyboard usability remain pending under `TI-17`.
