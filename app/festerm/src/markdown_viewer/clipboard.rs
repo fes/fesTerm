@@ -121,7 +121,7 @@ pub(super) fn install(context: &egui::Context) {
 
 pub(super) fn new_surface_owner() -> u64 {
     NEXT_SURFACE_OWNER
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |owner| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |owner| {
             owner.checked_add(1)
         })
         .expect("Markdown clipboard surface owner exhausted")
