@@ -14,13 +14,15 @@ Preview Copy now supplies restricted semantic HTML alongside its exact
 plain-text fallback in standalone views and editor Preview/Split.
 Shift+right-click additionally offers original selected Markdown, mapped from
 parser byte spans rather than reconstructed from rendered text. Menus retain
-only the selected snapshot and retire on reparse or hidden ownership; literal
-HTML stays escaped and copying grants no resource access. Source-mode and
-explicit code Copy remain plain text. Wayland's current clipboard backend
-honestly degrades to text. Deterministic key routing, Unicode/duplicate/fenced
-selection, safe export and stale-menu checks do not establish native
-Copilot navigation, rich-paste interoperability or clipboard usability;
-TI-02 and CP-06/CP-15 retain those native checks.
+only the selected snapshot, retain source bytes solely for an exact
+Shift-requested source action, and retire on reparse or hidden ownership.
+Parser-owned soft/hard breaks preserve semantic separators independently of
+widget placement. Literal HTML stays escaped and copying grants no resource
+access. Source-mode and explicit code Copy remain plain text. Wayland's current
+clipboard backend honestly degrades to text. Deterministic key routing,
+Unicode/duplicate/fenced selection, safe export and stale-menu checks do not
+establish native Copilot navigation, rich-paste interoperability or clipboard
+usability; TI-02 and CP-06/CP-15 retain those native checks.
 
 ## Optional terminal fonts without the embedded payload
 

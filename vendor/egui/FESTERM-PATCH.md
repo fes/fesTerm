@@ -6,8 +6,9 @@ The extracted package and its MIT/Apache-2.0 licenses are retained. The
 workspace patch selects this same source for eframe, the app and egui_kittest;
 installed registry sources are not modified.
 
-The only production differences are in `text_selection/text_cursor_state.rs`,
-`text_selection/label_text_selection.rs` and `widgets/text_edit/builder.rs`.
+The selection-anchor production differences are in
+`text_selection/text_cursor_state.rs`, `text_selection/label_text_selection.rs`
+and `widgets/text_edit/builder.rs`.
 TextEdit and selectable labels derive the new selection anchor from the
 already-delivered press event, transformed into the widget's own coordinates,
 instead of the final pointer position of a pass that also contains movement.
@@ -24,6 +25,16 @@ applies regardless of renderer: slow frame delivery makes batching more likely
 but is not required to reproduce it. Document bytes are unchanged; selection
 and semantic Copy remain ordinary egui behavior.
 
+The Markdown rich-copy integration adds `OutputCommand::CopyHtml` and exposes
+current-pass selected-label character ranges plus the pending plain Copy value.
+The application uses those observations only to replace the matching
+end-of-pass plain command with restricted HTML carrying that same fallback;
+ordinary labels and TextEdit keep their upstream selection and Copy paths.
+Secondary presses no longer move or clear label selection, allowing a
+right-click context menu to act on the existing range. Primary presses retain
+the upstream deselection and drag behavior. The added per-pass ranges are
+cleared at every begin-pass and retain no document bytes after the pass.
+
 Deterministic application regressions cover forward/reverse/Shift selection,
 Unicode and translated layers, separate and combined within-widget batches,
 disabled/clipped/modal ownership, actual Markdown Preview/Split prose and
@@ -32,6 +43,9 @@ ordinary cross-paragraph Copy. The label clipping rectangle
 is transformed into the same global coordinates as its galley. Complete
 cross-widget press/move/release batching is not qualified by this patch;
 egui's generic interaction admission still uses the final hit-test position.
+Markdown regressions separately cover current-pass range ownership,
+right-click preservation, matching plain fallback, parser-owned rich
+separators, stale-menu retirement, and escaped/resource-free HTML.
 
 Keep the diff against the checksum-verified upstream source small. Revalidate
 or remove this patch when upgrading egui; do not treat this selection repair

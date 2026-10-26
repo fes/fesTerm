@@ -164,13 +164,13 @@ impl Clipboard {
             feature = "arboard",
         ))]
         if let Some(clipboard) = &mut self.arboard {
-            if write_html_with_plain_fallback(&html, &text, |html, text| match html {
-                Some(html) => clipboard.set_html(html, Some(text)),
-                None => clipboard.set_text(text),
-            })
-            .is_err()
+            if let Err(err) =
+                write_html_with_plain_fallback(&html, &text, |html, text| match html {
+                    Some(html) => clipboard.set_html(html, Some(text)),
+                    None => clipboard.set_text(text),
+                })
             {
-                log::error!("arboard plain-text fallback copy failed");
+                log::error!("arboard plain-text fallback copy failed: {err}");
             }
             return;
         }

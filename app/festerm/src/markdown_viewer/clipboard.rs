@@ -34,7 +34,7 @@ struct Selection {
 struct MenuSelection {
     revision: u64,
     html: String,
-    markdown: String,
+    markdown: Option<String>,
     text: String,
     include_source: bool,
     source_inexact: bool,
@@ -418,8 +418,6 @@ fn register(
         return;
     }
     if let Some(previous) = state.current.last_rect {
-        let separator = !state.current.text.ends_with(char::is_whitespace)
-            && !text.starts_with(|c: char| c.is_whitespace() || c.is_ascii_punctuation());
         if code_block.is_some() && state.current.last_code == code_block {
             let gap = &document.source_text()[state.current.last_code_source_end..raw.start];
             let mut chars = gap.chars().peekable();
@@ -435,8 +433,6 @@ fn register(
                 }
             }
             html.insert_str(0, &"\n".repeat(lines));
-        } else if rich && separator && state.current.last_code.is_none() {
-            html.insert(0, ' ');
         }
         if previous.bottom() <= response.rect.top() {
             state.current.text.push('\n');
@@ -467,6 +463,54 @@ fn register(
     }
     state.current.html_bytes += html.len();
     state.current.pieces.push((raw, html));
+}
+
+fn inline_breaks(inlines: &[Inline], breaks: &mut Vec<(Range<usize>, char)>) {
+    for inline in inlines {
+        match inline {
+            Inline::SoftBreak { span } => breaks.push((span.byte_range(), ' ')),
+            Inline::HardBreak { span } => breaks.push((span.byte_range(), '\n')),
+            Inline::Emphasis(container)
+            | Inline::Strong(container)
+            | Inline::Strikethrough(container) => inline_breaks(container.inlines(), breaks),
+            Inline::Link(link) => inline_breaks(link.inlines(), breaks),
+            _ => {}
+        }
+    }
+}
+
+fn rich_inline_body(inlines: &[Inline], pieces: &[&(Range<usize>, String)]) -> String {
+    let mut breaks = Vec::new();
+    inline_breaks(inlines, &mut breaks);
+    let mut html = String::new();
+    let mut previous_end = None;
+    let mut next_break = 0;
+    for (source, fragment) in pieces {
+        if let Some(previous_end) = previous_end {
+            while next_break < breaks.len() && breaks[next_break].0.end <= previous_end {
+                next_break += 1;
+            }
+            while next_break < breaks.len() && breaks[next_break].0.start < source.start {
+                let (span, separator) = &breaks[next_break];
+                if previous_end <= span.start && span.end <= source.start {
+                    html.push(*separator);
+                }
+                next_break += 1;
+            }
+        }
+        html.push_str(fragment);
+        previous_end = Some(source.end);
+    }
+    html
+}
+
+fn overlapping_pieces<'a, 'b>(
+    pieces: &'a [&'b (Range<usize>, String)],
+    span: Range<usize>,
+) -> &'a [&'b (Range<usize>, String)] {
+    let first = pieces.partition_point(|(source, _)| source.end <= span.start);
+    let end = first + pieces[first..].partition_point(|(source, _)| source.start < span.end);
+    &pieces[first..end]
 }
 
 fn expand_inlines(inlines: &[Inline], selected: &mut Range<usize>) {
@@ -532,11 +576,7 @@ fn rich_blocks(blocks: &[super::Block], pieces: &[&(Range<usize>, String)]) -> S
     let mut html = String::new();
     for block in blocks {
         let span = block.span().byte_range();
-        let selected: Vec<_> = pieces
-            .iter()
-            .filter(|(source, _)| source.start < span.end && span.start < source.end)
-            .copied()
-            .collect();
+        let selected = overlapping_pieces(pieces, span);
         if selected.is_empty() {
             continue;
         }
@@ -547,52 +587,63 @@ fn rich_blocks(blocks: &[super::Block], pieces: &[&(Range<usize>, String)]) -> S
                 .collect::<String>()
         };
         match block {
-            super::Block::Paragraph(_) => html.push_str(&format!("<p>{}</p>", body())),
-            super::Block::Heading(heading) => {
-                html.push_str(&format!("<h{0}>{1}</h{0}>", heading.level(), body()))
-            }
+            super::Block::Paragraph(paragraph) => html.push_str(&format!(
+                "<p>{}</p>",
+                rich_inline_body(paragraph.inlines(), selected)
+            )),
+            super::Block::Heading(heading) => html.push_str(&format!(
+                "<h{0}>{1}</h{0}>",
+                heading.level(),
+                rich_inline_body(heading.inlines(), selected)
+            )),
             super::Block::BlockQuote(quote) => html.push_str(&format!(
                 "<blockquote>{}</blockquote>",
-                rich_blocks(quote.blocks(), &selected)
+                rich_blocks(quote.blocks(), selected)
             )),
             super::Block::List(list) => {
+                let selected_items: Vec<_> = list
+                    .items()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, item)| {
+                        let content = rich_blocks(item.blocks(), selected);
+                        (!content.is_empty()).then_some((index, content))
+                    })
+                    .collect();
+                let Some((first_selected, _)) = selected_items.first() else {
+                    continue;
+                };
                 let (open, close) = match list.kind() {
                     festerm_markdown::ListKind::Bullet => ("<ul>".to_owned(), "</ul>"),
-                    festerm_markdown::ListKind::Ordered { first_item_number } => {
-                        (format!("<ol start=\"{first_item_number}\">"), "</ol>")
-                    }
+                    festerm_markdown::ListKind::Ordered { first_item_number } => (
+                        format!(
+                            "<ol start=\"{}\">",
+                            first_item_number.saturating_add(*first_selected as u64)
+                        ),
+                        "</ol>",
+                    ),
                 };
                 html.push_str(&open);
-                for item in list.items() {
-                    let content = rich_blocks(item.blocks(), &selected);
-                    if !content.is_empty() {
-                        html.push_str(&format!("<li>{content}</li>"));
-                    }
+                for (_, content) in selected_items {
+                    html.push_str(&format!("<li>{content}</li>"));
                 }
                 html.push_str(close);
             }
             super::Block::Table(table) => {
                 html.push_str("<table>");
                 for row in table.rows() {
+                    let row_selected = overlapping_pieces(selected, row.span().byte_range());
+                    if row_selected.is_empty() {
+                        continue;
+                    }
                     let mut cells = String::new();
                     for cell in row.cells() {
-                        let span = cell.span().byte_range();
-                        let body: String = selected
-                            .iter()
-                            .filter(|(source, _)| {
-                                source.start < span.end && span.start < source.end
-                            })
-                            .map(|(_, html)| html.as_str())
-                            .collect();
+                        let pieces = overlapping_pieces(row_selected, cell.span().byte_range());
+                        let body = rich_inline_body(cell.inlines(), pieces);
                         let tag = if row.is_header() { "th" } else { "td" };
                         cells.push_str(&format!("<{tag}>{body}</{tag}>"));
                     }
-                    if selected.iter().any(|(source, _)| {
-                        source.start < row.span().byte_range().end
-                            && row.span().byte_range().start < source.end
-                    }) {
-                        html.push_str(&format!("<tr>{cells}</tr>"));
-                    }
+                    html.push_str(&format!("<tr>{cells}</tr>"));
                 }
                 html.push_str("</table>");
             }
@@ -609,22 +660,24 @@ pub(super) fn finish(ui: &mut egui::Ui, document: &MarkdownDocument, rect: egui:
     if !plugin.lock().capturing && !egui::Popup::is_id_open(ui.ctx(), id) {
         return;
     }
+    let capturing = plugin.lock().capturing;
     let selection = std::mem::take(&mut plugin.lock().current);
-    let ranges = ui
-        .ctx()
-        .plugin::<egui::text_selection::LabelSelectionState>()
-        .lock()
-        .selected_label_ranges(ui.ctx().viewport_id());
-    let owns_selection = !selection.overflow
-        && !ranges.is_empty()
-        && ranges.iter().all(|(id, _)| selection.widgets.contains(id));
+    let owns_selection = if capturing && !selection.overflow {
+        let ranges = ui
+            .ctx()
+            .plugin::<egui::text_selection::LabelSelectionState>()
+            .lock()
+            .selected_label_ranges(ui.ctx().viewport_id());
+        !ranges.is_empty() && ranges.iter().all(|(id, _)| selection.widgets.contains(id))
+    } else {
+        false
+    };
     let html = if owns_selection {
+        let mut pieces: Vec<_> = selection.pieces.iter().collect();
+        pieces.sort_unstable_by_key(|(source, _)| source.start);
         format!(
             "<div style=\"white-space:pre-wrap\">{}</div>",
-            rich_blocks(
-                document.blocks(),
-                &selection.pieces.iter().collect::<Vec<_>>()
-            )
+            rich_blocks(document.blocks(), &pieces)
         )
     } else {
         String::new()
@@ -679,12 +732,14 @@ pub(super) fn finish(ui: &mut egui::Ui, document: &MarkdownDocument, rect: egui:
         let payload = if owns_selection && html.len() <= MAX_COPY_BYTES {
             source.as_mut().map(|source| {
                 expand_blocks(document.blocks(), source);
+                let include_source = ui.input(|i| i.modifiers.shift);
                 MenuSelection {
                     revision,
                     html,
-                    markdown: document.source_text()[source.clone()].to_owned(),
+                    markdown: (include_source && !selection.source_inexact)
+                        .then(|| document.source_text()[source.clone()].to_owned()),
                     text: selection.text,
-                    include_source: ui.input(|i| i.modifiers.shift),
+                    include_source,
                     source_inexact: selection.source_inexact,
                 }
             })
@@ -725,11 +780,19 @@ pub(super) fn finish(ui: &mut egui::Ui, document: &MarkdownDocument, rect: egui:
                 });
                 ui.close();
             }
-            if payload.include_source && ui.add_enabled(!payload.source_inexact, egui::Button::new("Copy Markdown source"))
-                .on_disabled_hover_text("This partial transformed text has no exact Markdown source range. Select the complete text run or copy from Source mode.")
-                .clicked() {
-                ui.ctx().copy_text(payload.markdown.clone());
-                ui.close();
+            if payload.include_source
+                && ui
+                    .add_enabled(
+                        !payload.source_inexact,
+                        egui::Button::new("Copy Markdown source"),
+                    )
+                    .on_disabled_hover_text("This partial transformed text has no exact Markdown source range. Select the complete text run or copy from Source mode.")
+                    .clicked()
+            {
+                if let Some(markdown) = &payload.markdown {
+                    ui.ctx().copy_text(markdown.clone());
+                    ui.close();
+                }
             }
         });
 }
@@ -776,29 +839,31 @@ mod tests {
             output
         }
 
-        fn select(&mut self, text: &str) -> egui::Pos2 {
+        fn select_between(&mut self, start_text: &str, end_text: &str) -> egui::Pos2 {
             self.step(Vec::new());
             let output = self.step(Vec::new());
-            let label = output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    egui::Shape::Text(label) if label.galley.job.text == text => Some(label),
-                    _ => None,
-                })
-                .unwrap();
-            let start = label.pos
-                + label
-                    .galley
-                    .pos_from_cursor(label.galley.begin())
-                    .center()
-                    .to_vec2();
-            let end = label.pos
-                + label
-                    .galley
-                    .pos_from_cursor(label.galley.end())
-                    .center()
-                    .to_vec2();
+            let point = |text: &str, end: bool| {
+                let label = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(label) if label.galley.job.text == text => Some(label),
+                        _ => None,
+                    })
+                    .unwrap();
+                label.pos
+                    + label
+                        .galley
+                        .pos_from_cursor(if end {
+                            label.galley.end()
+                        } else {
+                            label.galley.begin()
+                        })
+                        .center()
+                        .to_vec2()
+            };
+            let start = point(start_text, false);
+            let end = point(end_text, true);
             self.step(vec![
                 egui::Event::PointerMoved(start),
                 button(start, true, egui::PointerButton::Primary),
@@ -806,6 +871,10 @@ mod tests {
             self.step(vec![egui::Event::PointerMoved(end)]);
             self.step(vec![button(end, false, egui::PointerButton::Primary)]);
             end
+        }
+
+        fn select(&mut self, text: &str) -> egui::Pos2 {
+            self.select_between(text, text)
         }
 
         fn menu(&mut self, pos: egui::Pos2, shift: bool) -> egui::FullOutput {
@@ -857,6 +926,13 @@ mod tests {
         let end = harness.select("café 漢字");
         let output = harness.menu(end, false);
         assert!(menu_button(&output, "Copy Markdown source").is_none());
+        assert!(harness
+            .context
+            .plugin::<ClipboardSelection>()
+            .lock()
+            .menus
+            .values()
+            .all(|(_, payload)| payload.markdown.is_none()));
         let copy = menu_button(&output, "Copy rich text").unwrap();
         harness.step(vec![
             egui::Event::PointerMoved(copy),
@@ -864,6 +940,52 @@ mod tests {
         ]);
         let output = harness.step(vec![button(copy, false, egui::PointerButton::Primary)]);
         assert!(output.platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyHtml {html, text} if html.contains("<strong>café 漢字</strong>") && text == "café 漢字")));
+    }
+
+    #[test]
+    fn markdown_rich_copy_uses_parser_breaks_not_widget_geometry_for_separators() {
+        for (source, separator) in [
+            ("**bold**_italic_\n", ""),
+            ("**bold**\n_italic_\n", " "),
+            ("**bold**  \n_italic_\n", "\n"),
+        ] {
+            let mut harness = CopyHarness::new(source);
+            harness.select_between("bold", "italic");
+            let output = harness.step(vec![egui::Event::Copy]);
+            let html = output
+                .platform_output
+                .commands
+                .iter()
+                .find_map(|command| match command {
+                    egui::OutputCommand::CopyHtml { html, .. } => Some(html),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(
+                html.contains(&format!("<strong>bold</strong>{separator}<em>italic</em>")),
+                "{source:?}: {html}"
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_rich_copy_preserves_the_first_selected_ordered_list_number() {
+        let mut harness = CopyHarness::new("1. first\n2. second\n3. third\n");
+        harness.select("third");
+        let output = harness.step(vec![egui::Event::Copy]);
+        let html = output
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::CopyHtml { html, .. } => Some(html),
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            html.contains("<ol start=\"3\"><li><p>third</p></li></ol>"),
+            "{html}"
+        );
     }
 
     #[test]
