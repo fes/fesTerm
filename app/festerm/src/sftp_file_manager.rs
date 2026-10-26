@@ -4,7 +4,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering as AtomicOrdering},
+        atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering},
         mpsc::{self, Receiver, Sender},
         Arc, Condvar, Mutex,
     },
@@ -33,6 +33,7 @@ use festerm_ui_egui::{
     icon::{self, Icon},
     theme,
 };
+use zeroize::{Zeroize, Zeroizing};
 
 /// How often the browsing session's worker checks that the remote
 /// connection is still alive, so a dropped connection (network blip, VPN
@@ -435,18 +436,187 @@ impl std::fmt::Debug for SftpFileManagerAuthentication {
     }
 }
 
-#[derive(Clone, Copy, Default, Eq, PartialEq)]
+impl Drop for SftpFileManagerAuthentication {
+    fn drop(&mut self) {
+        match self {
+            Self::Password(password) => password.zeroize(),
+            Self::PrivateKey {
+                key_text,
+                passphrase,
+            } => {
+                key_text.zeroize();
+                if let Some(passphrase) = passphrase {
+                    passphrase.zeroize();
+                }
+            }
+            Self::StoredPassword { .. } | Self::StoredPrivateKey { .. } => {}
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum AuthMode {
     #[default]
     Password,
     PrivateKey,
 }
 
-#[derive(Clone, Default)]
-struct AuthenticationFormState {
-    password: String,
-    private_key: String,
-    passphrase: String,
+#[derive(Default)]
+struct SecretText {
+    bytes: Zeroizing<Vec<u8>>,
+}
+
+impl SecretText {
+    #[cfg(test)]
+    fn new(text: impl Into<String>) -> Self {
+        let mut text = text.into();
+        let bytes = Zeroizing::new(text.as_bytes().to_vec());
+        text.zeroize();
+        Self { bytes }
+    }
+
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes).expect("secret text remains valid UTF-8")
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn take(&mut self) -> String {
+        let result =
+            String::from_utf8(self.bytes.as_slice().to_vec()).expect("secret text is valid UTF-8");
+        self.bytes.zeroize();
+        self.bytes.clear();
+        result
+    }
+
+    fn reserve_for(&mut self, required: usize) {
+        if required <= self.bytes.capacity() {
+            return;
+        }
+        let mut replacement = Zeroizing::new(Vec::with_capacity(required.next_power_of_two()));
+        replacement.extend_from_slice(&self.bytes);
+        self.bytes.zeroize();
+        self.bytes.clear();
+        self.bytes = replacement;
+    }
+}
+
+impl egui::TextBuffer for SecretText {
+    fn is_mutable(&self) -> bool {
+        true
+    }
+
+    fn as_str(&self) -> &str {
+        self.as_str()
+    }
+
+    fn insert_text(&mut self, text: &str, char_index: egui::text::CharIndex) -> usize {
+        let byte_index = self
+            .as_str()
+            .char_indices()
+            .nth(char_index.0)
+            .map_or(self.bytes.len(), |(index, _)| index);
+        let old_len = self.bytes.len();
+        let new_len = old_len + text.len();
+        self.reserve_for(new_len);
+        self.bytes.resize(new_len, 0);
+        self.bytes
+            .copy_within(byte_index..old_len, byte_index + text.len());
+        self.bytes[byte_index..byte_index + text.len()].copy_from_slice(text.as_bytes());
+        text.chars().count()
+    }
+
+    fn delete_char_range(&mut self, char_range: std::ops::Range<egui::text::CharIndex>) {
+        let value = self.as_str();
+        let start = value
+            .char_indices()
+            .nth(char_range.start.0)
+            .map_or(value.len(), |(index, _)| index);
+        let end = value
+            .char_indices()
+            .nth(char_range.end.0)
+            .map_or(value.len(), |(index, _)| index);
+        let old_len = self.bytes.len();
+        self.bytes.copy_within(end..old_len, start);
+        let new_len = old_len - (end - start);
+        self.bytes[new_len..old_len].fill(0);
+        self.bytes.truncate(new_len);
+    }
+
+    fn type_id(&self) -> std::any::TypeId {
+        std::any::TypeId::of::<Self>()
+    }
+}
+
+struct SecretWidgetState {
+    widget_id: egui::Id,
+    widget_context: Option<egui::Context>,
+}
+
+impl Default for SecretWidgetState {
+    fn default() -> Self {
+        static NEXT_AUTHENTICATION_FORM_ID: AtomicU64 = AtomicU64::new(1);
+
+        Self {
+            widget_id: egui::Id::new((
+                "sftp-file-manager-authentication",
+                NEXT_AUTHENTICATION_FORM_ID.fetch_add(1, AtomicOrdering::Relaxed),
+            )),
+            widget_context: None,
+        }
+    }
+}
+
+impl SecretWidgetState {
+    fn password_widget_id(&self) -> egui::Id {
+        self.widget_id.with("password")
+    }
+
+    fn private_key_widget_id(&self) -> egui::Id {
+        self.widget_id.with("private-key")
+    }
+
+    fn passphrase_widget_id(&self) -> egui::Id {
+        self.widget_id.with("passphrase")
+    }
+
+    fn clear(&self) {
+        let Some(context) = &self.widget_context else {
+            return;
+        };
+        context.data_mut(|data| {
+            for id in [
+                self.password_widget_id(),
+                self.private_key_widget_id(),
+                self.passphrase_widget_id(),
+            ] {
+                if let Some(mut state) = data.get_persisted::<egui::text_edit::TextEditState>(id) {
+                    state.clear_undoer_with(|(_, text)| text.zeroize());
+                }
+                data.remove::<egui::text_edit::TextEditState>(id);
+            }
+        });
+    }
+}
+
+impl Drop for SecretWidgetState {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct AuthenticationFormState {
+    secret_widgets: SecretWidgetState,
+    /// Immutable launch identity this draft belongs to. The state is normally
+    /// owned by one authentication-tab content instance, but this binding is
+    /// also a fail-closed guard against any future in-place target mutation.
+    bound_target: Option<SftpFileManagerLaunchTarget>,
+    password: SecretText,
+    private_key: SecretText,
+    passphrase: SecretText,
     mode: AuthMode,
     feedback: Option<String>,
     /// Destination fields are only meaningful (and only shown as editable)
@@ -471,6 +641,48 @@ struct AuthenticationFormState {
     /// something else in between (the connecting spinner, a failure notice,
     /// the host-key prompt), which counts as a fresh arrival.
     last_rendered_pass: Option<u64>,
+}
+
+impl AuthenticationFormState {
+    fn password_widget_id(&self) -> egui::Id {
+        self.secret_widgets.password_widget_id()
+    }
+
+    fn private_key_widget_id(&self) -> egui::Id {
+        self.secret_widgets.private_key_widget_id()
+    }
+
+    fn passphrase_widget_id(&self) -> egui::Id {
+        self.secret_widgets.passphrase_widget_id()
+    }
+}
+
+#[cfg(test)]
+impl AuthenticationFormState {
+    pub(crate) fn sensitive_draft_for_test(&self) -> (&str, &str, &str, bool) {
+        (
+            self.password.as_str(),
+            self.private_key.as_str(),
+            self.passphrase.as_str(),
+            self.mode == AuthMode::PrivateKey,
+        )
+    }
+
+    pub(crate) fn is_pristine_for_test(&self) -> bool {
+        self.password.is_empty()
+            && self.private_key.is_empty()
+            && self.passphrase.is_empty()
+            && self.mode == AuthMode::Password
+            && self.feedback.is_none()
+    }
+
+    pub(crate) fn sensitive_widget_ids_for_test(&self) -> [egui::Id; 3] {
+        [
+            self.password_widget_id(),
+            self.private_key_widget_id(),
+            self.passphrase_widget_id(),
+        ]
+    }
 }
 
 /// Parses the (possibly user-edited) destination fields back into a
@@ -517,14 +729,23 @@ fn resolve_edited_target(
 
 pub(crate) fn show_authentication_required(
     ui: &mut Ui,
-    tab_id: crate::tabs::TabId,
     target: &SftpFileManagerLaunchTarget,
+    return_to_profiles: bool,
+    state: &mut AuthenticationFormState,
 ) -> Option<crate::tabs::AppCommand> {
-    let state_id = ui.id().with(("gui_sftp_auth_state", tab_id));
-    let mut state = ui.data(|data| {
-        data.get_temp::<AuthenticationFormState>(state_id)
-            .unwrap_or_default()
-    });
+    match state.bound_target.as_ref() {
+        None => state.bound_target = Some(target.clone()),
+        Some(bound_target) if bound_target != target => {
+            *state = AuthenticationFormState {
+                bound_target: Some(target.clone()),
+                ..Default::default()
+            };
+        }
+        Some(_) => {}
+    }
+    if state.secret_widgets.widget_context.is_none() {
+        state.secret_widgets.widget_context = Some(ui.ctx().clone());
+    }
     if !state.destination_initialized {
         state.username = target.username.clone();
         state.host = target.host.clone();
@@ -589,11 +810,18 @@ pub(crate) fn show_authentication_required(
                 // doesn't inherit a stale request when the user switches.
                 let focus_secret = std::mem::take(&mut state.focus_secret);
                 let mut enter_pressed = false;
+                let password_widget_id = state.password_widget_id();
+                let private_key_widget_id = state.private_key_widget_id();
+                let passphrase_widget_id = state.passphrase_widget_id();
                 match state.mode {
                     AuthMode::Password => {
                         ui.label("Password");
-                        let response =
-                            ui.add(TextEdit::singleline(&mut state.password).password(true));
+                        let response = ui.add(
+                            TextEdit::singleline(&mut state.password)
+                                .password(true)
+                                .sensitive(true)
+                                .id(password_widget_id),
+                        );
                         if focus_secret {
                             response.request_focus();
                         }
@@ -601,17 +829,30 @@ pub(crate) fn show_authentication_required(
                             && ui.input(|input| input.key_pressed(egui::Key::Enter));
                     }
                     AuthMode::PrivateKey => {
-                        ui.label("OpenSSH private key");
+                        ui.label("OpenSSH private key (hidden)");
                         // The key box, not the passphrase, is the field the
                         // user still has to fill in this mode.
-                        let key_response =
-                            ui.add(TextEdit::multiline(&mut state.private_key).desired_rows(8));
+                        let key_response = ui.add(
+                            TextEdit::multiline(&mut state.private_key)
+                                .sensitive(true)
+                                .desired_rows(8)
+                                .id(private_key_widget_id),
+                        );
                         if focus_secret {
                             key_response.request_focus();
                         }
+                        ui.small(format!(
+                            "{} characters · {} lines",
+                            state.private_key.as_str().chars().count(),
+                            state.private_key.as_str().lines().count().max(1)
+                        ));
                         ui.label("Passphrase (optional)");
-                        let response =
-                            ui.add(TextEdit::singleline(&mut state.passphrase).password(true));
+                        let response = ui.add(
+                            TextEdit::singleline(&mut state.passphrase)
+                                .password(true)
+                                .sensitive(true)
+                                .id(passphrase_widget_id),
+                        );
                         enter_pressed |= response.lost_focus()
                             && ui.input(|input| input.key_pressed(egui::Key::Enter));
                     }
@@ -641,44 +882,56 @@ pub(crate) fn show_authentication_required(
                 }
                 let connect = ui.add(egui::Button::new("Open SFTP file manager"));
                 if connect.clicked() || enter_pressed {
-                    let resolved_target = match resolve_edited_target(target, &state) {
-                        Ok(resolved_target) => Some(resolved_target),
+                    match resolve_edited_target(target, state) {
                         Err(feedback) => {
                             state.feedback = Some(feedback);
-                            None
                         }
-                    };
-                    let authentication = match state.mode {
-                        AuthMode::Password if state.password.is_empty() => {
-                            state.feedback = Some("Enter a password.".to_owned());
-                            None
+                        Ok(target) => {
+                            let authentication = match state.mode {
+                                AuthMode::Password if state.password.is_empty() => {
+                                    state.feedback = Some("Enter a password.".to_owned());
+                                    None
+                                }
+                                AuthMode::Password => Some(
+                                    SftpFileManagerAuthentication::Password(state.password.take()),
+                                ),
+                                AuthMode::PrivateKey
+                                    if state.private_key.as_str().trim().is_empty() =>
+                                {
+                                    state.feedback =
+                                        Some("Paste an OpenSSH private key.".to_owned());
+                                    None
+                                }
+                                AuthMode::PrivateKey => {
+                                    Some(SftpFileManagerAuthentication::PrivateKey {
+                                        key_text: state.private_key.take(),
+                                        passphrase: (!state.passphrase.is_empty())
+                                            .then(|| state.passphrase.take()),
+                                    })
+                                }
+                            };
+                            if let Some(authentication) = authentication {
+                                state.feedback = None;
+                                command =
+                                    Some(crate::tabs::AppCommand::StartSftpFileManager {
+                                        target,
+                                        authentication,
+                                    });
+                            }
                         }
-                        AuthMode::Password => Some(SftpFileManagerAuthentication::Password(
-                            std::mem::take(&mut state.password),
-                        )),
-                        AuthMode::PrivateKey if state.private_key.trim().is_empty() => {
-                            state.feedback = Some("Paste an OpenSSH private key.".to_owned());
-                            None
-                        }
-                        AuthMode::PrivateKey => Some(SftpFileManagerAuthentication::PrivateKey {
-                            key_text: std::mem::take(&mut state.private_key),
-                            passphrase: (!state.passphrase.is_empty())
-                                .then(|| std::mem::take(&mut state.passphrase)),
-                        }),
-                    };
-                    if let (Some(target), Some(authentication)) =
-                        (resolved_target, authentication)
-                    {
-                        state.feedback = None;
-                        command = Some(crate::tabs::AppCommand::StartSftpFileManager {
-                            target,
-                            authentication,
-                        });
                     }
+                }
+                if return_to_profiles
+                    && (ui.button("Back to Profiles").clicked()
+                        || ui.input_mut(|input| {
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                        }))
+                {
+                    *state = AuthenticationFormState::default();
+                    command = Some(crate::tabs::AppCommand::OpenProfiles);
                 }
             });
         });
-    ui.data_mut(|data| data.insert_temp(state_id, state));
     command
 }
 
@@ -6871,6 +7124,12 @@ pub(crate) mod tests {
     use egui_kittest::{kittest::Queryable, Harness};
     use std::ffi::OsString;
 
+    #[derive(Default)]
+    struct AuthenticationHarnessState {
+        command: Option<crate::tabs::AppCommand>,
+        form: AuthenticationFormState,
+    }
+
     /// Builds a `SftpFileManagerTab` for unit tests without going through
     /// `SftpFileManagerTab::new`, which spawns a real background worker
     /// thread that attempts a live SSH connection -- impractical (and
@@ -7830,6 +8089,285 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn secret_text_preserves_unicode_across_insert_delete_growth_and_take() {
+        let mut secret = SecretText::new("é漢🙂");
+        assert_eq!(
+            egui::TextBuffer::insert_text(&mut secret, "ß", egui::text::CharIndex(1)),
+            1
+        );
+        assert_eq!(secret.as_str(), "éß漢🙂");
+
+        egui::TextBuffer::delete_char_range(
+            &mut secret,
+            egui::text::CharIndex(1)..egui::text::CharIndex(3),
+        );
+        assert_eq!(secret.as_str(), "é🙂");
+
+        let growth = "密".repeat(80);
+        assert_eq!(
+            egui::TextBuffer::insert_text(&mut secret, &growth, egui::text::CharIndex(1)),
+            80
+        );
+        assert_eq!(secret.as_str(), format!("é{growth}🙂"));
+        assert_eq!(secret.take(), format!("é{growth}🙂"));
+        assert!(secret.is_empty());
+    }
+
+    #[test]
+    fn sensitive_private_key_rejects_copy_and_scrubs_cut_payload() {
+        let target = test_launch_target(Some("production"));
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, state: &mut AuthenticationHarnessState| {
+                state.command = show_authentication_required(ui, &target, true, &mut state.form);
+            },
+            AuthenticationHarnessState::default(),
+        );
+        harness.run();
+        harness.get_by_label("Private key").click();
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .focus();
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .type_text("private-key-sentinel");
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.run();
+
+        harness.event(egui::Event::Copy);
+        harness.run();
+        assert!(harness
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .all(|command| !matches!(command, egui::OutputCommand::CopyText(_))));
+        assert_eq!(
+            harness.state().form.private_key.as_str(),
+            "private-key-sentinel"
+        );
+
+        harness.event(egui::Event::Cut);
+        harness.run();
+        assert!(harness
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .all(|command| !matches!(command, egui::OutputCommand::CopyText(_))));
+        assert!(harness.state().form.private_key.is_empty());
+    }
+
+    #[test]
+    fn sensitive_private_key_ime_commit_replaces_unicode_preedit() {
+        let target = test_launch_target(Some("production"));
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, state: &mut AuthenticationHarnessState| {
+                state.command = show_authentication_required(ui, &target, true, &mut state.form);
+            },
+            AuthenticationHarnessState::default(),
+        );
+        harness.run();
+        harness.get_by_label("Private key").click();
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .focus();
+        harness.run();
+        harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "é漢".to_owned(),
+            active_range_chars: Some(0..2),
+        }));
+        harness.run();
+        harness.event(egui::Event::Ime(egui::ImeEvent::Commit("é漢🙂".to_owned())));
+        harness.run();
+
+        assert_eq!(harness.state().form.private_key.as_str(), "é漢🙂");
+    }
+
+    #[test]
+    fn profiles_authentication_back_and_escape_clear_all_credential_drafts() {
+        for escape in [false, true] {
+            let target = test_launch_target(Some("production"));
+            let mut harness = Harness::builder().build_ui_state(
+                move |ui, state: &mut AuthenticationHarnessState| {
+                    if let Some(command) =
+                        show_authentication_required(ui, &target, true, &mut state.form)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                AuthenticationHarnessState::default(),
+            );
+            harness.run();
+            harness.get_by_label("Open SFTP file manager").click();
+            harness.run();
+            assert!(
+                harness.state().command.is_none(),
+                "invalid authentication stays on the form"
+            );
+            harness
+                .get_by_role(egui::accesskit::Role::PasswordInput)
+                .focus();
+            harness.run();
+            harness
+                .get_by_role(egui::accesskit::Role::PasswordInput)
+                .type_text("unsubmitted-password");
+            harness.run();
+            harness.get_by_label("Private key").click();
+            harness.run();
+            harness
+                .get_by_role(egui::accesskit::Role::MultilineTextInput)
+                .type_text("unsubmitted-private-key");
+            harness
+                .get_by_role(egui::accesskit::Role::PasswordInput)
+                .focus();
+            harness.run();
+            harness
+                .get_by_role(egui::accesskit::Role::PasswordInput)
+                .type_text("unsubmitted-passphrase");
+            harness.run();
+            assert_eq!(harness.state().form.mode, AuthMode::PrivateKey);
+            assert!(!harness.state().form.password.is_empty());
+            assert!(!harness.state().form.private_key.is_empty());
+            assert!(!harness.state().form.passphrase.is_empty());
+
+            if escape {
+                harness.key_press(egui::Key::Escape);
+            } else {
+                harness.get_by_label("Back to Profiles").click();
+            }
+            harness.run();
+
+            assert!(matches!(
+                harness.state().command,
+                Some(crate::tabs::AppCommand::OpenProfiles)
+            ));
+            assert_eq!(harness.state().form.mode, AuthMode::Password);
+            assert!(harness.state().form.password.is_empty());
+            assert!(harness.state().form.private_key.is_empty());
+            assert!(harness.state().form.passphrase.is_empty());
+        }
+    }
+
+    #[test]
+    fn invalid_destination_keeps_credentials_in_the_secure_draft() {
+        for mode in [AuthMode::Password, AuthMode::PrivateKey] {
+            let target = test_launch_target(None);
+            let bound_target = target.clone();
+            let mut harness = Harness::builder().build_ui_state(
+                move |ui, state: &mut AuthenticationHarnessState| {
+                    state.command =
+                        show_authentication_required(ui, &target, false, &mut state.form);
+                },
+                AuthenticationHarnessState {
+                    form: AuthenticationFormState {
+                        bound_target: Some(bound_target),
+                        password: SecretText::new("retained-password"),
+                        private_key: SecretText::new("retained-private-key"),
+                        passphrase: SecretText::new("retained-passphrase"),
+                        mode,
+                        destination_initialized: true,
+                        username: "alice".to_owned(),
+                        host: "invalid.example.test".to_owned(),
+                        port: "not-a-port".to_owned(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+
+            harness.run();
+            harness.get_by_label("Open SFTP file manager").click();
+            harness.run();
+
+            assert!(harness.state().command.is_none());
+            assert_eq!(
+                harness.state().form.sensitive_draft_for_test(),
+                (
+                    "retained-password",
+                    "retained-private-key",
+                    "retained-passphrase",
+                    mode == AuthMode::PrivateKey,
+                )
+            );
+            assert_eq!(
+                harness.state().form.feedback.as_deref(),
+                Some("Port must be a number between 1 and 65535.")
+            );
+        }
+    }
+
+    #[test]
+    fn sensitive_password_enter_submits_the_authentication_form() {
+        let target = test_launch_target(Some("production"));
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, state: &mut AuthenticationHarnessState| {
+                if let Some(command) =
+                    show_authentication_required(ui, &target, true, &mut state.form)
+                {
+                    state.command = Some(command);
+                }
+            },
+            AuthenticationHarnessState::default(),
+        );
+
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::PasswordInput)
+            .focus();
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::PasswordInput)
+            .type_text("submitted-password");
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(crate::tabs::AppCommand::StartSftpFileManager { .. })
+        ));
+    }
+
+    #[test]
+    fn authentication_state_fails_closed_if_reused_for_a_different_target() {
+        let profile_a = test_launch_target(Some("profile-a"));
+        let mut profile_b = test_launch_target(Some("profile-b"));
+        profile_b.label = "profile-b".to_owned();
+        profile_b.username = "bob".to_owned();
+        profile_b.host = "b.example.test".to_owned();
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, state: &mut AuthenticationHarnessState| {
+                state.command = show_authentication_required(ui, &profile_b, true, &mut state.form);
+            },
+            AuthenticationHarnessState {
+                form: AuthenticationFormState {
+                    bound_target: Some(profile_a),
+                    password: SecretText::new("profile-a-password"),
+                    private_key: SecretText::new("profile-a-private-key"),
+                    passphrase: SecretText::new("profile-a-passphrase"),
+                    mode: AuthMode::PrivateKey,
+                    destination_initialized: true,
+                    username: "alice".to_owned(),
+                    host: "a.example.test".to_owned(),
+                    port: "22".to_owned(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        harness.run();
+
+        assert!(harness.state().form.is_pristine_for_test());
+        assert_eq!(harness.state().form.username, "bob");
+        assert_eq!(harness.state().form.host, "b.example.test");
+        assert_eq!(harness.state().form.port, "22");
+    }
+
+    #[test]
     fn authentication_surface_offers_the_saved_credential_for_gui_sftp() {
         let target = SftpFileManagerLaunchTarget {
             label: "production".to_owned(),
@@ -7840,14 +8378,15 @@ pub(crate) mod tests {
             stored_credential_kind: Some(CredentialKind::Password),
             known_host_persisted: true,
         };
-        let tab_id = crate::tabs::AppState::for_test().active();
         let mut harness = Harness::builder().build_ui_state(
-            move |ui, command: &mut Option<crate::tabs::AppCommand>| {
-                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
-                    *command = Some(next);
+            move |ui, state: &mut AuthenticationHarnessState| {
+                if let Some(next) =
+                    show_authentication_required(ui, &target, false, &mut state.form)
+                {
+                    state.command = Some(next);
                 }
             },
-            None,
+            AuthenticationHarnessState::default(),
         );
         harness.run();
 
@@ -7855,7 +8394,7 @@ pub(crate) mod tests {
         harness.run();
 
         assert!(matches!(
-            harness.state(),
+            &harness.state().command,
             Some(crate::tabs::AppCommand::StartStoredSftpFileManagerProfile {
                 profile_id
             }) if profile_id == "production"
@@ -7873,14 +8412,11 @@ pub(crate) mod tests {
             stored_credential_kind: None,
             known_host_persisted: true,
         };
-        let tab_id = crate::tabs::AppState::for_test().active();
         let mut harness = Harness::builder().build_ui_state(
-            move |ui, command: &mut Option<crate::tabs::AppCommand>| {
-                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
-                    *command = Some(next);
-                }
+            move |ui, state: &mut AuthenticationHarnessState| {
+                state.command = show_authentication_required(ui, &target, false, &mut state.form);
             },
-            None,
+            AuthenticationHarnessState::default(),
         );
 
         harness.run();
@@ -7902,23 +8438,21 @@ pub(crate) mod tests {
             stored_credential_kind: None,
             known_host_persisted: false,
         };
-        let tab_id = crate::tabs::AppState::for_test().active();
         let mut harness = Harness::builder().build_ui_state(
-            move |ui, command: &mut Option<crate::tabs::AppCommand>| {
-                ui.data_mut(|data| {
-                    data.insert_temp(
-                        ui.id().with(("gui_sftp_auth_state", tab_id)),
-                        AuthenticationFormState {
-                            password: "secret".to_owned(),
-                            ..Default::default()
-                        },
-                    );
-                });
-                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
-                    *command = Some(next);
+            move |ui, state: &mut AuthenticationHarnessState| {
+                if let Some(next) =
+                    show_authentication_required(ui, &target, false, &mut state.form)
+                {
+                    state.command = Some(next);
                 }
             },
-            None,
+            AuthenticationHarnessState {
+                form: AuthenticationFormState {
+                    password: SecretText::new("secret"),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
         );
 
         harness.run();
@@ -7926,7 +8460,7 @@ pub(crate) mod tests {
         harness.run();
 
         assert!(matches!(
-            harness.state(),
+            harness.state().command,
             Some(crate::tabs::AppCommand::StartSftpFileManager { .. })
         ));
     }
@@ -7942,14 +8476,11 @@ pub(crate) mod tests {
             stored_credential_kind: None,
             known_host_persisted: true,
         };
-        let tab_id = crate::tabs::AppState::for_test().active();
         let mut harness = Harness::builder().build_ui_state(
-            move |ui, command: &mut Option<crate::tabs::AppCommand>| {
-                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
-                    *command = Some(next);
-                }
+            move |ui, state: &mut AuthenticationHarnessState| {
+                state.command = show_authentication_required(ui, &target, false, &mut state.form);
             },
-            None,
+            AuthenticationHarnessState::default(),
         );
 
         harness.run();
@@ -7981,6 +8512,7 @@ pub(crate) mod tests {
     fn authentication_surface_refocuses_the_password_after_returning_from_a_failure() {
         struct ReentryState {
             visible: bool,
+            form: AuthenticationFormState,
         }
 
         let target = SftpFileManagerLaunchTarget {
@@ -7992,18 +8524,20 @@ pub(crate) mod tests {
             stored_credential_kind: None,
             known_host_persisted: true,
         };
-        let tab_id = crate::tabs::AppState::for_test().active();
         let mut harness = Harness::builder().build_ui_state(
             move |ui, state: &mut ReentryState| {
                 if state.visible {
-                    show_authentication_required(ui, tab_id, &target);
+                    show_authentication_required(ui, &target, false, &mut state.form);
                 } else {
                     // Stands in for the connecting/failed surface the tab
                     // swaps in while the form is away.
                     ui.label("Connection failed.");
                 }
             },
-            ReentryState { visible: true },
+            ReentryState {
+                visible: true,
+                form: AuthenticationFormState::default(),
+            },
         );
 
         harness.run();
@@ -8043,14 +8577,11 @@ pub(crate) mod tests {
             stored_credential_kind: None,
             known_host_persisted: true,
         };
-        let tab_id = crate::tabs::AppState::for_test().active();
         let mut harness = Harness::builder().build_ui_state(
-            move |ui, command: &mut Option<crate::tabs::AppCommand>| {
-                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
-                    *command = Some(next);
-                }
+            move |ui, state: &mut AuthenticationHarnessState| {
+                state.command = show_authentication_required(ui, &target, false, &mut state.form);
             },
-            None,
+            AuthenticationHarnessState::default(),
         );
 
         harness.run();

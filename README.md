@@ -43,6 +43,12 @@ autosaved versioned TOML profiles/interface settings; metadata-only workspace
 restoration; and native secret-store references for saved SSH passwords and
 private keys. Persistent host-key trust is explicit and non-secret.
 
+Explicit [smart selection](docs/gui-design.md#smart-terminal-selection)
+highlights sentences, paragraphs or indented blocks from terminal cells before
+a separate Copy. The local deterministic baseline conservatively isolates
+bordered/gapped row segments; general TUI-layout and native usability
+qualification remain open, without a model or network dependency.
+
 SSH uses an in-process `russh` transport with fingerprint-first host
 verification, password, in-memory OpenSSH-key, and transient OpenSSH
 certificate authentication, remote PTY resize, periodic/on-demand liveness

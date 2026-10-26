@@ -79,6 +79,12 @@ impl TextEditState {
     pub fn clear_undoer(&mut self) {
         self.set_undoer(TextEditUndoer::default());
     }
+
+    /// Clears every retained undo/redo state after allowing the caller to
+    /// erase sensitive text in place.
+    pub fn clear_undoer_with(&mut self, clear_state: impl FnMut(&mut (CCursorRange, String))) {
+        self.undoer.lock().clear_with(clear_state);
+    }
 }
 
 #[derive(Clone, Default)]

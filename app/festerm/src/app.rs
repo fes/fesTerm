@@ -6069,8 +6069,9 @@ impl FesTermApp {
                 TabContent::SftpFileManagerAuthenticationRequired(tab) => {
                     screen_command = sftp_file_manager::show_authentication_required(
                         ui,
-                        active_tab_id,
                         &tab.target,
+                        tab.return_to_profiles,
+                        &mut tab.authentication,
                     );
                 }
                 TabContent::SftpFileManager(tab) => {
@@ -7281,6 +7282,170 @@ mod tests {
     }
 
     #[test]
+    fn global_open_profiles_drops_gui_sftp_credentials_before_reusing_the_tab_for_another_profile()
+    {
+        let configuration = Configuration::new(vec![
+            festerm_config::Profile::ssh(
+                "profile-a",
+                "a.example.test",
+                22,
+                "alice",
+                "xterm-256color",
+                80,
+                24,
+            )
+            .unwrap(),
+            festerm_config::Profile::ssh(
+                "profile-b",
+                "b.example.test",
+                22,
+                "bob",
+                "xterm-256color",
+                80,
+                24,
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
+        app.dispatch_for_test(AppCommand::OpenProfiles, &context);
+        app.dispatch_for_test(
+            AppCommand::OpenConfiguredSftpFileManagerProfile {
+                profile_id: "profile-a".to_owned(),
+            },
+            &context,
+        );
+        let reused_tab = app.state.active();
+        let tab_order = app
+            .state
+            .tabs()
+            .iter()
+            .map(|tab| tab.id)
+            .collect::<Vec<_>>();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 760.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::PasswordInput)
+            .type_text("profile-a-password");
+        harness.run();
+        harness.get_by_label("Private key").click();
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .type_text("profile-a-private-key");
+        harness
+            .get_by_role(egui::accesskit::Role::PasswordInput)
+            .focus();
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::PasswordInput)
+            .type_text("profile-a-passphrase");
+        harness.run();
+
+        let TabContent::SftpFileManagerAuthenticationRequired(tab) =
+            &harness.state().state.active_tab().content
+        else {
+            panic!("profile A should still be on its GUI SFTP authentication form");
+        };
+        assert_eq!(tab.target.profile_id.as_deref(), Some("profile-a"));
+        assert_eq!(
+            tab.authentication.sensitive_draft_for_test(),
+            (
+                "profile-a-password",
+                "profile-a-private-key",
+                "profile-a-passphrase",
+                true,
+            )
+        );
+        let profile_a_widget_ids = tab.authentication.sensitive_widget_ids_for_test();
+        for id in profile_a_widget_ids {
+            assert!(
+                egui::text_edit::TextEditState::load(&harness.ctx, id).is_some(),
+                "typing profile A credentials should populate its private widget state"
+            );
+        }
+
+        harness
+            .state_mut()
+            .dispatch_chrome_actions(vec![ChromeAction::OpenProfiles], &context);
+        assert_eq!(harness.state().state.active(), reused_tab);
+        assert_eq!(
+            harness
+                .state()
+                .state
+                .tabs()
+                .iter()
+                .map(|tab| tab.id)
+                .collect::<Vec<_>>(),
+            tab_order
+        );
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Profiles
+        ));
+        for id in profile_a_widget_ids {
+            assert!(
+                egui::text_edit::TextEditState::load(&harness.ctx, id).is_none(),
+                "replacing profile A's authentication content must erase its credential undo state"
+            );
+        }
+
+        harness.state_mut().dispatch_for_test(
+            AppCommand::OpenConfiguredSftpFileManagerProfile {
+                profile_id: "profile-b".to_owned(),
+            },
+            &context,
+        );
+        harness.run();
+
+        assert_eq!(harness.state().state.active(), reused_tab);
+        assert_eq!(
+            harness
+                .state()
+                .state
+                .tabs()
+                .iter()
+                .map(|tab| tab.id)
+                .collect::<Vec<_>>(),
+            tab_order
+        );
+        let TabContent::SftpFileManagerAuthenticationRequired(tab) =
+            &harness.state().state.active_tab().content
+        else {
+            panic!("profile B should open in the reused GUI SFTP authentication tab");
+        };
+        assert_eq!(tab.target.profile_id.as_deref(), Some("profile-b"));
+        assert_ne!(
+            tab.authentication.sensitive_widget_ids_for_test(),
+            profile_a_widget_ids,
+            "a replacement authentication form must not reuse profile A's credential widget identities"
+        );
+        assert!(
+            tab.authentication.is_pristine_for_test(),
+            "profile B must receive a fresh password/private-key/passphrase draft and default auth mode"
+        );
+        harness
+            .get_by_role(egui::accesskit::Role::PasswordInput)
+            .focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        let TabContent::SftpFileManagerAuthenticationRequired(tab) =
+            &harness.state().state.active_tab().content
+        else {
+            panic!("profile B should remain on its GUI SFTP authentication form");
+        };
+        assert!(
+            tab.authentication.is_pristine_for_test(),
+            "Undo in profile B must not resurrect profile A's credential history"
+        );
+    }
+
+    #[test]
     fn the_status_bar_names_the_active_tabs_durable_session_only_when_asked() {
         // Feature request #168: off by default, shown for the active tab
         // when enabled, and absent again on a surface that has no durable
@@ -8089,6 +8254,32 @@ mod tests {
                 };
                 assert_eq!(transport.sent(), vec![expected.to_vec()]);
             }
+        }
+    }
+
+    #[test]
+    fn windows_clipboard_newlines_preserve_multiline_source_order() {
+        for (text, expected) in [
+            ("", ""),
+            ("single line", "single line"),
+            ("first\nsecond\nthird", "first\r\nsecond\r\nthird"),
+            ("first\r\nsecond\r\nthird", "first\r\nsecond\r\nthird"),
+            ("first\rsecond\nthird\r\n", "first\r\nsecond\r\nthird\r\n"),
+            ("first\n\nthird", "first\r\n\r\nthird"),
+        ] {
+            let normalized =
+                egui_winit::clipboard::normalize_windows_clipboard_text(text.to_owned());
+            assert_eq!(normalized, expected);
+            assert_eq!(
+                normalized.lines().collect::<Vec<_>>(),
+                expected.lines().collect::<Vec<_>>()
+            );
+            let without_crlf = normalized.replace("\r\n", "");
+            assert!(!without_crlf.contains('\r') && !without_crlf.contains('\n'));
+            assert_eq!(
+                egui_winit::clipboard::normalize_windows_clipboard_text(normalized.clone()),
+                normalized
+            );
         }
     }
 

@@ -29,6 +29,15 @@ The initial target includes:
 
 ## Validation Principles
 
+Smart selection (#397) is an additive deterministic presentation baseline
+(`GUI:TERM-14`), not a terminal-protocol compatibility claim. Wrapped prose,
+explicit paragraph breaks, indentation, bordered/gapped row segments and Unicode
+have exact-cell/text regression coverage. Unmarked columns and arbitrary TUI
+semantic blocks are unsupported; pane segments conservatively stay one visual
+row. Native clipboard/accessibility and usability qualification remain pending
+under `docs/manual-validation.md` TI-19. No model-quality claim or M6 acceptance
+status changes.
+
 - Core behavior is tested without a GUI, PTY, or SSH connection wherever possible.
 - Fixtures are stored in the repository from the beginning.
 - Every corrected compatibility defect should gain a regression fixture.
