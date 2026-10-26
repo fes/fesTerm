@@ -17,9 +17,11 @@ parser byte spans rather than reconstructed from rendered text. Menus retain
 only the selected snapshot, retain source bytes solely for an exact
 Shift-requested source action, and retire on reparse or hidden ownership.
 Parser-owned soft/hard breaks preserve semantic separators independently of
-widget placement. Literal HTML stays escaped and copying grants no resource
-access. Source-mode and explicit code Copy remain plain text. Wayland's current
-clipboard backend honestly degrades to text. Deterministic key routing,
+widget placement; context-menu and keyboard rich Copy share egui's exact plain
+fallback, and each viewport retires only its own payload. Literal HTML stays
+escaped and copying grants no resource access. Source-mode and explicit code
+Copy remain plain text. Wayland's current clipboard backend honestly degrades
+to text. Deterministic key routing,
 Unicode/duplicate/fenced selection, safe export and stale-menu checks do not
 establish native Copilot navigation, rich-paste interoperability or clipboard
 usability; TI-02 and CP-06/CP-15 retain those native checks.

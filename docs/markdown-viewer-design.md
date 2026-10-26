@@ -460,11 +460,13 @@ exceeding the 16 MiB rich-output limit retains plain-text Copy instead of
 publishing incomplete rich content. Clipboard export does not fetch resources
 or read the clipboard. Rich inline boundaries and soft/hard breaks come from
 the parsed document rather than widget placement, so wrapping cannot add or
-remove semantic separators. Menus retain only a bounded selected snapshot and
-retire on reparse or loss of their visible viewport owner; source bytes are
-retained only for an exact Shift-requested source action. Native HTML delivery
-uses the existing clipboard backend; unsupported/failed HTML writes explicitly
-log and fall back to text. The current Wayland backend is text-only.
+remove semantic separators; keyboard and context-menu rich Copy both carry
+egui's exact plain selection rather than a second geometry heuristic. Menus
+retain only a bounded selected snapshot and retire per viewport on reparse or
+loss of their visible owner; source bytes are retained only for an exact
+Shift-requested source action. Native HTML delivery uses the existing clipboard
+backend; unsupported/failed HTML writes explicitly log and fall back to text.
+The current Wayland backend is text-only.
 
 Source-mode Copy and code-block Copy remain plain text; code-block Copy copies
 only code content, excluding fences, language labels and line numbers.

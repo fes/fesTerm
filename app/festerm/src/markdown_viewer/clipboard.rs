@@ -1,7 +1,6 @@
 use eframe::egui;
 use std::{
     collections::{HashMap, HashSet},
-    hash::{Hash, Hasher},
     ops::Range,
     sync::Arc,
 };
@@ -20,8 +19,6 @@ struct Selection {
     widgets: HashSet<egui::Id>,
     source: Option<Range<usize>>,
     html_bytes: usize,
-    text: String,
-    last_rect: Option<egui::Rect>,
     last_code: Option<usize>,
     last_code_source_end: usize,
     pieces: Vec<(Range<usize>, String)>,
@@ -32,12 +29,18 @@ struct Selection {
 
 #[derive(Clone)]
 struct MenuSelection {
-    revision: u64,
+    revision: DocumentRevision,
     html: String,
     markdown: Option<String>,
     text: String,
     include_source: bool,
     source_inexact: bool,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct DocumentRevision {
+    source_address: usize,
+    source_len: usize,
 }
 
 #[derive(Default)]
@@ -46,6 +49,7 @@ struct ClipboardSelection {
     copies: HashMap<egui::ViewportId, (String, String)>,
     menus: HashMap<egui::ViewportId, (egui::Id, Arc<MenuSelection>)>,
     seen_menus: HashSet<egui::ViewportId>,
+    ending_viewport: Option<egui::ViewportId>,
     capturing: bool,
 }
 
@@ -59,8 +63,14 @@ impl egui::Plugin for ClipboardSelection {
         self.seen_menus.remove(&ui.ctx().viewport_id());
     }
 
+    fn on_end_pass(&mut self, ui: &mut egui::Ui) {
+        self.ending_viewport = Some(ui.ctx().viewport_id());
+    }
+
     fn output_hook(&mut self, ctx: &egui::Context, output: &mut egui::FullOutput) {
-        let viewport = ctx.viewport_id();
+        let Some(viewport) = self.ending_viewport.take() else {
+            return;
+        };
         if !self.seen_menus.remove(&viewport) {
             if let Some((id, _)) = self.menus.remove(&viewport) {
                 egui::Popup::close_id(ctx, id);
@@ -86,12 +96,23 @@ impl egui::Plugin for ClipboardSelection {
 
 pub(super) fn begin(ui: &egui::Ui) {
     let plugin = ui.ctx().plugin_or_default::<ClipboardSelection>();
-    let mut state = plugin.lock();
-    state.current = Selection::default();
-    state.capturing = ui.input(|i| {
-        i.events.contains(&egui::Event::Copy)
-            || i.pointer.button_clicked(egui::PointerButton::Secondary)
+    let (copying, opening_menu) = ui.input(|i| {
+        (
+            i.events.contains(&egui::Event::Copy),
+            i.pointer.button_clicked(egui::PointerButton::Secondary),
+        )
     });
+    {
+        let mut state = plugin.lock();
+        state.current = Selection::default();
+        state.capturing = copying || opening_menu;
+    }
+    if opening_menu {
+        ui.ctx()
+            .plugin::<egui::text_selection::LabelSelectionState>()
+            .lock()
+            .capture_selection_text(ui.ctx().viewport_id());
+    }
 }
 
 fn escape(text: &str) -> String {
@@ -417,35 +438,22 @@ fn register(
         state.current.overflow = true;
         return;
     }
-    if let Some(previous) = state.current.last_rect {
-        if code_block.is_some() && state.current.last_code == code_block {
-            let gap = &document.source_text()[state.current.last_code_source_end..raw.start];
-            let mut chars = gap.chars().peekable();
-            let mut lines = 0;
-            while let Some(ch) = chars.next() {
-                if ch == '\r' {
-                    if chars.peek() == Some(&'\n') {
-                        chars.next();
-                    }
-                    lines += 1;
-                } else if ch == '\n' {
-                    lines += 1;
+    if code_block.is_some() && state.current.last_code == code_block {
+        let gap = &document.source_text()[state.current.last_code_source_end..raw.start];
+        let mut chars = gap.chars().peekable();
+        let mut lines = 0;
+        while let Some(ch) = chars.next() {
+            if ch == '\r' {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
                 }
+                lines += 1;
+            } else if ch == '\n' {
+                lines += 1;
             }
-            html.insert_str(0, &"\n".repeat(lines));
         }
-        if previous.bottom() <= response.rect.top() {
-            state.current.text.push('\n');
-            if response.rect.top() - previous.bottom() > response.rect.height() * 0.5 {
-                state.current.text.push('\n');
-            }
-        } else if !state.current.text.ends_with(char::is_whitespace)
-            && !text.starts_with(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
-        {
-            state.current.text.push(' ');
-        }
+        html.insert_str(0, &"\n".repeat(lines));
     }
-    state.current.last_rect = Some(response.rect);
     state.current.last_code = code_block;
     state.current.last_code_source_end = raw.end;
     if state.current.html_bytes.saturating_add(html.len()) > MAX_COPY_BYTES {
@@ -453,7 +461,6 @@ fn register(
         return;
     }
     state.current.rich |= rich;
-    state.current.text.push_str(&text);
     state.current.widgets.insert(response.id);
     if let Some(source) = &mut state.current.source {
         source.start = source.start.min(raw.start);
@@ -461,8 +468,16 @@ fn register(
     } else {
         state.current.source = Some(raw.clone());
     }
+
     state.current.html_bytes += html.len();
     state.current.pieces.push((raw, html));
+}
+
+fn document_revision(document: &MarkdownDocument) -> DocumentRevision {
+    DocumentRevision {
+        source_address: document.source_text().as_ptr() as usize,
+        source_len: document.source_text().len(),
+    }
 }
 
 fn inline_breaks(inlines: &[Inline], breaks: &mut Vec<(Range<usize>, char)>) {
@@ -672,6 +687,15 @@ pub(super) fn finish(ui: &mut egui::Ui, document: &MarkdownDocument, rect: egui:
     } else {
         false
     };
+    let plain_text = if capturing {
+        ui.ctx()
+            .plugin::<egui::text_selection::LabelSelectionState>()
+            .lock()
+            .pending_copy_text(ui.ctx().viewport_id())
+            .map(str::to_owned)
+    } else {
+        None
+    };
     let html = if owns_selection {
         let mut pieces: Vec<_> = selection.pieces.iter().collect();
         pieces.sort_unstable_by_key(|(source, _)| source.start);
@@ -690,13 +714,7 @@ pub(super) fn finish(ui: &mut egui::Ui, document: &MarkdownDocument, rect: egui:
         && html.len() <= MAX_COPY_BYTES
         && ui.input(|i| i.events.contains(&egui::Event::Copy))
     {
-        let expected = ui
-            .ctx()
-            .plugin::<egui::text_selection::LabelSelectionState>()
-            .lock()
-            .pending_copy_text(ui.ctx().viewport_id())
-            .map(str::to_owned);
-        if let Some(expected) = expected {
+        if let Some(expected) = plain_text.clone() {
             plugin
                 .lock()
                 .copies
@@ -724,13 +742,11 @@ pub(super) fn finish(ui: &mut egui::Ui, document: &MarkdownDocument, rect: egui:
         }
         return;
     }
-    let mut revision = std::collections::hash_map::DefaultHasher::new();
-    document.source_text().hash(&mut revision);
-    let revision = revision.finish();
+    let revision = document_revision(document);
     if opening {
         let mut source = selection.source;
         let payload = if owns_selection && html.len() <= MAX_COPY_BYTES {
-            source.as_mut().map(|source| {
+            source.as_mut().zip(plain_text).map(|(source, text)| {
                 expand_blocks(document.blocks(), source);
                 let include_source = ui.input(|i| i.modifiers.shift);
                 MenuSelection {
@@ -738,7 +754,7 @@ pub(super) fn finish(ui: &mut egui::Ui, document: &MarkdownDocument, rect: egui:
                     html,
                     markdown: (include_source && !selection.source_inexact)
                         .then(|| document.source_text()[source.clone()].to_owned()),
-                    text: selection.text,
+                    text,
                     include_source,
                     source_inexact: selection.source_inexact,
                 }
@@ -910,6 +926,86 @@ mod tests {
         })
     }
 
+    fn viewport_input(viewport: egui::ViewportId) -> egui::RawInput {
+        let mut input = egui::RawInput {
+            viewport_id: viewport,
+            ..Default::default()
+        };
+        if viewport != egui::ViewportId::ROOT {
+            input.viewports.insert(
+                viewport,
+                egui::ViewportInfo {
+                    parent: Some(egui::ViewportId::ROOT),
+                    ..Default::default()
+                },
+            );
+        }
+        input
+    }
+
+    #[test]
+    fn markdown_clipboard_output_and_menu_lifecycle_use_the_ended_viewport() {
+        let context = egui::Context::default();
+        let plugin = context.plugin_or_default::<ClipboardSelection>();
+        let child = egui::ViewportId::from_hash_of("markdown-copy-child");
+
+        for (viewport, text) in [(egui::ViewportId::ROOT, "root"), (child, "child")] {
+            let output = context.run_ui(viewport_input(viewport), |ui| {
+                ui.ctx()
+                    .plugin::<ClipboardSelection>()
+                    .lock()
+                    .copies
+                    .insert(viewport, (format!("<b>{text}</b>"), text.to_owned()));
+                ui.ctx().copy_text(text.to_owned());
+            });
+            assert!(output.platform_output.commands.iter().any(|command| {
+                matches!(command, egui::OutputCommand::CopyHtml {html, text: fallback}
+                    if html == &format!("<b>{text}</b>") && fallback == text)
+            }));
+            output.drop_without_applying_deltas();
+        }
+        assert!(plugin.lock().copies.is_empty());
+
+        let menu = |label: &str| {
+            Arc::new(MenuSelection {
+                revision: DocumentRevision {
+                    source_address: 1,
+                    source_len: label.len(),
+                },
+                html: format!("<b>{label}</b>"),
+                markdown: None,
+                text: label.to_owned(),
+                include_source: false,
+                source_inexact: false,
+            })
+        };
+        {
+            let mut state = plugin.lock();
+            state.menus.insert(
+                egui::ViewportId::ROOT,
+                (egui::Id::new("root-menu"), menu("root")),
+            );
+            state
+                .menus
+                .insert(child, (egui::Id::new("child-menu"), menu("child")));
+        }
+        let output = context.run_ui(viewport_input(egui::ViewportId::ROOT), |ui| {
+            ui.ctx()
+                .plugin::<ClipboardSelection>()
+                .lock()
+                .seen_menus
+                .insert(egui::ViewportId::ROOT);
+        });
+        output.drop_without_applying_deltas();
+        assert_eq!(plugin.lock().menus.len(), 2);
+
+        let output = context.run_ui(viewport_input(child), |_| {});
+        output.drop_without_applying_deltas();
+        let state = plugin.lock();
+        assert!(state.menus.contains_key(&egui::ViewportId::ROOT));
+        assert!(!state.menus.contains_key(&child));
+    }
+
     #[test]
     fn markdown_copy_idle_crlf_code_performs_no_source_mapping() {
         let mut harness = CopyHarness::new(&format!("```text\r\n{}```\r\n", "x\r\n".repeat(1500)));
@@ -940,6 +1036,20 @@ mod tests {
         ]);
         let output = harness.step(vec![button(copy, false, egui::PointerButton::Primary)]);
         assert!(output.platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyHtml {html, text} if html.contains("<strong>café 漢字</strong>") && text == "café 漢字")));
+    }
+
+    #[test]
+    fn markdown_selection_keeps_secondary_but_not_middle_click_behavior() {
+        let mut harness = CopyHarness::new("selected text\n");
+        harness.select("selected text");
+        let outside = egui::pos2(850.0, 550.0);
+        harness.step(vec![
+            egui::Event::PointerMoved(outside),
+            button(outside, true, egui::PointerButton::Middle),
+        ]);
+        harness.step(vec![button(outside, false, egui::PointerButton::Middle)]);
+        let output = harness.step(vec![egui::Event::Copy]);
+        assert!(output.platform_output.commands.is_empty());
     }
 
     #[test]

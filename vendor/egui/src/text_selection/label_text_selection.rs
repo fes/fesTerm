@@ -110,6 +110,8 @@ struct ViewportLabelSelectionState {
     /// Accumulated text to copy.
     text_to_copy: String,
     last_copied_galley_rect: Option<Rect>,
+    capture_text_without_copy: bool,
+    publish_text_to_copy: bool,
     selected_labels: Vec<(Id, std::ops::Range<usize>)>,
 
     /// Painted selections this frame.
@@ -130,6 +132,8 @@ impl Default for ViewportLabelSelectionState {
             has_reached_secondary: Default::default(),
             text_to_copy: Default::default(),
             last_copied_galley_rect: Default::default(),
+            capture_text_without_copy: Default::default(),
+            publish_text_to_copy: Default::default(),
             selected_labels: Default::default(),
             painted_selections: Default::default(),
         }
@@ -159,6 +163,15 @@ impl Plugin for LabelSelectionState {
 }
 
 impl LabelSelectionState {
+    /// Accumulate the current selection's plain text without publishing a
+    /// clipboard command at end-of-pass.
+    pub fn capture_selection_text(&mut self, viewport: crate::ViewportId) {
+        self.states
+            .entry(viewport)
+            .or_default()
+            .capture_text_without_copy = true;
+    }
+
     /// Plain label-selection payload queued during this pass, before end-of-pass.
     pub fn pending_copy_text(&self, viewport: crate::ViewportId) -> Option<&str> {
         self.states
@@ -250,6 +263,8 @@ impl ViewportLabelSelectionState {
         self.has_reached_secondary = false;
         self.text_to_copy.clear();
         self.last_copied_galley_rect = None;
+        self.capture_text_without_copy = false;
+        self.publish_text_to_copy = false;
         self.selected_labels.clear();
         self.painted_selections.clear();
     }
@@ -300,7 +315,7 @@ impl ViewportLabelSelectionState {
         }
 
         let pressed_escape = ui.input(|i| i.key_pressed(crate::Key::Escape));
-        let clicked_something_else = ui.input(|i| i.pointer.primary_pressed()) && !self.any_hovered;
+        let clicked_something_else = non_secondary_pointer_pressed(ui) && !self.any_hovered;
         let delected_everything = pressed_escape || clicked_something_else;
 
         if delected_everything {
@@ -312,9 +327,11 @@ impl ViewportLabelSelectionState {
         }
 
         let text_to_copy = std::mem::take(&mut self.text_to_copy);
-        if !text_to_copy.is_empty() {
+        if self.publish_text_to_copy && !text_to_copy.is_empty() {
             ui.copy_text(text_to_copy);
         }
+        self.capture_text_without_copy = false;
+        self.publish_text_to_copy = false;
     }
 
     fn is_active(&self) -> bool {
@@ -589,7 +606,7 @@ impl ViewportLabelSelectionState {
         }
 
         let cursor_at_press = super::text_cursor_state::pressed_pointer_pos(ui)
-            .filter(|_| ui.input(|i| i.pointer.primary_pressed()))
+            .filter(|_| non_secondary_pointer_pressed(ui))
             .filter(|_| {
                 response.enabled()
                     && (response.hovered()
@@ -603,8 +620,7 @@ impl ViewportLabelSelectionState {
             })
             .map(|pos| galley.cursor_from_pos((galley_from_global * pos).to_vec2()));
         self.any_hovered |= response.hovered() || cursor_at_press.is_some();
-        self.is_dragging |=
-            response.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
+        self.is_dragging |= response.is_pointer_button_down_on() && non_secondary_pointer_down(ui);
 
         let old_selection = self.selection;
 
@@ -641,7 +657,9 @@ impl ViewportLabelSelectionState {
                 process_selection_key_events(ui.ctx(), galley, response.id, &mut cursor_range);
             }
 
-            if got_copy_event(ui.ctx()) {
+            let publish_copy = got_copy_event(ui.ctx());
+            self.publish_text_to_copy |= publish_copy;
+            if publish_copy || self.capture_text_without_copy {
                 self.copy_text(galley_rect, galley, &cursor_range);
             }
 
@@ -800,6 +818,32 @@ fn estimate_row_height(galley: &Galley) -> f32 {
     } else {
         galley.size().y
     }
+}
+
+fn non_secondary_pointer_pressed(ui: &Ui) -> bool {
+    ui.input(|input| {
+        [
+            crate::PointerButton::Primary,
+            crate::PointerButton::Middle,
+            crate::PointerButton::Extra1,
+            crate::PointerButton::Extra2,
+        ]
+        .into_iter()
+        .any(|button| input.pointer.button_pressed(button))
+    })
+}
+
+fn non_secondary_pointer_down(ui: &Ui) -> bool {
+    ui.input(|input| {
+        [
+            crate::PointerButton::Primary,
+            crate::PointerButton::Middle,
+            crate::PointerButton::Extra1,
+            crate::PointerButton::Extra2,
+        ]
+        .into_iter()
+        .any(|button| input.pointer.button_down(button))
+    })
 }
 
 #[cfg(test)]

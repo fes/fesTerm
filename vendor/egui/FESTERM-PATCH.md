@@ -27,13 +27,15 @@ and semantic Copy remain ordinary egui behavior.
 
 The Markdown rich-copy integration adds `OutputCommand::CopyHtml` and exposes
 current-pass selected-label character ranges plus the pending plain Copy value.
-The application uses those observations only to replace the matching
-end-of-pass plain command with restricted HTML carrying that same fallback;
-ordinary labels and TextEdit keep their upstream selection and Copy paths.
-Secondary presses no longer move or clear label selection, allowing a
-right-click context menu to act on the existing range. Primary presses retain
-the upstream deselection and drag behavior. The added per-pass ranges are
-cleared at every begin-pass and retain no document bytes after the pass.
+Markdown can request that exact plain value for a context menu without emitting
+a clipboard command. The application uses those observations only to replace
+the matching end-of-pass plain command with restricted HTML carrying that same
+fallback; ordinary labels and TextEdit keep their upstream selection and Copy
+paths. Secondary presses no longer move or clear label selection, allowing a
+right-click context menu to act on the existing range. Primary, middle and
+extra-button presses retain the upstream deselection and drag behavior. The
+added ranges reset at begin-pass, capture-only plain text is consumed at
+end-of-pass, and neither retains document bytes beyond its pass.
 
 Deterministic application regressions cover forward/reverse/Shift selection,
 Unicode and translated layers, separate and combined within-widget batches,
@@ -45,7 +47,7 @@ cross-widget press/move/release batching is not qualified by this patch;
 egui's generic interaction admission still uses the final hit-test position.
 Markdown regressions separately cover current-pass range ownership,
 right-click preservation, matching plain fallback, parser-owned rich
-separators, stale-menu retirement, and escaped/resource-free HTML.
+separators, per-viewport stale-menu retirement, and escaped/resource-free HTML.
 
 Keep the diff against the checksum-verified upstream source small. Revalidate
 or remove this patch when upgrading egui; do not treat this selection repair

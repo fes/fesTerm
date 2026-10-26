@@ -42,7 +42,9 @@ blank, trailing and already-normalized line endings plus idempotence.
 `src/lib.rs` and `src/clipboard.rs` also carry restricted HTML plus its plain
 fallback as one output command. Native arboard backends publish both formats;
 an HTML-write failure retries plain text, Smithay/Wayland remains explicitly
-text-only, and disconnected fallback storage retains only the plain value.
+text-only, and a missing Smithay route uses the ordinary plain clipboard
+fallback instead of silently publishing through an unrelated rich backend.
+Disconnected fallback storage retains only the plain value.
 Windows normalizes that plain alternative through the same `CF_UNICODETEXT`
 boundary before either the combined write or its fallback.
 

@@ -152,10 +152,10 @@ impl Clipboard {
         }
 
         if self.is_wayland {
-            log::error!(
-                "No native Wayland clipboard backend is available; HTML and plain text were not published to the system clipboard"
+            log::warn!(
+                "No rich Wayland clipboard backend is available; publishing plain text through the ordinary clipboard fallback"
             );
-            self.clipboard = text;
+            self.set_text(text);
             return;
         }
 
