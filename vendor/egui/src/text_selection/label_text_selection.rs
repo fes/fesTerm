@@ -112,6 +112,8 @@ struct ViewportLabelSelectionState {
     last_copied_galley_rect: Option<Rect>,
     capture_text_without_copy: bool,
     publish_text_to_copy: bool,
+    preserve_secondary_for_labels: bool,
+    preserved_secondary_this_pass: bool,
     selected_labels: Vec<(Id, std::ops::Range<usize>)>,
 
     /// Painted selections this frame.
@@ -134,6 +136,8 @@ impl Default for ViewportLabelSelectionState {
             last_copied_galley_rect: Default::default(),
             capture_text_without_copy: Default::default(),
             publish_text_to_copy: Default::default(),
+            preserve_secondary_for_labels: Default::default(),
+            preserved_secondary_this_pass: Default::default(),
             selected_labels: Default::default(),
             painted_selections: Default::default(),
         }
@@ -163,6 +167,22 @@ impl Plugin for LabelSelectionState {
 }
 
 impl LabelSelectionState {
+    /// Preserve the existing selection when a secondary press reaches labels
+    /// rendered before the matching [`Self::end_preserve_selection_on_secondary_press`].
+    pub fn begin_preserve_selection_on_secondary_press(&mut self, viewport: crate::ViewportId) {
+        self.states
+            .entry(viewport)
+            .or_default()
+            .preserve_secondary_for_labels = true;
+    }
+
+    /// End a label range protected from secondary-click selection changes.
+    pub fn end_preserve_selection_on_secondary_press(&mut self, viewport: crate::ViewportId) {
+        if let Some(state) = self.states.get_mut(&viewport) {
+            state.preserve_secondary_for_labels = false;
+        }
+    }
+
     /// Accumulate the current selection's plain text without publishing a
     /// clipboard command at end-of-pass.
     pub fn capture_selection_text(&mut self, viewport: crate::ViewportId) {
@@ -265,6 +285,8 @@ impl ViewportLabelSelectionState {
         self.last_copied_galley_rect = None;
         self.capture_text_without_copy = false;
         self.publish_text_to_copy = false;
+        self.preserve_secondary_for_labels = false;
+        self.preserved_secondary_this_pass = false;
         self.selected_labels.clear();
         self.painted_selections.clear();
     }
@@ -315,7 +337,9 @@ impl ViewportLabelSelectionState {
         }
 
         let pressed_escape = ui.input(|i| i.key_pressed(crate::Key::Escape));
-        let clicked_something_else = non_secondary_pointer_pressed(ui) && !self.any_hovered;
+        let clicked_something_else =
+            pointer_pressed_for_selection(ui, self.preserved_secondary_this_pass)
+                && !self.any_hovered;
         let delected_everything = pressed_escape || clicked_something_else;
 
         if delected_everything {
@@ -605,8 +629,16 @@ impl ViewportLabelSelectionState {
             ui.set_cursor_icon(CursorIcon::Text);
         }
 
+        let preserve_secondary = self.preserve_secondary_for_labels;
+        self.preserved_secondary_this_pass |= preserve_secondary
+            && response.hovered()
+            && ui.input(|input| {
+                input
+                    .pointer
+                    .button_pressed(crate::PointerButton::Secondary)
+            });
         let cursor_at_press = super::text_cursor_state::pressed_pointer_pos(ui)
-            .filter(|_| non_secondary_pointer_pressed(ui))
+            .filter(|_| pointer_pressed_for_selection(ui, preserve_secondary))
             .filter(|_| {
                 response.enabled()
                     && (response.hovered()
@@ -620,7 +652,8 @@ impl ViewportLabelSelectionState {
             })
             .map(|pos| galley.cursor_from_pos((galley_from_global * pos).to_vec2()));
         self.any_hovered |= response.hovered() || cursor_at_press.is_some();
-        self.is_dragging |= response.is_pointer_button_down_on() && non_secondary_pointer_down(ui);
+        self.is_dragging |= response.is_pointer_button_down_on()
+            && pointer_down_for_selection(ui, preserve_secondary);
 
         let old_selection = self.selection;
 
@@ -820,7 +853,10 @@ fn estimate_row_height(galley: &Galley) -> f32 {
     }
 }
 
-fn non_secondary_pointer_pressed(ui: &Ui) -> bool {
+fn pointer_pressed_for_selection(ui: &Ui, preserve_secondary: bool) -> bool {
+    if !preserve_secondary {
+        return ui.input(|input| input.pointer.any_pressed());
+    }
     ui.input(|input| {
         [
             crate::PointerButton::Primary,
@@ -833,7 +869,10 @@ fn non_secondary_pointer_pressed(ui: &Ui) -> bool {
     })
 }
 
-fn non_secondary_pointer_down(ui: &Ui) -> bool {
+fn pointer_down_for_selection(ui: &Ui, preserve_secondary: bool) -> bool {
+    if !preserve_secondary {
+        return ui.input(|input| input.pointer.any_down());
+    }
     ui.input(|input| {
         [
             crate::PointerButton::Primary,
@@ -849,7 +888,7 @@ fn non_secondary_pointer_down(ui: &Ui) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RawInput, ViewportId, ViewportInfo};
+    use crate::{Event, Modifiers, PointerButton, RawInput, ViewportId, ViewportInfo};
 
     fn child_viewport_input(viewport_id: ViewportId) -> RawInput {
         let mut input = RawInput {
@@ -906,6 +945,33 @@ mod tests {
         assert!(
             !plugin.lock().has_selection(),
             "the selection must be cleared when its labels disappear from the same viewport"
+        );
+        output.drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn secondary_press_filter_requires_scoped_opt_in() {
+        let ctx = Context::default();
+        let pos = Pos2::new(10.0, 10.0);
+        let output = ctx.run_ui(
+            RawInput {
+                events: vec![
+                    Event::PointerMoved(pos),
+                    Event::PointerButton {
+                        pos,
+                        button: PointerButton::Secondary,
+                        pressed: true,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+                ..Default::default()
+            },
+            |ui| {
+                assert!(pointer_pressed_for_selection(ui, false));
+                assert!(!pointer_pressed_for_selection(ui, true));
+                assert!(pointer_down_for_selection(ui, false));
+                assert!(!pointer_down_for_selection(ui, true));
+            },
         );
         output.drop_without_applying_deltas();
     }

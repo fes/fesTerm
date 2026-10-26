@@ -444,7 +444,9 @@ handle byte targets; this separate gap is not covered by the code-row fix.
 
 Preview selection Copy publishes restricted semantic HTML with the existing
 plain-text selection as its fallback. This applies to the standalone viewer
-and editor Preview/Split. Right-click preserves the selection and offers
+and editor Preview/Split. A scoped selection opt-in preserves right-click only
+for labels rendered inside the Markdown surface; ordinary selectable labels
+retain upstream secondary-click behavior. The Markdown menu offers
 **Copy rich text**; holding Shift while right-clicking additionally offers
 **Copy Markdown source**, using parser-owned byte spans from the selected
 snapshot, not searching for repeated text or reconstructing Markdown.
@@ -462,9 +464,9 @@ or read the clipboard. Rich inline boundaries and soft/hard breaks come from
 the parsed document rather than widget placement, so wrapping cannot add or
 remove semantic separators; keyboard and context-menu rich Copy both carry
 egui's exact plain selection rather than a second geometry heuristic. Menus
-retain only a bounded selected snapshot and retire per viewport on reparse or
-loss of their visible owner; source bytes are retained only for an exact
-Shift-requested source action. Native HTML delivery uses the existing clipboard
+retain only a bounded selected snapshot and retire per viewport on a monotonic
+document revision, hidden owner, or closed viewport; source bytes are retained
+only for an exact Shift-requested source action. Native HTML delivery uses the existing clipboard
 backend; unsupported/failed HTML writes explicitly log and fall back to text.
 The current Wayland backend is text-only.
 

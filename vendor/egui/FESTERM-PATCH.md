@@ -31,11 +31,13 @@ Markdown can request that exact plain value for a context menu without emitting
 a clipboard command. The application uses those observations only to replace
 the matching end-of-pass plain command with restricted HTML carrying that same
 fallback; ordinary labels and TextEdit keep their upstream selection and Copy
-paths. Secondary presses no longer move or clear label selection, allowing a
-right-click context menu to act on the existing range. Primary, middle and
-extra-button presses retain the upstream deselection and drag behavior. The
-added ranges reset at begin-pass, capture-only plain text is consumed at
-end-of-pass, and neither retains document bytes beyond its pass.
+paths. Markdown brackets its rendered labels with a pass-local opt-in so a
+secondary press on those labels does not move or clear the existing selection,
+allowing a right-click context menu to act on that range. Labels outside that
+bracket retain upstream secondary-click behavior, and primary, middle and
+extra-button presses remain unchanged. The added ranges and opt-in reset at
+begin-pass, capture-only plain text is consumed at end-of-pass, and neither
+retains document bytes beyond its pass.
 
 Deterministic application regressions cover forward/reverse/Shift selection,
 Unicode and translated layers, separate and combined within-widget batches,

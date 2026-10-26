@@ -24,6 +24,7 @@ struct Selection {
     pieces: Vec<(Range<usize>, String)>,
     rich: bool,
     overflow: bool,
+    invalid: bool,
     source_inexact: bool,
 }
 
@@ -38,10 +39,7 @@ struct MenuSelection {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-struct DocumentRevision {
-    source_address: usize,
-    source_len: usize,
-}
+struct DocumentRevision(u64);
 
 #[derive(Default)]
 struct ClipboardSelection {
@@ -59,8 +57,24 @@ impl egui::Plugin for ClipboardSelection {
     }
 
     fn on_begin_pass(&mut self, ui: &mut egui::Ui) {
-        self.copies.remove(&ui.ctx().viewport_id());
-        self.seen_menus.remove(&ui.ctx().viewport_id());
+        let viewport = ui.ctx().viewport_id();
+        self.copies.remove(&viewport);
+        self.seen_menus.remove(&viewport);
+        if viewport == egui::ViewportId::ROOT {
+            let active: HashSet<_> =
+                ui.input(|input| input.raw.viewports.keys().copied().collect());
+            let mut closed = Vec::new();
+            self.menus.retain(|viewport, (id, _)| {
+                let keep = *viewport == egui::ViewportId::ROOT || active.contains(viewport);
+                if !keep {
+                    closed.push(*id);
+                }
+                keep
+            });
+            for id in closed {
+                egui::Popup::close_id(ui.ctx(), id);
+            }
+        }
     }
 
     fn on_end_pass(&mut self, ui: &mut egui::Ui) {
@@ -107,6 +121,10 @@ pub(super) fn begin(ui: &egui::Ui) {
         state.current = Selection::default();
         state.capturing = copying || opening_menu;
     }
+    ui.ctx()
+        .plugin::<egui::text_selection::LabelSelectionState>()
+        .lock()
+        .begin_preserve_selection_on_secondary_press(ui.ctx().viewport_id());
     if opening_menu {
         ui.ctx()
             .plugin::<egui::text_selection::LabelSelectionState>()
@@ -381,7 +399,6 @@ fn register(
     let Some(selected) = selected else { return };
     let mut source: Option<Range<usize>> = None;
     let mut html = String::new();
-    let mut text = String::new();
     let mut cursor = 0;
     for run in runs {
         let count = run.text.chars().count();
@@ -420,7 +437,6 @@ fn register(
                     .overflow = true;
                 return;
             }
-            text.push_str(selected_text);
         }
         cursor += count;
     }
@@ -439,7 +455,18 @@ fn register(
         return;
     }
     if code_block.is_some() && state.current.last_code == code_block {
-        let gap = &document.source_text()[state.current.last_code_source_end..raw.start];
+        let Some(gap) = document
+            .source_text()
+            .get(state.current.last_code_source_end..raw.start)
+        else {
+            tracing::warn!(
+                previous = state.current.last_code_source_end,
+                next = raw.start,
+                "Markdown code source ranges are not monotonic; using plain clipboard fallback"
+            );
+            state.current.invalid = true;
+            return;
+        };
         let mut chars = gap.chars().peekable();
         let mut lines = 0;
         while let Some(ch) = chars.next() {
@@ -471,13 +498,6 @@ fn register(
 
     state.current.html_bytes += html.len();
     state.current.pieces.push((raw, html));
-}
-
-fn document_revision(document: &MarkdownDocument) -> DocumentRevision {
-    DocumentRevision {
-        source_address: document.source_text().as_ptr() as usize,
-        source_len: document.source_text().len(),
-    }
 }
 
 fn inline_breaks(inlines: &[Inline], breaks: &mut Vec<(Range<usize>, char)>) {
@@ -668,7 +688,16 @@ fn rich_blocks(blocks: &[super::Block], pieces: &[&(Range<usize>, String)]) -> S
     html
 }
 
-pub(super) fn finish(ui: &mut egui::Ui, document: &MarkdownDocument, rect: egui::Rect) {
+pub(super) fn finish(
+    ui: &mut egui::Ui,
+    document: &MarkdownDocument,
+    revision: u64,
+    rect: egui::Rect,
+) {
+    ui.ctx()
+        .plugin::<egui::text_selection::LabelSelectionState>()
+        .lock()
+        .end_preserve_selection_on_secondary_press(ui.ctx().viewport_id());
     let plugin = ui.ctx().plugin::<ClipboardSelection>();
     let id = ui.id().with("markdown-selection-copy");
     let viewport = ui.ctx().viewport_id();
@@ -677,7 +706,7 @@ pub(super) fn finish(ui: &mut egui::Ui, document: &MarkdownDocument, rect: egui:
     }
     let capturing = plugin.lock().capturing;
     let selection = std::mem::take(&mut plugin.lock().current);
-    let owns_selection = if capturing && !selection.overflow {
+    let owns_selection = if capturing && !selection.overflow && !selection.invalid {
         let ranges = ui
             .ctx()
             .plugin::<egui::text_selection::LabelSelectionState>()
@@ -742,7 +771,7 @@ pub(super) fn finish(ui: &mut egui::Ui, document: &MarkdownDocument, rect: egui:
         }
         return;
     }
-    let revision = document_revision(document);
+    let revision = DocumentRevision(revision);
     if opening {
         let mut source = selection.source;
         let payload = if owns_selection && html.len() <= MAX_COPY_BYTES {
@@ -927,15 +956,23 @@ mod tests {
     }
 
     fn viewport_input(viewport: egui::ViewportId) -> egui::RawInput {
+        viewport_input_with_active(viewport, &[viewport])
+    }
+
+    fn viewport_input_with_active(
+        viewport: egui::ViewportId,
+        active: &[egui::ViewportId],
+    ) -> egui::RawInput {
         let mut input = egui::RawInput {
             viewport_id: viewport,
             ..Default::default()
         };
-        if viewport != egui::ViewportId::ROOT {
+        for active_viewport in active {
             input.viewports.insert(
-                viewport,
+                *active_viewport,
                 egui::ViewportInfo {
-                    parent: Some(egui::ViewportId::ROOT),
+                    parent: (*active_viewport != egui::ViewportId::ROOT)
+                        .then_some(egui::ViewportId::ROOT),
                     ..Default::default()
                 },
             );
@@ -968,10 +1005,7 @@ mod tests {
 
         let menu = |label: &str| {
             Arc::new(MenuSelection {
-                revision: DocumentRevision {
-                    source_address: 1,
-                    source_len: label.len(),
-                },
+                revision: DocumentRevision(label.len() as u64),
                 html: format!("<b>{label}</b>"),
                 markdown: None,
                 text: label.to_owned(),
@@ -989,6 +1023,19 @@ mod tests {
                 .menus
                 .insert(child, (egui::Id::new("child-menu"), menu("child")));
         }
+        let output = context.run_ui(
+            viewport_input_with_active(egui::ViewportId::ROOT, &[egui::ViewportId::ROOT, child]),
+            |ui| {
+                ui.ctx()
+                    .plugin::<ClipboardSelection>()
+                    .lock()
+                    .seen_menus
+                    .insert(egui::ViewportId::ROOT);
+            },
+        );
+        output.drop_without_applying_deltas();
+        assert_eq!(plugin.lock().menus.len(), 2);
+
         let output = context.run_ui(viewport_input(egui::ViewportId::ROOT), |ui| {
             ui.ctx()
                 .plugin::<ClipboardSelection>()
@@ -996,10 +1043,6 @@ mod tests {
                 .seen_menus
                 .insert(egui::ViewportId::ROOT);
         });
-        output.drop_without_applying_deltas();
-        assert_eq!(plugin.lock().menus.len(), 2);
-
-        let output = context.run_ui(viewport_input(child), |_| {});
         output.drop_without_applying_deltas();
         let state = plugin.lock();
         assert!(state.menus.contains_key(&egui::ViewportId::ROOT));
@@ -1119,7 +1162,7 @@ mod tests {
                 output.textures_delta.clear();
                 output
             } else {
-                harness.pane.parse("**replacement**\n".to_owned());
+                harness.pane.parse("**new secret selection**\n".to_owned());
                 harness.step(Vec::new())
             };
             assert!(menu_button(&output, "Copy Markdown source").is_none());

@@ -462,6 +462,7 @@ pub struct MarkdownViewerTab {
     outline_open: bool,
     outline_selected: Option<usize>,
     document: Option<MarkdownDocument>,
+    document_revision: u64,
     error: Option<MarkdownViewerErrorState>,
     stale_snapshot: bool,
     find: MarkdownFindState,
@@ -520,6 +521,7 @@ impl MarkdownViewerTab {
             outline_open: true,
             outline_selected: None,
             document: None,
+            document_revision: 0,
             error: None,
             stale_snapshot: false,
             find: MarkdownFindState::default(),
@@ -582,6 +584,7 @@ impl MarkdownViewerTab {
             outline_open: true,
             outline_selected: None,
             document: None,
+            document_revision: 0,
             error: None,
             stale_snapshot: false,
             find: MarkdownFindState::default(),
@@ -776,8 +779,11 @@ impl MarkdownViewerTab {
                                 {
                                     render_state.table_cells.probe = self.table_cell_probe.take();
                                 }
-                                document_rect =
-                                    Some(render_state.show_document(ui, document).document_rect);
+                                document_rect = Some(
+                                    render_state
+                                        .show_document(ui, document, self.document_revision)
+                                        .document_rect,
+                                );
                                 #[cfg(test)]
                                 {
                                     self.table_cell_probe = render_state.table_cells.probe.take();
@@ -839,6 +845,7 @@ impl MarkdownViewerTab {
                 self.table_layouts.clear();
                 self.outline_preparation.clear();
                 self.document = Some(document);
+                self.document_revision = self.document_revision.wrapping_add(1);
                 self.error = None;
                 self.stale_snapshot = false;
                 self.resource_approvals.clear();
@@ -3051,6 +3058,7 @@ impl MarkdownRenderState<'_> {
         &mut self,
         ui: &mut egui::Ui,
         document: &MarkdownDocument,
+        document_revision: u64,
     ) -> MarkdownDocumentLayout {
         if self.mode == MarkdownViewerMode::Preview {
             clipboard::begin(ui);
@@ -3131,7 +3139,7 @@ impl MarkdownRenderState<'_> {
             })
             .inner;
         if self.mode == MarkdownViewerMode::Preview {
-            clipboard::finish(ui, document, layout.document_rect);
+            clipboard::finish(ui, document, document_revision, layout.document_rect);
         }
         layout
     }
@@ -5113,6 +5121,7 @@ pub(crate) struct MarkdownPreviewPane {
     source_generation: Option<Generation>,
     source_parent_identity: Option<DirectoryIdentity>,
     document: Option<MarkdownDocument>,
+    document_revision: u64,
     error: Option<String>,
     /// The text the current parse was made from, so an unchanged frame costs
     /// nothing.
@@ -5157,6 +5166,7 @@ impl MarkdownPreviewPane {
             source_generation: None,
             source_parent_identity: None,
             document: None,
+            document_revision: 0,
             error: None,
             parsed: String::new(),
             settling: None,
@@ -5341,6 +5351,7 @@ impl MarkdownPreviewPane {
                 self.source_syntax = None;
                 self.outline_selected = document.headings().first().map(|_| 0);
                 self.document = Some(document);
+                self.document_revision = self.document_revision.wrapping_add(1);
                 self.error = None;
             }
             Err(error) => {
@@ -5458,6 +5469,7 @@ impl MarkdownPreviewPane {
         clipboard::finish(
             ui,
             &document,
+            self.document_revision,
             egui::Rect::from_min_size(
                 egui::pos2(ui.min_rect().left(), viewport_top),
                 vec2(ui.available_width(), viewport_height),
@@ -11369,7 +11381,7 @@ mod tests {
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: Some(&mut heading_tops),
                     };
-                    layout = Some(render_state.show_document(ui, &document));
+                    layout = Some(render_state.show_document(ui, &document, 0));
                 });
             },
         );
@@ -11443,7 +11455,7 @@ mod tests {
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: Some(&mut heading_tops),
                     };
-                    layout = Some(render_state.show_document(ui, &document));
+                    layout = Some(render_state.show_document(ui, &document, 0));
                 });
             },
         );
