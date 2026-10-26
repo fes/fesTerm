@@ -35,12 +35,19 @@ and eviction feedback.
 
 The application now provides local PTY, native SSH, and serial sessions;
 independent session chips; Launcher, Profiles, and Settings surfaces; command
-palette and native macOS menus; focus mode; selectable bundled terminal fonts
+palette and native macOS menus; focus mode; embedded JetBrains Mono with
+automatically downloaded optional terminal fonts
 and opt-in ligatures; deterministic UAX #29 grapheme-width allocation with
 pinned monochrome/color emoji fallback ([ADR 0026](/fes/fesTerm/blob/main/docs/adr/0026-grapheme-width-and-color-emoji-fallback.md));
 autosaved versioned TOML profiles/interface settings; metadata-only workspace
 restoration; and native secret-store references for saved SSH passwords and
 private keys. Persistent host-key trust is explicit and non-secret.
+
+Explicit [smart selection](docs/gui-design.md#smart-terminal-selection)
+highlights sentences, paragraphs or indented blocks from terminal cells before
+a separate Copy. The local deterministic baseline conservatively isolates
+bordered/gapped row segments; general TUI-layout and native usability
+qualification remain open, without a model or network dependency.
 
 SSH uses an in-process `russh` transport with fingerprint-first host
 verification, password, in-memory OpenSSH-key, and transient OpenSSH
@@ -137,9 +144,9 @@ for the supported subset and limits.
   signing, notarization, updater keys, publication, and credential rotation.
 - [Icon system](docs/icon-system.md) — first-party SVG sources, semantic Rust
   names, accessibility rules, color/state policy, and validation pipeline.
-- [Bundled terminal fonts](assets/fonts/) — pinned JetBrains Mono, Iosevka
-  Term, JuliaMono, and Maple Mono provenance, licensing, checksums, and
-  reproducible selection/ligature policy.
+- [Terminal font assets](assets/fonts/) — embedded JetBrains Mono plus pinned
+  optional Iosevka Term, JuliaMono, and Maple Mono provenance, licensing,
+  checksums, and reproducible selection/ligature policy.
 - [UI and platform test plan](docs/ui-test-plan.md) — layered compatibility,
   interaction, rendering, PTY, and platform validation strategy.
 - [Manual and usability validation registry](docs/manual-validation.md) — the

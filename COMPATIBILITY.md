@@ -29,6 +29,15 @@ The initial target includes:
 
 ## Validation Principles
 
+Smart selection (#397) is an additive deterministic presentation baseline
+(`GUI:TERM-14`), not a terminal-protocol compatibility claim. Wrapped prose,
+explicit paragraph breaks, indentation, bordered/gapped row segments and Unicode
+have exact-cell/text regression coverage. Unmarked columns and arbitrary TUI
+semantic blocks are unsupported; pane segments conservatively stay one visual
+row. Native clipboard/accessibility and usability qualification remain pending
+under `docs/manual-validation.md` TI-19. No model-quality claim or M6 acceptance
+status changes.
+
 - Core behavior is tested without a GUI, PTY, or SSH connection wherever possible.
 - Fixtures are stored in the repository from the beginning.
 - Every corrected compatibility defect should gain a regression fixture.
@@ -127,7 +136,7 @@ reference-application acceptance; P5 remains a manual release gate.
 | Terminal identity | Return conservative primary and secondary device attributes | passing | Core fixture |
 | Unicode width | Keep common wide and combining characters aligned | passing | Grid fixtures and core test |
 | Emoji and fallback | Preserve cell layout across fallback fonts | passing | All 3,773 fully-qualified Unicode 15.1 emoji are tested for streamed two-cell geometry, color classification/rasterization, and owned monochrome scalar coverage; users can select deterministic color or monochrome presentation without changing geometry; bounded positive/negative caches with per-frame work budgets and cold/warm Criterion workloads; reviewed Windows/Linux snapshots; native emoji smoke verifies geometry and color-texture submission |
-| Ligatures | Shape supported runs without moving cursor or selection boundaries | implemented; default off | Four selectable bundled families, immutable P6 cell geometry, generation-safe caches, bounded ASCII runs, representative operator tests, and reviewed snapshots |
+| Ligatures | Shape supported runs without moving cursor or selection boundaries | implemented; default off | Embedded JetBrains Mono plus three downloadable pinned families (ADR 0049), immutable P6 cell geometry, generation-safe caches, bounded ASCII runs, representative operator tests, and reviewed snapshots |
 | High output | Remain interactive under sustained output | passing | Core benchmark; M4 dirty-cache, input, and resize workload test |
 | Scrollback | Scroll and select smoothly near configured limits | passing | M9 bounded-memory core fixtures and GUI viewport integration; eviction fallback and disconnected read-only history remain #43 |
 | Dirty rendering | Redraw changed content without mandatory full-grid copying | passing | M4 `TerminalSnapshot` and dirty-row cache tests |

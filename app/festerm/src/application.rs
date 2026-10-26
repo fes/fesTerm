@@ -665,7 +665,8 @@ impl eframe::App for FesTermApplication {
 mod tests {
     use super::*;
     use crate::tabs::AppCommand;
-    use festerm_config::{Configuration, InterfaceSettings, Profile};
+    use festerm_config::{Configuration, InterfaceSettings, Profile, TerminalFontPreference};
+    use festerm_ui_egui::TerminalFontFamily;
 
     fn application() -> (FesTermApplication, egui::Context) {
         let context = egui::Context::default();
@@ -1593,6 +1594,51 @@ mod tests {
         application.settle_windows(&context);
 
         assert!(!application.window_mut(1).compact_launcher_grid_for_test());
+    }
+
+    #[test]
+    fn terminal_font_broadcast_reaches_stale_sibling_before_its_next_reconciliation() {
+        let (mut application, context) = application();
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenWindow, &context);
+        application.settle_windows(&context);
+        assert_eq!(
+            application
+                .window_mut(1)
+                .terminal_font_preference_for_test(),
+            TerminalFontPreference::JetBrainsMono
+        );
+
+        let configuration = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::DEFAULT.with_terminal_typography(
+                TerminalFontPreference::MapleMono,
+                InterfaceSettings::DEFAULT.terminal_ligatures(),
+            ))
+            .unwrap();
+        application.window_mut(0).broadcast_for_test(configuration);
+        festerm_ui_egui::reconcile_terminal_font_preference(
+            &context,
+            TerminalFontFamily::MapleMono,
+        );
+
+        application.settle_windows(&context);
+        assert_eq!(
+            application
+                .window_mut(1)
+                .terminal_font_preference_for_test(),
+            TerminalFontPreference::MapleMono
+        );
+        application
+            .window_mut(1)
+            .reinstall_terminal_font_for_test(&context);
+        assert!(
+            festerm_ui_egui::terminal_font_family_is_desired(
+                &context,
+                TerminalFontFamily::MapleMono
+            ),
+            "the same-pass broadcast must replace the stale window preference before its next reconciliation"
+        );
     }
 
     #[test]

@@ -31,6 +31,7 @@ use festerm_session::{
 };
 use ssh_key::Certificate as OpenSshCertificate;
 use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 use decision_gate::{DecisionGate, DecisionResolutionError, DecisionWaiter};
 pub use openssh_config::{
@@ -158,7 +159,7 @@ impl SshAuthentication {
     /// authentication attempts only.
     pub fn password(password: impl Into<String>) -> Self {
         Self::Password(SshPassword {
-            password: password.into(),
+            password: Zeroizing::new(password.into()),
         })
     }
 
@@ -289,7 +290,7 @@ impl fmt::Debug for SshAuthentication {
 /// This type intentionally has no getter, `Clone`, or derived `Debug`
 /// implementation. It is not a persistent connection-profile field.
 pub struct SshPassword {
-    password: String,
+    password: Zeroizing<String>,
 }
 
 /// Opaque native-store password source consumed only by the SSH worker.
@@ -453,14 +454,14 @@ impl fmt::Debug for SshPassword {
 /// implementation. [`SshPrivateKey::from_encrypted_openssh`] consumes it while
 /// parsing, and the resulting private key retains no passphrase.
 pub struct SshKeyPassphrase {
-    passphrase: String,
+    passphrase: Zeroizing<String>,
 }
 
 impl SshKeyPassphrase {
     /// Creates a transient passphrase for one encrypted-key parse attempt.
     pub fn new(passphrase: impl Into<String>) -> Self {
         Self {
-            passphrase: passphrase.into(),
+            passphrase: Zeroizing::new(passphrase.into()),
         }
     }
 }
@@ -627,7 +628,7 @@ impl fmt::Display for SshCertificateError {
 impl std::error::Error for SshCertificateError {}
 
 enum WorkerAuthentication {
-    Password(String),
+    Password(Zeroizing<String>),
     StoredPassword(StoredPasswordAuthentication),
     PublicKey(Arc<russh::keys::PrivateKey>),
     Certificate(WorkerCertificateAuthentication),
@@ -4586,7 +4587,7 @@ async fn establish_connection(
     let authentication_result = match authentication {
         WorkerAuthentication::Password(password) => {
             wait_for_ssh_operation(
-                handle.authenticate_password(profile.username(), password),
+                handle.authenticate_password_zeroizing(profile.username(), password.clone()),
                 command_receiver,
                 shared,
                 host_key_gate,
@@ -5043,7 +5044,7 @@ async fn establish_authenticated_handle(
     let authentication_result = match authentication {
         WorkerAuthentication::Password(password) => {
             wait_for_ssh_operation(
-                handle.authenticate_password(profile.username(), password),
+                handle.authenticate_password_zeroizing(profile.username(), password.clone()),
                 command_receiver,
                 shared,
                 host_key_gate,

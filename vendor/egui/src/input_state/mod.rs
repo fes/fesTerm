@@ -912,12 +912,89 @@ impl InputState {
             .collect()
     }
 
+    pub(crate) fn take_sensitive_filtered_events(&mut self, filter: &EventFilter) -> Vec<Event> {
+        let mut filtered = Vec::new();
+        let events = std::mem::take(&mut self.events);
+        for event in events {
+            if filter.matches(&event) {
+                if event_has_sensitive_text(&event) {
+                    filtered.push(event);
+                } else {
+                    filtered.push(event.clone());
+                    self.events.push(event);
+                }
+            } else {
+                self.events.push(event);
+            }
+        }
+        for event in &mut self.raw.events {
+            if filter.matches(event) {
+                zeroize_event_text(event);
+            }
+        }
+        filtered
+    }
+
     /// A long press is something we detect on touch screens
     /// to trigger a secondary click (context menu).
     ///
     /// Returns `true` only on one frame.
     pub(crate) fn is_long_touch(&self) -> bool {
         self.any_touches() && self.pointer.is_long_press()
+    }
+}
+
+fn event_has_sensitive_text(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Text(_)
+            | Event::Paste(_)
+            | Event::Ime(crate::ImeEvent::Commit(_))
+            | Event::Ime(crate::ImeEvent::Preedit { .. })
+    )
+}
+
+pub(crate) fn zeroize_event_text(event: &mut Event) {
+    use zeroize::Zeroize as _;
+
+    match event {
+        Event::Text(text) | Event::Paste(text) | Event::Ime(crate::ImeEvent::Commit(text)) => {
+            text.zeroize();
+        }
+        Event::Ime(crate::ImeEvent::Preedit { text, .. }) => text.zeroize(),
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod sensitive_event_tests {
+    use super::{Event, EventFilter, InputState};
+    use crate::{Key, Modifiers};
+
+    fn enter_event() -> Event {
+        Event::Key {
+            key: Key::Enter,
+            physical_key: Some(Key::Enter),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn sensitive_filter_moves_text_but_preserves_enter_for_later_consumers() {
+        let text = Event::Text("secret-sentinel".to_owned());
+        let enter = enter_event();
+        let mut input = InputState::default();
+        input.raw.events = vec![text.clone(), enter.clone()];
+        input.events = vec![text, enter.clone()];
+
+        let filtered = input.take_sensitive_filtered_events(&EventFilter::default());
+
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(input.events, vec![enter.clone()]);
+        assert!(matches!(&input.raw.events[0], Event::Text(text) if text.is_empty()));
+        assert_eq!(input.raw.events[1], enter);
     }
 }
 

@@ -163,12 +163,13 @@ events. Before M5, `festerm` recorded content-free input metadata in an observab
 no-session demo sink rather than presenting a shell. M5 replaces that demo
 sink with the local-session pump described below.
 
-The renderer bundles selectable JetBrains Mono 2.304, Iosevka Term 34.8.1,
+The renderer supports selectable JetBrains Mono 2.304, Iosevka Term 34.8.1,
 JuliaMono 0.63.2, and Maple Mono 7.9 regular/bold/italic/bold-italic faces.
-JetBrains Mono remains the default. Cached one-cell layouts preserve the
-default no-ligature behavior; an explicit default-off preference enables
-bounded ASCII cell-run shaping without changing width-two, cursor, selection,
-mouse, or resize geometry.
+JetBrains Mono remains embedded and is the default; ADR 0049 supplies the
+other three as verified matching-release downloads. Cached one-cell layouts
+preserve the default no-ligature behavior; an explicit default-off preference
+enables bounded ASCII cell-run shaping without changing width-two, cursor,
+selection, mouse, or resize geometry.
 
 ### Completion criteria
 

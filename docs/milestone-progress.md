@@ -22,6 +22,59 @@ selection, safe export and stale-menu checks do not establish native
 Copilot navigation, rich-paste interoperability or clipboard usability;
 TI-02 and CP-06/CP-15 retain those native checks.
 
+## Optional terminal fonts without the embedded payload
+
+Issue #398 separates font availability from the saved font choice. JetBrains
+Mono stays embedded; Iosevka Term, JuliaMono, and Maple Mono retain their
+reviewed repository manifests and provenance but move 46,363,464 bytes of
+optional faces out of production embeds into separately published release
+assets. This also preserves the reproducible Iosevka ligature build instead
+of substituting an upstream download with different shaping.
+
+Fresh same-toolchain macOS arm64 development builds with debug information
+disabled measured 208,988,672 bytes at the current integration base
+`14eae97cb1e50067ad2f638087f18e5933c6b376` (artifact SHA-256
+`2d454a0dbaf50d4d345f4cd89873f41c1943518b6e60b866dabaa4586fd557b7`) and
+162,694,416 bytes at reviewed feature head
+`ee6fe3e377d7d3ae7dc0149e3df5e9e169fcf1bb` (artifact SHA-256
+`90f0c78a5c39058e2a233a0c965a53bbe67854ff620d67a5b86cffc33689972b`):
+46,294,256 bytes smaller (22.15%), including downloader and embedded-notice
+overhead. Both used Rust 1.97.1 and `CARGO_PROFILE_DEV_DEBUG=0`. Direct byte
+inspection of the reviewed executable found all eight JetBrains Mono faces and
+none of the twelve optional faces. These are executable measurements, not a
+claim about compressed release installer size or another platform's binary.
+
+The application now reconciles a saved optional choice automatically after
+upgrade, using a bounded worker, exact size/hash checks, a process-safe cache,
+and atomic publication. The renderer receives verified faces rather than
+owning network or filesystem policy. Missing fonts use an explicitly temporary
+JetBrains fallback with progress and Retry, never a silently rewritten
+preference. Offline reuse, corruption repair, cancellation, generation-safe
+activation, and retry have deterministic coverage. ADR 0049 records the new
+asset boundary; released-endpoint, proxy, native DPI and usability evidence
+remain pending under TYPE-02/NP-05 until a matching release publishes assets.
+The effective family/generation is now context-scoped across all windows, so a
+pending or failed sibling cannot fight a successful installation or blank its
+terminal through reinstall/repaint oscillation. Superseded completion is now a
+quiescent Retry state, while stale-window protection is explicitly bounded to
+the composition root's synchronous same-pass configuration broadcast. About
+embeds complete manifest-versioned notices for bundled JetBrains Mono and Noto
+Emoji plus Iosevka Term, JuliaMono, and Maple Mono for packaged/offline use;
+the separately staged optional license assets remain publication mirrors rather
+than runtime cache inputs.
+
+## Preserving copied row order at the Windows clipboard boundary
+
+Rectangle copy produced top-to-bottom logical rows separated by LF, but the
+Windows clipboard adapter passed those bytes unchanged to `CF_UNICODETEXT`.
+That format requires CRLF line endings, so the LF-only multiline value was
+nonconforming and could render incorrectly in consumers such as Windows
+Terminal. The shared Windows clipboard boundary now canonicalizes LF, CR, and
+CRLF to one CRLF per logical line while preserving row order and Unicode. A
+deterministic regression covers mixed newline inputs; confirming the reported
+reversed presentation requires the native fesTerm-to-Windows-Terminal handoff
+still listed under TI-01.
+
 ## Connecting from Profiles without leaving a spent tab
 
 Profiles Connect used the same commands as Launcher, but placement only
@@ -29,10 +82,23 @@ recognized Launcher as a reusable surface. Saved-profile terminal and GUI
 SFTP launches now consume Profiles in place too, preserving chip identity
 and order. Ad-hoc launches still add a tab, and a synchronous terminal startup
 failure preserves Profiles beside the existing error-bearing session.
-GUI SFTP's credential step keeps a Back/Escape path to Profiles and clears
-transient credentials when cancelled. Deterministic placement, command, and
-credential-form tests cover the policy; native focus and usability remain
-classified under CP-10 rather than claimed as completed.
+GUI SFTP's credential step owns its transient password/private-key/passphrase
+draft and toolkit edit/undo state independently of the preserved chip identity,
+zeroizing repository-controlled live draft storage and scrubbing retained
+undo/redo snapshots on normal teardown. Submitted password and passphrase
+copies remain in zeroizing owners through the application, SSH worker and
+vendored russh authentication queue. The queued method is retired immediately
+on authentication success or failure, while debug and packet diagnostics expose
+metadata rather than credential or packet contents.
+Back/Escape, global Open Profiles, successful submission, close, and other
+content replacement all drop that form instance and erase its widget states,
+so another target opened in the same chip starts empty in password mode and
+Undo cannot recover the prior target's credentials. Deterministic placement,
+command, production-path A-to-B, and credential-form tests cover the policy;
+native focus and usability remain classified under CP-10 rather than claimed
+as completed. The erasure claim is limited to normal repository-controlled
+live buffers; allocator history, abrupt process termination, OS input and
+capture facilities, and third-party cryptographic internals remain outside it.
 
 ## v0.10.4: stable copying, native diagrams and terminal input repairs
 
@@ -6068,3 +6134,26 @@ context-free cancellation closes it before the next render. Actual application
 tests fail first on stale Open dispatch across availability, generation,
 fingerprint and cwd changes, then pass after the repair. Ordinary live menus
 remain usable; this adds no native or usability acceptance claim.
+
+## Smart selection starts with layout, not a model
+
+The owner explicitly requested #397 as a separate feature. Flattening terminal
+text before sentence segmentation would accidentally join adjacent TUI panes,
+and copying immediately would hide those mistakes. The first implementation
+therefore uses bounded cell-grid inference, conservative border/gap regions,
+authoritative soft wraps and explicit sentence/paragraph/indented-block scopes.
+It highlights the actual cells and retains deliberate existing Copy; ordinary
+selection and Shift's mouse-reporting override stay intact. Keyboard-only
+targeting and refusal feedback make the operation discoverable without a new
+click convention. Live output is not frozen: absolute selected cells survive
+unrelated output, but changed text, wraps, dimensions or eviction invalidate
+inference before Copy.
+
+Regression fixtures cover supported layouts rather than asserting universal
+semantic quality. Bordered/gapped pane results intentionally stop at one visual
+row, and unmarked columns, abbreviations and arbitrary repainting TUIs remain
+limits. No OCR, network, content logging or model dependency was needed.
+Prospective model accuracy/resource/distribution gates are documented before
+any adoption, alongside TI-19's remaining native/accessibility/usability checks.
+This is an additive presentation feature, not a crate-boundary change, M6
+acceptance or evidence that a language model would improve selection.

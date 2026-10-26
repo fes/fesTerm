@@ -803,7 +803,11 @@ fn paint_grid_with_clip_override(
     };
     glyphs.begin_paint(&painter);
     let mut stats = GridPaintStats::default();
-    let selection_range = paint.selection.range_in_snapshot(paint.snapshot);
+    let regular_selection_range = if paint.selection.is_smart() {
+        None
+    } else {
+        paint.selection.range_in_snapshot(paint.snapshot)
+    };
     let clip_policy = GridGlyphClipPolicy::new(&painter, clip_override);
     crate::background::paint_background(&painter, paint.layout.rect);
     let native =
@@ -811,6 +815,11 @@ fn paint_grid_with_clip_override(
     glyphs.rows.begin(dimensions.rows(), paint.full_redraw);
     glyphs.rows.observe(paint.cache);
     for row in 0..dimensions.rows() {
+        let selection_range = if paint.selection.is_smart() {
+            paint.selection.row_range(paint.snapshot, row)
+        } else {
+            regular_selection_range
+        };
         let Some(cells) = paint.cache.row(row) else {
             continue;
         };

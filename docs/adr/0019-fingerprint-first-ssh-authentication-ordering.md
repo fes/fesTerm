@@ -47,7 +47,7 @@ upfront `SshAuthentication::Password` failure already did.
 Quick Connect and the Advanced form's empty-password submit path now dispatch
 `SshAuthentication::interactive()` directly instead of opening a separate
 prompt tab. Both prompts (`HostKeyPrompt`/`PasswordPrompt`) render pty-styled
-(bundled terminal font and background) in place of the terminal view while
+(selected terminal font and background) in place of the terminal view while
 pending, rather than as a chrome dialog:
 
 - The host-key prompt shows `ssh`'s own confirmation text with a blinking

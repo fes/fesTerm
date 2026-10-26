@@ -359,7 +359,7 @@ backing; dimension changes retire the old row storage rather than retaining an
 exceptional high-water capacity. Value copying, changed-row revision identities
 and the renderer's owned shaping-run strings remain unchanged.
 Cell metrics and point-to-cell helpers remain UI-owned and convert only to
-valid core dimensions. A selected bundled primary face alone determines cell
+valid core dimensions. A selected pinned primary face alone determines cell
 metrics. The glyph cache is generation-keyed so replacing egui's font atlas
 cannot reuse stale layouts. Its unchanged 4,096-entry bound uses indexed LRU
 retirement: a capacity-crossing miss drops one owned layout, not every warm

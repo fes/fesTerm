@@ -26,6 +26,88 @@ under `images/gui-mockups/source/`; the adjacent PNG remains the comparison
 artifact. Rasterization must preserve the baseline logical viewport and may
 not silently change prose-owned behavior.
 
+## Smart terminal selection
+
+Issue #397 is an explicitly owner-requested additive feature, not a change to
+M6 acceptance or a general AI assistant. The initial implementation is a local,
+deterministic baseline; no model, OCR, download, network or content collection.
+Renderer/core and application/session ownership are unchanged.
+
+The local terminal context menu offers **Smart Select Sentence**, **Smart
+Select Paragraph**, and **Smart Select Block**, before ordinary Copy. Right-click
+remains terminal-owned under mouse reporting; Shift+right-click is the existing
+local override. Selection alone never copies or sends input. Inspect the
+highlight, then use existing Copy shortcuts/menu/native Edit. Drag replaces the
+inference with ordinary adjustable selection; Escape cancels inferred selection.
+An unavailable result leaves an existing selection intact and explains that
+ordinary drag is available. There is intentionally no immediate **Smart Copy**:
+it would skip the inspection step on unqualified layout inference.
+Instruction and refusal feedback expires automatically. Escape is consumed
+only while cancelling an inferred selection or keyboard target; otherwise it
+continues to the terminal normally.
+
+Keyboard-only: focus the terminal and use **Ctrl+Alt+Shift+S/P/B** for
+sentence/paragraph/block (also Control+Option+Shift on macOS). The target is
+the last keyboard target, otherwise the selection endpoint or terminal cursor;
+in scrolled history it starts at the viewport's upper-left cell.
+**Ctrl+Alt+Shift+arrows** move that target one cell, with an outline and
+row/column feedback.
+Escape clears the target. These fixed, local presentation gestures do not
+enter the application shortcut dispatcher or send their key events. They use the
+same application-owned terminal-input predicate as ordinary terminal routing,
+not transient widget-focus bookkeeping. Native Text and IME payloads remain
+terminal-owned even when emitted alongside a recognized gesture, so AltGr,
+Option, dead-key, and non-US layout characters are never silently discarded.
+Window focus loss, terminal-input blackout and a presentation gap clear held
+shortcut ownership. Held arrow repeats move the target while duplicate
+non-repeat shortcut presses remain local. Instructions, refusal feedback and
+passive overwrite/resize/eviction cancellation notices are visible and
+accessible without the application status bar, then expire automatically.
+Entering or leaving rectangle-copy mode also retires smart targeting and
+feedback. Ordinary clicks, drags, Copy and application shortcuts retain their
+meaning.
+
+Layout precedes segmentation. A vertical box/ASCII border or internal run of
+two spaces bounds the clicked row's text segment. Such layouts conservatively
+select only that visual row: full-width terminal soft-wrap metadata cannot
+certify a pane's logical wraps. Unbordered, one-space-separated columns cannot
+be reliably inferred and are **unsupported**, not validated pane recognition.
+Blank/border targets refuse. Full-width prose follows recorded soft wraps;
+paragraphs additionally group explicit adjacent lines with equal indentation.
+Blocks allow indentation transitions (for example an error plus indented
+details), stopping before the next unindented record and at blank lines.
+Sentence punctuation is `. ! ? 。 ！ ？` followed by whitespace/end; abbreviations,
+language-specific sentence rules and semantic explanation understanding are
+not claimed. Explicit newlines are preserved; visual wraps are joined.
+Printed indentation and interior spaces are preserved, trailing row padding is
+excluded except where soft wrapping makes it content. Wide/combining graphemes
+remain indivisible. Regions are clipped to the visible viewport, including
+scrolled/disconnected history, and never flatten all panes into one string.
+
+Each request examines at most 128 rows, 32,768 cells and 128 KiB of cell text.
+Exceeding context limits refuses rather than silently exporting a partial
+inference. No background queue or retained history scan is introduced. Selected
+cell text, dimensions and wrap metadata are revalidated before painting/Copy;
+overwritten, evicted, resized or reflowed content cancels rather than copying a
+stale inference. Unchanged absolute history rows survive continued output.
+Validation also binds to a core-owned monotonic screen-buffer generation, so
+alternate-screen exit/re-entry or reset cannot resurrect an inference merely
+because the replacement buffer contains identical cells. The production frame
+performs this validation once after history synchronization and before context
+menu construction or painting, removing both stale state and highlight.
+
+**Quality gates:** deterministic fixture expectations must remain exact, with
+zero cross-pane exports for supported border/gap layouts. Native
+Windows/macOS/Linux clipboard, accessibility, DPI and layout usability remain
+TI-19 evidence, not accepted capability claims. Before any optional model:
+freeze a labeled multilingual/abbreviation/TUI evaluation corpus; require
+at least 95% exact boundaries, zero supported cross-pane false selections,
+and a measured improvement over heuristics on the same corpus. Record p50/p95
+cold/warm latency (warm p95 <= 50 ms), peak memory (<= 128 MiB added), complete
+weights/runtime/installer bytes (<= 30 MiB added), license/provenance verification,
+offline availability and explicit opt-in/unavailable-model policy. These are
+prospective gates, not measured results or approval to adopt a model.
+
 ## Product Posture
 
 fesTerm should feel like a restrained, native-feeling terminal workstation:
@@ -397,7 +479,7 @@ the worker connects and verifies the host key first (see
 [Host-key verification](#host-key-verification)), and only once
 authentication is actually needed does an in-terminal, pty-styled password
 prompt appear (`user@host's password:`, `show_ssh_live_password_prompt`),
-rendered in the bundled terminal font in place of the terminal view with no
+rendered in the selected terminal font in place of the terminal view with no
 textbox or button — typed characters are never echoed, matching real `ssh`,
 and Enter submits. A rejected password appends "Permission denied, please try
 again." plus a fresh prompt line below (matching `ssh`'s own
@@ -418,7 +500,7 @@ Consequences:
   already exists.
 - Users can keep a launcher tab open while other sessions run.
 - The application does not need a separate home-window architecture.
-- Starting a session *from* the active launcher tab (e.g. "Local Shell") replaces that launcher tab in place with the new session tab, keeping the same position and chip identity, rather than leaving the spent launcher behind alongside a separate new tab (`app/festerm/src/tabs.rs`'s `start_local_session`). **Connect** for a saved profile from the active Profiles tab follows the same rule for local, SSH, terminal SFTP, serial, and graphical SFTP launches. A synchronous terminal startup failure leaves Profiles available and activates the ordinary error-bearing session in a separate tab. Graphical SFTP reuses the chip for its credential form, with **Back to Profiles** or Escape restoring Profiles in place and discarding transient credentials before a connection starts; submitting valid authentication continues in that same chip. Later host-key, authentication, and connection failures use the existing session's prompts, retry, and close paths. Other active surfaces, and ad-hoc launches while Profiles is active (e.g. a local-shell shortcut), still open a new tab rather than replacing unrelated content. Profiles can be reopened normally after a successful launch.
+- Starting a session *from* the active launcher tab (e.g. "Local Shell") replaces that launcher tab in place with the new session tab, keeping the same position and chip identity, rather than leaving the spent launcher behind alongside a separate new tab (`app/festerm/src/tabs.rs`'s `start_local_session`). **Connect** for a saved profile from the active Profiles tab follows the same rule for local, SSH, terminal SFTP, serial, and graphical SFTP launches. A synchronous terminal startup failure leaves Profiles available and activates the ordinary error-bearing session in a separate tab. Graphical SFTP reuses the chip for its credential form, but the password/private-key/passphrase draft and each field's toolkit-owned edit/undo state are owned by that exact form instance, not the preserved chip identity. **Back to Profiles**, Escape, global/chrome **Open Profiles**, successful submission, close, and any other content replacement therefore zeroize repository-controlled live draft storage and scrub retained undo/redo snapshots before erasing those widget states; opening a different target in the same chip starts empty in password mode, and Undo cannot recover the prior target's credentials. Submitted password and passphrase copies remain in zeroizing application, worker, and vendored russh authentication owners through success, failure, cancellation, and reconnect; the russh queued method is retired as soon as authentication succeeds or fails, and its debug output and packet diagnostics expose metadata rather than credential or packet contents. These guarantees cover normal repository-controlled live buffers and teardown. They do not guarantee erasure of allocator slack or previously freed allocations, abrupt process termination or OS swap/core-dump state, native input/IME intermediates, clipboard/accessibility/recording capture, or third-party cryptographic-library internals. Submitting valid authentication continues in that same chip. Later host-key, authentication, and connection failures use the existing session's prompts, retry, and close paths. Other active surfaces, and ad-hoc launches while Profiles is active (e.g. a local-shell shortcut), still open a new tab rather than replacing unrelated content. Profiles can be reopened normally after a successful launch.
 
 ### New Tab behavior
 
@@ -1518,7 +1600,7 @@ the byte stream.
 ![Host-key verification target](images/gui-mockups/host-key-verification.png)
 
 Host-key verification is an in-tab decision that blocks only the affected
-connection, rendered pty-style (bundled terminal font, terminal background)
+connection, rendered pty-style (selected terminal font, terminal background)
 in place of the terminal view, mimicking `ssh`'s own prompt text rather than
 a dialog. It shows the canonical `host:port`, key algorithm, and full SHA-256
 fingerprint. It does not claim that the host is safe; it asks the user to
@@ -1743,8 +1825,18 @@ configuration. Reset restores 512 MiB without evicting existing images.
 This allowance excludes decoder-private/native-GPU allocations and is not a
 process-RAM cap (ADR 0030).
 
-The **Terminal typography** card exposes the bundled terminal-family selector
-plus the default-on ligature toggle. The **Quick switch** card currently
+The **Terminal typography** card exposes the terminal-family selector plus the
+default-on ligature toggle. JetBrains Mono is embedded; other families download
+automatically on selection or restoration of a saved preference after upgrade.
+While preparing or unavailable, use an explicitly temporary JetBrains fallback
+without changing that preference. Show progress/failure here and above tab
+content, with an explicit **Retry font download** control on failure. Verified
+cached faces work offline. See ADR 0049 for release, privacy, and cache policy.
+The effective family and atlas generation belong to the shared egui context,
+not an individual window. A successful window therefore wins over a sibling
+that is still pending or has failed, and every terminal keeps painting while
+adopting that shared installation.
+The **Quick switch** card currently
 exposes the on-by-default quick-switch-number overlay preference; it no
 longer restates the Command palette/Open Settings chords the **Keyboard
 bindings** card below owns, so a customized binding is never shown twice with
@@ -2361,7 +2453,8 @@ Terminal typography may use separate font and shaping rules from application chr
 
 The terminal renderer defaults to bundled **JetBrains Mono NL 2.304** at `14`
 pt and lets Settings select JetBrains Mono, Iosevka Term, JuliaMono, or Maple
-Mono. Each family includes regular, bold, italic, and bold-italic static
+Mono. Only JetBrains Mono is embedded; the other families are pinned downloads
+with automatic startup reconciliation (ADR 0049). Each family includes regular, bold, italic, and bold-italic static
 faces; missing glyphs continue through an owned Noto Emoji monochrome face and
 then the separate monospace fallback chain. Emoji-presentation graphemes use
 the pinned Noto Color Emoji renderer path, while VS15 requests monochrome text
@@ -2419,7 +2512,7 @@ remain hard shaping boundaries.
 
 ### User control
 
-Users can configure the bundled terminal family, ligature preference, and
+Users can configure the terminal family, ligature preference, and
 deterministic color-versus-monochrome emoji presentation through versioned
 configuration and GUI Settings. Font size remains per-session runtime zoom;
 configurable fallback ordering, arbitrary font paths, and line height are
@@ -2668,8 +2761,10 @@ disable them.
 - Copy reads selected cells from fesTerm's model and remains available for any
   retained selectable buffer. It joins soft-wrapped rows, preserves real line
   breaks, omits unused trailing cells, and preserves displayed wide/combining
-  Unicode. Copying a selection clears it afterward, matching other terminal
-  programs.
+  Unicode. At the native Windows clipboard boundary, text line breaks are
+  normalized to the CRLF representation required by `CF_UNICODETEXT`; internal
+  selection text and non-Windows clipboards retain their native representation.
+  Copying a selection clears it afterward, matching other terminal programs.
 - Paste reads the OS clipboard and uses the ordered bounded session input path.
   It remains available whenever a live session accepts input and compatible
   clipboard text exists. A terminal program cannot disable it.
@@ -2768,6 +2863,9 @@ the selected width. The policy is captured on entry. Wide/combining graphemes
 remain indivisible: touching either half of a wide glyph copies the whole
 grapheme once, potentially extending that row's copied width beyond an edge.
 Visible text never exports hyperlink targets or terminal protocol sequences.
+On Windows, the shared clipboard boundary converts those top-to-bottom logical
+rows to CRLF without changing their order, including when pasted into another
+terminal application.
 On exit the next paint refreshes from current live state; a resized window may
 clip the frozen grid until that refresh. Native clipboard delivery and
 cross-renderer/DPI/keyboard usability remain pending under `TI-17`.
@@ -3432,7 +3530,8 @@ requires a different sequence:
 4. **Initial About and update surface implemented:** the compact
    application-owned modal
    exposes exact version/platform information, a bounded privacy-safe Copy
-   summary, the canonical source link, and repository/asset license notices;
+   summary, the canonical source link, and complete embedded optional-font
+   license notices that remain available in packaged/offline applications;
    configured packaged builds additionally expose the explicit signed-update
    state machine from ADR 0021. Developer/incomplete builds fail closed without
    a network action. Native update, link handoff, accessibility, and visual
@@ -3442,10 +3541,12 @@ requires a different sequence:
    Launcher session types and persistent chrome controls use it with semantic
    colors and accessible control labels. Remaining one-off sites and native
    cross-platform visual evidence are tracked separately. The terminal now
-   bundles four selectable families with real regular/bold/italic/bold-italic
-   faces, generation-safe runtime switching, independent fallback chains, and
-   default-off ligatures. Bundle Inter through the owned application-font
-   layer next, retaining fallback contracts.
+   provides four selectable pinned families with real
+   regular/bold/italic/bold-italic faces: JetBrains Mono is embedded, while
+   Iosevka Term, JuliaMono, and Maple Mono are verified matching-release
+   downloads. Runtime switching is generation-safe, fallback chains remain
+   independent, and ligatures default off. Bundle Inter through the owned
+   application-font layer next, retaining fallback contracts.
 6. Implement **Show session details in chips** as the presentation-only live
    preference defined above: grouped Settings row, `34→28` chip geometry,
    `42→36` single-row chrome geometry, active-only status-bar relocation, and

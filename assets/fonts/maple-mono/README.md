@@ -1,8 +1,9 @@
 # Maple Mono terminal font
 
-fesTerm bundles four unmodified static faces from **Maple Mono 7.9**:
-Regular, Bold, Italic, and Bold Italic. These are the plain upstream TTF files,
-not Nerd Font or CJK-expanded builds.
+fesTerm pins four unmodified static faces from **Maple Mono 7.9** as
+matching-release optional download assets: Regular, Bold, Italic, and Bold
+Italic. These are the plain upstream TTF files, not Nerd Font or CJK-expanded
+builds.
 
 Source: <https://github.com/subframe7536/maple-font/releases/tag/v7.9>.
 `manifest.json` records the official archive digest and per-file provenance.

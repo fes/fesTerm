@@ -104,6 +104,23 @@ impl<State> Undoer<State>
 where
     State: Clone + PartialEq,
 {
+    /// Clears all retained states after allowing the caller to erase any
+    /// sensitive contents in place.
+    pub fn clear_with(&mut self, mut clear_state: impl FnMut(&mut State)) {
+        for state in &mut self.undos {
+            clear_state(state);
+        }
+        for state in &mut self.redos {
+            clear_state(state);
+        }
+        if let Some(flux) = &mut self.flux {
+            clear_state(&mut flux.latest_state);
+        }
+        self.undos.clear();
+        self.redos.clear();
+        self.flux = None;
+    }
+
     /// Create a new [`Undoer`] with the given [`Settings`].
     pub fn with_settings(settings: Settings) -> Self {
         Self {
@@ -217,5 +234,29 @@ where
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Undoer;
+
+    #[test]
+    fn clear_with_visits_and_removes_every_retained_state() {
+        let mut undoer = Undoer::default();
+        undoer.feed_state(0.0, &"first".to_owned());
+        undoer.feed_state(0.1, &"second".to_owned());
+        let _ = undoer.undo(&"second".to_owned());
+
+        let mut cleared = Vec::new();
+        undoer.clear_with(|state| {
+            cleared.push(state.clone());
+            state.clear();
+        });
+
+        assert!(!cleared.is_empty());
+        assert!(!undoer.has_undo(&String::new()));
+        assert!(!undoer.has_redo(&String::new()));
+        assert!(!undoer.is_in_flux());
     }
 }

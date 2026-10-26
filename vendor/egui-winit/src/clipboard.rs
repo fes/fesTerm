@@ -95,6 +95,9 @@ impl Clipboard {
     }
 
     pub fn set_text(&mut self, text: String) {
+        #[cfg(target_os = "windows")]
+        let text = normalize_windows_clipboard_text(text);
+
         #[cfg(all(
             any(
                 target_os = "linux",
@@ -126,6 +129,9 @@ impl Clipboard {
 
     /// Copy HTML with a plain-text alternative, degrading to text when unsupported.
     pub fn set_html(&mut self, html: String, text: String) {
+        #[cfg(target_os = "windows")]
+        let text = normalize_windows_clipboard_text(text);
+
         #[cfg(all(
             any(
                 target_os = "linux",
@@ -303,6 +309,30 @@ mod tests {
         assert_eq!(result, Err(2));
         assert_eq!(writes, 2);
     }
+}
+
+/// Normalizes text for Windows `CF_UNICODETEXT`, which requires CRLF line endings.
+#[doc(hidden)]
+pub fn normalize_windows_clipboard_text(text: String) -> String {
+    if !text.contains('\r') && !text.contains('\n') {
+        return text;
+    }
+
+    let mut normalized = String::with_capacity(text.len());
+    let mut characters = text.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '\r' => {
+                if characters.peek() == Some(&'\n') {
+                    characters.next();
+                }
+                normalized.push_str("\r\n");
+            }
+            '\n' => normalized.push_str("\r\n"),
+            _ => normalized.push(character),
+        }
+    }
+    normalized
 }
 
 #[cfg(all(

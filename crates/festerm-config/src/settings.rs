@@ -46,12 +46,12 @@ pub struct InterfaceSettings {
     /// (`docs/gui-design.md` "Workspace restore").
     #[serde(default = "default_restore_workspace", skip_serializing_if = "is_true")]
     restore_workspace: bool,
-    /// The bundled primary face used for terminal cells. Application chrome
+    /// The pinned primary face used for terminal cells. Application chrome
     /// typography remains independent.
     #[serde(default, skip_serializing_if = "TerminalFontPreference::is_default")]
     terminal_font: TerminalFontPreference,
     /// Whether eligible adjacent terminal cells may be shaped as a run.
-    /// On by default: the bundled faces are designed around their coding
+    /// On by default: the supported faces are designed around their coding
     /// ligatures, and the renderer preserves cell ownership across them.
     #[serde(
         default = "default_terminal_ligatures",
@@ -427,7 +427,7 @@ impl InterfaceSettings {
     }
 }
 
-/// Bundled primary terminal families. The serialized names are stable
+/// Supported primary terminal families. The serialized names are stable
 /// configuration values rather than platform font-discovery names.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
