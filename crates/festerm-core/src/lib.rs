@@ -517,6 +517,37 @@ mod tests {
     }
 
     #[test]
+    fn screen_generation_tracks_buffer_transitions_and_full_reset() {
+        let mut terminal = terminal(5, 2);
+        let primary = terminal.screen_generation();
+
+        terminal.ingest(b"\x1b[?47h");
+        let alternate = terminal.screen_generation();
+        assert!(alternate > primary);
+
+        terminal.ingest(b"\x1b[?47h");
+        assert_eq!(
+            terminal.screen_generation(),
+            alternate,
+            "an already-active buffer is not a new lifetime"
+        );
+
+        terminal.ingest(b"\x1b[?47l");
+        let returned_primary = terminal.screen_generation();
+        assert!(returned_primary > alternate);
+
+        terminal.ingest(b"\x1b[?47h\x1b[?47l");
+        assert!(
+            terminal.screen_generation() > returned_primary,
+            "hidden enter/exit transitions still advance identity"
+        );
+
+        let before_reset = terminal.screen_generation();
+        terminal.reset_to_initial_state();
+        assert!(terminal.screen_generation() > before_reset);
+    }
+
+    #[test]
     fn dec_restore_clamps_an_origin_cursor_to_current_margins_before_cpr() {
         let mut terminal = terminal(5, 4);
         terminal.ingest(b"\x1b[2;3r\x1b[?6h\x1b7\x1b[?6l\x1b[3;4r\x1b8\x1b[6n");

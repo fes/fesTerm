@@ -667,6 +667,10 @@ struct SavedAnsiCursor {
     protection: ProtectionSource,
 }
 
+const fn initial_screen_generation() -> u64 {
+    1
+}
+
 /// GUI-independent terminal state. The terminal owns one logical writer.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Terminal {
@@ -675,6 +679,8 @@ pub struct Terminal {
     primary: BufferState,
     alternate: Option<BufferState>,
     active_screen: ActiveScreen,
+    #[serde(default = "initial_screen_generation")]
+    screen_generation: u64,
     modes: TerminalModes,
     cursor_style: CursorStyle,
     /// The last character printed, for `REP` to repeat.
@@ -722,6 +728,7 @@ impl Terminal {
             primary: BufferState::new(dimensions)?,
             alternate: None,
             active_screen: ActiveScreen::Primary,
+            screen_generation: initial_screen_generation(),
             modes: TerminalModes::default(),
             cursor_style: CursorStyle::default(),
             last_graphic_character: None,
@@ -848,6 +855,16 @@ impl Terminal {
 
     pub const fn modes(&self) -> TerminalModes {
         self.modes
+    }
+
+    /// Monotonic identity of the currently presented screen-buffer lifetime.
+    ///
+    /// Content equality is insufficient to identify a terminal buffer: an
+    /// alternate-screen exit/re-entry or full reset can present identical
+    /// cells from a different lifetime. Presentation state that retains cell
+    /// identity must bind to this generation as well as validating content.
+    pub const fn screen_generation(&self) -> u64 {
+        self.screen_generation
     }
 
     pub const fn cursor_style(&self) -> CursorStyle {
@@ -1026,6 +1043,7 @@ impl Terminal {
         self.primary.reset();
         self.alternate = None;
         self.active_screen = ActiveScreen::Primary;
+        self.advance_screen_generation();
         self.modes = TerminalModes::default();
         self.cursor_style = CursorStyle::default();
         self.cursor_style_set = false;
@@ -2958,6 +2976,7 @@ impl Terminal {
             alternate.grapheme_anchor = None;
         }
         self.active_screen = ActiveScreen::Alternate;
+        self.advance_screen_generation();
         self.modes.alternate_screen = true;
         self.active_buffer_mut().screen.mark_all_dirty();
     }
@@ -2967,6 +2986,7 @@ impl Terminal {
         self.current_hyperlink_cells_remaining = 0;
         if self.active_screen == ActiveScreen::Alternate {
             self.active_screen = ActiveScreen::Primary;
+            self.advance_screen_generation();
             self.primary.screen.mark_all_dirty();
         }
         if reset {
@@ -2975,6 +2995,10 @@ impl Terminal {
             }
         }
         self.modes.alternate_screen = false;
+    }
+
+    fn advance_screen_generation(&mut self) {
+        self.screen_generation = self.screen_generation.saturating_add(1);
     }
 
     fn home_cursor(&mut self) {

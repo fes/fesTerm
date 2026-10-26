@@ -26,6 +26,88 @@ under `images/gui-mockups/source/`; the adjacent PNG remains the comparison
 artifact. Rasterization must preserve the baseline logical viewport and may
 not silently change prose-owned behavior.
 
+## Smart terminal selection
+
+Issue #397 is an explicitly owner-requested additive feature, not a change to
+M6 acceptance or a general AI assistant. The initial implementation is a local,
+deterministic baseline; no model, OCR, download, network or content collection.
+Renderer/core and application/session ownership are unchanged.
+
+The local terminal context menu offers **Smart Select Sentence**, **Smart
+Select Paragraph**, and **Smart Select Block**, before ordinary Copy. Right-click
+remains terminal-owned under mouse reporting; Shift+right-click is the existing
+local override. Selection alone never copies or sends input. Inspect the
+highlight, then use existing Copy shortcuts/menu/native Edit. Drag replaces the
+inference with ordinary adjustable selection; Escape cancels inferred selection.
+An unavailable result leaves an existing selection intact and explains that
+ordinary drag is available. There is intentionally no immediate **Smart Copy**:
+it would skip the inspection step on unqualified layout inference.
+Instruction and refusal feedback expires automatically. Escape is consumed
+only while cancelling an inferred selection or keyboard target; otherwise it
+continues to the terminal normally.
+
+Keyboard-only: focus the terminal and use **Ctrl+Alt+Shift+S/P/B** for
+sentence/paragraph/block (also Control+Option+Shift on macOS). The target is
+the last keyboard target, otherwise the selection endpoint or terminal cursor;
+in scrolled history it starts at the viewport's upper-left cell.
+**Ctrl+Alt+Shift+arrows** move that target one cell, with an outline and
+row/column feedback.
+Escape clears the target. These fixed, local presentation gestures do not
+enter the application shortcut dispatcher or send their key events. They use the
+same application-owned terminal-input predicate as ordinary terminal routing,
+not transient widget-focus bookkeeping. Native Text and IME payloads remain
+terminal-owned even when emitted alongside a recognized gesture, so AltGr,
+Option, dead-key, and non-US layout characters are never silently discarded.
+Window focus loss, terminal-input blackout and a presentation gap clear held
+shortcut ownership. Held arrow repeats move the target while duplicate
+non-repeat shortcut presses remain local. Instructions, refusal feedback and
+passive overwrite/resize/eviction cancellation notices are visible and
+accessible without the application status bar, then expire automatically.
+Entering or leaving rectangle-copy mode also retires smart targeting and
+feedback. Ordinary clicks, drags, Copy and application shortcuts retain their
+meaning.
+
+Layout precedes segmentation. A vertical box/ASCII border or internal run of
+two spaces bounds the clicked row's text segment. Such layouts conservatively
+select only that visual row: full-width terminal soft-wrap metadata cannot
+certify a pane's logical wraps. Unbordered, one-space-separated columns cannot
+be reliably inferred and are **unsupported**, not validated pane recognition.
+Blank/border targets refuse. Full-width prose follows recorded soft wraps;
+paragraphs additionally group explicit adjacent lines with equal indentation.
+Blocks allow indentation transitions (for example an error plus indented
+details), stopping before the next unindented record and at blank lines.
+Sentence punctuation is `. ! ? 。 ！ ？` followed by whitespace/end; abbreviations,
+language-specific sentence rules and semantic explanation understanding are
+not claimed. Explicit newlines are preserved; visual wraps are joined.
+Printed indentation and interior spaces are preserved, trailing row padding is
+excluded except where soft wrapping makes it content. Wide/combining graphemes
+remain indivisible. Regions are clipped to the visible viewport, including
+scrolled/disconnected history, and never flatten all panes into one string.
+
+Each request examines at most 128 rows, 32,768 cells and 128 KiB of cell text.
+Exceeding context limits refuses rather than silently exporting a partial
+inference. No background queue or retained history scan is introduced. Selected
+cell text, dimensions and wrap metadata are revalidated before painting/Copy;
+overwritten, evicted, resized or reflowed content cancels rather than copying a
+stale inference. Unchanged absolute history rows survive continued output.
+Validation also binds to a core-owned monotonic screen-buffer generation, so
+alternate-screen exit/re-entry or reset cannot resurrect an inference merely
+because the replacement buffer contains identical cells. The production frame
+performs this validation once after history synchronization and before context
+menu construction or painting, removing both stale state and highlight.
+
+**Quality gates:** deterministic fixture expectations must remain exact, with
+zero cross-pane exports for supported border/gap layouts. Native
+Windows/macOS/Linux clipboard, accessibility, DPI and layout usability remain
+TI-19 evidence, not accepted capability claims. Before any optional model:
+freeze a labeled multilingual/abbreviation/TUI evaluation corpus; require
+at least 95% exact boundaries, zero supported cross-pane false selections,
+and a measured improvement over heuristics on the same corpus. Record p50/p95
+cold/warm latency (warm p95 <= 50 ms), peak memory (<= 128 MiB added), complete
+weights/runtime/installer bytes (<= 30 MiB added), license/provenance verification,
+offline availability and explicit opt-in/unavailable-model policy. These are
+prospective gates, not measured results or approval to adopt a model.
+
 ## Product Posture
 
 fesTerm should feel like a restrained, native-feeling terminal workstation:

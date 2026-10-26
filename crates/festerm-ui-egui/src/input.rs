@@ -263,6 +263,10 @@ pub(crate) struct KeyboardOwnership {
 pub(crate) const RECLAIM_FOCUS_WINDOW: Duration = Duration::from_millis(750);
 
 impl KeyboardOwnership {
+    pub(crate) const fn ime_composing(&self) -> bool {
+        self.ime_composing
+    }
+
     pub(crate) fn focus_in_if_needed(
         &mut self,
         terminal_has_keyboard_focus: bool,

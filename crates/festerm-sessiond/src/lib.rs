@@ -157,7 +157,7 @@ fn observe_recovery_allocation_restore() {
 /// This changes only when the daemon introduces an incompatible wire format.
 pub const PROTOCOL_VERSION: u16 = 2;
 /// Recovery snapshot schema used by protocol-v2 sessions started by this build.
-pub const RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 2;
+pub const RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 3;
 const LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 0;
 /// Oldest daemon protocol this client can attach to safely.
 ///
