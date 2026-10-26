@@ -1,9 +1,10 @@
 # Iosevka Term terminal font
 
-fesTerm bundles four static faces built reproducibly from **Iosevka 34.8.1**:
-Regular, Bold, Italic, and Bold Italic. The checked-in build plan retains Term
-spacing and assigns a conservative, explicit programming-ligature set to the
-standard contextual-alternates feature supported by egui's shaping path.
+fesTerm pins four static faces built reproducibly from **Iosevka 34.8.1** as
+matching-release optional download assets: Regular, Bold, Italic, and Bold
+Italic. The checked-in build plan retains Term spacing and assigns a
+conservative, explicit programming-ligature set to the standard
+contextual-alternates feature supported by egui's shaping path.
 
 Source: <https://github.com/be5invis/Iosevka/releases/tag/v34.8.1>.
 `manifest.json` records the exact source archive, release digest, build target,

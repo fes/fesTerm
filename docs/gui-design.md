@@ -3541,10 +3541,12 @@ requires a different sequence:
    Launcher session types and persistent chrome controls use it with semantic
    colors and accessible control labels. Remaining one-off sites and native
    cross-platform visual evidence are tracked separately. The terminal now
-   bundles four selectable families with real regular/bold/italic/bold-italic
-   faces, generation-safe runtime switching, independent fallback chains, and
-   default-off ligatures. Bundle Inter through the owned application-font
-   layer next, retaining fallback contracts.
+   provides four selectable pinned families with real
+   regular/bold/italic/bold-italic faces: JetBrains Mono is embedded, while
+   Iosevka Term, JuliaMono, and Maple Mono are verified matching-release
+   downloads. Runtime switching is generation-safe, fallback chains remain
+   independent, and ligatures default off. Bundle Inter through the owned
+   application-font layer next, retaining fallback contracts.
 6. Implement **Show session details in chips** as the presentation-only live
    preference defined above: grouped Settings row, `34→28` chip geometry,
    `42→36` single-row chrome geometry, active-only status-bar relocation, and

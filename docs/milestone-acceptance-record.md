@@ -200,7 +200,9 @@ a minimal deterministic regression for every reproducible failure in
 - [ ] Manual reference-application and supported-`vttest` semantic evidence
   (P5). Launch/resize/quit-only PTY probes remain supporting evidence rather
   than acceptance. `tack` is M10 work under #27 and does not block M6.
-- [x] P6 cell-geometry contract, selectable bundled fonts, and default-off user-visible ligature shaping.
+- [x] P6 cell-geometry contract, four selectable pinned font families, and
+  default-off user-visible ligature shaping. JetBrains Mono remains embedded;
+  the other three families are optional matching-release downloads.
 
 M6 must not be marked **Accepted** until every remaining blocking gate
 condition is completed. Explicit deferrals apply only to nonblocking rolling
