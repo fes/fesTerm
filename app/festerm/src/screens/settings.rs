@@ -31,6 +31,8 @@ pub(crate) struct SettingsViewModel {
     pub customize_local_shell: bool,
     pub restore_workspace: bool,
     pub terminal_font: TerminalFontPreference,
+    pub font_download_status: Option<String>,
+    pub font_download_failed: bool,
     pub terminal_ligatures: bool,
     pub emoji_presentation: EmojiPresentationPreference,
     pub scroll_speed: ScrollSpeedPreference,
@@ -70,6 +72,8 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         customize_local_shell,
         restore_workspace,
         terminal_font,
+        font_download_status,
+        font_download_failed,
         terminal_ligatures,
         emoji_presentation,
         scroll_speed,
@@ -433,8 +437,11 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                         );
                                         ssh_paragraph(
                                             ui,
-                                            "Choose the bundled primary face used by terminal \
-                                             cells. Application text is unchanged.",
+                                            "JetBrains Mono is included. Other families download automatically \
+                                             when selected, including after an upgrade restores your preference. \
+                                             Verified fonts work offline. GitHub receives the font asset request, \
+                                             your IP address and fesTerm version, never terminal content. \
+                                             Application text and update-download consent are unchanged.",
                                         );
                                     });
                                 },
@@ -460,6 +467,12 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             );
                             if selected_font != terminal_font {
                                 command = Some(AppCommand::SetTerminalFont(selected_font));
+                            }
+                            if let Some(status) = &font_download_status {
+                                ssh_paragraph(ui, status);
+                            }
+                            if font_download_failed && ui.button("Retry font download").clicked() {
+                                command = Some(AppCommand::RetryTerminalFontDownload);
                             }
                             ui.add_space(10.0);
                             ui.separator();
@@ -927,6 +940,7 @@ mod tests {
     struct SettingsHarnessState {
         command: Option<AppCommand>,
         keyboard_bindings: festerm_config::KeyboardBindings,
+        font_download_failed: bool,
     }
 
     fn settings_harness() -> Harness<'static, SettingsHarnessState> {
@@ -1023,6 +1037,10 @@ mod tests {
                             customize_local_shell: false,
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,
+                            font_download_status: state.font_download_failed.then(|| {
+                                "Using JetBrains Mono temporarily. Download failed; Retry.".into()
+                            }),
+                            font_download_failed: state.font_download_failed,
                             terminal_ligatures: false,
                             emoji_presentation: EmojiPresentationPreference::Color,
                             scroll_speed: ScrollSpeedPreference::Normal,
@@ -1051,8 +1069,25 @@ mod tests {
                 SettingsHarnessState {
                     command: None,
                     keyboard_bindings: bindings,
+                    font_download_failed: false,
                 },
             )
+    }
+
+    #[test]
+    fn settings_font_download_failure_offers_an_explicit_typed_retry() {
+        let mut harness = settings_harness();
+        harness.state_mut().font_download_failed = true;
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("Using JetBrains Mono temporarily")
+            .is_some());
+        harness.get_by_label("Retry font download").click();
+        harness.step();
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::RetryTerminalFontDownload)
+        ));
     }
 
     #[test]
@@ -1690,6 +1725,8 @@ mod tests {
                             customize_local_shell: false,
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,
+                            font_download_status: None,
+                            font_download_failed: false,
                             terminal_ligatures: false,
                             emoji_presentation: EmojiPresentationPreference::Color,
                             scroll_speed: ScrollSpeedPreference::Normal,
@@ -1712,6 +1749,7 @@ mod tests {
                 SettingsHarnessState {
                     command: None,
                     keyboard_bindings: Default::default(),
+                    font_download_failed: false,
                 },
             );
         harness.run();

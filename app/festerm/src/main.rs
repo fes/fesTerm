@@ -21,6 +21,7 @@ mod document_store;
 #[allow(dead_code)]
 mod documents;
 mod environment;
+mod font_downloads;
 mod inspector;
 mod keyboard;
 mod local_command;

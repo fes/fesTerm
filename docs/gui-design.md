@@ -479,7 +479,7 @@ the worker connects and verifies the host key first (see
 [Host-key verification](#host-key-verification)), and only once
 authentication is actually needed does an in-terminal, pty-styled password
 prompt appear (`user@host's password:`, `show_ssh_live_password_prompt`),
-rendered in the bundled terminal font in place of the terminal view with no
+rendered in the selected terminal font in place of the terminal view with no
 textbox or button — typed characters are never echoed, matching real `ssh`,
 and Enter submits. A rejected password appends "Permission denied, please try
 again." plus a fresh prompt line below (matching `ssh`'s own
@@ -1600,7 +1600,7 @@ the byte stream.
 ![Host-key verification target](images/gui-mockups/host-key-verification.png)
 
 Host-key verification is an in-tab decision that blocks only the affected
-connection, rendered pty-style (bundled terminal font, terminal background)
+connection, rendered pty-style (selected terminal font, terminal background)
 in place of the terminal view, mimicking `ssh`'s own prompt text rather than
 a dialog. It shows the canonical `host:port`, key algorithm, and full SHA-256
 fingerprint. It does not claim that the host is safe; it asks the user to
@@ -1825,8 +1825,18 @@ configuration. Reset restores 512 MiB without evicting existing images.
 This allowance excludes decoder-private/native-GPU allocations and is not a
 process-RAM cap (ADR 0030).
 
-The **Terminal typography** card exposes the bundled terminal-family selector
-plus the default-on ligature toggle. The **Quick switch** card currently
+The **Terminal typography** card exposes the terminal-family selector plus the
+default-on ligature toggle. JetBrains Mono is embedded; other families download
+automatically on selection or restoration of a saved preference after upgrade.
+While preparing or unavailable, use an explicitly temporary JetBrains fallback
+without changing that preference. Show progress/failure here and above tab
+content, with an explicit **Retry font download** control on failure. Verified
+cached faces work offline. See ADR 0049 for release, privacy, and cache policy.
+The effective family and atlas generation belong to the shared egui context,
+not an individual window. A successful window therefore wins over a sibling
+that is still pending or has failed, and every terminal keeps painting while
+adopting that shared installation.
+The **Quick switch** card currently
 exposes the on-by-default quick-switch-number overlay preference; it no
 longer restates the Command palette/Open Settings chords the **Keyboard
 bindings** card below owns, so a customized binding is never shown twice with
@@ -2443,7 +2453,8 @@ Terminal typography may use separate font and shaping rules from application chr
 
 The terminal renderer defaults to bundled **JetBrains Mono NL 2.304** at `14`
 pt and lets Settings select JetBrains Mono, Iosevka Term, JuliaMono, or Maple
-Mono. Each family includes regular, bold, italic, and bold-italic static
+Mono. Only JetBrains Mono is embedded; the other families are pinned downloads
+with automatic startup reconciliation (ADR 0049). Each family includes regular, bold, italic, and bold-italic static
 faces; missing glyphs continue through an owned Noto Emoji monochrome face and
 then the separate monospace fallback chain. Emoji-presentation graphemes use
 the pinned Noto Color Emoji renderer path, while VS15 requests monochrome text
@@ -2501,7 +2512,7 @@ remain hard shaping boundaries.
 
 ### User control
 
-Users can configure the bundled terminal family, ligature preference, and
+Users can configure the terminal family, ligature preference, and
 deterministic color-versus-monochrome emoji presentation through versioned
 configuration and GUI Settings. Font size remains per-session runtime zoom;
 configurable fallback ordering, arbitrary font paths, and line height are
@@ -3519,7 +3530,8 @@ requires a different sequence:
 4. **Initial About and update surface implemented:** the compact
    application-owned modal
    exposes exact version/platform information, a bounded privacy-safe Copy
-   summary, the canonical source link, and repository/asset license notices;
+   summary, the canonical source link, and complete embedded optional-font
+   license notices that remain available in packaged/offline applications;
    configured packaged builds additionally expose the explicit signed-update
    state machine from ADR 0021. Developer/incomplete builds fail closed without
    a network action. Native update, link handoff, accessibility, and visual
@@ -3529,10 +3541,12 @@ requires a different sequence:
    Launcher session types and persistent chrome controls use it with semantic
    colors and accessible control labels. Remaining one-off sites and native
    cross-platform visual evidence are tracked separately. The terminal now
-   bundles four selectable families with real regular/bold/italic/bold-italic
-   faces, generation-safe runtime switching, independent fallback chains, and
-   default-off ligatures. Bundle Inter through the owned application-font
-   layer next, retaining fallback contracts.
+   provides four selectable pinned families with real
+   regular/bold/italic/bold-italic faces: JetBrains Mono is embedded, while
+   Iosevka Term, JuliaMono, and Maple Mono are verified matching-release
+   downloads. Runtime switching is generation-safe, fallback chains remain
+   independent, and ligatures default off. Bundle Inter through the owned
+   application-font layer next, retaining fallback contracts.
 6. Implement **Show session details in chips** as the presentation-only live
    preference defined above: grouped Settings row, `34→28` chip geometry,
    `42→36` single-row chrome geometry, active-only status-bar relocation, and

@@ -93,6 +93,58 @@ credentials remain outside the repository.
 Do not publish unsigned output as a production release. The release workflow
 must fail closed when its protected signing environment is incomplete.
 
+## Optional terminal font release assets
+
+JetBrains Mono remains embedded. Iosevka Term, JuliaMono, and Maple Mono are
+optional downloads, not resources installed by the default native packages.
+The pinned emoji and chrome fonts are not part of this download catalog.
+The app embeds the optional families' authoritative manifest metadata and
+complete license notices for offline About display, but not their TTF bytes.
+It also embeds the complete manifest notices for runtime-bundled JetBrains Mono
+and Noto Emoji. Runtime notice family/version labels must match the manifests.
+
+Stage the checked-in optional faces without network access or extraction:
+
+```text
+python scripts/manage_bundled_font.py --stage-downloads target/font-downloads --downloads-report target/font-downloads.json
+```
+
+The staging directory must contain only this catalog's assets. The command
+checks the manifests' exact SHA256 and byte sizes before writing anything,
+accepts identical staged files, and refuses to overwrite differing files.
+It stages twelve `festerm-font-<sha256>.ttf` files plus the three corresponding
+`festerm-font-<sha256>.license.txt` notices. The deterministic JSON report,
+also printed to stdout, lists source paths, names, hashes, sizes, font-only
+and total byte counts. Future pinned versions are derived from the manifests,
+not hard-coded into the release workflow. Iosevka must use the repository's
+custom-built TTFs, never substitute files from an upstream release archive.
+Normal `python scripts/manage_bundled_font.py` verification also rejects
+production Rust embeddings of optional faces, ignores `cfg(test)` fixtures,
+requires every complete optional notice to remain embedded in production, and
+requires every runtime-embedded font family to have all manifest notice files
+embedded with the manifest family/version label.
+
+Every tagged Release run stages these assets and uploads them alongside the
+native installers in the protected `release` publishing job before making
+the draft public. Dispatch-only packaging retains the same assets and JSON
+report as workflow artifacts without publishing a release. Font payloads
+are kept separate from installers and the signed application update manifest.
+The published license assets mirror the complete notices embedded in the app;
+runtime font acquisition does not download or cache those sidecars.
+The runtime download contract is strictly:
+
+```text
+https://github.com/fes/fesTerm/releases/download/v<CARGO_PKG_VERSION>/festerm-font-<sha256>.ttf
+```
+
+Keep each version's release assets indefinitely: older clients reconcile
+against their own compile-time catalog and application version, not `latest`
+or upstream URLs. Never replace bytes under an existing content-addressed
+name. Development builds before their version's first release may need a
+deliberately seeded verified font cache; staging alone does not publish assets
+or make an unreleased version downloadable. Runtime font fetching never
+extracts archives.
+
 ## Planned desktop Store channels
 
 See the [desktop Store distribution plan](../docs/app-store-distribution-plan.md)

@@ -54,7 +54,7 @@ Before considering this milestone complete:
    fixture, replay, controlled-PTY test, or snapshot before closing it.
 4. Complete P5 evidence before making broader terminal or terminfo claims.
 5. Exercise both default one-cell rendering and opt-in ligatures with the
-   selected bundled family; verify cursor, selection, hyperlinks, wide cells,
+   selected supported family; verify cursor, selection, hyperlinks, wide cells,
    fallback glyphs, and resize geometry remain cell-authoritative. Include the
    Agency-style emoji fixture with VS16, ZWJ, keycap, and flag sequences.
 

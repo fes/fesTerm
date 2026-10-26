@@ -38,8 +38,10 @@ pub use cache::{
     RenderCacheUpdate, RenderedCell, ResizeOutcome, ResizeTracker, TerminalRenderCache,
 };
 pub use fonts::{
-    install_terminal_font_family, install_terminal_fonts, terminal_font, terminal_fonts_installed,
-    TerminalFontFamily, TerminalFontGeneration, TerminalFontSet, DEFAULT_TERMINAL_FONT_SIZE,
+    install_terminal_font_faces, install_terminal_font_family, install_terminal_fonts,
+    reconcile_terminal_font_preference, terminal_font, terminal_font_family_is_desired,
+    terminal_font_installation, terminal_fonts_installed, TerminalFontFamily,
+    TerminalFontGeneration, TerminalFontSet, DEFAULT_TERMINAL_FONT_SIZE,
 };
 pub use geometry::{
     cell_from_point, dimensions_from_points, CellMetrics, CellPosition, CellRange, ViewSize,

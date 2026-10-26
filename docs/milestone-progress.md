@@ -3,6 +3,47 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Optional terminal fonts without the embedded payload
+
+Issue #398 separates font availability from the saved font choice. JetBrains
+Mono stays embedded; Iosevka Term, JuliaMono, and Maple Mono retain their
+reviewed repository manifests and provenance but move 46,363,464 bytes of
+optional faces out of production embeds into separately published release
+assets. This also preserves the reproducible Iosevka ligature build instead
+of substituting an upstream download with different shaping.
+
+Fresh same-toolchain macOS arm64 development builds with debug information
+disabled measured 208,988,672 bytes at the current integration base
+`14eae97cb1e50067ad2f638087f18e5933c6b376` (artifact SHA-256
+`2d454a0dbaf50d4d345f4cd89873f41c1943518b6e60b866dabaa4586fd557b7`) and
+162,694,416 bytes at reviewed feature head
+`ee6fe3e377d7d3ae7dc0149e3df5e9e169fcf1bb` (artifact SHA-256
+`90f0c78a5c39058e2a233a0c965a53bbe67854ff620d67a5b86cffc33689972b`):
+46,294,256 bytes smaller (22.15%), including downloader and embedded-notice
+overhead. Both used Rust 1.97.1 and `CARGO_PROFILE_DEV_DEBUG=0`. Direct byte
+inspection of the reviewed executable found all eight JetBrains Mono faces and
+none of the twelve optional faces. These are executable measurements, not a
+claim about compressed release installer size or another platform's binary.
+
+The application now reconciles a saved optional choice automatically after
+upgrade, using a bounded worker, exact size/hash checks, a process-safe cache,
+and atomic publication. The renderer receives verified faces rather than
+owning network or filesystem policy. Missing fonts use an explicitly temporary
+JetBrains fallback with progress and Retry, never a silently rewritten
+preference. Offline reuse, corruption repair, cancellation, generation-safe
+activation, and retry have deterministic coverage. ADR 0049 records the new
+asset boundary; released-endpoint, proxy, native DPI and usability evidence
+remain pending under TYPE-02/NP-05 until a matching release publishes assets.
+The effective family/generation is now context-scoped across all windows, so a
+pending or failed sibling cannot fight a successful installation or blank its
+terminal through reinstall/repaint oscillation. Superseded completion is now a
+quiescent Retry state, while stale-window protection is explicitly bounded to
+the composition root's synchronous same-pass configuration broadcast. About
+embeds complete manifest-versioned notices for bundled JetBrains Mono and Noto
+Emoji plus Iosevka Term, JuliaMono, and Maple Mono for packaged/offline use;
+the separately staged optional license assets remain publication mirrors rather
+than runtime cache inputs.
+
 ## Preserving copied row order at the Windows clipboard boundary
 
 Rectangle copy produced top-to-bottom logical rows separated by LF, but the

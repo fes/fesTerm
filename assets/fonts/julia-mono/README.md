@@ -1,7 +1,8 @@
 # JuliaMono terminal font
 
-fesTerm bundles four unmodified static faces from **JuliaMono 0.63.2**:
-Regular, Bold, Regular Italic, and Bold Italic.
+fesTerm pins four unmodified static faces from **JuliaMono 0.63.2** as
+matching-release optional download assets: Regular, Bold, Regular Italic, and
+Bold Italic.
 
 Source: <https://github.com/cormullion/juliamono/releases/tag/v0.63.2>.
 `manifest.json` records the official archive digest and per-file provenance.

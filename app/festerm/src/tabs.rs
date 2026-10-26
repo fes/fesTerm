@@ -2304,7 +2304,7 @@ pub enum AppCommand {
     /// restarts (`docs/gui-design.md` "Workspace restore" - explicit
     /// opt-in, off by default).
     ToggleRestoreWorkspace,
-    /// Selects the bundled primary terminal face without changing
+    /// Selects the supported primary terminal face without changing
     /// application-chrome typography.
     SetTerminalFont(TerminalFontPreference),
     SetKeyboardBindings(festerm_config::KeyboardBindings),
@@ -2324,6 +2324,7 @@ pub enum AppCommand {
     /// moves the scrollback viewport (feature request #67).
     SetScrollSpeed(festerm_config::ScrollSpeedPreference),
     ToggleRectangleCopyTrimTrailingSpaces,
+    RetryTerminalFontDownload,
     /// Remembers how a text editor view was last set up, so the next one opens
     /// the way the reader works rather than the way the defaults do.
     SetEditorSettings(festerm_config::EditorSettings),
@@ -3534,7 +3535,8 @@ impl AppState {
             AppCommand::RetrySftpFileManagerConnection { tab_id, target } => {
                 self.retry_sftp_file_manager_connection(tab_id, target)
             }
-            AppCommand::StartStoredPasswordSshProfile { .. }
+            AppCommand::RetryTerminalFontDownload
+            | AppCommand::StartStoredPasswordSshProfile { .. }
             | AppCommand::StartStoredPasswordSftpProfile { .. }
             | AppCommand::StartStoredSftpFileManagerProfile { .. }
             | AppCommand::StoreSshPassword { .. }
