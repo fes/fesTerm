@@ -1017,6 +1017,7 @@
         "validation/direct2d/README.md#unchanged-frame-preparation-work-control"
       ],
       "decisions": [
+        "ADR-0007",
         "ADR-0012",
         "ADR-0037",
         "ADR-0039",
@@ -1100,6 +1101,7 @@
         "rectangle_copy_rejects_native_palette_and_paired_keyboard_paste",
         "rectangle_copy_shortcut_copies_corners_selected_in_the_same_frame",
         "rectangle_copy_semantic_copy_copies_corners_selected_in_the_same_frame",
+        "windows_clipboard_newlines_preserve_multiline_source_order",
         "rectangle_copy_palette_keeps_foreground_keyboard_ownership",
         "retained_grid_rows_invalidate_dirty_content_selection_fonts_and_unicode",
         "retained_grid_rows_preserve_geometry_clip_opacity_transform_and_cursor",
@@ -2363,10 +2365,24 @@
       "decisions": [
         "ADR-0002",
         "ADR-0025",
+        "ADR-0029",
         "ADR-0038"
       ],
       "automated_tests": [
         "open_profiles_is_a_singleton_and_reactivates_the_existing_tab",
+        "profile_session_placement_reuses_profiles_position_identity_and_workspace",
+        "ad_hoc_session_does_not_consume_profiles_and_other_surfaces_are_preserved",
+        "failed_or_missing_profile_launch_keeps_profiles_available",
+        "configured_interactive_ssh_connect_consumes_profiles_in_place",
+        "stored_credential_profile_connect_reuses_profiles_for_ssh_and_sftp",
+        "gui_sftp_profile_connect_replaces_profiles_and_can_cancel_in_place",
+        "secret_text_preserves_unicode_across_insert_delete_growth_and_take",
+        "sensitive_private_key_rejects_copy_and_scrubs_cut_payload",
+        "sensitive_private_key_ime_commit_replaces_unicode_preedit",
+        "sensitive_password_enter_submits_the_authentication_form",
+        "profiles_authentication_back_and_escape_clear_all_credential_drafts",
+        "authentication_state_fails_closed_if_reused_for_a_different_target",
+        "global_open_profiles_drops_gui_sftp_credentials_before_reusing_the_tab_for_another_profile",
         "profiles_repaints_reuse_the_composition_root_provider_default",
         "textureless_bordered_panels_match_pixels_across_dpi",
         "textureless_panel_fill_preserves_opacity_and_srgb_fallback",
@@ -2466,6 +2482,7 @@
       ],
       "manual_scenarios": [
         "CP-05",
+        "CP-10",
         "CP-11",
         "TI-09"
       ],

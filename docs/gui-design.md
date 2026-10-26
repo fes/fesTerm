@@ -507,7 +507,7 @@ Consequences:
   already exists.
 - Users can keep a launcher tab open while other sessions run.
 - The application does not need a separate home-window architecture.
-- Starting a session *from* the active launcher tab (e.g. "Local Shell") replaces that launcher tab in place with the new session tab, keeping the same position and chip identity, rather than leaving the spent launcher behind alongside a separate new tab (`app/festerm/src/tabs.rs`'s `start_local_session`). Starting a session while some other tab is active (e.g. via a keyboard shortcut) still opens a new tab rather than replacing whatever is currently active.
+- Starting a session *from* the active launcher tab (e.g. "Local Shell") replaces that launcher tab in place with the new session tab, keeping the same position and chip identity, rather than leaving the spent launcher behind alongside a separate new tab (`app/festerm/src/tabs.rs`'s `start_local_session`). **Connect** for a saved profile from the active Profiles tab follows the same rule for local, SSH, terminal SFTP, serial, and graphical SFTP launches. A synchronous terminal startup failure leaves Profiles available and activates the ordinary error-bearing session in a separate tab. Graphical SFTP reuses the chip for its credential form, but the password/private-key/passphrase draft and each field's toolkit-owned edit/undo state are owned by that exact form instance, not the preserved chip identity. **Back to Profiles**, Escape, global/chrome **Open Profiles**, successful submission, close, and any other content replacement therefore zeroize repository-controlled live draft storage and scrub retained undo/redo snapshots before erasing those widget states; opening a different target in the same chip starts empty in password mode, and Undo cannot recover the prior target's credentials. Submitted password and passphrase copies remain in zeroizing application, worker, and vendored russh authentication owners through success, failure, cancellation, and reconnect; the russh queued method is retired as soon as authentication succeeds or fails, and its debug output and packet diagnostics expose metadata rather than credential or packet contents. These guarantees cover normal repository-controlled live buffers and teardown. They do not guarantee erasure of allocator slack or previously freed allocations, abrupt process termination or OS swap/core-dump state, native input/IME intermediates, clipboard/accessibility/recording capture, or third-party cryptographic-library internals. Submitting valid authentication continues in that same chip. Later host-key, authentication, and connection failures use the existing session's prompts, retry, and close paths. Other active surfaces, and ad-hoc launches while Profiles is active (e.g. a local-shell shortcut), still open a new tab rather than replacing unrelated content. Profiles can be reopened normally after a successful launch.
 
 ### New Tab behavior
 
@@ -2757,8 +2757,10 @@ disable them.
 - Copy reads selected cells from fesTerm's model and remains available for any
   retained selectable buffer. It joins soft-wrapped rows, preserves real line
   breaks, omits unused trailing cells, and preserves displayed wide/combining
-  Unicode. Copying a selection clears it afterward, matching other terminal
-  programs.
+  Unicode. At the native Windows clipboard boundary, text line breaks are
+  normalized to the CRLF representation required by `CF_UNICODETEXT`; internal
+  selection text and non-Windows clipboards retain their native representation.
+  Copying a selection clears it afterward, matching other terminal programs.
 - Paste reads the OS clipboard and uses the ordered bounded session input path.
   It remains available whenever a live session accepts input and compatible
   clipboard text exists. A terminal program cannot disable it.
@@ -2857,6 +2859,9 @@ the selected width. The policy is captured on entry. Wide/combining graphemes
 remain indivisible: touching either half of a wide glyph copies the whole
 grapheme once, potentially extending that row's copied width beyond an edge.
 Visible text never exports hyperlink targets or terminal protocol sequences.
+On Windows, the shared clipboard boundary converts those top-to-bottom logical
+rows to CRLF without changing their order, including when pasted into another
+terminal application.
 On exit the next paint refreshes from current live state; a resized window may
 clip the frozen grid until that refresh. Native clipboard delivery and
 cross-renderer/DPI/keyboard usability remain pending under `TI-17`.

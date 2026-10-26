@@ -3,6 +3,43 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Preserving copied row order at the Windows clipboard boundary
+
+Rectangle copy produced top-to-bottom logical rows separated by LF, but the
+Windows clipboard adapter passed those bytes unchanged to `CF_UNICODETEXT`.
+That format requires CRLF line endings, so the LF-only multiline value was
+nonconforming and could render incorrectly in consumers such as Windows
+Terminal. The shared Windows clipboard boundary now canonicalizes LF, CR, and
+CRLF to one CRLF per logical line while preserving row order and Unicode. A
+deterministic regression covers mixed newline inputs; confirming the reported
+reversed presentation requires the native fesTerm-to-Windows-Terminal handoff
+still listed under TI-01.
+
+## Connecting from Profiles without leaving a spent tab
+
+Profiles Connect used the same commands as Launcher, but placement only
+recognized Launcher as a reusable surface. Saved-profile terminal and GUI
+SFTP launches now consume Profiles in place too, preserving chip identity
+and order. Ad-hoc launches still add a tab, and a synchronous terminal startup
+failure preserves Profiles beside the existing error-bearing session.
+GUI SFTP's credential step owns its transient password/private-key/passphrase
+draft and toolkit edit/undo state independently of the preserved chip identity,
+zeroizing repository-controlled live draft storage and scrubbing retained
+undo/redo snapshots on normal teardown. Submitted password and passphrase
+copies remain in zeroizing owners through the application, SSH worker and
+vendored russh authentication queue. The queued method is retired immediately
+on authentication success or failure, while debug and packet diagnostics expose
+metadata rather than credential or packet contents.
+Back/Escape, global Open Profiles, successful submission, close, and other
+content replacement all drop that form instance and erase its widget states,
+so another target opened in the same chip starts empty in password mode and
+Undo cannot recover the prior target's credentials. Deterministic placement,
+command, production-path A-to-B, and credential-form tests cover the policy;
+native focus and usability remain classified under CP-10 rather than claimed
+as completed. The erasure claim is limited to normal repository-controlled
+live buffers; allocator history, abrupt process termination, OS input and
+capture facilities, and third-party cryptographic internals remain outside it.
+
 ## v0.10.4: stable copying, native diagrams and terminal input repairs
 
 This patch release packages the merged fixes and capabilities since v0.10.3.
