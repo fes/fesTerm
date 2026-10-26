@@ -52,9 +52,27 @@ in scrolled history it starts at the viewport's upper-left cell.
 **Ctrl+Alt+Shift+arrows** move that target one cell, with an outline and
 row/column feedback.
 Escape clears the target. These fixed, local presentation gestures do not
-enter the application shortcut dispatcher or send terminal keys. Instructions
-and refusal feedback are visible and accessible without the application status
-bar. Ordinary clicks, drags, Copy and application shortcuts retain their meaning.
+enter the application shortcut dispatcher or send terminal keys. They use the
+same application-owned terminal-input predicate as ordinary terminal routing,
+not transient widget-focus bookkeeping. Native Text/IME payload ownership is
+explicitly bounded to the consumed shortcut's held-key lifetime. A payload
+arriving in a later event batch is still local only while that recognized key
+remains held; key release or any unrelated keypress ends ordinary Text
+ownership immediately. An IME
+composition that begins while the shortcut is owned remains owned through its
+terminating commit. Native empty-preedit termination may retain that explicit
+composition for one following event batch so a split commit remains local;
+duplicate empty preedits do not renew the grace, and absent a commit it expires
+before a later unrelated composition. Capture cannot otherwise suppress an
+unrelated same-batch character after release. IME dismissal and unrelated
+commits still reach terminal keyboard state. Window focus loss, terminal-input
+blackout and a presentation gap all clear held, pending and IME ownership so a
+hidden view cannot suppress input when it returns. Held arrow repeats move
+the target while duplicate non-repeat shortcut presses remain local. Window
+focus loss clears held-key ownership. Instructions and refusal feedback are
+visible and accessible without the application status bar; passive
+overwrite/resize/eviction cancellation notices expire automatically. Ordinary
+clicks, drags, Copy and application shortcuts retain their meaning.
 
 Layout precedes segmentation. A vertical box/ASCII border or internal run of
 two spaces bounds the clicked row's text segment. Such layouts conservatively
@@ -79,6 +97,11 @@ inference. No background queue or retained history scan is introduced. Selected
 cell text, dimensions and wrap metadata are revalidated before painting/Copy;
 overwritten, evicted, resized or reflowed content cancels rather than copying a
 stale inference. Unchanged absolute history rows survive continued output.
+Validation also binds to a core-owned monotonic screen-buffer generation, so
+alternate-screen exit/re-entry or reset cannot resurrect an inference merely
+because the replacement buffer contains identical cells. The production frame
+performs this validation once after history synchronization and before context
+menu construction or painting, removing both stale state and highlight.
 
 **Quality gates:** deterministic fixture expectations must remain exact, with
 zero cross-pane exports for supported border/gap layouts. Native

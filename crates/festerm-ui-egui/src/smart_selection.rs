@@ -27,13 +27,13 @@ pub(crate) struct SmartSelection {
     pub rows: Vec<SmartRow>,
     pub conservative: bool,
     dimensions: festerm_core::Dimensions,
-    alternate: bool,
+    screen_generation: u64,
 }
 
 impl SmartSelection {
     pub fn text(&self, snapshot: TerminalSnapshot<'_>) -> Option<String> {
         if snapshot.dimensions() != self.dimensions
-            || snapshot.modes().alternate_screen() != self.alternate
+            || snapshot.screen_generation() != self.screen_generation
         {
             return None;
         }
@@ -320,7 +320,7 @@ pub(crate) fn infer(
         rows: selected,
         conservative,
         dimensions: snapshot.dimensions(),
-        alternate: snapshot.modes().alternate_screen(),
+        screen_generation: snapshot.screen_generation(),
     })
 }
 
@@ -480,10 +480,28 @@ mod tests {
         );
         terminal.ingest(b"\x1b[?1049l");
         let selection = select(&terminal, 1, 0, SmartSelectionScope::Sentence);
+        terminal.ingest(b"\x1b[?1049hsame text\x1b[?1049l");
+        assert_eq!(
+            selection_text(TerminalSnapshot::from_terminal(&terminal), &selection),
+            None,
+            "a hidden alternate enter/exit cannot resurrect primary selection identity"
+        );
+
+        let selection = select(&terminal, 1, 0, SmartSelectionScope::Sentence);
         terminal.resize(Dimensions::new(21, 3).unwrap()).unwrap();
         assert_eq!(
             selection_text(TerminalSnapshot::from_terminal(&terminal), &selection),
             None
+        );
+
+        let mut terminal = make_terminal(20, 3, "same text");
+        let selection = select(&terminal, 1, 0, SmartSelectionScope::Sentence);
+        terminal.reset_to_initial_state();
+        terminal.ingest(b"same text");
+        assert_eq!(
+            selection_text(TerminalSnapshot::from_terminal(&terminal), &selection),
+            None,
+            "identical post-reset content belongs to a new buffer lifetime"
         );
     }
 

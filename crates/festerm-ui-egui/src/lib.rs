@@ -76,6 +76,7 @@ pub struct TerminalSnapshot<'a> {
     cursor_style: CursorStyle,
     cursor_style_requested_by_program: bool,
     modes: TerminalModes,
+    screen_generation: u64,
 }
 
 impl<'a> TerminalSnapshot<'a> {
@@ -87,6 +88,7 @@ impl<'a> TerminalSnapshot<'a> {
             cursor_style: terminal.cursor_style(),
             cursor_style_requested_by_program: terminal.cursor_style_requested_by_program(),
             modes: terminal.modes(),
+            screen_generation: terminal.screen_generation(),
         }
     }
 
@@ -123,6 +125,10 @@ impl<'a> TerminalSnapshot<'a> {
 
     pub const fn modes(self) -> TerminalModes {
         self.modes
+    }
+
+    pub const fn screen_generation(self) -> u64 {
+        self.screen_generation
     }
 
     /// Returns a borrowed core cell, preserving width-two/continuation roles.

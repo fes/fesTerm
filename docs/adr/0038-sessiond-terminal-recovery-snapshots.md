@@ -78,9 +78,13 @@ Operational details of protocol v2:
   lengths, truncated payloads, or failed deserialization abort recovery rather
   than being repaired heuristically.
 - Protocol-v2 records now carry an explicit **recovery snapshot schema
-  version**. This release writes schema **2**; legacy v2 records without that
-  field deserialize as schema **0** and are rejected before attach/replacement
-  rather than silently taking over a live session with an unreadable snapshot.
+  version**. The current implementation writes schema **3**; it extends the
+  authoritative terminal model with the monotonic screen-buffer generation
+  required to reject stale presentation identity across alternate-screen
+  transitions and reset. Schema-2 snapshots and legacy v2 records without a
+  schema field (which deserialize as schema **0**) are rejected before
+  attach/replacement rather than silently taking over a live session with an
+  incompatible snapshot.
 - The serialized payload remains the helper's own `bincode` encoding of
   `festerm-core::Terminal`, but it is now decoded under the snapshot byte cap
   and then validated structurally before adoption. Screen dimensions, ring
@@ -90,7 +94,7 @@ Operational details of protocol v2:
   contract, not a long-term archival format: future incompatible layout
   changes require a new snapshot schema and the existing registry/version
   negotiation.
-- Schema 2 retains allocation-capacity accounting for cell text and history
+- Schemas 2 and 3 retain allocation-capacity accounting for cell text and history
   vectors. Text length is not equivalent to owned capacity, and ordinary
   serialization/clone can otherwise change future history eviction. Charges
   are validated against explicit capacity metadata before bounded allocation
