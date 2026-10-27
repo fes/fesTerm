@@ -787,14 +787,17 @@ impl MarkdownViewerTab {
                                     render_state.table_cells.probe = self.table_cell_probe.take();
                                 }
                                 document_rect = Some(
-                                    render_state
-                                        .show_document(
-                                            ui,
-                                            document,
-                                            self.clipboard_owner,
-                                            self.document_revision,
-                                        )
-                                        .document_rect,
+                                    ui.push_id(("markdown-viewer", tab_id), |ui| {
+                                        render_state
+                                            .show_document(
+                                                ui,
+                                                document,
+                                                self.clipboard_owner,
+                                                self.document_revision,
+                                            )
+                                            .document_rect
+                                    })
+                                    .inner,
                                 );
                                 #[cfg(test)]
                                 {
@@ -6765,7 +6768,11 @@ mod tests {
         events: Vec<egui::Event>,
         opacity: f32,
     ) -> [egui::FullOutput; 2] {
-        let tab_id = crate::tabs::AppState::for_test().active();
+        let tab_id = pair[0].0.data_mut(|data| {
+            *data.get_temp_mut_or_insert_with(egui::Id::new("source-oracle-tab"), || {
+                crate::tabs::AppState::for_test().active()
+            })
+        });
         let output = std::array::from_fn(|index| {
             let (context, viewer) = &mut pair[index];
             let mut output = context.run_ui(

@@ -769,6 +769,9 @@ Reparsing retains an inline image only if its owned XML is also unchanged.
 Native DPI, readability, browser/font differences, link handoff and accessibility
 remain CP-06/CP-15 evidence rather than inferred from headless tests.
 
+New documents start at the top; `MD-04`/`EDIT-09` switching restores each open
+document's own scroll state rather than inheriting the last active document.
+
 `MD-04` and `EDIT-03` additionally have complete-table/editor-body preparation
 oracles: exact dependency invalidation, warm preparation/copy counters, bounded
 ordinary fallback and live offscreen navigation, selection/Copy, accessibility
