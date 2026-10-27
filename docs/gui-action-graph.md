@@ -745,6 +745,11 @@ too, though still only partially covered.
 | `MD-06` | `EditorPreview/Viewer → Reloaded/Stale/Closed` | Modify, replace, delete, or conflict with source under the owning surface's freshness policy. | Local editor Preview follows ADR 0034's reload/conflict rules; read-only remote snapshots make no editing/conflict claim, and SSH loss/deletion preserve safe bounded state. | Restore fixture, reload baseline, then close to prior surface. | P,H,N,U; partial |
 | `MD-07` | `Desktop/CLI → Document/Error` | Choose fesTerm in Open With for one or more `.md`/`.markdown` files, cold and already running, or use `festerm --open -- <paths...>`. | The installed handler is optional and does not seize defaults. Native events and bounded user-scoped IPC converge on the document command, never terminal drops/uploads. New files open in Preview in the last-active window; existing files focus their view without losing unsaved edits. Blocking dialogs defer requests; malformed, missing and over-limit requests report errors. | Dismiss errors, close opened documents, or uninstall only fesTerm's association metadata. | H,N,U; partial |
 
+`MD-04` includes offline `mermaid` fences in standalone and shared Preview:
+all native-renderer diagram families are admitted under ADR 0050's bounds;
+source toggle, exact Copy and Find remain available. `MD-05` retains inert
+resource/callback/link behavior and source fallback for invalid/oversize input.
+
 `MD-04`, `MD-05` and `EDIT-09` also share restricted rich selection Copy with
 the original plain-text fallback. Right-click preserves selection and offers
 rich Copy; Shift at menu opening adds exact selected Markdown source from
@@ -778,6 +783,14 @@ ordinary fallback and live offscreen navigation, selection/Copy, accessibility
 and same-pass editor IME. All document widgets remain live; this does not add
 virtualization or implement table-cell byte navigation. Native/manual gates
 remain unchanged.
+
+`MD-04` and `EDIT-09` table-divider regressions inspect actual emitted border
+segments: one full-height internal stroke per column boundary, independent of
+row count, with unchanged cell allocations, horizontal scroll clipping and
+border-overlay order. Header-only, empty-cell and ragged-source fixtures use
+the same layout path. Removing repeated antialias blending intentionally need
+not reproduce the old border pixels; CP-06/CP-15 native readability remains
+pending.
 
 `MD-04` also covers right-click **Copy path** on the standalone toolbar and
 saved-local editor origin bar: the clipboard receives the complete path before
@@ -885,6 +898,16 @@ exact raw fence Copy and keyboard activation remain covered. These CPU
 interaction checks do not replace native `CP-06`/`CP-15` evidence. Table-cell
 byte navigation is a separate, still-unimplemented gap; it is not part of this
 code-row repair.
+
+For `MD-04` and `EDIT-09`, bounded snapshot-owned code-line galleys reuse the
+shared exact document-layout epoch plus each line's wrap width/alignment/
+justification. Complete ordinary/prepared shape, response and accessibility
+oracles retain every live selectable Label, including offscreen and newly
+revealed fences. Warm controls require zero full-job clones/layout requests
+and exact pointer reuse; font/options/style/scale/atlas/reparse, bounded-payload
+fallback, Unicode selection/Copy and retirement controls preserve the same
+workflow. These are CPU correctness invariants, not native performance or
+`CP-06`/`CP-15` acceptance.
 
 ## R. Approved text editor and shared document model
 

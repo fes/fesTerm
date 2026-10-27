@@ -15,6 +15,17 @@ technology, visual judgment, reference-application screen semantics, or a real
 usability question. A reproducible failure should become the smallest suitable
 fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
+## Offline Mermaid (CP-06, CP-15)
+
+Automated coverage renders flowcharts, sequences and representative chart/UML
+families offline; checks malformed and excessive inputs, inert generated links,
+retained textures, source toggle, Find and exact fenced Copy. Native visual,
+readability and screen-reader qualification remains pending: review diagrams
+in standalone remote Preview and local Preview/Split at native scales, using
+source/Find/Copy. This does not qualify every Mermaid.js syntax feature or
+interactive diagram nodes; previews remain inert images under ADR 0050's
+conservative limits.
+
 ## Status vocabulary
 
 - **Automated:** a repository-owned test provides the acceptance evidence.
@@ -1148,6 +1159,15 @@ Live accessibility and Source response geometry are also compared. This is
 automated fidelity evidence, not completed Markdown draw timing or native
 clipboard/screen-reader usability; those pending statuses are unchanged.
 
+CP-06/CP-15 table borders: native visual/readability checks remain pending
+for the single-stroke internal column dividers in standalone Preview and editor
+Preview/Split. Compare tall, header-only, empty-cell and ragged-source tables
+at normal/fractional scale, including horizontal scrolling and selection.
+CPU regressions inspect actual segment counts, clipping, cell responses and
+overlay order; they do not establish native pixels or responsiveness.
+Removing repeated antialias blending may lighten border edges, so exact
+overdrawn baseline pixels are not required.
+
 CP-15 saved-local images: open owned local Markdown fixtures in Preview
 and Split, exceed 64 automatic references and explicitly load the next image.
 Across windows, lower **Image memory budget** below admitted usage, check that
@@ -1585,12 +1605,17 @@ drag/resize responsiveness, and Windows Terminal comparison remain additional
 evidence: an offscreen replay does not establish their latency or parity.
 
 The shared Markdown renderer additionally retains bounded fenced-line formatting
-instructions with each immutable parsed snapshot. Automated ordinary/prepared
-oracles keep complete clipped shapes, accessibility, live Copy and navigation
-equal across width/font/scale/Find/snapshot changes, and test entry/payload caps
-and snapshot retirement. Fonts and wrapping still resolve through live labels;
-these preparation counters do not qualify native latency, clipboard delivery,
-readability or screen-reader behavior under CP-06/CP-15.
+instructions and final galleys with each immutable parsed snapshot. Automated
+ordinary/prepared oracles keep complete clipped shapes, label IDs/bounds/intrinsic
+sizes/sense, accessibility, live selection/Copy and navigation equal across
+width/font/options/scale/theme/Find/snapshot changes and actual atlas reset.
+Warm and newly revealed 400-fence controls require zero full-job layout requests
+and clone payload, with exact galley pointer reuse; entry/payload-cap fallback,
+unsupported placers, failed reload and successful replacement/close retirement
+are deterministic evidence. Fonts/atlas and exact wrapping/alignment invalidate
+retention while every selectable Label remains live. These counters do not
+qualify native latency, clipboard delivery, readability or screen-reader
+behavior under CP-06/CP-15; no native/manual gate is closed.
 
 The bounded Inspector/SFTP pane-and-table coverage adds complete widget
 pixel comparisons and an opt-in completed-render replay. Windows correctness

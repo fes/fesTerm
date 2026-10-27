@@ -36,6 +36,21 @@ now include document identity, and standalone viewer regions include tab
 identity. A switching regression verifies new-at-top and restoration of the
 first document's own position without resetting scroll on every frame.
 
+## Drawing Markdown table column dividers once
+
+The table renderer submitted each full-height internal column border again
+for every row, even though warm layout preparation already reused the cell
+measurements. It now submits each column boundary once at the same border
+overlay stage and inside the same horizontal scroll clip. Row separators,
+prepared widths/heights and live selectable cells retain their existing path.
+
+Focused CPU regressions inspect emitted geometry for tall, ragged-source,
+empty-cell and header-only tables, normal/fractional scale and horizontal
+scrolling. This establishes column-scaled divider submission, not measured
+frame-time improvement. Removing repeated antialias blending can change border
+pixels; sensible single-stroke readability on native platforms remains
+CP-06/CP-15 pending evidence. No cache or ownership boundary changes.
+
 ## Backward terminal navigation and portable Markdown copying
 
 Shift+Tab was losing its modifier before reaching the terminal encoder.
@@ -62,6 +77,17 @@ to text. Deterministic key routing,
 Unicode/duplicate/fenced selection, safe export and stale-menu checks do not
 establish native Copilot navigation, rich-paste interoperability or clipboard
 usability; TI-02 and CP-06/CP-15 retain those native checks.
+
+## Adding offline Mermaid without a browser
+
+Markdown fenced diagrams previously appeared only as source. The owner selected
+native offline rendering rather than Mermaid.js/browser parity. The shared
+desktop Preview now passes `mermaid` fences through a pinned Rust renderer and
+rasterizes internally generated SVG with bundled fonts and disabled external
+image resolution. Two background workers and explicit input/output/snapshot
+limits keep work off the UI thread; failures keep readable source. Source
+toggle, Find and exact Copy remain available. ADR 0050 records the extended
+contract, conservative limits and remaining native visual/accessibility gates.
 
 ## Optional terminal fonts without the embedded payload
 
@@ -482,6 +508,25 @@ geometry survives between frames. The ordinary/prepared oracle compares complete
 shapes, accessibility and commands across width, font, scale, Find, scrolling
 and snapshot changes; deterministic counters prove that 400 warm lines stop
 rebuilding their formatting. Native latency and readability gates remain open.
+
+## Keeping warm fenced-code lines out of the full-job font-cache path
+
+Retaining formatting instructions alone still made egui's Label clone every
+line's text and sections, then hash the whole job before checking visibility.
+Preview now retains bounded final code-line galleys using the existing shared
+document-layout epoch and payload accounting. Exact width/alignment and the
+font/atlas/style epoch invalidate reuse; successful snapshot replacement and
+view closure retire it. The separate allowance is 4,096 galleys and 16 MiB of
+conservatively charged capacities per view, with ordinary complete rendering
+for rejected entries and unsupported layouts.
+
+The existing ordinary/prepared oracle now also checks code response identities,
+geometry, intrinsic sizes and sense. Focused controls require exact pointer reuse
+and zero warm full-job layouts/clone payload across all 400 lines, including a
+revealed tail; dependency/atlas changes, Unicode selection/Copy, payload/count
+overflow and snapshot retirement retain complete shapes and accessibility.
+All selectable Labels still run: this is not viewport virtualization, a vendor
+Label change, a measured native speedup or closure of CP-06/CP-15.
 
 ## Merging editor formatting boundaries without a third list
 

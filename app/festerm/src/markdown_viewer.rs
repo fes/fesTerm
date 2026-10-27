@@ -123,6 +123,7 @@ const MAX_PREPARED_SOURCE_JOBS: usize = 8192;
 const MAX_PREPARED_SOURCE_JOB_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 const MAX_PREPARED_CODE_JOBS: usize = 4096;
 const MAX_PREPARED_CODE_JOB_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
+const MAX_PREPARED_CODE_GALLEY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_SOURCE_PREPARATION_QUERY_BYTES: usize = 4096;
 const MAX_GEOMETRY_FONT_MAP_ENTRIES: usize = 128;
 const MAX_GEOMETRY_FONT_NAME_BYTES: usize = 8 * 1024;
@@ -1795,16 +1796,143 @@ impl PreparedTable {
 
 #[derive(Default)]
 struct CodeLinePreparation {
+    diagrams: crate::markdown_diagrams::MermaidDiagrams,
     jobs: BTreeMap<(usize, usize), Arc<LayoutJob>>,
     payload_bytes: usize,
+    epoch: LayoutEpoch,
+    galleys: BTreeMap<(usize, usize), PreparedCodeLine>,
+    galley_payload_bytes: usize,
     #[cfg(test)]
     probe: Option<CodeLinePreparationProbe>,
 }
 
+struct PreparedCodeLine {
+    width: f32,
+    halign: Align,
+    justify: bool,
+    galley: Arc<egui::Galley>,
+    payload_bytes: usize,
+}
+
 impl CodeLinePreparation {
     fn clear(&mut self) {
+        self.diagrams.clear();
         self.jobs.clear();
         self.payload_bytes = 0;
+        self.clear_galleys();
+    }
+
+    fn clear_galleys(&mut self) {
+        self.galleys.clear();
+        self.galley_payload_bytes = 0;
+    }
+
+    fn begin(&mut self, ui: &egui::Ui) {
+        if !self.epoch.refresh(ui) {
+            self.clear_galleys();
+        }
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.layouts = 0;
+            probe.clone_payload_bytes = 0;
+            probe.galley_hits = 0;
+            probe.observations.clear();
+        }
+    }
+
+    fn label(
+        &mut self,
+        ui: &mut egui::Ui,
+        block_start: usize,
+        index: usize,
+        line: &HighlightedCodeLine,
+    ) -> egui::Response {
+        #[cfg(test)]
+        let ordinary = self.probe.as_ref().is_some_and(|probe| probe.ordinary);
+        #[cfg(not(test))]
+        let ordinary = false;
+        // render_code_block owns fresh Frame/ScrollArea children, so its
+        // ordinary top-down placer cannot inherit a grid. Other layouts keep
+        // Label's complete fallback, including wrapping multi-rect rows.
+        let width = ui.available_width();
+        let supported = *ui.layout() == egui::Layout::top_down(Align::Min) && width >= 0.0;
+        if ordinary || !supported {
+            let job = self.line(block_start, index, line);
+            return ui.add(egui::Label::new(job).selectable(true).wrap());
+        }
+        let key = (block_start, index);
+        let halign = ui.layout().horizontal_placement();
+        let justify = ui.layout().horizontal_justify();
+        let current = self.galleys.get(&key).filter(|prepared| {
+            prepared.width == width && prepared.halign == halign && prepared.justify == justify
+        });
+        let galley = if let Some(prepared) = current {
+            #[cfg(test)]
+            if let Some(probe) = &mut self.probe {
+                probe.galley_hits += 1;
+            }
+            prepared.galley.clone()
+        } else {
+            if let Some(previous) = self.galleys.remove(&key) {
+                self.galley_payload_bytes -= previous.payload_bytes;
+            }
+            let job = self.line(block_start, index, line);
+            #[cfg(test)]
+            let shared = Arc::strong_count(&job) > 1;
+            let mut job = Arc::unwrap_or_clone(job);
+            #[cfg(test)]
+            if let Some(probe) = &mut self.probe {
+                probe.layouts += 1;
+                if shared {
+                    probe.clone_payload_bytes += job.text.capacity()
+                        + job.sections.capacity()
+                            * std::mem::size_of::<egui::text::LayoutSection>();
+                }
+            }
+            job.wrap.max_width = width;
+            job.halign = halign;
+            job.justify = justify;
+            let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+            self.retain(key, width, halign, justify, &galley);
+            galley
+        };
+        let intrinsic_size = galley.intrinsic_size();
+        let mut response = ui.add(egui::Label::new(galley).selectable(true).wrap());
+        // Label's Galley arm omits the ordinary job arm's intrinsic-size update.
+        response.set_intrinsic_size(intrinsic_size);
+        response
+    }
+
+    fn retain(
+        &mut self,
+        key: (usize, usize),
+        width: f32,
+        halign: Align,
+        justify: bool,
+        galley: &Arc<egui::Galley>,
+    ) {
+        let Some(payload_bytes) = galley_payload_bytes(galley)
+            .and_then(|bytes| bytes.checked_add(std::mem::size_of::<PreparedCodeLine>()))
+            .and_then(|bytes| bytes.checked_add(std::mem::size_of::<(usize, usize)>()))
+        else {
+            return;
+        };
+        if self.galleys.len() < MAX_PREPARED_CODE_JOBS
+            && payload_bytes
+                <= MAX_PREPARED_CODE_GALLEY_BYTES.saturating_sub(self.galley_payload_bytes)
+        {
+            self.galley_payload_bytes += payload_bytes;
+            self.galleys.insert(
+                key,
+                PreparedCodeLine {
+                    width,
+                    halign,
+                    justify,
+                    galley: galley.clone(),
+                    payload_bytes,
+                },
+            );
+        }
     }
 
     fn line(
@@ -1836,9 +1964,8 @@ impl CodeLinePreparation {
             && payload_bytes
                 <= MAX_PREPARED_CODE_JOB_PAYLOAD_BYTES.saturating_sub(self.payload_bytes)
         {
-            // Only immutable, snapshot-owned formatting instructions survive.
-            // Labels still resolve fonts, wrapping, selection and accessibility
-            // every frame; no galley, atlas reference or geometry is retained.
+            // Immutable snapshot instructions also serve the conservative
+            // fallback when a galley cannot fit its separate payload budget.
             self.jobs.insert(key, job.clone());
             self.payload_bytes += payload_bytes;
         }
@@ -1852,6 +1979,10 @@ struct CodeLinePreparationProbe {
     ordinary: bool,
     preparations: usize,
     prepared_text_bytes: usize,
+    layouts: usize,
+    clone_payload_bytes: usize,
+    galley_hits: usize,
+    observations: Vec<(egui::Id, egui::Rect, Option<egui::Vec2>, egui::Sense)>,
 }
 
 #[derive(Default)]
@@ -3087,6 +3218,7 @@ impl MarkdownRenderState<'_> {
             clipboard::begin(ui);
         }
         self.table_layouts.begin(ui, self.find);
+        self.code_preparation.begin(ui);
         let viewport_height = ui.available_height().max(120.0);
         let layout = ui
             .horizontal(|ui| {
@@ -3543,27 +3675,27 @@ impl MarkdownRenderState<'_> {
                             cell_rects.push(row_rects);
                         }
 
-                        if let Some(first_row) = cell_rects.first() {
-                            let table_rect = cell_rects
-                                .iter()
-                                .flatten()
-                                .fold(first_row[0], |rect, next| rect.union(*next));
+                        let mut cells = cell_rects.iter().flatten();
+                        if let Some(first_cell) = cells.next() {
+                            let table_rect =
+                                cells.fold(*first_cell, |rect, next| rect.union(*next));
                             ui.painter().rect_stroke(
                                 table_rect,
                                 0.0,
                                 egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
                                 egui::StrokeKind::Inside,
                             );
-                            for row in &cell_rects {
-                                for cell in row.iter().take(row.len().saturating_sub(1)) {
-                                    ui.painter().line_segment(
-                                        [
-                                            egui::pos2(cell.right(), table_rect.top()),
-                                            egui::pos2(cell.right(), table_rect.bottom()),
-                                        ],
-                                        egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
-                                    );
-                                }
+                            // Full-height dividers belong to columns, not rows.
+                            let mut right = table_rect.left();
+                            for width in widths.iter().take(widths.len().saturating_sub(1)) {
+                                right += width;
+                                ui.painter().line_segment(
+                                    [
+                                        egui::pos2(right, table_rect.top()),
+                                        egui::pos2(right, table_rect.bottom()),
+                                    ],
+                                    egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                                );
                             }
                             for row in cell_rects.iter().take(cell_rects.len().saturating_sub(1)) {
                                 let Some(first_cell) = row.first() else {
@@ -3636,6 +3768,20 @@ impl MarkdownRenderState<'_> {
                         bottom: CODE_BLOCK_PADDING_Y - CODE_BLOCK_TRAILING_LEAD,
                     })
                     .show(ui, |ui| {
+                        if block.language() == Some("mermaid") {
+                            let reveal_source = self.find.matches().iter().any(|found| {
+                                byte_range_contains(block.span(), found.span().start().byte_offset())
+                            }) || self.code_preparation.diagrams.has_find_match(block.span().byte_range())
+                                || matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(block.span(), target));
+                            if !self.code_preparation.diagrams.show(
+                                ui,
+                                block.span().start().byte_offset(),
+                                block.code_text(),
+                                reveal_source,
+                            ) {
+                                return;
+                            }
+                        }
                         let mut vertical_scroll_target = None;
                         egui::ScrollArea::horizontal()
                             .id_salt(("markdown-code", block.span().byte_range().start))
@@ -3643,14 +3789,21 @@ impl MarkdownRenderState<'_> {
                                 ui.spacing_mut().item_spacing.y = CODE_LINE_SPACING;
                                 let mut code_offset = 0;
                                 for (index, line) in block.highlighted_lines().iter().enumerate() {
-                                    let job = self.code_preparation.line(
+                                    let response = self.code_preparation.label(
+                                        ui,
                                         block.span().start().byte_offset(),
                                         index,
                                         line,
                                     );
-                                    let response = ui.add(
-                                        egui::Label::new(job).selectable(true).wrap(),
-                                    );
+                                    #[cfg(test)]
+                                    if let Some(probe) = &mut self.code_preparation.probe {
+                                        probe.observations.push((
+                                            response.id,
+                                            response.rect,
+                                            response.intrinsic_size(),
+                                            response.sense,
+                                        ));
+                                    }
                                     let text = trim_line_ending(line.text());
                                     clipboard::code_line(ui, &response, document, block, text, code_offset);
                                     code_offset += line.text().len();
@@ -5473,6 +5626,7 @@ impl MarkdownPreviewPane {
             heading_tops: Some(&mut heading_tops),
         };
         state.table_layouts.begin(ui, state.find);
+        state.code_preparation.begin(ui);
         #[cfg(test)]
         {
             state.table_cells.probe = self.table_cell_probe.take();
@@ -5572,6 +5726,14 @@ impl MarkdownPreviewPane {
         self.visible_heading = Some(index);
         self.requested_heading = Some(index);
         self.frames_in_flight = 0;
+    }
+
+    pub(crate) fn set_find_offsets(&mut self, offsets: impl Iterator<Item = usize>) {
+        self.code_preparation.diagrams.set_find_offsets(offsets);
+    }
+
+    pub(crate) fn scroll_to_byte(&mut self, offset: usize) {
+        self.pending_scroll = Some(PendingScroll::Byte(offset));
     }
 
     /// The headings the current parse found, for a caller drawing its own
@@ -6340,6 +6502,53 @@ mod tests {
             },
             (),
         )
+    }
+
+    #[test]
+    fn mermaid_fences_render_in_shared_preview_keep_copy_and_reveal_find_matches() {
+        let source = "flowchart LR\n A[Start] --> B[Finish]\n";
+        let text = format!("```mermaid\n{source}```\n\n```rust\nlet plain = 1;\n```\n");
+        let mut harness = Harness::builder()
+            .with_size(vec2(900.0, 700.0))
+            .build_ui_state(
+                |ui, pane: &mut MarkdownPreviewPane| pane.show(ui),
+                MarkdownPreviewPane::new(
+                    MarkdownSource::from(
+                        LocalMarkdownSource::new(PathBuf::from("controlled-mermaid.md")).unwrap(),
+                    ),
+                    &text,
+                ),
+            );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while harness.query_by_label("Show Mermaid source").is_none() {
+            assert!(Instant::now() < deadline, "Mermaid worker did not finish");
+            thread::sleep(Duration::from_millis(5));
+            harness.run();
+        }
+        assert!(harness.query_by_label("flowchart LR").is_none());
+        assert!(harness.query_by_label("let plain = 1;").is_some());
+        harness
+            .get_all_by_label("Copy the code block")
+            .next()
+            .unwrap()
+            .click();
+        harness.step();
+        assert_eq!(
+            harness.output().platform_output.commands,
+            vec![egui::OutputCommand::CopyText(source.to_owned())]
+        );
+        harness.get_by_label("Show Mermaid source").click();
+        harness.run();
+        harness.get_by_label("flowchart LR");
+        harness.get_by_label("Show Mermaid source").click();
+        harness.run();
+        assert!(harness.query_by_label("flowchart LR").is_none());
+        let pane = harness.state_mut();
+        pane.find
+            .set_query(pane.document.as_ref().unwrap(), "Start".into());
+        harness.run();
+        harness.get_by_label("flowchart LR");
+        assert_eq!(harness.state().rendered_text(), text);
     }
 
     /// epaint anchors a text section's background at `baseline -
@@ -8299,6 +8508,23 @@ mod tests {
         assert_eq!(pair[0].1.pending_scroll, pair[1].1.pending_scroll);
         assert_eq!(pair[0].1.visible_heading, pair[1].1.visible_heading);
         assert_eq!(pair[0].1.heading_tops, pair[1].1.heading_tops);
+        assert_eq!(
+            pair[0]
+                .1
+                .code_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .observations,
+            pair[1]
+                .1
+                .code_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .observations,
+            "frame {frame}: code label identities, bounds, intrinsic sizes and sense"
+        );
         let old_cells = pair[0].1.table_cell_probe.as_ref().unwrap();
         let new_cells = pair[1].1.table_cell_probe.as_ref().unwrap();
         assert_eq!(old_cells.observations, new_cells.observations);
@@ -8356,6 +8582,178 @@ mod tests {
         }
         pair[1].1.table_layouts.ordinary = false;
         pair
+    }
+
+    fn assert_table_divider_geometry(
+        output: &egui::FullOutput,
+        table: &PreparedTable,
+    ) -> (egui::Rect, egui::Rect) {
+        let stroke = egui::Stroke::new(1.0, theme::BORDER_SUBTLE);
+        let (border_index, border, clip) = output
+            .shapes
+            .iter()
+            .enumerate()
+            .find_map(|(index, shape)| match &shape.shape {
+                egui::Shape::Rect(rect)
+                    if rect.corner_radius == egui::CornerRadius::ZERO
+                        && rect.stroke == stroke
+                        && rect.stroke_kind == egui::StrokeKind::Inside =>
+                {
+                    Some((index, rect.rect, shape.clip_rect))
+                }
+                _ => None,
+            })
+            .expect("the real table outline must be painted");
+        assert!((border.width() - table.widths.iter().sum::<f32>()).abs() < 0.01);
+        assert!(
+            (border.height() - table.rows.iter().map(|row| row.height).sum::<f32>()).abs() < 0.01
+        );
+        let mut verticals = Vec::new();
+        let mut horizontals = Vec::new();
+        for (index, shape) in output.shapes.iter().enumerate() {
+            if let egui::Shape::LineSegment {
+                points,
+                stroke: actual,
+            } = &shape.shape
+            {
+                if *actual != stroke {
+                    continue;
+                }
+                assert!(index > border_index, "dividers follow cells and outline");
+                assert_eq!(shape.clip_rect, clip, "all borders share the table clip");
+                if points[0].x == points[1].x {
+                    assert_eq!(points[0].y, border.top());
+                    assert_eq!(points[1].y, border.bottom());
+                    verticals.push(points[0].x);
+                } else {
+                    assert_eq!(points[0].x, border.left());
+                    assert_eq!(points[1].x, border.right());
+                    assert_eq!(points[0].y, points[1].y);
+                    horizontals.push(points[0].y);
+                }
+            }
+        }
+        assert_eq!(
+            verticals.len(),
+            table.widths.len() - 1,
+            "one actual full-height stroke per internal column, regardless of row count"
+        );
+        let mut right = border.left();
+        for (actual, width) in verticals.iter().zip(&table.widths) {
+            right += width;
+            assert_eq!(*actual, right);
+        }
+        assert_eq!(horizontals.len(), table.rows.len() - 1);
+        let mut bottom = border.top();
+        for (actual, row) in horizontals.iter().zip(&table.rows) {
+            bottom += row.height;
+            assert!((*actual - bottom).abs() < 0.01);
+        }
+        if table
+            .rows
+            .iter()
+            .flat_map(|row| &row.galleys)
+            .any(|galley| !galley.job.text.is_empty())
+        {
+            assert!(
+                output.shapes[..border_index]
+                    .iter()
+                    .any(|shape| matches!(shape.shape, egui::Shape::Text(_))),
+                "visible cell text is painted before the border overlay"
+            );
+        }
+        (border, clip)
+    }
+
+    #[test]
+    fn table_dividers_emit_once_per_column_for_tall_ragged_empty_and_header_only_tables() {
+        let header = "| Left | Middle | Right |\n| :--- | :---: | ---: |\n";
+        for text in [
+            header.to_owned(),
+            format!("{header}| a | b | c |\n"),
+            format!("{header}{}", "| a | b | c |\n".repeat(64)),
+            format!("{header}| short |\n| | | |\n| a | b |\n"),
+            "| Only |\n| --- |\n| body |\n".to_owned(),
+            "| | | |\n| --- | --- | --- |\n| | | |\n".to_owned(),
+        ] {
+            let parsed = document(&text);
+            let Block::Table(block) = &parsed.blocks()[0] else {
+                panic!("expected a table fixture");
+            };
+            let expected_cells: usize = block.rows().iter().map(|row| row.cells().len()).sum();
+            for width in [360.0, 1180.0] {
+                for scale in [1.0, 1.25] {
+                    let mut pair = document_layout_pair(&text);
+                    for (context, _) in &pair {
+                        context.set_pixels_per_point(scale);
+                    }
+                    for frame in 0..3 {
+                        let output =
+                            caption_oracle_frame(&mut pair, frame, vec2(width, 760.0), Vec::new());
+                        let pane = &pair[1].1;
+                        let table = pane.table_layouts.tables.values().next().unwrap();
+                        assert_table_divider_geometry(&output[1], table);
+                        let cells = &pane.table_cell_probe.as_ref().unwrap().observations;
+                        assert_eq!(cells.len(), expected_cells, "every cell remains live");
+                        assert!(cells
+                            .iter()
+                            .all(|cell| cell.enabled && cell.sense.senses_click()));
+                        if frame == 2 {
+                            assert_eq!(pane.table_layouts.preparations, 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn table_dividers_scroll_with_cells_inside_the_existing_clip() {
+        let text = concat!(
+            "| First | Second | Third | Fourth | Fifth | Sixth | Seventh | Eighth |\n",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |\n",
+            "| a | b | c | d | e | f | g | h |\n",
+        );
+        let mut pair = document_layout_pair(text);
+        let size = vec2(360.0, 400.0);
+        caption_oracle_frame(&mut pair, 0, size, Vec::new());
+        let output = caption_oracle_frame(&mut pair, 1, size, Vec::new());
+        let table = pair[1].1.table_layouts.tables.values().next().unwrap();
+        let (before, clip) = assert_table_divider_geometry(&output[1], table);
+        assert!(before.width() > clip.width(), "the fixture must overflow");
+        let cell_before = pair[1].1.table_cell_probe.as_ref().unwrap().observations[0].rect;
+        let pointer = before.intersect(clip).center();
+        let output = caption_oracle_frame(
+            &mut pair,
+            2,
+            size,
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: vec2(-80.0, 0.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        let table = pair[1].1.table_layouts.tables.values().next().unwrap();
+        assert_table_divider_geometry(&output[1], table);
+        // Scroll input is applied after this frame's content has been laid out.
+        let output = caption_oracle_frame(&mut pair, 3, size, Vec::new());
+        let table = pair[1].1.table_layouts.tables.values().next().unwrap();
+        let (after, after_clip) = assert_table_divider_geometry(&output[1], table);
+        let cell_after = pair[1].1.table_cell_probe.as_ref().unwrap().observations[0].rect;
+        assert!(
+            after.left() < before.left(),
+            "horizontal scroll must move ink"
+        );
+        assert!((after.size() - before.size()).abs().max_elem() < 0.01);
+        assert_eq!(after_clip, clip);
+        assert!(
+            (cell_after.left() - cell_before.left() - (after.left() - before.left())).abs() < 0.01
+        );
+        assert_eq!(pair[1].1.table_layouts.preparations, 0);
     }
 
     #[test]
@@ -9031,6 +9429,284 @@ mod tests {
     }
 
     #[test]
+    fn code_line_galleys_skip_warm_job_clones_and_layouts_even_when_revealed() {
+        let mut pair = caption_oracle_pair(&code_navigation_fixture());
+        let size = vec2(1180.0, 760.0);
+        let tail = "nav_target_399";
+        for frame in 0..3 {
+            let output = caption_oracle_frame(&mut pair, frame, size, Vec::new());
+            assert!(visible_code_geometry(&output[1], tail).is_none());
+        }
+        let retained: Vec<_> = pair[1]
+            .1
+            .code_preparation
+            .galleys
+            .iter()
+            .map(|(key, prepared)| (*key, prepared.galley.clone()))
+            .collect();
+        assert_eq!(retained.len(), 400);
+        for frame in 3..8 {
+            if frame == 3 {
+                for (_, pane) in &mut pair {
+                    pane.find
+                        .set_query(pane.document.as_ref().unwrap(), "Entry".into());
+                    pane.pending_scroll = Some(PendingScroll::Byte(
+                        pane.code_copy_probe.as_ref().unwrap().buttons[399]
+                            .source
+                            .start,
+                    ));
+                }
+            }
+            let output = caption_oracle_frame(&mut pair, frame, size, Vec::new());
+            let preparation = &pair[1].1.code_preparation;
+            let probe = preparation.probe.as_ref().unwrap();
+            assert_eq!(probe.galley_hits, 400);
+            assert_eq!(probe.layouts, 0);
+            assert_eq!(probe.clone_payload_bytes, 0);
+            assert_eq!(probe.preparations, 400);
+            for (key, galley) in &retained {
+                assert!(Arc::ptr_eq(galley, &preparation.galleys[key].galley));
+            }
+            if frame == 7 {
+                // Byte navigation targets the code row, not its separate header.
+                let (rect, clip) = visible_code_geometry(&output[1], tail)
+                    .expect("the previously offscreen code row must be revealed");
+                assert!(clip.contains(rect.center()));
+            }
+        }
+        assert!(pair[1].1.pending_scroll.is_none());
+        let weak = Arc::downgrade(&retained[0].1);
+        drop(retained);
+        let owners = weak.strong_count();
+        rebind_caption_oracle(&mut pair, "```text\nreplacement\n```\n");
+        assert_eq!(weak.strong_count(), owners - 1);
+        assert_eq!(pair[1].1.code_preparation.galley_payload_bytes, 0);
+        caption_oracle_frame(&mut pair, 8, size, Vec::new());
+        let weak = Arc::downgrade(
+            &pair[1]
+                .1
+                .code_preparation
+                .galleys
+                .values()
+                .next()
+                .unwrap()
+                .galley,
+        );
+        // Egui may still own the same galley in its ordinary font cache.
+        // Dropping the owner must remove our retention, not evict egui's cache.
+        drop(pair);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn code_line_galleys_invalidate_exact_dependencies_and_preserve_unicode_selection() {
+        let source = "```text\ncafé 漢字\n\n\tindented\n```\n";
+        let mut pair = caption_oracle_pair(source);
+        let size = vec2(1180.0, 760.0);
+        caption_oracle_frame(&mut pair, 0, size, Vec::new());
+        for (frame, control) in [
+            "width", "fonts", "options", "scale", "theme", "override", "atlas", "revision",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let size = if control == "width" {
+                vec2(360.0, 760.0)
+            } else {
+                size
+            };
+            for (context, _) in &pair {
+                match control {
+                    "fonts" => {
+                        let mut fonts = egui::FontDefinitions::default();
+                        fonts.families.insert(
+                            egui::FontFamily::Monospace,
+                            fonts.families[&egui::FontFamily::Proportional].clone(),
+                        );
+                        context.set_fonts(fonts);
+                    }
+                    "options" => context.global_style_mut(|style| {
+                        style.visuals.text_options.font_hinting =
+                            !style.visuals.text_options.font_hinting;
+                    }),
+                    "scale" => {
+                        context.set_pixels_per_point(1.25);
+                        // Context::begin_pass overrides screen_rect while
+                        // activating zoom. Activate it before measuring at our
+                        // fixed input rectangle, rather than calling that
+                        // transient rectangle the first stable-width frame.
+                        let mut output = context.run_ui(Default::default(), |_| {});
+                        output.textures_delta.clear();
+                        assert_eq!(context.pixels_per_point(), 1.25);
+                    }
+                    "theme" => context.set_visuals(egui::Visuals::light()),
+                    "override" => context.global_style_mut(|style| {
+                        style.visuals.override_text_color = Some(egui::Color32::RED);
+                    }),
+                    "atlas" => crate::document_layout::exhaust_font_atlas(context),
+                    _ => {}
+                }
+            }
+            if control == "revision" {
+                rebind_caption_oracle(&mut pair, source);
+            }
+            caption_oracle_frame(&mut pair, frame * 2 + 1, size, Vec::new());
+            let preparation = &pair[1].1.code_preparation;
+            assert_eq!(preparation.probe.as_ref().unwrap().layouts, 3, "{control}");
+            assert!(preparation.galley_payload_bytes <= MAX_PREPARED_CODE_GALLEY_BYTES);
+            caption_oracle_frame(&mut pair, frame * 2 + 2, size, Vec::new());
+            assert_eq!(
+                pair[1].1.code_preparation.probe.as_ref().unwrap().layouts,
+                0,
+                "{control}: warm"
+            );
+        }
+        let output = caption_oracle_frame(&mut pair, 17, size, Vec::new());
+        let text = output[0]
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == "café 漢字" => Some(text),
+                _ => None,
+            })
+            .unwrap();
+        let start = text.pos
+            + text
+                .galley
+                .pos_from_cursor(text.galley.begin())
+                .center()
+                .to_vec2();
+        let end = text.pos
+            + text
+                .galley
+                .pos_from_cursor(text.galley.end())
+                .center()
+                .to_vec2();
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        caption_oracle_frame(
+            &mut pair,
+            18,
+            size,
+            vec![egui::Event::PointerMoved(start), button(start, true)],
+        );
+        caption_oracle_frame(&mut pair, 19, size, vec![egui::Event::PointerMoved(end)]);
+        caption_oracle_frame(&mut pair, 20, size, vec![button(end, false)]);
+        let output = caption_oracle_frame(&mut pair, 21, size, vec![egui::Event::Copy]);
+        assert!(output[1].platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(text) if text.trim() == "café 漢字")
+        }));
+    }
+
+    #[test]
+    fn code_line_galleys_bound_capacity_and_keep_uncached_and_unsupported_labels_live() {
+        let mut pair = caption_oracle_pair("```text\nbounded\n```\n");
+        let size = vec2(1180.0, 760.0);
+        caption_oracle_frame(&mut pair, 0, size, Vec::new());
+        let galley = pair[1]
+            .1
+            .code_preparation
+            .galleys
+            .values()
+            .next()
+            .unwrap()
+            .galley
+            .clone();
+        let cache = &mut pair[1].1.code_preparation;
+        cache.clear_galleys();
+        for index in 0..=MAX_PREPARED_CODE_JOBS {
+            cache.retain((usize::MAX, index), 100.0, Align::Min, false, &galley);
+        }
+        assert_eq!(cache.galleys.len(), MAX_PREPARED_CODE_JOBS);
+        assert!(!cache
+            .galleys
+            .contains_key(&(usize::MAX, MAX_PREPARED_CODE_JOBS)));
+        // A full cache must still render the entire ordinary selectable label.
+        caption_oracle_frame(&mut pair, 1, size, Vec::new());
+        assert_eq!(
+            pair[1].1.code_preparation.probe.as_ref().unwrap().layouts,
+            1
+        );
+        caption_oracle_frame(&mut pair, 2, size, Vec::new());
+        assert_eq!(
+            pair[1].1.code_preparation.probe.as_ref().unwrap().layouts,
+            1
+        );
+        let mut excessive = (*galley).clone();
+        excessive.rows.reserve_exact(
+            MAX_PREPARED_CODE_GALLEY_BYTES / std::mem::size_of::<egui::epaint::text::PlacedRow>()
+                + 1,
+        );
+        assert!(galley_payload_bytes(&excessive).unwrap() > MAX_PREPARED_CODE_GALLEY_BYTES);
+        let cache = &mut pair[1].1.code_preparation;
+        cache.clear_galleys();
+        cache.retain((0, 0), 100.0, Align::Min, false, &Arc::new(excessive));
+        assert!(cache.galleys.is_empty());
+        assert_eq!(cache.galley_payload_bytes, 0);
+        let mut large = (*galley).clone();
+        large.rows.reserve_exact(
+            MAX_PREPARED_CODE_GALLEY_BYTES
+                / 4
+                / std::mem::size_of::<egui::epaint::text::PlacedRow>(),
+        );
+        let large = Arc::new(large);
+        for index in 0..8 {
+            cache.retain((usize::MAX, index), 100.0, Align::Min, false, &large);
+        }
+        assert!(!cache.galleys.is_empty());
+        assert!(cache.galleys.len() < 8);
+        assert!(cache.galley_payload_bytes <= MAX_PREPARED_CODE_GALLEY_BYTES);
+        let weak = Arc::downgrade(&large);
+        drop(large);
+        cache.clear();
+        assert!(weak.upgrade().is_none());
+        caption_oracle_frame(&mut pair, 3, size, Vec::new());
+        caption_oracle_frame(&mut pair, 4, size, Vec::new());
+        assert_eq!(
+            pair[1].1.code_preparation.probe.as_ref().unwrap().layouts,
+            0
+        );
+
+        let parsed = document("```text\nbounded\n```\n");
+        let Block::CodeBlock(block) = &parsed.blocks()[0] else {
+            panic!("code block")
+        };
+        let output: [egui::FullOutput; 2] = std::array::from_fn(|index| {
+            let (context, pane) = &mut pair[index];
+            let mut output = context.run_ui(Default::default(), |ui| {
+                pane.code_preparation.begin(ui);
+                ui.horizontal_wrapped(|ui| {
+                    let response =
+                        pane.code_preparation
+                            .label(ui, 0, 0, &block.highlighted_lines()[0]);
+                    assert!(response.rect.height() > 0.0);
+                });
+            });
+            output.textures_delta.clear();
+            output
+        });
+        assert_eq!(output[0].shapes, output[1].shapes);
+        assert_eq!(
+            format!("{:?}", output[0].platform_output.accesskit_update),
+            format!("{:?}", output[1].platform_output.accesskit_update)
+        );
+        assert_eq!(
+            pair[1]
+                .1
+                .code_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .galley_hits,
+            0
+        );
+    }
+
+    #[test]
     fn code_line_preparation_reuses_bounded_jobs_with_live_layout_and_snapshot_invalidation() {
         let mut pair = caption_oracle_pair(&mixed_caption_fixture());
         let size = vec2(1180.0, 760.0);
@@ -9140,11 +9816,22 @@ mod tests {
         });
         output.textures_delta.clear();
         let weak = Arc::downgrade(viewer.code_preparation.jobs.values().next().unwrap());
+        let galley = Arc::downgrade(
+            &viewer
+                .code_preparation
+                .galleys
+                .values()
+                .next()
+                .unwrap()
+                .galley,
+        );
+        let owners = galley.strong_count();
         viewer.reload();
         assert!(
             weak.upgrade().is_some(),
             "failed reload preserves the old snapshot"
         );
+        assert_eq!(galley.strong_count(), owners);
         viewer.apply_load_result(Ok(load_remote_document(
             test_remote_source("/owned/code.md"),
             "/owned/code.md".into(),
@@ -9152,8 +9839,11 @@ mod tests {
         )
         .unwrap()));
         assert!(weak.upgrade().is_none());
+        assert_eq!(galley.strong_count(), owners - 1);
         assert!(viewer.code_preparation.jobs.is_empty());
         assert_eq!(viewer.code_preparation.payload_bytes, 0);
+        assert!(viewer.code_preparation.galleys.is_empty());
+        assert_eq!(viewer.code_preparation.galley_payload_bytes, 0);
     }
 
     #[test]

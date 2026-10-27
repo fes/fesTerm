@@ -102,6 +102,9 @@ tabs from a command line. Existing document views and unsaved text are preserved
 Linux AppImages require desktop integration to appear in Open With. Native
 association lifecycle qualification is tracked in `docs/manual-validation.md`
 CP-19; registration never changes the user's default Markdown application.
+Markdown Preview also renders `mermaid` fences offline using a native renderer,
+with selectable source fallback for unsupported syntax or preview limits;
+see [ADR 0050](docs/adr/0050-native-mermaid-preview.md).
 
 Markdown Preview and editor Preview/Split support bounded static local and
 inline SVG, plus native HTML links and named anchors. Other HTML stays inert;

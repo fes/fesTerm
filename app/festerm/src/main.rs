@@ -25,6 +25,7 @@ mod font_downloads;
 mod inspector;
 mod keyboard;
 mod local_command;
+mod markdown_diagrams;
 mod markdown_images;
 mod markdown_svg;
 mod markdown_viewer;
