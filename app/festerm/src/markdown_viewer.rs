@@ -3621,7 +3621,8 @@ impl MarkdownRenderState<'_> {
                         if block.language() == Some("mermaid") {
                             let reveal_source = self.find.matches().iter().any(|found| {
                                 byte_range_contains(block.span(), found.span().start().byte_offset())
-                            }) || matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(block.span(), target));
+                            }) || self.code_preparation.diagrams.has_find_match(block.span().byte_range())
+                                || matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(block.span(), target));
                             if !self.code_preparation.diagrams.show(
                                 ui,
                                 block.span().start().byte_offset(),
@@ -5556,6 +5557,14 @@ impl MarkdownPreviewPane {
         self.visible_heading = Some(index);
         self.requested_heading = Some(index);
         self.frames_in_flight = 0;
+    }
+
+    pub(crate) fn set_find_offsets(&mut self, offsets: impl Iterator<Item = usize>) {
+        self.code_preparation.diagrams.set_find_offsets(offsets);
+    }
+
+    pub(crate) fn scroll_to_byte(&mut self, offset: usize) {
+        self.pending_scroll = Some(PendingScroll::Byte(offset));
     }
 
     /// The headings the current parse found, for a caller drawing its own

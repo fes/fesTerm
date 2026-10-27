@@ -1978,8 +1978,13 @@ impl TextEditorTab {
 
     fn run_find_action(&mut self, action: FindAction, documents: &SharedDocuments) {
         match action {
-            FindAction::Previous => self.find.pending_selection = self.find.step(false),
-            FindAction::Next => self.find.pending_selection = self.find.step(true),
+            FindAction::Previous | FindAction::Next => {
+                let found = self.find.step(action == FindAction::Next);
+                if let (Some(pane), Some(found)) = (&mut self.preview, &found) {
+                    pane.scroll_to_byte(found.start);
+                }
+                self.find.pending_selection = found;
+            }
             FindAction::Replace => self.replace_current(documents),
             FindAction::ReplaceAll => self.replace_all(documents),
         }
@@ -2371,10 +2376,18 @@ impl TextEditorTab {
     /// split — the same block renderer the Markdown tab uses, fed from this
     /// view's buffer instead of from a file.
     fn show_preview_pane(&mut self, ui: &mut egui::Ui, height: f32) {
+        let highlighting = self.highlighting_matches();
         let pane = self.preview.get_or_insert_with(|| {
             editor_markdown_preview(&self.local_preview_source, &self.origin_label, &self.buffer)
         });
         pane.sync(ui.ctx(), &self.buffer);
+        pane.set_find_offsets(
+            self.find
+                .matches()
+                .iter()
+                .filter(|_| highlighting)
+                .map(|found| found.start),
+        );
         ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
             ui.set_height(height);
             ui.push_id(("document-preview", self.document), |ui| pane.show(ui));
@@ -3845,6 +3858,58 @@ mod tests {
         assert!(preview.image_loaded_for_test(1));
         assert_eq!(preview.rendered_text(), text);
         assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+    }
+
+    #[test]
+    fn mermaid_editor_find_reveals_source_and_navigates_in_preview_and_split() {
+        for mode in [EditorMode::Preview, EditorMode::Split] {
+            let directory = TemporaryDirectory::new("mermaid-editor-find");
+            let text = format!(
+                "{}\n```mermaid\nflowchart LR\n A[Unique caf\u{e9}] --> B[End]\n```\n",
+                "Before the diagram\n\n".repeat(80),
+            );
+            let path = directory.file("diagram.md", &text);
+            let (documents, mut editor) = opened_editor_for(&path);
+            editor.mode = mode;
+            let tab = TabId::next_for_test();
+            let mut harness = Harness::builder()
+                .with_size(vec2(1180.0, 800.0))
+                .build_ui_state(
+                    move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                        ui.ctx().all_styles_mut(|style| {
+                            style.scroll_animation = egui::style::ScrollAnimation::none();
+                        });
+                        state.1.show(ui, tab, &state.0);
+                    },
+                    (documents, editor),
+                );
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while harness.query_by_label("Show Mermaid source").is_none() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Mermaid worker did not finish"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                harness.run();
+            }
+            assert!(harness.query_by_label("flowchart LR").is_none());
+            open_find_and_type(&mut harness, false, "Unique caf.");
+            assert_eq!(harness.state().1.find_match_count_for_test(), 1);
+            harness.get_by_label("flowchart LR");
+            harness.get_by_label("Next match").click();
+            harness.run();
+            let source = harness.get_by_label("flowchart LR").rect();
+            assert!(
+                source.top() >= 0.0 && source.bottom() < 800.0,
+                "{mode:?}: {source:?}"
+            );
+            harness.get_by_label("Close Find").click();
+            harness.run();
+            assert!(harness.query_by_label("flowchart LR").is_none());
+            assert_eq!(harness.state().1.mode, mode);
+            assert_eq!(harness.state().1.buffer, text);
+            assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+        }
     }
 
     #[test]

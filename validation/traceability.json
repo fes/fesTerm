@@ -1698,6 +1698,7 @@
       ],
       "automated_tests": [
         "native_svg_real_editor_preview_and_split_keep_images_and_document_text",
+        "mermaid_editor_find_reveals_source_and_navigates_in_preview_and_split",
         "native_svg_reparse_compares_payload_and_releases_actual_image_owners",
         "markdown_documents_start_at_top_and_keep_independent_scroll_positions",
         "background_document_io_leaves_real_frame_idle_until_completion_wake",
@@ -2940,6 +2941,7 @@
         "mermaid_generated_links_and_html_remain_inert_pixels",
         "mermaid_preview_reuses_pixels_and_exposes_source_on_request_and_find",
         "mermaid_fences_render_in_shared_preview_keep_copy_and_reveal_find_matches",
+        "mermaid_editor_find_reveals_source_and_navigates_in_preview_and_split",
         "markdown_documents_start_at_top_and_keep_independent_scroll_positions",
         "document_retention_defaults_on_only_for_supported_route",
         "retained_document_frames_preserve_editor_preview_and_split_pixels",

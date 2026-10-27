@@ -208,6 +208,9 @@ selectable source. Invalid, unsupported or over-limit diagrams show source and
 a content-free explanation. Diagrams are noninteractive raster previews:
 callbacks, links, animations and resource references cannot execute or fetch.
 No browser, JavaScript or external rendering service is required.
+Editor Preview/Split uses the editor's bounded regex-match byte offsets to
+reveal source, not a second literal search. Find navigation also scrolls the
+preview without consuming the edit pane's pending selection.
 
 Scroll position belongs to each open document, not the last document shown
 in the window. Newly opened documents start at the top; switching back to an

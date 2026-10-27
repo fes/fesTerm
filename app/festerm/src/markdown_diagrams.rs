@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    ops::Range,
     sync::{
         atomic::{AtomicUsize, Ordering},
         mpsc::{self, Receiver, TryRecvError},
@@ -51,11 +52,22 @@ struct Entry {
 #[derive(Default)]
 pub(crate) struct MermaidDiagrams {
     entries: BTreeMap<usize, Entry>,
+    find_offsets: Vec<usize>,
 }
 
 impl MermaidDiagrams {
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
+        self.find_offsets.clear();
+    }
+
+    pub(crate) fn set_find_offsets(&mut self, offsets: impl Iterator<Item = usize>) {
+        self.find_offsets.clear();
+        self.find_offsets.extend(offsets);
+    }
+
+    pub(crate) fn has_find_match(&self, span: Range<usize>) -> bool {
+        self.find_offsets.iter().any(|offset| span.contains(offset))
     }
 
     /// Returns whether the ordinary selectable source should also be drawn.
