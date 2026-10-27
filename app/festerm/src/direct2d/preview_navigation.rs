@@ -284,8 +284,9 @@ fn profile_small_preview_navigation() {
                 let texture_bytes: usize = output
                     .textures_delta
                     .set
-                    .iter()
-                    .map(|(_, delta)| {
+                    .values()
+                    .flatten()
+                    .map(|delta| {
                         let [width, height] = delta.image.size();
                         width * height * 4
                     })
