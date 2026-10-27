@@ -21,7 +21,7 @@ use crate::document_layout::{galley_payload_bytes, LayoutEpoch};
 use crate::document_store::{DirectoryIdentity, Generation};
 use crate::documents::{OpenDocument, SharedDocuments};
 use crate::markdown_viewer::{
-    elide_middle, toolbar_button, toolbar_button_response, toolbar_button_width,
+    copy_path_menu, elide_middle, toolbar_button, toolbar_button_response, toolbar_button_width,
     toolbar_button_with_trailing, MarkdownPreviewPane, TOOLBAR_BUTTON_GAP, TOOLBAR_BUTTON_HEIGHT,
     TOOLBAR_BUTTON_PADDING_X, TOOLBAR_BUTTON_RADIUS, TOOLBAR_TEXT_SIZE,
 };
@@ -1726,7 +1726,11 @@ impl TextEditorTab {
                                 theme::TEXT_PRIMARY,
                                 true,
                             );
-                            monospace_label(ui, &self.origin_label, theme::TEXT_SECONDARY);
+                            let path =
+                                monospace_label(ui, &self.origin_label, theme::TEXT_SECONDARY);
+                            if !self.untitled {
+                                path.context_menu(|ui| copy_path_menu(ui, &self.origin_label));
+                            }
                         });
                     });
                 });
@@ -3198,7 +3202,7 @@ fn hairline(ui: &mut egui::Ui) {
 
 /// Paths are read character by character, so they are set in the same
 /// monospace the Markdown viewer uses for them.
-fn monospace_label(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
+fn monospace_label(ui: &mut egui::Ui, text: &str, colour: egui::Color32) -> egui::Response {
     let font = FontId::monospace(LABEL_TEXT_SIZE);
     // A path is as long as somebody's directories are deep, and the mode
     // control has already claimed its end of the row; elide in the middle so
@@ -3210,11 +3214,12 @@ fn monospace_label(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
         .x
         .max(1.0);
     let budget = (ui.available_width() / character).floor().max(8.0) as usize;
-    let text = &elide_middle(text, budget);
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, colour);
-    let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::hover());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
+    let display = elide_middle(text, budget);
+    let galley = ui.painter().layout_no_wrap(display, font, colour);
+    let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), text));
     ui.painter().galley(rect.left_top(), galley, colour);
+    response.on_hover_text(text)
 }
 
 /// Lays the body out with every match behind a wash of colour and the current
@@ -3802,6 +3807,51 @@ mod tests {
     }
 
     #[test]
+    fn editor_path_context_menu_copies_the_full_path_in_all_modes() {
+        let directory = TemporaryDirectory::new("copy-origin-path");
+        let name = format!("{}caf\u{e9} \u{6f22}.md", "long-file-name-".repeat(7));
+        let path = directory.file(&name, "# Controlled document\n");
+        let (documents, editor) = opened_editor_for(&path);
+        let document = editor.document();
+        let expected = editor.origin_label().to_owned();
+        for mode in [EditorMode::Edit, EditorMode::Preview, EditorMode::Split] {
+            for width in [900.0, 320.0] {
+                let mut editor = TextEditorTab::new(document, &documents);
+                editor.mode = mode;
+                let mut harness = Harness::builder()
+                    .with_size(vec2(width, 200.0))
+                    .build_ui_state(
+                        |ui, editor: &mut TextEditorTab| editor.show_origin_bar(ui),
+                        editor,
+                    );
+                harness.run();
+                let position = harness.get_by_label(&expected).rect().center();
+                harness.event(egui::Event::PointerMoved(position));
+                for pressed in [true, false] {
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: Default::default(),
+                    });
+                }
+                harness.run();
+                assert!(harness.output().platform_output.commands.is_empty());
+                harness.get_by_label("Copy path").click();
+                harness.step();
+                assert_eq!(
+                    harness.output().platform_output.commands,
+                    vec![egui::OutputCommand::CopyText(expected.clone())]
+                );
+                harness.run();
+                assert!(harness.query_by_label("Copy path").is_none());
+                assert_eq!(harness.state().mode, mode);
+                assert_eq!(harness.state().buffer, "# Controlled document\n");
+            }
+        }
+    }
+
+    #[test]
     fn native_svg_real_editor_preview_and_split_keep_images_and_document_text() {
         let directory = TemporaryDirectory::new("native-svg-editor");
         directory.file(
@@ -3841,6 +3891,37 @@ mod tests {
         assert!(preview.image_loaded_for_test(1));
         assert_eq!(preview.rendered_text(), text);
         assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+    }
+
+    #[test]
+    fn untitled_editor_path_context_menu_has_no_copy_action() {
+        let documents = DocumentRegistry::shared();
+        let document =
+            documents
+                .borrow_mut()
+                .create_untitled("scratch", "Controlled untitled document", b"");
+        let editor = TextEditorTab::new(document, &documents);
+        let label = editor.origin_label().to_owned();
+        let mut harness = Harness::builder()
+            .with_size(vec2(700.0, 200.0))
+            .build_ui_state(
+                |ui, editor: &mut TextEditorTab| editor.show_origin_bar(ui),
+                editor,
+            );
+        harness.run();
+        let position = harness.get_by_label(&label).rect().center();
+        harness.event(egui::Event::PointerMoved(position));
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Default::default(),
+            });
+        }
+        harness.run();
+        assert!(harness.query_by_label("Copy path").is_none());
+        assert!(harness.output().platform_output.commands.is_empty());
     }
 
     #[test]

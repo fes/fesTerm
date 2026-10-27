@@ -878,6 +878,18 @@ accessibility-tree checks, not native clipboard delivery, IME/caret usability,
 screen-reader qualification, GPU timing or end-to-end latency. CP-06, CP-15 and
 CP-18 native/manual acceptance and existing renderer-specific gates stay open.
 
+CP-06/CP-15 path Copy: on owned local and remote fixtures, right-click the
+document path in standalone Preview/Source and editor Edit/Preview/Split,
+including narrow windows and long paths with spaces/Unicode. **Copy path** must
+deliver the full path to the native clipboard, matching the viewer overflow
+action; hover/accessibility must expose the full label. Opening the menu or
+dismissing it with Escape must not write to the clipboard or change the
+document. Untitled editors must not offer a file-path action. Deterministic
+headless tests automate the real menus, exact clipboard output requests,
+dismissal, mode stability and the untitled guard; native clipboard delivery,
+secondary-click conventions and screen-reader/tooltip presentation remain
+manual evidence.
+
 The draft-consolidation Windows run retains an explicit environment boundary:
 the interactive account lacks `SeSecurityPrivilege`. Its 32 application and
 four Windows-security failures exactly match the unchanged `c333013c` main
