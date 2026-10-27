@@ -2899,14 +2899,16 @@
         "docs/gui-design.md#approved-native-markdown-viewing",
         "docs/markdown-viewer-design.md",
         "docs/adr/0047-bounded-local-document-background-io.md",
-        "docs/adr/0048-bounded-native-svg-and-html-anchors.md"
+        "docs/adr/0048-bounded-native-svg-and-html-anchors.md",
+        "docs/adr/0050-native-mermaid-preview.md"
       ],
       "decisions": [
         "ADR-0030",
         "ADR-0035",
         "ADR-0046",
         "ADR-0047",
-        "ADR-0048"
+        "ADR-0048",
+        "ADR-0050"
       ],
       "automated_tests": [
         "svg_projection_preserves_source_spans_and_excludes_code",
@@ -2931,6 +2933,12 @@
         "native_html_named_anchors_scroll_offscreen_targets_and_consume_requests",
         "native_html_real_editor_preview_and_split_scroll_to_named_targets",
         "native_svg_real_editor_preview_and_split_keep_images_and_document_text",
+        "mermaid_rasterizes_flowcharts_sequences_and_charts_offline",
+        "mermaid_fences_preserve_normalized_label_and_exact_source",
+        "mermaid_rejects_bad_syntax_and_excessive_work_without_echoing_source",
+        "mermaid_generated_links_and_html_remain_inert_pixels",
+        "mermaid_preview_reuses_pixels_and_exposes_source_on_request_and_find",
+        "mermaid_fences_render_in_shared_preview_keep_copy_and_reveal_find_matches",
         "document_retention_defaults_on_only_for_supported_route",
         "retained_document_frames_preserve_editor_preview_and_split_pixels",
         "retained_document_frames_invalidate_exact_inputs_and_texture_ownership",

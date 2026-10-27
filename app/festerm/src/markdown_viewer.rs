@@ -1785,6 +1785,7 @@ impl PreparedTable {
 
 #[derive(Default)]
 struct CodeLinePreparation {
+    diagrams: crate::markdown_diagrams::MermaidDiagrams,
     jobs: BTreeMap<(usize, usize), Arc<LayoutJob>>,
     payload_bytes: usize,
     #[cfg(test)]
@@ -1793,6 +1794,7 @@ struct CodeLinePreparation {
 
 impl CodeLinePreparation {
     fn clear(&mut self) {
+        self.diagrams.clear();
         self.jobs.clear();
         self.payload_bytes = 0;
     }
@@ -3613,6 +3615,19 @@ impl MarkdownRenderState<'_> {
                         bottom: CODE_BLOCK_PADDING_Y - CODE_BLOCK_TRAILING_LEAD,
                     })
                     .show(ui, |ui| {
+                        if block.language() == Some("mermaid") {
+                            let reveal_source = self.find.matches().iter().any(|found| {
+                                byte_range_contains(block.span(), found.span().start().byte_offset())
+                            }) || matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(block.span(), target));
+                            if !self.code_preparation.diagrams.show(
+                                ui,
+                                block.span().start().byte_offset(),
+                                block.code_text(),
+                                reveal_source,
+                            ) {
+                                return;
+                            }
+                        }
                         let mut vertical_scroll_target = None;
                         egui::ScrollArea::horizontal()
                             .id_salt(("markdown-code", block.span().byte_range().start))
@@ -6146,6 +6161,53 @@ mod tests {
             },
             (),
         )
+    }
+
+    #[test]
+    fn mermaid_fences_render_in_shared_preview_keep_copy_and_reveal_find_matches() {
+        let source = "flowchart LR\n A[Start] --> B[Finish]\n";
+        let text = format!("```mermaid\n{source}```\n\n```rust\nlet plain = 1;\n```\n");
+        let mut harness = Harness::builder()
+            .with_size(vec2(900.0, 700.0))
+            .build_ui_state(
+                |ui, pane: &mut MarkdownPreviewPane| pane.show(ui),
+                MarkdownPreviewPane::new(
+                    MarkdownSource::from(
+                        LocalMarkdownSource::new(PathBuf::from("controlled-mermaid.md")).unwrap(),
+                    ),
+                    &text,
+                ),
+            );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while harness.query_by_label("Show Mermaid source").is_none() {
+            assert!(Instant::now() < deadline, "Mermaid worker did not finish");
+            thread::sleep(Duration::from_millis(5));
+            harness.run();
+        }
+        assert!(harness.query_by_label("flowchart LR").is_none());
+        assert!(harness.query_by_label("let plain = 1;").is_some());
+        harness
+            .get_all_by_label("Copy the code block")
+            .next()
+            .unwrap()
+            .click();
+        harness.step();
+        assert_eq!(
+            harness.output().platform_output.commands,
+            vec![egui::OutputCommand::CopyText(source.to_owned())]
+        );
+        harness.get_by_label("Show Mermaid source").click();
+        harness.run();
+        harness.get_by_label("flowchart LR");
+        harness.get_by_label("Show Mermaid source").click();
+        harness.run();
+        assert!(harness.query_by_label("flowchart LR").is_none());
+        let pane = harness.state_mut();
+        pane.find
+            .set_query(pane.document.as_ref().unwrap(), "Start".into());
+        harness.run();
+        harness.get_by_label("flowchart LR");
+        assert_eq!(harness.state().rendered_text(), text);
     }
 
     /// epaint anchors a text section's background at `baseline -

@@ -15,6 +15,17 @@ technology, visual judgment, reference-application screen semantics, or a real
 usability question. A reproducible failure should become the smallest suitable
 fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
+## Offline Mermaid (CP-06, CP-15)
+
+Automated coverage renders flowcharts, sequences and representative chart/UML
+families offline; checks malformed and excessive inputs, inert generated links,
+retained textures, source toggle, Find and exact fenced Copy. Native visual,
+readability and screen-reader qualification remains pending: review diagrams
+in standalone remote Preview and local Preview/Split at native scales, using
+source/Find/Copy. This does not qualify every Mermaid.js syntax feature or
+interactive diagram nodes; previews remain inert images under ADR 0050's
+conservative limits.
+
 ## Status vocabulary
 
 - **Automated:** a repository-owned test provides the acceptance evidence.
