@@ -4,6 +4,7 @@ use super::{
     profile,
 };
 use crate::markdown_viewer::MarkdownPreviewPane;
+use eframe::{egui, egui_wgpu, wgpu};
 use egui::epaint::Primitive;
 use egui_kittest::{wgpu::WgpuTestRenderer, TestRenderer};
 use festerm_markdown::LocalMarkdownSource;
