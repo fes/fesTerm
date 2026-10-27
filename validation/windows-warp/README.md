@@ -1557,3 +1557,132 @@ proved misleading in this investigation; briefly balanced thread suspension
 followed by a process snapshot preserved the active JIT instruction pointers.
 Raw process snapshots can contain sensitive memory and must remain private
 until reviewed. Quiet reruns alone do not establish a fix.
+
+## Small Preview navigation campaign
+
+`direct2d::preview_navigation::profile_small_preview_navigation` is an ignored,
+test-only companion to the large-document profiles. It exercises the real
+`MarkdownPreviewPane` without fixture files, windows, desktop input, clipboard, PTYs,
+network, or native terminal callbacks. No production API change is needed.
+Only release Windows x64 DX12 **Microsoft Basic Render** CPU/WARP is admitted;
+adapter/backend/format mismatches refuse, never silently substitute hardware.
+The shell aggregate records `windows-x64-required` instead of running a
+zero-test filter on unsupported platforms.
+
+### Workload and interpretation
+
+Eleven owned fixtures: 16 prose paragraphs; one 5/15/30-row, three-column
+table; identical plain/Rust-highlighted fenced payloads at 20/100/300 lines;
+and a mixed 5-row table/20-line Rust fence. Every fixture has the same two
+navigation headings. Each has four fresh-context modes: warm stationary,
+continuous 36-point wheel, page-unit wheel, and alternating heading requests.
+Wheel direction reverses every eight frames; headings alternate every eight
+frames. Page-unit wheel is **not keyboard PageDown**. Context time advances
+deterministically at 60 Hz with scroll-to animation disabled; this is not a
+claim that the application runs at 60 Hz.
+
+Pin 640×400 logical points, 960×600 physical pixels, 150% DPI, Dark theme.
+Eight complete warmup frames precede 32 measured frames per fixture/mode:
+1,408 measured frames, 1,760 completed offscreen draws. A three-minute
+workload guard refuses incomplete campaigns (device waits have separate
+ten-second timeouts). No speedup threshold is built into this evidence tool.
+Small content can fit or reach an end: report **requests and real nonzero
+scroll-offset changes separately**, including no-effect requests. Never
+normalize by requests as though they were all effective movement. Each
+navigation route must change actual offsets somewhere; stationary must not.
+
+Stdout contains JSON metadata, individual frame records, summaries, and a
+final `small-preview-navigation-complete` record. Libtest adds non-JSON lines;
+retain the original log and parse only lines beginning `{`. A pass requires
+both the final complete record and successful test exit, not partial samples.
+Records contain only owned fixture names, numeric metrics, hashes and the
+validated adapter name, not source/executable/receipt paths or user contents.
+
+UI build and tessellation are separate wall times. Texture-delta sets/frees
+and RGBA payload bytes, mesh jobs, unique clips, vertices/indices, and the
+renderer’s actual staged mesh-byte counter accompany every sample. Texture
+upload timing flushes queue writes and waits separately. Completed render
+wall time and process CPU time cover `profile::draw_composed`, which submits
+and waits for completion; they are **not host-return-only timing**. They
+exclude the preceding frontend construction, tessellation and texture phase,
+and exclude presentation/readback. Ordinary mesh replay has no retained-frame
+shortcut or native Direct2D terminal callback. These are offscreen component
+costs, **not physical input-to-display latency**, event-loop idle CPU, native
+resource acceptance or full-app responsiveness. CP-18 remains open.
+
+### Source-pinned baseline/candidate procedure
+
+Use the **identical benchmark module and registration** on original main
+`2268fd1a` plus this test-only campaign, and on each independently fixed
+candidate. Keep each worktree, Cargo target directory and staged test
+executable separate. Build from committed, clean, frozen trees; do not infer
+the compiled source from runtime `git HEAD`. Capture build command, source
+commit/tree, compiler version, successful build log, and the actual
+release **test-executable** hash, not the application hash. A self-authored
+receipt without that frozen build procedure is not source attestation.
+
+Example preparation in **each chosen clean worktree**, with a fresh relative
+artifact directory (do not reuse baseline and candidate directories):
+
+```powershell
+$out = Join-Path (Get-Location) 'target\preview-navigation-evidence\build'
+if (Test-Path $out) { throw 'Use a fresh artifact directory' }
+if (git status --porcelain) { throw 'Commit/freeze the benchmark and source first' }
+$revision = (git rev-parse HEAD).Trim()
+$tree = (git rev-parse 'HEAD^{tree}').Trim()
+New-Item -ItemType Directory $out | Out-Null
+rustc --version --verbose | Set-Content "$out\rustc.txt"
+cargo test --release --locked -p festerm --bin festerm --no-run --message-format=json `
+    2> "$out\build.stderr" | Set-Content "$out\build.jsonl"
+if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+if ((git rev-parse HEAD).Trim() -ne $revision -or (git status --porcelain)) {
+    throw 'Source changed during build'
+}
+$artifacts = @(Get-Content "$out\build.jsonl" | ForEach-Object {
+    $item = $_ | ConvertFrom-Json
+    if ($item.reason -eq 'compiler-artifact' -and $item.target.name -eq 'festerm' `
+        -and $item.profile.test -and $item.executable) { $item.executable }
+})
+if ($artifacts.Count -ne 1) { throw 'Expected exactly one festerm test executable' }
+Copy-Item $artifacts[0] "$out\festerm-tests.exe"
+@{
+    source_revision = $revision
+    source_tree = $tree
+    test_binary_sha256 = (Get-FileHash "$out\festerm-tests.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+    benchmark_sha256 = (Get-FileHash 'app\festerm\src\direct2d\preview_navigation.rs' -Algorithm SHA256).Hash.ToLowerInvariant()
+    build_command = 'cargo test --release --locked -p festerm --bin festerm --no-run --message-format=json'
+} | ConvertTo-Json | Set-Content "$out\build-receipt.json"
+```
+
+The test checks the receipt’s binary hash against `current_exe()` and its
+benchmark hash against **compiled-in** module bytes. Source commit/tree fields
+are syntax-validated and attributed explicitly to the external build receipt;
+the test cannot retrospectively prove a compiler consumed a particular tree.
+Archive the receipt/build logs/compiler record together. Keep the target,
+features, toolchain, viewport/DPI, fonts, host and adapter unchanged.
+
+Run the staged executable, not an unbound runtime checkout:
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:FESTERM_PREVIEW_NAVIGATION_BUILD_RECEIPT = "$out\build-receipt.json"
+& "$out\festerm-tests.exe" direct2d::preview_navigation::profile_small_preview_navigation `
+    --exact --ignored --nocapture --test-threads=1
+```
+
+Parent orchestration should stage A=baseline and B=one fix, then execute
+independent A/B/B/A blocks (prefer at least two blocks), swapping **both**
+executable and receipt per sample. Use unique log names; do not overwrite
+previous attempts. Require identical benchmark hashes and fixture/frame
+counts across controls. Compare matched fixture/navigation stages and raw
+distributions, not only pooled means; report adverse/unchanged cases and
+scroll-change counts. Compare the two fixes independently before combining.
+No actual timings, improvement, or native qualification are claimed here.
+
+The existing optional aggregate also dispatches the prepared executable when
+`FESTERM_RUN_PREVIEW_NAVIGATION_PROFILE=1`,
+`FESTERM_PREVIEW_NAVIGATION_TEST_EXE=<staged test exe>` and
+`FESTERM_PREVIEW_NAVIGATION_BUILD_RECEIPT=<matching receipt>` are set.
+It first lists ignored tests to refuse stale executables with zero matches.
+The aggregate includes other, potentially native suites; use the focused
+executable command above when desktop interaction is not authorized.

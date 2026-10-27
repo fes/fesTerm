@@ -473,6 +473,35 @@ if ($env:OS -eq 'Windows_NT') {
     }
 }
 
+if ($env:OS -ne 'Windows_NT' -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
+    Add-Content -Path $ResultPath -Value "`nsuite=small-preview-navigation status=skipped reason=windows-x64-required"
+} elseif ($env:FESTERM_RUN_PREVIEW_NAVIGATION_PROFILE -eq '1') {
+    try {
+        if (-not $env:FESTERM_PREVIEW_NAVIGATION_BUILD_RECEIPT -or
+            -not $env:FESTERM_PREVIEW_NAVIGATION_TEST_EXE) {
+            throw 'Set FESTERM_PREVIEW_NAVIGATION_BUILD_RECEIPT and FESTERM_PREVIEW_NAVIGATION_TEST_EXE to source-bound release artifacts.'
+        }
+        $navigationTests = & $env:FESTERM_PREVIEW_NAVIGATION_TEST_EXE --list --ignored
+        if ($LASTEXITCODE -ne 0 -or
+            $navigationTests -notcontains 'direct2d::preview_navigation::profile_small_preview_navigation: test') {
+            throw 'The supplied executable does not contain the exact ignored navigation test.'
+        }
+        Invoke-NativeCommand {
+            & $env:FESTERM_PREVIEW_NAVIGATION_TEST_EXE `
+                direct2d::preview_navigation::profile_small_preview_navigation `
+                --exact --ignored --nocapture --test-threads=1
+        }
+        if ($LASTEXITCODE -ne 0) { throw 'Small preview navigation profile failed.' }
+        Add-Content -Path $ResultPath -Value "`nsuite=small-preview-navigation status=pass"
+    } catch {
+        Write-Warning $_
+        Add-Content -Path $ResultPath -Value "`nsuite=small-preview-navigation status=fail"
+        $status = 'fail'
+    }
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=small-preview-navigation status=skipped reason=explicit-opt-in"
+}
+
 if ($env:FESTERM_RUN_SURFACE_PROFILE -eq '1') {
     try {
         Invoke-NativeCommand {

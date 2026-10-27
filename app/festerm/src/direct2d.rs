@@ -140,6 +140,9 @@ pub(crate) mod profile;
 mod document_retention;
 
 #[cfg(all(test, windows, target_arch = "x86_64"))]
+mod preview_navigation;
+
+#[cfg(all(test, windows, target_arch = "x86_64"))]
 mod font_atlas_profile;
 
 #[cfg(all(test, windows, target_arch = "x86_64"))]

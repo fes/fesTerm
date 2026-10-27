@@ -6165,3 +6165,17 @@ Prospective model accuracy/resource/distribution gates are documented before
 any adoption, alongside TI-19's remaining native/accessibility/usability checks.
 This is an additive presentation feature, not a crate-boundary change, M6
 acceptance or evidence that a language model would improve selection.
+
+## Measuring small Preview navigation separately
+
+The large 400-section profiles and sparse wheel/idle samples did not answer
+whether a single modest table or code fence stays cheap during continuous
+navigation. An independent ignored campaign now prepares matched small prose,
+table, plain/highlighted code and mixed fixtures through the production
+Preview pane, without changing its implementation. It separates construction,
+tessellation and completed offscreen WARP replay, and counts actual scroll
+changes rather than treating every input as movement. Identical benchmark
+bytes and externally source-bound release test binaries support balanced
+baseline/candidate runs for independent fixes. This is a measurement protocol,
+not a recorded speedup or physical-latency result; native qualification remains
+open under CP-18. See `validation/windows-warp/README.md`.

@@ -60,6 +60,20 @@ Existing v0.10.4 assets are not retroactively changed; live-endpoint upgrade
 evidence is blocked until the next normal release. Native DPI/appearance/
 usability review remains NP-05, not a unit-test acceptance claim.
 
+### Small Markdown navigation campaign (MD-04 / EDIT-09 / CP-18)
+
+The ignored `profile_small_preview_navigation` prepares matched small prose,
+5/15/30-row table, plain/Rust 20/100/300-line fence and mixed fixtures.
+It measures stationary construction plus real wheel, page-unit wheel and
+heading navigation through the shared production Preview pane, including
+actual scroll-offset changes and completed offscreen DX12 CPU/WARP replay.
+The [campaign protocol](../validation/windows-warp/README.md#small-preview-navigation-campaign)
+requires independently source-bound release test binaries and balanced runs.
+This addition is prepared automation, not measured improvement or evidence of
+physical input-to-display latency. It does not exercise keyboard PageDown,
+native windows, OS clipboard, multi-window/DPI transitions, hardware or
+device loss. Those native/usability checks and CP-18 remain pending.
+
 ### ADR 0046 document-frame experiment (CP-18)
 
 The WARP document-frame implementation adds an automated exact-pixel

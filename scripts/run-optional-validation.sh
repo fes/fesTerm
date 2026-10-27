@@ -23,6 +23,7 @@ status=pass
 printf 'status=running\n' >"$result_path"
 printf 'suite=six-session-aging status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=windows-sampler-diagnostics status=skipped reason=windows-x64-required\n' >>"$result_path"
+printf 'suite=small-preview-navigation status=skipped reason=windows-x64-required\n' >>"$result_path"
 if [ "$(uname -s)" = Darwin ]; then
     if python3 scripts/smoke-ios-simulator.py --run --build; then
         printf 'suite=ios-simulator status=pass\n' >>"$result_path"

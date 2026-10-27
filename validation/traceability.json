@@ -1697,6 +1697,7 @@
         "ADR-0048"
       ],
       "automated_tests": [
+        "profile_small_preview_navigation",
         "native_svg_real_editor_preview_and_split_keep_images_and_document_text",
         "native_svg_reparse_compares_payload_and_releases_actual_image_owners",
         "background_document_io_leaves_real_frame_idle_until_completion_wake",
@@ -2909,6 +2910,7 @@
         "ADR-0048"
       ],
       "automated_tests": [
+        "profile_small_preview_navigation",
         "svg_projection_preserves_source_spans_and_excludes_code",
         "svg_projection_handles_quotes_lists_multiple_roots_and_malformed_markup",
         "html_anchors_project_links_and_targets_without_phantom_headings",
