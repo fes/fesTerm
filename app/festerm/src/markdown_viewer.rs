@@ -3109,7 +3109,7 @@ impl MarkdownRenderState<'_> {
                     egui::Layout::top_down(Align::Min),
                     |ui| {
                         document_rect = ui.max_rect();
-                        egui::ScrollArea::vertical()
+                        let scroll = egui::ScrollArea::vertical()
                             .id_salt("markdown-document")
                             .max_height(viewport_height)
                             .min_scrolled_height(viewport_height)
@@ -3153,6 +3153,13 @@ impl MarkdownRenderState<'_> {
                                     );
                                 });
                             });
+                        if self.mode == MarkdownViewerMode::Preview {
+                            tracing::debug!(target: "festerm::markdown_scroll",
+                                markdown_preview_offset_y = scroll.state.offset.y,
+                                markdown_preview_content_height = scroll.content_size.y,
+                                markdown_preview_viewport_height = scroll.inner_rect.height(),
+                                "Markdown viewer scroll state");
+                        }
                     },
                 );
                 MarkdownDocumentLayout {
@@ -5468,7 +5475,7 @@ impl MarkdownPreviewPane {
         let viewport_height = ui.available_height().max(120.0);
         let viewport_top = ui.cursor().top();
         clipboard::begin(ui);
-        egui::ScrollArea::vertical()
+        let scroll = egui::ScrollArea::vertical()
             .id_salt("markdown-preview-pane")
             .max_height(viewport_height)
             .auto_shrink([false, true])
@@ -5497,6 +5504,11 @@ impl MarkdownPreviewPane {
                     );
                 });
             });
+        tracing::debug!(target: "festerm::markdown_scroll",
+            markdown_preview_offset_y = scroll.state.offset.y,
+            markdown_preview_content_height = scroll.content_size.y,
+            markdown_preview_viewport_height = scroll.inner_rect.height(),
+            "Markdown preview pane scroll state");
         clipboard::finish(
             ui,
             &document,
