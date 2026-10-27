@@ -8991,8 +8991,10 @@ mod tests {
     fn code_line_galleys_skip_warm_job_clones_and_layouts_even_when_revealed() {
         let mut pair = caption_oracle_pair(&mixed_caption_fixture());
         let size = vec2(1180.0, 760.0);
+        let tail = "fn example() { let value = 399; }";
         for frame in 0..3 {
-            caption_oracle_frame(&mut pair, frame, size, Vec::new());
+            let output = caption_oracle_frame(&mut pair, frame, size, Vec::new());
+            assert!(visible_code_geometry(&output[1], tail).is_none());
         }
         let retained: Vec<_> = pair[1]
             .1
@@ -9014,7 +9016,7 @@ mod tests {
                     ));
                 }
             }
-            caption_oracle_frame(&mut pair, frame, size, Vec::new());
+            let output = caption_oracle_frame(&mut pair, frame, size, Vec::new());
             let preparation = &pair[1].1.code_preparation;
             let probe = preparation.probe.as_ref().unwrap();
             assert_eq!(probe.galley_hits, 400);
@@ -9024,13 +9026,14 @@ mod tests {
             for (key, galley) in &retained {
                 assert!(Arc::ptr_eq(galley, &preparation.galleys[key].galley));
             }
+            if frame == 7 {
+                // Byte navigation targets the code row, not its separate header.
+                let (rect, clip) = visible_code_geometry(&output[1], tail)
+                    .expect("the previously offscreen code row must be revealed");
+                assert!(clip.contains(rect.center()));
+            }
         }
         assert!(pair[1].1.pending_scroll.is_none());
-        assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains(
-            pair[1].1.code_copy_probe.as_ref().unwrap().buttons[399]
-                .rect
-                .center()
-        ));
         let weak = Arc::downgrade(&retained[0].1);
         drop(retained);
         let owners = weak.strong_count();
@@ -9085,7 +9088,16 @@ mod tests {
                         style.visuals.text_options.font_hinting =
                             !style.visuals.text_options.font_hinting;
                     }),
-                    "scale" => context.set_pixels_per_point(1.25),
+                    "scale" => {
+                        context.set_pixels_per_point(1.25);
+                        // Context::begin_pass overrides screen_rect while
+                        // activating zoom. Activate it before measuring at our
+                        // fixed input rectangle, rather than calling that
+                        // transient rectangle the first stable-width frame.
+                        let mut output = context.run_ui(Default::default(), |_| {});
+                        output.textures_delta.clear();
+                        assert_eq!(context.pixels_per_point(), 1.25);
+                    }
                     "theme" => context.set_visuals(egui::Visuals::light()),
                     "override" => context.global_style_mut(|style| {
                         style.visuals.override_text_color = Some(egui::Color32::RED);
