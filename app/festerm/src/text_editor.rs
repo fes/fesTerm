@@ -1726,13 +1726,13 @@ impl TextEditorTab {
                                 theme::TEXT_PRIMARY,
                                 true,
                             );
-                            ui.push_id(("editor-path", self.document), |ui| {
-                                let path =
-                                    monospace_label(ui, &self.origin_label, theme::TEXT_SECONDARY);
-                                if !self.untitled {
-                                    path.context_menu(|ui| copy_path_menu(ui, &self.origin_label));
-                                }
-                            });
+                            let path =
+                                monospace_label(ui, &self.origin_label, theme::TEXT_SECONDARY);
+                            if !self.untitled {
+                                egui::Popup::context_menu(&path)
+                                    .id(egui::Id::new(("editor-path", self.document)))
+                                    .show(|ui| copy_path_menu(ui, &self.origin_label));
+                            }
                         });
                     });
                 });

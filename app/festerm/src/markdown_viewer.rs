@@ -1436,27 +1436,23 @@ impl MarkdownViewerTab {
                     // ignored how much room the controls had actually left,
                     // so on a narrow window the path drew straight through
                     // the Preview/Source/Find buttons.
-                    ui.push_id(("markdown-path", self.clipboard_owner), |ui| {
-                        let path = ui.add(
-                            egui::Label::new(
-                                RichText::new(elide_middle(self.display_path(), 72))
-                                    .size(TOOLBAR_TEXT_SIZE)
-                                    .monospace()
-                                    .color(theme::TEXT_SECONDARY),
-                            )
-                            .sense(Sense::click())
-                            .truncate(),
-                        );
-                        path.widget_info(|| {
-                            WidgetInfo::labeled(
-                                WidgetType::Label,
-                                ui.is_enabled(),
-                                self.display_path(),
-                            )
-                        });
-                        path.on_hover_text(self.display_path())
-                            .context_menu(|ui| copy_path_menu(ui, self.display_path()));
+                    let path = ui.add(
+                        egui::Label::new(
+                            RichText::new(elide_middle(self.display_path(), 72))
+                                .size(TOOLBAR_TEXT_SIZE)
+                                .monospace()
+                                .color(theme::TEXT_SECONDARY),
+                        )
+                        .sense(Sense::click())
+                        .truncate(),
+                    );
+                    path.widget_info(|| {
+                        WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), self.display_path())
                     });
+                    let path = path.on_hover_text(self.display_path());
+                    egui::Popup::context_menu(&path)
+                        .id(egui::Id::new(("markdown-path", self.clipboard_owner)))
+                        .show(|ui| copy_path_menu(ui, self.display_path()));
                 });
             });
         });
