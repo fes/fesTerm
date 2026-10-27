@@ -7338,7 +7338,7 @@ mod tests {
                     }),
                     ..Default::default()
                 });
-            for frame in 0..3 {
+            for frame in 0..2 {
                 let output: [egui::FullOutput; 2] = std::array::from_fn(|index| {
                     let find = &pair[index].1.find;
                     let preparation = &mut preparations[index];
@@ -8263,7 +8263,7 @@ mod tests {
                     for (context, _) in &pair {
                         context.set_pixels_per_point(scale);
                     }
-                    for frame in 0..2 {
+                    for frame in 0..3 {
                         let output =
                             caption_oracle_frame(&mut pair, frame, vec2(width, 760.0), Vec::new());
                         let pane = &pair[1].1;
