@@ -3158,6 +3158,12 @@ impl MarkdownRenderState<'_> {
                                 markdown_preview_offset_y = scroll.state.offset.y,
                                 markdown_preview_content_height = scroll.content_size.y,
                                 markdown_preview_viewport_height = scroll.inner_rect.height(),
+                                markdown_preview_left = scroll.inner_rect.left(),
+                                markdown_preview_top = scroll.inner_rect.top(),
+                                markdown_preview_right = scroll.inner_rect.right(),
+                                markdown_preview_bottom = scroll.inner_rect.bottom(),
+                                markdown_preview_hovered = ui.rect_contains_pointer(scroll.inner_rect),
+                                markdown_preview_pointer = ?ui.input(|input| input.pointer.hover_pos()),
                                 "Markdown viewer scroll state");
                         }
                     },
@@ -5508,6 +5514,12 @@ impl MarkdownPreviewPane {
             markdown_preview_offset_y = scroll.state.offset.y,
             markdown_preview_content_height = scroll.content_size.y,
             markdown_preview_viewport_height = scroll.inner_rect.height(),
+            markdown_preview_left = scroll.inner_rect.left(),
+            markdown_preview_top = scroll.inner_rect.top(),
+            markdown_preview_right = scroll.inner_rect.right(),
+            markdown_preview_bottom = scroll.inner_rect.bottom(),
+            markdown_preview_hovered = ui.rect_contains_pointer(scroll.inner_rect),
+            markdown_preview_pointer = ?ui.input(|input| input.pointer.hover_pos()),
             "Markdown preview pane scroll state");
         clipboard::finish(
             ui,
