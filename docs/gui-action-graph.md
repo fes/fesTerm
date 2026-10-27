@@ -784,6 +784,15 @@ and same-pass editor IME. All document widgets remain live; this does not add
 virtualization or implement table-cell byte navigation. Native/manual gates
 remain unchanged.
 
+`MD-04` also covers right-click **Copy path** on the standalone toolbar and
+saved-local editor origin bar: the clipboard receives the complete path before
+display abbreviation, including spaces/Unicode, in Preview/Source and
+Edit/Preview/Split respectively. The standalone overflow action is equivalent.
+Opening/dismissing a menu copies nothing; copying does not reload, edit, change
+mode or retarget the document. Hover/accessibility retain the full path, and
+untitled editors offer no file-path action. Editor presentation parity belongs
+to `EDIT-09`; native clipboard delivery remains CP-06/CP-15 evidence.
+
 `MD-04`'s outline oracle includes unchanged/scroll/resize/scale/font/revision
 controls: bounded cached geometry must preserve variable wrapping, all live
 heading identities/accessibility nodes and offscreen keyboard navigation.

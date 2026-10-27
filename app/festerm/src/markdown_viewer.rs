@@ -1335,27 +1335,26 @@ impl MarkdownViewerTab {
                 // and mockup both put in this slot.
                 let overflow =
                     toolbar_button_response(ui, Some(Icon::Overflow), "", "Viewer menu", false);
-                egui::Popup::menu(&overflow).show(|ui| {
-                    if ui.button("Copy path").clicked() {
-                        ui.ctx().copy_text(self.display_path().to_owned());
-                        ui.close();
-                    }
-                    if ui.button("Reload").clicked() {
-                        command = Some(AppCommand::ReloadMarkdown);
-                        ui.close();
-                    }
-                    if let Some(path) = self.local_path().map(Path::to_path_buf) {
-                        if ui.button("Edit").clicked() {
-                            command = Some(AppCommand::OpenTextEditor { path });
+                egui::Popup::menu(&overflow)
+                    .id(egui::Id::new(("markdown-overflow", self.clipboard_owner)))
+                    .show(|ui| {
+                        copy_path_menu(ui, self.display_path());
+                        if ui.button("Reload").clicked() {
+                            command = Some(AppCommand::ReloadMarkdown);
                             ui.close();
                         }
-                    }
-                    ui.separator();
-                    if ui.button("Close viewer").clicked() {
-                        command = Some(AppCommand::CloseTab(tab_id));
-                        ui.close();
-                    }
-                });
+                        if let Some(path) = self.local_path().map(Path::to_path_buf) {
+                            if ui.button("Edit").clicked() {
+                                command = Some(AppCommand::OpenTextEditor { path });
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        if ui.button("Close viewer").clicked() {
+                            command = Some(AppCommand::CloseTab(tab_id));
+                            ui.close();
+                        }
+                    });
                 if toolbar_button(
                     ui,
                     Some(Icon::Outline),
@@ -1437,15 +1436,23 @@ impl MarkdownViewerTab {
                     // ignored how much room the controls had actually left,
                     // so on a narrow window the path drew straight through
                     // the Preview/Source/Find buttons.
-                    ui.add(
+                    let path = ui.add(
                         egui::Label::new(
                             RichText::new(elide_middle(self.display_path(), 72))
                                 .size(TOOLBAR_TEXT_SIZE)
                                 .monospace()
                                 .color(theme::TEXT_SECONDARY),
                         )
+                        .sense(Sense::click())
                         .truncate(),
                     );
+                    path.widget_info(|| {
+                        WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), self.display_path())
+                    });
+                    let path = path.on_hover_text(self.display_path());
+                    egui::Popup::context_menu(&path)
+                        .id(egui::Id::new(("markdown-path", self.clipboard_owner)))
+                        .show(|ui| copy_path_menu(ui, self.display_path()));
                 });
             });
         });
@@ -5766,6 +5773,13 @@ pub(crate) fn show_markdown_outline(
     clicked
 }
 
+pub(crate) fn copy_path_menu(ui: &mut egui::Ui, path: &str) {
+    if ui.button("Copy path").clicked() {
+        ui.ctx().copy_text(path.to_owned());
+        ui.close();
+    }
+}
+
 pub(crate) fn toolbar_button(
     ui: &mut egui::Ui,
     icon_name: Option<Icon>,
@@ -6085,6 +6099,159 @@ mod tests {
         "| Product scope and priorities | `DESIGN.md`, `ROADMAP.md` |\n",
         "| Dependency and ownership boundaries | `ARCHITECTURE.md` |\n",
     );
+
+    #[test]
+    fn markdown_path_context_menu_copies_the_full_path_in_preview_and_source() {
+        let path = format!(
+            "/controlled/{}notes caf\u{e9} \u{6f22}.md",
+            "long-directory/".repeat(12)
+        );
+        assert_ne!(elide_middle(&path, 72), path);
+        for remote in [false, true] {
+            for mode in [MarkdownViewerMode::Preview, MarkdownViewerMode::Source] {
+                for width in [900.0, 480.0] {
+                    for overflow in [false, true] {
+                        let mut viewer = if remote {
+                            MarkdownViewerTab::open_remote(
+                                test_remote_source(&path),
+                                path.clone(),
+                                b"# Controlled document\n".to_vec(),
+                            )
+                        } else {
+                            MarkdownViewerTab::open_local(PathBuf::from(&path))
+                        };
+                        viewer.mode = mode;
+                        let expected = viewer.display_path().to_owned();
+                        let tab = crate::tabs::AppState::for_test().active();
+                        let mut harness = Harness::builder()
+                            .with_size(vec2(width, 200.0))
+                            .build_ui_state(
+                                move |ui, viewer: &mut MarkdownViewerTab| {
+                                    assert!(viewer.show_toolbar(ui, tab).is_none());
+                                },
+                                viewer,
+                            );
+                        harness.run();
+                        assert!(harness.output().platform_output.commands.is_empty());
+                        if overflow {
+                            harness.get_by_label("Viewer menu").click();
+                        } else {
+                            let position = harness.get_by_label(&expected).rect().center();
+                            harness.event(egui::Event::PointerMoved(position));
+                            for pressed in [true, false] {
+                                harness.event(egui::Event::PointerButton {
+                                    pos: position,
+                                    button: egui::PointerButton::Secondary,
+                                    pressed,
+                                    modifiers: Default::default(),
+                                });
+                            }
+                        }
+                        harness.run();
+                        assert!(harness.output().platform_output.commands.is_empty());
+                        harness.get_by_label("Copy path").click();
+                        harness.step();
+                        assert_eq!(
+                            harness.output().platform_output.commands,
+                            vec![egui::OutputCommand::CopyText(expected.clone())]
+                        );
+                        harness.run();
+                        assert!(harness.query_by_label("Copy path").is_none());
+                        assert_eq!(harness.state().display_path(), expected);
+                        assert_eq!(harness.state().mode, mode);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn markdown_path_context_menu_can_be_dismissed_without_copying() {
+        let path = "/srv/controlled/notes.md";
+        let viewer = MarkdownViewerTab::open_remote(
+            test_remote_source(path),
+            path.to_owned(),
+            b"# Controlled document\n".to_vec(),
+        );
+        let tab = crate::tabs::AppState::for_test().active();
+        let mut harness = Harness::builder()
+            .with_size(vec2(700.0, 200.0))
+            .build_ui_state(
+                move |ui, viewer: &mut MarkdownViewerTab| {
+                    assert!(viewer.show_toolbar(ui, tab).is_none());
+                },
+                viewer,
+            );
+        harness.run();
+        let position = harness.get_by_label(path).rect().center();
+        harness.event(egui::Event::PointerMoved(position));
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Default::default(),
+            });
+        }
+        harness.run();
+        harness.get_by_label("Copy path");
+        harness.event(egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        });
+        harness.run();
+        assert!(harness.query_by_label("Copy path").is_none());
+        assert!(harness.output().platform_output.commands.is_empty());
+    }
+
+    #[test]
+    fn markdown_path_menus_do_not_retarget_when_switching_documents() {
+        for overflow in [false, true] {
+            let viewers = ["/srv/first.md", "/srv/second.md"].map(|path| {
+                MarkdownViewerTab::open_remote(
+                    test_remote_source(path),
+                    path.to_owned(),
+                    b"# Controlled document\n".to_vec(),
+                )
+            });
+            let tabs = [TabId::next_for_test(), TabId::next_for_test()];
+            let mut harness = Harness::builder()
+                .with_size(vec2(900.0, 200.0))
+                .build_ui_state(
+                    move |ui, state: &mut (usize, [MarkdownViewerTab; 2])| {
+                        assert!(state.1[state.0].show_toolbar(ui, tabs[state.0]).is_none());
+                    },
+                    (0, viewers),
+                );
+            harness.run();
+            if overflow {
+                harness.get_by_label("Viewer menu").click();
+            } else {
+                let position = harness.get_by_label("/srv/first.md").rect().center();
+                harness.event(egui::Event::PointerMoved(position));
+                for pressed in [true, false] {
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: Default::default(),
+                    });
+                }
+            }
+            harness.run();
+            harness.get_by_label("Copy path");
+            harness.state_mut().0 = 1;
+            harness.run();
+            assert!(harness.query_by_label("Copy path").is_none());
+            assert!(harness.output().platform_output.commands.is_empty());
+            harness.state_mut().0 = 0;
+            harness.run();
+            assert!(harness.query_by_label("Copy path").is_none());
+        }
+    }
 
     /// Renders a document through the real block renderer inside a headless
     /// harness, so layout assertions measure the geometry the viewer actually
