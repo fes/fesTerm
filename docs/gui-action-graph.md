@@ -899,6 +899,16 @@ interaction checks do not replace native `CP-06`/`CP-15` evidence. Table-cell
 byte navigation is a separate, still-unimplemented gap; it is not part of this
 code-row repair.
 
+For `MD-04` and `EDIT-09`, bounded snapshot-owned code-line galleys reuse the
+shared exact document-layout epoch plus each line's wrap width/alignment/
+justification. Complete ordinary/prepared shape, response and accessibility
+oracles retain every live selectable Label, including offscreen and newly
+revealed fences. Warm controls require zero full-job clones/layout requests
+and exact pointer reuse; font/options/style/scale/atlas/reparse, bounded-payload
+fallback, Unicode selection/Copy and retirement controls preserve the same
+workflow. These are CPU correctness invariants, not native performance or
+`CP-06`/`CP-15` acceptance.
+
 ## R. Approved text editor and shared document model
 
 `EDIT-01` is resolved by the design decisions recorded in

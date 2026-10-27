@@ -123,6 +123,32 @@ preserving newline-spanning roles, plain gaps and exact source bytes instead
 of scanning all spans again for every line. Parsing and the existing code-size
 and syntax-budget bounds remain unchanged.
 
+Fenced code lines retain final galleys with their immutable parsed snapshot,
+separately from the existing 4,096-job / 4 MiB formatting-instruction cache.
+The galley cache admits at most 4,096 lines and 16 MiB per view, conservatively
+charging each entry's metadata and all job/string/section, placed-row, glyph
+and row-mesh capacities using the shared document-layout accounting helper.
+Shared allocations are charged again; bounded map nodes, Arc/allocator overhead,
+the tiny layout witness, egui's own cache and frame/output ownership are separate,
+not a process-memory cap. Unaccountable custom font-family jobs are not admitted.
+
+The shared exact layout epoch described below invalidates on context, viewport,
+scale, font definitions/options, theme text override/dark mode and atlas reset
+(or conservative witness eviction). Each line additionally compares its exact
+wrap width, horizontal alignment and justification. Syntax formatting and
+explicit code fonts/colours belong to the immutable snapshot; successful
+reload/reparse clears both caches, failed reload preserves them, and closing
+the view releases its retention. No source hash or approximate signature is used.
+The ordinary non-grid, non-wrapping-horizontal Label layout edits are applied
+once on a miss, then its existing selectable Galley API supplies every live
+widget, with the ordinary intrinsic response size restored. Unsupported placers
+use ordinary Labels; over-budget lines still lay out and display in full.
+Warm admitted lines neither clone their formatting text/sections nor submit
+their full jobs to the font cache. All rows, including offscreen rows and
+newly revealed fences, remain selectable and accessible; byte/Find navigation,
+Find marking and exact fenced Copy remain unchanged. This is not viewport
+virtualization or native-latency qualification.
+
 The identical inactive **Copy** caption is prepared lazily at the first code
 header's actual painter and reused only within a fresh `MarkdownRenderState`
 invocation. A single entry checks painter-context identity, viewport/pass,
