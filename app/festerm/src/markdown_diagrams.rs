@@ -23,7 +23,7 @@ struct Worker;
 impl Worker {
     fn acquire() -> Option<Self> {
         WORKERS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < MAX_WORKERS).then_some(count + 1)
             })
             .ok()
