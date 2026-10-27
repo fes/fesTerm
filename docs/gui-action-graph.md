@@ -1017,6 +1017,14 @@ test executable; hosted timing is not physical-latency evidence.
 
 ## Coverage map to the GUI design
 
+The separately ignored `profile_small_preview_navigation` adds a small-fixture
+performance protocol for the shared `MD-04`/`EDIT-09` Preview pane. Stationary,
+wheel, page-unit wheel and heading requests retain actual scroll-offset
+change counts, frontend build/tessellation and completed offscreen WARP costs.
+It adds no product action, keyboard-paging claim or native qualification.
+The protocol is documented in `validation/windows-warp/README.md`; execution,
+source-bound comparisons and CP-18 physical/native evidence remain separate.
+
 This index prevents a design section from becoming unreachable merely because
 it has no implemented control yet.
 
