@@ -37,6 +37,17 @@ Unicode/duplicate/fenced selection, safe export and stale-menu checks do not
 establish native Copilot navigation, rich-paste interoperability or clipboard
 usability; TI-02 and CP-06/CP-15 retain those native checks.
 
+## Adding offline Mermaid without a browser
+
+Markdown fenced diagrams previously appeared only as source. The owner selected
+native offline rendering rather than Mermaid.js/browser parity. The shared
+desktop Preview now passes `mermaid` fences through a pinned Rust renderer and
+rasterizes internally generated SVG with bundled fonts and disabled external
+image resolution. Two background workers and explicit input/output/snapshot
+limits keep work off the UI thread; failures keep readable source. Source
+toggle, Find and exact Copy remain available. ADR 0050 records the extended
+contract, conservative limits and remaining native visual/accessibility gates.
+
 ## Optional terminal fonts without the embedded payload
 
 Issue #398 separates font availability from the saved font choice. JetBrains

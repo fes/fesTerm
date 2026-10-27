@@ -206,6 +206,21 @@ cell still has its original live selectable Label, identity, response,
 accessibility and alignment. This is frame-local preparation reuse, not table
 virtualization, Find truncation, or a native/GPU performance claim.
 
+Fences labelled `mermaid` render offline diagrams in both standalone Preview
+and saved-local editor Preview/Split, using the native renderer and bounds in
+[ADR 0050](adr/0050-native-mermaid-preview.md). Available families are flowchart,
+sequence, class, state, ER, pie, Gantt, journey, timeline, Sankey, quadrant, XY,
+radar, packet, mindmap, git graph, requirement, C4, block, architecture, Kanban,
+treemap and ZenUML. This is not full Mermaid.js compatibility. Copy retains the
+exact fenced payload; **Show Mermaid source**, Find and byte navigation expose
+selectable source. Invalid, unsupported or over-limit diagrams show source and
+a content-free explanation. Diagrams are noninteractive raster previews:
+callbacks, links, animations and resource references cannot execute or fetch.
+No browser, JavaScript or external rendering service is required.
+Editor Preview/Split uses the editor's bounded regex-match byte offsets to
+reveal source, not a second literal search. Find navigation also scrolls the
+preview without consuming the edit pane's pending selection.
+
 Scroll position belongs to each open document, not the last document shown
 in the window. Newly opened documents start at the top; switching back to an
 already-open document retains its own position.
@@ -215,7 +230,7 @@ Inline and block raw HTML are displayed as inert source or an explicit
 projections defined by [ADR 0048](adr/0048-bounded-native-svg-and-html-anchors.md).
 This is not a browser, DOM, or general HTML renderer. Fenced/backtick code,
 comments, scripts and other opaque HTML blocks remain literal. Footnotes, math,
-Mermaid/diagrams, custom containers, includes, embedded web content, and
+other diagram extensions, custom containers, includes, embedded web content, and
 Markdown extensions outside the declared contract are deferred. Unsupported
 constructs degrade to readable literal text rather than disappearing.
 
