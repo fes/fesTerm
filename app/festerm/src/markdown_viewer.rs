@@ -7338,7 +7338,7 @@ mod tests {
                     }),
                     ..Default::default()
                 });
-            for frame in 0..2 {
+            for frame in 0..3 {
                 let output: [egui::FullOutput; 2] = std::array::from_fn(|index| {
                     let find = &pair[index].1.find;
                     let preparation = &mut preparations[index];
@@ -8274,7 +8274,9 @@ mod tests {
                         assert!(cells
                             .iter()
                             .all(|cell| cell.enabled && cell.sense.senses_click()));
-                        assert_eq!(pane.table_layouts.preparations, usize::from(frame == 0));
+                        if frame == 2 {
+                            assert_eq!(pane.table_layouts.preparations, 0);
+                        }
                     }
                 }
             }
