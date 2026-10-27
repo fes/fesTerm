@@ -776,6 +776,14 @@ and same-pass editor IME. All document widgets remain live; this does not add
 virtualization or implement table-cell byte navigation. Native/manual gates
 remain unchanged.
 
+`MD-04` and `EDIT-09` table-divider regressions inspect actual emitted border
+segments: one full-height internal stroke per column boundary, independent of
+row count, with unchanged cell allocations, horizontal scroll clipping and
+border-overlay order. Header-only, empty-cell and ragged-source fixtures use
+the same layout path. Removing repeated antialias blending intentionally need
+not reproduce the old border pixels; CP-06/CP-15 native readability remains
+pending.
+
 `MD-04`'s outline oracle includes unchanged/scroll/resize/scale/font/revision
 controls: bounded cached geometry must preserve variable wrapping, all live
 heading identities/accessibility nodes and offscreen keyboard navigation.

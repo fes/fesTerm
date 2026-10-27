@@ -3,6 +3,21 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Drawing Markdown table column dividers once
+
+The table renderer submitted each full-height internal column border again
+for every row, even though warm layout preparation already reused the cell
+measurements. It now submits each column boundary once at the same border
+overlay stage and inside the same horizontal scroll clip. Row separators,
+prepared widths/heights and live selectable cells retain their existing path.
+
+Focused CPU regressions inspect emitted geometry for tall, ragged-source,
+empty-cell and header-only tables, normal/fractional scale and horizontal
+scrolling. This establishes column-scaled divider submission, not measured
+frame-time improvement. Removing repeated antialias blending can change border
+pixels; sensible single-stroke readability on native platforms remains
+CP-06/CP-15 pending evidence. No cache or ownership boundary changes.
+
 ## Backward terminal navigation and portable Markdown copying
 
 Shift+Tab was losing its modifier before reaching the terminal encoder.

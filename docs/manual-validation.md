@@ -1102,6 +1102,15 @@ Live accessibility and Source response geometry are also compared. This is
 automated fidelity evidence, not completed Markdown draw timing or native
 clipboard/screen-reader usability; those pending statuses are unchanged.
 
+CP-06/CP-15 table borders: native visual/readability checks remain pending
+for the single-stroke internal column dividers in standalone Preview and editor
+Preview/Split. Compare tall, header-only, empty-cell and ragged-source tables
+at normal/fractional scale, including horizontal scrolling and selection.
+CPU regressions inspect actual segment counts, clipping, cell responses and
+overlay order; they do not establish native pixels or responsiveness.
+Removing repeated antialias blending may lighten border edges, so exact
+overdrawn baseline pixels are not required.
+
 CP-15 saved-local images: open owned local Markdown fixtures in Preview
 and Split, exceed 64 automatic references and explicitly load the next image.
 Across windows, lower **Image memory budget** below admitted usage, check that

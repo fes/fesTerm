@@ -164,6 +164,14 @@ loading remain unchanged. CPU construction/copy counters and ordinary-versus-
 cached complete shape/accessibility/input oracles are deterministic evidence,
 not measured end-to-end speedups or native/GPU qualification.
 
+Table borders overlay the cells with one full-height stroke per internal
+column, followed by horizontal row separators, inside the existing horizontal
+scroll clip. Column widths, row heights and live selection widgets still use
+the same prepared layout. Divider submission scales with columns rather than
+rows times columns. Removing repeated antialiased strokes can lighten border
+edges; exact pixels from the overdrawn rendering are not the fidelity target.
+Native visual/readability checks remain pending.
+
 On a preparation miss, table columns are measured from unwrapped cell content
 before sharing the reading width. A cell whose measured galley fits the final,
 integer-normalized wrap constraint reuses it; only a squeezed cell needs another
