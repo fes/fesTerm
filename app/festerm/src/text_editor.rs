@@ -2297,13 +2297,17 @@ impl TextEditorTab {
         {
             self.outline_heading_storage = Some(headings.as_ptr() as usize);
         }
-        let clicked = crate::markdown_viewer::show_markdown_outline(
-            ui,
-            headings,
-            selected,
-            height,
-            "text-editor-outline",
-        );
+        let clicked = ui
+            .push_id(("document-outline", self.document), |ui| {
+                crate::markdown_viewer::show_markdown_outline(
+                    ui,
+                    headings,
+                    selected,
+                    height,
+                    "text-editor-outline",
+                )
+            })
+            .inner;
         if let Some(index) = clicked {
             if let Some(offset) = self
                 .preview
@@ -2359,7 +2363,7 @@ impl TextEditorTab {
 
     fn show_edit_pane(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments, width: f32) {
         egui::ScrollArea::vertical()
-            .id_salt("text-editor-body")
+            .id_salt(("text-editor-body", self.document))
             .auto_shrink([false, false])
             .max_width(width)
             .show(ui, |ui| {
@@ -2379,7 +2383,7 @@ impl TextEditorTab {
         pane.sync(ui.ctx(), &self.buffer);
         ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
             ui.set_height(height);
-            pane.show(ui);
+            ui.push_id(("document-preview", self.document), |ui| pane.show(ui));
         });
     }
 
@@ -6438,6 +6442,85 @@ mod tests {
                 },
                 (documents, editor),
             )
+    }
+
+    #[test]
+    fn markdown_documents_start_at_top_and_keep_independent_scroll_positions() {
+        let text: String = (0..60)
+            .map(|index| format!("## Section {index}\n\nParagraph in section {index}.\n\n"))
+            .collect();
+        let documents = DocumentRegistry::shared();
+        let directory = TemporaryDirectory::new("markdown-scroll-state");
+        let editors = (0..2)
+            .map(|index| {
+                let path = directory.file(&format!("scroll-{index}.md"), &text);
+                let document = documents.borrow_mut().open_local(&path).unwrap();
+                let mut editor = TextEditorTab::new(document, &documents);
+                editor.mode = EditorMode::Preview;
+                editor.options.outline = false;
+                editor
+            })
+            .collect::<Vec<_>>();
+        let mut harness =
+            Harness::builder()
+                .with_size(vec2(900.0, 420.0))
+                .build_ui_state(
+                    |ui,
+                     (documents, editors, active): &mut (
+                        SharedDocuments,
+                        Vec<TextEditorTab>,
+                        usize,
+                    )| editors[*active].show_body(ui, documents),
+                    (documents, editors, 0usize),
+                );
+        harness.run();
+        assert_eq!(
+            harness.state().1[0]
+                .preview
+                .as_ref()
+                .unwrap()
+                .visible_heading(),
+            Some(0)
+        );
+        for _ in 0..8 {
+            harness.event(egui::Event::PointerMoved(egui::pos2(450.0, 200.0)));
+            harness.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, -400.0),
+                modifiers: egui::Modifiers::NONE,
+                phase: egui::TouchPhase::Move,
+            });
+            harness.step();
+        }
+        harness.run();
+        let first_position = harness.state().1[0]
+            .preview
+            .as_ref()
+            .unwrap()
+            .visible_heading();
+        assert!(first_position.is_some_and(|heading| heading > 0));
+        harness.state_mut().2 = 1;
+        harness.run();
+        assert_eq!(
+            harness.state().1[1]
+                .preview
+                .as_ref()
+                .unwrap()
+                .visible_heading(),
+            Some(0),
+            "a newly opened document must not inherit the previous document's offset"
+        );
+        harness.state_mut().2 = 0;
+        harness.run();
+        assert_eq!(
+            harness.state().1[0]
+                .preview
+                .as_ref()
+                .unwrap()
+                .visible_heading(),
+            first_position,
+            "returning to an open document restores its own position"
+        );
     }
 
     fn assert_outline_borrows_preview(editor: &TextEditorTab, expected_count: usize) {

@@ -28,6 +28,15 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
   failed or skipped test.
 - **Pass / Fail / Not run:** result for one specific platform and commit. Not run
   always includes a reason and never counts as pass.
+### Document-local scrolling (CP-06, CP-15)
+
+An automated local Markdown switching regression verifies new-at-top and
+restoration of each open document's independent scroll position. Native
+qualification remains pending: switch between differently scrolled documents,
+including standalone remote Preview/Source and local Preview/Split with an
+outline, and verify that new documents start at the top without resetting
+existing documents on every frame.
+
 
 ### Downloadable terminal fonts (TYPE-02 / NP-05)
 

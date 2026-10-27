@@ -206,6 +206,10 @@ cell still has its original live selectable Label, identity, response,
 accessibility and alignment. This is frame-local preparation reuse, not table
 virtualization, Find truncation, or a native/GPU performance claim.
 
+Scroll position belongs to each open document, not the last document shown
+in the window. Newly opened documents start at the top; switching back to an
+already-open document retains its own position.
+
 Inline and block raw HTML are displayed as inert source or an explicit
 `HTML not rendered` placeholder, except the bounded native SVG and HTML anchor
 projections defined by [ADR 0048](adr/0048-bounded-native-svg-and-html-anchors.md).
