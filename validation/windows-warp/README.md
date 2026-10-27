@@ -1703,7 +1703,89 @@ previous attempts. Require identical benchmark hashes and fixture/frame
 counts across controls. Compare matched fixture/navigation stages and raw
 distributions, not only pooled means; report adverse/unchanged cases and
 scroll-change counts. Compare the two fixes independently before combining.
-No actual timings, improvement, or native qualification are claimed here.
+The protocol itself does not imply a gain or native qualification; measured
+observations are recorded separately below.
+
+### 2026-10-27 source-bound small Preview observations
+
+The protocol above was executed for #408 (table-only), #409 (code-only), and
+their combined production source. Two independent A/B/B/A blocks per single
+fix and one combined block completed **20 actual test processes, 28,160
+measured frames and 35,200 completed offscreen draws**. Every process exited
+zero and emitted its complete record. All 132 fixture/navigation comparisons
+have matching actual scroll offsets and request/change counts across controls.
+The [complete generated results](preview-navigation-20261027.json) retain
+all cases, component p50/p95, geometry/payload counts, adverse pair counts,
+ordered process receipts and source/tree/executable hashes.
+
+The frozen source controls are available in the fork:
+
+| Control | Source revision |
+| --- | --- |
+| Main plus identical test harness | [`a4f46606`](https://github.com/fswiderski/fesTerm/commit/a4f46606b3cb241bc9b417a11a12af21641ecebe) |
+| Code-only production viewer | [`62ec18e8`](https://github.com/fswiderski/fesTerm/commit/62ec18e8d5d079451ea31553fc0963fb4e1e270d) |
+| Table-only production viewer | [`7963bd64`](https://github.com/fswiderski/fesTerm/commit/7963bd64f25362c1c051faf0c4ea7a62aa5542ff) |
+| Combined production viewer | [`a6e70a21`](https://github.com/fswiderski/fesTerm/commit/a6e70a21e5c61520dced72d0b30192f24a877b87) |
+
+Measurement-only single-fix trees retain cumulative documentation, but their
+`markdown_viewer.rs` files exactly match the corresponding independent PR
+sources. They are controls, not additional product branches to merge.
+The one fixed-worktree/target serial procedure above was used, with a clean
+application compilation before each build and unchanged dependencies.
+Compiler: `rustc 1.98.1 (48a229cea 2026-09-01)`, Windows x64 MSVC.
+All four compiled benchmark-module SHA-256 values are
+`d41449cbe71faf61a7c583af8cba71ab0b7e7db70794296447b533eae329a6dc`.
+All owned builds and other tests were stopped for the balanced campaigns.
+The shared host is not certified quiet. Earlier pilots, including the failed
+scroll-ID observation and empty direct-PowerShell invocation, are retained
+locally and excluded. Original logs, binaries and build receipts remain local;
+the public summary is not a public binary attestation.
+
+Representative **point-wheel** pooled medians follow. Single-fix rows have
+128 measured samples per control and four matched process pairs; combined
+rows have 64 samples and two pairs. Milliseconds are separate components,
+not native frame/presentation or input-to-display times.
+
+| Source / fixture | UI before / after ms | Completed WARP before / after ms | Adverse draw pairs |
+| --- | --- | --- | --- |
+| Table-only, 30 body rows | 0.357 / 0.401 | 71.136 / 37.701 | 0/4 |
+| Table-only, 5 body rows | 0.193 / 0.230 | 22.546 / 23.828 | 4/4 |
+| Code-only, 300 Rust lines | 1.037 / 0.583 | 91.137 / 95.349 | 3/4 |
+| Code-only, 20 Rust lines | 0.268 / 0.241 | 88.362 / 98.522 | 3/4 |
+| Combined, 30 body rows | 0.270 / 0.252 | 71.876 / 40.818 | 0/2 |
+| Combined, 300 Rust lines | 0.687 / 0.363 | 86.158 / 87.304 | 1/2 |
+| Combined, mixed | 0.232 / 0.199 | 64.798 / 63.023 | 1/2 |
+| Combined, unchanged prose | 0.245 / 0.321 | 26.213 / 27.183 | 1/2 |
+
+The 30-row table's independent point-wheel mesh falls from 1,336 to 856
+vertices, 4,014 to 2,214 indices and 42,824 to 26,024 staged bytes: 39.2%
+less staged payload, alongside the 47.0% lower completed-draw median.
+Its draw p95 is 80.212 to 45.441 ms. Page-unit wheel has a 32.2% lower draw
+median, with one of four adverse pairs. This does **not** make every table
+faster: the 5-row point-wheel draw median rises 5.7% and p95 rises from
+33.372 to 48.145 ms, despite 12.7% less staged payload.
+
+The 300-line Rust fence's independent UI median is 43.8% lower and p95 moves
+1.234 to 1.070 ms, with zero adverse UI pairs. Page-unit wheel UI is 47.4%
+lower; plain 300-line point-wheel UI is 49.6% lower. Submitted code meshes
+are unchanged. Completed Rust point-wheel drawing instead rises 4.6%, and
+its draw p95 rises 100.150 to 147.380 ms. These are preparation savings,
+**not a demonstrated code-fence scrolling-latency repair**.
+
+Unchanged controls also move substantially: prose UI is 31.3% lower in the
+code-only block, while unchanged plain 300-line page-wheel drawing is 58.8%
+slower in the table-only block. Neither shift can be attributed to the
+unexercised optimization. Keep these adverse/unchanged cases rather than
+normalizing them away or promising a universal speedup.
+
+Completed drawing still dominates the combined code/mixed cases, even after
+the deterministic repeated-work fixes. The next architecture prerequisite is
+**CP-18 native retained-scroll qualification**: profile the actual application's
+whole-frame route and document invalidation, then review an ADR for bounded
+document-coordinate retention if that evidence supports it. This campaign
+deliberately bypasses the existing retention route; it cannot by itself qualify
+a renderer redesign, native responsiveness or parity with VS Code. No such
+redesign or new default-on rendering policy is delivered by these PRs.
 
 The existing optional aggregate also dispatches the prepared executable when
 `FESTERM_RUN_PREVIEW_NAVIGATION_PROFILE=1`,

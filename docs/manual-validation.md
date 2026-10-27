@@ -69,10 +69,14 @@ heading navigation through the shared production Preview pane, including
 actual scroll-offset changes and completed offscreen DX12 CPU/WARP replay.
 The [campaign protocol](../validation/windows-warp/README.md#small-preview-navigation-campaign)
 requires independently source-bound release test binaries and balanced runs.
-This addition is prepared automation, not measured improvement or evidence of
+The 2026-10-27 source-bound campaign completed twenty balanced process runs;
+the linked record retains per-case gains, adverse controls and unchanged
+scroll offsets. This is measured offscreen component evidence, not proof of
 physical input-to-display latency. It does not exercise keyboard PageDown,
 native windows, OS clipboard, multi-window/DPI transitions, hardware or
-device loss. Those native/usability checks and CP-18 remain pending.
+device loss. Those native/usability checks and CP-18 remain pending. A
+document-coordinate retention design remains behind CP-18 native
+retained-scroll qualification and an architecture review/ADR.
 
 ### ADR 0046 document-frame experiment (CP-18)
 
