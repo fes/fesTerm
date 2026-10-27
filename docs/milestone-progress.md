@@ -2,6 +2,13 @@
 
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
+## Keeping document scroll positions independent
+
+Opening another Markdown document also exposed window-local scroll IDs: new
+documents inherited the last one's offset. Editor Preview/Edit scroll regions
+now include document identity, and standalone viewer regions include tab
+identity. A switching regression verifies new-at-top and restoration of the
+first document's own position without resetting scroll on every frame.
 
 ## Backward terminal navigation and portable Markdown copying
 
