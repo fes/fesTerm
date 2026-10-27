@@ -31,6 +31,7 @@ festerm-ssh = { path = "../../crates/festerm-ssh" }
 festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
 festerm-windows-power = { path = "../../crates/festerm-windows-power" }
 image = "0.25"
+mermaid-svg = "=0.7.0"
 resvg = { version = "0.48.1", default-features = false, features = ["text"] }
 roxmltree = "0.21"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
