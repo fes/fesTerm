@@ -60,6 +60,16 @@ instrumentation-only control from the same current main before qualification.
 Do not attribute those independent changes to prefix retention by comparing
 the old control with an integrated candidate.
 
+For the original pre-integration candidate `54e2f62a`, `cargo test --workspace`
+stopped at the application suite: 1,299 passed, 34 failed, 22 ignored. The clean
+instrumentation-only control `8d4bb9c4`, run with
+`cargo test --locked -p festerm --bin festerm`, produced 1,296 passed,
+the exact same 34 failed test names, and 22 ignored. Those failures include
+unavailable `SeSecurityPrivilege`, recovery-worker timeouts and an owned-capture
+cleanup-path assertion. They were not repaired in this rendering workstream,
+and this comparison does not make the workspace green or predict the outcome
+of a later integrated head. Record that head's own results in the PR.
+
 ### Remaining matched comparison
 
 Use an active Windows desktop, no concurrent owned builds/tests, the same
