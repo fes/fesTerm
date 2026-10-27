@@ -175,6 +175,62 @@ impl Navigation {
     }
 }
 
+fn preview_scroll_offset(ui: &egui::Ui) -> f32 {
+    let id = ui.make_persistent_id(egui::IdSalt::new("markdown-preview-pane"));
+    egui::scroll_area::State::load(ui.ctx(), id)
+        .expect("observe actual production ScrollArea state")
+        .offset
+        .y
+}
+
+#[test]
+fn navigation_observes_production_preview_scroll_state() {
+    let context = egui::Context::default();
+    context.all_styles_mut(|style| {
+        style.animation_time = 0.0;
+        style.scroll_animation = egui::style::ScrollAnimation::none();
+    });
+    let mut pane = MarkdownPreviewPane::new(
+        LocalMarkdownSource::new("owned-navigation-fixture.md")
+            .unwrap()
+            .into(),
+        &fixtures()
+            .into_iter()
+            .find(|(name, _)| name == "code-rust-100")
+            .unwrap()
+            .1,
+    );
+    for frame in 0..6 {
+        if frame == 3 {
+            pane.scroll_to_heading(1);
+        }
+        let mut offset = None;
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(640.0, 400.0),
+                )),
+                time: Some(frame as f64 / 60.0),
+                ..Default::default()
+            },
+            |ui| {
+                pane.show(ui);
+                offset = Some(preview_scroll_offset(ui));
+            },
+        );
+        output.textures_delta.clear();
+        if frame < 3 {
+            assert_eq!(offset, Some(0.0));
+        } else if frame == 5 {
+            assert!(
+                offset.unwrap() > 0.0,
+                "heading navigation must really scroll"
+            );
+        }
+    }
+}
+
 #[test]
 #[ignore = "explicit opt-in small frontend navigation + completed offscreen DX12 CPU/WARP replay; not display latency"]
 fn profile_small_preview_navigation() {
@@ -268,10 +324,8 @@ fn profile_small_preview_navigation() {
                 let mut offset = None;
                 let started = Instant::now();
                 let mut output = context.run_ui(input, |ui| {
-                    let id = ui.make_persistent_id("markdown-preview-pane");
                     pane.show(ui);
-                    offset =
-                        egui::scroll_area::State::load(ui.ctx(), id).map(|state| state.offset.y);
+                    offset = Some(preview_scroll_offset(ui));
                 });
                 let build_ns = started.elapsed().as_nanos();
                 assert_eq!(output.pixels_per_point, SCALE, "fixed viewport DPI");

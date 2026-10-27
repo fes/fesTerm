@@ -1677,9 +1677,24 @@ Run the staged executable, not an unbound runtime checkout:
 ```powershell
 $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
 $env:FESTERM_PREVIEW_NAVIGATION_BUILD_RECEIPT = "$out\build-receipt.json"
-& "$out\festerm-tests.exe" direct2d::preview_navigation::profile_small_preview_navigation `
-    --exact --ignored --nocapture --test-threads=1
+$process = Start-Process -FilePath "$out\festerm-tests.exe" -ArgumentList @(
+    'direct2d::preview_navigation::profile_small_preview_navigation',
+    '--exact', '--ignored', '--nocapture', '--test-threads=1'
+) -RedirectStandardOutput "$out\run.log" -RedirectStandardError "$out\run.stderr" -PassThru
+if (-not $process.WaitForExit(240000)) {
+    Stop-Process -Id $process.Id
+    throw 'Campaign process exceeded four minutes'
+}
+[void]$process.WaitForExit()
+if ($process.ExitCode -ne 0) { throw 'Campaign failed; retain both logs' }
+# Also require the complete JSON record and expected sample counts described above.
 ```
+
+Explicit process waiting and redirected standard handles are required: release
+application test executables use the Windows GUI subsystem. A direct PowerShell
+invocation can return empty output and a stale exit code without qualifying the
+test. The aggregate runner checks both actual process exit and the complete
+record, retains uniquely named logs beside its result file, and rejects timeouts.
 
 Parent orchestration should stage A=baseline and B=one fix, then execute
 independent A/B/B/A blocks (prefer at least two blocks), swapping **both**

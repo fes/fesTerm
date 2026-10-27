@@ -481,17 +481,41 @@ if ($env:OS -ne 'Windows_NT' -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
             -not $env:FESTERM_PREVIEW_NAVIGATION_TEST_EXE) {
             throw 'Set FESTERM_PREVIEW_NAVIGATION_BUILD_RECEIPT and FESTERM_PREVIEW_NAVIGATION_TEST_EXE to source-bound release artifacts.'
         }
-        $navigationTests = & $env:FESTERM_PREVIEW_NAVIGATION_TEST_EXE --list --ignored
-        if ($LASTEXITCODE -ne 0 -or
-            $navigationTests -notcontains 'direct2d::preview_navigation::profile_small_preview_navigation: test') {
+        $navigationLogPrefix = "$ResultPath.preview-navigation-$([Guid]::NewGuid().ToString('N'))"
+        function Invoke-PreviewNavigationExecutable {
+            param([string[]] $Arguments, [string] $Stage)
+
+            $stdout = "$navigationLogPrefix.$Stage.log"
+            $stderr = "$navigationLogPrefix.$Stage.stderr"
+            $process = Start-Process -FilePath $env:FESTERM_PREVIEW_NAVIGATION_TEST_EXE `
+                -ArgumentList $Arguments -RedirectStandardOutput $stdout `
+                -RedirectStandardError $stderr -PassThru -ErrorAction Stop
+            if (-not $process.WaitForExit(240000)) {
+                Stop-Process -Id $process.Id
+                throw 'Navigation executable exceeded its four-minute process budget.'
+            }
+            [void]$process.WaitForExit()
+            if ($process.ExitCode -ne 0) {
+                throw "Navigation executable failed; see $stderr."
+            }
+            Get-Content -LiteralPath $stdout -ErrorAction Stop
+        }
+        $navigationTests = Invoke-PreviewNavigationExecutable -Arguments @('--list', '--ignored') -Stage 'list'
+        if ($navigationTests -notcontains 'direct2d::preview_navigation::profile_small_preview_navigation: test') {
             throw 'The supplied executable does not contain the exact ignored navigation test.'
         }
-        Invoke-NativeCommand {
-            & $env:FESTERM_PREVIEW_NAVIGATION_TEST_EXE `
-                direct2d::preview_navigation::profile_small_preview_navigation `
-                --exact --ignored --nocapture --test-threads=1
+        $navigationOutput = Invoke-PreviewNavigationExecutable -Arguments @(
+            'direct2d::preview_navigation::profile_small_preview_navigation',
+            '--exact', '--ignored', '--nocapture', '--test-threads=1'
+        ) -Stage 'run'
+        $completion = @($navigationOutput | Where-Object { $_.StartsWith('{') } |
+            ForEach-Object { $_ | ConvertFrom-Json -ErrorAction Stop } |
+            Where-Object { $_.kind -eq 'small-preview-navigation-complete' })
+        if ($completion.Count -ne 1 -or $completion[0].status -ne 'pass' -or
+            $completion[0].measured_frames -ne 1408 -or $completion[0].completed_draws -ne 1760) {
+            throw 'Navigation executable did not produce the complete bounded campaign.'
         }
-        if ($LASTEXITCODE -ne 0) { throw 'Small preview navigation profile failed.' }
+        $navigationOutput
         Add-Content -Path $ResultPath -Value "`nsuite=small-preview-navigation status=pass"
     } catch {
         Write-Warning $_
