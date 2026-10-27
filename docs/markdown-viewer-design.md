@@ -100,7 +100,9 @@ Right-clicking the toolbar path offers **Copy path**, matching the overflow
 menu. Both copy the complete path, including spaces and Unicode, not its
 abbreviated visible label. The full path is also available on hover and through
 accessibility. Saved-local Markdown exposes the same path action in its editor
-origin bar in Edit, Preview, and Split. Opening or dismissing the menu writes
+origin bar in Edit, Preview, and Split. Path menus belong to their document;
+switching documents dismisses them instead of retargeting Copy.
+Opening or dismissing the menu writes
 nothing to the clipboard; copying never reloads, edits, or opens the source.
 
 ## Supported Markdown contract

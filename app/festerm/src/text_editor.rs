@@ -1726,11 +1726,13 @@ impl TextEditorTab {
                                 theme::TEXT_PRIMARY,
                                 true,
                             );
-                            let path =
-                                monospace_label(ui, &self.origin_label, theme::TEXT_SECONDARY);
-                            if !self.untitled {
-                                path.context_menu(|ui| copy_path_menu(ui, &self.origin_label));
-                            }
+                            ui.push_id(("editor-path", self.document), |ui| {
+                                let path =
+                                    monospace_label(ui, &self.origin_label, theme::TEXT_SECONDARY);
+                                if !self.untitled {
+                                    path.context_menu(|ui| copy_path_menu(ui, &self.origin_label));
+                                }
+                            });
                         });
                     });
                 });
@@ -3849,6 +3851,47 @@ mod tests {
                 assert_eq!(harness.state().buffer, "# Controlled document\n");
             }
         }
+    }
+
+    #[test]
+    fn editor_path_menu_does_not_retarget_when_switching_documents() {
+        let directory = TemporaryDirectory::new("copy-path-switch");
+        let first = directory.file("first.md", "# First\n");
+        let second = directory.file("second.md", "# Second\n");
+        let documents = DocumentRegistry::shared();
+        let editors = [first, second].map(|path| {
+            let document = documents.borrow_mut().open_local(&path).unwrap();
+            TextEditorTab::new(document, &documents)
+        });
+        let first_path = editors[0].origin_label().to_owned();
+        let mut harness = Harness::builder()
+            .with_size(vec2(900.0, 200.0))
+            .build_ui_state(
+                |ui, state: &mut (usize, [TextEditorTab; 2])| {
+                    state.1[state.0].show_origin_bar(ui);
+                },
+                (0, editors),
+            );
+        harness.run();
+        let position = harness.get_by_label(&first_path).rect().center();
+        harness.event(egui::Event::PointerMoved(position));
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Default::default(),
+            });
+        }
+        harness.run();
+        harness.get_by_label("Copy path");
+        harness.state_mut().0 = 1;
+        harness.run();
+        assert!(harness.query_by_label("Copy path").is_none());
+        assert!(harness.output().platform_output.commands.is_empty());
+        harness.state_mut().0 = 0;
+        harness.run();
+        assert!(harness.query_by_label("Copy path").is_none());
     }
 
     #[test]
