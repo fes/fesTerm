@@ -450,6 +450,25 @@ shapes, accessibility and commands across width, font, scale, Find, scrolling
 and snapshot changes; deterministic counters prove that 400 warm lines stop
 rebuilding their formatting. Native latency and readability gates remain open.
 
+## Keeping warm fenced-code lines out of the full-job font-cache path
+
+Retaining formatting instructions alone still made egui's Label clone every
+line's text and sections, then hash the whole job before checking visibility.
+Preview now retains bounded final code-line galleys using the existing shared
+document-layout epoch and payload accounting. Exact width/alignment and the
+font/atlas/style epoch invalidate reuse; successful snapshot replacement and
+view closure retire it. The separate allowance is 4,096 galleys and 16 MiB of
+conservatively charged capacities per view, with ordinary complete rendering
+for rejected entries and unsupported layouts.
+
+The existing ordinary/prepared oracle now also checks code response identities,
+geometry, intrinsic sizes and sense. Focused controls require exact pointer reuse
+and zero warm full-job layouts/clone payload across all 400 lines, including a
+revealed tail; dependency/atlas changes, Unicode selection/Copy, payload/count
+overflow and snapshot retirement retain complete shapes and accessibility.
+All selectable Labels still run: this is not viewport virtualization, a vendor
+Label change, a measured native speedup or closure of CP-06/CP-15.
+
 ## Merging editor formatting boundaries without a third list
 
 The editor already sweeps ordered syntax and Find ranges, but each layout

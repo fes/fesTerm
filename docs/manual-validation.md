@@ -1539,12 +1539,17 @@ drag/resize responsiveness, and Windows Terminal comparison remain additional
 evidence: an offscreen replay does not establish their latency or parity.
 
 The shared Markdown renderer additionally retains bounded fenced-line formatting
-instructions with each immutable parsed snapshot. Automated ordinary/prepared
-oracles keep complete clipped shapes, accessibility, live Copy and navigation
-equal across width/font/scale/Find/snapshot changes, and test entry/payload caps
-and snapshot retirement. Fonts and wrapping still resolve through live labels;
-these preparation counters do not qualify native latency, clipboard delivery,
-readability or screen-reader behavior under CP-06/CP-15.
+instructions and final galleys with each immutable parsed snapshot. Automated
+ordinary/prepared oracles keep complete clipped shapes, label IDs/bounds/intrinsic
+sizes/sense, accessibility, live selection/Copy and navigation equal across
+width/font/options/scale/theme/Find/snapshot changes and actual atlas reset.
+Warm and newly revealed 400-fence controls require zero full-job layout requests
+and clone payload, with exact galley pointer reuse; entry/payload-cap fallback,
+unsupported placers, failed reload and successful replacement/close retirement
+are deterministic evidence. Fonts/atlas and exact wrapping/alignment invalidate
+retention while every selectable Label remains live. These counters do not
+qualify native latency, clipboard delivery, readability or screen-reader
+behavior under CP-06/CP-15; no native/manual gate is closed.
 
 The bounded Inspector/SFTP pane-and-table coverage adds complete widget
 pixel comparisons and an opt-in completed-render replay. Windows correctness
