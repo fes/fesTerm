@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [switch] $MarkdownScrollingOnly,
     [string] $ResultPath = $(if ($env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH) {
         $env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH
     } else {
@@ -47,6 +48,30 @@ function Invoke-VisualStudioCommand {
 
 if ($env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
     throw 'Set FESTERM_RUN_OPTIONAL_VALIDATION=1 to run optional validation.'
+}
+
+function Invoke-MarkdownScrollingValidation {
+    if ($env:OS -ne 'Windows_NT') { throw 'Native Markdown scrolling requires Windows.' }
+    foreach ($name in @('FESTERM_MARKDOWN_SCROLL_EXE', 'FESTERM_MARKDOWN_SCROLL_RECEIPT',
+        'FESTERM_MARKDOWN_SCROLL_SOURCE_ROOT', 'FESTERM_MARKDOWN_SCROLL_OUT')) {
+        if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Set $name for native Markdown scrolling." }
+    }
+    & "$PSScriptRoot\check-windows-markdown-scrolling.ps1" `
+        -Executable $env:FESTERM_MARKDOWN_SCROLL_EXE -Receipt $env:FESTERM_MARKDOWN_SCROLL_RECEIPT `
+        -SourceRoot $env:FESTERM_MARKDOWN_SCROLL_SOURCE_ROOT -OutputDirectory $env:FESTERM_MARKDOWN_SCROLL_OUT `
+        -AllowGlobalPointer:($env:FESTERM_MARKDOWN_SCROLL_ALLOW_POINTER -eq '1')
+}
+
+if ($MarkdownScrollingOnly) {
+    Set-Content -Path $ResultPath -Value 'status=running'
+    try {
+        Invoke-MarkdownScrollingValidation
+        Add-Content -Path $ResultPath -Value "suite=windows-markdown-scrolling status=pass`nstatus=pass"
+    } catch {
+        Add-Content -Path $ResultPath -Value "suite=windows-markdown-scrolling status=fail`nstatus=fail"
+        throw
+    }
+    return
 }
 
 $p5ResultPath = if ($env:FESTERM_P5_REFERENCE_RESULT_PATH) {
@@ -261,6 +286,18 @@ if ($env:OS -eq 'Windows_NT') {
         Write-Warning $_
         Add-Content -Path $ResultPath -Value "`nsuite=windows-idle-rendering status=fail"
         $status = 'fail'
+    }
+    if ($env:FESTERM_RUN_MARKDOWN_SCROLLING -eq '1') {
+        try {
+            Invoke-MarkdownScrollingValidation
+            Add-Content -Path $ResultPath -Value "`nsuite=windows-markdown-scrolling status=pass"
+        } catch {
+            Write-Warning $_
+            Add-Content -Path $ResultPath -Value "`nsuite=windows-markdown-scrolling status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=windows-markdown-scrolling status=skipped reason=explicit-opt-in"
     }
     if ($env:FESTERM_RUN_DIRECT2D_PROBE -eq '1') {
         try {

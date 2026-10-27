@@ -71,6 +71,31 @@ usability review remains NP-05, not a unit-test acceptance claim.
 
 ### ADR 0046 document-frame experiment (CP-18)
 
+#### ADR 0051 native scrolling candidate: qualification pending
+
+Automated prefix/suffix pixel and resource tests cover exact ordered
+composition, fractional clips, translucent overlap, callback preparation,
+immutable queued images, managed-texture invalidation, idle upgrade and
+copy-only targets. These are deterministic rendering checks, not native
+performance or usability acceptance.
+
+The opt-in native gate is `scripts\check-windows-markdown-scrolling.ps1`;
+`scripts\run-optional-validation.ps1 -MarkdownScrollingOnly` dispatches it
+without running unrelated suites/builds. It requires staged release/source
+receipts, fresh owned output, an active desktop, actual WARP/geometry/offset
+proof and normal owned-process exit. Real cursor movement requires a separate
+explicit opt-in; intervening desktop interaction aborts the probe.
+
+Native baseline pilots cover prose, Rust fences of 20/300 lines and a 30-row
+table. They qualify the observed bottleneck only. The candidate A/B comparison
+is **pending** because the desktop disconnected before it could run; do not
+treat the candidate build or passing pixel tests as a measured improvement.
+See the [source-bound record and rerun procedure](../validation/windows-warp/README.md#native-markdown-scrolling-draft-qualification).
+CP-18's remaining native interaction, hardware, mixed-DPI, multi-window,
+device-loss, resource and physical-latency qualifications remain unchanged.
+
+#### Existing document-frame evidence
+
 The WARP document-frame implementation adds an automated exact-pixel
 oracle for actual 200-line Edit, Markdown Preview and Split at 100%, 125% and
 200%, with screenshot equivalence, exact input/resource invalidation, unsafe

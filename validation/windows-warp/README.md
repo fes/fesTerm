@@ -1,5 +1,106 @@
 # Windows WARP application rasterization
 
+## Native Markdown scrolling: draft qualification
+
+The ADR 0051 candidate is **not yet natively performance-qualified**. The
+candidate launch was refused before app/input creation because the Windows
+desktop session was disconnected (`WTSActive` required; actual state 4).
+The user selected publication as a draft pending native qualification.
+There is no candidate/native speedup, GPU-completion, physical-latency or
+freeze-repair claim.
+
+### Source-bound control pilots
+
+The control is source `8d4bb9c4bbd5bd8bb18d76f8c8c897e0605c783c`,
+tree `24c96ac6b8641d2c90afc6d9ca1c06b5ed4ef37f`,
+executable SHA-256
+`19de10d8a1a2e4b2721ccbfc7afc81b0e1ce78010f0a22a213db46aa8aba4c2b`.
+It adds numeric scroll/viewport diagnostics to main `0db5e864` without the
+adaptive-prefix change. A successful four-case native pilot used the normal
+`festerm --open -- <fixture.md>` route (the shared editor in Preview mode),
+default bundled fonts and the installed software-background plugins.
+Actual adapter proof was Microsoft Basic Render Driver / Dx12 / Cpu;
+the client was 1280 x 800 physical, 640 x 400 logical, DPI 192.
+
+Each process received five alternating down/up/down/up/down bursts of five
+targeted wheel messages at nominal 45 ms cadence. Logged offsets actually
+alternated approximately 0 and 200 points; all processes closed normally and
+restored the explicitly opted-in real cursor. CPU is aggregate process CPU,
+not elapsed latency or one-core utilization.
+
+| Fixture | Process CPU (s) | Measured wall (s) |
+| --- | ---: | ---: |
+| 20 prose paragraphs | 34.52 | 5.84 |
+| One 20-line Rust fence | 38.53 | 6.37 |
+| One 300-line Rust fence | 31.75 | 5.52 |
+| One 30-row table | 59.56 | 7.37 |
+
+These are bottleneck pilots, not balanced A/B observations. The final profiler
+subsequently gained recipe/fixture/receipt hashes, post-exit identity checks,
+independent cleanup steps, partial-reuse counters and measured-root-frame
+timing summaries. Do not assign its final recipe hash or new metadata to the
+earlier pilots. Raw logs/results and rejected zero-motion attempts remain
+local session artifacts; private paths, pointer coordinates and raw logs are
+not published. Redundant synthetic mouse moves cleared real Windows hover;
+the explicitly opted-in real-pointer route now omits those moves and still
+sends wheel messages only to the owned HWND.
+
+The frozen candidate build is source
+`54e2f62afbb01af61314a3d51d8c8efb406aa0ee`,
+tree `bb4e08a235b27911524a21b70f1f30e61672651a`,
+executable SHA-256
+`a97dd74bc765c043f1c161b49f72902ca7c1ee9579db5cdaa1e85287891d835b`.
+Both staged releases used Rust 1.98.1 and
+`cargo build --release --locked -p festerm --bin festerm --message-format=json`
+from the same fixed source path. These are historical frozen artifacts, not
+rebuilt versions of the integrated PR head. Current main subsequently merged
+independent Mermaid/table/code-galley changes and assigned ADR 0050 to Mermaid;
+the prefix proposal is now ADR 0051. Rebuild the integrated candidate and an
+instrumentation-only control from the same current main before qualification.
+Do not attribute those independent changes to prefix retention by comparing
+the old control with an integrated candidate.
+
+### Remaining matched comparison
+
+Use an active Windows desktop, no concurrent owned builds/tests, the same
+frozen final profiler recipe, fresh per-process output and matching receipts.
+Repeat all four fixtures in balanced A/B/B/A order; retain every adverse and
+rejected outcome. Require matching fixture hashes, physical geometry/DPI,
+adapter, actual signed offsets, normal exits and identity revalidation.
+Record exact, rebuilt and partial retention outcomes separately; absent old
+counter fields are null, not zero. Check prefix-job counts and native refusal
+logs before attributing any gain. Host `root_paint` p50/p95 summaries cover only
+the measured frame range and return from host API calls, not completed GPU
+work or message-to-display acknowledgments. Desktop interaction invalidates a
+sample rather than being overridden.
+
+The aggregate opt-in entry point supports focused execution without triggering
+ConPTY staging or unrelated suites:
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:FESTERM_MARKDOWN_SCROLL_EXE = 'C:\stage\festerm.exe'
+$env:FESTERM_MARKDOWN_SCROLL_RECEIPT = 'C:\stage\receipt.json'
+$env:FESTERM_MARKDOWN_SCROLL_SOURCE_ROOT = 'C:\src\frozen-source'
+$env:FESTERM_MARKDOWN_SCROLL_OUT = 'C:\evidence\fresh-run'
+# Only after explicit permission to activate the owned window and move/restore the cursor:
+$env:FESTERM_MARKDOWN_SCROLL_ALLOW_POINTER = '1'
+.\scripts\run-optional-validation.ps1 -MarkdownScrollingOnly `
+    -ResultPath C:\evidence\scroll-status.txt
+```
+
+In the full optional aggregate, set `FESTERM_RUN_MARKDOWN_SCROLLING=1` as well.
+The receipt schema and direct invocation are documented in the profiler's
+comment-based help. Stage artifacts outside the clean frozen source tree.
+The recipe is read-locked during each process and its hash, fixture hash,
+receipt, executable and source identities are revalidated after exit.
+
+The earlier small offscreen Preview/navigation measurements did **not** install
+the production software-background plugins. Preserve their historical
+identities and narrower offscreen claims; they are not this native route or a
+matched VS Code comparison. Broader CP-18 native/hardware/resource/usability
+gates remain open.
+
 Follow-up to [#242](https://github.com/fes/fesTerm/issues/242), after #253
 corrected application-window selection. This investigates CPU work that
 continues after the GUI frame counter stops advancing.

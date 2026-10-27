@@ -1689,18 +1689,19 @@
         "docs/adr/0034-shared-mutable-text-documents.md",
         "docs/adr/0047-bounded-local-document-background-io.md",
         "docs/adr/0048-bounded-native-svg-and-html-anchors.md",
-        "docs/adr/0050-adaptive-exact-document-prefix.md"
+        "docs/adr/0051-adaptive-exact-document-prefix.md"
       ],
       "decisions": [
         "ADR-0034",
         "ADR-0046",
         "ADR-0047",
         "ADR-0048",
-        "ADR-0050"
+        "ADR-0051"
       ],
       "automated_tests": [
         "retained_document_prefix_reuse_preserves_suffix_pixels_and_idle_upgrade",
         "retained_document_prefix_reuse_keeps_queued_images_and_invalidations",
+        "retained_document_prefix_keeps_copy_only_targets_on_complete_frames",
         "native_svg_real_editor_preview_and_split_keep_images_and_document_text",
         "native_svg_reparse_compares_payload_and_releases_actual_image_owners",
         "markdown_documents_start_at_top_and_keep_independent_scroll_positions",
@@ -2908,7 +2909,7 @@
         "docs/markdown-viewer-design.md",
         "docs/adr/0047-bounded-local-document-background-io.md",
         "docs/adr/0048-bounded-native-svg-and-html-anchors.md",
-        "docs/adr/0050-adaptive-exact-document-prefix.md"
+        "docs/adr/0051-adaptive-exact-document-prefix.md"
       ],
       "decisions": [
         "ADR-0030",
@@ -2916,11 +2917,12 @@
         "ADR-0046",
         "ADR-0047",
         "ADR-0048",
-        "ADR-0050"
+        "ADR-0051"
       ],
       "automated_tests": [
         "retained_document_prefix_reuse_preserves_suffix_pixels_and_idle_upgrade",
         "retained_document_prefix_reuse_keeps_queued_images_and_invalidations",
+        "retained_document_prefix_keeps_copy_only_targets_on_complete_frames",
         "svg_projection_preserves_source_spans_and_excludes_code",
         "svg_projection_handles_quotes_lists_multiple_roots_and_malformed_markup",
         "html_anchors_project_links_and_targets_without_phantom_headings",

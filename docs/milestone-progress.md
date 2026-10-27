@@ -2,6 +2,32 @@
 
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
+
+## Qualifying native Markdown scrolling before claiming a WARP repair
+
+The small offscreen Markdown benchmark did not install the application's
+software-background plugins. Its measurements remain useful for that harness,
+but could not select a native rendering repair. An isolated, owned-window
+probe now opens synthetic Markdown through the normal application route,
+requires actual scroll-offset movement and the DX12 CPU adapter, and records
+bounded host timing and retention counters. Early zero-motion attempts were
+rejected rather than counted as navigation evidence.
+
+Native control pilots confirmed substantial rendering CPU during movement.
+The draft ADR 0051 candidate retains an exact static leading paint-job prefix
+and repaints the changing suffix, keeping existing image/signature bounds,
+admission, callback preparation, immutable queued resources and idle reuse.
+Pixel/resource regressions pass, including fractional clips, translucency,
+suffix buffer indexing and copy-only targets. Partial reuse is not reported
+as an exact no-paint hit.
+
+The Windows desktop disconnected before the candidate's native comparison.
+The change therefore remains a draft, not a demonstrated speedup or a repaired
+freeze. [The WARP record](../validation/windows-warp/README.md#native-markdown-scrolling-draft-qualification)
+keeps source/binary identities, baseline pilots, rejected attempts and the
+remaining matched comparison explicit. No physical latency or general
+native/usability acceptance is inferred.
+
 ## Keeping document scroll positions independent
 
 Opening another Markdown document also exposed window-local scroll IDs: new

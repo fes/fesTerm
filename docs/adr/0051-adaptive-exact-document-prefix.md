@@ -1,4 +1,4 @@
-# ADR 0050: Adaptive Exact Document Prefix Retention
+# ADR 0051: Adaptive Exact Document Prefix Retention
 
 - **Status:** Proposed
 - **Date:** 2026-10-27
@@ -88,13 +88,19 @@ latency. Architecture acceptance and measured rollout remain subject to review.
   existing storage limits remain mandatory.
 - **GUI/action edges affected:** `GUI:MD-04`, `GUI:EDIT-09`; rendering only,
   with no new application command or navigation behavior.
-- **Automated tests required:** Planned
+- **Automated tests required:**
   `retained_document_prefix_reuse_preserves_suffix_pixels_and_idle_upgrade`
   and `retained_document_prefix_reuse_keeps_queued_images_and_invalidations`,
+  `retained_document_prefix_keeps_copy_only_targets_on_complete_frames`,
   existing document-retention fallback/preparation tests, and the native
   profiling helper contract tests.
 - **Native/manual evidence required:** `CP-18`; source-pinned matched native
   scrolling measurements with real offset and lifecycle proof. Native
   physical latency, other machines/adapters, and broader usability remain
   separate qualifications.
+- **Qualification status:** The ten focused document-retention tests pass
+  (one existing profiling test remains ignored). Native control pilots prove
+  actual scrolling and substantial WARP work, not a candidate improvement.
+  The candidate comparison is blocked by a disconnected Windows desktop;
+  this proposal remains draft pending matched native performance evidence.
 - **Coverage superseded:** None.
