@@ -21,7 +21,7 @@ use crate::document_layout::{galley_payload_bytes, LayoutEpoch};
 use crate::document_store::{DirectoryIdentity, Generation};
 use crate::documents::{OpenDocument, SharedDocuments};
 use crate::markdown_viewer::{
-    elide_middle, toolbar_button, toolbar_button_response, toolbar_button_width,
+    copy_path_menu, elide_middle, toolbar_button, toolbar_button_response, toolbar_button_width,
     toolbar_button_with_trailing, MarkdownPreviewPane, TOOLBAR_BUTTON_GAP, TOOLBAR_BUTTON_HEIGHT,
     TOOLBAR_BUTTON_PADDING_X, TOOLBAR_BUTTON_RADIUS, TOOLBAR_TEXT_SIZE,
 };
@@ -1726,7 +1726,13 @@ impl TextEditorTab {
                                 theme::TEXT_PRIMARY,
                                 true,
                             );
-                            monospace_label(ui, &self.origin_label, theme::TEXT_SECONDARY);
+                            let path =
+                                monospace_label(ui, &self.origin_label, theme::TEXT_SECONDARY);
+                            if !self.untitled {
+                                egui::Popup::context_menu(&path)
+                                    .id(egui::Id::new(("editor-path", self.document)))
+                                    .show(|ui| copy_path_menu(ui, &self.origin_label));
+                            }
                         });
                     });
                 });
@@ -1978,8 +1984,13 @@ impl TextEditorTab {
 
     fn run_find_action(&mut self, action: FindAction, documents: &SharedDocuments) {
         match action {
-            FindAction::Previous => self.find.pending_selection = self.find.step(false),
-            FindAction::Next => self.find.pending_selection = self.find.step(true),
+            FindAction::Previous | FindAction::Next => {
+                let found = self.find.step(action == FindAction::Next);
+                if let (Some(pane), Some(found)) = (&mut self.preview, &found) {
+                    pane.scroll_to_byte(found.start);
+                }
+                self.find.pending_selection = found;
+            }
             FindAction::Replace => self.replace_current(documents),
             FindAction::ReplaceAll => self.replace_all(documents),
         }
@@ -2291,13 +2302,17 @@ impl TextEditorTab {
         {
             self.outline_heading_storage = Some(headings.as_ptr() as usize);
         }
-        let clicked = crate::markdown_viewer::show_markdown_outline(
-            ui,
-            headings,
-            selected,
-            height,
-            "text-editor-outline",
-        );
+        let clicked = ui
+            .push_id(("document-outline", self.document), |ui| {
+                crate::markdown_viewer::show_markdown_outline(
+                    ui,
+                    headings,
+                    selected,
+                    height,
+                    "text-editor-outline",
+                )
+            })
+            .inner;
         if let Some(index) = clicked {
             if let Some(offset) = self
                 .preview
@@ -2353,7 +2368,7 @@ impl TextEditorTab {
 
     fn show_edit_pane(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments, width: f32) {
         egui::ScrollArea::vertical()
-            .id_salt("text-editor-body")
+            .id_salt(("text-editor-body", self.document))
             .auto_shrink([false, false])
             .max_width(width)
             .show(ui, |ui| {
@@ -2367,13 +2382,21 @@ impl TextEditorTab {
     /// split — the same block renderer the Markdown tab uses, fed from this
     /// view's buffer instead of from a file.
     fn show_preview_pane(&mut self, ui: &mut egui::Ui, height: f32) {
+        let highlighting = self.highlighting_matches();
         let pane = self.preview.get_or_insert_with(|| {
             editor_markdown_preview(&self.local_preview_source, &self.origin_label, &self.buffer)
         });
         pane.sync(ui.ctx(), &self.buffer);
+        pane.set_find_offsets(
+            self.find
+                .matches()
+                .iter()
+                .filter(|_| highlighting)
+                .map(|found| found.start),
+        );
         ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
             ui.set_height(height);
-            pane.show(ui);
+            ui.push_id(("document-preview", self.document), |ui| pane.show(ui));
         });
     }
 
@@ -3198,7 +3221,7 @@ fn hairline(ui: &mut egui::Ui) {
 
 /// Paths are read character by character, so they are set in the same
 /// monospace the Markdown viewer uses for them.
-fn monospace_label(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
+fn monospace_label(ui: &mut egui::Ui, text: &str, colour: egui::Color32) -> egui::Response {
     let font = FontId::monospace(LABEL_TEXT_SIZE);
     // A path is as long as somebody's directories are deep, and the mode
     // control has already claimed its end of the row; elide in the middle so
@@ -3210,11 +3233,12 @@ fn monospace_label(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
         .x
         .max(1.0);
     let budget = (ui.available_width() / character).floor().max(8.0) as usize;
-    let text = &elide_middle(text, budget);
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, colour);
-    let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::hover());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
+    let display = elide_middle(text, budget);
+    let galley = ui.painter().layout_no_wrap(display, font, colour);
+    let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), text));
     ui.painter().galley(rect.left_top(), galley, colour);
+    response.on_hover_text(text)
 }
 
 /// Lays the body out with every match behind a wash of colour and the current
@@ -3802,6 +3826,92 @@ mod tests {
     }
 
     #[test]
+    fn editor_path_context_menu_copies_the_full_path_in_all_modes() {
+        let directory = TemporaryDirectory::new("copy-origin-path");
+        let name = format!("{}caf\u{e9} \u{6f22}.md", "long-file-name-".repeat(7));
+        let path = directory.file(&name, "# Controlled document\n");
+        let (documents, editor) = opened_editor_for(&path);
+        let document = editor.document();
+        let expected = editor.origin_label().to_owned();
+        for mode in [EditorMode::Edit, EditorMode::Preview, EditorMode::Split] {
+            for width in [900.0, 320.0] {
+                let mut editor = TextEditorTab::new(document, &documents);
+                editor.mode = mode;
+                let mut harness = Harness::builder()
+                    .with_size(vec2(width, 200.0))
+                    .build_ui_state(
+                        |ui, editor: &mut TextEditorTab| editor.show_origin_bar(ui),
+                        editor,
+                    );
+                harness.run();
+                let position = harness.get_by_label(&expected).rect().center();
+                harness.event(egui::Event::PointerMoved(position));
+                for pressed in [true, false] {
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: Default::default(),
+                    });
+                }
+                harness.run();
+                assert!(harness.output().platform_output.commands.is_empty());
+                harness.get_by_label("Copy path").click();
+                harness.step();
+                assert_eq!(
+                    harness.output().platform_output.commands,
+                    vec![egui::OutputCommand::CopyText(expected.clone())]
+                );
+                harness.run();
+                assert!(harness.query_by_label("Copy path").is_none());
+                assert_eq!(harness.state().mode, mode);
+                assert_eq!(harness.state().buffer, "# Controlled document\n");
+            }
+        }
+    }
+
+    #[test]
+    fn editor_path_menu_does_not_retarget_when_switching_documents() {
+        let directory = TemporaryDirectory::new("copy-path-switch");
+        let first = directory.file("first.md", "# First\n");
+        let second = directory.file("second.md", "# Second\n");
+        let documents = DocumentRegistry::shared();
+        let editors = [first, second].map(|path| {
+            let document = documents.borrow_mut().open_local(&path).unwrap();
+            TextEditorTab::new(document, &documents)
+        });
+        let first_path = editors[0].origin_label().to_owned();
+        let mut harness = Harness::builder()
+            .with_size(vec2(900.0, 200.0))
+            .build_ui_state(
+                |ui, state: &mut (usize, [TextEditorTab; 2])| {
+                    state.1[state.0].show_origin_bar(ui);
+                },
+                (0, editors),
+            );
+        harness.run();
+        let position = harness.get_by_label(&first_path).rect().center();
+        harness.event(egui::Event::PointerMoved(position));
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Default::default(),
+            });
+        }
+        harness.run();
+        harness.get_by_label("Copy path");
+        harness.state_mut().0 = 1;
+        harness.run();
+        assert!(harness.query_by_label("Copy path").is_none());
+        assert!(harness.output().platform_output.commands.is_empty());
+        harness.state_mut().0 = 0;
+        harness.run();
+        assert!(harness.query_by_label("Copy path").is_none());
+    }
+
+    #[test]
     fn native_svg_real_editor_preview_and_split_keep_images_and_document_text() {
         let directory = TemporaryDirectory::new("native-svg-editor");
         directory.file(
@@ -3841,6 +3951,89 @@ mod tests {
         assert!(preview.image_loaded_for_test(1));
         assert_eq!(preview.rendered_text(), text);
         assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+    }
+
+    #[test]
+    fn mermaid_editor_find_reveals_source_and_navigates_in_preview_and_split() {
+        for mode in [EditorMode::Preview, EditorMode::Split] {
+            let directory = TemporaryDirectory::new("mermaid-editor-find");
+            let text = format!(
+                "{}\n```mermaid\nflowchart LR\n A[Unique caf\u{e9}] --> B[End]\n```\n",
+                "Before the diagram\n\n".repeat(80),
+            );
+            let path = directory.file("diagram.md", &text);
+            let (documents, mut editor) = opened_editor_for(&path);
+            editor.mode = mode;
+            let tab = TabId::next_for_test();
+            let mut harness = Harness::builder()
+                .with_size(vec2(1180.0, 800.0))
+                .build_ui_state(
+                    move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                        ui.ctx().all_styles_mut(|style| {
+                            style.scroll_animation = egui::style::ScrollAnimation::none();
+                        });
+                        state.1.show(ui, tab, &state.0);
+                    },
+                    (documents, editor),
+                );
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while harness.query_by_label("Show Mermaid source").is_none() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Mermaid worker did not finish"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                harness.run();
+            }
+            assert!(harness.query_by_label("flowchart LR").is_none());
+            open_find_and_type(&mut harness, false, "Unique caf.");
+            assert_eq!(harness.state().1.find_match_count_for_test(), 1);
+            harness.get_by_label("flowchart LR");
+            harness.get_by_label("Next match").click();
+            harness.run();
+            let source = harness.get_by_label("flowchart LR").rect();
+            assert!(
+                source.top() >= 0.0 && source.bottom() < 800.0,
+                "{mode:?}: {source:?}"
+            );
+            harness.get_by_label("Close Find").click();
+            harness.run();
+            assert!(harness.query_by_label("flowchart LR").is_none());
+            assert_eq!(harness.state().1.mode, mode);
+            assert_eq!(harness.state().1.buffer, text);
+            assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+        }
+    }
+
+    #[test]
+    fn untitled_editor_path_context_menu_has_no_copy_action() {
+        let documents = DocumentRegistry::shared();
+        let document =
+            documents
+                .borrow_mut()
+                .create_untitled("scratch", "Controlled untitled document", b"");
+        let editor = TextEditorTab::new(document, &documents);
+        let label = editor.origin_label().to_owned();
+        let mut harness = Harness::builder()
+            .with_size(vec2(700.0, 200.0))
+            .build_ui_state(
+                |ui, editor: &mut TextEditorTab| editor.show_origin_bar(ui),
+                editor,
+            );
+        harness.run();
+        let position = harness.get_by_label(&label).rect().center();
+        harness.event(egui::Event::PointerMoved(position));
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Default::default(),
+            });
+        }
+        harness.run();
+        assert!(harness.query_by_label("Copy path").is_none());
+        assert!(harness.output().platform_output.commands.is_empty());
     }
 
     #[test]
@@ -6314,6 +6507,85 @@ mod tests {
                 },
                 (documents, editor),
             )
+    }
+
+    #[test]
+    fn markdown_documents_start_at_top_and_keep_independent_scroll_positions() {
+        let text: String = (0..60)
+            .map(|index| format!("## Section {index}\n\nParagraph in section {index}.\n\n"))
+            .collect();
+        let documents = DocumentRegistry::shared();
+        let directory = TemporaryDirectory::new("markdown-scroll-state");
+        let editors = (0..2)
+            .map(|index| {
+                let path = directory.file(&format!("scroll-{index}.md"), &text);
+                let document = documents.borrow_mut().open_local(&path).unwrap();
+                let mut editor = TextEditorTab::new(document, &documents);
+                editor.mode = EditorMode::Preview;
+                editor.options.outline = false;
+                editor
+            })
+            .collect::<Vec<_>>();
+        let mut harness =
+            Harness::builder()
+                .with_size(vec2(900.0, 420.0))
+                .build_ui_state(
+                    |ui,
+                     (documents, editors, active): &mut (
+                        SharedDocuments,
+                        Vec<TextEditorTab>,
+                        usize,
+                    )| editors[*active].show_body(ui, documents),
+                    (documents, editors, 0usize),
+                );
+        harness.run();
+        assert_eq!(
+            harness.state().1[0]
+                .preview
+                .as_ref()
+                .unwrap()
+                .visible_heading(),
+            Some(0)
+        );
+        for _ in 0..8 {
+            harness.event(egui::Event::PointerMoved(egui::pos2(450.0, 200.0)));
+            harness.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, -400.0),
+                modifiers: egui::Modifiers::NONE,
+                phase: egui::TouchPhase::Move,
+            });
+            harness.step();
+        }
+        harness.run();
+        let first_position = harness.state().1[0]
+            .preview
+            .as_ref()
+            .unwrap()
+            .visible_heading();
+        assert!(first_position.is_some_and(|heading| heading > 0));
+        harness.state_mut().2 = 1;
+        harness.run();
+        assert_eq!(
+            harness.state().1[1]
+                .preview
+                .as_ref()
+                .unwrap()
+                .visible_heading(),
+            Some(0),
+            "a newly opened document must not inherit the previous document's offset"
+        );
+        harness.state_mut().2 = 0;
+        harness.run();
+        assert_eq!(
+            harness.state().1[0]
+                .preview
+                .as_ref()
+                .unwrap()
+                .visible_heading(),
+            first_position,
+            "returning to an open document restores its own position"
+        );
     }
 
     fn assert_outline_borrows_preview(editor: &TextEditorTab, expected_count: usize) {

@@ -15,6 +15,17 @@ technology, visual judgment, reference-application screen semantics, or a real
 usability question. A reproducible failure should become the smallest suitable
 fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
+## Offline Mermaid (CP-06, CP-15)
+
+Automated coverage renders flowcharts, sequences and representative chart/UML
+families offline; checks malformed and excessive inputs, inert generated links,
+retained textures, source toggle, Find and exact fenced Copy. Native visual,
+readability and screen-reader qualification remains pending: review diagrams
+in standalone remote Preview and local Preview/Split at native scales, using
+source/Find/Copy. This does not qualify every Mermaid.js syntax feature or
+interactive diagram nodes; previews remain inert images under ADR 0050's
+conservative limits.
+
 ## Status vocabulary
 
 - **Automated:** a repository-owned test provides the acceptance evidence.
@@ -28,6 +39,15 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
   failed or skipped test.
 - **Pass / Fail / Not run:** result for one specific platform and commit. Not run
   always includes a reason and never counts as pass.
+### Document-local scrolling (CP-06, CP-15)
+
+An automated local Markdown switching regression verifies new-at-top and
+restoration of each open document's independent scroll position. Native
+qualification remains pending: switch between differently scrolled documents,
+including standalone remote Preview/Source and local Preview/Split with an
+outline, and verify that new documents start at the top without resetting
+existing documents on every frame.
+
 
 ### Downloadable terminal fonts (TYPE-02 / NP-05)
 
@@ -878,6 +898,18 @@ accessibility-tree checks, not native clipboard delivery, IME/caret usability,
 screen-reader qualification, GPU timing or end-to-end latency. CP-06, CP-15 and
 CP-18 native/manual acceptance and existing renderer-specific gates stay open.
 
+CP-06/CP-15 path Copy: on owned local and remote fixtures, right-click the
+document path in standalone Preview/Source and editor Edit/Preview/Split,
+including narrow windows and long paths with spaces/Unicode. **Copy path** must
+deliver the full path to the native clipboard, matching the viewer overflow
+action; hover/accessibility must expose the full label. Opening the menu or
+dismissing it with Escape must not write to the clipboard or change the
+document. Untitled editors must not offer a file-path action. Deterministic
+headless tests automate the real menus, exact clipboard output requests,
+dismissal, mode stability and the untitled guard; native clipboard delivery,
+secondary-click conventions and screen-reader/tooltip presentation remain
+manual evidence.
+
 The draft-consolidation Windows run retains an explicit environment boundary:
 the interactive account lacks `SeSecurityPrivilege`. Its 32 application and
 four Windows-security failures exactly match the unchanged `c333013c` main
@@ -1101,6 +1133,15 @@ identical pixels; the two 0.5-opacity controls execute none and remain identical
 Live accessibility and Source response geometry are also compared. This is
 automated fidelity evidence, not completed Markdown draw timing or native
 clipboard/screen-reader usability; those pending statuses are unchanged.
+
+CP-06/CP-15 table borders: native visual/readability checks remain pending
+for the single-stroke internal column dividers in standalone Preview and editor
+Preview/Split. Compare tall, header-only, empty-cell and ragged-source tables
+at normal/fractional scale, including horizontal scrolling and selection.
+CPU regressions inspect actual segment counts, clipping, cell responses and
+overlay order; they do not establish native pixels or responsiveness.
+Removing repeated antialias blending may lighten border edges, so exact
+overdrawn baseline pixels are not required.
 
 CP-15 saved-local images: open owned local Markdown fixtures in Preview
 and Split, exceed 64 automatic references and explicitly load the next image.

@@ -788,14 +788,17 @@ impl MarkdownViewerTab {
                                     render_state.table_cells.probe = self.table_cell_probe.take();
                                 }
                                 document_rect = Some(
-                                    render_state
-                                        .show_document(
-                                            ui,
-                                            document,
-                                            self.clipboard_owner,
-                                            self.document_revision,
-                                        )
-                                        .document_rect,
+                                    ui.push_id(("markdown-viewer", tab_id), |ui| {
+                                        render_state
+                                            .show_document(
+                                                ui,
+                                                document,
+                                                self.clipboard_owner,
+                                                self.document_revision,
+                                            )
+                                            .document_rect
+                                    })
+                                    .inner,
                                 );
                                 #[cfg(test)]
                                 {
@@ -1333,27 +1336,26 @@ impl MarkdownViewerTab {
                 // and mockup both put in this slot.
                 let overflow =
                     toolbar_button_response(ui, Some(Icon::Overflow), "", "Viewer menu", false);
-                egui::Popup::menu(&overflow).show(|ui| {
-                    if ui.button("Copy path").clicked() {
-                        ui.ctx().copy_text(self.display_path().to_owned());
-                        ui.close();
-                    }
-                    if ui.button("Reload").clicked() {
-                        command = Some(AppCommand::ReloadMarkdown);
-                        ui.close();
-                    }
-                    if let Some(path) = self.local_path().map(Path::to_path_buf) {
-                        if ui.button("Edit").clicked() {
-                            command = Some(AppCommand::OpenTextEditor { path });
+                egui::Popup::menu(&overflow)
+                    .id(egui::Id::new(("markdown-overflow", self.clipboard_owner)))
+                    .show(|ui| {
+                        copy_path_menu(ui, self.display_path());
+                        if ui.button("Reload").clicked() {
+                            command = Some(AppCommand::ReloadMarkdown);
                             ui.close();
                         }
-                    }
-                    ui.separator();
-                    if ui.button("Close viewer").clicked() {
-                        command = Some(AppCommand::CloseTab(tab_id));
-                        ui.close();
-                    }
-                });
+                        if let Some(path) = self.local_path().map(Path::to_path_buf) {
+                            if ui.button("Edit").clicked() {
+                                command = Some(AppCommand::OpenTextEditor { path });
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        if ui.button("Close viewer").clicked() {
+                            command = Some(AppCommand::CloseTab(tab_id));
+                            ui.close();
+                        }
+                    });
                 if toolbar_button(
                     ui,
                     Some(Icon::Outline),
@@ -1435,15 +1437,23 @@ impl MarkdownViewerTab {
                     // ignored how much room the controls had actually left,
                     // so on a narrow window the path drew straight through
                     // the Preview/Source/Find buttons.
-                    ui.add(
+                    let path = ui.add(
                         egui::Label::new(
                             RichText::new(elide_middle(self.display_path(), 72))
                                 .size(TOOLBAR_TEXT_SIZE)
                                 .monospace()
                                 .color(theme::TEXT_SECONDARY),
                         )
+                        .sense(Sense::click())
                         .truncate(),
                     );
+                    path.widget_info(|| {
+                        WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), self.display_path())
+                    });
+                    let path = path.on_hover_text(self.display_path());
+                    egui::Popup::context_menu(&path)
+                        .id(egui::Id::new(("markdown-path", self.clipboard_owner)))
+                        .show(|ui| copy_path_menu(ui, self.display_path()));
                 });
             });
         });
@@ -1786,6 +1796,7 @@ impl PreparedTable {
 
 #[derive(Default)]
 struct CodeLinePreparation {
+    diagrams: crate::markdown_diagrams::MermaidDiagrams,
     jobs: BTreeMap<(usize, usize), Arc<LayoutJob>>,
     payload_bytes: usize,
     epoch: LayoutEpoch,
@@ -1805,6 +1816,7 @@ struct PreparedCodeLine {
 
 impl CodeLinePreparation {
     fn clear(&mut self) {
+        self.diagrams.clear();
         self.jobs.clear();
         self.payload_bytes = 0;
         self.clear_galleys();
@@ -3650,27 +3662,27 @@ impl MarkdownRenderState<'_> {
                             cell_rects.push(row_rects);
                         }
 
-                        if let Some(first_row) = cell_rects.first() {
-                            let table_rect = cell_rects
-                                .iter()
-                                .flatten()
-                                .fold(first_row[0], |rect, next| rect.union(*next));
+                        let mut cells = cell_rects.iter().flatten();
+                        if let Some(first_cell) = cells.next() {
+                            let table_rect =
+                                cells.fold(*first_cell, |rect, next| rect.union(*next));
                             ui.painter().rect_stroke(
                                 table_rect,
                                 0.0,
                                 egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
                                 egui::StrokeKind::Inside,
                             );
-                            for row in &cell_rects {
-                                for cell in row.iter().take(row.len().saturating_sub(1)) {
-                                    ui.painter().line_segment(
-                                        [
-                                            egui::pos2(cell.right(), table_rect.top()),
-                                            egui::pos2(cell.right(), table_rect.bottom()),
-                                        ],
-                                        egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
-                                    );
-                                }
+                            // Full-height dividers belong to columns, not rows.
+                            let mut right = table_rect.left();
+                            for width in widths.iter().take(widths.len().saturating_sub(1)) {
+                                right += width;
+                                ui.painter().line_segment(
+                                    [
+                                        egui::pos2(right, table_rect.top()),
+                                        egui::pos2(right, table_rect.bottom()),
+                                    ],
+                                    egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                                );
                             }
                             for row in cell_rects.iter().take(cell_rects.len().saturating_sub(1)) {
                                 let Some(first_cell) = row.first() else {
@@ -3743,6 +3755,20 @@ impl MarkdownRenderState<'_> {
                         bottom: CODE_BLOCK_PADDING_Y - CODE_BLOCK_TRAILING_LEAD,
                     })
                     .show(ui, |ui| {
+                        if block.language() == Some("mermaid") {
+                            let reveal_source = self.find.matches().iter().any(|found| {
+                                byte_range_contains(block.span(), found.span().start().byte_offset())
+                            }) || self.code_preparation.diagrams.has_find_match(block.span().byte_range())
+                                || matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(block.span(), target));
+                            if !self.code_preparation.diagrams.show(
+                                ui,
+                                block.span().start().byte_offset(),
+                                block.code_text(),
+                                reveal_source,
+                            ) {
+                                return;
+                            }
+                        }
                         let mut vertical_scroll_target = None;
                         egui::ScrollArea::horizontal()
                             .id_salt(("markdown-code", block.span().byte_range().start))
@@ -5678,6 +5704,14 @@ impl MarkdownPreviewPane {
         self.frames_in_flight = 0;
     }
 
+    pub(crate) fn set_find_offsets(&mut self, offsets: impl Iterator<Item = usize>) {
+        self.code_preparation.diagrams.set_find_offsets(offsets);
+    }
+
+    pub(crate) fn scroll_to_byte(&mut self, offset: usize) {
+        self.pending_scroll = Some(PendingScroll::Byte(offset));
+    }
+
     /// The headings the current parse found, for a caller drawing its own
     /// outline beside the text.
     pub(crate) fn headings(&self) -> &[festerm_markdown::Heading] {
@@ -5875,6 +5909,13 @@ pub(crate) fn show_markdown_outline(
             }
         });
     clicked
+}
+
+pub(crate) fn copy_path_menu(ui: &mut egui::Ui, path: &str) {
+    if ui.button("Copy path").clicked() {
+        ui.ctx().copy_text(path.to_owned());
+        ui.close();
+    }
 }
 
 pub(crate) fn toolbar_button(
@@ -6197,6 +6238,159 @@ mod tests {
         "| Dependency and ownership boundaries | `ARCHITECTURE.md` |\n",
     );
 
+    #[test]
+    fn markdown_path_context_menu_copies_the_full_path_in_preview_and_source() {
+        let path = format!(
+            "/controlled/{}notes caf\u{e9} \u{6f22}.md",
+            "long-directory/".repeat(12)
+        );
+        assert_ne!(elide_middle(&path, 72), path);
+        for remote in [false, true] {
+            for mode in [MarkdownViewerMode::Preview, MarkdownViewerMode::Source] {
+                for width in [900.0, 480.0] {
+                    for overflow in [false, true] {
+                        let mut viewer = if remote {
+                            MarkdownViewerTab::open_remote(
+                                test_remote_source(&path),
+                                path.clone(),
+                                b"# Controlled document\n".to_vec(),
+                            )
+                        } else {
+                            MarkdownViewerTab::open_local(PathBuf::from(&path))
+                        };
+                        viewer.mode = mode;
+                        let expected = viewer.display_path().to_owned();
+                        let tab = crate::tabs::AppState::for_test().active();
+                        let mut harness = Harness::builder()
+                            .with_size(vec2(width, 200.0))
+                            .build_ui_state(
+                                move |ui, viewer: &mut MarkdownViewerTab| {
+                                    assert!(viewer.show_toolbar(ui, tab).is_none());
+                                },
+                                viewer,
+                            );
+                        harness.run();
+                        assert!(harness.output().platform_output.commands.is_empty());
+                        if overflow {
+                            harness.get_by_label("Viewer menu").click();
+                        } else {
+                            let position = harness.get_by_label(&expected).rect().center();
+                            harness.event(egui::Event::PointerMoved(position));
+                            for pressed in [true, false] {
+                                harness.event(egui::Event::PointerButton {
+                                    pos: position,
+                                    button: egui::PointerButton::Secondary,
+                                    pressed,
+                                    modifiers: Default::default(),
+                                });
+                            }
+                        }
+                        harness.run();
+                        assert!(harness.output().platform_output.commands.is_empty());
+                        harness.get_by_label("Copy path").click();
+                        harness.step();
+                        assert_eq!(
+                            harness.output().platform_output.commands,
+                            vec![egui::OutputCommand::CopyText(expected.clone())]
+                        );
+                        harness.run();
+                        assert!(harness.query_by_label("Copy path").is_none());
+                        assert_eq!(harness.state().display_path(), expected);
+                        assert_eq!(harness.state().mode, mode);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn markdown_path_context_menu_can_be_dismissed_without_copying() {
+        let path = "/srv/controlled/notes.md";
+        let viewer = MarkdownViewerTab::open_remote(
+            test_remote_source(path),
+            path.to_owned(),
+            b"# Controlled document\n".to_vec(),
+        );
+        let tab = crate::tabs::AppState::for_test().active();
+        let mut harness = Harness::builder()
+            .with_size(vec2(700.0, 200.0))
+            .build_ui_state(
+                move |ui, viewer: &mut MarkdownViewerTab| {
+                    assert!(viewer.show_toolbar(ui, tab).is_none());
+                },
+                viewer,
+            );
+        harness.run();
+        let position = harness.get_by_label(path).rect().center();
+        harness.event(egui::Event::PointerMoved(position));
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Default::default(),
+            });
+        }
+        harness.run();
+        harness.get_by_label("Copy path");
+        harness.event(egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        });
+        harness.run();
+        assert!(harness.query_by_label("Copy path").is_none());
+        assert!(harness.output().platform_output.commands.is_empty());
+    }
+
+    #[test]
+    fn markdown_path_menus_do_not_retarget_when_switching_documents() {
+        for overflow in [false, true] {
+            let viewers = ["/srv/first.md", "/srv/second.md"].map(|path| {
+                MarkdownViewerTab::open_remote(
+                    test_remote_source(path),
+                    path.to_owned(),
+                    b"# Controlled document\n".to_vec(),
+                )
+            });
+            let tabs = [TabId::next_for_test(), TabId::next_for_test()];
+            let mut harness = Harness::builder()
+                .with_size(vec2(900.0, 200.0))
+                .build_ui_state(
+                    move |ui, state: &mut (usize, [MarkdownViewerTab; 2])| {
+                        assert!(state.1[state.0].show_toolbar(ui, tabs[state.0]).is_none());
+                    },
+                    (0, viewers),
+                );
+            harness.run();
+            if overflow {
+                harness.get_by_label("Viewer menu").click();
+            } else {
+                let position = harness.get_by_label("/srv/first.md").rect().center();
+                harness.event(egui::Event::PointerMoved(position));
+                for pressed in [true, false] {
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: Default::default(),
+                    });
+                }
+            }
+            harness.run();
+            harness.get_by_label("Copy path");
+            harness.state_mut().0 = 1;
+            harness.run();
+            assert!(harness.query_by_label("Copy path").is_none());
+            assert!(harness.output().platform_output.commands.is_empty());
+            harness.state_mut().0 = 0;
+            harness.run();
+            assert!(harness.query_by_label("Copy path").is_none());
+        }
+    }
+
     /// Renders a document through the real block renderer inside a headless
     /// harness, so layout assertions measure the geometry the viewer actually
     /// draws rather than a reimplementation of it.
@@ -6284,6 +6478,53 @@ mod tests {
             },
             (),
         )
+    }
+
+    #[test]
+    fn mermaid_fences_render_in_shared_preview_keep_copy_and_reveal_find_matches() {
+        let source = "flowchart LR\n A[Start] --> B[Finish]\n";
+        let text = format!("```mermaid\n{source}```\n\n```rust\nlet plain = 1;\n```\n");
+        let mut harness = Harness::builder()
+            .with_size(vec2(900.0, 700.0))
+            .build_ui_state(
+                |ui, pane: &mut MarkdownPreviewPane| pane.show(ui),
+                MarkdownPreviewPane::new(
+                    MarkdownSource::from(
+                        LocalMarkdownSource::new(PathBuf::from("controlled-mermaid.md")).unwrap(),
+                    ),
+                    &text,
+                ),
+            );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while harness.query_by_label("Show Mermaid source").is_none() {
+            assert!(Instant::now() < deadline, "Mermaid worker did not finish");
+            thread::sleep(Duration::from_millis(5));
+            harness.run();
+        }
+        assert!(harness.query_by_label("flowchart LR").is_none());
+        assert!(harness.query_by_label("let plain = 1;").is_some());
+        harness
+            .get_all_by_label("Copy the code block")
+            .next()
+            .unwrap()
+            .click();
+        harness.step();
+        assert_eq!(
+            harness.output().platform_output.commands,
+            vec![egui::OutputCommand::CopyText(source.to_owned())]
+        );
+        harness.get_by_label("Show Mermaid source").click();
+        harness.run();
+        harness.get_by_label("flowchart LR");
+        harness.get_by_label("Show Mermaid source").click();
+        harness.run();
+        assert!(harness.query_by_label("flowchart LR").is_none());
+        let pane = harness.state_mut();
+        pane.find
+            .set_query(pane.document.as_ref().unwrap(), "Start".into());
+        harness.run();
+        harness.get_by_label("flowchart LR");
+        assert_eq!(harness.state().rendered_text(), text);
     }
 
     /// epaint anchors a text section's background at `baseline -
@@ -6903,7 +7144,11 @@ mod tests {
         events: Vec<egui::Event>,
         opacity: f32,
     ) -> [egui::FullOutput; 2] {
-        let tab_id = crate::tabs::AppState::for_test().active();
+        let tab_id = pair[0].0.data_mut(|data| {
+            *data.get_temp_mut_or_insert_with(egui::Id::new("source-oracle-tab"), || {
+                crate::tabs::AppState::for_test().active()
+            })
+        });
         let output = std::array::from_fn(|index| {
             let (context, viewer) = &mut pair[index];
             let mut output = context.run_ui(
@@ -8313,6 +8558,178 @@ mod tests {
         }
         pair[1].1.table_layouts.ordinary = false;
         pair
+    }
+
+    fn assert_table_divider_geometry(
+        output: &egui::FullOutput,
+        table: &PreparedTable,
+    ) -> (egui::Rect, egui::Rect) {
+        let stroke = egui::Stroke::new(1.0, theme::BORDER_SUBTLE);
+        let (border_index, border, clip) = output
+            .shapes
+            .iter()
+            .enumerate()
+            .find_map(|(index, shape)| match &shape.shape {
+                egui::Shape::Rect(rect)
+                    if rect.corner_radius == egui::CornerRadius::ZERO
+                        && rect.stroke == stroke
+                        && rect.stroke_kind == egui::StrokeKind::Inside =>
+                {
+                    Some((index, rect.rect, shape.clip_rect))
+                }
+                _ => None,
+            })
+            .expect("the real table outline must be painted");
+        assert!((border.width() - table.widths.iter().sum::<f32>()).abs() < 0.01);
+        assert!(
+            (border.height() - table.rows.iter().map(|row| row.height).sum::<f32>()).abs() < 0.01
+        );
+        let mut verticals = Vec::new();
+        let mut horizontals = Vec::new();
+        for (index, shape) in output.shapes.iter().enumerate() {
+            if let egui::Shape::LineSegment {
+                points,
+                stroke: actual,
+            } = &shape.shape
+            {
+                if *actual != stroke {
+                    continue;
+                }
+                assert!(index > border_index, "dividers follow cells and outline");
+                assert_eq!(shape.clip_rect, clip, "all borders share the table clip");
+                if points[0].x == points[1].x {
+                    assert_eq!(points[0].y, border.top());
+                    assert_eq!(points[1].y, border.bottom());
+                    verticals.push(points[0].x);
+                } else {
+                    assert_eq!(points[0].x, border.left());
+                    assert_eq!(points[1].x, border.right());
+                    assert_eq!(points[0].y, points[1].y);
+                    horizontals.push(points[0].y);
+                }
+            }
+        }
+        assert_eq!(
+            verticals.len(),
+            table.widths.len() - 1,
+            "one actual full-height stroke per internal column, regardless of row count"
+        );
+        let mut right = border.left();
+        for (actual, width) in verticals.iter().zip(&table.widths) {
+            right += width;
+            assert_eq!(*actual, right);
+        }
+        assert_eq!(horizontals.len(), table.rows.len() - 1);
+        let mut bottom = border.top();
+        for (actual, row) in horizontals.iter().zip(&table.rows) {
+            bottom += row.height;
+            assert!((*actual - bottom).abs() < 0.01);
+        }
+        if table
+            .rows
+            .iter()
+            .flat_map(|row| &row.galleys)
+            .any(|galley| !galley.job.text.is_empty())
+        {
+            assert!(
+                output.shapes[..border_index]
+                    .iter()
+                    .any(|shape| matches!(shape.shape, egui::Shape::Text(_))),
+                "visible cell text is painted before the border overlay"
+            );
+        }
+        (border, clip)
+    }
+
+    #[test]
+    fn table_dividers_emit_once_per_column_for_tall_ragged_empty_and_header_only_tables() {
+        let header = "| Left | Middle | Right |\n| :--- | :---: | ---: |\n";
+        for text in [
+            header.to_owned(),
+            format!("{header}| a | b | c |\n"),
+            format!("{header}{}", "| a | b | c |\n".repeat(64)),
+            format!("{header}| short |\n| | | |\n| a | b |\n"),
+            "| Only |\n| --- |\n| body |\n".to_owned(),
+            "| | | |\n| --- | --- | --- |\n| | | |\n".to_owned(),
+        ] {
+            let parsed = document(&text);
+            let Block::Table(block) = &parsed.blocks()[0] else {
+                panic!("expected a table fixture");
+            };
+            let expected_cells: usize = block.rows().iter().map(|row| row.cells().len()).sum();
+            for width in [360.0, 1180.0] {
+                for scale in [1.0, 1.25] {
+                    let mut pair = document_layout_pair(&text);
+                    for (context, _) in &pair {
+                        context.set_pixels_per_point(scale);
+                    }
+                    for frame in 0..3 {
+                        let output =
+                            caption_oracle_frame(&mut pair, frame, vec2(width, 760.0), Vec::new());
+                        let pane = &pair[1].1;
+                        let table = pane.table_layouts.tables.values().next().unwrap();
+                        assert_table_divider_geometry(&output[1], table);
+                        let cells = &pane.table_cell_probe.as_ref().unwrap().observations;
+                        assert_eq!(cells.len(), expected_cells, "every cell remains live");
+                        assert!(cells
+                            .iter()
+                            .all(|cell| cell.enabled && cell.sense.senses_click()));
+                        if frame == 2 {
+                            assert_eq!(pane.table_layouts.preparations, 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn table_dividers_scroll_with_cells_inside_the_existing_clip() {
+        let text = concat!(
+            "| First | Second | Third | Fourth | Fifth | Sixth | Seventh | Eighth |\n",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |\n",
+            "| a | b | c | d | e | f | g | h |\n",
+        );
+        let mut pair = document_layout_pair(text);
+        let size = vec2(360.0, 400.0);
+        caption_oracle_frame(&mut pair, 0, size, Vec::new());
+        let output = caption_oracle_frame(&mut pair, 1, size, Vec::new());
+        let table = pair[1].1.table_layouts.tables.values().next().unwrap();
+        let (before, clip) = assert_table_divider_geometry(&output[1], table);
+        assert!(before.width() > clip.width(), "the fixture must overflow");
+        let cell_before = pair[1].1.table_cell_probe.as_ref().unwrap().observations[0].rect;
+        let pointer = before.intersect(clip).center();
+        let output = caption_oracle_frame(
+            &mut pair,
+            2,
+            size,
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: vec2(-80.0, 0.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        let table = pair[1].1.table_layouts.tables.values().next().unwrap();
+        assert_table_divider_geometry(&output[1], table);
+        // Scroll input is applied after this frame's content has been laid out.
+        let output = caption_oracle_frame(&mut pair, 3, size, Vec::new());
+        let table = pair[1].1.table_layouts.tables.values().next().unwrap();
+        let (after, after_clip) = assert_table_divider_geometry(&output[1], table);
+        let cell_after = pair[1].1.table_cell_probe.as_ref().unwrap().observations[0].rect;
+        assert!(
+            after.left() < before.left(),
+            "horizontal scroll must move ink"
+        );
+        assert!((after.size() - before.size()).abs().max_elem() < 0.01);
+        assert_eq!(after_clip, clip);
+        assert!(
+            (cell_after.left() - cell_before.left() - (after.left() - before.left())).abs() < 0.01
+        );
+        assert_eq!(pair[1].1.table_layouts.preparations, 0);
     }
 
     #[test]

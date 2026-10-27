@@ -2545,6 +2545,9 @@ fn normalize_code_language(language: Option<&str>) -> Option<String> {
         "ps" | "ps1" => "powershell",
         other => other,
     };
+    if mapped == "mermaid" {
+        return Some(mapped.to_owned());
+    }
     SUPPORTED_HIGHLIGHT_LANGUAGES
         .iter()
         .copied()
@@ -3506,6 +3509,24 @@ mod tests {
             assert_eq!(matched.span().start().line_index(), 0);
             assert_eq!(matched.span().end().line_index(), 0);
         }
+    }
+
+    #[test]
+    fn mermaid_fences_preserve_normalized_label_and_exact_source() {
+        let source = "flowchart LR\n A[Start] --> B[Finish]\n";
+        let document = local_document(&format!("```Mermaid extra-info\n{source}```\n"));
+        let Block::CodeBlock(code) = &document.blocks()[0] else {
+            panic!("expected fenced diagram");
+        };
+        assert_eq!(code.language(), Some("mermaid"));
+        assert_eq!(code.code_text(), source);
+        assert_eq!(
+            code.highlighted_lines()
+                .iter()
+                .map(HighlightedCodeLine::text)
+                .collect::<String>(),
+            source
+        );
     }
 
     #[test]

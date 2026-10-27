@@ -2,6 +2,28 @@
 
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
+## Keeping document scroll positions independent
+
+Opening another Markdown document also exposed window-local scroll IDs: new
+documents inherited the last one's offset. Editor Preview/Edit scroll regions
+now include document identity, and standalone viewer regions include tab
+identity. A switching regression verifies new-at-top and restoration of the
+first document's own position without resetting scroll on every frame.
+
+## Drawing Markdown table column dividers once
+
+The table renderer submitted each full-height internal column border again
+for every row, even though warm layout preparation already reused the cell
+measurements. It now submits each column boundary once at the same border
+overlay stage and inside the same horizontal scroll clip. Row separators,
+prepared widths/heights and live selectable cells retain their existing path.
+
+Focused CPU regressions inspect emitted geometry for tall, ragged-source,
+empty-cell and header-only tables, normal/fractional scale and horizontal
+scrolling. This establishes column-scaled divider submission, not measured
+frame-time improvement. Removing repeated antialias blending can change border
+pixels; sensible single-stroke readability on native platforms remains
+CP-06/CP-15 pending evidence. No cache or ownership boundary changes.
 
 ## Backward terminal navigation and portable Markdown copying
 
@@ -29,6 +51,17 @@ to text. Deterministic key routing,
 Unicode/duplicate/fenced selection, safe export and stale-menu checks do not
 establish native Copilot navigation, rich-paste interoperability or clipboard
 usability; TI-02 and CP-06/CP-15 retain those native checks.
+
+## Adding offline Mermaid without a browser
+
+Markdown fenced diagrams previously appeared only as source. The owner selected
+native offline rendering rather than Mermaid.js/browser parity. The shared
+desktop Preview now passes `mermaid` fences through a pinned Rust renderer and
+rasterizes internally generated SVG with bundled fonts and disabled external
+image resolution. Two background workers and explicit input/output/snapshot
+limits keep work off the UI thread; failures keep readable source. Source
+toggle, Find and exact Copy remain available. ADR 0050 records the extended
+contract, conservative limits and remaining native visual/accessibility gates.
 
 ## Optional terminal fonts without the embedded payload
 
