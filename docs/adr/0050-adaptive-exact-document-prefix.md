@@ -37,7 +37,8 @@ callbacks, foreign textures, image-copy callbacks, invalid targets, and
 over-budget inputs retain their ordinary same-frame fallback. Callback
 preparation and finish-preparation always run. Only a complete exact hit may
 skip all mesh uploads; partial reuse uploads current meshes and preserves
-their original buffer-slice indexing.
+their original buffer-slice indexing. Partial composition requires a render
+attachment target; copy-only hosts retain complete-frame behavior.
 
 Retain one immutable image, at most 16 Mi pixels / 64 MiB, and one accounted
 signature of at most 1 MiB. As with existing signature replacement, one
@@ -69,6 +70,8 @@ can require an additional render pass, and batching may leave little reusable
 prefix; neither universal gains nor physical input-to-display latency are
 assumed. Explicit partial-reuse diagnostics distinguish this path from an
 exact complete-frame hit.
+The existing exact-hit counter and return value exclude suffix painting;
+partial reuse has its own outcome counter.
 
 Native qualification uses source-bound release applications, isolated
 configuration and activation IPC, actual adapter and geometry proof, observed

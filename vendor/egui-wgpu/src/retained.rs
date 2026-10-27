@@ -214,6 +214,7 @@ enum RetainedPlan {
 /// Cumulative outcomes and current cache-owned storage, excluding GPU in-flight work.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RetainedUiStats {
+    /// Exact hits requiring no retained-UI paint (a final terminal copy may still follow).
     pub reused_frames: u64,
     pub rebuilt_frames: u64,
     /// Image reuse that still paints a changing complete-frame suffix.
@@ -454,6 +455,9 @@ impl RetainedUi {
                 .as_ref()
                 .filter(|cached| {
                     whole_frame
+                        && target
+                            .usage()
+                            .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
                         && cached.signature.matches_frame(
                             screen,
                             target.format(),
@@ -509,7 +513,7 @@ impl RetainedUi {
         clear: [f32; 4],
         plan: RetainedPlan,
     ) -> bool {
-        let reused = matches!(plan, RetainedPlan::Reuse | RetainedPlan::ReusePrefix(_));
+        let reused = matches!(plan, RetainedPlan::Reuse);
         if let RetainedPlan::Rebuild {
             signature,
             painted_jobs,
@@ -555,14 +559,13 @@ impl RetainedUi {
                 painted_jobs,
             });
             self.rebuilt_frames = self.rebuilt_frames.saturating_add(1);
+        } else if let RetainedPlan::ReusePrefix(signature) = plan {
+            self.cached
+                .as_mut()
+                .expect("retained prefix initialized")
+                .signature = signature;
+            self.partial_reused_frames = self.partial_reused_frames.saturating_add(1);
         } else {
-            if let RetainedPlan::ReusePrefix(signature) = plan {
-                self.cached
-                    .as_mut()
-                    .expect("retained prefix initialized")
-                    .signature = signature;
-                self.partial_reused_frames = self.partial_reused_frames.saturating_add(1);
-            }
             self.reused_frames = self.reused_frames.saturating_add(1);
         }
         let cached = self.cached.as_ref().expect("retained image initialized");
