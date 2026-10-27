@@ -3532,27 +3532,27 @@ impl MarkdownRenderState<'_> {
                             cell_rects.push(row_rects);
                         }
 
-                        if let Some(first_row) = cell_rects.first() {
-                            let table_rect = cell_rects
-                                .iter()
-                                .flatten()
-                                .fold(first_row[0], |rect, next| rect.union(*next));
+                        let mut cells = cell_rects.iter().flatten();
+                        if let Some(first_cell) = cells.next() {
+                            let table_rect =
+                                cells.fold(*first_cell, |rect, next| rect.union(*next));
                             ui.painter().rect_stroke(
                                 table_rect,
                                 0.0,
                                 egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
                                 egui::StrokeKind::Inside,
                             );
-                            for row in &cell_rects {
-                                for cell in row.iter().take(row.len().saturating_sub(1)) {
-                                    ui.painter().line_segment(
-                                        [
-                                            egui::pos2(cell.right(), table_rect.top()),
-                                            egui::pos2(cell.right(), table_rect.bottom()),
-                                        ],
-                                        egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
-                                    );
-                                }
+                            // Full-height dividers belong to columns, not rows.
+                            let mut right = table_rect.left();
+                            for width in widths.iter().take(widths.len().saturating_sub(1)) {
+                                right += width;
+                                ui.painter().line_segment(
+                                    [
+                                        egui::pos2(right, table_rect.top()),
+                                        egui::pos2(right, table_rect.bottom()),
+                                    ],
+                                    egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                                );
                             }
                             for row in cell_rects.iter().take(cell_rects.len().saturating_sub(1)) {
                                 let Some(first_cell) = row.first() else {
@@ -8403,6 +8403,178 @@ mod tests {
         }
         pair[1].1.table_layouts.ordinary = false;
         pair
+    }
+
+    fn assert_table_divider_geometry(
+        output: &egui::FullOutput,
+        table: &PreparedTable,
+    ) -> (egui::Rect, egui::Rect) {
+        let stroke = egui::Stroke::new(1.0, theme::BORDER_SUBTLE);
+        let (border_index, border, clip) = output
+            .shapes
+            .iter()
+            .enumerate()
+            .find_map(|(index, shape)| match &shape.shape {
+                egui::Shape::Rect(rect)
+                    if rect.corner_radius == egui::CornerRadius::ZERO
+                        && rect.stroke == stroke
+                        && rect.stroke_kind == egui::StrokeKind::Inside =>
+                {
+                    Some((index, rect.rect, shape.clip_rect))
+                }
+                _ => None,
+            })
+            .expect("the real table outline must be painted");
+        assert!((border.width() - table.widths.iter().sum::<f32>()).abs() < 0.01);
+        assert!(
+            (border.height() - table.rows.iter().map(|row| row.height).sum::<f32>()).abs() < 0.01
+        );
+        let mut verticals = Vec::new();
+        let mut horizontals = Vec::new();
+        for (index, shape) in output.shapes.iter().enumerate() {
+            if let egui::Shape::LineSegment {
+                points,
+                stroke: actual,
+            } = &shape.shape
+            {
+                if *actual != stroke {
+                    continue;
+                }
+                assert!(index > border_index, "dividers follow cells and outline");
+                assert_eq!(shape.clip_rect, clip, "all borders share the table clip");
+                if points[0].x == points[1].x {
+                    assert_eq!(points[0].y, border.top());
+                    assert_eq!(points[1].y, border.bottom());
+                    verticals.push(points[0].x);
+                } else {
+                    assert_eq!(points[0].x, border.left());
+                    assert_eq!(points[1].x, border.right());
+                    assert_eq!(points[0].y, points[1].y);
+                    horizontals.push(points[0].y);
+                }
+            }
+        }
+        assert_eq!(
+            verticals.len(),
+            table.widths.len() - 1,
+            "one actual full-height stroke per internal column, regardless of row count"
+        );
+        let mut right = border.left();
+        for (actual, width) in verticals.iter().zip(&table.widths) {
+            right += width;
+            assert_eq!(*actual, right);
+        }
+        assert_eq!(horizontals.len(), table.rows.len() - 1);
+        let mut bottom = border.top();
+        for (actual, row) in horizontals.iter().zip(&table.rows) {
+            bottom += row.height;
+            assert!((*actual - bottom).abs() < 0.01);
+        }
+        if table
+            .rows
+            .iter()
+            .flat_map(|row| &row.galleys)
+            .any(|galley| !galley.job.text.is_empty())
+        {
+            assert!(
+                output.shapes[..border_index]
+                    .iter()
+                    .any(|shape| matches!(shape.shape, egui::Shape::Text(_))),
+                "visible cell text is painted before the border overlay"
+            );
+        }
+        (border, clip)
+    }
+
+    #[test]
+    fn table_dividers_emit_once_per_column_for_tall_ragged_empty_and_header_only_tables() {
+        let header = "| Left | Middle | Right |\n| :--- | :---: | ---: |\n";
+        for text in [
+            header.to_owned(),
+            format!("{header}| a | b | c |\n"),
+            format!("{header}{}", "| a | b | c |\n".repeat(64)),
+            format!("{header}| short |\n| | | |\n| a | b |\n"),
+            "| Only |\n| --- |\n| body |\n".to_owned(),
+            "| | | |\n| --- | --- | --- |\n| | | |\n".to_owned(),
+        ] {
+            let parsed = document(&text);
+            let Block::Table(block) = &parsed.blocks()[0] else {
+                panic!("expected a table fixture");
+            };
+            let expected_cells: usize = block.rows().iter().map(|row| row.cells().len()).sum();
+            for width in [360.0, 1180.0] {
+                for scale in [1.0, 1.25] {
+                    let mut pair = document_layout_pair(&text);
+                    for (context, _) in &pair {
+                        context.set_pixels_per_point(scale);
+                    }
+                    for frame in 0..3 {
+                        let output =
+                            caption_oracle_frame(&mut pair, frame, vec2(width, 760.0), Vec::new());
+                        let pane = &pair[1].1;
+                        let table = pane.table_layouts.tables.values().next().unwrap();
+                        assert_table_divider_geometry(&output[1], table);
+                        let cells = &pane.table_cell_probe.as_ref().unwrap().observations;
+                        assert_eq!(cells.len(), expected_cells, "every cell remains live");
+                        assert!(cells
+                            .iter()
+                            .all(|cell| cell.enabled && cell.sense.senses_click()));
+                        if frame == 2 {
+                            assert_eq!(pane.table_layouts.preparations, 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn table_dividers_scroll_with_cells_inside_the_existing_clip() {
+        let text = concat!(
+            "| First | Second | Third | Fourth | Fifth | Sixth | Seventh | Eighth |\n",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |\n",
+            "| a | b | c | d | e | f | g | h |\n",
+        );
+        let mut pair = document_layout_pair(text);
+        let size = vec2(360.0, 400.0);
+        caption_oracle_frame(&mut pair, 0, size, Vec::new());
+        let output = caption_oracle_frame(&mut pair, 1, size, Vec::new());
+        let table = pair[1].1.table_layouts.tables.values().next().unwrap();
+        let (before, clip) = assert_table_divider_geometry(&output[1], table);
+        assert!(before.width() > clip.width(), "the fixture must overflow");
+        let cell_before = pair[1].1.table_cell_probe.as_ref().unwrap().observations[0].rect;
+        let pointer = before.intersect(clip).center();
+        let output = caption_oracle_frame(
+            &mut pair,
+            2,
+            size,
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: vec2(-80.0, 0.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        let table = pair[1].1.table_layouts.tables.values().next().unwrap();
+        assert_table_divider_geometry(&output[1], table);
+        // Scroll input is applied after this frame's content has been laid out.
+        let output = caption_oracle_frame(&mut pair, 3, size, Vec::new());
+        let table = pair[1].1.table_layouts.tables.values().next().unwrap();
+        let (after, after_clip) = assert_table_divider_geometry(&output[1], table);
+        let cell_after = pair[1].1.table_cell_probe.as_ref().unwrap().observations[0].rect;
+        assert!(
+            after.left() < before.left(),
+            "horizontal scroll must move ink"
+        );
+        assert!((after.size() - before.size()).abs().max_elem() < 0.01);
+        assert_eq!(after_clip, clip);
+        assert!(
+            (cell_after.left() - cell_before.left() - (after.left() - before.left())).abs() < 0.01
+        );
+        assert_eq!(pair[1].1.table_layouts.preparations, 0);
     }
 
     #[test]
