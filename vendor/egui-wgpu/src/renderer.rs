@@ -658,6 +658,21 @@ impl Renderer {
         paint_jobs: &[epaint::ClippedPrimitive],
         screen_descriptor: &ScreenDescriptor,
     ) {
+        self.render_job_range(
+            render_pass,
+            paint_jobs,
+            screen_descriptor,
+            0..paint_jobs.len(),
+        );
+    }
+
+    pub(crate) fn render_job_range(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'static>,
+        paint_jobs: &[epaint::ClippedPrimitive],
+        screen_descriptor: &ScreenDescriptor,
+        range: std::ops::Range<usize>,
+    ) {
         profiling::function_scope!();
 
         let pixels_per_point = screen_descriptor.pixels_per_point;
@@ -670,11 +685,26 @@ impl Renderer {
         let mut index_buffer_slices = self.index_buffer.slices.iter();
         let mut vertex_buffer_slices = self.vertex_buffer.slices.iter();
 
-        for epaint::ClippedPrimitive {
-            clip_rect,
-            primitive,
-        } in paint_jobs
+        for (
+            job_index,
+            epaint::ClippedPrimitive {
+                clip_rect,
+                primitive,
+            },
+        ) in paint_jobs.iter().enumerate()
         {
+            if !range.contains(&job_index) {
+                // Buffer slices belong to the full staged list, not just this draw range.
+                if matches!(primitive, Primitive::Mesh(_)) {
+                    index_buffer_slices
+                        .next()
+                        .expect("You must call .update_buffers() before .render()");
+                    vertex_buffer_slices
+                        .next()
+                        .expect("You must call .update_buffers() before .render()");
+                }
+                continue;
+            }
             if needs_reset {
                 render_pass.set_viewport(
                     0.0,

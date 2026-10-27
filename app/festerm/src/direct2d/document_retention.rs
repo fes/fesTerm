@@ -866,7 +866,7 @@ fn retained_document_frames_keep_preparation_and_queued_images() {
     assert_eq!(prepares.load(Ordering::Relaxed), 4);
     assert_eq!(finishes.load(Ordering::Relaxed), 4);
     assert_eq!(paints.load(Ordering::Relaxed), 3);
-    for changed_key in [
+    for (index, changed_key) in [
         egui_wgpu::CallbackPaintKey {
             namespace: key.namespace.clone(),
             bytes: Arc::from([2]),
@@ -875,16 +875,28 @@ fn retained_document_frames_keep_preparation_and_queued_images() {
             namespace: Arc::new(()),
             bytes: key.bytes.clone(),
         },
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         jobs[1] = observed_job(Some(changed_key), None, &prepares, &finishes, &paints);
-        assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(false));
+        assert_frame(
+            &state,
+            &screen,
+            &jobs,
+            [0.0; 4],
+            &mut cache,
+            Some(index != 0),
+        );
     }
     jobs[1].clip_rect = jobs[1].clip_rect.shrink(8.0);
-    assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(false));
+    assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(true));
     let Primitive::Callback(callback) = &mut jobs[1].primitive else {
         unreachable!()
     };
     callback.rect = callback.rect.shrink(4.0);
+    assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(true));
+    assert_eq!(cache.stats().partial_reused_frames, 3);
     assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(false));
     let delayed_target = target(&state, screen.size_in_pixels, state.target_format, true);
     let pending = {
@@ -909,6 +921,138 @@ fn retained_document_frames_keep_preparation_and_queued_images() {
     };
     for vertex in &mut mesh.vertices {
         vertex.color = egui::Color32::RED;
+    }
+
+    fn document_suffix(rect: egui::Rect, color: egui::Color32) -> ClippedPrimitive {
+        let mut mesh = egui::Mesh::with_texture(egui::TextureId::Managed(77));
+        let uv = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+        mesh.add_rect_with_uv(rect, uv, color);
+        mesh.add_rect_with_uv(rect.shrink(3.25), uv, egui::Color32::from_white_alpha(60));
+        ClippedPrimitive {
+            clip_rect: egui::Rect::from_min_max(egui::pos2(19.25, 16.5), egui::pos2(108.5, 80.25)),
+            primitive: Primitive::Mesh(mesh),
+        }
+    }
+
+    #[test]
+    fn retained_document_prefix_reuse_preserves_suffix_pixels_and_idle_upgrade() {
+        for scale in [1.0, 1.5, 2.0] {
+            let (state, mut screen, mut jobs) = fixture();
+            screen.pixels_per_point = scale;
+            screen.size_in_pixels = [(128.0 * scale) as u32, (96.0 * scale) as u32];
+            let prepares = Arc::new(AtomicUsize::new(0));
+            let finishes = Arc::new(AtomicUsize::new(0));
+            let prefix_paints = Arc::new(AtomicUsize::new(0));
+            let suffix_paints = Arc::new(AtomicUsize::new(0));
+            let key = egui_wgpu::CallbackPaintKey {
+                namespace: Arc::new(()),
+                bytes: Arc::from([7]),
+            };
+            jobs.push(observed_job(
+                Some(key.clone()),
+                None,
+                &prepares,
+                &finishes,
+                &prefix_paints,
+            ));
+            jobs.push(document_suffix(
+                egui::Rect::from_min_max(egui::pos2(20.5, 19.25), egui::pos2(95.25, 72.5)),
+                egui::Color32::from_rgba_unmultiplied(180, 50, 90, 150),
+            ));
+            jobs.push(observed_job(
+                Some(key),
+                None,
+                &prepares,
+                &finishes,
+                &suffix_paints,
+            ));
+            let mut cache = egui_wgpu::RetainedUi::default();
+            let clear = [0.04, 0.02, 0.01, 0.5];
+            assert_frame(&state, &screen, &jobs, clear, &mut cache, Some(false));
+            for (index, shift) in [1.25, -5.75].into_iter().enumerate() {
+                let Primitive::Mesh(mesh) = &mut jobs[2].primitive else {
+                    unreachable!()
+                };
+                for vertex in &mut mesh.vertices {
+                    vertex.pos.x += shift;
+                }
+                assert_frame(&state, &screen, &jobs, clear, &mut cache, Some(index != 0));
+                assert_eq!(cache.stats().cached_prefix_jobs, 2);
+                assert_eq!(cache.stats().cached_signature_jobs, 4);
+            }
+            assert_eq!(cache.stats().partial_reused_frames, 1);
+            assert_eq!(prefix_paints.load(Ordering::Relaxed), 5);
+            assert_eq!(suffix_paints.load(Ordering::Relaxed), 6);
+            assert_eq!(prepares.load(Ordering::Relaxed), 12);
+            assert_eq!(finishes.load(Ordering::Relaxed), 12);
+            assert_frame(&state, &screen, &jobs, clear, &mut cache, Some(false));
+            assert_eq!(cache.stats().cached_prefix_jobs, jobs.len());
+            let captures = cache.stats().signature_captures;
+            assert_frame(&state, &screen, &jobs, clear, &mut cache, Some(true));
+            assert_eq!(cache.stats().signature_captures, captures);
+            assert!(cache.stats().texture_bytes <= 64 * 1024 * 1024);
+            assert!(cache.stats().signature_bytes <= 1024 * 1024);
+        }
+    }
+
+    #[test]
+    fn retained_document_prefix_reuse_keeps_queued_images_and_invalidations() {
+        let (state, screen, mut jobs) = fixture();
+        let rect = egui::Rect::from_min_max(egui::pos2(25.0, 20.0), egui::pos2(99.0, 72.0));
+        jobs.push(document_suffix(rect, egui::Color32::from_rgb(180, 50, 90)));
+        let mut cache = egui_wgpu::RetainedUi::default();
+        assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(false));
+        jobs[1] = document_suffix(rect.translate(egui::vec2(2.5, 0.0)), egui::Color32::GREEN);
+        assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(false));
+        jobs[1] = document_suffix(rect.translate(egui::vec2(-3.25, 0.0)), egui::Color32::BLUE);
+        let reference_target = target(&state, screen.size_in_pixels, state.target_format, true);
+        profile::draw_composed(&state, &reference_target, &screen, &jobs, [0.0; 4], None);
+        let expected = profile::read_image(&state, &reference_target);
+        let delayed_target = target(&state, screen.size_in_pixels, state.target_format, true);
+        let pending = {
+            let renderer = state.renderer.read();
+            let mut encoder = state.device.create_command_encoder(&Default::default());
+            assert_eq!(
+                cache.try_render_frame(
+                    &renderer,
+                    &state.device,
+                    &mut encoder,
+                    &jobs,
+                    &screen,
+                    &delayed_target,
+                    [0.0; 4]
+                ),
+                Some(true)
+            );
+            encoder.finish()
+        };
+        // Keep the delayed suffix's ordinary mesh buffers immutable as well as its image.
+        *state.renderer.write() =
+            egui_wgpu::Renderer::new(&state.device, state.target_format, Default::default());
+        state.renderer.write().retained_frame_enabled = true;
+        state.renderer.write().update_texture(
+            &state.device,
+            &state.queue,
+            egui::TextureId::Managed(77),
+            &egui::epaint::ImageDelta::full(
+                egui::ColorImage::filled([2, 2], egui::Color32::WHITE),
+                egui::TextureOptions::NEAREST,
+            ),
+        );
+        jobs[1] = document_suffix(rect, egui::Color32::YELLOW);
+        let newer = assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(false));
+        assert_ne!(expected, newer);
+        assert_eq!(cache.stats().cached_prefix_jobs, jobs.len());
+        cache.clear();
+        assert_eq!(cache.stats().texture_bytes, 0);
+        assert_eq!(cache.stats().signature_bytes, 0);
+        drop(cache);
+        state.queue.submit([pending]);
+        profile::assert_same_pixels(
+            &expected,
+            &profile::read_image(&state, &delayed_target),
+            "queued prefix copies and suffix resources survive replacement and cache destruction",
+        );
     }
     let newer = assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(false));
     assert_ne!(initial, newer);

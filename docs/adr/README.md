@@ -49,6 +49,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0050: Adaptive Exact Document Prefix Retention](0050-adaptive-exact-document-prefix.md) - bounded leading paint reuse during document changes; native performance and architectural acceptance require qualification
+
 - [ADR 0046: Retained Document Frame](0046-opt-in-retained-document-frame.md) - owner-authorized qualified-route WARP default with explicit opt-out; exact complete-frame reuse shares ADR 0041's bounded cache; independent architectural review remains pending
 
 - [ADR 0044: Bounded Ordinary Terminal Row Paint Cache](0044-bounded-ordinary-terminal-row-paint-cache.md) - issue #327's internal presentation repair; independent gates and 52-run cleanup qualification complete, owner accepts the residual shaped-heavy CPU tradeoff under #334; external PR review remains required
