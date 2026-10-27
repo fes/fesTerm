@@ -8989,9 +8989,9 @@ mod tests {
 
     #[test]
     fn code_line_galleys_skip_warm_job_clones_and_layouts_even_when_revealed() {
-        let mut pair = caption_oracle_pair(&mixed_caption_fixture());
+        let mut pair = caption_oracle_pair(&code_navigation_fixture());
         let size = vec2(1180.0, 760.0);
-        let tail = "fn example() { let value = 399; }";
+        let tail = "nav_target_399";
         for frame in 0..3 {
             let output = caption_oracle_frame(&mut pair, frame, size, Vec::new());
             assert!(visible_code_geometry(&output[1], tail).is_none());
@@ -9008,7 +9008,7 @@ mod tests {
             if frame == 3 {
                 for (_, pane) in &mut pair {
                     pane.find
-                        .set_query(pane.document.as_ref().unwrap(), "synthetic".into());
+                        .set_query(pane.document.as_ref().unwrap(), "Entry".into());
                     pane.pending_scroll = Some(PendingScroll::Byte(
                         pane.code_copy_probe.as_ref().unwrap().buttons[399]
                             .source
