@@ -2,6 +2,13 @@
 
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
+## Keeping document scroll positions independent
+
+Opening another Markdown document also exposed window-local scroll IDs: new
+documents inherited the last one's offset. Editor Preview/Edit scroll regions
+now include document identity, and standalone viewer regions include tab
+identity. A switching regression verifies new-at-top and restoration of the
+first document's own position without resetting scroll on every frame.
 
 ## Drawing Markdown table column dividers once
 
@@ -44,6 +51,17 @@ to text. Deterministic key routing,
 Unicode/duplicate/fenced selection, safe export and stale-menu checks do not
 establish native Copilot navigation, rich-paste interoperability or clipboard
 usability; TI-02 and CP-06/CP-15 retain those native checks.
+
+## Adding offline Mermaid without a browser
+
+Markdown fenced diagrams previously appeared only as source. The owner selected
+native offline rendering rather than Mermaid.js/browser parity. The shared
+desktop Preview now passes `mermaid` fences through a pinned Rust renderer and
+rasterizes internally generated SVG with bundled fonts and disabled external
+image resolution. Two background workers and explicit input/output/snapshot
+limits keep work off the UI thread; failures keep readable source. Source
+toggle, Find and exact Copy remain available. ADR 0050 records the extended
+contract, conservative limits and remaining native visual/accessibility gates.
 
 ## Optional terminal fonts without the embedded payload
 

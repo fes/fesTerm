@@ -79,6 +79,13 @@ Auto-save sits beside Save rather than beside `Edit | Preview | Split`, because
 it belongs to the document every view shares, not to the view that happens to
 be showing it.
 
+The origin bar's path offers **Copy path** on right-click in Edit, Preview,
+and Split. Copy uses the complete displayed origin before abbreviation; hover
+and accessibility also expose it in full. This action does not change the
+document or view mode. Switching documents dismisses the path menu instead of
+retargeting Copy. An untitled document has no file path and does not offer
+the action.
+
 ### Bounded live text-layout preparation
 
 Each editor view retains at most one complete laid-out body, under a 16 MiB
