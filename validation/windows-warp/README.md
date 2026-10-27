@@ -1582,6 +1582,8 @@ deterministically at 60 Hz with scroll-to animation disabled; this is not a
 claim that the application runs at 60 Hz.
 
 Pin 640×400 logical points, 960×600 physical pixels, 150% DPI, Dark theme.
+Both controls use egui's default font definitions and fesTerm's visuals, not
+the native application's bundled-font installation.
 Eight complete warmup frames precede 32 measured frames per fixture/mode:
 1,408 measured frames, 1,760 completed offscreen draws. A three-minute
 workload guard refuses incomplete campaigns (device waits have separate
@@ -1614,12 +1616,21 @@ resource acceptance or full-app responsiveness. CP-18 remains open.
 
 Use the **identical benchmark module and registration** on original main
 `2268fd1a` plus this test-only campaign, and on each independently fixed
-candidate. Keep each worktree, Cargo target directory and staged test
-executable separate. Build from committed, clean, frozen trees; do not infer
+candidate. Keep staged test executables and evidence directories separate.
+Separate worktrees and Cargo targets are the default. Build from committed,
+clean, frozen trees; do not infer
 the compiled source from runtime `git HEAD`. Capture build command, source
 commit/tree, compiler version, successful build log, and the actual
 release **test-executable** hash, not the application hash. A self-authored
 receipt without that frozen build procedure is not source attestation.
+
+A serial alternative may reuse one fixed worktree and target when Git confirms
+the compared revisions change only the application/tests/documentation, not
+dependencies, manifests or build configuration. Stage the baseline first, then
+run `cargo clean --release -p festerm` before building the candidate, recording
+that command in its receipt. Never change that worktree during a build or run
+concurrent builds in the reused target. This retains identical dependency
+artifacts while forcing a fresh application compilation.
 
 Example preparation in **each chosen clean worktree**, with a fresh relative
 artifact directory (do not reuse baseline and candidate directories):
