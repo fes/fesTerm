@@ -64,6 +64,9 @@ function Invoke-MarkdownScrollingValidation {
 
 if ($MarkdownScrollingOnly) {
     $resultFullPath = [IO.Path]::GetFullPath($ResultPath)
+    if (Test-Path -LiteralPath $resultFullPath) {
+        throw 'ResultPath already exists; optional validation evidence is never overwritten.'
+    }
     $resultStream = [IO.File]::Open(
         $resultFullPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
     $resultWriter = [IO.StreamWriter]::new(
@@ -104,6 +107,9 @@ $nativeResultPath = 'native-smoke-window-result.txt'
 $emojiResultPath = 'native-emoji-smoke-result.txt'
 $status = 'pass'
 $resultFullPath = [IO.Path]::GetFullPath($ResultPath)
+if (Test-Path -LiteralPath $resultFullPath) {
+    throw 'ResultPath already exists; optional validation evidence is never overwritten.'
+}
 $resultStream = [IO.File]::Open(
     $resultFullPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
 $resultWriter = [IO.StreamWriter]::new(

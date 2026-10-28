@@ -411,6 +411,7 @@ $artifact = Join-Path $directory 'artifact.bin'
 [IO.File]::WriteAllText($source, 'frozen')
 $lock = Copy-MarkdownImmutableArtifact $source $artifact
 try {
+    Assert ((Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.Length -eq 64) 'Sealed artifact can be hashed'
     Reject {
         $writer = [IO.File]::Open($artifact, [IO.FileMode]::Open, [IO.FileAccess]::Write,
             [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
@@ -419,6 +420,15 @@ try {
     Reject { [IO.File]::Delete($artifact) }
     Assert ((Get-Content -LiteralPath $artifact -Raw) -eq 'frozen') 'Locked artifact remains readable'
         Reject { Move-Item -LiteralPath $directory -Destination "$directory-moved" }
+        $executable = Join-Path $directory 'sealed-cmd.exe'
+        $executableLock = Copy-MarkdownImmutableArtifact $env:ComSpec $executable
+        try {
+            $process = Start-Process -FilePath $executable -ArgumentList '/c', 'exit', '0' -PassThru -Wait
+            Assert ($process.ExitCode -eq 0) 'Sealed executable remains launchable'
+        } finally {
+            $executableLock.Dispose()
+            Remove-Item -LiteralPath $executable
+        }
     } finally {
         $lock.Dispose()
         $directoryLock.Dispose()

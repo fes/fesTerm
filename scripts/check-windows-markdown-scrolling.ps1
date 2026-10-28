@@ -374,6 +374,19 @@ function Open-MarkdownImmutableArtifact {
     return [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
 }
 
+function Seal-MarkdownWrittenArtifact {
+    param([IO.FileStream] $Writer, [string] $Path)
+    $Writer.Flush($true)
+    $transition = [IO.File]::Open(
+        $Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    $Writer.Dispose()
+    try {
+        return Open-MarkdownImmutableArtifact $Path
+    } finally {
+        $transition.Dispose()
+    }
+}
+
 function Assert-MarkdownNonReparsePath {
     param([string] $Path)
     $item = Get-Item -LiteralPath $Path -Force
@@ -393,9 +406,7 @@ function Copy-MarkdownImmutableArtifact {
             $Destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
         try {
             $sourceLock.CopyTo($destinationLock)
-            $destinationLock.Flush($true)
-            $destinationLock.Position = 0
-            return $destinationLock
+            return Seal-MarkdownWrittenArtifact $destinationLock $Destination
         } catch {
             $destinationLock.Dispose()
             throw
@@ -414,9 +425,7 @@ function Copy-MarkdownPublishedArtifact {
             $Destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
         try {
             $sourceStream.CopyTo($destinationLock)
-            $destinationLock.Flush($true)
-            $destinationLock.Position = 0
-            return $destinationLock
+            return Seal-MarkdownWrittenArtifact $destinationLock $Destination
         } catch {
             $destinationLock.Dispose()
             throw
@@ -668,8 +677,8 @@ foreach ($name in $cases) {
     $fixtureLock = [IO.File]::Open(
         $fixture, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
     $fixtureLock.Write($fixtureBytes, 0, $fixtureBytes.Length)
-    $fixtureLock.Flush($true)
-    $fixtureLock.Position = 0
+    $fixtureLock = Seal-MarkdownWrittenArtifact $fixtureLock $fixture
+    $evidenceLocks.Add($fixtureLock)
     $config = Join-Path $folder 'config.toml'
     $configText = @'
 schema_version = 1
@@ -683,8 +692,8 @@ show_resumable_sessions = false
     $configLock = [IO.File]::Open(
         $config, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
     $configLock.Write($configBytes, 0, $configBytes.Length)
-    $configLock.Flush($true)
-    $configLock.Position = 0
+    $configLock = Seal-MarkdownWrittenArtifact $configLock $config
+    $evidenceLocks.Add($configLock)
     $local = Join-Path $folder 'local-app-data'
     [void](New-Item -ItemType Directory -Path $local)
     $directoryLocks.Add([FesTermDirectoryLock]::Open($local))
@@ -930,8 +939,6 @@ show_resumable_sessions = false
                 $result['identity_after_exit'] = Assert-MarkdownSourceReceipt $Executable $Receipt $SourceRoot $identity
                 $result['source_identity_revalidated'] = $true
             } },
-            @{ Name = 'fixture_retain'; Action = { $evidenceLocks.Add($fixtureLock) } },
-            @{ Name = 'config_retain'; Action = { $evidenceLocks.Add($configLock) } },
             @{ Name = 'process_dispose'; Action = { $process.Dispose() } }
         )
         Invoke-MarkdownCleanup $result $steps
@@ -941,8 +948,7 @@ show_resumable_sessions = false
         $resultLock = [IO.File]::Open(
             $resultPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
         $resultLock.Write($resultBytes, 0, $resultBytes.Length)
-        $resultLock.Flush($true)
-        $resultLock.Position = 0
+        $resultLock = Seal-MarkdownWrittenArtifact $resultLock $resultPath
         $evidenceLocks.Add($resultLock)
     }
     if ($null -ne $primaryFailure) { throw $primaryFailure }
@@ -982,7 +988,6 @@ show_resumable_sessions = false
     foreach ($lock in $evidenceLocks) {
         try { $lock.Dispose() } catch { Write-Warning 'Could not release an evidence artifact lock.' }
     }
-    try { Remove-Item -LiteralPath $artifactDirectory -Force } catch { Write-Warning 'Could not remove the staging directory.' }
     try { Remove-Item -LiteralPath $OutputDirectory -Recurse -Force } catch {
         Write-Warning 'Could not remove the private runtime evidence directory.'
     }
