@@ -63,13 +63,24 @@ function Invoke-MarkdownScrollingValidation {
 }
 
 if ($MarkdownScrollingOnly) {
-    Set-Content -Path $ResultPath -Value 'status=running'
+    $resultFullPath = [IO.Path]::GetFullPath($ResultPath)
+    $resultStream = [IO.File]::Open(
+        $resultFullPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+    $resultWriter = [IO.StreamWriter]::new(
+        $resultStream, [Text.UTF8Encoding]::new($false), 1024, $true)
+    $resultWriter.AutoFlush = $true
     try {
+        $resultWriter.WriteLine('status=running')
         Invoke-MarkdownScrollingValidation
-        Add-Content -Path $ResultPath -Value "suite=windows-markdown-scrolling status=pass`nstatus=pass"
+        $resultWriter.WriteLine('suite=windows-markdown-scrolling status=pass')
+        $resultWriter.WriteLine('status=pass')
     } catch {
-        Add-Content -Path $ResultPath -Value "suite=windows-markdown-scrolling status=fail`nstatus=fail"
+        $resultWriter.WriteLine('suite=windows-markdown-scrolling status=fail')
+        $resultWriter.WriteLine('status=fail')
         throw
+    } finally {
+        $resultWriter.Dispose()
+        $resultStream.Dispose()
     }
     return
 }

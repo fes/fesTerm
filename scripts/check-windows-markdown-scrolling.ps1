@@ -18,13 +18,15 @@ paragraphs. Five five-wheel bursts alternate down/up/down/up/down. Each drain
 requires at least 500ms and 200ms without observed motion, bounded to 3s;
 all drains are included in the measured CPU/wall interval.
 The helper, executable and receipt are copied into a newly created
-user/SYSTEM-only non-reparse staging directory and held under
-write/delete-denying read handles throughout every case. Each generated
-fixture and the recipe are likewise read-locked while its app runs. Recipe,
-fixture and receipt SHA256 values are checked at launch and after exit; source
-and executable are revalidated after exit as well. Results contain no artifact
-paths. Frame timing percentiles cover only the measured root-frame range and
-are host-return durations, not GPU completion or physical display latency.
+user/SYSTEM-only non-reparse runtime directory beneath LocalApplicationData
+and held under write/delete-denying read handles throughout every case. Each
+generated fixture, log, result and the recipe are likewise sealed for the
+complete run. Completed case directories are published to OutputDirectory
+only after profiling. Recipe, fixture and receipt SHA256 values are checked at
+launch and after exit; source and executable are revalidated after exit as
+well. Results contain no artifact paths. Frame timing percentiles cover only
+the measured root-frame range and are host-return durations, not GPU completion
+or physical display latency.
 Example:
  $env:FESTERM_RUN_OPTIONAL_VALIDATION='1'
  .\scripts\check-windows-markdown-scrolling.ps1 -Executable C:\stage\festerm.exe `
@@ -303,6 +305,12 @@ function Assert-MarkdownSourceReceipt {
 
 function Open-MarkdownImmutableArtifact {
     param([string] $Path)
+    Assert-MarkdownNonReparsePath $Path
+    return [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+}
+
+function Assert-MarkdownNonReparsePath {
+    param([string] $Path)
     $item = Get-Item -LiteralPath $Path -Force
     while ($null -ne $item) {
         if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
@@ -310,7 +318,6 @@ function Open-MarkdownImmutableArtifact {
         }
         $item = $item.Parent
     }
-    return [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
 }
 
 function Copy-MarkdownImmutableArtifact {
@@ -381,14 +388,25 @@ $recipePath = $PSCommandPath
 $sourceHelper = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot 'windows-application-window.ps1')).Path
 $sourceExecutable = $Executable
 $sourceReceipt = $Receipt
-$OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
-if (Test-Path -LiteralPath $OutputDirectory) { throw 'OutputDirectory already exists; evidence is never overwritten.' }
+$publicationDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+if (Test-Path -LiteralPath $publicationDirectory) { throw 'OutputDirectory already exists; evidence is never overwritten.' }
+[void](New-Item -ItemType Directory -Path $publicationDirectory)
+Protect-MarkdownPrivateDirectory $publicationDirectory
+$localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+if ([string]::IsNullOrWhiteSpace($localAppData)) { throw 'Cannot resolve trusted local application data.' }
+Assert-MarkdownNonReparsePath $localAppData
+$trustedBase = Join-Path $localAppData 'fesTerm-validation'
+[void](New-Item -ItemType Directory -Path $trustedBase -Force)
+Protect-MarkdownPrivateDirectory $trustedBase
+$OutputDirectory = Join-Path $trustedBase ([Guid]::NewGuid().ToString('N'))
 [void](New-Item -ItemType Directory -Path $OutputDirectory)
 Protect-MarkdownPrivateDirectory $OutputDirectory
 $artifactDirectory = Join-Path $OutputDirectory '.native-profile-artifacts'
 $immutableArtifactLocks = @()
 $stagedArtifacts = @()
 $evidenceLocks = [Collections.Generic.List[IDisposable]]::new()
+$cases = @()
+$publicationFailure = $null
 try {
     [void](New-Item -ItemType Directory -Path $artifactDirectory)
     Protect-MarkdownPrivateDirectory $artifactDirectory
@@ -792,6 +810,7 @@ show_resumable_sessions = false
         foreach ($stream in $streams) {
             $steps += @{ Name = 'raw_log_retain'; Resource = $stream; Action = {
                 param($step)
+                $step.Resource.Flush($true)
                 $evidenceLocks.Add($step.Resource)
             } }
         }
@@ -827,9 +846,6 @@ show_resumable_sessions = false
     if ($result['status'] -ne 'passed') { throw 'Profiling cleanup or final identity validation failed; inspect the owned result JSON.' }
 }
 } finally {
-    foreach ($lock in $evidenceLocks) {
-        try { $lock.Dispose() } catch { Write-Warning 'Could not release an evidence artifact lock.' }
-    }
     foreach ($lock in $immutableArtifactLocks) {
         try { $lock.Dispose() } catch { Write-Warning 'Could not release a staged artifact lock.' }
     }
@@ -837,4 +853,24 @@ show_resumable_sessions = false
         try { Remove-Item -LiteralPath $path -Force } catch { Write-Warning 'Could not remove a staged artifact.' }
     }
     try { Remove-Item -LiteralPath $artifactDirectory -Force } catch { Write-Warning 'Could not remove the staging directory.' }
+    foreach ($name in $cases) {
+        $sourceCase = Join-Path $OutputDirectory $name
+        if (Test-Path -LiteralPath $sourceCase) {
+            try {
+                Copy-Item -LiteralPath $sourceCase -Destination (Join-Path $publicationDirectory $name) -Recurse
+            } catch {
+                $publicationFailure = $_
+                Write-Warning "Could not publish the $name evidence directory."
+            }
+        }
+    }
+    foreach ($lock in $evidenceLocks) {
+        try { $lock.Dispose() } catch { Write-Warning 'Could not release an evidence artifact lock.' }
+    }
+    try { Remove-Item -LiteralPath $OutputDirectory -Recurse -Force } catch {
+        Write-Warning 'Could not remove the private runtime evidence directory.'
+    }
+}
+if ($null -ne $publicationFailure) {
+    throw 'Could not publish native profiling evidence to OutputDirectory.'
 }
