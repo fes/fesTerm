@@ -420,7 +420,7 @@ try {
     Reject { [IO.File]::Delete($artifact) }
     Assert ((Get-Content -LiteralPath $artifact -Raw) -eq 'frozen') 'Locked artifact remains readable'
         Reject { Move-Item -LiteralPath $directory -Destination "$directory-moved" }
-        $executable = Join-Path $directory 'sealed-cmd.exe'
+        $executable = Join-Path $directory 'cmd.exe'
         $executableLock = Copy-MarkdownImmutableArtifact $env:ComSpec $executable
         try {
             $process = Start-Process -FilePath $executable -ArgumentList '/c', 'exit', '0' -PassThru -Wait

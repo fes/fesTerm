@@ -376,14 +376,18 @@ function Open-MarkdownImmutableArtifact {
 
 function Seal-MarkdownWrittenArtifact {
     param([IO.FileStream] $Writer, [string] $Path)
-    $Writer.Flush($true)
-    $transition = [IO.File]::Open(
-        $Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-    $Writer.Dispose()
+    $transition = $null
     try {
+        $Writer.Flush($true)
+        $transition = [IO.File]::Open(
+            $Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        $Writer.Dispose()
         return Open-MarkdownImmutableArtifact $Path
+    } catch {
+        $Writer.Dispose()
+        throw
     } finally {
-        $transition.Dispose()
+        if ($null -ne $transition) { $transition.Dispose() }
     }
 }
 
@@ -674,10 +678,15 @@ foreach ($name in $cases) {
     $fixture = Join-Path $folder 'synthetic.md'
     $fixtureText = New-MarkdownScrollFixture $name
     $fixtureBytes = [Text.UTF8Encoding]::new($false).GetBytes($fixtureText)
-    $fixtureLock = [IO.File]::Open(
+    $fixtureWriter = [IO.File]::Open(
         $fixture, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
-    $fixtureLock.Write($fixtureBytes, 0, $fixtureBytes.Length)
-    $fixtureLock = Seal-MarkdownWrittenArtifact $fixtureLock $fixture
+    try {
+        $fixtureWriter.Write($fixtureBytes, 0, $fixtureBytes.Length)
+        $fixtureLock = Seal-MarkdownWrittenArtifact $fixtureWriter $fixture
+    } catch {
+        $fixtureWriter.Dispose()
+        throw
+    }
     $evidenceLocks.Add($fixtureLock)
     $config = Join-Path $folder 'config.toml'
     $configText = @'
@@ -689,10 +698,15 @@ automatic_update_checks = false
 show_resumable_sessions = false
 '@
     $configBytes = [Text.UTF8Encoding]::new($false).GetBytes($configText)
-    $configLock = [IO.File]::Open(
+    $configWriter = [IO.File]::Open(
         $config, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
-    $configLock.Write($configBytes, 0, $configBytes.Length)
-    $configLock = Seal-MarkdownWrittenArtifact $configLock $config
+    try {
+        $configWriter.Write($configBytes, 0, $configBytes.Length)
+        $configLock = Seal-MarkdownWrittenArtifact $configWriter $config
+    } catch {
+        $configWriter.Dispose()
+        throw
+    }
     $evidenceLocks.Add($configLock)
     $local = Join-Path $folder 'local-app-data'
     [void](New-Item -ItemType Directory -Path $local)
@@ -945,11 +959,18 @@ show_resumable_sessions = false
         $resultPath = Join-Path $folder 'result.json'
         $resultBytes = [Text.UTF8Encoding]::new($false).GetBytes(
             (($result | ConvertTo-Json -Depth 10) + "`n"))
-        $resultLock = [IO.File]::Open(
-            $resultPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
-        $resultLock.Write($resultBytes, 0, $resultBytes.Length)
-        $resultLock = Seal-MarkdownWrittenArtifact $resultLock $resultPath
-        $evidenceLocks.Add($resultLock)
+        $resultWriter = $null
+        try {
+            $resultWriter = [IO.File]::Open(
+                $resultPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+            $resultWriter.Write($resultBytes, 0, $resultBytes.Length)
+            $resultLock = Seal-MarkdownWrittenArtifact $resultWriter $resultPath
+            $evidenceLocks.Add($resultLock)
+        } catch {
+            if ($null -ne $resultWriter) { $resultWriter.Dispose() }
+            if ($null -eq $primaryFailure) { throw }
+            Write-Warning 'Could not publish the failed case result; preserving the profile failure.'
+        }
     }
     if ($null -ne $primaryFailure) { throw $primaryFailure }
     if ($result['status'] -ne 'passed') { throw 'Profiling cleanup or final identity validation failed; inspect the owned result JSON.' }
