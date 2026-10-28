@@ -313,6 +313,26 @@ function Open-MarkdownImmutableArtifact {
     return [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
 }
 
+function Copy-MarkdownImmutableArtifact {
+    param([string] $Source, [string] $Destination)
+    $sourceLock = Open-MarkdownImmutableArtifact $Source
+    try {
+        $destinationLock = [IO.File]::Open(
+            $Destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+        try {
+            $sourceLock.CopyTo($destinationLock)
+            $destinationLock.Flush($true)
+            $destinationLock.Position = 0
+            return $destinationLock
+        } catch {
+            $destinationLock.Dispose()
+            throw
+        }
+    } finally {
+        $sourceLock.Dispose()
+    }
+}
+
 function Protect-MarkdownPrivateDirectory {
     param([string] $Path)
     $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -330,6 +350,19 @@ function Protect-MarkdownPrivateDirectory {
             [Security.AccessControl.AccessControlType]::Allow))
     }
     Set-Acl -LiteralPath $Path -AclObject $acl
+}
+
+function Assert-MarkdownCommittedHelper {
+    param([string] $Path, [string] $Root)
+    $expected = & git -C $Root rev-parse --verify 'HEAD:scripts/windows-application-window.ps1'
+    if ($LASTEXITCODE -ne 0 -or $expected -notmatch '^[0-9a-fA-F]{40,64}$') {
+        throw 'Cannot resolve the committed native profiling helper.'
+    }
+    $actual = & git -C $Root hash-object `
+        '--path=scripts/windows-application-window.ps1' -- $Path
+    if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) {
+        throw 'Staged native profiling helper does not match the frozen source commit.'
+    }
 }
 
 if ($HelperOnly) { return }
@@ -355,24 +388,22 @@ Protect-MarkdownPrivateDirectory $OutputDirectory
 $artifactDirectory = Join-Path $OutputDirectory '.native-profile-artifacts'
 $immutableArtifactLocks = @()
 $stagedArtifacts = @()
+$evidenceLocks = [Collections.Generic.List[IDisposable]]::new()
 try {
     [void](New-Item -ItemType Directory -Path $artifactDirectory)
     Protect-MarkdownPrivateDirectory $artifactDirectory
     $Executable = Join-Path $artifactDirectory 'festerm.exe'
     $Receipt = Join-Path $artifactDirectory 'receipt.json'
     $helperPath = Join-Path $artifactDirectory 'windows-application-window.ps1'
-    Copy-Item -LiteralPath $sourceExecutable -Destination $Executable
-    Copy-Item -LiteralPath $sourceReceipt -Destination $Receipt
-    Copy-Item -LiteralPath $sourceHelper -Destination $helperPath
     $stagedArtifacts = @($Executable, $Receipt, $helperPath)
-    # Execute only private staged copies retained through every case. FileShare.Read
-    # prevents replacement, writes, and deletion while still allowing reads.
-    foreach ($path in $stagedArtifacts) {
-        $immutableArtifactLocks += Open-MarkdownImmutableArtifact $path
-    }
+    $immutableArtifactLocks += Copy-MarkdownImmutableArtifact $sourceExecutable $Executable
+    $immutableArtifactLocks += Copy-MarkdownImmutableArtifact $sourceReceipt $Receipt
+    $immutableArtifactLocks += Copy-MarkdownImmutableArtifact $sourceHelper $helperPath
+    $immutableArtifactLocks += Open-MarkdownImmutableArtifact $recipePath
     $recipeSha256 = (Get-FileHash -LiteralPath $recipePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $receiptSha256 = (Get-FileHash -LiteralPath $Receipt -Algorithm SHA256).Hash.ToLowerInvariant()
     $identity = Assert-MarkdownSourceReceipt $Executable $Receipt $SourceRoot
+    Assert-MarkdownCommittedHelper $helperPath $SourceRoot
     . $helperPath
     [FesTermApplicationWindow]::RequireInteractiveDesktop()
 
@@ -512,16 +543,28 @@ foreach ($name in $cases) {
     $folder = Join-Path $OutputDirectory $name
     [void](New-Item -ItemType Directory -Path $folder)
     $fixture = Join-Path $folder 'synthetic.md'
-    [IO.File]::WriteAllText($fixture, (New-MarkdownScrollFixture $name))
+    $fixtureText = New-MarkdownScrollFixture $name
+    $fixtureBytes = [Text.UTF8Encoding]::new($false).GetBytes($fixtureText)
+    $fixtureLock = [IO.File]::Open(
+        $fixture, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+    $fixtureLock.Write($fixtureBytes, 0, $fixtureBytes.Length)
+    $fixtureLock.Flush($true)
+    $fixtureLock.Position = 0
     $config = Join-Path $folder 'config.toml'
-    [IO.File]::WriteAllText($config, @'
+    $configText = @'
 schema_version = 1
 [settings]
 confirm_session_close = false
 restore_workspace = false
 automatic_update_checks = false
 show_resumable_sessions = false
-'@)
+'@
+    $configBytes = [Text.UTF8Encoding]::new($false).GetBytes($configText)
+    $configLock = [IO.File]::Open(
+        $config, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+    $configLock.Write($configBytes, 0, $configBytes.Length)
+    $configLock.Flush($true)
+    $configLock.Position = 0
     $local = Join-Path $folder 'local-app-data'
     [void](New-Item -ItemType Directory -Path $local)
     $info = [Diagnostics.ProcessStartInfo]::new($Executable)
@@ -548,8 +591,6 @@ show_resumable_sessions = false
     $pinned = $null
     $streams = @()
     $copies = @()
-    $recipeLock = $null
-    $fixtureLock = $null
     $launchArtifacts = $null
     $primaryFailure = $null
     $pointerControlled = $false
@@ -566,9 +607,6 @@ show_resumable_sessions = false
         limitation = 'Host-return timings only: not GPU completion, completed presents per message, or physical display latency. Targeted PostMessage may be ignored; offset proof is required. Receipt is builder provenance, not cryptographic source attestation.'
     }
     try {
-        # Windows sharing denies edits/deletion until final revalidation completes.
-        $recipeLock = [IO.File]::Open($recipePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-        $fixtureLock = Open-MarkdownImmutableArtifact $fixture
         $launchArtifacts = Get-MarkdownArtifactIdentity $recipePath $fixture $Receipt
         $result['artifacts_at_launch'] = $launchArtifacts
         if ($launchArtifacts.recipe_sha256 -ne $recipeSha256 -or $launchArtifacts.receipt_sha256 -ne $receiptSha256) {
@@ -581,7 +619,7 @@ show_resumable_sessions = false
         foreach ($channel in @('stdout', 'stderr')) {
             $path = Join-Path $folder "$channel.log"
             $stream = [IO.FileStream]::new($path, [IO.FileMode]::CreateNew,
-                [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite, 1, $true)
+                [IO.FileAccess]::Write, [IO.FileShare]::Read, 1, $true)
             $streams += $stream
             $source = if ($channel -eq 'stdout') { $process.StandardOutput } else { $process.StandardError }
             $copies += $source.BaseStream.CopyToAsync($stream)
@@ -752,7 +790,10 @@ show_resumable_sessions = false
             } }
         }
         foreach ($stream in $streams) {
-            $steps += @{ Name = 'raw_log_dispose'; Resource = $stream; Action = { param($step) $step.Resource.Dispose() } }
+            $steps += @{ Name = 'raw_log_retain'; Resource = $stream; Action = {
+                param($step)
+                $evidenceLocks.Add($step.Resource)
+            } }
         }
         $steps += @(
             @{ Name = 'artifact_revalidation'; Action = {
@@ -767,17 +808,28 @@ show_resumable_sessions = false
                 $result['identity_after_exit'] = Assert-MarkdownSourceReceipt $Executable $Receipt $SourceRoot $identity
                 $result['source_identity_revalidated'] = $true
             } },
-            @{ Name = 'fixture_unlock'; Action = { if ($null -ne $fixtureLock) { $fixtureLock.Dispose() } } },
-            @{ Name = 'recipe_unlock'; Action = { if ($null -ne $recipeLock) { $recipeLock.Dispose() } } },
+            @{ Name = 'fixture_retain'; Action = { $evidenceLocks.Add($fixtureLock) } },
+            @{ Name = 'config_retain'; Action = { $evidenceLocks.Add($configLock) } },
             @{ Name = 'process_dispose'; Action = { $process.Dispose() } }
         )
         Invoke-MarkdownCleanup $result $steps
-        $result | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $folder 'result.json') -Encoding utf8
+        $resultPath = Join-Path $folder 'result.json'
+        $resultBytes = [Text.UTF8Encoding]::new($false).GetBytes(
+            (($result | ConvertTo-Json -Depth 10) + "`n"))
+        $resultLock = [IO.File]::Open(
+            $resultPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+        $resultLock.Write($resultBytes, 0, $resultBytes.Length)
+        $resultLock.Flush($true)
+        $resultLock.Position = 0
+        $evidenceLocks.Add($resultLock)
     }
     if ($null -ne $primaryFailure) { throw $primaryFailure }
     if ($result['status'] -ne 'passed') { throw 'Profiling cleanup or final identity validation failed; inspect the owned result JSON.' }
 }
 } finally {
+    foreach ($lock in $evidenceLocks) {
+        try { $lock.Dispose() } catch { Write-Warning 'Could not release an evidence artifact lock.' }
+    }
     foreach ($lock in $immutableArtifactLocks) {
         try { $lock.Dispose() } catch { Write-Warning 'Could not release a staged artifact lock.' }
     }

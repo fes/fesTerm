@@ -404,9 +404,10 @@ foreach ($rule in $acl.Access) {
     Assert ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow) 'Only allow rules'
     Assert ($rule.IdentityReference -eq $owner -or $rule.IdentityReference -eq $system) 'Only owner and SYSTEM'
 }
+$source = Join-Path $directory 'source.bin'
 $artifact = Join-Path $directory 'artifact.bin'
-[IO.File]::WriteAllText($artifact, 'frozen')
-$lock = Open-MarkdownImmutableArtifact $artifact
+[IO.File]::WriteAllText($source, 'frozen')
+$lock = Copy-MarkdownImmutableArtifact $source $artifact
 try {
     Reject {
         $writer = [IO.File]::Open($artifact, [IO.FileMode]::Open, [IO.FileAccess]::Write,
@@ -417,6 +418,7 @@ try {
     Assert ((Get-Content -LiteralPath $artifact -Raw) -eq 'frozen') 'Locked artifact remains readable'
 } finally {
     $lock.Dispose()
+    Remove-Item -LiteralPath $source
     Remove-Item -LiteralPath $artifact
     Remove-Item -LiteralPath $directory
 }
