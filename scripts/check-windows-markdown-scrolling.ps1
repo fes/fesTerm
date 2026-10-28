@@ -936,8 +936,13 @@ show_resumable_sessions = false
         foreach ($stream in $streams) {
             $steps += @{ Name = 'raw_log_retain'; Resource = $stream; Action = {
                 param($step)
-                $step.Resource.Flush($true)
-                $evidenceLocks.Add($step.Resource)
+                try {
+                    $step.Resource.Flush($true)
+                    $evidenceLocks.Add($step.Resource)
+                } catch {
+                    $step.Resource.Dispose()
+                    throw
+                }
             } }
         }
         $steps += @(
