@@ -474,6 +474,7 @@ $directoryLocks = [Collections.Generic.List[IDisposable]]::new()
 $cases = @()
 $publicationFailure = $null
 try {
+    $directoryLocks.Add([FesTermDirectoryLock]::Open($publicationDirectory))
     $directoryLocks.Add([FesTermDirectoryLock]::Open($localAppData))
     $directoryLocks.Add([FesTermDirectoryLock]::Open($trustedBase))
     $directoryLocks.Add([FesTermDirectoryLock]::Open($OutputDirectory))
@@ -921,13 +922,9 @@ show_resumable_sessions = false
     foreach ($lock in $immutableArtifactLocks) {
         try { $lock.Dispose() } catch { Write-Warning 'Could not release a staged artifact lock.' }
     }
-    foreach ($lock in $directoryLocks) {
-        try { $lock.Dispose() } catch { Write-Warning 'Could not release a runtime directory lock.' }
-    }
     foreach ($path in $stagedArtifacts) {
         try { Remove-Item -LiteralPath $path -Force } catch { Write-Warning 'Could not remove a staged artifact.' }
     }
-    try { Remove-Item -LiteralPath $artifactDirectory -Force } catch { Write-Warning 'Could not remove the staging directory.' }
     foreach ($name in $cases) {
         $sourceCase = Join-Path $OutputDirectory $name
         if (Test-Path -LiteralPath $sourceCase) {
@@ -939,9 +936,13 @@ show_resumable_sessions = false
             }
         }
     }
+    foreach ($lock in $directoryLocks) {
+        try { $lock.Dispose() } catch { Write-Warning 'Could not release a runtime directory lock.' }
+    }
     foreach ($lock in $evidenceLocks) {
         try { $lock.Dispose() } catch { Write-Warning 'Could not release an evidence artifact lock.' }
     }
+    try { Remove-Item -LiteralPath $artifactDirectory -Force } catch { Write-Warning 'Could not remove the staging directory.' }
     try { Remove-Item -LiteralPath $OutputDirectory -Recurse -Force } catch {
         Write-Warning 'Could not remove the private runtime evidence directory.'
     }
