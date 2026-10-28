@@ -381,7 +381,7 @@ function Assert-MarkdownNonReparsePath {
         if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
             throw 'Profiling artifacts and their parent directories must not be reparse points.'
         }
-        $item = $item.Parent
+        $item = if ($item -is [IO.FileInfo]) { $item.Directory } else { $item.Parent }
     }
 }
 
