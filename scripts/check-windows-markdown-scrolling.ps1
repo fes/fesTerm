@@ -405,6 +405,36 @@ function Copy-MarkdownImmutableArtifact {
     }
 }
 
+function Copy-MarkdownPublishedArtifact {
+    param([string] $Source, [string] $Destination)
+    $sourceStream = [IO.File]::Open(
+        $Source, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    try {
+        $destinationLock = [IO.File]::Open(
+            $Destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+        try {
+            $sourceStream.CopyTo($destinationLock)
+            $destinationLock.Flush($true)
+            $destinationLock.Position = 0
+            return $destinationLock
+        } catch {
+            $destinationLock.Dispose()
+            throw
+        }
+    } finally {
+        $sourceStream.Dispose()
+    }
+}
+
+function Add-MarkdownDirectoryChainLocks {
+    param([string] $Path, [Collections.Generic.List[IDisposable]] $Locks)
+    $item = Get-Item -LiteralPath $Path -Force
+    while ($null -ne $item) {
+        $Locks.Add([FesTermDirectoryLock]::Open($item.FullName))
+        $item = $item.Parent
+    }
+}
+
 function Protect-MarkdownPrivateDirectory {
     param([string] $Path)
     $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -474,7 +504,7 @@ $directoryLocks = [Collections.Generic.List[IDisposable]]::new()
 $cases = @()
 $publicationFailure = $null
 try {
-    $directoryLocks.Add([FesTermDirectoryLock]::Open($publicationDirectory))
+    Add-MarkdownDirectoryChainLocks $publicationDirectory $directoryLocks
     $directoryLocks.Add([FesTermDirectoryLock]::Open($localAppData))
     $directoryLocks.Add([FesTermDirectoryLock]::Open($trustedBase))
     $directoryLocks.Add([FesTermDirectoryLock]::Open($OutputDirectory))
@@ -929,7 +959,17 @@ show_resumable_sessions = false
         $sourceCase = Join-Path $OutputDirectory $name
         if (Test-Path -LiteralPath $sourceCase) {
             try {
-                Copy-Item -LiteralPath $sourceCase -Destination (Join-Path $publicationDirectory $name) -Recurse
+                $publishedCase = Join-Path $publicationDirectory $name
+                [void](New-Item -ItemType Directory -Path $publishedCase)
+                Protect-MarkdownPrivateDirectory $publishedCase
+                $directoryLocks.Add([FesTermDirectoryLock]::Open($publishedCase))
+                foreach ($file in @('synthetic.md', 'config.toml', 'stdout.log', 'stderr.log', 'result.json')) {
+                    $sourceFile = Join-Path $sourceCase $file
+                    if (Test-Path -LiteralPath $sourceFile) {
+                        $evidenceLocks.Add((Copy-MarkdownPublishedArtifact `
+                            $sourceFile (Join-Path $publishedCase $file)))
+                    }
+                }
             } catch {
                 $publicationFailure = $_
                 Write-Warning "Could not publish the $name evidence directory."
