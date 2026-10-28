@@ -1,0 +1,4601 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-28",
+  "scope": "Native Windows x64 WARP; normal file-open route; production software backgrounds",
+  "receipts": {
+    "control": {
+      "schema_version": 1,
+      "executable_sha256": "4937a40fa4aa37a2d920d44e1832fb717fe57dc35bc3bd40e7f46284fd60e9bf",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "source_tree": "d2841e06012f6682aae68d6bffc5bf6a3338604b",
+      "build_command": "cargo build --release --locked -p festerm --bin festerm --message-format=json",
+      "compiler": "rustc 1.98.1 (48a229cea 2026-09-01)"
+    },
+    "candidate": {
+      "schema_version": 1,
+      "executable_sha256": "cf1361f043c0c1ef95a638c526e1f8bfbd935f13e13ddccd35d8c43abf71944f",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "source_tree": "c85f549ade0315537adc6589bffbd6faf7cefb79",
+      "build_command": "cargo build --release --locked -p festerm --bin festerm --message-format=json",
+      "compiler": "rustc 1.98.1 (48a229cea 2026-09-01)"
+    }
+  },
+  "geometry": {
+    "logical": [
+      640,
+      400
+    ],
+    "physical": [
+      1280,
+      800
+    ],
+    "dpi": 192
+  },
+  "adapter": {
+    "name": "Microsoft Basic Render Driver",
+    "backend": "Dx12",
+    "device_type": "Cpu"
+  },
+  "protocol": {
+    "balanced_block": "03: fresh profiler invocation per case; control/candidate/candidate/control",
+    "bursts": 5,
+    "wheel_messages_per_burst": 5,
+    "cadence_ms": 45,
+    "directions": [
+      "down",
+      "up",
+      "down",
+      "up",
+      "down"
+    ],
+    "minimum_drain_ms": 500,
+    "required_observed_quiet_ms": 200,
+    "drain_deadline_ms": 3000,
+    "owned_builds_or_tests_during_measurement": false
+  },
+  "limitations": [
+    "Two observations per arm per case on one machine; descriptive, not statistical or universal.",
+    "CPU is aggregate process CPU over the full burst/drain interval, not one-core CPU or latency.",
+    "Host nearest-rank p50/p95 cover only each measured root-frame range; not GPU completion or physical latency.",
+    "Frame counts and idle-hit proportions differ; wheel messages and presents are not one-to-one.",
+    "Earlier prose settle rejections in both arms remain rejected; no deadline relaxation or normalized-away drift.",
+    "Receipt is builder provenance, not cryptographic source attestation; raw private logs remain local."
+  ],
+  "earlier_precomparison_attempts": [
+    {
+      "attempt": "pilot-editor-candidate-001",
+      "outcome": "cursor access denied before input; rejected"
+    },
+    {
+      "attempt": "pilot-editor-candidate-002",
+      "outcome": "Set-Acl required unavailable SeSecurityPrivilege before app launch; rejected"
+    },
+    {
+      "attempt": "pilot-editor-candidate-003",
+      "outcome": "plain Edit pilot passed after reviewed ACL fix; excluded from balanced comparison"
+    }
+  ],
+  "runs": [
+    {
+      "run": "balanced-01-1-control",
+      "case": "prose",
+      "kind": "control",
+      "status": "failed",
+      "result_sha256": "3895e272e7a8db595891b53d22323ddbf39ff9646959b117a36f1df1f6b817c3",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "c6cf849a2663e2b079b42f5a95e6ea8c83125de7858f92668eeba84d40522263",
+      "surface": "markdown_preview",
+      "exit_code": -1,
+      "forced_termination": true,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 810.8196,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 1.52587890625e-05,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 766.7895,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 1.52587890625e-05,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 505.1945,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 3.814697265625e-06,
+          "actual_offset_delta": -200.0000114440918,
+          "drain_ms": 3326.5319,
+          "settled": false,
+          "settle_timed_out": true
+        }
+      ],
+      "measurement": null,
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 173528,
+      "rejection": "unchanged 3-second scroll-settle deadline"
+    },
+    {
+      "run": "balanced-01-1-control",
+      "case": "rust20",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "78fc17b787fef6e0afc154517c4b6bb58dd084904d3cda6525b06b8ce0567b19",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "b875df346b6d4b5ba84c3c1196ae84a6c6e5a9895b4262e84bdcf5f41b2e95b3",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 564.0684,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 540.4857,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 820.8188,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 3.814697265625e-06,
+          "actual_offset_delta": -200.0000114440918,
+          "drain_ms": 737.9446,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 3.814697265625e-06,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.0000114440918,
+          "drain_ms": 541.9877,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "process_cpu_seconds": 50.59375,
+        "cpu_percent_one_core": 774.211738637594,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "wall_seconds": 6.5348725,
+        "host_frame_timing": {
+          "samples": 104,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 119,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 14.0,
+            "p50": 12.0
+          },
+          "prepare_ms": {
+            "p95": 0.2,
+            "p50": 0.112
+          },
+          "acquire_ms": {
+            "p95": 74.808,
+            "p50": 67.971
+          },
+          "encode_ms": {
+            "p95": 0.656,
+            "p50": 0.41
+          },
+          "submit_ms": {
+            "p95": 0.754,
+            "p50": 0.466
+          },
+          "present_ms": {
+            "p95": 0.33,
+            "p50": 0.149
+          },
+          "total_ms": {
+            "p95": 75.993,
+            "p50": 69.494
+          }
+        },
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 9,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "counters_after": {
+          "RootSamples": 119,
+          "RootCompleted": 119,
+          "RetentionSamples": 119,
+          "Reused": 36,
+          "Rebuilt": 83,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-01-1-control",
+      "case": "rust300",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "f85390f6df597b11caaa540aa2bcf1ee82b0bde8dbda755e8588822e4dc07f1a",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "7a48ea1b77ad06311f436219c7c5930019831551121617386c51a462cc3720c5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998474121094,
+          "drain_ms": 704.8016,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 199.99998474121094,
+          "offset_after": 0.0,
+          "actual_offset_delta": -199.99998474121094,
+          "drain_ms": 702.1376,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 728.3103,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 734.5418,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 716.1293,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "process_cpu_seconds": 44.890625,
+        "cpu_percent_one_core": 761.9666089459677,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "wall_seconds": 5.8914163,
+        "host_frame_timing": {
+          "samples": 82,
+          "root_frame_exclusive_start": 14,
+          "root_frame_inclusive_end": 96,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 14.0,
+            "p50": 13.0
+          },
+          "prepare_ms": {
+            "p95": 0.251,
+            "p50": 0.174
+          },
+          "acquire_ms": {
+            "p95": 64.56,
+            "p50": 59.874
+          },
+          "encode_ms": {
+            "p95": 0.657,
+            "p50": 0.421
+          },
+          "submit_ms": {
+            "p95": 0.867,
+            "p50": 0.514
+          },
+          "present_ms": {
+            "p95": 0.333,
+            "p50": 0.163
+          },
+          "total_ms": {
+            "p95": 65.755,
+            "p50": 61.502
+          }
+        },
+        "counters_before": {
+          "RootSamples": 14,
+          "RootCompleted": 14,
+          "RetentionSamples": 14,
+          "Reused": 8,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "counters_after": {
+          "RootSamples": 96,
+          "RootCompleted": 96,
+          "RetentionSamples": 96,
+          "Reused": 24,
+          "Rebuilt": 72,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-01-1-control",
+      "case": "table30",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "bc3dc2824ae6c9c18d4f2e34961d398d5807f864b8a905fefc202688da9a2957",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "2ed472397222098bbac30838c67480c0c0a115e17d8b1815a44ca75b39e88bd5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998474121094,
+          "drain_ms": 781.1291,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 199.99998474121094,
+          "offset_after": 0.0,
+          "actual_offset_delta": -199.99998474121094,
+          "drain_ms": 851.9355,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 876.3382,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 3.814697265625e-06,
+          "actual_offset_delta": -200.0000114440918,
+          "drain_ms": 776.2133,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 3.814697265625e-06,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998092651367,
+          "drain_ms": 906.2315,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "process_cpu_seconds": 77.84375,
+        "cpu_percent_one_core": 1004.8076776000112,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "wall_seconds": 7.7471293,
+        "host_frame_timing": {
+          "samples": 68,
+          "root_frame_exclusive_start": 14,
+          "root_frame_inclusive_end": 82,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 12.0,
+            "p50": 12.0
+          },
+          "prepare_ms": {
+            "p95": 0.214,
+            "p50": 0.107
+          },
+          "acquire_ms": {
+            "p95": 121.371,
+            "p50": 114.211
+          },
+          "encode_ms": {
+            "p95": 0.569,
+            "p50": 0.412
+          },
+          "submit_ms": {
+            "p95": 0.608,
+            "p50": 0.415
+          },
+          "present_ms": {
+            "p95": 0.23,
+            "p50": 0.127
+          },
+          "total_ms": {
+            "p95": 122.62,
+            "p50": 115.206
+          }
+        },
+        "counters_before": {
+          "RootSamples": 14,
+          "RootCompleted": 14,
+          "RetentionSamples": 14,
+          "Reused": 8,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "counters_after": {
+          "RootSamples": 82,
+          "RootCompleted": 82,
+          "RetentionSamples": 82,
+          "Reused": 16,
+          "Rebuilt": 66,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-02-1-control",
+      "case": "editor300",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "f490d12a932e5989daba139cdca8720fa477e39bf44c803bcf03b8ee3d6e37ec",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "c57628d30725362e2d5cec0cf4dc4f768c62aa67cb51752cf8cf8ea9c48bdc3d",
+      "surface": "editor",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 576.0983,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.00001525878906,
+          "drain_ms": 710.097,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998474121094,
+          "drain_ms": 705.3797,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 199.99998474121094,
+          "offset_after": 0.0,
+          "actual_offset_delta": -199.99998474121094,
+          "drain_ms": 724.6563,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 701.3701,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "process_cpu_seconds": 42.625,
+        "host_frame_timing": {
+          "samples": 88,
+          "root_frame_exclusive_start": 13,
+          "root_frame_inclusive_end": 101,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 10.0,
+            "p95": 10.0
+          },
+          "prepare_ms": {
+            "p50": 0.102,
+            "p95": 0.183
+          },
+          "acquire_ms": {
+            "p50": 64.668,
+            "p95": 70.774
+          },
+          "encode_ms": {
+            "p50": 0.385,
+            "p95": 0.57
+          },
+          "submit_ms": {
+            "p50": 0.411,
+            "p95": 0.681
+          },
+          "present_ms": {
+            "p50": 0.12,
+            "p95": 0.25
+          },
+          "total_ms": {
+            "p50": 66.121,
+            "p95": 72.03
+          }
+        },
+        "wall_seconds": 5.7112724,
+        "counters_before": {
+          "RootSamples": 13,
+          "RootCompleted": 13,
+          "RetentionSamples": 13,
+          "Reused": 7,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "cpu_percent_one_core": 746.3310627593248,
+        "counters_after": {
+          "RootSamples": 101,
+          "RootCompleted": 101,
+          "RetentionSamples": 101,
+          "Reused": 30,
+          "Rebuilt": 71,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-02-1-control",
+      "case": "prose",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "55413640a97102080911d8b177c9952f320c01f881f18275b742627feaa4d4ff",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "c6cf849a2663e2b079b42f5a95e6ea8c83125de7858f92668eeba84d40522263",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 763.9416,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 750.1179,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 527.9305,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 707.602,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998474121094,
+          "drain_ms": 790.5482,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "process_cpu_seconds": 49.46875,
+        "host_frame_timing": {
+          "samples": 78,
+          "root_frame_exclusive_start": 14,
+          "root_frame_inclusive_end": 92,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 11.0,
+            "p95": 11.0
+          },
+          "prepare_ms": {
+            "p50": 0.151,
+            "p95": 0.305
+          },
+          "acquire_ms": {
+            "p50": 70.453,
+            "p95": 77.643
+          },
+          "encode_ms": {
+            "p50": 0.391,
+            "p95": 0.573
+          },
+          "submit_ms": {
+            "p50": 0.414,
+            "p95": 0.713
+          },
+          "present_ms": {
+            "p50": 0.14,
+            "p95": 0.373
+          },
+          "total_ms": {
+            "p50": 71.757,
+            "p95": 79.178
+          }
+        },
+        "wall_seconds": 6.0851371,
+        "counters_before": {
+          "RootSamples": 14,
+          "RootCompleted": 14,
+          "RetentionSamples": 14,
+          "Reused": 8,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "cpu_percent_one_core": 812.9438858493427,
+        "counters_after": {
+          "RootSamples": 92,
+          "RootCompleted": 92,
+          "RetentionSamples": 92,
+          "Reused": 26,
+          "Rebuilt": 66,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 173528
+    },
+    {
+      "run": "balanced-02-1-control",
+      "case": "rust20",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "27d95890504d12183a90cba4ed029df60e99d44af05a3814e51cac8ae8562854",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "b875df346b6d4b5ba84c3c1196ae84a6c6e5a9895b4262e84bdcf5f41b2e95b3",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 521.268,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 510.131,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 526.4796,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 7.62939453125e-06,
+          "actual_offset_delta": -200.00000762939453,
+          "drain_ms": 516.526,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 7.62939453125e-06,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00000762939453,
+          "drain_ms": 640.9857,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "process_cpu_seconds": 57.234375,
+        "host_frame_timing": {
+          "samples": 105,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 120,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 13.0,
+            "p95": 14.0
+          },
+          "prepare_ms": {
+            "p50": 0.106,
+            "p95": 0.185
+          },
+          "acquire_ms": {
+            "p50": 76.943,
+            "p95": 81.594
+          },
+          "encode_ms": {
+            "p50": 0.404,
+            "p95": 0.58
+          },
+          "submit_ms": {
+            "p50": 0.436,
+            "p95": 0.901
+          },
+          "present_ms": {
+            "p50": 0.13,
+            "p95": 0.299
+          },
+          "total_ms": {
+            "p50": 78.221,
+            "p95": 82.755
+          }
+        },
+        "wall_seconds": 6.4838353,
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 9,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "cpu_percent_one_core": 882.7240722786404,
+        "counters_after": {
+          "RootSamples": 120,
+          "RootCompleted": 120,
+          "RetentionSamples": 120,
+          "Reused": 40,
+          "Rebuilt": 80,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-02-1-control",
+      "case": "rust300",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "e3c6be1052451e942f9328b52cabe65aa23098b016a37b4f4cc4a5a4160ce334",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "7a48ea1b77ad06311f436219c7c5930019831551121617386c51a462cc3720c5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 709.3666,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 688.3563,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 553.5171,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 700.3903,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998474121094,
+          "drain_ms": 759.4919,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "process_cpu_seconds": 51.109375,
+        "host_frame_timing": {
+          "samples": 83,
+          "root_frame_exclusive_start": 14,
+          "root_frame_inclusive_end": 97,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 13.0,
+            "p95": 14.0
+          },
+          "prepare_ms": {
+            "p50": 0.191,
+            "p95": 0.293
+          },
+          "acquire_ms": {
+            "p50": 70.155,
+            "p95": 77.244
+          },
+          "encode_ms": {
+            "p50": 0.409,
+            "p95": 0.6
+          },
+          "submit_ms": {
+            "p50": 0.507,
+            "p95": 0.75
+          },
+          "present_ms": {
+            "p50": 0.16,
+            "p95": 0.39
+          },
+          "total_ms": {
+            "p50": 71.612,
+            "p95": 78.843
+          }
+        },
+        "wall_seconds": 6.3808608,
+        "counters_before": {
+          "RootSamples": 14,
+          "RootCompleted": 14,
+          "RetentionSamples": 14,
+          "Reused": 8,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "cpu_percent_one_core": 800.9793130105581,
+        "counters_after": {
+          "RootSamples": 97,
+          "RootCompleted": 97,
+          "RetentionSamples": 97,
+          "Reused": 26,
+          "Rebuilt": 71,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-02-1-control",
+      "case": "table30",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "fbead908c935add4a2efa72cee4458d6b01c48cf0ff81e50f506cb8c4ec96fd3",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "2ed472397222098bbac30838c67480c0c0a115e17d8b1815a44ca75b39e88bd5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 815.1596,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 792.1487,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 894.9566,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 787.067,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 837.0191,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "process_cpu_seconds": 85.9375,
+        "host_frame_timing": {
+          "samples": 67,
+          "root_frame_exclusive_start": 14,
+          "root_frame_inclusive_end": 81,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 12.0,
+            "p95": 12.0
+          },
+          "prepare_ms": {
+            "p50": 0.122,
+            "p95": 0.2
+          },
+          "acquire_ms": {
+            "p50": 122.94,
+            "p95": 131.458
+          },
+          "encode_ms": {
+            "p50": 0.41,
+            "p95": 0.677
+          },
+          "submit_ms": {
+            "p50": 0.439,
+            "p95": 0.923
+          },
+          "present_ms": {
+            "p50": 0.171,
+            "p95": 0.327
+          },
+          "total_ms": {
+            "p50": 124.432,
+            "p95": 132.587
+          }
+        },
+        "wall_seconds": 8.146923,
+        "counters_before": {
+          "RootSamples": 14,
+          "RootCompleted": 14,
+          "RetentionSamples": 14,
+          "Reused": 8,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "cpu_percent_one_core": 1054.8461057015024,
+        "counters_after": {
+          "RootSamples": 81,
+          "RootCompleted": 81,
+          "RetentionSamples": 81,
+          "Reused": 13,
+          "Rebuilt": 68,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-02-2-candidate",
+      "case": "prose",
+      "kind": "candidate",
+      "status": "failed",
+      "result_sha256": "878e25f4c6a07cb0215060fa01e6a510fa3cf6264428810a1c4cf9bbb219eaf4",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "c6cf849a2663e2b079b42f5a95e6ea8c83125de7858f92668eeba84d40522263",
+      "surface": "markdown_preview",
+      "exit_code": -1,
+      "forced_termination": true,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 583.9159,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 1.52587890625e-05,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 564.312,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 1.52587890625e-05,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 3556.1014,
+          "settled": false,
+          "settle_timed_out": true
+        }
+      ],
+      "measurement": null,
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          9,
+          11
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 173528,
+      "rejection": "unchanged 3-second scroll-settle deadline"
+    },
+    {
+      "run": "balanced-02-2-candidate",
+      "case": "rust20",
+      "kind": "candidate",
+      "status": "passed",
+      "result_sha256": "1dd75492e666934c42ad97d781737e1534e0cf1aa681bf9c2e59d7d4bc8fa4c2",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "b875df346b6d4b5ba84c3c1196ae84a6c6e5a9895b4262e84bdcf5f41b2e95b3",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 685.6136,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 1.1444091796875e-05,
+          "actual_offset_delta": -200.00000381469727,
+          "drain_ms": 549.8784,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 1.1444091796875e-05,
+          "offset_after": 200.00003051757812,
+          "actual_offset_delta": 200.00001907348633,
+          "drain_ms": 556.2819,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00003051757812,
+          "offset_after": 1.52587890625e-05,
+          "actual_offset_delta": -200.00001525878906,
+          "drain_ms": 568.0466,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 1.52587890625e-05,
+          "offset_after": 200.00003051757812,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 565.0384,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "wall_seconds": 5.9568427,
+        "process_cpu_seconds": 24.921875,
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 8,
+          "Rebuilt": 7,
+          "PartialReused": 0,
+          "CachedPrefixJobs": 14,
+          "CachedSignatureJobs": 14
+        },
+        "host_frame_timing": {
+          "samples": 125,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 140,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 12.0,
+            "p95": 14.0
+          },
+          "prepare_ms": {
+            "p50": 0.116,
+            "p95": 0.217
+          },
+          "acquire_ms": {
+            "p50": 35.54,
+            "p95": 70.297
+          },
+          "encode_ms": {
+            "p50": 0.36,
+            "p95": 0.543
+          },
+          "submit_ms": {
+            "p50": 0.347,
+            "p95": 0.543
+          },
+          "present_ms": {
+            "p50": 0.108,
+            "p95": 0.183
+          },
+          "total_ms": {
+            "p50": 36.674,
+            "p95": 71.42
+          }
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "counters_after": {
+          "RootSamples": 140,
+          "RootCompleted": 140,
+          "RetentionSamples": 140,
+          "Reused": 23,
+          "Rebuilt": 22,
+          "PartialReused": 95,
+          "CachedPrefixJobs": 12,
+          "CachedSignatureJobs": 12
+        },
+        "cpu_percent_one_core": 418.37389797115173
+      },
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          9,
+          12
+        ],
+        [
+          9,
+          13
+        ],
+        [
+          9,
+          14
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-02-2-candidate",
+      "case": "rust300",
+      "kind": "candidate",
+      "status": "passed",
+      "result_sha256": "38f7ac88920e5e8c43e3ef783edb1b25a953b9f8fa9b668b31e72c9c457f3089",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "7a48ea1b77ad06311f436219c7c5930019831551121617386c51a462cc3720c5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 588.8092,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 536.4864,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998474121094,
+          "drain_ms": 556.101,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 199.99998474121094,
+          "offset_after": 0.0,
+          "actual_offset_delta": -199.99998474121094,
+          "drain_ms": 678.3086,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 560.8614,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "wall_seconds": 5.7947579,
+        "process_cpu_seconds": 25.390625,
+        "counters_before": {
+          "RootSamples": 14,
+          "RootCompleted": 14,
+          "RetentionSamples": 14,
+          "Reused": 7,
+          "Rebuilt": 7,
+          "PartialReused": 0,
+          "CachedPrefixJobs": 14,
+          "CachedSignatureJobs": 14
+        },
+        "host_frame_timing": {
+          "samples": 123,
+          "root_frame_exclusive_start": 14,
+          "root_frame_inclusive_end": 137,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 13.0,
+            "p95": 14.0
+          },
+          "prepare_ms": {
+            "p50": 0.157,
+            "p95": 0.283
+          },
+          "acquire_ms": {
+            "p50": 27.562,
+            "p95": 63.898
+          },
+          "encode_ms": {
+            "p50": 0.345,
+            "p95": 0.507
+          },
+          "submit_ms": {
+            "p50": 0.338,
+            "p95": 0.599
+          },
+          "present_ms": {
+            "p50": 0.111,
+            "p95": 0.259
+          },
+          "total_ms": {
+            "p50": 28.446,
+            "p95": 64.467
+          }
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "counters_after": {
+          "RootSamples": 137,
+          "RootCompleted": 137,
+          "RetentionSamples": 137,
+          "Reused": 22,
+          "Rebuilt": 22,
+          "PartialReused": 93,
+          "CachedPrefixJobs": 12,
+          "CachedSignatureJobs": 12
+        },
+        "cpu_percent_one_core": 438.1654149865347
+      },
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          9,
+          12
+        ],
+        [
+          9,
+          13
+        ],
+        [
+          9,
+          14
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-02-2-candidate",
+      "case": "table30",
+      "kind": "candidate",
+      "status": "passed",
+      "result_sha256": "5bb8d5d9c3762841591b466e58ae1db736b8c8706e1703c1cedc38bdc4f9a78c",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "2ed472397222098bbac30838c67480c0c0a115e17d8b1815a44ca75b39e88bd5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 795.5387,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.00001525878906,
+          "drain_ms": 763.5748,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 807.2836,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 750.5734,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 826.8571,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "wall_seconds": 6.7703093,
+        "process_cpu_seconds": 57.25,
+        "counters_before": {
+          "RootSamples": 14,
+          "RootCompleted": 14,
+          "RetentionSamples": 14,
+          "Reused": 7,
+          "Rebuilt": 7,
+          "PartialReused": 0,
+          "CachedPrefixJobs": 12,
+          "CachedSignatureJobs": 12
+        },
+        "host_frame_timing": {
+          "samples": 77,
+          "root_frame_exclusive_start": 14,
+          "root_frame_inclusive_end": 91,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 12.0,
+            "p95": 12.0
+          },
+          "prepare_ms": {
+            "p50": 0.103,
+            "p95": 0.192
+          },
+          "acquire_ms": {
+            "p50": 78.278,
+            "p95": 117.125
+          },
+          "encode_ms": {
+            "p50": 0.34,
+            "p95": 0.59
+          },
+          "submit_ms": {
+            "p50": 0.293,
+            "p95": 0.564
+          },
+          "present_ms": {
+            "p50": 0.105,
+            "p95": 0.189
+          },
+          "total_ms": {
+            "p50": 79.263,
+            "p95": 118.136
+          }
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "counters_after": {
+          "RootSamples": 91,
+          "RootCompleted": 91,
+          "RetentionSamples": 91,
+          "Reused": 19,
+          "Rebuilt": 22,
+          "PartialReused": 50,
+          "CachedPrefixJobs": 12,
+          "CachedSignatureJobs": 12
+        },
+        "cpu_percent_one_core": 845.6039076383113
+      },
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          9,
+          12
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-editor300-1-control",
+      "case": "editor300",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "07496eba183fd63bace497e2aa08b53e963b245290fba9bc4f4df34ad360251f",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "c57628d30725362e2d5cec0cf4dc4f768c62aa67cb51752cf8cf8ea9c48bdc3d",
+      "surface": "editor",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 777.5079,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.00001525878906,
+          "drain_ms": 521.5438,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 809.4161,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 3.0517578125e-05,
+          "actual_offset_delta": -199.99998474121094,
+          "drain_ms": 710.336,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 3.0517578125e-05,
+          "offset_after": 200.00003051757812,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 787.5029,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "cpu_percent_one_core": 709.3617250621929,
+        "host_frame_timing": {
+          "samples": 103,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 118,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 10.0,
+            "p50": 10.0
+          },
+          "prepare_ms": {
+            "p95": 0.191,
+            "p50": 0.107
+          },
+          "acquire_ms": {
+            "p95": 67.314,
+            "p50": 62.378
+          },
+          "encode_ms": {
+            "p95": 0.6,
+            "p50": 0.383
+          },
+          "submit_ms": {
+            "p95": 0.591,
+            "p50": 0.399
+          },
+          "present_ms": {
+            "p95": 0.249,
+            "p50": 0.127
+          },
+          "total_ms": {
+            "p95": 68.507,
+            "p50": 63.474
+          }
+        },
+        "process_cpu_seconds": 46.25,
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 9,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "wall_seconds": 6.5199458,
+        "counters_after": {
+          "RootSamples": 118,
+          "RootCompleted": 118,
+          "RetentionSamples": 118,
+          "Reused": 38,
+          "Rebuilt": 80,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-editor300-2-candidate",
+      "case": "editor300",
+      "kind": "candidate",
+      "status": "passed",
+      "result_sha256": "ca27a73d59ff88f065df6a79add42ee5c8760d08159e799a9233988f2ea6d9bc",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "c57628d30725362e2d5cec0cf4dc4f768c62aa67cb51752cf8cf8ea9c48bdc3d",
+      "surface": "editor",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 687.4943,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 3.814697265625e-06,
+          "actual_offset_delta": -200.0000114440918,
+          "drain_ms": 574.8927,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 3.814697265625e-06,
+          "offset_after": 200.0,
+          "actual_offset_delta": 199.99999618530273,
+          "drain_ms": 539.6079,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 7.62939453125e-06,
+          "actual_offset_delta": -199.99999237060547,
+          "drain_ms": 554.3827,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 7.62939453125e-06,
+          "offset_after": 200.0,
+          "actual_offset_delta": 199.99999237060547,
+          "drain_ms": 565.8115,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "process_cpu_seconds": 26.5,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "counters_after": {
+          "RootSamples": 135,
+          "RootCompleted": 135,
+          "RetentionSamples": 135,
+          "Reused": 21,
+          "Rebuilt": 22,
+          "PartialReused": 92,
+          "CachedPrefixJobs": 10,
+          "CachedSignatureJobs": 10
+        },
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 8,
+          "Rebuilt": 7,
+          "PartialReused": 0,
+          "CachedPrefixJobs": 10,
+          "CachedSignatureJobs": 10
+        },
+        "cpu_percent_one_core": 457.10043427991076,
+        "wall_seconds": 5.797413,
+        "host_frame_timing": {
+          "samples": 120,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 135,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 10.0,
+            "p95": 10.0
+          },
+          "prepare_ms": {
+            "p50": 0.101,
+            "p95": 0.198
+          },
+          "acquire_ms": {
+            "p50": 35.02,
+            "p95": 61.506
+          },
+          "encode_ms": {
+            "p50": 0.347,
+            "p95": 0.483
+          },
+          "submit_ms": {
+            "p50": 0.312,
+            "p95": 0.541
+          },
+          "present_ms": {
+            "p50": 0.109,
+            "p95": 0.202
+          },
+          "total_ms": {
+            "p50": 36.075,
+            "p95": 62.063
+          }
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          6,
+          10
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-editor300-3-candidate",
+      "case": "editor300",
+      "kind": "candidate",
+      "status": "passed",
+      "result_sha256": "059cdc9a7675d36ce9f6b9ca4343fcb2c5a724a544d2c7d1e3d5da4c4e9b6aff",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "c57628d30725362e2d5cec0cf4dc4f768c62aa67cb51752cf8cf8ea9c48bdc3d",
+      "surface": "editor",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 557.5922,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 559.8388,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99996948242188,
+          "actual_offset_delta": 199.99996948242188,
+          "drain_ms": 567.3953,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 199.99996948242188,
+          "offset_after": 0.0,
+          "actual_offset_delta": -199.99996948242188,
+          "drain_ms": 560.8291,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998474121094,
+          "drain_ms": 536.3056,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "process_cpu_seconds": 26.34375,
+        "wall_seconds": 5.8348344,
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 8,
+          "Rebuilt": 7,
+          "PartialReused": 0,
+          "CachedPrefixJobs": 10,
+          "CachedSignatureJobs": 10
+        },
+        "counters_after": {
+          "RootSamples": 134,
+          "RootCompleted": 134,
+          "RetentionSamples": 134,
+          "Reused": 21,
+          "Rebuilt": 22,
+          "PartialReused": 91,
+          "CachedPrefixJobs": 10,
+          "CachedSignatureJobs": 10
+        },
+        "host_frame_timing": {
+          "samples": 119,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 134,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 10.0,
+            "p95": 10.0
+          },
+          "prepare_ms": {
+            "p50": 0.123,
+            "p95": 0.179
+          },
+          "acquire_ms": {
+            "p50": 34.894,
+            "p95": 62.629
+          },
+          "encode_ms": {
+            "p50": 0.364,
+            "p95": 0.504
+          },
+          "submit_ms": {
+            "p50": 0.347,
+            "p95": 0.569
+          },
+          "present_ms": {
+            "p50": 0.111,
+            "p95": 0.23
+          },
+          "total_ms": {
+            "p50": 35.948,
+            "p95": 63.82
+          }
+        },
+        "cpu_percent_one_core": 451.4909626226924,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning."
+      },
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          6,
+          10
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-editor300-4-control",
+      "case": "editor300",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "8886d1ae37bb532a47f8f63b4bf670c22c8826c1c507e61a089dd0e307f80f51",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "c57628d30725362e2d5cec0cf4dc4f768c62aa67cb51752cf8cf8ea9c48bdc3d",
+      "surface": "editor",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 559.8561,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 723.8348,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 585.0435,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.00001525878906,
+          "drain_ms": 834.6219,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 793.0896,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 9,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "cpu_percent_one_core": 647.5123710558463,
+        "host_frame_timing": {
+          "samples": 110,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 125,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 10.0,
+            "p50": 10.0
+          },
+          "prepare_ms": {
+            "p95": 0.232,
+            "p50": 0.148
+          },
+          "acquire_ms": {
+            "p95": 63.278,
+            "p50": 52.628
+          },
+          "encode_ms": {
+            "p95": 0.622,
+            "p50": 0.452
+          },
+          "submit_ms": {
+            "p95": 0.743,
+            "p50": 0.496
+          },
+          "present_ms": {
+            "p95": 0.295,
+            "p50": 0.141
+          },
+          "total_ms": {
+            "p95": 65.442,
+            "p50": 54.068
+          }
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "process_cpu_seconds": 42.96875,
+        "counters_after": {
+          "RootSamples": 125,
+          "RootCompleted": 125,
+          "RetentionSamples": 125,
+          "Reused": 40,
+          "Rebuilt": 85,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "wall_seconds": 6.6359736
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-prose-1-control",
+      "case": "prose",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "c2e1a88c76e6a350119a3ed8b97ba024859dda0c8fea5a1d934116b0bd0a7275",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "c6cf849a2663e2b079b42f5a95e6ea8c83125de7858f92668eeba84d40522263",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 587.0726,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 7.62939453125e-06,
+          "actual_offset_delta": -200.00000762939453,
+          "drain_ms": 530.7136,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 7.62939453125e-06,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.9999771118164,
+          "drain_ms": 542.5409,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 199.99998474121094,
+          "offset_after": 0.0,
+          "actual_offset_delta": -199.99998474121094,
+          "drain_ms": 662.5997,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 783.2034,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "wall_seconds": 6.9193157,
+        "host_frame_timing": {
+          "samples": 101,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 116,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 11.0,
+            "p95": 11.0
+          },
+          "prepare_ms": {
+            "p50": 0.187,
+            "p95": 0.275
+          },
+          "acquire_ms": {
+            "p50": 66.551,
+            "p95": 73.576
+          },
+          "encode_ms": {
+            "p50": 0.419,
+            "p95": 0.627
+          },
+          "submit_ms": {
+            "p50": 0.462,
+            "p95": 0.725
+          },
+          "present_ms": {
+            "p50": 0.134,
+            "p95": 0.285
+          },
+          "total_ms": {
+            "p50": 68.081,
+            "p95": 74.858
+          }
+        },
+        "counters_after": {
+          "RootSamples": 116,
+          "RootCompleted": 116,
+          "RetentionSamples": 116,
+          "Reused": 35,
+          "Rebuilt": 81,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "cpu_percent_one_core": 817.0063695749566,
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 9,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "process_cpu_seconds": 56.53125
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 173528
+    },
+    {
+      "run": "balanced-03-prose-2-candidate",
+      "case": "prose",
+      "kind": "candidate",
+      "status": "passed",
+      "result_sha256": "e7a3336d901e7d6db41e213c99e57cb2035c3850a0a45b0d0da8c0c53f657541",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "c6cf849a2663e2b079b42f5a95e6ea8c83125de7858f92668eeba84d40522263",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00003051757812,
+          "actual_offset_delta": 200.00003051757812,
+          "drain_ms": 576.958,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00003051757812,
+          "offset_after": 2.288818359375e-05,
+          "actual_offset_delta": -200.00000762939453,
+          "drain_ms": 572.977,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 2.288818359375e-05,
+          "offset_after": 200.0000457763672,
+          "actual_offset_delta": 200.0000228881836,
+          "drain_ms": 640.0191,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0000457763672,
+          "offset_after": 3.0517578125e-05,
+          "actual_offset_delta": -200.00001525878906,
+          "drain_ms": 637.5675,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 3.0517578125e-05,
+          "offset_after": 200.0000457763672,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 727.7361,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "wall_seconds": 6.637658,
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 8,
+          "Rebuilt": 7,
+          "PartialReused": 0,
+          "CachedPrefixJobs": 11,
+          "CachedSignatureJobs": 11
+        },
+        "cpu_percent_one_core": 443.2568686123931,
+        "counters_after": {
+          "RootSamples": 135,
+          "RootCompleted": 135,
+          "RetentionSamples": 135,
+          "Reused": 23,
+          "Rebuilt": 22,
+          "PartialReused": 90,
+          "CachedPrefixJobs": 11,
+          "CachedSignatureJobs": 11
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "process_cpu_seconds": 29.421875,
+        "host_frame_timing": {
+          "samples": 120,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 135,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 11.0,
+            "p50": 11.0
+          },
+          "prepare_ms": {
+            "p95": 0.32,
+            "p50": 0.216
+          },
+          "acquire_ms": {
+            "p95": 65.754,
+            "p50": 31.631
+          },
+          "encode_ms": {
+            "p95": 0.547,
+            "p50": 0.414
+          },
+          "submit_ms": {
+            "p95": 0.668,
+            "p50": 0.387
+          },
+          "present_ms": {
+            "p95": 0.279,
+            "p50": 0.141
+          },
+          "total_ms": {
+            "p95": 66.934,
+            "p50": 32.886
+          }
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          9,
+          11
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 173528
+    },
+    {
+      "run": "balanced-03-prose-3-candidate",
+      "case": "prose",
+      "kind": "candidate",
+      "status": "passed",
+      "result_sha256": "003ccec897b3b1d92b665b0ae5832d4cb7d7d87ed0d767a616f55d4d87d54e9a",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "c6cf849a2663e2b079b42f5a95e6ea8c83125de7858f92668eeba84d40522263",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 582.6451,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 558.1,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 506.2877,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 1.1444091796875e-05,
+          "actual_offset_delta": -200.00000381469727,
+          "drain_ms": 572.4945,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 1.1444091796875e-05,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00000381469727,
+          "drain_ms": 594.9818,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "process_cpu_seconds": 33.5,
+        "cpu_percent_one_core": 534.3095983121048,
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 8,
+          "Rebuilt": 7,
+          "PartialReused": 0,
+          "CachedPrefixJobs": 11,
+          "CachedSignatureJobs": 11
+        },
+        "wall_seconds": 6.2697732,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "host_frame_timing": {
+          "samples": 118,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 133,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 11.0,
+            "p95": 11.0
+          },
+          "prepare_ms": {
+            "p50": 0.189,
+            "p95": 0.256
+          },
+          "acquire_ms": {
+            "p50": 34.156,
+            "p95": 69.184
+          },
+          "encode_ms": {
+            "p50": 0.344,
+            "p95": 0.464
+          },
+          "submit_ms": {
+            "p50": 0.32,
+            "p95": 0.479
+          },
+          "present_ms": {
+            "p50": 0.11,
+            "p95": 0.178
+          },
+          "total_ms": {
+            "p50": 35.233,
+            "p95": 70.209
+          }
+        },
+        "counters_after": {
+          "RootSamples": 133,
+          "RootCompleted": 133,
+          "RetentionSamples": 133,
+          "Reused": 21,
+          "Rebuilt": 22,
+          "PartialReused": 90,
+          "CachedPrefixJobs": 11,
+          "CachedSignatureJobs": 11
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          9,
+          11
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 173528
+    },
+    {
+      "run": "balanced-03-prose-4-control",
+      "case": "prose",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "efb0335626611d57764284658874ca90c6813293b13a5eb25d0ded414f4d238b",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "c6cf849a2663e2b079b42f5a95e6ea8c83125de7858f92668eeba84d40522263",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 580.6514,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 626.2282,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 544.735,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 7.62939453125e-06,
+          "actual_offset_delta": -199.99999237060547,
+          "drain_ms": 530.9966,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 7.62939453125e-06,
+          "offset_after": 200.0,
+          "actual_offset_delta": 199.99999237060547,
+          "drain_ms": 568.4446,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "process_cpu_seconds": 58.71875,
+        "cpu_percent_one_core": 867.6964141061713,
+        "host_frame_timing": {
+          "samples": 91,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 106,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 11.0,
+            "p50": 11.0
+          },
+          "prepare_ms": {
+            "p95": 0.279,
+            "p50": 0.199
+          },
+          "acquire_ms": {
+            "p95": 75.919,
+            "p50": 69.625
+          },
+          "encode_ms": {
+            "p95": 0.642,
+            "p50": 0.465
+          },
+          "submit_ms": {
+            "p95": 0.908,
+            "p50": 0.53
+          },
+          "present_ms": {
+            "p95": 0.298,
+            "p50": 0.157
+          },
+          "total_ms": {
+            "p95": 77.564,
+            "p50": 71.176
+          }
+        },
+        "counters_after": {
+          "RootSamples": 106,
+          "RootCompleted": 106,
+          "RetentionSamples": 106,
+          "Reused": 26,
+          "Rebuilt": 80,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "wall_seconds": 6.7671998,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 9,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 173528
+    },
+    {
+      "run": "balanced-03-rust20-1-control",
+      "case": "rust20",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "2cafa9e63457ab0f403310b6aa205ca406b97ad67828c7da12627abd7075b1a7",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "b875df346b6d4b5ba84c3c1196ae84a6c6e5a9895b4262e84bdcf5f41b2e95b3",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 762.8012,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 716.048,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 821.1246,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 809.7325,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 568.301,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "cpu_percent_one_core": 656.9954078411267,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 9,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "process_cpu_seconds": 46.640625,
+        "counters_after": {
+          "RootSamples": 133,
+          "RootCompleted": 133,
+          "RetentionSamples": 133,
+          "Reused": 53,
+          "Rebuilt": 80,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "host_frame_timing": {
+          "samples": 118,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 133,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 12.0,
+            "p95": 14.0
+          },
+          "prepare_ms": {
+            "p50": 0.139,
+            "p95": 0.196
+          },
+          "acquire_ms": {
+            "p50": 68.203,
+            "p95": 74.71
+          },
+          "encode_ms": {
+            "p50": 0.426,
+            "p95": 0.672
+          },
+          "submit_ms": {
+            "p50": 0.511,
+            "p95": 0.902
+          },
+          "present_ms": {
+            "p50": 0.135,
+            "p95": 0.352
+          },
+          "total_ms": {
+            "p50": 70.153,
+            "p95": 76.259
+          }
+        },
+        "wall_seconds": 7.0990793
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-rust20-2-candidate",
+      "case": "rust20",
+      "kind": "candidate",
+      "status": "passed",
+      "result_sha256": "587e93983d867e7f9343af893b04d2dbaaf10c6e27da217cae08d89ecb06c9c1",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "b875df346b6d4b5ba84c3c1196ae84a6c6e5a9895b4262e84bdcf5f41b2e95b3",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 585.631,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 3.814697265625e-06,
+          "actual_offset_delta": -200.0000114440918,
+          "drain_ms": 575.2331,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 3.814697265625e-06,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998092651367,
+          "drain_ms": 638.855,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 199.99998474121094,
+          "offset_after": 0.0,
+          "actual_offset_delta": -199.99998474121094,
+          "drain_ms": 567.6719,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 539.1107,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "host_frame_timing": {
+          "samples": 118,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 133,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 14.0,
+            "p50": 13.0
+          },
+          "prepare_ms": {
+            "p95": 0.199,
+            "p50": 0.147
+          },
+          "acquire_ms": {
+            "p95": 72.875,
+            "p50": 37.101
+          },
+          "encode_ms": {
+            "p95": 0.59,
+            "p50": 0.441
+          },
+          "submit_ms": {
+            "p95": 0.717,
+            "p50": 0.442
+          },
+          "present_ms": {
+            "p95": 0.275,
+            "p50": 0.14
+          },
+          "total_ms": {
+            "p95": 74.095,
+            "p50": 38.412
+          }
+        },
+        "counters_after": {
+          "RootSamples": 133,
+          "RootCompleted": 133,
+          "RetentionSamples": 133,
+          "Reused": 21,
+          "Rebuilt": 22,
+          "PartialReused": 90,
+          "CachedPrefixJobs": 12,
+          "CachedSignatureJobs": 12
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "cpu_percent_one_core": 386.3758614695453,
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 8,
+          "Rebuilt": 7,
+          "PartialReused": 0,
+          "CachedPrefixJobs": 14,
+          "CachedSignatureJobs": 14
+        },
+        "wall_seconds": 6.1185564,
+        "process_cpu_seconds": 23.640625
+      },
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          9,
+          12
+        ],
+        [
+          9,
+          13
+        ],
+        [
+          9,
+          14
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-rust20-3-candidate",
+      "case": "rust20",
+      "kind": "candidate",
+      "status": "passed",
+      "result_sha256": "b11fd0de5ec4e431aa4e0703c654ecbde2697b5e6ab37e841f83546c9d58df98",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "b875df346b6d4b5ba84c3c1196ae84a6c6e5a9895b4262e84bdcf5f41b2e95b3",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998474121094,
+          "drain_ms": 556.1099,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 199.99998474121094,
+          "offset_after": 0.0,
+          "actual_offset_delta": -199.99998474121094,
+          "drain_ms": 674.88,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 574.1326,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.00001525878906,
+          "drain_ms": 566.4479,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 559.3811,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 8,
+          "Rebuilt": 7,
+          "PartialReused": 0,
+          "CachedPrefixJobs": 14,
+          "CachedSignatureJobs": 14
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "counters_after": {
+          "RootSamples": 133,
+          "RootCompleted": 133,
+          "RetentionSamples": 133,
+          "Reused": 21,
+          "Rebuilt": 22,
+          "PartialReused": 90,
+          "CachedPrefixJobs": 12,
+          "CachedSignatureJobs": 12
+        },
+        "cpu_percent_one_core": 421.4092868055745,
+        "process_cpu_seconds": 25.78125,
+        "wall_seconds": 6.1178647,
+        "host_frame_timing": {
+          "samples": 118,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 133,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 13.0,
+            "p95": 14.0
+          },
+          "prepare_ms": {
+            "p50": 0.137,
+            "p95": 0.207
+          },
+          "acquire_ms": {
+            "p50": 37.855,
+            "p95": 76.669
+          },
+          "encode_ms": {
+            "p50": 0.404,
+            "p95": 0.556
+          },
+          "submit_ms": {
+            "p50": 0.402,
+            "p95": 0.656
+          },
+          "present_ms": {
+            "p50": 0.121,
+            "p95": 0.283
+          },
+          "total_ms": {
+            "p50": 38.997,
+            "p95": 77.652
+          }
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          9,
+          12
+        ],
+        [
+          9,
+          13
+        ],
+        [
+          9,
+          14
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-rust20-4-control",
+      "case": "rust20",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "94debb8b025231dc72c40f81eab39b295453a53791aa791848c44575dd7ef7f5",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "b875df346b6d4b5ba84c3c1196ae84a6c6e5a9895b4262e84bdcf5f41b2e95b3",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998474121094,
+          "drain_ms": 522.3748,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 199.99998474121094,
+          "offset_after": 0.0,
+          "actual_offset_delta": -199.99998474121094,
+          "drain_ms": 712.7718,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 700.0296,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 666.1065,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 685.0408,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "wall_seconds": 6.7168734,
+        "cpu_percent_one_core": 692.7516305428654,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "host_frame_timing": {
+          "samples": 96,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 111,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 14.0,
+            "p50": 12.0
+          },
+          "prepare_ms": {
+            "p95": 0.251,
+            "p50": 0.163
+          },
+          "acquire_ms": {
+            "p95": 80.411,
+            "p50": 71.365
+          },
+          "encode_ms": {
+            "p95": 0.752,
+            "p50": 0.452
+          },
+          "submit_ms": {
+            "p95": 0.79,
+            "p50": 0.559
+          },
+          "present_ms": {
+            "p95": 1.287,
+            "p50": 0.145
+          },
+          "total_ms": {
+            "p95": 82.92,
+            "p50": 72.763
+          }
+        },
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 9,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "counters_after": {
+          "RootSamples": 111,
+          "RootCompleted": 111,
+          "RetentionSamples": 111,
+          "Reused": 36,
+          "Rebuilt": 75,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "process_cpu_seconds": 46.53125
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-rust300-1-control",
+      "case": "rust300",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "c51874c08a2d089ffcf69528a0a3c37fa3b43f75008655c2c239dc650dab3c47",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "7a48ea1b77ad06311f436219c7c5930019831551121617386c51a462cc3720c5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 544.6182,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 3.814697265625e-06,
+          "actual_offset_delta": -200.0000114440918,
+          "drain_ms": 537.0563,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 3.814697265625e-06,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.0000114440918,
+          "drain_ms": 553.7385,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.00001525878906,
+          "drain_ms": 698.0716,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 526.4372,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "host_frame_timing": {
+          "samples": 94,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 109,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 13.0,
+            "p95": 14.0
+          },
+          "prepare_ms": {
+            "p50": 0.233,
+            "p95": 0.341
+          },
+          "acquire_ms": {
+            "p50": 67.404,
+            "p95": 73.919
+          },
+          "encode_ms": {
+            "p50": 0.473,
+            "p95": 0.728
+          },
+          "submit_ms": {
+            "p50": 0.593,
+            "p95": 1.091
+          },
+          "present_ms": {
+            "p50": 0.158,
+            "p95": 0.377
+          },
+          "total_ms": {
+            "p50": 69.317,
+            "p95": 75.688
+          }
+        },
+        "process_cpu_seconds": 51.890625,
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 9,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "cpu_percent_one_core": 793.3919548486673,
+        "counters_after": {
+          "RootSamples": 109,
+          "RootCompleted": 109,
+          "RetentionSamples": 109,
+          "Reused": 30,
+          "Rebuilt": 79,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "wall_seconds": 6.5403518,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning."
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-rust300-2-candidate",
+      "case": "rust300",
+      "kind": "candidate",
+      "status": "passed",
+      "result_sha256": "f15b96a5e06c09d4f634426e28415f278597cc9e3ec96e0250dcee8a28240ca7",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "7a48ea1b77ad06311f436219c7c5930019831551121617386c51a462cc3720c5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 553.0407,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 3.814697265625e-06,
+          "actual_offset_delta": -199.99999618530273,
+          "drain_ms": 586.8434,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 3.814697265625e-06,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.0000114440918,
+          "drain_ms": 573.8449,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.00001525878906,
+          "drain_ms": 573.9764,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998474121094,
+          "drain_ms": 599.1709,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "cpu_percent_one_core": 402.98450281979785,
+        "wall_seconds": 6.1261661,
+        "host_frame_timing": {
+          "samples": 119,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 134,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 14.0,
+            "p50": 13.0
+          },
+          "prepare_ms": {
+            "p95": 0.312,
+            "p50": 0.236
+          },
+          "acquire_ms": {
+            "p95": 69.461,
+            "p50": 29.242
+          },
+          "encode_ms": {
+            "p95": 0.556,
+            "p50": 0.429
+          },
+          "submit_ms": {
+            "p95": 0.818,
+            "p50": 0.426
+          },
+          "present_ms": {
+            "p95": 0.327,
+            "p50": 0.138
+          },
+          "total_ms": {
+            "p95": 70.756,
+            "p50": 30.418
+          }
+        },
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 8,
+          "Rebuilt": 7,
+          "PartialReused": 0,
+          "CachedPrefixJobs": 14,
+          "CachedSignatureJobs": 14
+        },
+        "process_cpu_seconds": 24.6875,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "counters_after": {
+          "RootSamples": 134,
+          "RootCompleted": 134,
+          "RetentionSamples": 134,
+          "Reused": 22,
+          "Rebuilt": 22,
+          "PartialReused": 90,
+          "CachedPrefixJobs": 12,
+          "CachedSignatureJobs": 12
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          9,
+          12
+        ],
+        [
+          9,
+          13
+        ],
+        [
+          9,
+          14
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-rust300-3-candidate",
+      "case": "rust300",
+      "kind": "candidate",
+      "status": "passed",
+      "result_sha256": "c00492f08409a3de7728c8b9f492d685f6cd87c66500743307b1b34b2e9277d9",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "7a48ea1b77ad06311f436219c7c5930019831551121617386c51a462cc3720c5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 572.3194,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 603.9064,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99996948242188,
+          "actual_offset_delta": 199.99996948242188,
+          "drain_ms": 565.6633,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 199.99996948242188,
+          "offset_after": 0.0,
+          "actual_offset_delta": -199.99996948242188,
+          "drain_ms": 666.0265,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 581.1641,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "counters_after": {
+          "RootSamples": 136,
+          "RootCompleted": 136,
+          "RetentionSamples": 136,
+          "Reused": 20,
+          "Rebuilt": 22,
+          "PartialReused": 94,
+          "CachedPrefixJobs": 12,
+          "CachedSignatureJobs": 12
+        },
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 8,
+          "Rebuilt": 7,
+          "PartialReused": 0,
+          "CachedPrefixJobs": 14,
+          "CachedSignatureJobs": 14
+        },
+        "host_frame_timing": {
+          "samples": 121,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 136,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 12.0,
+            "p95": 14.0
+          },
+          "prepare_ms": {
+            "p50": 0.237,
+            "p95": 0.318
+          },
+          "acquire_ms": {
+            "p50": 26.593,
+            "p95": 62.925
+          },
+          "encode_ms": {
+            "p50": 0.431,
+            "p95": 0.58
+          },
+          "submit_ms": {
+            "p50": 0.435,
+            "p95": 0.755
+          },
+          "present_ms": {
+            "p50": 0.144,
+            "p95": 0.271
+          },
+          "total_ms": {
+            "p50": 28.053,
+            "p95": 64.096
+          }
+        },
+        "process_cpu_seconds": 23.671875,
+        "wall_seconds": 6.104565,
+        "cpu_percent_one_core": 387.7733302864332,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning."
+      },
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          9,
+          12
+        ],
+        [
+          9,
+          13
+        ],
+        [
+          9,
+          14
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-rust300-4-control",
+      "case": "rust300",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "b99e27837f3c329ac1bbff2a6dfbf31ef3a347e2a527e26bef69a044359590f0",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "7a48ea1b77ad06311f436219c7c5930019831551121617386c51a462cc3720c5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 550.943,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 512.5656,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 595.8898,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.00001525878906,
+          "drain_ms": 706.8874,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 581.1727,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "host_frame_timing": {
+          "samples": 96,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 111,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 14.0,
+            "p50": 13.0
+          },
+          "prepare_ms": {
+            "p95": 0.33,
+            "p50": 0.236
+          },
+          "acquire_ms": {
+            "p95": 71.958,
+            "p50": 65.478
+          },
+          "encode_ms": {
+            "p95": 0.712,
+            "p50": 0.507
+          },
+          "submit_ms": {
+            "p95": 1.019,
+            "p50": 0.623
+          },
+          "present_ms": {
+            "p95": 0.404,
+            "p50": 0.168
+          },
+          "total_ms": {
+            "p95": 73.735,
+            "p50": 67.345
+          }
+        },
+        "wall_seconds": 6.8253081,
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 9,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "cpu_percent_one_core": 764.8464250280512,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "process_cpu_seconds": 52.203125,
+        "counters_after": {
+          "RootSamples": 111,
+          "RootCompleted": 111,
+          "RetentionSamples": 111,
+          "Reused": 32,
+          "Rebuilt": 79,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-table30-1-control",
+      "case": "table30",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "067b870d6556e1ae60f2027df471cb494e57b20807be59d2919e3ba5a20f3457",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "2ed472397222098bbac30838c67480c0c0a115e17d8b1815a44ca75b39e88bd5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 764.1737,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 770.037,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 747.3805,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 862.3647,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 819.2873,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "wall_seconds": 8.9231481,
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 9,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "process_cpu_seconds": 86.125,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "host_frame_timing": {
+          "samples": 80,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 95,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 12.0,
+            "p50": 12.0
+          },
+          "prepare_ms": {
+            "p95": 0.25,
+            "p50": 0.19
+          },
+          "acquire_ms": {
+            "p95": 121.025,
+            "p50": 115.126
+          },
+          "encode_ms": {
+            "p95": 0.626,
+            "p50": 0.505
+          },
+          "submit_ms": {
+            "p95": 0.877,
+            "p50": 0.525
+          },
+          "present_ms": {
+            "p95": 0.315,
+            "p50": 0.154
+          },
+          "total_ms": {
+            "p95": 122.796,
+            "p50": 116.742
+          }
+        },
+        "cpu_percent_one_core": 965.1862664926518,
+        "counters_after": {
+          "RootSamples": 95,
+          "RootCompleted": 95,
+          "RetentionSamples": 95,
+          "Reused": 18,
+          "Rebuilt": 77,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-table30-2-candidate",
+      "case": "table30",
+      "kind": "candidate",
+      "status": "passed",
+      "result_sha256": "3e4586e788d83c7854f30bd7373cfe62649d2c14ca3bbf55e16d8e2c6a00e2a1",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "2ed472397222098bbac30838c67480c0c0a115e17d8b1815a44ca75b39e88bd5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 526.7896,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 545.3376,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 527.144,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 520.4959,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 545.4063,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 8,
+          "Rebuilt": 7,
+          "PartialReused": 0,
+          "CachedPrefixJobs": 12,
+          "CachedSignatureJobs": 12
+        },
+        "cpu_percent_one_core": 808.192911007827,
+        "host_frame_timing": {
+          "samples": 82,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 97,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p50": 12.0,
+            "p95": 12.0
+          },
+          "prepare_ms": {
+            "p50": 0.176,
+            "p95": 0.259
+          },
+          "acquire_ms": {
+            "p50": 79.977,
+            "p95": 116.72
+          },
+          "encode_ms": {
+            "p50": 0.427,
+            "p95": 0.542
+          },
+          "submit_ms": {
+            "p50": 0.396,
+            "p95": 0.641
+          },
+          "present_ms": {
+            "p50": 0.143,
+            "p95": 0.243
+          },
+          "total_ms": {
+            "p50": 81.133,
+            "p95": 117.936
+          }
+        },
+        "counters_after": {
+          "RootSamples": 97,
+          "RootCompleted": 97,
+          "RetentionSamples": 97,
+          "Reused": 16,
+          "Rebuilt": 21,
+          "PartialReused": 60,
+          "CachedPrefixJobs": 9,
+          "CachedSignatureJobs": 12
+        },
+        "wall_seconds": 7.0083051,
+        "process_cpu_seconds": 56.640625,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning."
+      },
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          9,
+          12
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-table30-3-candidate",
+      "case": "table30",
+      "kind": "candidate",
+      "status": "passed",
+      "result_sha256": "3dd79c4f4abe95cf336d46a02c731908b7ce957ff29644a76452870214b9e5ee",
+      "source_revision": "a44ea5c71e72e2bef40496c13be747ee58b4a843",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "2ed472397222098bbac30838c67480c0c0a115e17d8b1815a44ca75b39e88bd5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.00001525878906,
+          "actual_offset_delta": 200.00001525878906,
+          "drain_ms": 534.1382,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.00001525878906,
+          "offset_after": 7.62939453125e-06,
+          "actual_offset_delta": -200.00000762939453,
+          "drain_ms": 505.3106,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 7.62939453125e-06,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.9999771118164,
+          "drain_ms": 815.1276,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 199.99998474121094,
+          "offset_after": 0.0,
+          "actual_offset_delta": -199.99998474121094,
+          "drain_ms": 894.8063,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99996948242188,
+          "actual_offset_delta": 199.99996948242188,
+          "drain_ms": 968.5308,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "host_frame_timing": {
+          "samples": 85,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 100,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 12.0,
+            "p50": 12.0
+          },
+          "prepare_ms": {
+            "p95": 0.224,
+            "p50": 0.159
+          },
+          "acquire_ms": {
+            "p95": 113.549,
+            "p50": 75.526
+          },
+          "encode_ms": {
+            "p95": 0.53,
+            "p50": 0.408
+          },
+          "submit_ms": {
+            "p95": 0.704,
+            "p50": 0.4
+          },
+          "present_ms": {
+            "p95": 0.245,
+            "p50": 0.141
+          },
+          "total_ms": {
+            "p95": 114.685,
+            "p50": 76.742
+          }
+        },
+        "process_cpu_seconds": 54.625,
+        "cpu_percent_one_core": 730.3302802875922,
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "counters_after": {
+          "RootSamples": 100,
+          "RootCompleted": 100,
+          "RetentionSamples": 100,
+          "Reused": 20,
+          "Rebuilt": 22,
+          "PartialReused": 58,
+          "CachedPrefixJobs": 12,
+          "CachedSignatureJobs": 12
+        },
+        "wall_seconds": 7.4794927,
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 8,
+          "Rebuilt": 7,
+          "PartialReused": 0,
+          "CachedPrefixJobs": 12,
+          "CachedSignatureJobs": 12
+        }
+      },
+      "partial_reuse_prefix_signature_job_pairs": [
+        [
+          9,
+          12
+        ]
+      ],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    },
+    {
+      "run": "balanced-03-table30-4-control",
+      "case": "table30",
+      "kind": "control",
+      "status": "passed",
+      "result_sha256": "1da21fd2ffb1d1b2686e9861786696bb7bf7fccc4b5bcc4576c3bd034fd9498f",
+      "source_revision": "b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836",
+      "recipe_sha256": "76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3",
+      "fixture_sha256": "2ed472397222098bbac30838c67480c0c0a115e17d8b1815a44ca75b39e88bd5",
+      "surface": "markdown_preview",
+      "exit_code": 0,
+      "forced_termination": false,
+      "pointer_restored": true,
+      "artifacts_revalidated": true,
+      "source_identity_revalidated": true,
+      "cleanup_errors": [],
+      "bursts": [
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998474121094,
+          "drain_ms": 693.262,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 199.99998474121094,
+          "offset_after": 0.0,
+          "actual_offset_delta": -199.99998474121094,
+          "drain_ms": 642.5942,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 200.0,
+          "actual_offset_delta": 200.0,
+          "drain_ms": 707.8415,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "up",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 200.0,
+          "offset_after": 0.0,
+          "actual_offset_delta": -200.0,
+          "drain_ms": 650.445,
+          "settled": true,
+          "settle_timed_out": false
+        },
+        {
+          "requested_direction": "down",
+          "requested_wheel_messages": 5,
+          "cadence_ms": 45,
+          "offset_before": 0.0,
+          "offset_after": 199.99998474121094,
+          "actual_offset_delta": 199.99998474121094,
+          "drain_ms": 875.4613,
+          "settled": true,
+          "settle_timed_out": false
+        }
+      ],
+      "measurement": {
+        "cpu_percent_one_core": 947.464998347101,
+        "host_frame_timing": {
+          "samples": 82,
+          "root_frame_exclusive_start": 15,
+          "root_frame_inclusive_end": 97,
+          "percentile_method": "nearest rank",
+          "limitation": "Host-return durations only; not completed GPU work, physical display latency, or per-message present acknowledgments. Raw primitive counts are the logged root_paint primitives, not inferred rendering work.",
+          "primitives": {
+            "p95": 12.0,
+            "p50": 12.0
+          },
+          "prepare_ms": {
+            "p95": 0.233,
+            "p50": 0.146
+          },
+          "acquire_ms": {
+            "p95": 108.21,
+            "p50": 102.082
+          },
+          "encode_ms": {
+            "p95": 0.65,
+            "p50": 0.454
+          },
+          "submit_ms": {
+            "p95": 0.852,
+            "p50": 0.453
+          },
+          "present_ms": {
+            "p95": 0.306,
+            "p50": 0.141
+          },
+          "total_ms": {
+            "p95": 109.843,
+            "p50": 103.569
+          }
+        },
+        "counters_before": {
+          "RootSamples": 15,
+          "RootCompleted": 15,
+          "RetentionSamples": 15,
+          "Reused": 9,
+          "Rebuilt": 6,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "wall_seconds": 8.3166001,
+        "counters_after": {
+          "RootSamples": 97,
+          "RootCompleted": 97,
+          "RetentionSamples": 97,
+          "Reused": 18,
+          "Rebuilt": 79,
+          "PartialReused": null,
+          "CachedPrefixJobs": null,
+          "CachedSignatureJobs": null
+        },
+        "retention_note": "Missing fields are null, not zero. In the new renderer, Reused is exact-only; Rebuilt, Reused and PartialReused partition retention outcomes. Older renderer counters retain their original meaning.",
+        "process_cpu_seconds": 78.796875
+      },
+      "partial_reuse_prefix_signature_job_pairs": [],
+      "max_logged_texture_bytes": 29119500,
+      "max_logged_signature_bytes": 168096
+    }
+  ]
+}

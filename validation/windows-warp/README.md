@@ -1,9 +1,92 @@
 # Windows WARP application rasterization
 
+## Native prefix navigation: 2026-10-28
+
+A source-matched native comparison now covers all four Markdown fixtures and
+plain Edit. The owner explicitly accepted ADR 0051's renderer-wide exact-prefix
+policy on 2026-10-28, retaining the broader CP-18 gates. This is limited
+single-machine WARP performance evidence, not general native acceptance.
+The [numeric record](native-prefix-navigation-20261028.json) preserves all
+33 comparison outcomes, including the two rejected observations.
+
+The candidate is source `a44ea5c71e72e2bef40496c13be747ee58b4a843`,
+tree `c85f549ade0315537adc6589bffbd6faf7cefb79`, executable SHA-256
+`cf1361f043c0c1ef95a638c526e1f8bfbd935f13e13ddccd35d8c43abf71944f`.
+The control is source `b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836`,
+tree `d2841e06012f6682aae68d6bffc5bf6a3338604b`, executable SHA-256
+`4937a40fa4aa37a2d920d44e1832fb717fe57dc35bc3bd40e7f46284fd60e9bf`.
+The control differs only by restoring main `a9273c43`'s three renderer files
+and their directly dependent document-retention test module. Both include the
+same integrated Markdown fixes, diagnostics, profiler and Ubuntu CI workaround.
+Both releases were built from the same fixed source path with Rust 1.98.1 and
+`cargo build --release --locked -p festerm --bin festerm --message-format=json`.
+Later documentation commits are not relabelled as measured source.
+
+The shared profiler SHA-256 is
+`76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3`.
+Each case used a fresh profiler invocation and fresh owned process in
+control/candidate/candidate/control order, with no concurrent owned builds or
+tests. All twenty final observations prove Microsoft Basic Render Driver /
+Dx12 / Cpu, 640 x 400 logical / 1280 x 800 physical / DPI 192, matching fixture
+hashes, the required Preview or Edit surface, five alternating approximately
+200-point movements, normal exit, restored cursor, and post-exit identity
+revalidation. They use the normal `--open --` route and production software
+backgrounds, not an offscreen harness. The burst/drain protocol below is
+unchanged.
+
+Values below are ranges of two per-process observations per arm, not pooled
+percentiles. CPU reduction compares the sum of the two full measured
+burst/drain process-CPU intervals. Frames and idle-hit proportions differ;
+messages and presents are not one-to-one.
+
+| Fixture | Control CPU (s) | Candidate CPU (s) | CPU reduction | Control host frame p50 (ms) | Candidate host frame p50 (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 20-line Rust fence | 46.53-46.64 | 23.64-25.78 | 47.0% | 70.15-72.76 | 38.41-39.00 |
+| 300-line Rust fence | 51.89-52.20 | 23.67-24.69 | 53.5% | 67.35-69.32 | 28.05-30.42 |
+| 30-row table | 78.80-86.13 | 54.63-56.64 | 32.5% | 103.57-116.74 | 76.74-81.13 |
+| 20 prose paragraphs | 56.53-58.72 | 29.42-33.50 | 45.4% | 68.08-71.18 | 32.89-35.23 |
+| Plain 300-line Rust Edit | 42.97-46.25 | 26.34-26.50 | 40.8% | 54.07-63.47 | 35.95-36.08 |
+
+| Fixture | Control host frame p95 (ms) | Candidate host frame p95 (ms) |
+| --- | ---: | ---: |
+| 20-line Rust fence | 76.26-82.92 | 74.10-77.65 |
+| 300-line Rust fence | 73.74-75.69 | 64.10-70.76 |
+| 30-row table | 109.84-122.80 | 114.69-117.94 |
+| 20 prose paragraphs | 74.86-77.56 | 66.93-70.21 |
+| Plain 300-line Rust Edit | 65.44-68.51 | 62.06-63.82 |
+
+The table control drift and overlapping/adverse p95 values are not normalized
+away. Host-return timings are neither completed GPU work nor physical latency;
+two observations per arm do not establish statistical confidence or eliminate
+tail stalls. The table still has substantial WARP cost.
+
+Candidate measured intervals contain 58-94 partial reuses, separately from
+8-15 exact hits and 14-15 rebuilds. Native partial-reuse logs show a nine-job
+prefix of 11-14 jobs in Markdown and six of ten in Edit. Old control
+partial/prefix fields remain null, not zero. Logged resource sizes and all
+per-run counters remain in the numeric record; they are not process peak
+memory or long-duration resource qualification.
+
+Two earlier all-case invocations were rejected at the unchanged three-second
+prose settle deadline: one control after four bursts and one candidate after
+three. Their available successful cases and failed cases are all retained,
+not pooled into the balanced result. Forced cleanup of those failed owned
+processes is not counted as normal exit. The final block isolates each case in
+a fresh profiler invocation; it does not relax the deadline. The initial
+cursor-access and private-directory ACL failures also remain recorded. The
+ACL repair persists only the intended owner/DACL via .NET, avoiding
+`Set-Acl`'s unavailable audit privilege while retaining protected,
+inheritable owner/SYSTEM-only access; a real Windows ACL regression verifies it.
+
+Other machines/adapters, selection/typing, mixed DPI, multi-window, device
+loss, sustained resource behavior, usability and physical latency remain
+separate CP-18 prerequisites. No matched VS Code runtime comparison or
+universal freeze-repair claim is made.
+
 ## Native Markdown scrolling: draft qualification
 
-The ADR 0051 candidate is **not yet natively performance-qualified**. The
-candidate launch was refused before app/input creation because the Windows
+At initial draft publication, the ADR 0051 candidate was **not yet natively
+performance-qualified**. Its launch was refused before app/input creation because the Windows
 desktop session was disconnected (`WTSActive` required; actual state 4).
 The user selected publication as a draft pending native qualification.
 There is no candidate/native speedup, GPU-completion, physical-latency or
@@ -70,7 +153,7 @@ cleanup-path assertion. They were not repaired in this rendering workstream,
 and this comparison does not make the workspace green or predict the outcome
 of a later integrated head. Record that head's own results in the PR.
 
-### Remaining matched comparison
+### Historical matched-comparison prerequisites
 
 The current recipe has five cases: the original four Markdown fixtures plus
 `editor300`, a 300-line plain `.rs` document opened in Edit mode. The latter
@@ -80,7 +163,7 @@ The historical control pilots above still cover only their original four cases.
 
 Use an active Windows desktop, no concurrent owned builds/tests, the same
 frozen final profiler recipe, fresh per-process output and matching receipts.
-Repeat all four fixtures in balanced A/B/B/A order; retain every adverse and
+Repeat all five fixtures in balanced A/B/B/A order; retain every adverse and
 rejected outcome. Require matching fixture hashes, physical geometry/DPI,
 adapter, actual signed offsets, normal exits and identity revalidation.
 Record exact, rebuilt and partial retention outcomes separately; absent old

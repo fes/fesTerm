@@ -100,7 +100,7 @@ retained-scroll qualification and an architecture review/ADR.
 
 ### ADR 0046 document-frame experiment (CP-18)
 
-#### ADR 0051 native scrolling candidate: qualification pending
+#### ADR 0051 native scrolling: bounded matched evidence
 
 Automated prefix/suffix pixel and resource tests cover exact ordered
 composition, fractional clips, translucent overlap, callback preparation,
@@ -116,10 +116,14 @@ proof and normal owned-process exit. Real cursor movement requires a separate
 explicit opt-in; intervening desktop interaction aborts the probe.
 
 Native baseline pilots cover prose, Rust fences of 20/300 lines and a 30-row
-table. They qualify the observed bottleneck only. The candidate A/B comparison
-is **pending** because the desktop disconnected before it could run; do not
-treat the candidate build or passing pixel tests as a measured improvement.
-See the [source-bound record and rerun procedure](../validation/windows-warp/README.md#native-markdown-scrolling-draft-qualification).
+table. They qualify the observed bottleneck only. A later source-matched
+comparison completed twenty balanced control/candidate/candidate/control
+observations across those four cases and plain Edit, all with actual offsets,
+normal exit, cursor restoration and identity revalidation. Aggregate process
+CPU fell 32.5-53.5% on that WARP machine; host timing is not physical latency.
+Two earlier prose settle-timeout rejections remain recorded. The owner accepted
+ADR 0051's renderer-wide policy on 2026-10-28, not general native acceptance.
+See the [source-bound record and rerun procedure](../validation/windows-warp/README.md#native-prefix-navigation-2026-10-28).
 CP-18's remaining native interaction, hardware, mixed-DPI, multi-window,
 device-loss, resource and physical-latency qualifications remain unchanged.
 

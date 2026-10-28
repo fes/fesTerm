@@ -106,16 +106,17 @@ CP-18 now binds fresh all-miss evidence to clean source and the actual release
 test executable; final architectural merge acceptance remains pending.
 The broader native/resource/latency matrix is not accepted by this extension.
 
-Proposed [ADR 0051](docs/adr/0051-adaptive-exact-document-prefix.md) would let
+Accepted [ADR 0051](docs/adr/0051-adaptive-exact-document-prefix.md) lets
 that eligible complete-frame route retain an exact leading paint-job prefix
-while scrolling changes a suffix. The host would copy the clear-initialized
+while scrolling changes a suffix. The host copies the clear-initialized
 prefix image and paint the current suffix in original order, while preserving
 the existing image/signature limits, full-frame admission, callback preparation,
 managed-texture epochs, and ordinary same-frame fallback. This generic renderer
 mechanism applies to every eligible complete non-terminal frame, although its
-current qualification plan targets Markdown viewer and editor-preview scrolling.
-It remains proposed pending matched native candidate/control evidence and
-explicit architecture acceptance; no performance benefit is currently accepted.
+source-matched qualification covers four Markdown scrolling cases and plain
+Edit. The owner accepted this policy on 2026-10-28 after twenty balanced native
+WARP observations; broader CP-18 hardware/resource/usability and physical-latency
+gates remain open. This is not universal surface or freeze-repair acceptance.
 
 The app-owned textureless panel pipeline also handles the full-width chrome
 band and status-bar frame on eligible Windows DX12 CPU adapters. The UI exposes

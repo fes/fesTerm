@@ -1,7 +1,9 @@
 # ADR 0051: Adaptive Exact Document Prefix Retention
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-27
+- **Accepted:** 2026-10-28, explicit owner approval of the renderer-wide policy;
+  broader CP-18 hardware/resource/usability gates remain open
 - **Supersedes:** None; extends ADRs 0041 and 0046
 
 ## Context
@@ -105,7 +107,11 @@ latency. Architecture acceptance and measured rollout remain subject to review.
   separate qualifications.
 - **Qualification status:** The ten focused document-retention tests pass
   (one existing profiling test remains ignored). Native control pilots prove
-  actual scrolling and substantial WARP work, not a candidate improvement.
-  The candidate comparison is blocked by a disconnected Windows desktop;
-  this proposal remains draft pending matched native performance evidence.
+  actual scrolling and substantial WARP work. The
+  [2026-10-28 matched native comparison](../../validation/windows-warp/README.md#native-prefix-navigation-2026-10-28)
+  adds twenty successful balanced observations across four Markdown cases
+  and plain Edit, with 32.5-53.5% lower aggregate process CPU on that machine.
+  Two earlier prose settle-timeout rejections remain recorded. Architecture
+  acceptance does not close CP-18's broader native/resource/latency gates or
+  establish universal speedups, tail-stall elimination, or a freeze repair.
 - **Coverage superseded:** None.

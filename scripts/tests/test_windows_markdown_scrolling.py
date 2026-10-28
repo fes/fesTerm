@@ -1,4 +1,4 @@
-"""Pure PowerShell profiling helpers: no app launch, Win32 call or native probe."""
+"""Profiling helper tests: no app launch, input, or native performance probe."""
 
 import hashlib
 import json
