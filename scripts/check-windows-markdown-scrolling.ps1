@@ -499,7 +499,7 @@ function Protect-MarkdownPrivateDirectory {
             [Security.AccessControl.PropagationFlags]::None,
             [Security.AccessControl.AccessControlType]::Allow))
     }
-    Set-Acl -LiteralPath $Path -AclObject $acl
+    [IO.FileSystemAclExtensions]::SetAccessControl([IO.DirectoryInfo]::new($Path), $acl)
 }
 
 function Assert-MarkdownCommittedHelper {

@@ -49,6 +49,41 @@ function Sample($offset) {
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result.stdout
 
+    @unittest.skipUnless(os.name == "nt", "Windows directory ACLs are required")
+    def test_private_directory_acl_preserves_owner_system_only_access(self):
+        self.probe(
+            r"""
+$path = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($path)
+try {
+    Protect-MarkdownPrivateDirectory $path
+    $sections = [Security.AccessControl.AccessControlSections]::Access -bor
+        [Security.AccessControl.AccessControlSections]::Owner
+    $acl = [IO.FileSystemAclExtensions]::GetAccessControl([IO.DirectoryInfo]::new($path), $sections)
+    $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $system = [Security.Principal.SecurityIdentifier]::new(
+        [Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
+    Assert ($acl.AreAccessRulesProtected) 'Inheritance remains disabled'
+    Assert ($acl.GetOwner([Security.Principal.SecurityIdentifier]) -eq $owner) 'Current user owns directory'
+    $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    Assert ($rules.Count -eq 2) 'Only owner and SYSTEM grants remain'
+    foreach ($sid in @($owner, $system)) {
+        $rule = @($rules | Where-Object IdentityReference -eq $sid)
+        Assert ($rule.Count -eq 1) 'Exactly one grant per allowed identity'
+        Assert (-not $rule[0].IsInherited) 'Grant is explicit'
+        Assert ($rule[0].AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow) 'Allow grant'
+        Assert ($rule[0].FileSystemRights -eq [Security.AccessControl.FileSystemRights]::FullControl) 'Full control'
+        $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+            [Security.AccessControl.InheritanceFlags]::ObjectInherit
+        Assert ($rule[0].InheritanceFlags -eq $inheritance) 'Files and subdirectories inherit protection'
+        Assert ($rule[0].PropagationFlags -eq [Security.AccessControl.PropagationFlags]::None) 'Normal propagation'
+    }
+} finally {
+    [IO.Directory]::Delete($path)
+}
+"""
+        )
+
     def test_aggregate_native_preflight_rejects_platform_and_missing_artifacts(self):
         self.probe(
             r"""
