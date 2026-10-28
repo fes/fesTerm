@@ -403,7 +403,8 @@ Assert $acl.AreAccessRulesProtected 'Private staging disables inherited access'
 foreach ($rule in $acl.Access) {
     Assert (-not $rule.IsInherited) 'Private staging has no inherited rules'
     Assert ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow) 'Only allow rules'
-    Assert ($rule.IdentityReference -eq $owner -or $rule.IdentityReference -eq $system) 'Only owner and SYSTEM'
+    $identity = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier])
+    Assert ($identity -eq $owner -or $identity -eq $system) 'Only owner and SYSTEM'
 }
 $source = Join-Path $directory 'source.bin'
 $artifact = Join-Path $directory 'artifact.bin'

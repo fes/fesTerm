@@ -56,6 +56,8 @@ class PreviewNavigationDispatchTests(unittest.TestCase):
                 "$ResultPath = $env:NAVIGATION_TEST_RESULT\n"
                 "$status = 'pass'\n"
                 "function Invoke-NativeCommand { param([scriptblock] $Command); & $Command }\n"
+                "function Write-OptionalResult { param([string] $Text); "
+                "Add-Content $ResultPath $Text }\n"
                 "function Start-Process {\n"
                 "  param($FilePath, $ArgumentList, $RedirectStandardOutput, "
                 "$RedirectStandardError, [switch]$PassThru, $ErrorAction)\n"
