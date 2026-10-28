@@ -388,11 +388,22 @@ $fixtures | ConvertTo-Json
         self.assertIn("FESTERM_RUN_OPTIONAL_VALIDATION=1", result.stderr)
 
     @unittest.skipUnless(os.name == "nt", "Windows file sharing semantics are required")
-    def test_immutable_artifact_lock_rejects_write_delete_and_reparse_paths(self):
+    def test_private_staging_acl_and_immutable_artifact_lock(self):
         self.probe(
             r"""
 $directory = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
 [void][IO.Directory]::CreateDirectory($directory)
+Protect-MarkdownPrivateDirectory $directory
+$owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$system = [Security.Principal.SecurityIdentifier]::new(
+    [Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
+$acl = Get-Acl -LiteralPath $directory
+Assert $acl.AreAccessRulesProtected 'Private staging disables inherited access'
+foreach ($rule in $acl.Access) {
+    Assert (-not $rule.IsInherited) 'Private staging has no inherited rules'
+    Assert ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow) 'Only allow rules'
+    Assert ($rule.IdentityReference -eq $owner -or $rule.IdentityReference -eq $system) 'Only owner and SYSTEM'
+}
 $artifact = Join-Path $directory 'artifact.bin'
 [IO.File]::WriteAllText($artifact, 'frozen')
 $lock = Open-MarkdownImmutableArtifact $artifact

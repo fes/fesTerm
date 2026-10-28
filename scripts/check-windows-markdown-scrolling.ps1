@@ -17,13 +17,14 @@ Cases contain one 20/300-line Rust fence, one 30-body-row table, or 20 prose
 paragraphs. Five five-wheel bursts alternate down/up/down/up/down. Each drain
 requires at least 500ms and 200ms without observed motion, bounded to 3s;
 all drains are included in the measured CPU/wall interval.
-The helper, executable and receipt must not be reparse-backed and are held
-under write/delete-denying read handles throughout every case. The recipe is
-read-locked while each app runs. Recipe, fixture and receipt SHA256 values are
-checked at launch and after exit; source and executable are revalidated after
-exit as well. Results contain no artifact paths. Frame timing percentiles cover
-only the measured root-frame range and are host-return durations, not GPU
-completion or physical display latency.
+The helper, executable and receipt are copied into a newly created
+user/SYSTEM-only non-reparse staging directory and held under
+write/delete-denying read handles throughout every case. Each generated
+fixture and the recipe are likewise read-locked while its app runs. Recipe,
+fixture and receipt SHA256 values are checked at launch and after exit; source
+and executable are revalidated after exit as well. Results contain no artifact
+paths. Frame timing percentiles cover only the measured root-frame range and
+are host-return durations, not GPU completion or physical display latency.
 Example:
  $env:FESTERM_RUN_OPTIONAL_VALIDATION='1'
  .\scripts\check-windows-markdown-scrolling.ps1 -Executable C:\stage\festerm.exe `
@@ -312,6 +313,25 @@ function Open-MarkdownImmutableArtifact {
     return [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
 }
 
+function Protect-MarkdownPrivateDirectory {
+    param([string] $Path)
+    $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $system = [Security.Principal.SecurityIdentifier]::new(
+        [Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
+    $acl = [Security.AccessControl.DirectorySecurity]::new()
+    $acl.SetOwner($owner)
+    $acl.SetAccessRuleProtection($true, $false)
+    $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+        [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    foreach ($sid in @($owner, $system)) {
+        $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+            $sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance,
+            [Security.AccessControl.PropagationFlags]::None,
+            [Security.AccessControl.AccessControlType]::Allow))
+    }
+    Set-Acl -LiteralPath $Path -AclObject $acl
+}
+
 if ($HelperOnly) { return }
 if ($env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
     throw 'Set FESTERM_RUN_OPTIONAL_VALIDATION=1 to opt in to native Markdown scroll profiling.'
@@ -325,15 +345,29 @@ $Receipt = (Resolve-Path -LiteralPath $Receipt).Path
 $SourceRoot = (Resolve-Path -LiteralPath $SourceRoot).Path
 if ([IO.Path]::GetFileName($Executable) -ne 'festerm.exe') { throw 'Supply staged release festerm.exe.' }
 $recipePath = $PSCommandPath
-$helperPath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot 'windows-application-window.ps1')).Path
+$sourceHelper = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot 'windows-application-window.ps1')).Path
+$sourceExecutable = $Executable
+$sourceReceipt = $Receipt
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if (Test-Path -LiteralPath $OutputDirectory) { throw 'OutputDirectory already exists; evidence is never overwritten.' }
 [void](New-Item -ItemType Directory -Path $OutputDirectory)
+Protect-MarkdownPrivateDirectory $OutputDirectory
+$artifactDirectory = Join-Path $OutputDirectory '.native-profile-artifacts'
 $immutableArtifactLocks = @()
+$stagedArtifacts = @()
 try {
-    # Open before validation and retain through every case. FileShare.Read prevents
-    # path replacement, writes, and deletion while still allowing the loader to read.
-    foreach ($path in @($Executable, $Receipt, $helperPath)) {
+    [void](New-Item -ItemType Directory -Path $artifactDirectory)
+    Protect-MarkdownPrivateDirectory $artifactDirectory
+    $Executable = Join-Path $artifactDirectory 'festerm.exe'
+    $Receipt = Join-Path $artifactDirectory 'receipt.json'
+    $helperPath = Join-Path $artifactDirectory 'windows-application-window.ps1'
+    Copy-Item -LiteralPath $sourceExecutable -Destination $Executable
+    Copy-Item -LiteralPath $sourceReceipt -Destination $Receipt
+    Copy-Item -LiteralPath $sourceHelper -Destination $helperPath
+    $stagedArtifacts = @($Executable, $Receipt, $helperPath)
+    # Execute only private staged copies retained through every case. FileShare.Read
+    # prevents replacement, writes, and deletion while still allowing reads.
+    foreach ($path in $stagedArtifacts) {
         $immutableArtifactLocks += Open-MarkdownImmutableArtifact $path
     }
     $recipeSha256 = (Get-FileHash -LiteralPath $recipePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -515,6 +549,7 @@ show_resumable_sessions = false
     $streams = @()
     $copies = @()
     $recipeLock = $null
+    $fixtureLock = $null
     $launchArtifacts = $null
     $primaryFailure = $null
     $pointerControlled = $false
@@ -533,6 +568,7 @@ show_resumable_sessions = false
     try {
         # Windows sharing denies edits/deletion until final revalidation completes.
         $recipeLock = [IO.File]::Open($recipePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        $fixtureLock = Open-MarkdownImmutableArtifact $fixture
         $launchArtifacts = Get-MarkdownArtifactIdentity $recipePath $fixture $Receipt
         $result['artifacts_at_launch'] = $launchArtifacts
         if ($launchArtifacts.recipe_sha256 -ne $recipeSha256 -or $launchArtifacts.receipt_sha256 -ne $receiptSha256) {
@@ -731,6 +767,7 @@ show_resumable_sessions = false
                 $result['identity_after_exit'] = Assert-MarkdownSourceReceipt $Executable $Receipt $SourceRoot $identity
                 $result['source_identity_revalidated'] = $true
             } },
+            @{ Name = 'fixture_unlock'; Action = { if ($null -ne $fixtureLock) { $fixtureLock.Dispose() } } },
             @{ Name = 'recipe_unlock'; Action = { if ($null -ne $recipeLock) { $recipeLock.Dispose() } } },
             @{ Name = 'process_dispose'; Action = { $process.Dispose() } }
         )
@@ -742,6 +779,10 @@ show_resumable_sessions = false
 }
 } finally {
     foreach ($lock in $immutableArtifactLocks) {
-        $lock.Dispose()
+        try { $lock.Dispose() } catch { Write-Warning 'Could not release a staged artifact lock.' }
     }
+    foreach ($path in $stagedArtifacts) {
+        try { Remove-Item -LiteralPath $path -Force } catch { Write-Warning 'Could not remove a staged artifact.' }
+    }
+    try { Remove-Item -LiteralPath $artifactDirectory -Force } catch { Write-Warning 'Could not remove the staging directory.' }
 }
