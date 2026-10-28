@@ -387,6 +387,31 @@ $fixtures | ConvertTo-Json
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("FESTERM_RUN_OPTIONAL_VALIDATION=1", result.stderr)
 
+    @unittest.skipUnless(os.name == "nt", "Windows file sharing semantics are required")
+    def test_immutable_artifact_lock_rejects_write_delete_and_reparse_paths(self):
+        self.probe(
+            r"""
+$directory = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
+[void][IO.Directory]::CreateDirectory($directory)
+$artifact = Join-Path $directory 'artifact.bin'
+[IO.File]::WriteAllText($artifact, 'frozen')
+$lock = Open-MarkdownImmutableArtifact $artifact
+try {
+    Reject {
+        $writer = [IO.File]::Open($artifact, [IO.FileMode]::Open, [IO.FileAccess]::Write,
+            [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+        $writer.Dispose()
+    }
+    Reject { [IO.File]::Delete($artifact) }
+    Assert ((Get-Content -LiteralPath $artifact -Raw) -eq 'frozen') 'Locked artifact remains readable'
+} finally {
+    $lock.Dispose()
+    Remove-Item -LiteralPath $artifact
+    Remove-Item -LiteralPath $directory
+}
+"""
+        )
+
     def test_receipt_requires_hash_clean_source_and_actual_git_identity(self):
         self.probe(
             r"""

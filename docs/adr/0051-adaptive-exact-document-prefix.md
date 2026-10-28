@@ -22,6 +22,9 @@ document identity, layout epochs, or translated tiles to the renderer.
 
 Within the existing eligible complete-frame route, reuse an exact leading
 paint-job prefix while repainting the changing suffix in its original order.
+This is a renderer-wide rule for every eligible complete non-terminal frame,
+not a Markdown-specific admission policy; Markdown scrolling is the initial
+qualification workload.
 The retained image is initialized with the existing clear color and only the
 cached prefix; it never includes stale suffix pixels.
 
@@ -86,8 +89,10 @@ latency. Architecture acceptance and measured rollout remain subject to review.
   may retain only a leading paint-job prefix; suffix paint order, buffer
   indexing, callback preparation, immutable queued resources, admission, and
   existing storage limits remain mandatory.
-- **GUI/action edges affected:** `GUI:MD-04`, `GUI:EDIT-09`; rendering only,
-  with no new application command or navigation behavior.
+- **GUI/action edges affected:** `GUI:MD-04`, `GUI:EDIT-09`, and rendering of
+  other eligible complete non-terminal application surfaces; rendering only,
+  with no new application command or navigation behavior. Native qualification
+  must include representative non-Markdown surfaces before acceptance.
 - **Automated tests required:**
   `retained_document_prefix_reuse_preserves_suffix_pixels_and_idle_upgrade`
   and `retained_document_prefix_reuse_keeps_queued_images_and_invalidations`,

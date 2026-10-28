@@ -17,11 +17,13 @@ Cases contain one 20/300-line Rust fence, one 30-body-row table, or 20 prose
 paragraphs. Five five-wheel bursts alternate down/up/down/up/down. Each drain
 requires at least 500ms and 200ms without observed motion, bounded to 3s;
 all drains are included in the measured CPU/wall interval.
-The recipe is read-locked while each app runs. Recipe, fixture and receipt
-SHA256 values are checked at launch and after exit; source and executable are
-revalidated after exit as well. Results contain no artifact paths. Frame timing
-percentiles cover only the measured root-frame range and are host-return
-durations, not GPU completion or physical display latency.
+The helper, executable and receipt must not be reparse-backed and are held
+under write/delete-denying read handles throughout every case. The recipe is
+read-locked while each app runs. Recipe, fixture and receipt SHA256 values are
+checked at launch and after exit; source and executable are revalidated after
+exit as well. Results contain no artifact paths. Frame timing percentiles cover
+only the measured root-frame range and are host-return durations, not GPU
+completion or physical display latency.
 Example:
  $env:FESTERM_RUN_OPTIONAL_VALIDATION='1'
  .\scripts\check-windows-markdown-scrolling.ps1 -Executable C:\stage\festerm.exe `
@@ -298,6 +300,18 @@ function Assert-MarkdownSourceReceipt {
     return [pscustomobject]@{ executable_sha256 = $hash; source_revision = $revision; source_tree = $tree }
 }
 
+function Open-MarkdownImmutableArtifact {
+    param([string] $Path)
+    $item = Get-Item -LiteralPath $Path -Force
+    while ($null -ne $item) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Profiling artifacts and their parent directories must not be reparse points.'
+        }
+        $item = $item.Parent
+    }
+    return [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+}
+
 if ($HelperOnly) { return }
 if ($env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
     throw 'Set FESTERM_RUN_OPTIONAL_VALIDATION=1 to opt in to native Markdown scroll profiling.'
@@ -311,14 +325,22 @@ $Receipt = (Resolve-Path -LiteralPath $Receipt).Path
 $SourceRoot = (Resolve-Path -LiteralPath $SourceRoot).Path
 if ([IO.Path]::GetFileName($Executable) -ne 'festerm.exe') { throw 'Supply staged release festerm.exe.' }
 $recipePath = $PSCommandPath
-$recipeSha256 = (Get-FileHash -LiteralPath $recipePath -Algorithm SHA256).Hash.ToLowerInvariant()
-$receiptSha256 = (Get-FileHash -LiteralPath $Receipt -Algorithm SHA256).Hash.ToLowerInvariant()
-$identity = Assert-MarkdownSourceReceipt $Executable $Receipt $SourceRoot
+$helperPath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot 'windows-application-window.ps1')).Path
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if (Test-Path -LiteralPath $OutputDirectory) { throw 'OutputDirectory already exists; evidence is never overwritten.' }
 [void](New-Item -ItemType Directory -Path $OutputDirectory)
-. (Join-Path $PSScriptRoot 'windows-application-window.ps1')
-[FesTermApplicationWindow]::RequireInteractiveDesktop()
+$immutableArtifactLocks = @()
+try {
+    # Open before validation and retain through every case. FileShare.Read prevents
+    # path replacement, writes, and deletion while still allowing the loader to read.
+    foreach ($path in @($Executable, $Receipt, $helperPath)) {
+        $immutableArtifactLocks += Open-MarkdownImmutableArtifact $path
+    }
+    $recipeSha256 = (Get-FileHash -LiteralPath $recipePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $receiptSha256 = (Get-FileHash -LiteralPath $Receipt -Algorithm SHA256).Hash.ToLowerInvariant()
+    $identity = Assert-MarkdownSourceReceipt $Executable $Receipt $SourceRoot
+    . $helperPath
+    [FesTermApplicationWindow]::RequireInteractiveDesktop()
 
 Add-Type -TypeDefinition @'
 using System;
@@ -717,4 +739,9 @@ show_resumable_sessions = false
     }
     if ($null -ne $primaryFailure) { throw $primaryFailure }
     if ($result['status'] -ne 'passed') { throw 'Profiling cleanup or final identity validation failed; inspect the owned result JSON.' }
+}
+} finally {
+    foreach ($lock in $immutableArtifactLocks) {
+        $lock.Dispose()
+    }
 }
