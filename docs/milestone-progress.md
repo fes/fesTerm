@@ -6243,3 +6243,29 @@ Prospective model accuracy/resource/distribution gates are documented before
 any adoption, alongside TI-19's remaining native/accessibility/usability checks.
 This is an additive presentation feature, not a crate-boundary change, M6
 acceptance or evidence that a language model would improve selection.
+
+## Measuring small Preview navigation separately
+
+The large 400-section profiles and sparse wheel/idle samples did not answer
+whether a single modest table or code fence stays cheap during continuous
+navigation. An independent ignored campaign now prepares matched small prose,
+table, plain/highlighted code and mixed fixtures through the production
+Preview pane, without changing its implementation. It separates construction,
+tessellation and completed offscreen WARP replay, and counts actual scroll
+changes rather than treating every input as movement. Identical benchmark
+bytes and externally source-bound release test binaries support balanced
+baseline/candidate runs for independent fixes. Runtime qualification caught
+two harness problems before accepting measurements: egui's ScrollArea hashes
+its salt before composing its ID, and release Windows GUI-subsystem test
+executables need explicit process waiting and redirected standard handles.
+Both are now regressed, including rejection of incomplete/failed runs.
+
+Twenty balanced processes subsequently completed 28,160 measured frames.
+The independent 30-row table's point-wheel staged payload falls 39.2%, with
+a 47.0% lower completed-draw median. Warm 300-line Rust construction is
+43.8% lower, but its draw median is adverse; smaller cases and unchanged
+controls also move both ways. These are bounded work-removal observations,
+not a blanket Markdown responsiveness repair. Drawing still dominates and
+document-coordinate retention remains behind native route qualification and
+architecture review. Native acceptance remains open under CP-18; the complete
+per-case evidence and limitations are in `validation/windows-warp/README.md`.
