@@ -394,6 +394,7 @@ $fixtures | ConvertTo-Json
 $directory = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
 [void][IO.Directory]::CreateDirectory($directory)
 Protect-MarkdownPrivateDirectory $directory
+$directoryLock = [FesTermDirectoryLock]::Open($directory)
 $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
 $system = [Security.Principal.SecurityIdentifier]::new(
     [Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
@@ -416,8 +417,10 @@ try {
     }
     Reject { [IO.File]::Delete($artifact) }
     Assert ((Get-Content -LiteralPath $artifact -Raw) -eq 'frozen') 'Locked artifact remains readable'
-} finally {
-    $lock.Dispose()
+        Reject { Move-Item -LiteralPath $directory -Destination "$directory-moved" }
+    } finally {
+        $lock.Dispose()
+        $directoryLock.Dispose()
     Remove-Item -LiteralPath $source
     Remove-Item -LiteralPath $artifact
     Remove-Item -LiteralPath $directory

@@ -50,6 +50,71 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using Microsoft.Win32.SafeHandles;
+using System.Runtime.InteropServices;
+
+public sealed class FesTermDirectoryLock : IDisposable {
+    private const uint FILE_READ_ATTRIBUTES = 0x80;
+    private const uint FILE_SHARE_READ = 0x1;
+    private const uint FILE_SHARE_WRITE = 0x2;
+    private const uint OPEN_EXISTING = 3;
+    private const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+    private const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+    private const uint FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
+    private const int FileAttributeTagInfo = 9;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct AttributeTagInfo {
+        public uint FileAttributes;
+        public uint ReparseTag;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(
+        string name, uint access, uint share, IntPtr security, uint creation,
+        uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandleEx(
+        SafeFileHandle file, int informationClass, out AttributeTagInfo information, uint size);
+
+    private SafeFileHandle handle;
+
+    private FesTermDirectoryLock(SafeFileHandle handle) {
+        this.handle = handle;
+    }
+
+    public static FesTermDirectoryLock Open(string path) {
+        var handle = CreateFile(path, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            IntPtr.Zero, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
+        if (handle.IsInvalid) throw new Win32Exception();
+        AttributeTagInfo information;
+        if (!GetFileInformationByHandleEx(handle, FileAttributeTagInfo, out information,
+                (uint)Marshal.SizeOf<AttributeTagInfo>())) {
+            var error = new Win32Exception();
+            handle.Dispose();
+            throw error;
+        }
+        if ((information.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+            handle.Dispose();
+            throw new InvalidOperationException("Profiling runtime directories must not be reparse points.");
+        }
+        return new FesTermDirectoryLock(handle);
+    }
+
+    public void Dispose() {
+        if (handle != null) {
+            handle.Dispose();
+            handle = null;
+        }
+    }
+}
+'@
+
 function Get-MarkdownScrollSamples {
     param([string] $Text)
     # Strip ANSI decoration before parsing invariant diagnostic fields only.
@@ -405,11 +470,16 @@ $artifactDirectory = Join-Path $OutputDirectory '.native-profile-artifacts'
 $immutableArtifactLocks = @()
 $stagedArtifacts = @()
 $evidenceLocks = [Collections.Generic.List[IDisposable]]::new()
+$directoryLocks = [Collections.Generic.List[IDisposable]]::new()
 $cases = @()
 $publicationFailure = $null
 try {
+    $directoryLocks.Add([FesTermDirectoryLock]::Open($localAppData))
+    $directoryLocks.Add([FesTermDirectoryLock]::Open($trustedBase))
+    $directoryLocks.Add([FesTermDirectoryLock]::Open($OutputDirectory))
     [void](New-Item -ItemType Directory -Path $artifactDirectory)
     Protect-MarkdownPrivateDirectory $artifactDirectory
+    $directoryLocks.Add([FesTermDirectoryLock]::Open($artifactDirectory))
     $Executable = Join-Path $artifactDirectory 'festerm.exe'
     $Receipt = Join-Path $artifactDirectory 'receipt.json'
     $helperPath = Join-Path $artifactDirectory 'windows-application-window.ps1'
@@ -560,6 +630,7 @@ $cases = if ($Case -eq 'all') { @('rust20', 'rust300', 'table30', 'prose') } els
 foreach ($name in $cases) {
     $folder = Join-Path $OutputDirectory $name
     [void](New-Item -ItemType Directory -Path $folder)
+    $directoryLocks.Add([FesTermDirectoryLock]::Open($folder))
     $fixture = Join-Path $folder 'synthetic.md'
     $fixtureText = New-MarkdownScrollFixture $name
     $fixtureBytes = [Text.UTF8Encoding]::new($false).GetBytes($fixtureText)
@@ -585,6 +656,7 @@ show_resumable_sessions = false
     $configLock.Position = 0
     $local = Join-Path $folder 'local-app-data'
     [void](New-Item -ItemType Directory -Path $local)
+    $directoryLocks.Add([FesTermDirectoryLock]::Open($local))
     $info = [Diagnostics.ProcessStartInfo]::new($Executable)
     $info.UseShellExecute = $false
     $info.WorkingDirectory = $folder
@@ -848,6 +920,9 @@ show_resumable_sessions = false
 } finally {
     foreach ($lock in $immutableArtifactLocks) {
         try { $lock.Dispose() } catch { Write-Warning 'Could not release a staged artifact lock.' }
+    }
+    foreach ($lock in $directoryLocks) {
+        try { $lock.Dispose() } catch { Write-Warning 'Could not release a runtime directory lock.' }
     }
     foreach ($path in $stagedArtifacts) {
         try { Remove-Item -LiteralPath $path -Force } catch { Write-Warning 'Could not remove a staged artifact.' }
