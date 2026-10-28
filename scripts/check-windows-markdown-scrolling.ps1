@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Opt-in, owned-window WARP Markdown scroll profiling.
+Opt-in, owned-window WARP Markdown and plain-text editor scroll profiling.
 .DESCRIPTION
 Requires PowerShell 7, an interactive Windows desktop, a staged release
 festerm.exe and an external JSON receipt with exactly these identity fields:
@@ -13,8 +13,9 @@ No build, PTY, native smoke or keyboard input is used. AllowGlobalPointer
 explicitly permits activating the owned window and moving/restoring the real
 cursor; wheel messages still target only that HWND. Without this option,
 Windows may clear synthetic hover and the actual-offset guard will fail.
-Cases contain one 20/300-line Rust fence, one 30-body-row table, or 20 prose
-paragraphs. Five five-wheel bursts alternate down/up/down/up/down. Each drain
+Cases contain one 20/300-line Rust fence, one 30-body-row table, 20 prose
+paragraphs, or 300 plain Rust source lines opened in Edit mode. Five five-wheel
+bursts alternate down/up/down/up/down. Each drain
 requires at least 500ms and 200ms without observed motion, bounded to 3s;
 all drains are included in the measured CPU/wall interval.
 The helper, executable and receipt are copied into a newly created
@@ -41,7 +42,7 @@ param(
     [string] $Receipt,
     [string] $SourceRoot,
     [string] $OutputDirectory,
-    [ValidateSet('rust20', 'rust300', 'table30', 'prose', 'all')]
+    [ValidateSet('rust20', 'rust300', 'table30', 'prose', 'editor300', 'all')]
     [string] $Case = 'all',
     [switch] $HelperOnly,
     [switch] $AllowGlobalPointer
@@ -116,37 +117,52 @@ public sealed class FesTermDirectoryLock : IDisposable {
 '@
 
 function Get-MarkdownScrollSamples {
-    param([string] $Text)
+    param([string] $Text, [ValidateSet('markdown', 'editor')][string] $RequiredSurface)
     # Strip ANSI decoration before parsing invariant diagnostic fields only.
     $clean = $Text -replace '\x1b\[[0-9;]*m', ''
     $number = '[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?'
     foreach ($line in ($clean -split "`n")) {
-        if ($line -notmatch 'festerm::markdown_scroll' -or
-            $line -notmatch 'Markdown (?:viewer|preview pane) scroll state') { continue }
+        if ($line -match 'festerm::markdown_scroll' -and
+            $line -match 'Markdown (viewer|preview pane) scroll state') {
+            $surface = if ($Matches[1] -eq 'viewer') { 'markdown_viewer' } else { 'markdown_preview' }
+            $kind = 'markdown'
+            $prefix = 'markdown_preview'
+        } elseif ($line -match 'festerm::editor_scroll' -and
+            $line -match 'Text editor Edit scroll state') {
+            $surface = 'editor'
+            $kind = 'editor'
+            $prefix = 'editor_scroll'
+        } else { continue }
+        if ($RequiredSurface -and $kind -ne $RequiredSurface) {
+            throw 'Scroll diagnostic does not match the required fixture surface.'
+        }
         $values = @()
         foreach ($field in @('offset_y', 'content_height', 'viewport_height')) {
-            if ($line -notmatch "\bmarkdown_preview_$field=($number)(?=\s|$)") {
-                throw "Malformed Markdown scroll diagnostic: $field."
+            if ($line -notmatch "\b${prefix}_$field=($number)(?=\s|$)") {
+                throw "Malformed scroll diagnostic: $field."
             }
             $value = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
             if (-not [double]::IsFinite($value) -or $value -lt 0) {
-                throw "Invalid Markdown scroll diagnostic: $field."
+                throw "Invalid scroll diagnostic: $field."
             }
             $values += $value
         }
         if ($values[2] -le 0 -or $values[0] -gt [Math]::Max(0, $values[1] - $values[2]) + 1) {
-            throw 'Impossible Markdown scroll geometry.'
+            throw 'Impossible scroll geometry.'
         }
         $rect = @()
         foreach ($edge in @('left', 'top', 'right', 'bottom')) {
-            if ($line -match "\bmarkdown_preview_$edge=($number)(?=\s|$)") {
+            if ($line -match "\b${prefix}_$edge=($number)(?=\s|$)") {
                 $coordinate = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
                 if (-not [double]::IsFinite($coordinate)) { throw 'Invalid preview hit region.' }
                 $rect += $coordinate
             }
         }
         if ($rect.Count -ne 0 -and $rect.Count -ne 4) { throw 'Incomplete preview hit region.' }
-        [pscustomobject]@{ Offset = $values[0]; Content = $values[1]; Viewport = $values[2]; Rect = $rect }
+        [pscustomobject]@{
+            Offset = $values[0]; Content = $values[1]; Viewport = $values[2]; Rect = $rect
+            Surface = $surface
+        }
     }
 }
 
@@ -319,9 +335,28 @@ function ConvertTo-MarkdownPackedPoint {
     return [IntPtr]::new($packed)
 }
 
+function Get-MarkdownScrollCases {
+    param([ValidateSet('rust20', 'rust300', 'table30', 'prose', 'editor300', 'all')][string] $Name = 'all')
+    $names = if ($Name -eq 'all') { @('rust20', 'rust300', 'table30', 'prose', 'editor300') } else { @($Name) }
+    foreach ($caseName in $names) {
+        [pscustomobject]@{
+            Name = $caseName
+            FixtureName = $(if ($caseName -eq 'editor300') { 'synthetic.rs' } else { 'synthetic.md' })
+            Surface = $(if ($caseName -eq 'editor300') { 'editor' } else { 'markdown' })
+        }
+    }
+}
+
 function New-MarkdownScrollFixture {
-    param([ValidateSet('rust20', 'rust300', 'table30', 'prose')][string] $Name)
+    param([ValidateSet('rust20', 'rust300', 'table30', 'prose', 'editor300')][string] $Name)
     $parts = [Collections.Generic.List[string]]::new()
+    if ($Name -eq 'editor300') {
+        for ($i = 0; $i -lt 300; $i++) {
+            $suffix = '{0:D3}' -f $i
+            $parts.Add("const VALUE_${suffix}: usize = $i;")
+        }
+        return $parts -join "`n"
+    }
     $parts.Add("# Synthetic scrolling fixture`n")
     if ($Name.StartsWith('rust')) {
         $count = if ($Name -eq 'rust20') { 20 } else { 300 }
@@ -670,12 +705,13 @@ function Restore-MarkdownPointer {
     $script:pointerControlled = $false
 }
 
-$cases = if ($Case -eq 'all') { @('rust20', 'rust300', 'table30', 'prose') } else { @($Case) }
-foreach ($name in $cases) {
+$cases = @(Get-MarkdownScrollCases $Case)
+foreach ($caseDefinition in $cases) {
+    $name = $caseDefinition.Name
     $folder = Join-Path $OutputDirectory $name
     [void](New-Item -ItemType Directory -Path $folder)
     $directoryLocks.Add([FesTermDirectoryLock]::Open($folder))
-    $fixture = Join-Path $folder 'synthetic.md'
+    $fixture = Join-Path $folder $caseDefinition.FixtureName
     $fixtureText = New-MarkdownScrollFixture $name
     $fixtureBytes = [Text.UTF8Encoding]::new($false).GetBytes($fixtureText)
     $fixtureWriter = [IO.File]::Open(
@@ -727,7 +763,7 @@ show_resumable_sessions = false
     $info.Environment['WGPU_BACKEND'] = 'dx12'
     $info.Environment['WGPU_ADAPTER_NAME'] = 'Microsoft Basic Render Driver'
     $info.Environment['RUST_LOG_STYLE'] = 'never'
-    $info.Environment['RUST_LOG'] = 'festerm=info,festerm::markdown_scroll=debug,egui_winit::pointer_input=debug,egui_wgpu::retained_ui=debug,egui_wgpu::frame_timing=debug'
+    $info.Environment['RUST_LOG'] = 'festerm=info,festerm::markdown_scroll=debug,festerm::editor_scroll=debug,egui_winit::pointer_input=debug,egui_wgpu::retained_ui=debug,egui_wgpu::frame_timing=debug'
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $info
     $started = $false
@@ -745,6 +781,7 @@ show_resumable_sessions = false
     finally { [FesTermApplicationWindow]::RestorePixelContext($previous) }
     $result = [ordered]@{
         schema_version = 1; case = $name; status = 'failed'; identity = $identity
+        required_surface = $caseDefinition.Surface; diagnostic_surface = $null
         exit_code = $null; forced_termination = $false
         artifacts_revalidated = $false; source_identity_revalidated = $false
         real_pointer_control_opted_in = [bool]$AllowGlobalPointer
@@ -794,7 +831,7 @@ show_resumable_sessions = false
         do {
             Assert-MarkdownOwnedInterval
             $text = Read-MarkdownRawLog $logPath
-            $samples = @(Get-MarkdownScrollSamples $text)
+            $samples = @(Get-MarkdownScrollSamples $text -RequiredSurface $caseDefinition.Surface)
             if ($samples.Count) { break }
             Start-Sleep -Milliseconds 100
         } while ($lifetime.Elapsed.TotalSeconds -lt 35)
@@ -802,6 +839,7 @@ show_resumable_sessions = false
         if (-not $samples.Count -or $samples[-1].Content -le $samples[-1].Viewport) {
             throw 'Missing baseline diagnostic or fixture does not actually scroll.'
         }
+        $result['diagnostic_surface'] = $samples[-1].Surface
         $point = Get-MarkdownPhysicalClientPoint $samples[-1] $pinned[4] $pinned[2] $pinned[3]
         $clientX, $clientY = $point
         $targetX = $pinned[0] + $clientX
@@ -822,7 +860,7 @@ show_resumable_sessions = false
         Start-Sleep -Milliseconds 500
         Assert-MarkdownOwnedInterval
         $text = Read-MarkdownRawLog $logPath
-        $samples = @(Get-MarkdownScrollSamples $text)
+        $samples = @(Get-MarkdownScrollSamples $text -RequiredSurface $caseDefinition.Surface)
         $before = Get-MarkdownFrameCounters $text
         $baselineOffset = $samples[-1].Offset
         $bursts = @()
@@ -831,7 +869,7 @@ show_resumable_sessions = false
         $measured = [Diagnostics.Stopwatch]::StartNew()
         foreach ($direction in @(1, -1, 1, -1, 1)) {
             Assert-MarkdownOwnedInterval
-            $samples = @(Get-MarkdownScrollSamples (Read-MarkdownRawLog $logPath))
+            $samples = @(Get-MarkdownScrollSamples (Read-MarkdownRawLog $logPath) -RequiredSurface $caseDefinition.Surface)
             $count = $samples.Count
             $offset = $samples[-1].Offset
             $counterStart = Get-MarkdownFrameCounters (Read-MarkdownRawLog $logPath)
@@ -853,7 +891,7 @@ show_resumable_sessions = false
                 Assert-MarkdownOwnedInterval
                 Start-Sleep -Milliseconds 100
                 $text = Read-MarkdownRawLog $logPath
-                $later = @(Get-MarkdownScrollSamples $text)
+                $later = @(Get-MarkdownScrollSamples $text -RequiredSurface $caseDefinition.Surface)
                 $state = Get-MarkdownScrollDrainState $later $state.Count $state.Offset `
                     $state.LastChangeMs $drain.Elapsed.TotalMilliseconds
             } while (-not $state.Settled -and -not $state.TimedOut)
@@ -987,7 +1025,8 @@ show_resumable_sessions = false
     foreach ($path in $stagedArtifacts) {
         try { Remove-Item -LiteralPath $path -Force } catch { Write-Warning 'Could not remove a staged artifact.' }
     }
-    foreach ($name in $cases) {
+    foreach ($caseDefinition in $cases) {
+        $name = $caseDefinition.Name
         $sourceCase = Join-Path $OutputDirectory $name
         if (Test-Path -LiteralPath $sourceCase) {
             try {
@@ -995,7 +1034,7 @@ show_resumable_sessions = false
                 [void](New-Item -ItemType Directory -Path $publishedCase)
                 Protect-MarkdownPrivateDirectory $publishedCase
                 $directoryLocks.Add([FesTermDirectoryLock]::Open($publishedCase))
-                foreach ($file in @('synthetic.md', 'config.toml', 'stdout.log', 'stderr.log', 'result.json')) {
+                foreach ($file in @($caseDefinition.FixtureName, 'config.toml', 'stdout.log', 'stderr.log', 'result.json')) {
                     $sourceFile = Join-Path $sourceCase $file
                     if (Test-Path -LiteralPath $sourceFile) {
                         $evidenceLocks.Add((Copy-MarkdownPublishedArtifact `

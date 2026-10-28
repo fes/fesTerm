@@ -72,6 +72,12 @@ of a later integrated head. Record that head's own results in the PR.
 
 ### Remaining matched comparison
 
+The current recipe has five cases: the original four Markdown fixtures plus
+`editor300`, a 300-line plain `.rs` document opened in Edit mode. The latter
+requires Edit-specific offset/geometry diagnostics; a Markdown preview cannot
+silently stand in for the non-Markdown qualification required by ADR 0051.
+The historical control pilots above still cover only their original four cases.
+
 Use an active Windows desktop, no concurrent owned builds/tests, the same
 frozen final profiler recipe, fresh per-process output and matching receipts.
 Repeat all four fixtures in balanced A/B/B/A order; retain every adverse and

@@ -1,5 +1,6 @@
 """Pure PowerShell profiling helpers: no app launch, Win32 call or native probe."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -96,6 +97,47 @@ foreach ($bad in @('NaN', 'Infinity', '-1', '1e999', '1,25', '99999', '1junk')) 
 }
 Reject { Get-MarkdownScrollSamples ((Sample '0') -replace ' markdown_preview_viewport_height=400', '') }
 Reject { Get-MarkdownScrollSamples ((Sample '0') -replace 'viewport_height=400', 'viewport_height=0') }
+"""
+        )
+
+    def test_editor_and_legacy_diagnostics_parse_with_distinct_surfaces(self):
+        self.probe(
+            r"""
+$viewer = Sample '1.25e2'
+$pane = $viewer -replace 'viewer', 'preview pane'
+$editor = ($viewer -replace 'festerm::markdown_scroll', 'festerm::editor_scroll' `
+    -replace 'Markdown viewer scroll state', 'Text editor Edit scroll state' `
+    -replace 'markdown_preview_', 'editor_scroll_') +
+    ' editor_scroll_left=10 editor_scroll_top=20 editor_scroll_right=610 editor_scroll_bottom=380 editor_scroll_hovered=true editor_scroll_pointer=Some([100.0 200.0])'
+$samples = @(Get-MarkdownScrollSamples ("`e[32m" + ($viewer, $pane, $editor -join "`n") + "`e[0m"))
+Assert ($samples.Count -eq 3) 'Old and new diagnostic shapes parse together'
+Assert (($samples.Surface -join ',') -eq 'markdown_viewer,markdown_preview,editor') 'Distinct actual surfaces'
+Assert ($samples[2].Offset -eq 125 -and $samples[2].Content -eq 20000 -and
+    $samples[2].Viewport -eq 400) 'Editor uses invariant actual geometry'
+$point = Get-MarkdownPhysicalClientPoint $samples[2] 96 640 400
+Assert ($point[0] -eq 310 -and $point[1] -eq 200) 'Editor rectangle drives pointer target'
+foreach ($bad in @('NaN', '-1', '99999', '1junk')) {
+    Reject { Get-MarkdownScrollSamples ($editor -replace 'offset_y=1.25e2', "offset_y=$bad") }
+}
+Reject { Get-MarkdownScrollSamples ($editor -replace ' editor_scroll_bottom=380', '') }
+Reject { Get-MarkdownScrollSamples ($editor -replace ' editor_scroll_viewport_height=400', '') }
+"""
+        )
+
+    def test_required_fixture_surface_rejects_wrong_or_mixed_diagnostics(self):
+        self.probe(
+            r"""
+$markdown = Sample '0'
+$editor = $markdown -replace 'festerm::markdown_scroll', 'festerm::editor_scroll' `
+    -replace 'Markdown viewer scroll state', 'Text editor Edit scroll state' `
+    -replace 'markdown_preview_', 'editor_scroll_'
+Assert (@(Get-MarkdownScrollSamples $markdown -RequiredSurface markdown).Count -eq 1) 'Viewer accepted for Markdown'
+Assert (@(Get-MarkdownScrollSamples ($markdown -replace 'viewer', 'preview pane') -RequiredSurface markdown).Count -eq 1) 'Pane accepted for Markdown'
+Assert (@(Get-MarkdownScrollSamples $editor -RequiredSurface editor).Count -eq 1) 'Edit accepted for editor'
+Reject { Get-MarkdownScrollSamples $markdown -RequiredSurface editor }
+Reject { Get-MarkdownScrollSamples $editor -RequiredSurface markdown }
+Reject { Get-MarkdownScrollSamples ($editor + "`n" + $markdown) -RequiredSurface editor }
+Reject { Get-MarkdownScrollSamples ($markdown + "`n" + $editor) -RequiredSurface markdown }
 """
         )
 
@@ -347,8 +389,15 @@ $fixtures | ConvertTo-Json
             "table30": (1000, 2500),
             "prose": (3000, 7000),
         }
+        original_hashes = {
+            "rust20": "b875df346b6d4b5ba84c3c1196ae84a6c6e5a9895b4262e84bdcf5f41b2e95b3",
+            "rust300": "7a48ea1b77ad06311f436219c7c5930019831551121617386c51a462cc3720c5",
+            "table30": "2ed472397222098bbac30838c67480c0c0a115e17d8b1815a44ca75b39e88bd5",
+            "prose": "c6cf849a2663e2b079b42f5a95e6ea8c83125de7858f92668eeba84d40522263",
+        }
         for name, fixture in fixtures.items():
             with self.subTest(case=name):
+                self.assertEqual(hashlib.sha256(fixture.encode("utf-8")).hexdigest(), original_hashes[name])
                 minimum, maximum = bounds[name]
                 self.assertGreaterEqual(len(fixture), minimum)
                 self.assertLessEqual(len(fixture), maximum)
@@ -372,6 +421,34 @@ $fixtures | ConvertTo-Json
                     self.assertTrue(
                         all(paragraph.startswith("Synthetic paragraph") for paragraph in paragraphs[1:])
                     )
+
+    def test_editor_fixture_is_bounded_unfenced_source_in_all_and_explicit_selection(self):
+        fixture = self.probe(
+            r"""
+$cases = @(Get-MarkdownScrollCases all)
+Assert (($cases.Name -join ',') -eq 'rust20,rust300,table30,prose,editor300') 'All includes exactly five cases'
+$editor = @(Get-MarkdownScrollCases editor300)
+Assert ($editor.Count -eq 1 -and $editor[0].FixtureName -eq 'synthetic.rs' -and
+    $editor[0].Surface -eq 'editor') 'Normal non-Markdown open chooses Edit'
+foreach ($caseDefinition in $cases[0..3]) {
+    Assert ($caseDefinition.FixtureName -eq 'synthetic.md' -and $caseDefinition.Surface -eq 'markdown') 'Existing Markdown routes preserved'
+}
+$fixture = New-MarkdownScrollFixture editor300
+Assert ($fixture -ceq (New-MarkdownScrollFixture editor300)) 'Deterministic editor fixture'
+$markdown = New-MarkdownScrollFixture rust300
+Assert ($fixture -ceq $markdown.Split('```rust')[1].Split('```')[0].Trim("`n")) 'Same synthetic source workload without Markdown'
+$fixture | ConvertTo-Json -Compress
+"""
+        )
+        source = json.loads(fixture)
+        self.assertEqual(
+            source.splitlines(),
+            [f"const VALUE_{index:03d}: usize = {index};" for index in range(300)],
+        )
+        self.assertNotIn("```", source)
+        self.assertNotIn("# Synthetic", source)
+        self.assertGreaterEqual(len(source.encode("utf-8")), 8000)
+        self.assertLessEqual(len(source.encode("utf-8")), 16000)
 
     def test_native_entry_point_requires_opt_in_before_side_effects(self):
         environment = os.environ.copy()

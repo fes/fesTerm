@@ -123,6 +123,12 @@ See the [source-bound record and rerun procedure](../validation/windows-warp/REA
 CP-18's remaining native interaction, hardware, mixed-DPI, multi-window,
 device-loss, resource and physical-latency qualifications remain unchanged.
 
+The current recipe additionally opens a bounded 300-line `.rs` fixture in
+plain Edit mode. It requires Edit-specific numeric diagnostics and rejects
+Markdown diagnostics for that case, providing a representative non-Markdown
+complete-frame surface. This new case does not retroactively extend the
+historical four-case control pilots.
+
 #### Existing document-frame evidence
 
 The WARP document-frame implementation adds an automated exact-pixel
