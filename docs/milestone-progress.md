@@ -3,6 +3,37 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## v0.11.1: recovering existing native sessions safely
+
+This patch release packages the native-session upgrade repair and confirmed
+termination action merged after v0.11.0. Recovery explicitly supports the
+released schema-2 snapshot layout without restarting existing shells, while
+new helpers continue writing schema 3. Native Running Sessions gains deliberate
+termination with a Cancel-default confirmation and exact-generation checks
+that protect replacements and newly attached sessions.
+
+Release preparation synchronizes workspace, lockfile, packaging and versioned
+Windows-helper metadata, and makes headless CI select its intended software
+Vulkan driver explicitly. Application behavior is unchanged by those
+preparations; signed-package and native usability qualification remain open
+under CP-11/CP-12, and other deferred acceptance claims are not broadened.
+
+## Selecting the intended software Vulkan driver in headless CI
+
+The Ubuntu 26 application suite intermittently crashed even with optional
+Vulkan object naming disabled. An exact-source GDB run reproduced SIGSEGV in
+the loader's `vkGetDeviceProcAddr` during device creation while another test
+was enumerating physical devices and closing a driver library. Two complete
+passes before the third crash showed why a green retry alone was insufficient.
+
+Headless quality and release validation now select the installed Lavapipe ICD
+explicitly instead of enumerating unrelated host hardware drivers. Missing or
+ambiguous software-driver manifests fail before tests start. The actual
+software Vulkan pixel tests, wgpu validation and parallel test execution remain
+enabled, without production renderer changes, automatic test retries or weaker
+assertions. This confines the test environment to its intended renderer; it
+does not claim to repair the system Vulkan loader.
+
 ## Native-session upgrade compatibility and deliberate termination
 
 The v0.11.0 selection-generation field changed the positional recovery snapshot

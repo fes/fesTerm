@@ -158,6 +158,9 @@ jobs:
         run: |
           echo "WGPU_DEBUG=0" >> "$GITHUB_ENV"
           echo "WGPU_VALIDATION=1" >> "$GITHUB_ENV"
+      - name: Select the software Vulkan driver for headless tests
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 scripts/select_headless_vulkan.py --github-env "$GITHUB_ENV"
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Check the excluded vendored text-selection library
         run: cargo test -p egui --lib
