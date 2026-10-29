@@ -3,6 +3,20 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## v0.11.1: recovering existing native sessions safely
+
+This patch release packages the native-session upgrade repair and confirmed
+termination action merged after v0.11.0. Recovery explicitly supports the
+released schema-2 snapshot layout without restarting existing shells, while
+new helpers continue writing schema 3. Native Running Sessions gains deliberate
+termination with a Cancel-default confirmation and exact-generation checks
+that protect replacements and newly attached sessions.
+
+Release preparation changes only synchronized workspace, lockfile, packaging
+and versioned Windows-helper metadata plus this narrative. Source behavior
+is unchanged; signed-package and native usability qualification remain open
+under CP-11/CP-12, and other deferred acceptance claims are not broadened.
+
 ## Native-session upgrade compatibility and deliberate termination
 
 The v0.11.0 selection-generation field changed the positional recovery snapshot
