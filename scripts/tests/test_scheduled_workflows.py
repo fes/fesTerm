@@ -1,9 +1,18 @@
 from pathlib import Path
+import importlib.util
 import re
+import tempfile
 import unittest
 
 
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
+SPEC = importlib.util.spec_from_file_location(
+    "select_headless_vulkan",
+    Path(__file__).resolve().parents[1] / "select_headless_vulkan.py",
+)
+headless_vulkan = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+SPEC.loader.exec_module(headless_vulkan)
 
 
 class HeadlessVulkanWorkflowTests(unittest.TestCase):
@@ -26,6 +35,46 @@ class HeadlessVulkanWorkflowTests(unittest.TestCase):
             validate,
         )
         self.assertIn("      - run: cargo test --workspace", validate)
+        select_driver = (
+            'run: python3 scripts/select_headless_vulkan.py --github-env "$GITHUB_ENV"'
+        )
+        self.assertIn(select_driver, quality)
+        self.assertIn(select_driver, validate)
+
+    def test_only_the_packaged_software_icd_is_selected_without_replacing_other_environment(self):
+        for name in ("lvp_icd.x86_64.json", "lvp_icd.json"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                driver = root / name
+                driver.write_text("{}", encoding="utf-8")
+                (root / "intel_icd.json").write_text("{}", encoding="utf-8")
+                (root / "lvp_icd.directory.json").mkdir()
+                environment = root / "github-env"
+                environment.write_text("EXISTING=preserved\n", encoding="utf-8")
+
+                selected = headless_vulkan.configure(root, environment)
+
+                self.assertEqual(selected, driver.resolve())
+                self.assertEqual(
+                    environment.read_text(encoding="utf-8"),
+                    f"EXISTING=preserved\nVK_DRIVER_FILES={driver.resolve()}\n",
+                )
+
+    def test_missing_or_ambiguous_software_icds_fail_without_changing_environment(self):
+        for names in ((), ("lvp_icd.json", "lvp_icd.x86_64.json")):
+            with self.subTest(names=names), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                for name in names:
+                    (root / name).write_text("{}", encoding="utf-8")
+                environment = root / "github-env"
+                environment.write_text("EXISTING=preserved\n", encoding="utf-8")
+
+                with self.assertRaisesRegex(ValueError, "exactly one Lavapipe"):
+                    headless_vulkan.configure(root, environment)
+
+                self.assertEqual(
+                    environment.read_text(encoding="utf-8"), "EXISTING=preserved\n"
+                )
 
 
 class ScheduledWorkflowTests(unittest.TestCase):

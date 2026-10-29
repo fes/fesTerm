@@ -72,6 +72,8 @@ jobs:
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y libudev-dev mesa-vulkan-drivers pkg-config
+      - name: Select the software Vulkan driver for headless tests
+        run: python3 scripts/select_headless_vulkan.py --github-env "$GITHUB_ENV"
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
