@@ -130,7 +130,7 @@ reference-application acceptance; P5 remains a manual release gate.
 | Tab stops | Set, clear, resize, and traverse explicit tab stops | passing | Core fixture |
 | Cursor styles | Apply DECSCUSR shapes without changing cell geometry | passing | Core fixture; renderer shape mapping |
 | Titles | Apply sanitized OSC 0/2 titles without affecting grid state | passing | Core fixture; application title mapping |
-| Hyperlinks | Preserve normalized HTTP/HTTPS OSC 8 metadata; open only by explicit modifier-click or context command through application policy | implemented | Core parser/lifetime, UI intent-routing, and application allowlist tests |
+| Hyperlinks | Preserve normalized HTTP/HTTPS and bounded absolute local-file OSC 8 metadata; explicit modifier/context activation opens web URLs through OS policy and local-session files only in internal document surfaces | implemented | Core parser/lifetime, decoded UI preview/copy, source-generation/origin, no-follow file/parent and web-only OS-sink tests; ADR 0052; native TI-10 pending |
 | Color queries | Report the painted foreground, background, cursor, and palette entries for OSC 4/10/11/12 queries, mirroring the request terminator; color *sets* and the OSC 104/110/111/112 resets stay ignored rather than reported as applied | passing | Exact-byte core tests; renderer/core palette-agreement test; ADR 0036 |
 | Reverse wraparound | Honor DECSET 45 by climbing to the previous row only across a soft-wrapped boundary, stopping at the start of the logical line and at the top of the scrolling region | passing | esctest2 `CUBTests`; core cursor-motion tests; ADR 0037 |
 | Terminal identity | Return conservative primary and secondary device attributes | passing | Core fixture |

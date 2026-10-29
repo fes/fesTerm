@@ -713,8 +713,60 @@ impl SaveFailure {
 /// Reads a file into an editable document.
 pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadFailure> {
     let canonical_path = fs::canonicalize(path).map_err(classify_read_error)?;
-    let (mut source_authority, mut file) =
+    let (source_authority, file) =
         open_canonical_source(&canonical_path).map_err(classify_read_error)?;
+    load_opened_source(source_authority, file, bounds)
+}
+
+/// Opens an explicitly authorized terminal file link without following aliases.
+pub(crate) fn load_terminal_link(
+    path: &Path,
+    bounds: DocumentBounds,
+) -> Result<LoadedDocument, LoadFailure> {
+    if !path.is_absolute() || path.file_name().is_none() {
+        return Err(LoadFailure::NotAFile);
+    }
+    #[cfg(windows)]
+    festerm_windows_security::require_local_disk_root(
+        path.ancestors().last().ok_or(LoadFailure::NotAFile)?,
+    )
+    .map_err(classify_read_error)?;
+    let parent = path.parent().ok_or(LoadFailure::NotAFile)?;
+    let directory = open_canonical_directory(parent).map_err(classify_read_error)?;
+    let parent_identity =
+        DirectoryIdentity::from_directory(&directory).map_err(classify_read_error)?;
+    let name = Path::new(path.file_name().ok_or(LoadFailure::NotAFile)?);
+    let metadata = directory
+        .symlink_metadata(name)
+        .map_err(classify_read_error)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(LoadFailure::NotAFile);
+    }
+    let parent_file = directory.into_std_file();
+    #[cfg(unix)]
+    let file = festerm_unix_security::open_file_nofollow(&parent_file, name)
+        .map_err(classify_read_error)?;
+    #[cfg(windows)]
+    let file = festerm_windows_security::open_file_no_reparse(&parent_file, name)
+        .map_err(classify_read_error)?;
+    #[cfg(windows)]
+    let canonical_path =
+        festerm_windows_security::opened_file_path(&file).map_err(classify_read_error)?;
+    #[cfg(not(windows))]
+    let canonical_path = path.to_path_buf();
+    let source_authority = LocalSourceAuthority {
+        canonical_path,
+        parent_identity,
+        retained_identity: None,
+    };
+    load_opened_source(source_authority, file, bounds)
+}
+
+fn load_opened_source(
+    mut source_authority: LocalSourceAuthority,
+    mut file: File,
+    bounds: DocumentBounds,
+) -> Result<LoadedDocument, LoadFailure> {
     let metadata = file.metadata().map_err(classify_read_error)?;
     if !metadata.is_file() {
         return Err(LoadFailure::NotAFile);
@@ -2856,6 +2908,68 @@ mod tests {
         let extended = SaveFailure::WindowsExtendedAttributes;
         assert!(extended.detail().contains("WSL ownership or mode"));
         assert!(extended.detail().contains("Nothing was written"));
+    }
+
+    #[test]
+    fn terminal_file_link_load_is_bounded_and_rejects_non_files() {
+        let directory = TemporaryDirectory::new("terminal-file-link");
+        let root = fs::canonicalize(&directory.path).unwrap();
+        let path = root.join("report.md");
+        fs::write(&path, "# Safe\n").unwrap();
+        let loaded = load_terminal_link(&path, DocumentBounds::default()).unwrap();
+        assert_eq!(loaded.document.text(), "# Safe\n");
+        assert!(matches!(
+            load_terminal_link(&path, DocumentBounds::new(2, 2, 2)),
+            Err(LoadFailure::Refused(RefusalReason::TooLarge { .. }))
+        ));
+        assert!(load_terminal_link(&root, DocumentBounds::default()).is_err());
+        fs::write(&path, b"binary\0content").unwrap();
+        assert!(matches!(
+            load_terminal_link(&path, DocumentBounds::default()),
+            Err(LoadFailure::Refused(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_file_link_load_never_follows_file_or_parent_symlinks() {
+        let directory = TemporaryDirectory::new("terminal-file-link-alias");
+        let root = fs::canonicalize(&directory.path).unwrap();
+        fs::write(root.join("report.md"), "# Safe\n").unwrap();
+        std::os::unix::fs::symlink(root.join("report.md"), root.join("alias.md")).unwrap();
+        std::os::unix::fs::symlink(&root, root.join("alias-dir")).unwrap();
+        for path in [root.join("alias.md"), root.join("alias-dir/report.md")] {
+            assert!(load_terminal_link(&path, DocumentBounds::default()).is_err());
+        }
+        let fifo = root.join("pipe.md");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRUSR).unwrap();
+        assert!(load_terminal_link(&fifo, DocumentBounds::default()).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_file_link_load_refuses_junction_redirection() {
+        let directory = TemporaryDirectory::new("terminal-file-link-junction");
+        let root = fs::canonicalize(&directory.path).unwrap();
+        let real = root.join("real");
+        fs::create_dir(&real).unwrap();
+        fs::write(real.join("report.md"), "# Safe\n").unwrap();
+        let alias = root.join("alias");
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&alias)
+            .arg(&real)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "owned junction fixture creation failed");
+        let result = load_terminal_link(&alias.join("report.md"), DocumentBounds::default());
+        fs::remove_dir(&alias).unwrap();
+        assert!(
+            result.is_err(),
+            "terminal file links must not follow junctions"
+        );
     }
 
     #[test]

@@ -1407,6 +1407,13 @@ impl SessionTab {
             .map(TerminalPathMenuState::ui_action)
     }
 
+    pub(crate) fn prepare_terminal_link_context(&mut self) {
+        self.view.set_file_link_context(
+            self.controller.lifecycle_generation(),
+            matches!(self.inspector_transport, InspectorTransport::Local { .. }),
+        );
+    }
+
     pub(crate) fn update_terminal_context_menu(&mut self, context: &egui::Context) -> bool {
         if (self.view.rectangle_copy_active() || self.terminal_path.frozen_authority.is_some())
             && self.terminal_path.frozen_authority.as_ref()
@@ -2039,6 +2046,12 @@ pub enum AppCommand {
     /// tab, if that candidate resolved safely.
     OpenTerminalDetectedPath {
         tab_id: TabId,
+    },
+    /// Revalidates one terminal's captured hyperlink without retargeting another session.
+    OpenTerminalHyperlink {
+        tab_id: TabId,
+        lifecycle_generation: u64,
+        target: ExternalLinkTarget,
     },
     /// Opens an explicit terminal hyperlink after application-owned URL
     /// validation. Terminal presentation emits intent only.
@@ -3514,6 +3527,16 @@ impl AppState {
             AppCommand::OpenTerminalDetectedPath { tab_id } => {
                 self.open_detected_terminal_path(tab_id, context)
             }
+            AppCommand::OpenTerminalHyperlink {
+                tab_id,
+                lifecycle_generation,
+                target,
+            } => self.open_terminal_hyperlink(
+                tab_id,
+                lifecycle_generation,
+                target.into_inner(),
+                context,
+            ),
             AppCommand::OpenExternalLink { target } => {
                 if let Some(target) = festerm_core::normalize_external_web_url(&target.into_inner())
                 {
@@ -4196,6 +4219,13 @@ impl AppState {
         }
 
         let opened = self.documents.borrow_mut().open_local(path);
+        self.finish_opening_text_editor(opened)
+    }
+
+    fn finish_opening_text_editor(
+        &mut self,
+        opened: Result<DocumentId, OpenFailure>,
+    ) -> Option<OpenFailure> {
         match opened {
             Ok(document) => {
                 if let Some(existing) = self.tabs.iter().find_map(|tab| match &tab.content {
@@ -4377,6 +4407,52 @@ impl AppState {
             return;
         }
         self.open_text_document(document);
+    }
+
+    fn open_terminal_hyperlink(
+        &mut self,
+        tab_id: TabId,
+        lifecycle_generation: u64,
+        target: String,
+        context: &egui::Context,
+    ) {
+        let source = self
+            .session_tab(tab_id)
+            .filter(|session| session.controller.lifecycle_generation() == lifecycle_generation);
+        if source.is_some() {
+            if let Some(web) = festerm_core::normalize_external_web_url(&target) {
+                self.dispatch(
+                    AppCommand::OpenExternalLink {
+                        target: ExternalLinkTarget::new(web),
+                    },
+                    context,
+                );
+                return;
+            }
+        }
+        let path = source
+            .filter(|session| {
+                matches!(
+                    session.inspector_transport,
+                    InspectorTransport::Local { .. }
+                )
+            })
+            .and_then(|_| crate::terminal_paths::explicit_local_file_path(&target));
+        let Some(path) = path else {
+            self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                title: None,
+                acknowledgement_path: None,
+                name: "File link".to_owned(),
+                path: festerm_core::local_file_hyperlink_path(&target).unwrap_or(target),
+                headline: "This file link cannot be opened".to_owned(),
+                detail: "Only an absolute local file URI from the same local session generation can open in fesTerm. Remote, serial, network and device targets are not supported.".to_owned(),
+            });
+            return;
+        };
+        let opened = self.documents.borrow_mut().open_terminal_link(&path);
+        if let Some(failure) = self.finish_opening_text_editor(opened) {
+            self.open_refusal = Some((path, failure));
+        }
     }
 
     fn open_detected_terminal_path(&mut self, tab_id: TabId, context: &egui::Context) {
@@ -8040,6 +8116,143 @@ mod tests {
             .take_open_refusal_notice()
             .expect("generation mismatch should refuse");
         assert!(notice.detail.contains("different transport generation"));
+    }
+
+    #[test]
+    fn terminal_file_links_open_local_documents_and_preserve_unsaved_edits() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let tab_id = state.replace_active_with_test_ssh_session(
+            crate::session_controller::fake::FakeSshSession::new([]),
+            "fixture",
+            "fixture.invalid",
+            22,
+        );
+        state.session_tab_mut(tab_id).unwrap().inspector_transport =
+            InspectorTransport::Local { persistence: None };
+        let directory = tempfile::tempdir().unwrap();
+        let path = std::fs::canonicalize(directory.path())
+            .unwrap()
+            .join("report one.md");
+        std::fs::write(&path, "# Original\n").unwrap();
+        let target = crate::terminal_paths::file_uri_for_test(&path);
+        let generation = state
+            .session_tab(tab_id)
+            .unwrap()
+            .controller
+            .lifecycle_generation();
+        let command = || AppCommand::OpenTerminalHyperlink {
+            tab_id,
+            lifecycle_generation: generation,
+            target: ExternalLinkTarget::new(target.clone()),
+        };
+        state.dispatch(command(), &context);
+        assert!(state.open_refusal.is_none(), "{:?}", state.open_refusal);
+        let editor_tab = state.active();
+        let document = state.active_document().expect("internal document");
+        assert_eq!(
+            state
+                .documents
+                .borrow()
+                .get(document)
+                .unwrap()
+                .text()
+                .text(),
+            "# Original\n"
+        );
+        state
+            .documents
+            .borrow_mut()
+            .get_mut(document)
+            .unwrap()
+            .text_mut()
+            .replace(0..0, "Unsaved\n")
+            .unwrap();
+        state.dispatch(command(), &context);
+        assert_eq!(state.active(), editor_tab);
+        assert_eq!(state.documents.borrow().len(), 1);
+        assert_eq!(
+            state
+                .documents
+                .borrow()
+                .get(document)
+                .unwrap()
+                .text()
+                .text(),
+            "Unsaved\n# Original\n"
+        );
+        assert!(context.output(|output| !output
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::OutputCommand::OpenUrl(_)))));
+    }
+
+    #[test]
+    fn terminal_file_links_refuse_remote_serial_stale_closed_and_unsafe_targets() {
+        for mode in [
+            "ssh", "sftp", "serial", "stale", "closed", "network", "device",
+        ] {
+            let context = egui::Context::default();
+            let mut state = AppState::for_test();
+            let tab_id = state.replace_active_with_test_ssh_session(
+                crate::session_controller::fake::FakeSshSession::new([]),
+                "fixture",
+                "fixture.invalid",
+                22,
+            );
+            let session = state.session_tab_mut(tab_id).unwrap();
+            let generation = session.controller.lifecycle_generation();
+            session.inspector_transport = match mode {
+                "ssh" => InspectorTransport::Ssh {
+                    username: "fixture".into(),
+                    host: "fixture.invalid".into(),
+                    port: 22,
+                    persistence: None,
+                },
+                "sftp" => InspectorTransport::Sftp {
+                    username: "fixture".into(),
+                    host: "fixture.invalid".into(),
+                    port: 22,
+                },
+                "serial" => InspectorTransport::Serial {
+                    device: "fixture".into(),
+                    baud_rate: 9600,
+                    data_bits: festerm_config::SerialDataBits::Eight,
+                    parity: festerm_config::SerialParity::None,
+                    stop_bits: festerm_config::SerialStopBits::One,
+                    flow_control: festerm_config::SerialFlowControl::None,
+                },
+                _ => InspectorTransport::Local { persistence: None },
+            };
+            if mode == "stale" {
+                session.controller.advance_lifecycle_generation();
+            }
+            if mode == "closed" {
+                state.close(tab_id);
+            }
+            let target = match mode {
+                "network" => "file:///%2Fattacker.invalid/share/report.md",
+                "device" => "file:///C:/NUL.md",
+                _ => "file:///C:/fixture/report.md",
+            };
+            state.dispatch(
+                AppCommand::OpenTerminalHyperlink {
+                    tab_id,
+                    lifecycle_generation: generation,
+                    target: ExternalLinkTarget::new(target.into()),
+                },
+                &context,
+            );
+            assert!(state.documents.borrow().is_empty(), "{mode}");
+            assert!(state.take_open_refusal_notice().is_some(), "{mode}");
+            assert!(
+                context.output(|output| !output
+                    .commands
+                    .iter()
+                    .any(|command| matches!(command, egui::OutputCommand::OpenUrl(_)))),
+                "{mode}"
+            );
+        }
     }
 
     #[test]

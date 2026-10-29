@@ -11,6 +11,7 @@ use std::fmt;
 mod cell;
 mod colors;
 mod history;
+mod hyperlink;
 mod input;
 mod modes;
 mod parser;
@@ -18,6 +19,8 @@ mod replies;
 mod screen;
 mod terminal;
 mod unicode;
+
+pub use hyperlink::{local_file_hyperlink_path, normalize_terminal_hyperlink};
 
 /// The largest screen that the core will allocate.
 pub const MAX_CELL_COUNT: usize = 4 * 1024 * 1024;
@@ -1718,7 +1721,7 @@ mod tests {
             "https://github.com@evil.example/login",
             "mailto:user@example.com",
             "javascript:alert(1)",
-            "file:///etc/passwd",
+            "file://other-host/etc/passwd",
         ] {
             let mut terminal = terminal(8, 1);
             terminal.ingest(format!("\x1b]8;;{target}\x1b\\X").as_bytes());

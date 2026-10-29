@@ -200,6 +200,7 @@ pub struct TerminalView {
     context_text: Option<TerminalContextText>,
     next_context_generation: u64,
     primary_link_gesture: Option<(Arc<str>, CellPosition)>,
+    file_link_context: Option<(u64, bool)>,
     last_rendered_frame: Option<u64>,
     secondary_gesture: SecondaryGestureOwnership,
     /// Whether the in-progress middle-click gesture (paste-on-middle-click,
@@ -669,6 +670,25 @@ impl TerminalView {
     /// validation and OS launch policy.
     pub fn take_link_requests(&mut self) -> Vec<Arc<str>> {
         self.pending_link_requests.drain(..).collect()
+    }
+
+    /// Supplies presentation eligibility; the application still authorizes each activation.
+    pub fn set_file_link_context(&mut self, generation: u64, local: bool) {
+        let next = Some((generation, local));
+        if self.file_link_context != next {
+            self.primary_link_gesture = None;
+            self.pending_link_requests.clear();
+            self.context_link = None;
+            self.context_target = None;
+            self.context_text = None;
+            self.file_link_context = next;
+        }
+    }
+
+    fn link_can_open(&self, target: &str) -> bool {
+        festerm_core::normalize_external_web_url(target).is_some()
+            || (self.file_link_context.is_some_and(|(_, local)| local)
+                && festerm_core::local_file_hyperlink_path(target).is_some())
     }
 
     pub fn take_context_action_request(&mut self) -> bool {
@@ -1270,9 +1290,17 @@ impl TerminalView {
             .and_then(|cell| link_snapshot.cell(cell.column, cell.row))
             .and_then(|cell| cell.hyperlink_target())
         {
-            response.clone().on_hover_text(link.as_ref());
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            let preview = hyperlink_preview(&link);
+            let display: String = context_target_parts(&preview)
+                .iter()
+                .map(Cow::as_ref)
+                .collect();
+            response.clone().on_hover_text(display);
+            if self.link_can_open(&link) {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
         }
+        let local_file_links = self.file_link_context.is_some_and(|(_, local)| local);
         ui.input_mut(|input| {
             input.events.retain(|event| {
                 let egui::Event::PointerButton {
@@ -1299,6 +1327,10 @@ impl TerminalView {
                     else {
                         return true;
                     };
+                    if !local_file_links && festerm_core::local_file_hyperlink_path(&link).is_some()
+                    {
+                        return true;
+                    }
                     self.primary_link_gesture = Some((link, cell));
                     return false;
                 }
@@ -1927,15 +1959,28 @@ impl TerminalView {
             if rendered_items {
                 ui.separator();
             }
-            show_context_target(ui, link.as_ref());
-            if ui.button("Open link").clicked() {
+            let file_path = festerm_core::local_file_hyperlink_path(&link);
+            show_context_target(ui, &hyperlink_preview(&link));
+            if ui
+                .add_enabled(self.link_can_open(&link), egui::Button::new("Open link"))
+                .on_disabled_hover_text("File links can only open in a local session.")
+                .clicked()
+            {
                 self.pending_link_requests.push_back(link.clone());
                 ui.close();
             }
-            if ui.button("Copy link").clicked() {
-                ui.ctx().copy_text(link.to_string());
+            if ui
+                .button(if file_path.is_some() {
+                    "Copy path"
+                } else {
+                    "Copy link"
+                })
+                .clicked()
+            {
+                ui.ctx().copy_text(hyperlink_preview(&link));
                 ui.close();
             }
+
             rendered_items = true;
         }
         rendered_items
@@ -2465,6 +2510,17 @@ fn context_target_text(
         }
     }
     (full, best)
+}
+
+fn hyperlink_preview(target: &str) -> String {
+    let Some(path) = festerm_core::local_file_hyperlink_path(target) else {
+        return target.to_owned();
+    };
+    #[cfg(windows)]
+    if path.as_bytes().get(2) == Some(&b':') {
+        return path[1..].replace('/', "\\");
+    }
+    path
 }
 
 fn show_context_target(ui: &mut Ui, target: &str) {
@@ -6689,6 +6745,169 @@ mod tests {
             vec![Arc::<str>::from("https://example.com/")]
         );
         assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn file_link_gestures_preview_and_copy_use_the_decoded_destination() {
+        struct State {
+            terminal: HeadlessViewState,
+            copied: Vec<String>,
+        }
+        for local in [false, true] {
+            let mut terminal = HeadlessViewState::new();
+            terminal.view.set_file_link_context(4, local);
+            terminal
+                .terminal
+                .ingest(b"\x1b]8;;file:///C:/report%20one.md\x07misleading label\x1b]8;;\x07");
+            let mut harness = Harness::builder()
+                .with_size(Vec2::new(800.0, 600.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        let state_view = &mut state.terminal;
+                        state_view
+                            .view
+                            .show(ui, &mut state_view.terminal, &mut state_view.sink);
+                        state.copied.extend(ui.ctx().output(|output| {
+                            output
+                                .commands
+                                .iter()
+                                .filter_map(|command| match command {
+                                    egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                        }));
+                    },
+                    State {
+                        terminal,
+                        copied: Vec::new(),
+                    },
+                );
+            harness.run();
+            let point = harness
+                .state()
+                .terminal
+                .view
+                .diagnostics()
+                .grid_rect
+                .unwrap()
+                .min
+                + egui::vec2(2.0, 2.0);
+            for modifiers in [egui::Modifiers::NONE, egui::Modifiers::COMMAND] {
+                for pressed in [true, false] {
+                    harness.event(egui::Event::PointerButton {
+                        pos: point,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers,
+                    });
+                }
+                harness.run();
+                let expected = usize::from(local && modifiers.command);
+                assert_eq!(
+                    harness.state_mut().terminal.view.take_link_requests().len(),
+                    expected
+                );
+            }
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            harness.run();
+            let expected_path = if cfg!(windows) {
+                r"C:\report one.md"
+            } else {
+                "/C:/report one.md"
+            };
+            assert!(harness.query_by_label(expected_path).is_some());
+            let open = harness.get_by_label("Open link").rect().center();
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos: open,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            harness.run();
+            assert_eq!(
+                harness.state_mut().terminal.view.take_link_requests().len(),
+                usize::from(local)
+            );
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            harness.run();
+            harness.get_by_label("Copy path").click();
+            harness.run();
+            assert_eq!(
+                harness.state().copied.last().map(String::as_str),
+                Some(expected_path)
+            );
+            assert!(harness.state().terminal.sink.0.is_empty());
+        }
+    }
+
+    #[test]
+    fn changing_file_link_generation_retires_press_menu_and_pending_activation() {
+        let mut state = HeadlessViewState::new();
+        state.view.set_file_link_context(0, true);
+        state
+            .terminal
+            .ingest(b"\x1b]8;;file:///tmp/report.md\x07link\x1b]8;;\x07");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        let point =
+            harness.state().view.diagnostics().grid_rect.unwrap().min + egui::vec2(2.0, 2.0);
+        harness.event(egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::COMMAND,
+        });
+        harness.run();
+        harness.state_mut().view.set_file_link_context(1, true);
+        harness.event(egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::COMMAND,
+        });
+        harness.run();
+        assert!(harness.state_mut().view.take_link_requests().is_empty());
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        assert!(harness.state().view.context_link.is_some());
+        harness.get_by_label("Open link").click();
+        harness.run();
+        assert_eq!(harness.state().view.pending_link_requests.len(), 1);
+        harness.state_mut().view.set_file_link_context(2, true);
+        harness.run();
+        assert!(harness.state().view.context_link.is_none());
+        assert!(harness.state_mut().view.take_link_requests().is_empty());
     }
 
     #[test]

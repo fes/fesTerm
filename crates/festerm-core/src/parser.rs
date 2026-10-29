@@ -180,7 +180,7 @@ fn parse_osc8(data: &[u8]) -> Option<Option<Arc<str>>> {
     let Ok(uri) = std::str::from_utf8(uri) else {
         return Some(None);
     };
-    Some(crate::normalize_external_web_url(uri).map(Arc::from))
+    Some(crate::normalize_terminal_hyperlink(uri).map(Arc::from))
 }
 
 /// The separator preceding a retained CSI parameter.

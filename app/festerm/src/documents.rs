@@ -405,6 +405,37 @@ impl DocumentRegistry {
         ))
     }
 
+    pub(crate) fn open_terminal_link(&mut self, path: &Path) -> Result<DocumentId, OpenFailure> {
+        let origin = LocalOrigin::new(path)
+            .map(DocumentOrigin::Local)
+            .map_err(OpenFailure::Origin)?;
+        let loaded =
+            document_store::load_terminal_link(path, self.bounds).map_err(OpenFailure::Load)?;
+        let existing = self
+            .documents
+            .iter()
+            .filter(|(_, document)| {
+                document.origin.key() == origin.key()
+                    || document
+                        .source_authority
+                        .as_ref()
+                        .is_some_and(|authority| authority.matches(&loaded.source_authority))
+            })
+            .map(|(id, _)| *id)
+            .min();
+        if let Some(id) = existing {
+            self.retain(id);
+            return Ok(id);
+        }
+        Ok(self.insert(
+            origin,
+            loaded.document,
+            Some(loaded.generation),
+            Some(loaded.source_authority),
+            loaded.read_only,
+        ))
+    }
+
     fn current_keyed_local(&mut self, origin: &DocumentOrigin) -> Option<DocumentId> {
         let key = origin.key();
         let id = self.by_key.get(&key).copied()?;
