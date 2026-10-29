@@ -3,6 +3,35 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## v0.11.0: deliberate copying, portable Markdown and bounded native rendering
+
+This feature release packages the merged capabilities and repairs since
+v0.10.4. Terminal selection is layout-aware and explicit about copy intent,
+including ordered cross-row clipboard output and document-owned Copy menus.
+Saved-profile replacement preserves the selected profile identity, transient
+SSH credentials are cleared across all relevant paths, and optional terminal
+fonts are delivered separately while saved choices reconcile safely on
+upgrade.
+
+Markdown Preview and Split views gain restricted rich clipboard output plus
+exact source-copy actions, document-local scroll restoration, bounded native
+Mermaid previews, single-submission table dividers and final code-line
+galley bounds. Copy payload ownership, parser revisions and local-resource
+authority remain explicit; literal HTML is escaped and copying grants no
+network or filesystem access.
+
+The accepted ADR 0051 implementation also retains an exact static leading
+paint-job prefix during native WARP rendering and submits only the changing
+suffix. Source-matched Windows qualification measured lower process CPU in
+the covered Markdown and Edit cases while preserving the existing pixel,
+resource, admission and fallback guards. Broader hardware, physical latency
+and freeze-repair claims remain outside that evidence.
+
+Release preparation changes only synchronized workspace, lockfile, packaging
+and versioned Windows-helper metadata plus this narrative. It does not change
+source behavior or broaden any deferred native, accessibility, DPI, mobile or
+CoreSimulator qualification claim.
+
 ## Removing wall-clock races from CI evidence
 
 A survey of 500 recent workflow runs separated ordinary failing PR iterations
