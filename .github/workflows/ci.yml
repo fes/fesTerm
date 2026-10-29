@@ -259,17 +259,44 @@ jobs:
         run: |
           cargo test --locked -p festerm --bin festerm --no-run --message-format=json > "$RUNNER_TEMP/test-binaries.jsonl"
           python3 -c 'import json, os; from pathlib import Path; artifacts = [json.loads(line) for line in Path(os.environ["RUNNER_TEMP"], "test-binaries.jsonl").read_text().splitlines()]; binaries = [item["executable"] for item in artifacts if item.get("reason") == "compiler-artifact" and item.get("executable") and item["target"]["name"] == "festerm" and item["profile"]["test"]]; assert len(binaries) == 1, binaries; print("TEST_BINARY=" + binaries[0])' >> "$GITHUB_ENV"
+      - name: Restrict the controlled experiment to the software Vulkan driver
+        run: |
+          shopt -s nullglob
+          drivers=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          test "${#drivers[@]}" -eq 1
+          echo "VK_DRIVER_FILES=${drivers[0]}" >> "$GITHUB_ENV"
+          cat "${drivers[0]}"
       - name: Capture native backtraces without accepting a failing test
         run: |
           mkdir -p "$RUNNER_TEMP/linux-backtrace"
-          for attempt in 1 2 3; do
-            echo "Native Linux baseline attempt $attempt"
-            timeout --signal=KILL 900 gdb --batch --return-child-result --quiet \
+          run_under_gdb() {
+            timeout --signal=KILL 900 gdb --batch --quiet \
               -ex 'set pagination off' \
+              -ex 'set confirm off' \
               -ex 'set print thread-events off' \
               -ex 'handle SIGPIPE nostop noprint pass' \
+              -ex 'python gdb._festerm_exit_status = 1' \
+              -ex 'python gdb.events.exited.connect(lambda event: setattr(gdb, "_festerm_exit_status", getattr(event, "exit_code", 1)))' \
               -ex run -ex 'thread apply all bt 10' \
-              --args "$TEST_BINARY" 2>&1 | tee "$RUNNER_TEMP/linux-backtrace/run-$attempt.log"
+              -ex 'python gdb.execute("quit {}".format(gdb._festerm_exit_status))' \
+              --args "$@"
+          }
+          run_under_gdb python3 -c 'pass'
+          if run_under_gdb python3 -c 'raise SystemExit(7)'; then
+            echo 'Diagnostic guard incorrectly accepted exit 7' >&2
+            exit 1
+          else
+            test "$?" -eq 7
+          fi
+          if run_under_gdb python3 -c 'import os, signal; os.kill(os.getpid(), signal.SIGSEGV)'; then
+            echo 'Diagnostic guard incorrectly accepted SIGSEGV' >&2
+            exit 1
+          else
+            test "$?" -eq 1
+          fi
+          for attempt in 1 2 3 4 5; do
+            echo "Native Linux software-ICD attempt $attempt"
+            run_under_gdb "$TEST_BINARY" 2>&1 | tee "$RUNNER_TEMP/linux-backtrace/run-$attempt.log"
           done
       - name: Retain native backtrace evidence
         if: always()
