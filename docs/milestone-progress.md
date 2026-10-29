@@ -14,8 +14,9 @@ retains protected local IPC, its shell and authoritative recovery state.
 Bridge restarts can therefore be separated from shell lifetime; daemon/ConPTY
 hot upgrades are not implied.
 
-The selected experimental bootstrap uses explicitly provisioned scoped tokens,
-not borrowed VS Code credentials or an unqualified native Entra registration.
+The selected experimental bootstrap uses explicitly provisioned scoped tokens
+from an official GitHub-authenticated Dev Tunnels CLI first, not borrowed
+VS Code credentials or an unqualified native Entra registration.
 Implementation, bounded SDK integration, service-use suitability and real
 remote/native evidence remain prerequisites. This proposal changes no runtime
 behavior or milestone acceptance status.
