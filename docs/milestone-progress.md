@@ -3,6 +3,36 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Qualifying native Markdown scrolling before claiming a WARP repair
+
+The small offscreen Markdown benchmark did not install the application's
+software-background plugins. Its measurements remain useful for that harness,
+but could not select a native rendering repair. An isolated, owned-window
+probe now opens synthetic Markdown through the normal application route,
+requires actual scroll-offset movement and the DX12 CPU adapter, and records
+bounded host timing and retention counters. Early zero-motion attempts were
+rejected rather than counted as navigation evidence.
+
+Native control pilots confirmed substantial rendering CPU during movement.
+The ADR 0051 implementation retains an exact static leading paint-job prefix
+and repaints the changing suffix, keeping existing image/signature bounds,
+admission, callback preparation, immutable queued resources and idle reuse.
+Pixel/resource regressions pass, including fractional clips, translucency,
+suffix buffer indexing and copy-only targets. Partial reuse is not reported
+as an exact no-paint hit.
+
+The Windows desktop initially disconnected before comparison, so publication
+remained draft. Follow-up review added plain Edit qualification and repaired
+private profiler ACL persistence without requiring an audit privilege or
+weakening owner/SYSTEM-only access. Twenty source-matched native observations,
+balanced per case, now show 32.5-53.5% lower process CPU across Markdown and
+40.8% in Edit. Two earlier prose settle-timeout rejections and adverse table
+tail/drift results remain explicit in
+[the WARP record](../validation/windows-warp/README.md#native-prefix-navigation-2026-10-28).
+The owner accepted the renderer-wide ADR 0051 policy on 2026-10-28. Physical
+latency, broader surfaces/hardware/resources and freeze-repair claims remain
+unqualified; architectural acceptance is not milestone acceptance.
+
 ## Keeping headless Vulkan tests out of the loader's debug-name fault
 
 The required Ubuntu application tests were dying mid-suite with SIGSEGV on
@@ -979,8 +1009,10 @@ historical application hashes are not substituted. A failed orchestration
 attempt is preserved separately: explicit process waiting repaired missing
 results without changing the candidate. Hosted background variability is
 retained, not excluded or called dedicated-hardware/native-latency evidence.
-Architecture/vendor/graph/trace records agree; ADR 0046 stays Proposed pending
-final merge acceptance, and the broader native matrix stays pending.
+At that publication, architecture/vendor/graph/trace records agreed and ADR
+0046 stayed Proposed pending final merge acceptance. The later ADR 0051
+integration review accepted the bounded policy; the broader native matrix
+stays pending.
 
 ## Preserving selection ownership and separate clicks during batching
 
@@ -1050,9 +1082,11 @@ CPU/completed-render regression ceiling, so idle reuse cannot mask copy/allocati
 overhead. That bounded control passed. The application therefore defaults
 retention on for the already-qualified Windows x64 DX12 CPU/BGRA route, with
 `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` as an explicit escape hatch. Hardware
-paths and generic vendor defaults are unchanged. The ADR remains Proposed
-pending independent architectural review; neither rollout nor CPU improvement
-claims a fix for the original freeze or physical display-latency acceptance.
+paths and generic vendor defaults are unchanged. The ADR remained Proposed
+pending independent architectural review at this historical stage. Final
+integration review later accepted the bounded policy; neither rollout nor CPU
+improvement claims a fix for the original freeze or physical display-latency
+acceptance.
 
 ## Preserving text-selection anchors when native events share a frame
 

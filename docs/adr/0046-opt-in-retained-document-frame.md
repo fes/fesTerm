@@ -1,7 +1,11 @@
 # ADR 0046: Retained Document Frame
 
-- **Status:** Proposed (independent design review agrees; all-miss provenance resolved; final merge acceptance pending)
+- **Status:** Accepted
 - **Date:** 2026-10-10
+- **Accepted:** 2026-10-28, final integration review on
+  [PR 411](https://github.com/fes/fesTerm/pull/411) confirmed the bounded
+  supported-route policy after all-miss provenance and exact-prefix native
+  evidence
 - **Supersedes:** None; extends ADR 0041 without changing terminal-prefix policy
 
 ## Context
@@ -27,9 +31,9 @@ Complete-frame retention defaults on for the existing Windows x64 DX12
 CPU-adapter/BGRA gamma route after successful native painter installation.
 `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` explicitly disables it; unset, empty
 or `1` requests it. Invalid/non-Unicode values produce an explicit warning and
-remain disabled. The owner requested regression qualification followed by
-this supported-route rollout. This is not a configuration setting, broader
-hardware enablement or architectural acceptance decision. Generic vendor
+remain disabled. The owner requested regression qualification followed by this
+supported-route rollout. Acceptance remains limited to this renderer policy; it
+is not a configuration setting or broader hardware enablement. Generic vendor
 renderer defaults remain off.
 
 The host still processes input, builds UI, updates textures and buffers, runs
@@ -69,7 +73,7 @@ validated route. Device/allocation errors retain the existing wgpu error policy.
   duplication; reuse the existing bounded cache instead.
 - Enable without qualifying changing-frame and lifecycle controls: rejected.
   The owner separately authorized supported-route enablement after regression
-  qualification; independent architectural review remains required before merge.
+  qualification; the later architectural review disposition below gates merge.
 
 ## Consequences
 
@@ -117,8 +121,9 @@ retention regression.
 
 Changing scenes remain expensive; observer-inclusive response timings are not
 physical display latency. The original near-zero-CPU freeze was not reproduced.
-Independent architectural review and broader native qualification remain open;
-the initial result did not itself change the Proposed status or default-off gate.
+Independent architectural review and broader native qualification remained open
+after this initial result; it did not itself change the Proposed status or
+default-off gate.
 
 ### Qualified-route rollout
 
@@ -155,8 +160,10 @@ ceiling, exact pixels and zero-hit counters. CP-18 links the actual release
 test-executable hash, source/tree/clean status, invocation and durable raw
 records/log checksums. Historical app hashes identify different executables
 and are not substituted. Hosted timing variability is explicitly retained.
-The ADR remains Proposed pending final merge acceptance, not missing
-all-miss provenance. Broader native qualification remains open.
+Final integration review accepts this bounded shared-cache policy together with
+ADR 0051's exact-prefix extension. The all-miss provenance and exact-prefix
+native comparison satisfy the declared architectural merge gate; broader
+hardware, resource, usability and physical-latency qualification remains open.
 
 ## Validation impact
 

@@ -1688,15 +1688,20 @@
         "docs/text-editor-design.md",
         "docs/adr/0034-shared-mutable-text-documents.md",
         "docs/adr/0047-bounded-local-document-background-io.md",
-        "docs/adr/0048-bounded-native-svg-and-html-anchors.md"
+        "docs/adr/0048-bounded-native-svg-and-html-anchors.md",
+        "docs/adr/0051-adaptive-exact-document-prefix.md"
       ],
       "decisions": [
         "ADR-0034",
         "ADR-0046",
         "ADR-0047",
-        "ADR-0048"
+        "ADR-0048",
+        "ADR-0051"
       ],
       "automated_tests": [
+        "retained_document_prefix_reuse_preserves_suffix_pixels_and_idle_upgrade",
+        "retained_document_prefix_reuse_keeps_queued_images_and_invalidations",
+        "retained_document_prefix_keeps_copy_only_targets_on_complete_frames",
         "navigation_observes_production_preview_scroll_state",
         "profile_small_preview_navigation",
         "native_svg_real_editor_preview_and_split_keep_images_and_document_text",
@@ -2059,7 +2064,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "CP-18 fresh Windows x64 run 38100443816 binds all-miss source/tree and clean status, actual release test-executable SHA-256, invocation and durable raw numeric records/log checksums: https://github.com/fes/fesTerm/pull/373#issuecomment-6104134288; three independent ABBA controls passed; final ADR-0046 merge acceptance and broader native qualification remain pending",
+        "CP-18 fresh Windows x64 run 38100443816 binds all-miss source/tree and clean status, actual release test-executable SHA-256, invocation and durable raw numeric records/log checksums: https://github.com/fes/fesTerm/pull/373#issuecomment-6104134288; three independent ABBA controls passed and final ADR-0046 integration review on PR 411 accepted the bounded architecture on 2026-10-28; broader native qualification remains pending",
         "conditional no-overwrite publication, the briefly absent destination-name window, crash/power-loss recovery from private staging, permission preservation, and real filesystem freshness polling across macOS, Windows, and Linux are exercised interactively; automated coverage is headless",
         "remote documents are unimplemented, so the Save As remote destination refuses rather than connecting, and remote disconnect/reconnect has no coverage",
         "vi compatibility ships behind a per-view option; the engine's own matrix is covered unit by unit in festerm-document, and the view covers routing, refusal and the mode indicator, but the matrix is not exercised end to end key by key"
@@ -2912,7 +2917,8 @@
         "docs/markdown-viewer-design.md",
         "docs/adr/0047-bounded-local-document-background-io.md",
         "docs/adr/0048-bounded-native-svg-and-html-anchors.md",
-        "docs/adr/0050-native-mermaid-preview.md"
+        "docs/adr/0050-native-mermaid-preview.md",
+        "docs/adr/0051-adaptive-exact-document-prefix.md"
       ],
       "decisions": [
         "ADR-0030",
@@ -2920,9 +2926,13 @@
         "ADR-0046",
         "ADR-0047",
         "ADR-0048",
-        "ADR-0050"
+        "ADR-0050",
+        "ADR-0051"
       ],
       "automated_tests": [
+        "retained_document_prefix_reuse_preserves_suffix_pixels_and_idle_upgrade",
+        "retained_document_prefix_reuse_keeps_queued_images_and_invalidations",
+        "retained_document_prefix_keeps_copy_only_targets_on_complete_frames",
         "navigation_observes_production_preview_scroll_state",
         "profile_small_preview_navigation",
         "svg_projection_preserves_source_spans_and_excludes_code",
@@ -3144,7 +3154,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "CP-18 fresh Windows x64 run 38100443816 binds all-miss source/tree and clean status, actual release test-executable SHA-256, invocation and durable raw numeric records/log checksums: https://github.com/fes/fesTerm/pull/373#issuecomment-6104134288; three independent ABBA controls passed; final ADR-0046 merge acceptance and broader native qualification remain pending",
+        "CP-18 fresh Windows x64 run 38100443816 binds all-miss source/tree and clean status, actual release test-executable SHA-256, invocation and durable raw numeric records/log checksums: https://github.com/fes/fesTerm/pull/373#issuecomment-6104134288; three independent ABBA controls passed and final ADR-0046 integration review on PR 411 accepted the bounded architecture on 2026-10-28; broader native qualification remains pending",
         "Reloading a remote-opened Markdown tab after a disconnect/reconnect is not yet implemented (reports RemoteReloadUnsupported); relative resource fetch within a remote-sourced document is also unimplemented"
       ]
     },

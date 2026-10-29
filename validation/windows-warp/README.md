@@ -1,5 +1,214 @@
 # Windows WARP application rasterization
 
+## Native prefix navigation: 2026-10-28
+
+A source-matched native comparison now covers all four Markdown fixtures and
+plain Edit. The owner explicitly accepted ADR 0051's renderer-wide exact-prefix
+policy on 2026-10-28, retaining the broader CP-18 gates. This is limited
+single-machine WARP performance evidence, not general native acceptance.
+The [numeric record](native-prefix-navigation-20261028.json) preserves all
+33 comparison outcomes, including the two rejected observations.
+
+The candidate is source `a44ea5c71e72e2bef40496c13be747ee58b4a843`,
+tree `c85f549ade0315537adc6589bffbd6faf7cefb79`, executable SHA-256
+`cf1361f043c0c1ef95a638c526e1f8bfbd935f13e13ddccd35d8c43abf71944f`.
+The control is source `b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836`,
+tree `d2841e06012f6682aae68d6bffc5bf6a3338604b`, executable SHA-256
+`4937a40fa4aa37a2d920d44e1832fb717fe57dc35bc3bd40e7f46284fd60e9bf`.
+That measured control commit was local and is not published. Its exact tree
+remains reproducible from durable history: start at candidate `a44ea5c7` and
+restore `app/festerm/src/direct2d/document_retention.rs` plus
+`vendor/egui-wgpu/src/{renderer,retained,winit}.rs` from main `a9273c43`.
+An automated evidence test reconstructs and requires the recorded tree hash.
+This post-measurement preservation does not relabel the historical receipt or
+executable. The control therefore differs only in the three renderer files and
+their directly dependent document-retention test module; both arms otherwise
+include the same integrated Markdown fixes, diagnostics, profiler and Ubuntu
+CI workaround. Both releases were built from the same fixed source path with
+Rust 1.98.1 and
+`cargo build --release --locked -p festerm --bin festerm --message-format=json`.
+Later documentation commits are not relabelled as measured source.
+
+The shared profiler SHA-256 is
+`76ae19e93a51005eb548a0b8c19aea46f935705c416fdd9e5d9bc2c4410843e3`.
+Each case used a fresh profiler invocation and fresh owned process in
+control/candidate/candidate/control order, with no concurrent owned builds or
+tests. All twenty final observations prove Microsoft Basic Render Driver /
+Dx12 / Cpu, 640 x 400 logical / 1280 x 800 physical / DPI 192, matching fixture
+hashes, the required Preview or Edit surface, five alternating approximately
+200-point movements, normal exit, restored cursor, and post-exit identity
+revalidation. They use the normal `--open --` route and production software
+backgrounds, not an offscreen harness. The burst/drain protocol below is
+unchanged.
+
+Values below are ranges of two per-process observations per arm, not pooled
+percentiles. CPU reduction compares the sum of the two full measured
+burst/drain process-CPU intervals. Frames and idle-hit proportions differ;
+messages and presents are not one-to-one.
+
+| Fixture | Control CPU (s) | Candidate CPU (s) | CPU reduction | Control host frame p50 (ms) | Candidate host frame p50 (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 20-line Rust fence | 46.53-46.64 | 23.64-25.78 | 47.0% | 70.15-72.76 | 38.41-39.00 |
+| 300-line Rust fence | 51.89-52.20 | 23.67-24.69 | 53.5% | 67.35-69.32 | 28.05-30.42 |
+| 30-row table | 78.80-86.13 | 54.63-56.64 | 32.5% | 103.57-116.74 | 76.74-81.13 |
+| 20 prose paragraphs | 56.53-58.72 | 29.42-33.50 | 45.4% | 68.08-71.18 | 32.89-35.23 |
+| Plain 300-line Rust Edit | 42.97-46.25 | 26.34-26.50 | 40.8% | 54.07-63.47 | 35.95-36.08 |
+
+| Fixture | Control host frame p95 (ms) | Candidate host frame p95 (ms) |
+| --- | ---: | ---: |
+| 20-line Rust fence | 76.26-82.92 | 74.10-77.65 |
+| 300-line Rust fence | 73.74-75.69 | 64.10-70.76 |
+| 30-row table | 109.84-122.80 | 114.69-117.94 |
+| 20 prose paragraphs | 74.86-77.56 | 66.93-70.21 |
+| Plain 300-line Rust Edit | 65.44-68.51 | 62.06-63.82 |
+
+The table control drift and overlapping/adverse p95 values are not normalized
+away. Host-return timings are neither completed GPU work nor physical latency;
+two observations per arm do not establish statistical confidence or eliminate
+tail stalls. The table still has substantial WARP cost.
+
+Candidate measured intervals contain 58-94 partial reuses, separately from
+8-15 exact hits and 14-15 rebuilds. Manually transcribed annotations from the
+private native logs report a nine-job prefix of 11-14 jobs in Markdown and six
+of ten in Edit; these annotations and logged byte maxima are not covered by
+each `result_sha256`. Old control partial/prefix fields remain null, not zero.
+Logged maxima can include startup geometry and are not process peak memory or
+long-duration resource qualification. Result-bound counters remain in the
+numeric record.
+
+Two earlier all-case invocations were rejected at the unchanged three-second
+prose settle deadline: one control after four bursts and one candidate after
+three. Their available successful cases and failed cases are all retained,
+not pooled into the balanced result. Forced cleanup of those failed owned
+processes is not counted as normal exit. The final block isolates each case in
+a fresh profiler invocation; it does not relax the deadline. The initial
+cursor-access and private-directory ACL failures also remain recorded. The
+ACL repair persists only the intended owner/DACL via .NET, avoiding
+`Set-Acl`'s unavailable audit privilege while retaining protected,
+inheritable owner/SYSTEM-only access; a real Windows ACL regression verifies it.
+
+Other machines/adapters, selection/typing, mixed DPI, multi-window, device
+loss, sustained resource behavior, usability and physical latency remain
+separate CP-18 prerequisites. No matched VS Code runtime comparison or
+universal freeze-repair claim is made.
+
+## Native Markdown scrolling: draft qualification
+
+At initial draft publication, the ADR 0051 candidate was **not yet natively
+performance-qualified**. Its launch was refused before app/input creation because the Windows
+desktop session was disconnected (`WTSActive` required; actual state 4).
+The user selected publication as a draft pending native qualification.
+There is no candidate/native speedup, GPU-completion, physical-latency or
+freeze-repair claim.
+
+### Source-bound control pilots
+
+The control is source `8d4bb9c4bbd5bd8bb18d76f8c8c897e0605c783c`,
+tree `24c96ac6b8641d2c90afc6d9ca1c06b5ed4ef37f`,
+executable SHA-256
+`19de10d8a1a2e4b2721ccbfc7afc81b0e1ce78010f0a22a213db46aa8aba4c2b`.
+It adds numeric scroll/viewport diagnostics to main `0db5e864` without the
+adaptive-prefix change. A successful four-case native pilot used the normal
+`festerm --open -- <fixture.md>` route (the shared editor in Preview mode),
+default bundled fonts and the installed software-background plugins.
+Actual adapter proof was Microsoft Basic Render Driver / Dx12 / Cpu;
+the client was 1280 x 800 physical, 640 x 400 logical, DPI 192.
+
+Each process received five alternating down/up/down/up/down bursts of five
+targeted wheel messages at nominal 45 ms cadence. Logged offsets actually
+alternated approximately 0 and 200 points; all processes closed normally and
+restored the explicitly opted-in real cursor. CPU is aggregate process CPU,
+not elapsed latency or one-core utilization.
+
+| Fixture | Process CPU (s) | Measured wall (s) |
+| --- | ---: | ---: |
+| 20 prose paragraphs | 34.52 | 5.84 |
+| One 20-line Rust fence | 38.53 | 6.37 |
+| One 300-line Rust fence | 31.75 | 5.52 |
+| One 30-row table | 59.56 | 7.37 |
+
+These are bottleneck pilots, not balanced A/B observations. The final profiler
+subsequently gained recipe/fixture/receipt hashes, post-exit identity checks,
+independent cleanup steps, partial-reuse counters and measured-root-frame
+timing summaries. Do not assign its final recipe hash or new metadata to the
+earlier pilots. Raw logs/results and rejected zero-motion attempts remain
+local session artifacts; private paths, pointer coordinates and raw logs are
+not published. Redundant synthetic mouse moves cleared real Windows hover;
+the explicitly opted-in real-pointer route now omits those moves and still
+sends wheel messages only to the owned HWND.
+
+The frozen candidate build is source
+`54e2f62afbb01af61314a3d51d8c8efb406aa0ee`,
+tree `bb4e08a235b27911524a21b70f1f30e61672651a`,
+executable SHA-256
+`a97dd74bc765c043f1c161b49f72902ca7c1ee9579db5cdaa1e85287891d835b`.
+Both staged releases used Rust 1.98.1 and
+`cargo build --release --locked -p festerm --bin festerm --message-format=json`
+from the same fixed source path. These are historical frozen artifacts, not
+rebuilt versions of the integrated PR head. Current main subsequently merged
+independent Mermaid/table/code-galley changes and assigned ADR 0050 to Mermaid;
+the prefix proposal is now ADR 0051. Rebuild the integrated candidate and an
+instrumentation-only control from the same current main before qualification.
+Do not attribute those independent changes to prefix retention by comparing
+the old control with an integrated candidate.
+
+For the original pre-integration candidate `54e2f62a`, `cargo test --workspace`
+stopped at the application suite: 1,299 passed, 34 failed, 22 ignored. The clean
+instrumentation-only control `8d4bb9c4`, run with
+`cargo test --locked -p festerm --bin festerm`, produced 1,296 passed,
+the exact same 34 failed test names, and 22 ignored. Those failures include
+unavailable `SeSecurityPrivilege`, recovery-worker timeouts and an owned-capture
+cleanup-path assertion. They were not repaired in this rendering workstream,
+and this comparison does not make the workspace green or predict the outcome
+of a later integrated head. Record that head's own results in the PR.
+
+### Historical matched-comparison prerequisites
+
+The current recipe has five cases: the original four Markdown fixtures plus
+`editor300`, a 300-line plain `.rs` document opened in Edit mode. The latter
+requires Edit-specific offset/geometry diagnostics; a Markdown preview cannot
+silently stand in for the non-Markdown qualification required by ADR 0051.
+The historical control pilots above still cover only their original four cases.
+
+Use an active Windows desktop, no concurrent owned builds/tests, the same
+frozen final profiler recipe, fresh per-process output and matching receipts.
+Repeat all five fixtures in balanced A/B/B/A order; retain every adverse and
+rejected outcome. Require matching fixture hashes, physical geometry/DPI,
+adapter, actual signed offsets, normal exits and identity revalidation.
+Record exact, rebuilt and partial retention outcomes separately; absent old
+counter fields are null, not zero. Check prefix-job counts and native refusal
+logs before attributing any gain. Host `root_paint` p50/p95 summaries cover only
+the measured frame range and return from host API calls, not completed GPU
+work or message-to-display acknowledgments. Desktop interaction invalidates a
+sample rather than being overridden.
+
+The aggregate opt-in entry point supports focused execution without triggering
+ConPTY staging or unrelated suites:
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:FESTERM_MARKDOWN_SCROLL_EXE = 'C:\stage\festerm.exe'
+$env:FESTERM_MARKDOWN_SCROLL_RECEIPT = 'C:\stage\receipt.json'
+$env:FESTERM_MARKDOWN_SCROLL_SOURCE_ROOT = 'C:\src\frozen-source'
+$env:FESTERM_MARKDOWN_SCROLL_OUT = 'C:\evidence\fresh-run'
+# Only after explicit permission to activate the owned window and move/restore the cursor:
+$env:FESTERM_MARKDOWN_SCROLL_ALLOW_POINTER = '1'
+.\scripts\run-optional-validation.ps1 -MarkdownScrollingOnly `
+    -ResultPath C:\evidence\scroll-status.txt
+```
+
+In the full optional aggregate, set `FESTERM_RUN_MARKDOWN_SCROLLING=1` as well.
+The receipt schema and direct invocation are documented in the profiler's
+comment-based help. Stage artifacts outside the clean frozen source tree.
+The recipe is read-locked during each process and its hash, fixture hash,
+receipt, executable and source identities are revalidated after exit.
+
+The earlier small offscreen Preview/navigation measurements did **not** install
+the production software-background plugins. Preserve their historical
+identities and narrower offscreen claims; they are not this native route or a
+matched VS Code comparison. Broader CP-18 native/hardware/resource/usability
+gates remain open.
+
 Follow-up to [#242](https://github.com/fes/fesTerm/issues/242), after #253
 corrected application-window selection. This investigates CPU work that
 continues after the GUI frame counter stops advancing.

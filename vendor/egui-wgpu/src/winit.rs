@@ -817,8 +817,10 @@ impl Painter {
             } else {
                 let stats = self.retained_ui.stats();
                 log::debug!(target: "egui_wgpu::retained_ui",
-                    "retained_ui_reused_frames={} retained_ui_rebuilt_frames={} retained_ui_texture_bytes={} retained_ui_signature_bytes={} whole_frame={}",
-                    stats.reused_frames, stats.rebuilt_frames, stats.texture_bytes,                     stats.signature_bytes, final_copy.is_none());
+                    "retained_ui_reused_frames={} retained_ui_rebuilt_frames={} retained_ui_texture_bytes={} retained_ui_signature_bytes={} whole_frame={} retained_ui_partial_reused_frames={} retained_ui_cached_prefix_jobs={} retained_ui_cached_signature_jobs={}",
+                    stats.reused_frames, stats.rebuilt_frames, stats.texture_bytes,
+                    stats.signature_bytes, final_copy.is_none(), stats.partial_reused_frames,
+                    stats.cached_prefix_jobs, stats.cached_signature_jobs);
             }
 
             if let Some(copy) = final_copy {

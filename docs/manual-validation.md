@@ -100,6 +100,41 @@ retained-scroll qualification and an architecture review/ADR.
 
 ### ADR 0046 document-frame experiment (CP-18)
 
+#### ADR 0051 native scrolling: bounded matched evidence
+
+Automated prefix/suffix pixel and resource tests cover exact ordered
+composition, fractional clips, translucent overlap, callback preparation,
+immutable queued images, managed-texture invalidation, idle upgrade and
+copy-only targets. These are deterministic rendering checks, not native
+performance or usability acceptance.
+
+The opt-in native gate is `scripts\check-windows-markdown-scrolling.ps1`;
+`scripts\run-optional-validation.ps1 -MarkdownScrollingOnly` dispatches it
+without running unrelated suites/builds. It requires staged release/source
+receipts, fresh owned output, an active desktop, actual WARP/geometry/offset
+proof and normal owned-process exit. Real cursor movement requires a separate
+explicit opt-in; intervening desktop interaction aborts the probe.
+
+Native baseline pilots cover prose, Rust fences of 20/300 lines and a 30-row
+table. They qualify the observed bottleneck only. A later source-matched
+comparison completed twenty balanced control/candidate/candidate/control
+observations across those four cases and plain Edit, all with actual offsets,
+normal exit, cursor restoration and identity revalidation. Aggregate process
+CPU fell 32.5-53.5% on that WARP machine; host timing is not physical latency.
+Two earlier prose settle-timeout rejections remain recorded. The owner accepted
+ADR 0051's renderer-wide policy on 2026-10-28, not general native acceptance.
+See the [source-bound record and rerun procedure](../validation/windows-warp/README.md#native-prefix-navigation-2026-10-28).
+CP-18's remaining native interaction, hardware, mixed-DPI, multi-window,
+device-loss, resource and physical-latency qualifications remain unchanged.
+
+The current recipe additionally opens a bounded 300-line `.rs` fixture in
+plain Edit mode. It requires Edit-specific numeric diagnostics and rejects
+Markdown diagnostics for that case, providing a representative non-Markdown
+complete-frame surface. This new case does not retroactively extend the
+historical four-case control pilots.
+
+#### Existing document-frame evidence
+
 The WARP document-frame implementation adds an automated exact-pixel
 oracle for actual 200-line Edit, Markdown Preview and Split at 100%, 125% and
 200%, with screenshot equivalence, exact input/resource invalidation, unsafe
@@ -195,7 +230,8 @@ Changing frames remain expensive, and capture-inclusive observations do not
 qualify input-to-display latency. No indefinite near-zero-CPU freeze was
 reproduced. Retain **Manual pending / Usability pending** for the broader
 matrix, including native mutable-callback/device recovery, hardware/multi-window,
-OS clipboard and sustained pointer dragging. ADR 0046 remains Proposed.
+OS clipboard and sustained pointer dragging. ADR 0046 accepts only the bounded
+qualified-route architecture; these broader CP-18 gates remain open.
 
 #### Supported-route rollout regression qualification
 

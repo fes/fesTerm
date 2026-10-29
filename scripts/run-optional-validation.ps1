@@ -1,9 +1,10 @@
 [CmdletBinding()]
 param(
+    [switch] $MarkdownScrollingOnly,
     [string] $ResultPath = $(if ($env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH) {
         $env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH
     } else {
-        'optional-validation-result.txt'
+        "optional-validation-{0}.txt" -f [Guid]::NewGuid().ToString('N')
     })
 )
 
@@ -49,6 +50,50 @@ if ($env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
     throw 'Set FESTERM_RUN_OPTIONAL_VALIDATION=1 to run optional validation.'
 }
 
+function Write-OptionalResultLocation {
+    param([string] $Path)
+    Write-Host ("Optional validation result: {0}" -f [IO.Path]::GetFileName($Path))
+}
+
+function Invoke-MarkdownScrollingValidation {
+    if ($env:OS -ne 'Windows_NT') { throw 'Native Markdown scrolling requires Windows.' }
+    foreach ($name in @('FESTERM_MARKDOWN_SCROLL_EXE', 'FESTERM_MARKDOWN_SCROLL_RECEIPT',
+        'FESTERM_MARKDOWN_SCROLL_SOURCE_ROOT', 'FESTERM_MARKDOWN_SCROLL_OUT')) {
+        if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Set $name for native Markdown scrolling." }
+    }
+    & "$PSScriptRoot\check-windows-markdown-scrolling.ps1" `
+        -Executable $env:FESTERM_MARKDOWN_SCROLL_EXE -Receipt $env:FESTERM_MARKDOWN_SCROLL_RECEIPT `
+        -SourceRoot $env:FESTERM_MARKDOWN_SCROLL_SOURCE_ROOT -OutputDirectory $env:FESTERM_MARKDOWN_SCROLL_OUT `
+        -AllowGlobalPointer:($env:FESTERM_MARKDOWN_SCROLL_ALLOW_POINTER -eq '1')
+}
+
+if ($MarkdownScrollingOnly) {
+    $resultFullPath = [IO.Path]::GetFullPath($ResultPath)
+    if (Test-Path -LiteralPath $resultFullPath) {
+        throw 'ResultPath already exists; optional validation evidence is never overwritten.'
+    }
+    Write-OptionalResultLocation $resultFullPath
+    $resultStream = [IO.File]::Open(
+        $resultFullPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+    $resultWriter = [IO.StreamWriter]::new(
+        $resultStream, [Text.UTF8Encoding]::new($false), 1024, $true)
+    $resultWriter.AutoFlush = $true
+    try {
+        $resultWriter.WriteLine('status=running')
+        Invoke-MarkdownScrollingValidation
+        $resultWriter.WriteLine('suite=windows-markdown-scrolling status=pass')
+        $resultWriter.WriteLine('status=pass')
+    } catch {
+        $resultWriter.WriteLine('suite=windows-markdown-scrolling status=fail')
+        $resultWriter.WriteLine('status=fail')
+        throw
+    } finally {
+        $resultWriter.Dispose()
+        $resultStream.Dispose()
+    }
+    return
+}
+
 $p5ResultPath = if ($env:FESTERM_P5_REFERENCE_RESULT_PATH) {
     $env:FESTERM_P5_REFERENCE_RESULT_PATH
 } else {
@@ -67,7 +112,22 @@ $opensshResultPath = if ($env:FESTERM_OPENSSH_INTEROP_RESULT_PATH) {
 $nativeResultPath = 'native-smoke-window-result.txt'
 $emojiResultPath = 'native-emoji-smoke-result.txt'
 $status = 'pass'
-Set-Content -Path $ResultPath -Value 'status=running' -NoNewline
+$resultFullPath = [IO.Path]::GetFullPath($ResultPath)
+if (Test-Path -LiteralPath $resultFullPath) {
+    throw 'ResultPath already exists; optional validation evidence is never overwritten.'
+}
+Write-OptionalResultLocation $resultFullPath
+$resultStream = [IO.File]::Open(
+    $resultFullPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+$resultWriter = [IO.StreamWriter]::new(
+    $resultStream, [Text.UTF8Encoding]::new($false), 1024, $true)
+$resultWriter.AutoFlush = $true
+function Write-OptionalResult {
+    param([string] $Text)
+    $resultWriter.Write($Text)
+}
+Write-OptionalResult 'status=running'
+try {
 
 if ($env:OS -eq 'Windows_NT') {
     try {
@@ -75,9 +135,9 @@ if ($env:OS -eq 'Windows_NT') {
         if ($LASTEXITCODE -ne 0) {
             throw "Windows ConPTY staging failed with exit code $LASTEXITCODE."
         }
-        Add-Content -Path $ResultPath -Value "`nsuite=conpty status=pass"
+        Write-OptionalResult "`nsuite=conpty status=pass"
     } catch {
-        Add-Content -Path $ResultPath -Value "`nsuite=conpty status=fail"
+        Write-OptionalResult "`nsuite=conpty status=fail"
         $status = 'fail'
     }
 } else {
@@ -89,9 +149,9 @@ Invoke-NativeCommand {
     cargo bench --locked -p festerm-ui-egui --bench render_cache_allocations -- --check
 }
 if ($LASTEXITCODE -eq 0) {
-    Add-Content -Path $ResultPath -Value "`nsuite=presentation-cache-allocations status=pass"
+    Write-OptionalResult "`nsuite=presentation-cache-allocations status=pass"
 } else {
-    Add-Content -Path $ResultPath -Value "`nsuite=presentation-cache-allocations status=fail"
+    Write-OptionalResult "`nsuite=presentation-cache-allocations status=fail"
     $status = 'fail'
 }
 
@@ -120,9 +180,9 @@ if ($env:OS -eq 'Windows_NT') {
     cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
 }
 if ($LASTEXITCODE -eq 0) {
-    Add-Content -Path $ResultPath -Value "`nsuite=sessiond-native status=pass"
+    Write-OptionalResult "`nsuite=sessiond-native status=pass"
 } else {
-    Add-Content -Path $ResultPath -Value "`nsuite=sessiond-native status=fail"
+    Write-OptionalResult "`nsuite=sessiond-native status=fail"
     $status = 'fail'
 }
 
@@ -138,9 +198,9 @@ if ($env:OS -eq 'Windows_NT' -and
     Invoke-NativeCommand { python scripts/check_keyboard_routing.py }
 }
 if ($LASTEXITCODE -eq 0) {
-    Add-Content -Path $ResultPath -Value "`nsuite=keyboard-routing-synthesized status=pass"
+    Write-OptionalResult "`nsuite=keyboard-routing-synthesized status=pass"
 } else {
-    Add-Content -Path $ResultPath -Value "`nsuite=keyboard-routing-synthesized status=fail"
+    Write-OptionalResult "`nsuite=keyboard-routing-synthesized status=fail"
     $status = 'fail'
 }
 
@@ -156,25 +216,25 @@ if ($env:OS -eq 'Windows_NT' -and
     Invoke-NativeCommand { python scripts/check_running_sessions.py }
 }
 if ($LASTEXITCODE -eq 0) {
-    Add-Content -Path $ResultPath -Value "`nsuite=running-session-churn status=pass"
+    Write-OptionalResult "`nsuite=running-session-churn status=pass"
 } else {
-    Add-Content -Path $ResultPath -Value "`nsuite=running-session-churn status=fail"
+    Write-OptionalResult "`nsuite=running-session-churn status=fail"
     $status = 'fail'
 }
 
 & "$PSScriptRoot\run-p5-reference.ps1" -ResultPath $p5ResultPath
 if ($LASTEXITCODE -eq 0) {
-    Add-Content -Path $ResultPath -Value "`nsuite=p5 status=pass"
+    Write-OptionalResult "`nsuite=p5 status=pass"
 } else {
-    Add-Content -Path $ResultPath -Value "`nsuite=p5 status=fail"
+    Write-OptionalResult "`nsuite=p5 status=fail"
     $status = 'fail'
 }
 
 & "$PSScriptRoot\run-p6-render-validation.ps1" -ResultPath $p6ResultPath
 if ($LASTEXITCODE -eq 0) {
-    Add-Content -Path $ResultPath -Value "`nsuite=p6-renderer status=pass"
+    Write-OptionalResult "`nsuite=p6-renderer status=pass"
 } else {
-    Add-Content -Path $ResultPath -Value "`nsuite=p6-renderer status=fail"
+    Write-OptionalResult "`nsuite=p6-renderer status=fail"
     $status = 'fail'
 }
 
@@ -186,11 +246,11 @@ Remove-Item Env:FESTERM_OPENSSH_INTEROP_RESULT_PATH -ErrorAction Ignore
 if ($opensshExitCode -eq 0 -and
     (Test-Path $opensshResultPath) -and
     ((Get-Content $opensshResultPath -TotalCount 1) -eq 'status=skipped reason=docker-unavailable')) {
-    Add-Content -Path $ResultPath -Value "`nsuite=openssh-interop status=skipped reason=docker-unavailable"
+    Write-OptionalResult "`nsuite=openssh-interop status=skipped reason=docker-unavailable"
 } elseif ($opensshExitCode -eq 0) {
-    Add-Content -Path $ResultPath -Value "`nsuite=openssh-interop status=pass"
+    Write-OptionalResult "`nsuite=openssh-interop status=pass"
 } else {
-    Add-Content -Path $ResultPath -Value "`nsuite=openssh-interop status=fail"
+    Write-OptionalResult "`nsuite=openssh-interop status=fail"
     $status = 'fail'
 }
 
@@ -223,9 +283,9 @@ Remove-Item Env:FESTERM_NATIVE_SMOKE_RESULT_PATH -ErrorAction Ignore
 Remove-Item $nativeResultPath -ErrorAction Ignore
 
 if ($nativePassed) {
-    Add-Content -Path $ResultPath -Value "`nsuite=p4-native-window status=pass"
+    Write-OptionalResult "`nsuite=p4-native-window status=pass"
 } else {
-    Add-Content -Path $ResultPath -Value "`nsuite=p4-native-window status=fail"
+    Write-OptionalResult "`nsuite=p4-native-window status=fail"
     $status = 'fail'
 }
 
@@ -240,27 +300,39 @@ Remove-Item Env:FESTERM_NATIVE_EMOJI_SMOKE -ErrorAction Ignore
 Remove-Item Env:FESTERM_NATIVE_SMOKE_RESULT_PATH -ErrorAction Ignore
 Remove-Item $emojiResultPath -ErrorAction Ignore
 if ($emojiPassed) {
-    Add-Content -Path $ResultPath -Value "`nsuite=native-emoji status=pass"
+    Write-OptionalResult "`nsuite=native-emoji status=pass"
 } else {
-    Add-Content -Path $ResultPath -Value "`nsuite=native-emoji status=fail"
+    Write-OptionalResult "`nsuite=native-emoji status=fail"
     $status = 'fail'
 }
 
 if ($env:OS -eq 'Windows_NT') {
     & "$PSScriptRoot\run-windows-os-input-smoke.ps1"
     if ($LASTEXITCODE -eq 0) {
-        Add-Content -Path $ResultPath -Value "`nsuite=p5-windows-os-input status=pass"
+        Write-OptionalResult "`nsuite=p5-windows-os-input status=pass"
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=p5-windows-os-input status=fail"
+        Write-OptionalResult "`nsuite=p5-windows-os-input status=fail"
         $status = 'fail'
     }
     try {
         & "$PSScriptRoot\check-windows-idle-rendering.ps1" -IncludeSustainedOutput
-        Add-Content -Path $ResultPath -Value "`nsuite=windows-idle-rendering status=pass"
+        Write-OptionalResult "`nsuite=windows-idle-rendering status=pass"
     } catch {
         Write-Warning $_
-        Add-Content -Path $ResultPath -Value "`nsuite=windows-idle-rendering status=fail"
+        Write-OptionalResult "`nsuite=windows-idle-rendering status=fail"
         $status = 'fail'
+    }
+    if ($env:FESTERM_RUN_MARKDOWN_SCROLLING -eq '1') {
+        try {
+            Invoke-MarkdownScrollingValidation
+            Write-OptionalResult "`nsuite=windows-markdown-scrolling status=pass"
+        } catch {
+            Write-Warning $_
+            Write-OptionalResult "`nsuite=windows-markdown-scrolling status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Write-OptionalResult "`nsuite=windows-markdown-scrolling status=skipped reason=explicit-opt-in"
     }
     if ($env:FESTERM_RUN_DIRECT2D_PROBE -eq '1') {
         try {
@@ -270,27 +342,27 @@ if ($env:OS -eq 'Windows_NT') {
                 Join-Path $PSScriptRoot '..\target\direct2d-probe'
             }
             & "$PSScriptRoot\..\validation\direct2d\run.ps1" -ResultDirectory $direct2dResult
-            Add-Content -Path $ResultPath -Value "`nsuite=direct2d-replay status=pass"
+            Write-OptionalResult "`nsuite=direct2d-replay status=pass"
         } catch {
             Write-Warning $_
-            Add-Content -Path $ResultPath -Value "`nsuite=direct2d-replay status=fail"
+            Write-OptionalResult "`nsuite=direct2d-replay status=fail"
             $status = 'fail'
         }
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=direct2d-replay status=skipped reason=experimental-opt-in"
+        Write-OptionalResult "`nsuite=direct2d-replay status=skipped reason=experimental-opt-in"
     }
     if ($env:FESTERM_RUN_WINDOWS_SAMPLER_DIAGNOSTICS -eq '1') {
         try {
             & "$PSScriptRoot\run-windows-sampler-diagnostics.ps1"
             if ($LASTEXITCODE -ne 0) { throw 'Windows sampler diagnostics failed.' }
-            Add-Content -Path $ResultPath -Value "`nsuite=windows-sampler-diagnostics status=pass"
+            Write-OptionalResult "`nsuite=windows-sampler-diagnostics status=pass"
         } catch {
             Write-Warning $_
-            Add-Content -Path $ResultPath -Value "`nsuite=windows-sampler-diagnostics status=fail"
+            Write-OptionalResult "`nsuite=windows-sampler-diagnostics status=fail"
             $status = 'fail'
         }
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=windows-sampler-diagnostics status=skipped reason=explicit-opt-in"
+        Write-OptionalResult "`nsuite=windows-sampler-diagnostics status=skipped reason=explicit-opt-in"
     }
     if ($env:FESTERM_RUN_WARP_PANEL_PROBE -eq '1') {
         try {
@@ -298,14 +370,14 @@ if ($env:OS -eq 'Windows_NT') {
                 cargo test -p festerm replay_large_warp_panels -- --ignored --nocapture
             }
             if ($LASTEXITCODE -ne 0) { throw 'WARP panel replay failed.' }
-            Add-Content -Path $ResultPath -Value "`nsuite=warp-panel-replay status=pass"
+            Write-OptionalResult "`nsuite=warp-panel-replay status=pass"
         } catch {
             Write-Warning $_
-            Add-Content -Path $ResultPath -Value "`nsuite=warp-panel-replay status=fail"
+            Write-OptionalResult "`nsuite=warp-panel-replay status=fail"
             $status = 'fail'
         }
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=warp-panel-replay status=skipped reason=explicit-opt-in"
+        Write-OptionalResult "`nsuite=warp-panel-replay status=skipped reason=explicit-opt-in"
     }
     if ($env:FESTERM_RUN_WARP_UI_PROBE -eq '1') {
         try {
@@ -314,14 +386,14 @@ if ($env:OS -eq 'Windows_NT') {
             }
             if ($LASTEXITCODE -ne 0) { throw 'WARP UI surface replay failed.' }
             $sceneSet = if ($env:FESTERM_WARP_UI_SCENES) { $env:FESTERM_WARP_UI_SCENES } else { 'all' }
-            Add-Content -Path $ResultPath -Value "`nsuite=warp-ui-replay status=pass scene_set=$sceneSet"
+            Write-OptionalResult "`nsuite=warp-ui-replay status=pass scene_set=$sceneSet"
         } catch {
             Write-Warning $_
-            Add-Content -Path $ResultPath -Value "`nsuite=warp-ui-replay status=fail"
+            Write-OptionalResult "`nsuite=warp-ui-replay status=fail"
             $status = 'fail'
         }
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=warp-ui-replay status=skipped reason=explicit-opt-in"
+        Write-OptionalResult "`nsuite=warp-ui-replay status=skipped reason=explicit-opt-in"
     }
     if ($env:FESTERM_RUN_TUI_RENDER_PROBE -eq '1') {
         try {
@@ -330,14 +402,14 @@ if ($env:OS -eq 'Windows_NT') {
                 cargo test --release -p festerm replay_terminal_tui_workloads -- --ignored --nocapture --test-threads=1
             }
             if ($LASTEXITCODE -ne 0) { throw 'Terminal TUI rendering replay failed.' }
-            Add-Content -Path $ResultPath -Value "`nsuite=terminal-tui-replay status=pass"
+            Write-OptionalResult "`nsuite=terminal-tui-replay status=pass"
         } catch {
             Write-Warning $_
-            Add-Content -Path $ResultPath -Value "`nsuite=terminal-tui-replay status=fail"
+            Write-OptionalResult "`nsuite=terminal-tui-replay status=fail"
             $status = 'fail'
         }
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=terminal-tui-replay status=skipped reason=explicit-opt-in"
+        Write-OptionalResult "`nsuite=terminal-tui-replay status=skipped reason=explicit-opt-in"
     }
     if ($env:FESTERM_RUN_TUI_CPU_PROFILE -eq '1') {
         try {
@@ -346,14 +418,14 @@ if ($env:OS -eq 'Windows_NT') {
                 cargo test --release -p festerm profile_terminal_residual_cpu -- --ignored --nocapture --test-threads=1
             }
             if ($LASTEXITCODE -ne 0) { throw 'Terminal CPU profile failed.' }
-            Add-Content -Path $ResultPath -Value "`nsuite=terminal-cpu-profile status=pass"
+            Write-OptionalResult "`nsuite=terminal-cpu-profile status=pass"
         } catch {
             Write-Warning $_
-            Add-Content -Path $ResultPath -Value "`nsuite=terminal-cpu-profile status=fail"
+            Write-OptionalResult "`nsuite=terminal-cpu-profile status=fail"
             $status = 'fail'
         }
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=terminal-cpu-profile status=skipped reason=explicit-opt-in"
+        Write-OptionalResult "`nsuite=terminal-cpu-profile status=skipped reason=explicit-opt-in"
     }
     if ($env:FESTERM_RUN_SESSION_AGING -eq '1') {
         try {
@@ -362,14 +434,14 @@ if ($env:OS -eq 'Windows_NT') {
             }
             & "$PSScriptRoot\check-windows-session-aging.ps1" -OutputDirectory $env:FESTERM_AGING_SUITE_OUT `
                 -ThreadOwnership:($env:FESTERM_AGING_THREAD_OWNERSHIP -eq '1')
-            Add-Content -Path $ResultPath -Value "`nsuite=six-session-aging status=pass"
+            Write-OptionalResult "`nsuite=six-session-aging status=pass"
         } catch {
             Write-Warning $_
-            Add-Content -Path $ResultPath -Value "`nsuite=six-session-aging status=fail"
+            Write-OptionalResult "`nsuite=six-session-aging status=fail"
             $status = 'fail'
         }
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=six-session-aging status=skipped reason=explicit-opt-in"
+        Write-OptionalResult "`nsuite=six-session-aging status=skipped reason=explicit-opt-in"
     }
     if ($env:FESTERM_RUN_RETAINED_COMPARISON -eq '1') {
         try {
@@ -384,14 +456,14 @@ if ($env:OS -eq 'Windows_NT') {
                     --source-label $env:FESTERM_RETAINED_SOURCE_LABEL
             }
             if ($LASTEXITCODE -ne 0) { throw 'Balanced retained-prefix comparison failed.' }
-            Add-Content -Path $ResultPath -Value "`nsuite=retained-prefix-comparison status=pass"
+            Write-OptionalResult "`nsuite=retained-prefix-comparison status=pass"
         } catch {
             Write-Warning $_
-            Add-Content -Path $ResultPath -Value "`nsuite=retained-prefix-comparison status=fail"
+            Write-OptionalResult "`nsuite=retained-prefix-comparison status=fail"
             $status = 'fail'
         }
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=retained-prefix-comparison status=skipped reason=explicit-opt-in"
+        Write-OptionalResult "`nsuite=retained-prefix-comparison status=skipped reason=explicit-opt-in"
     }
     if ($env:FESTERM_RUN_DOCUMENT_RETENTION_PROFILE -eq '1') {
         try {
@@ -401,14 +473,14 @@ if ($env:OS -eq 'Windows_NT') {
                 cargo test --release -p festerm --bin festerm profile_document_retention_changing_frames -- --ignored --nocapture --test-threads=1
             }
             if ($LASTEXITCODE -ne 0) { throw 'Document retention profile failed.' }
-            Add-Content -Path $ResultPath -Value "`nsuite=document-retention-profile status=pass"
+            Write-OptionalResult "`nsuite=document-retention-profile status=pass"
         } catch {
             Write-Warning $_
-            Add-Content -Path $ResultPath -Value "`nsuite=document-retention-profile status=fail"
+            Write-OptionalResult "`nsuite=document-retention-profile status=fail"
             $status = 'fail'
         }
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=document-retention-profile status=skipped reason=explicit-opt-in"
+        Write-OptionalResult "`nsuite=document-retention-profile status=skipped reason=explicit-opt-in"
     }
     if ($env:FESTERM_RUN_FONT_ATLAS_PROFILE -eq '1') {
         try {
@@ -418,14 +490,14 @@ if ($env:OS -eq 'Windows_NT') {
                 cargo test --release -p festerm profile_native_font_atlas_capture -- --ignored --nocapture --test-threads=1
             }
             if ($LASTEXITCODE -ne 0) { throw 'Native font atlas profile failed.' }
-            Add-Content -Path $ResultPath -Value "`nsuite=native-font-atlas-profile status=pass"
+            Write-OptionalResult "`nsuite=native-font-atlas-profile status=pass"
         } catch {
             Write-Warning $_
-            Add-Content -Path $ResultPath -Value "`nsuite=native-font-atlas-profile status=fail"
+            Write-OptionalResult "`nsuite=native-font-atlas-profile status=fail"
             $status = 'fail'
         }
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=native-font-atlas-profile status=skipped reason=explicit-opt-in"
+        Write-OptionalResult "`nsuite=native-font-atlas-profile status=skipped reason=explicit-opt-in"
     }
     if ($env:FESTERM_RUN_TUI_NATIVE_COMPARISON -eq '1') {
         try {
@@ -438,14 +510,14 @@ if ($env:OS -eq 'Windows_NT') {
                 -WindowsTerminal $env:FESTERM_WINDOWS_TERMINAL_PORTABLE `
                 -ResultDirectory $env:FESTERM_TUI_NATIVE_OUT `
                 -RegisterBundledFont:($env:FESTERM_REGISTER_TUI_FONT -eq '1')
-            Add-Content -Path $ResultPath -Value "`nsuite=terminal-tui-native status=pass"
+            Write-OptionalResult "`nsuite=terminal-tui-native status=pass"
         } catch {
             Write-Warning $_
-            Add-Content -Path $ResultPath -Value "`nsuite=terminal-tui-native status=fail"
+            Write-OptionalResult "`nsuite=terminal-tui-native status=fail"
             $status = 'fail'
         }
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=terminal-tui-native status=skipped reason=explicit-opt-in"
+        Write-OptionalResult "`nsuite=terminal-tui-native status=skipped reason=explicit-opt-in"
     }
     if ($env:FESTERM_RUN_COPY_QUALIFICATION -eq '1') {
         try {
@@ -462,19 +534,19 @@ if ($env:OS -eq 'Windows_NT') {
                     $env:FESTERM_COPY_QUALIFICATION_OUT
             }
             if ($LASTEXITCODE -ne 0) { throw 'Saved native qualification evidence failed validation.' }
-            Add-Content -Path $ResultPath -Value "`nsuite=copy-native-qualification status=pass"
+            Write-OptionalResult "`nsuite=copy-native-qualification status=pass"
         } catch {
             Write-Warning $_
-            Add-Content -Path $ResultPath -Value "`nsuite=copy-native-qualification status=fail"
+            Write-OptionalResult "`nsuite=copy-native-qualification status=fail"
             $status = 'fail'
         }
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=copy-native-qualification status=skipped reason=explicit-opt-in"
+        Write-OptionalResult "`nsuite=copy-native-qualification status=skipped reason=explicit-opt-in"
     }
 }
 
 if ($env:OS -ne 'Windows_NT' -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
-    Add-Content -Path $ResultPath -Value "`nsuite=small-preview-navigation status=skipped reason=windows-x64-required"
+    Write-OptionalResult "`nsuite=small-preview-navigation status=skipped reason=windows-x64-required"
 } elseif ($env:FESTERM_RUN_PREVIEW_NAVIGATION_PROFILE -eq '1') {
     try {
         if (-not $env:FESTERM_PREVIEW_NAVIGATION_BUILD_RECEIPT -or
@@ -516,14 +588,14 @@ if ($env:OS -ne 'Windows_NT' -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
             throw 'Navigation executable did not produce the complete bounded campaign.'
         }
         $navigationOutput
-        Add-Content -Path $ResultPath -Value "`nsuite=small-preview-navigation status=pass"
+        Write-OptionalResult "`nsuite=small-preview-navigation status=pass"
     } catch {
         Write-Warning $_
-        Add-Content -Path $ResultPath -Value "`nsuite=small-preview-navigation status=fail"
+        Write-OptionalResult "`nsuite=small-preview-navigation status=fail"
         $status = 'fail'
     }
 } else {
-    Add-Content -Path $ResultPath -Value "`nsuite=small-preview-navigation status=skipped reason=explicit-opt-in"
+    Write-OptionalResult "`nsuite=small-preview-navigation status=skipped reason=explicit-opt-in"
 }
 
 if ($env:FESTERM_RUN_SURFACE_PROFILE -eq '1') {
@@ -533,26 +605,26 @@ if ($env:FESTERM_RUN_SURFACE_PROFILE -eq '1') {
         }
         if ($LASTEXITCODE -ne 0) { throw 'Interactive surface profile failed.' }
         $profileScenes = if ([string]::IsNullOrEmpty($env:FESTERM_SURFACE_PROFILE_SCENES)) { 'all' } else { $env:FESTERM_SURFACE_PROFILE_SCENES }
-        Add-Content -Path $ResultPath -Value "`nsuite=interactive-surface-profile status=pass scene_set=$profileScenes"
+        Write-OptionalResult "`nsuite=interactive-surface-profile status=pass scene_set=$profileScenes"
     } catch {
         Write-Warning $_
-        Add-Content -Path $ResultPath -Value "`nsuite=interactive-surface-profile status=fail"
+        Write-OptionalResult "`nsuite=interactive-surface-profile status=fail"
         $status = 'fail'
     }
 } else {
-    Add-Content -Path $ResultPath -Value "`nsuite=interactive-surface-profile status=skipped reason=explicit-opt-in"
+    Write-OptionalResult "`nsuite=interactive-surface-profile status=skipped reason=explicit-opt-in"
 }
 
 if ($IsMacOS) {
     Invoke-NativeCommand { python3 "$PSScriptRoot/smoke-ios-simulator.py" --run --build }
     if ($LASTEXITCODE -eq 0) {
-        Add-Content -Path $ResultPath -Value "`nsuite=ios-simulator status=pass"
+        Write-OptionalResult "`nsuite=ios-simulator status=pass"
     } else {
-        Add-Content -Path $ResultPath -Value "`nsuite=ios-simulator status=fail"
+        Write-OptionalResult "`nsuite=ios-simulator status=fail"
         $status = 'fail'
     }
 } else {
-    Add-Content -Path $ResultPath -Value "`nsuite=ios-simulator status=skipped reason=macos-required"
+    Write-OptionalResult "`nsuite=ios-simulator status=skipped reason=macos-required"
 }
 
 if ($env:FESTERM_RUN_ROW_CACHE_PROFILE -eq '1') {
@@ -561,15 +633,19 @@ if ($env:FESTERM_RUN_ROW_CACHE_PROFILE -eq '1') {
             cargo test --release -p festerm-ui-egui --lib profile_retained_grid_row_stages -- --ignored --nocapture --test-threads=1
         }
         if ($LASTEXITCODE -ne 0) { throw 'Terminal row-cache profile failed.' }
-        Add-Content -Path $ResultPath -Value "`nsuite=terminal-row-cache-profile status=pass"
+        Write-OptionalResult "`nsuite=terminal-row-cache-profile status=pass"
     } catch {
         Write-Warning $_
-        Add-Content -Path $ResultPath -Value "`nsuite=terminal-row-cache-profile status=fail"
+        Write-OptionalResult "`nsuite=terminal-row-cache-profile status=fail"
         $status = 'fail'
     }
 } else {
-    Add-Content -Path $ResultPath -Value "`nsuite=terminal-row-cache-profile status=skipped reason=explicit-opt-in"
+    Write-OptionalResult "`nsuite=terminal-row-cache-profile status=skipped reason=explicit-opt-in"
 }
 
-Add-Content -Path $ResultPath -Value "`nstatus=$status"
+Write-OptionalResult "`nstatus=$status"
+} finally {
+    $resultWriter.Dispose()
+    $resultStream.Dispose()
+}
 if ($status -eq 'fail') { exit 1 }

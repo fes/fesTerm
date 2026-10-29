@@ -199,18 +199,28 @@ impl Signature {
 struct CachedPrefix {
     signature: Signature,
     texture: wgpu::Texture,
+    painted_jobs: usize,
 }
 
 enum RetainedPlan {
     Reuse,
-    Rebuild(Signature),
+    Rebuild {
+        signature: Signature,
+        painted_jobs: usize,
+    },
+    ReusePrefix(Signature),
 }
 
 /// Cumulative outcomes and current cache-owned storage, excluding GPU in-flight work.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RetainedUiStats {
+    /// Exact hits requiring no retained-UI paint (a final terminal copy may still follow).
     pub reused_frames: u64,
     pub rebuilt_frames: u64,
+    /// Image reuse that still paints a changing complete-frame suffix.
+    pub partial_reused_frames: u64,
+    pub cached_prefix_jobs: usize,
+    pub cached_signature_jobs: usize,
     /// Attempts to materialize an owned signature, including declined candidates.
     pub signature_captures: u64,
     pub texture_bytes: u64,
@@ -229,6 +239,7 @@ pub struct RetainedUi {
     cached: Option<CachedPrefix>,
     reused_frames: u64,
     rebuilt_frames: u64,
+    partial_reused_frames: u64,
     signature_captures: u64,
     decline_reason: Option<&'static str>,
 }
@@ -244,6 +255,12 @@ impl RetainedUi {
         RetainedUiStats {
             reused_frames: self.reused_frames,
             rebuilt_frames: self.rebuilt_frames,
+            partial_reused_frames: self.partial_reused_frames,
+            cached_prefix_jobs: self.cached.as_ref().map_or(0, |cached| cached.painted_jobs),
+            cached_signature_jobs: self
+                .cached
+                .as_ref()
+                .map_or(0, |cached| cached.signature.jobs.len()),
             signature_captures: self.signature_captures,
             texture_bytes: self.cached.as_ref().map_or(0, |cached| {
                 u64::from(cached.texture.width()) * u64::from(cached.texture.height()) * 4
@@ -356,7 +373,7 @@ impl RetainedUi {
     ///
     /// Call after texture updates and [`Renderer::prepare_without_mesh_uploads`].
     /// `whole_frame` selects complete-frame retention rather than the prefix of an
-    /// eligible final image copy. Rebuilds and refusals upload all current meshes;
+    /// eligible final image copy. Rebuilds, partial hits and refusals upload all meshes;
     /// `None` therefore leaves the caller ready for ordinary same-frame rendering.
     /// Exact hits still require the caller to encode any final callback copy.
     #[allow(clippy::too_many_arguments)]
@@ -402,17 +419,18 @@ impl RetainedUi {
         clear: [f32; 4],
         whole_frame: bool,
     ) -> Option<RetainedPlan> {
-        let reused = self.cached.as_ref().is_some_and(|cached| {
-            cached.signature.matches_inputs(
-                renderer,
-                jobs,
-                screen,
-                target.format(),
-                clear,
-                whole_frame,
-            )
+        let complete_hit = self.cached.as_ref().is_some_and(|cached| {
+            cached.painted_jobs == jobs.len()
+                && cached.signature.matches_inputs(
+                    renderer,
+                    jobs,
+                    screen,
+                    target.format(),
+                    clear,
+                    whole_frame,
+                )
         });
-        if reused {
+        if complete_hit {
             Some(RetainedPlan::Reuse)
         } else {
             self.signature_captures = self.signature_captures.saturating_add(1);
@@ -432,7 +450,54 @@ impl RetainedUi {
                     return None;
                 }
             };
-            Some(RetainedPlan::Rebuild(signature))
+            let common_prefix = self
+                .cached
+                .as_ref()
+                .filter(|cached| {
+                    whole_frame
+                        && target
+                            .usage()
+                            .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
+                        && cached.signature.matches_frame(
+                            screen,
+                            target.format(),
+                            clear,
+                            true,
+                            &signature.textures,
+                        )
+                })
+                .map_or(0, |cached| {
+                    cached
+                        .signature
+                        .jobs
+                        .iter()
+                        .zip(&signature.jobs)
+                        .take_while(|(saved, current)| saved == current)
+                        .count()
+                });
+            if common_prefix == jobs.len() {
+                // Restore complete-frame idle reuse after a moving suffix settles.
+                Some(RetainedPlan::Rebuild {
+                    signature,
+                    painted_jobs: jobs.len(),
+                })
+            } else if common_prefix > 0
+                && self
+                    .cached
+                    .as_ref()
+                    .is_some_and(|cached| cached.painted_jobs <= common_prefix)
+            {
+                Some(RetainedPlan::ReusePrefix(signature))
+            } else {
+                Some(RetainedPlan::Rebuild {
+                    signature,
+                    painted_jobs: if common_prefix == 0 {
+                        jobs.len()
+                    } else {
+                        common_prefix
+                    },
+                })
+            }
         }
     }
 
@@ -449,7 +514,11 @@ impl RetainedUi {
         plan: RetainedPlan,
     ) -> bool {
         let reused = matches!(plan, RetainedPlan::Reuse);
-        if let RetainedPlan::Rebuild(signature) = plan {
+        if let RetainedPlan::Rebuild {
+            signature,
+            painted_jobs,
+        } = plan
+        {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("egui immutable retained image"),
                 size: target.size(),
@@ -482,10 +551,20 @@ impl RetainedUi {
                         ..Default::default()
                     })
                     .forget_lifetime();
-                renderer.render(&mut pass, jobs, screen);
+                renderer.render_job_range(&mut pass, jobs, screen, 0..painted_jobs);
             }
-            self.cached = Some(CachedPrefix { signature, texture });
+            self.cached = Some(CachedPrefix {
+                signature,
+                texture,
+                painted_jobs,
+            });
             self.rebuilt_frames = self.rebuilt_frames.saturating_add(1);
+        } else if let RetainedPlan::ReusePrefix(signature) = plan {
+            self.cached
+                .as_mut()
+                .expect("retained prefix initialized")
+                .signature = signature;
+            self.partial_reused_frames = self.partial_reused_frames.saturating_add(1);
         } else {
             self.reused_frames = self.reused_frames.saturating_add(1);
         }
@@ -495,6 +574,25 @@ impl RetainedUi {
             target.as_image_copy(),
             target.size(),
         );
+        if cached.painted_jobs < jobs.len() {
+            let view = target.create_view(&Default::default());
+            let mut pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("egui retained prefix changing suffix"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    ..Default::default()
+                })
+                .forget_lifetime();
+            renderer.render_job_range(&mut pass, jobs, screen, cached.painted_jobs..jobs.len());
+        }
         reused
     }
 }

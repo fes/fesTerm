@@ -2367,7 +2367,7 @@ impl TextEditorTab {
     }
 
     fn show_edit_pane(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments, width: f32) {
-        egui::ScrollArea::vertical()
+        let scroll = egui::ScrollArea::vertical()
             .id_salt(("text-editor-body", self.document))
             .auto_shrink([false, false])
             .max_width(width)
@@ -2376,6 +2376,17 @@ impl TextEditorTab {
                     self.show_text(ui, documents);
                 });
             });
+        tracing::debug!(target: "festerm::editor_scroll",
+            editor_scroll_offset_y = scroll.state.offset.y,
+            editor_scroll_content_height = scroll.content_size.y,
+            editor_scroll_viewport_height = scroll.inner_rect.height(),
+            editor_scroll_left = scroll.inner_rect.left(),
+            editor_scroll_top = scroll.inner_rect.top(),
+            editor_scroll_right = scroll.inner_rect.right(),
+            editor_scroll_bottom = scroll.inner_rect.bottom(),
+            editor_scroll_hovered = ui.rect_contains_pointer(scroll.inner_rect),
+            editor_scroll_pointer = ?ui.input(|input| input.pointer.hover_pos()),
+            "Text editor Edit scroll state");
     }
 
     /// The rendered view of the text being typed on the other side of the

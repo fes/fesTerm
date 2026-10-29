@@ -94,7 +94,7 @@ partial presentation or a replacement window backend. See
 immutable signatures for the preceding UI and ordinary same-frame fallback, and
 [`vendor/egui-wgpu/FESTERM-PATCH.md`](vendor/egui-wgpu/FESTERM-PATCH.md).
 
-Proposed [ADR 0046](docs/adr/0046-opt-in-retained-document-frame.md) extends
+Accepted [ADR 0046](docs/adr/0046-opt-in-retained-document-frame.md) extends
 that same host-owned immutable image to eligible complete non-terminal frames.
 The supported Windows x64 DX12 CPU/BGRA gamma route requests it after native
 installation; `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` disables this extension
@@ -102,9 +102,21 @@ without changing terminal-prefix policy. Generic vendor defaults remain off.
 Both modes share the 64-MiB image and 1-MiB exact-signature limits, not a
 process/peak allocation guarantee. Input, callback preparation, document
 freshness, UI construction, acquisition and presentation remain unchanged.
-CP-18 now binds fresh all-miss evidence to clean source and the actual release
-test executable; final architectural merge acceptance remains pending.
-The broader native/resource/latency matrix is not accepted by this extension.
+CP-18 binds fresh all-miss evidence to clean source and the actual release test
+executable. Final integration review accepted the bounded shared-cache policy;
+the broader native/resource/latency matrix is not accepted by this extension.
+
+Accepted [ADR 0051](docs/adr/0051-adaptive-exact-document-prefix.md) lets
+that eligible complete-frame route retain an exact leading paint-job prefix
+while scrolling changes a suffix. The host copies the clear-initialized
+prefix image and paints the current suffix in original order, while preserving
+the existing image/signature limits, full-frame admission, callback preparation,
+managed-texture epochs, and ordinary same-frame fallback. This generic renderer
+mechanism applies to every eligible complete non-terminal frame, although its
+source-matched qualification covers four Markdown scrolling cases and plain
+Edit. The owner accepted this policy on 2026-10-28 after twenty balanced native
+WARP observations; broader CP-18 hardware/resource/usability and physical-latency
+gates remain open. This is not universal surface or freeze-repair acceptance.
 
 The app-owned textureless panel pipeline also handles the full-width chrome
 band and status-bar frame on eligible Windows DX12 CPU adapters. The UI exposes
