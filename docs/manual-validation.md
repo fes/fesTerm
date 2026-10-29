@@ -1519,6 +1519,7 @@ that its shell PID/state survive.
 
 An isolated source-built Windows cross-version run additionally attached the
 unmodified v0.10.4 daemon with the patched client, adopted its schema-2 snapshot,
+initialized the frontend screen generation to 1 without rewriting the payload,
 continued live input/output and reused it through the saved-profile start path
 without changing its PID, state or schema-2 registry record. The same run
 refused attached/stale termination requests, then terminated and pruned the
