@@ -17,10 +17,12 @@ Using an MIT-licensed transport SDK did not resolve those separate gates.
 
 The owner instead requested a design for using Dev Tunnels directly, with
 fesTerm-owned software at both ends, and selected a separate remote bridge
-process. The first implementation may use explicitly provisioned,
-tunnel-scoped host/connect tokens; native fesTerm-owned Entra sign-in is
-deferred. This does not authorize borrowing another application's OAuth
-identity or extracting its cached credentials.
+process. The first implementation uses explicitly provisioned,
+tunnel-scoped host/connect tokens, with **GitHub authentication through the
+official Dev Tunnels CLI as the first supported provisioning route**.
+Native fesTerm-owned sign-in and Entra integration are deferred. This does
+not authorize borrowing another application's OAuth identity or extracting
+its cached credentials.
 
 ADR 0025 makes `festerm-sessiond` a local-only, per-session PTY owner. ADR
 0038 gives that daemon an authoritative recovery mirror; the GUI owns the
@@ -82,8 +84,12 @@ always-running system service.
 
 The initial experimental bootstrap is:
 
-1. An operator explicitly creates a private, dedicated test tunnel and port
-   using the official Dev Tunnels tooling and their authorized account.
+1. An operator deliberately signs in through the official Dev Tunnels CLI
+   using `devtunnel user login --github`, then explicitly creates a private,
+   dedicated test tunnel and port under that authorized GitHub identity.
+   Existing VS Code client sign-in, `gh` authentication and standalone
+   `devtunnel` authentication must not be assumed interchangeable. Confirm
+   the intended CLI account without reading or exporting other apps' caches.
 2. The operator provisions distinct tunnel-scoped **host** and **connect**
    tokens. The bridge receives only hosting authority; the client receives
    only connection authority. Provision ports separately rather than giving
@@ -116,6 +122,12 @@ separation is fault/dependency isolation, not a sandbox against compromise of
 that OS account. The daemon still validates local requests and generations.
 Do not expose a raw Unix socket/named pipe, registry path or local executable
 selection as an unrestricted network proxy.
+
+The bridge/client runtime consumes scoped capabilities rather than GitHub
+OAuth tokens; its session protocol does not depend on the provisioning
+identity provider. GitHub-first does not imply a native in-app GitHub sign-in
+flow in this initial token-bootstrap experiment. Such a flow needs its own
+supported application identity/authorization design and qualification.
 
 Native Entra sign-in requires a later supported fesTerm application identity,
 confirmed service audience/scopes, consent/onboarding and real tenant/MFA/
@@ -243,7 +255,7 @@ it refuses without killing or replacing that daemon.
 ### Delivery and unresolved external gates
 
 Publish this proposal separately from implementation. Deliver an opt-in
-experimental code PR with the selected token bootstrap, explicit supported
+experimental code PR with the GitHub-first token bootstrap, explicit supported
 operations, deterministic protocol/lifecycle tests and independent security
 review. Then qualify a controlled real tunnel and remote host; mock tests
 alone do not establish service interoperability or native usability.
