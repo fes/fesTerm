@@ -5827,6 +5827,7 @@ impl FesTermApp {
                 || self.overlays.pending_paste.is_some()
                 || self.overlays.pending_file_drop.is_some()
                 || self.overlays.pending_settings_reset.is_some()
+                || self.overlays.pending_native_termination.is_some()
                 || self.overlays.pending_document_close.is_some()
                 || self.overlays.pending_quit.is_some());
         let port_forward_manager_escape =
@@ -5976,6 +5977,9 @@ impl FesTermApp {
                 TabContent::Launcher => {
                     for error in &self.state.discovery.inventory.errors {
                         ui.colored_label(theme::TEXT_SECONDARY, error);
+                    }
+                    if self.state.native_termination_pending() {
+                        ui.label("Terminating native session...");
                     }
                     if let Some(error) = &self.state.resume_error {
                         ui.colored_label(theme::TEXT_SECONDARY, error);
@@ -6452,6 +6456,16 @@ impl FesTermApp {
                 AppCommand::ResetInterfaceSettings => {
                     self.request_reset_interface_settings(&ui.ctx().clone());
                 }
+                AppCommand::TerminateUnattachedSession { session } => {
+                    if !self.state.native_termination_pending() {
+                        self.palette.close();
+                        self.overlays.pending_native_termination =
+                            Some(crate::overlay_state::PendingNativeTerminationConfirmation {
+                                session,
+                                cancel_focus_requested: false,
+                            });
+                    }
+                }
                 AppCommand::ResolveHostKeyTrust { tab, decision } => {
                     let context = ui.ctx().clone();
                     if matches!(decision, HostKeyTrustDecision::AcceptAndPersist) {
@@ -6505,6 +6519,8 @@ impl FesTermApp {
             self.show_quit_confirmation(ui.ctx(), confirmation_escape);
         } else if self.overlays.pending_settings_reset.is_some() {
             self.show_settings_reset_confirmation(ui.ctx(), confirmation_escape);
+        } else if self.overlays.pending_native_termination.is_some() {
+            self.show_native_termination_confirmation(ui.ctx(), confirmation_escape);
         } else if self.overlays.pending_file_drop.is_some() {
             self.show_file_drop_confirmation(ui.ctx(), confirmation_escape);
         } else {
@@ -9939,6 +9955,52 @@ mod tests {
             harness.state().state.interface_settings(),
             InterfaceSettings::DEFAULT
         );
+    }
+
+    #[test]
+    fn native_termination_confirmation_defaults_to_cancel_and_escape_never_launches() {
+        use crate::overlay_state::PendingNativeTerminationConfirmation;
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.state
+            .dispatch(AppCommand::ToggleShowResumableSessions, &context);
+        let pending = PendingNativeTerminationConfirmation {
+            session: festerm_sessiond::UnattachedSession {
+                name: "owned-test-session".into(),
+                pid: 123,
+                endpoint: "owned-test-endpoint".into(),
+                created_at_unix_ms: 456,
+                shell: "owned-test-shell".into(),
+                arguments: Vec::new(),
+                working_directory: None,
+            },
+            cancel_focus_requested: false,
+        };
+        app.overlays.pending_native_termination = Some(pending.clone());
+        assert!(app.overlays.blocks_terminal_input());
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1000.0, 700.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        assert!(harness.get_by_label("Cancel").is_focused());
+        harness.get_by_label("Cancel").click();
+        harness.step();
+        assert!(harness
+            .state()
+            .overlays
+            .pending_native_termination
+            .is_none());
+        assert!(!harness.state().state.native_termination_pending());
+        harness.state_mut().overlays.pending_native_termination = Some(pending);
+        harness.step();
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(harness
+            .state()
+            .overlays
+            .pending_native_termination
+            .is_none());
+        assert!(!harness.state().state.native_termination_pending());
     }
 
     #[test]

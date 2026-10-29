@@ -363,6 +363,15 @@ even when a start time is shown. Counts describe eligible displayed entries,
 not a universally unattached-only population. Empty provider groups are omitted, and an entirely
 empty panel says that nothing local can be reattached right now.
 
+Native rows also offer the same **Reattach** / **Terminate session...** menu
+through an accessible overflow button or right-clicking the row. Terminate
+always asks for confirmation with Cancel initially focused, explains that
+the shell/processes and terminal state will be lost, and leaves saved profiles
+unchanged. The confirmed action targets the selected generation, not merely
+its name; if it was replaced or attached meanwhile, refuse and offer refresh.
+Termination runs asynchronously with bounded helper execution and refreshes
+inventory on completion. tmux and Screen do not offer this action.
+
 Reattach is asynchronous and attach-only, unlike saved profiles' intentional
 attach-or-create behavior. External tmux reattachment preserves the existing
 session's status/options; saved profiles retain their intentional status-off

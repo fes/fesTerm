@@ -1508,6 +1508,33 @@ native usability evidence, including narrow-window readability of the retry
 guidance. These checks neither remove the existing 15-second adoption wait
 nor prove a global daemon RSS or recovery-snapshot peak budget.
 
+CP-11 upgrade compatibility has automated released-schema-2 wire fixtures:
+primary/alternate buffers, fragmented CSI/UTF-8, continued output,
+resize/history and current-schema round trips. Malformed, queued-reply,
+mislabelled and oversized payloads remain refused before capacity restoration.
+The existing daemon record remains schema 2 rather than falsely promising
+schema-3 writes. Signed native package evidence must still attach to a live
+v0.10.4 helper after upgrade, including through the saved profile, and confirm
+that its shell PID/state survive.
+
+An isolated source-built Windows cross-version run additionally attached the
+unmodified v0.10.4 daemon with the patched client, adopted its schema-2 snapshot,
+continued live input/output and reused it through the saved-profile start path
+without changing its PID, state or schema-2 registry record. The same run
+refused attached/stale termination requests, then terminated and pruned the
+exact unattached generation. This does not substitute for signed-package or
+macOS/Linux native evidence.
+
+`LAUNCH-22` native termination has automated overflow/right-click command
+dispatch, Cancel/Escape/focus, coalesced worker/failure and locked exact-generation
+guards. CP-11/CP-12 native/usability follow-up uses an isolated disposable
+session: cancel first, then terminate from each menu route, verify the shell
+tree ends and the row disappears without deleting its saved profile. Attach
+or recreate the session while confirmation is open and verify refusal rather
+than termination of the new/attached generation. Review keyboard navigation,
+focus and narrow-window wording on each native platform. These are additions
+to the existing inventory, not claims that signed-package/native gates passed.
+
 ### Rendering performance
 
 `TERM-01` presentation-cache allocation/lifecycle coverage is automated:

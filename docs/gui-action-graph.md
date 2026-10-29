@@ -439,6 +439,8 @@ stateDiagram-v2
 | `LAUNCH-20` | `RunningSessions → RunningSessions` | Activate the Running Sessions **Refresh** control, including rapid repeated requests. | `AppCommand::RefreshRunningSessions` invalidates the old discovery generation and coalesces work into at most one active worker plus one pending request. Provider I/O never runs during rendering. Disabled/superseded results are discarded; saved profiles/session definitions remain unchanged. | Already on Launcher; provider failures offer actionable retry diagnostics. | P,H,N |
 | `LAUNCH-21` | `PopulatedLauncher → PopulatedLauncher` | Open New Session at a width that keeps both panels side by side with more saved profiles or running sessions than fit their panel. | The launch card row and both panel footers keep their positions; the profile table and the session groups scroll inside their own panels rather than scrolling the whole surface. The surface stays inset from the window's content edge. The tighter layout keeps headings/search aligned and icon actions at least 24 px across; all five card titles fit without elision in a 1000 px window in both density modes. Below the stacking width the surface scrolls as one, because neither panel then has a bounded height to scroll inside. | Already on Launcher. | P,H,N |
 
+| `LAUNCH-22` | `RunningSessions → termination confirmation → RunningSessions` | Open a native session row's overflow or right-click menu and choose **Terminate session...**. | Both gestures dispatch `AppCommand::TerminateUnattachedSession` with the exact discovered generation. Composition-owned confirmation defaults to Cancel; Cancel/Escape do nothing. Confirmation runs one bounded helper worker outside rendering, revalidating name/PID/creation time/endpoint and still-unattached state under the registry lock. Replaced or attached sessions are refused; failures remain visible and inventory refreshes. Saved profiles and tmux/Screen sessions are unchanged. | Cancel or refresh; a terminated shell cannot be restored. | P,H,N,U; native/usability qualification pending |
+
 ## C. Local session lifecycle
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |
@@ -685,8 +687,10 @@ Only the frozen view's owned popup is closed; ordinary live menus remain usable.
 | `WORK-03` | `K10 → same` | Inspect missing/failed entries and successful siblings. | Failure never blocks siblings; missing definition remains visible, not dropped; stable order/names/focus preserved; terminal titles not promoted. | Retry valid definition or leave failed. | P,H,N |
 | `WORK-04` | `K10 → K1` | Close restored surfaces and delete workspace. | Runtime closure does not delete definitions/profiles; workspace deletion does not delete referenced profiles. | Already `K1`. | P,H,N |
 
-For `PROF-06`, native recovery preserves schema 3 and the 768-MiB payload
-limit. Encoding sizes before wire allocation and owns one fixed
+For `PROF-06`, new native recovery writes schema 3 and upgrades released
+schema-2 snapshots in memory without restarting the shell or relabelling its
+registry generation. Unknown/missing schemas remain refused. Both supported
+layouts retain the 768-MiB payload limit. Encoding sizes before wire allocation and owns one fixed
 header-prefixed buffer; decoding retires the received payload before
 validating/restoring owned terminal state. Invalid, trailing, truncated or
 over-limit payloads never reach adoption. The managed wire observations do

@@ -318,6 +318,30 @@ pub fn list_unattached_local_sessions() -> Result<Vec<UnattachedSession>, Persis
     list_unattached_sessions_in(&runtime_root()?)
 }
 
+/// Builds a generation-pinned termination request for an unattached discovery entry.
+///
+/// Run this command off the UI thread with a bounded subprocess runner. The helper
+/// revalidates the generation and attachment state while holding the registry lock.
+pub fn terminate_unattached_session_command(
+    selected: &UnattachedSession,
+) -> Result<Command, PersistentSessionError> {
+    PersistentSessionName::new(&selected.name)
+        .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+    let mut command = Command::new(daemon_executable()?);
+    command.args([
+        "kill-unattached",
+        "--name",
+        &selected.name,
+        "--pid",
+        &selected.pid.to_string(),
+        "--created-at",
+        &selected.created_at_unix_ms.to_string(),
+        "--endpoint",
+        &selected.endpoint,
+    ]);
+    Ok(command)
+}
+
 /// Explicit runtime-root seam for isolated native validation.
 pub fn list_unattached_sessions_in(
     root: &std::path::Path,
@@ -1541,14 +1565,19 @@ fn read_recovery_terminal_with_abort<R: Read + ?Sized>(
         )
     })?;
     read_protocol_bytes(stream, &mut payload.bytes, &mut should_abort)?;
-    let mut terminal = bincode_options()
-        .deserialize::<Terminal>(&payload.bytes)
-        .map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("persistent-session recovery snapshot is invalid: {error}"),
-            )
-        })?;
+    let decoded = if snapshot_schema_version == 2 {
+        bincode_options()
+            .deserialize::<Schema2RecoveryTerminal>(&payload.bytes)
+            .map(|snapshot| snapshot.0)
+    } else {
+        bincode_options().deserialize::<Terminal>(&payload.bytes)
+    };
+    let mut terminal = decoded.map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("persistent-session recovery snapshot is invalid: {error}"),
+        )
+    })?;
     drop(payload);
     terminal.validate_recovery_snapshot().map_err(|error| {
         io::Error::new(
@@ -1565,6 +1594,17 @@ fn read_recovery_terminal_with_abort<R: Read + ?Sized>(
     observe_recovery_allocation_restore();
     terminal.restore_recovery_snapshot_allocations();
     Ok(Some(terminal))
+}
+
+struct Schema2RecoveryTerminal(Terminal);
+
+impl<'de> Deserialize<'de> for Schema2RecoveryTerminal {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Terminal::deserialize_recovery_snapshot_v2(deserializer).map(Self)
+    }
 }
 
 fn read_protocol_bytes(
@@ -2044,7 +2084,7 @@ fn ensure_protocol_compatible(record: &SessionRecord) -> Result<(), PersistentSe
     if record.protocol_version >= 2 && !snapshot_schema_is_supported(record.snapshot_schema_version)
     {
         return Err(PersistentSessionError::new(format!(
-            "session '{}' uses recovery snapshot schema {}, but this fesTerm supports schema {}; \
+            "session '{}' uses recovery snapshot schema {}, but this fesTerm supports schemas 2 and {}; \
              keep using a compatible fesTerm version or terminate that session before replacing it",
             record.name, record.snapshot_schema_version, RECOVERY_SNAPSHOT_SCHEMA_VERSION
         )));
@@ -2057,8 +2097,9 @@ pub const fn protocol_is_supported(version: u16) -> bool {
     version >= MIN_SUPPORTED_PROTOCOL_VERSION && version <= PROTOCOL_VERSION
 }
 
+/// Schema 2 is upgraded on receipt; new helpers continue to emit only schema 3.
 pub const fn snapshot_schema_is_supported(version: u16) -> bool {
-    version == RECOVERY_SNAPSHOT_SCHEMA_VERSION
+    version == 2 || version == RECOVERY_SNAPSHOT_SCHEMA_VERSION
 }
 
 const fn recovery_snapshot_required(protocol_version: u16, snapshot_schema_version: u16) -> bool {
@@ -3002,6 +3043,114 @@ mod recovery_wire_tests {
             RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             Instant::now() + Duration::from_secs(10),
         )
+    }
+
+    fn schema2_fixture_terminal(alternate: bool) -> Terminal {
+        let mut terminal =
+            Terminal::with_scrollback_limit(festerm_core::Dimensions::new(8, 3).unwrap(), 4096)
+                .unwrap();
+        terminal.ingest(b"old0\r\nold1\r\nold2\r\nold3\r\nold4\r\n");
+        terminal.ingest(b"\x1b]2;schema2 fixture\x07\x1b[?2004h");
+        terminal.ingest("\x1b]8;;https://example.invalid/\x07e\u{301}\x1b]8;;\x07".as_bytes());
+        if alternate {
+            terminal.ingest(b"\x1b[?1049h\x1b[2;3H\x1b[1;32mALT \xe2\x98");
+        } else {
+            terminal.ingest(b"\x1b[38;2;12;");
+        }
+        terminal
+    }
+
+    fn assert_migrated_terminal_matches(actual: &Terminal, expected: &Terminal) {
+        let actual = serde_json::to_value(actual.recovery_clone()).unwrap();
+        let mut expected = serde_json::to_value(expected.recovery_clone()).unwrap();
+        expected["screen_generation"] = actual["screen_generation"].clone();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn schema2_recovery_migrates_released_snapshots_and_preserves_live_state() {
+        for (wire, alternate, continuation) in [
+            (
+                include_bytes!("../tests/fixtures/schema2-primary.bin").as_slice(),
+                false,
+                b"34;56mX".as_slice(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/schema2-alternate.bin").as_slice(),
+                true,
+                b"\x83".as_slice(),
+            ),
+        ] {
+            let measurement = WireMeasurement::start();
+            let mut recovered = read_attach_recovery_terminal(
+                &mut io::Cursor::new(wire),
+                PROTOCOL_VERSION,
+                2,
+                Instant::now() + Duration::from_secs(1),
+            )
+            .unwrap()
+            .unwrap();
+            let mut expected = schema2_fixture_terminal(alternate);
+            assert_eq!(recovered.screen_generation(), 1);
+            assert_eq!(measurement.read().before_restore, Some(0));
+            assert_migrated_terminal_matches(&recovered, &expected);
+
+            for terminal in [&mut recovered, &mut expected] {
+                terminal.ingest(continuation);
+                terminal.ingest(b"\x1b[?1049l\x1b[?1049h\x1b[?1049l");
+                terminal
+                    .resize(festerm_core::Dimensions::new(6, 4).unwrap())
+                    .unwrap();
+                terminal.set_scrollback_limit(2048);
+                terminal.ingest("future-e\u{301}-\u{1f642}\r\n".repeat(100).as_bytes());
+            }
+            assert!(recovered.screen_generation() > 1);
+            assert_migrated_terminal_matches(&recovered, &expected);
+            let wire = encode_recovery_snapshot(&recovered).unwrap();
+            let current = read_snapshot(&mut io::Cursor::new(wire)).unwrap().unwrap();
+            assert_eq!(current.recovery_clone(), recovered.recovery_clone());
+        }
+    }
+
+    #[test]
+    fn schema2_recovery_keeps_validation_bounds_and_rejects_mislabelled_payloads() {
+        let valid = include_bytes!("../tests/fixtures/schema2-primary.bin");
+        let invalid = include_bytes!("../tests/fixtures/schema2-queued-reply.bin");
+        let measurement = WireMeasurement::start();
+        let error = read_attach_recovery_terminal(
+            &mut io::Cursor::new(invalid),
+            PROTOCOL_VERSION,
+            2,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("queued replies or input"));
+        assert_eq!(measurement.read().before_restore, None);
+        assert_eq!(measurement.read().current, 0);
+
+        let mut trailing = valid.to_vec();
+        trailing.push(0);
+        let length = (trailing.len() - RECOVERY_HEADER_BYTES) as u64;
+        trailing[RECOVERY_MAGIC.len()..RECOVERY_HEADER_BYTES]
+            .copy_from_slice(&length.to_be_bytes());
+        let mut oversized = Vec::from(RECOVERY_MAGIC);
+        oversized.extend_from_slice(&((MAX_RECOVERY_SNAPSHOT_BYTES + 1) as u64).to_be_bytes());
+        for (wire, schema) in [
+            (trailing.as_slice(), 2),
+            (&valid[..valid.len() - 1], 2),
+            (oversized.as_slice(), 2),
+            (valid.as_slice(), RECOVERY_SNAPSHOT_SCHEMA_VERSION),
+        ] {
+            assert!(read_attach_recovery_terminal(
+                &mut io::Cursor::new(wire),
+                PROTOCOL_VERSION,
+                schema,
+                Instant::now() + Duration::from_secs(1),
+            )
+            .is_err());
+            assert_eq!(measurement.read().before_restore, None);
+            assert_eq!(measurement.read().current, 0);
+        }
     }
 
     #[test]
@@ -4867,6 +5016,23 @@ mod registry_filtering_tests {
             .to_string();
         assert!(error.contains("snapshot schema"));
         assert!(error.contains(&RECOVERY_SNAPSHOT_SCHEMA_VERSION.to_string()));
+    }
+
+    #[test]
+    fn schema2_registry_record_remains_attachable_without_relabelling() {
+        let registry: SessionRegistry = serde_json::from_str(
+            r#"{"sessions":{"saved":{"name":"saved","pid":42,"socket":"saved.sock",
+            "protocol_version":2,"snapshot_schema_version":2}}}"#,
+        )
+        .unwrap();
+        let record = registry.sessions.get("saved").unwrap();
+        ensure_protocol_compatible(record).unwrap();
+        assert_eq!(record.snapshot_schema_version, 2);
+        for schema in [0, 1, RECOVERY_SNAPSHOT_SCHEMA_VERSION + 1] {
+            let mut unsupported = record.clone();
+            unsupported.snapshot_schema_version = schema;
+            assert!(ensure_protocol_compatible(&unsupported).is_err());
+        }
     }
 
     #[test]

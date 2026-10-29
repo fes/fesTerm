@@ -1103,6 +1103,60 @@ impl FesTermApp {
         }
     }
 
+    pub(super) fn show_native_termination_confirmation(
+        &mut self,
+        context: &egui::Context,
+        escape: bool,
+    ) {
+        let Some(pending) = self.overlays.pending_native_termination.as_ref().cloned() else {
+            return;
+        };
+        let mut cancel = escape;
+        let mut confirm = false;
+        crate::software_background::show_modal(
+            context,
+            egui::Modal::new(egui::Id::new("native_session_termination_confirmation"))
+                .backdrop_color(egui::Color32::from_black_alpha(128)),
+            |ui| {
+                prepare_confirmation(ui, context, 400.0);
+                confirmation_body(ui, |ui| {
+                    ui.heading("Terminate native session?");
+                    ui.add_space(6.0);
+                    ui.label(format!(
+                        "This ends '{}' and its running processes. Its terminal state \
+                         will be discarded and cannot be reattached. Saved profiles are unchanged.",
+                        pending.session.name,
+                    ));
+                });
+                ui.add_space(12.0);
+                ui.horizontal_wrapped(|ui| {
+                    let cancel_button = dialog_action(ui, ActionButtonRole::Secondary, "Cancel");
+                    if !pending.cancel_focus_requested {
+                        cancel_button.request_focus();
+                    }
+                    cancel |= cancel_button.clicked();
+                    confirm =
+                        dialog_action(ui, ActionButtonRole::DangerOutline, "Terminate session")
+                            .clicked();
+                });
+            },
+        );
+        if let Some(current) = self.overlays.pending_native_termination.as_mut() {
+            current.cancel_focus_requested = true;
+        }
+        if cancel {
+            self.overlays.pending_native_termination = None;
+        } else if confirm {
+            self.overlays.pending_native_termination = None;
+            self.state.dispatch(
+                AppCommand::TerminateUnattachedSession {
+                    session: pending.session,
+                },
+                context,
+            );
+        }
+    }
+
     pub(super) fn cancel_settings_reset_confirmation(&mut self) {
         self.overlays.pending_settings_reset = None;
     }

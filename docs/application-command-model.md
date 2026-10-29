@@ -64,6 +64,14 @@ lifecycle generation while **Confirm before closing live sessions** is on,
 and dispatches `CloseTab` immediately when that preference is off. Widgets and
 individual invocation routes never interpret the preference themselves. Only
 a revalidated confirmation dispatches `CloseTab` in the confirming mode.
+
+Native Running Sessions termination follows the same composition-owned
+confirmation rule, independently of the live-tab close preference.
+`TerminateUnattachedSession` carries the discovered name/PID/creation
+time/endpoint; the bounded helper revalidates that exact, still-unattached
+generation under the registry lock before destructive work. Widgets only
+dispatch intent; cancellation does not start a helper or remove a profile.
+
 Explicit terminal clipboard reads carry request identity, originating tab,
 transport generation and input-ownership epoch; cancellation/supersession
 cannot retarget a late callback. Already supplied native-key payloads are used

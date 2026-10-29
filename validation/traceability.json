@@ -312,6 +312,34 @@
       "status": "automated"
     },
     {
+      "id": "launcher-native-session-termination",
+      "edges": [
+        "LAUNCH-22"
+      ],
+      "requirements": [
+        "docs/gui-design.md#session-launcher",
+        "docs/application-command-model.md#required-properties"
+      ],
+      "decisions": [
+        "ADR-0014",
+        "ADR-0025"
+      ],
+      "automated_tests": [
+        "native_session_overflow_and_right_click_dispatch_generation_pinned_termination",
+        "native_termination_confirmation_defaults_to_cancel_and_escape_never_launches",
+        "native_termination_is_bounded_refreshes_inventory_and_surfaces_failures",
+        "kill_unattached_requires_a_complete_valid_generation_identity",
+        "kill_unattached_refuses_replaced_or_attached_generations_before_signalling",
+        "kill_unattached_cleans_only_the_confirmed_generation_and_retains_failed_retries",
+        "tmux_and_screen_sessions_appear_in_their_own_labeled_widgets_and_dispatch_resume"
+      ],
+      "manual_scenarios": [
+        "CP-11",
+        "CP-12"
+      ],
+      "status": "partial"
+    },
+    {
       "id": "sftp-launcher",
       "edges": [
         "LAUNCH-09"
@@ -2465,6 +2493,9 @@
         "recovery_encoding_enforces_the_exact_payload_limit",
         "recovery_wire_refuses_invalid_state_before_capacity_restoration",
         "recovery_wire_refuses_trailing_truncated_and_oversized_payloads",
+        "schema2_recovery_migrates_released_snapshots_and_preserves_live_state",
+        "schema2_recovery_keeps_validation_bounds_and_rejects_mislabelled_payloads",
+        "schema2_registry_record_remains_attachable_without_relabelling",
         "native_windows_packaged_helper_can_be_replaced_while_staged_daemon_remains_usable",
         "native_windows_versioned_helper_installs_beside_a_live_legacy_daemon",
         "windows_packaged_helper_prefers_the_immutable_release_name",
