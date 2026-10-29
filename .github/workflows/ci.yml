@@ -153,7 +153,7 @@ jobs:
       - name: Install libudev headers for serial-port device enumeration
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get install -y libudev-dev pkg-config
-      - name: Keep headless Vulkan validation without optional loader object naming
+      - name: Avoid optional Vulkan object naming in headless tests
         if: matrix.os == 'ubuntu-latest'
         run: |
           echo "WGPU_DEBUG=0" >> "$GITHUB_ENV"
