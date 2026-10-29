@@ -153,6 +153,11 @@ jobs:
       - name: Install libudev headers for serial-port device enumeration
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get install -y libudev-dev pkg-config
+      - name: Avoid optional Vulkan object naming in headless tests
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          echo "WGPU_DEBUG=0" >> "$GITHUB_ENV"
+          echo "WGPU_VALIDATION=1" >> "$GITHUB_ENV"
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Check the excluded vendored text-selection library
         run: cargo test -p egui --lib

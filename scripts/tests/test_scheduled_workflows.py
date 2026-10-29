@@ -6,6 +6,28 @@ import unittest
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 
 
+class HeadlessVulkanWorkflowTests(unittest.TestCase):
+    def test_linux_validation_disables_only_optional_vulkan_debugging(self):
+        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        quality = ci.split("\n  quality:\n", 1)[1]
+        self.assertIn(
+            "      - name: Avoid optional Vulkan object naming in headless tests\n"
+            "        if: matrix.os == 'ubuntu-latest'\n"
+            "        run: |\n"
+            '          echo "WGPU_DEBUG=0" >> "$GITHUB_ENV"\n'
+            '          echo "WGPU_VALIDATION=1" >> "$GITHUB_ENV"',
+            quality,
+        )
+
+        release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+        validate = release.split("\n  validate:\n", 1)[1].split("\n  macos:\n", 1)[0]
+        self.assertIn(
+            '    env:\n      WGPU_DEBUG: "0"\n      WGPU_VALIDATION: "1"',
+            validate,
+        )
+        self.assertIn("      - run: cargo test --workspace", validate)
+
+
 class ScheduledWorkflowTests(unittest.TestCase):
     def test_fuzz_explicitly_selects_nightly_over_the_repository_toolchain(self):
         workflow = (WORKFLOWS / "fuzz.yml").read_text(encoding="utf-8")

@@ -2,6 +2,22 @@
 
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
+
+## Keeping headless Vulkan tests out of the loader's debug-name fault
+
+The required Ubuntu application tests were dying mid-suite with SIGSEGV on
+main and on the WARP follow-up, before Rust could report a test outcome.
+A local Linux reproduction under GDB identified the Vulkan loader's
+`vkSetDebugUtilsObjectNameEXT` path while naming a staging buffer, not
+application shutdown. Hosted Linux validation now omits optional native object
+naming while explicitly retaining wgpu validation and the real software Vulkan
+pixel tests. Native validation remains requested, but this configuration does
+not claim that Vulkan validation-layer messages are routed through wgpu while
+native debug utilities are disabled. It does not skip, serialize or retry the
+suite, change rendering algorithms, or alter production renderer defaults. The
+underlying loader fault is not claimed repaired by this test-environment
+configuration.
+
 ## Keeping document scroll positions independent
 
 Opening another Markdown document also exposed window-local scroll IDs: new
