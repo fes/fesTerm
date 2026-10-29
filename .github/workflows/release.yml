@@ -26,6 +26,9 @@ jobs:
     name: Validate release
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      WGPU_DEBUG: "0"
+      WGPU_VALIDATION: "1"
     outputs:
       publish: ${{ steps.release.outputs.publish }}
       tag: ${{ steps.release.outputs.tag }}
