@@ -412,6 +412,24 @@ impl DocumentSyntax {
         &self.spans
     }
 
+    #[cfg(feature = "test-support")]
+    pub fn spans_without_budget_for_test(
+        &mut self,
+        text: &str,
+        revision: u64,
+        range: Range<usize>,
+    ) -> &[Span] {
+        let range = clamp_to_char_boundaries(text, range);
+        if self.parsed_revision != Some(revision) {
+            self.reparse_with_options(text, revision, Some(tree_sitter::ParseOptions::new()));
+        }
+        if self.cached_range.as_ref() != Some(&range) {
+            self.spans = self.query_range(text, &range);
+            self.cached_range = Some(range);
+        }
+        &self.spans
+    }
+
     fn reparse(&mut self, text: &str, revision: u64) {
         self.reparse_with_options(text, revision, None);
     }

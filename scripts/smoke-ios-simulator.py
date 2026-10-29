@@ -24,6 +24,8 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_ID = "org.festerm.mobile-spike"
 EXECUTABLE = "festerm-mobile"
+FIRST_UI_OBSERVATION_POLLS = 3
+FIRST_UI_MARKER = "festerm-mobile: first UI built"
 
 
 def choose_devices(inventory: dict, sdk_version: str) -> list[dict]:
@@ -54,7 +56,7 @@ class Runner:
     def __init__(self, log: Path):
         self.log = log
 
-    def __call__(self, *args: str, timeout: int = 45, check: bool = True) -> str:
+    def __call__(self, *args: str, timeout: float = 45, check: bool = True) -> str:
         print("[ios-smoke] " + shlex.join(args), flush=True)
         with self.log.open("a", encoding="utf-8") as stream:
             stream.write("$ " + shlex.join(args) + "\n")
@@ -94,6 +96,24 @@ def verify_process(run, pid: int) -> None:
         raise RuntimeError(f"Launched process {pid} is no longer {EXECUTABLE}")
 
 
+def first_ui_marker_present(stderr: Path) -> bool:
+    return stderr.exists() and FIRST_UI_MARKER in stderr.read_text(errors="replace")
+
+
+def observe_first_ui(stderr: Path, pause=time.sleep, monotonic=time.monotonic,
+                     marker_present=first_ui_marker_present
+                     ) -> tuple[int, float, int | None, float | None]:
+    started = monotonic()
+    first_poll = None
+    first_seconds = None
+    for poll in range(1, FIRST_UI_OBSERVATION_POLLS + 1):
+        pause(1)
+        if first_poll is None and marker_present(stderr):
+            first_poll = poll
+            first_seconds = monotonic() - started
+    return FIRST_UI_OBSERVATION_POLLS, monotonic() - started, first_poll, first_seconds
+
+
 def exercise_device(run, spec: dict, bundle: Path, output: Path,
                     existing: set[str], pause=time.sleep) -> dict:
     result = dict(spec, status="running", captures=[], cleanup_errors=[])
@@ -118,18 +138,48 @@ def exercise_device(run, spec: dict, bundle: Path, output: Path,
             if not match or int(match[1]) <= 0:
                 raise RuntimeError("simctl launch did not return a valid application PID")
             pid = int(match[1])
-            pause(3)  # Bounded startup grace period, not a rendering assertion.
-            verify_process(run, pid)
+            readiness_polls, startup_grace_seconds, observed_poll, observed_seconds = (
+                observe_first_ui(stderr, pause)
+            )
+            liveness_error = None
+            try:
+                verify_process(run, pid)
+            except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                liveness_error = str(error)
             screenshot = output / f"{spec['family'].lower()}-{phase}.png"
-            run("xcrun", "simctl", "io", owned, "screenshot", "--type=png", str(screenshot))
-            dimensions = png_dimensions(screenshot)
-            verify_process(run, pid)
-            result["captures"].append({"phase": phase, "pid": pid,
-                                       "screenshot": screenshot.name, "pixels": dimensions})
-            # A live process can have failed renderer initialization. Preserve
-            # its screenshot and logs, but never pass without reaching the UI.
-            first_ui = stderr.exists() and "festerm-mobile: first UI built" in stderr.read_text(errors="replace")
-            result["captures"][-1].update(first_ui_built=first_ui, stderr=stderr.name)
+            capture = {"phase": phase, "pid": pid, "screenshot": screenshot.name,
+                       "screenshot_status": "pending",
+                       "readiness_polls": readiness_polls,
+                       "startup_grace_seconds": startup_grace_seconds,
+                       "first_ui_observed_at": (
+                           f"poll-{observed_poll}" if observed_poll is not None else None
+                       ),
+                       "first_ui_observed_after_seconds": observed_seconds,
+                       "first_ui_built": observed_poll is not None,
+                       "stderr": stderr.name}
+            if liveness_error is not None:
+                capture["liveness_error"] = liveness_error
+            result["captures"].append(capture)
+            if liveness_error is not None:
+                capture["screenshot_status"] = "not-attempted"
+                raise RuntimeError(liveness_error)
+            try:
+                run("xcrun", "simctl", "io", owned, "screenshot", "--type=png", str(screenshot))
+                capture["pixels"] = png_dimensions(screenshot)
+                capture["screenshot_status"] = "pass"
+            except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                capture["screenshot_status"] = "fail"
+                capture["screenshot_error"] = str(error)
+                raise
+            try:
+                verify_process(run, pid)
+            except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                capture["liveness_error"] = str(error)
+                raise
+            first_ui = observed_poll is not None or first_ui_marker_present(stderr)
+            if observed_poll is None and first_ui:
+                capture["first_ui_observed_at"] = "post-capture"
+            capture["first_ui_built"] = first_ui
             run("xcrun", "simctl", "terminate", owned, BUNDLE_ID)
             if not first_ui:
                 raise RuntimeError(f"Application never built its first UI; inspect {stderr.name}")

@@ -252,11 +252,25 @@ preview with repository-owned fixtures; Reset restores terminal content.
 The iOS workflow's nightly/manual isolated Simulator smoke automates install,
 launch survival, first UI callback, terminate/relaunch and PNG capture for
 `MOB-01`/`MOB-03`.
-A live process without the UI callback fails; app stderr is retained. Screenshots still
-require visual review; it does not qualify gestures or background/resume.
+A successful launch observes the first-UI marker once per second during the
+existing three-second startup grace and records the actual grace plus whether
+the marker appeared at poll 1, 2 or 3. The prior exact-process check,
+screenshot/PNG validation, second liveness check and final marker evaluation
+then run unchanged; a marker first observed post-capture remains accepted.
+No application/process deadline or pass/fail guard changes. A process without
+the callback or one that dies still yields failed evidence. App stderr is
+retained. Screenshots still require visual review; this does not qualify
+gestures or background/resume.
+Pre-capture liveness failure records readiness and `not-attempted`, then blocks
+the screenshot exactly as before.
+An in-memory readiness record is created before capture and persisted after a
+controlled screenshot timeout or invalid PNG unwinds; hard job termination can
+still preempt the final manifest write.
 Read-only cold-service preparation (#303) runs before compilation under a
 pinned toolchain. Its `prepared` receipt is not a passed `MOB-01`/`MOB-03`
-application run; inventory, launch/capture and cleanup checks remain unchanged.
+application run; no failed attempt is retried, and inventory, command
+deadlines for CoreSimulator application operations, ownership, capture and
+cleanup guards remain unchanged.
 Affected PRs retain mobile unit/dependency checks, device compilation and
 Simulator app builds, including vendor-only epaint edits; they skip
 CoreSimulator preparation and runtime smoke while iOS is experimental.

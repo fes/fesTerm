@@ -242,6 +242,15 @@ impl OpenDocument {
         syntax.spans(text.text(), text.revision(), range)
     }
 
+    #[cfg(test)]
+    pub(crate) fn syntax_spans_without_budget_for_test(
+        &mut self,
+        range: std::ops::Range<usize>,
+    ) -> &[festerm_syntax::Span] {
+        let Self { text, syntax, .. } = self;
+        syntax.spans_without_budget_for_test(text.text(), text.revision(), range)
+    }
+
     /// Why this document has no colour, when it has none.
     pub(crate) fn syntax_status(&self) -> SyntaxStatus {
         self.syntax.status()
