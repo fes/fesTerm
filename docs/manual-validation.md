@@ -15,6 +15,22 @@ technology, visual judgment, reference-application screen semantics, or a real
 usability question. A reproducible failure should become the smallest suitable
 fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
+## Proposed direct Dev Tunnels bridge (DT-01 through DT-05)
+
+These are deferred evidence obligations for proposed
+[ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md), not instructions to
+enable an existing feature or claims of completed native qualification.
+Use dedicated, explicitly authorized test tunnels/sessions; never alter or
+terminate unrelated shells. Keep all failed attempts as failed evidence.
+
+| ID | Scenario | Evidence class | Prerequisite / current result |
+| --- | --- | --- | --- |
+| DT-01 | Provision a private dedicated tunnel with scoped host/connect tokens; verify selected host binding, denied/wrong/expired credentials, secret redaction, applicable service policy and cleanup ownership. | Real-service functional + security/policy | Deferred: reviewed bridge/backend, supported token provisioning, authorized controlled host and service-use review. Native Entra/MFA/Conditional Access remains a separate future scope. |
+| DT-02 | Attach a supported exact remote session; exercise PowerShell/cmd on native Windows and shells/TUIs on Linux/macOS, Unicode, keyboard/mouse modes, Ctrl+C, resize and output/backpressure. | Real-service functional + native usability | Deferred: DT-01 and deterministic protocol/bounds tests; automate controlled PTY checks, retain physical-input/rendering/accessibility judgments. |
+| DT-03 | Disconnect/restart client and bridge; verify same daemon-owned process and ordered recovery without duplicate replies or stale input; refuse changed identities and unconfirmed takeover. | Controlled lifecycle automation + native functional | Deferred: supported attach/adoption and ownership admission; record actual bridge/daemon/OS versions. |
+| DT-04 | Exercise only advertised inventory/create/terminate operations; reject stale generations, preserve occupied/replacement sessions and verify Cancel defaults and uncertain-result handling. | Deterministic/headless automation + native usability | Deferred: implemented operation subset and command routing. Missing operations are unsupported, not passed by omission. |
+| DT-05 | Rotate/reject/revoke credentials, lose the relay, restart/upgrade the bridge and separately test logoff/reboot/daemon termination boundaries. | Real-service/platform lifecycle + usability | Deferred: DT-01/03; record observed established-stream revocation behavior. No daemon hot-upgrade or reboot-survival claim. |
+
 ## Offline Mermaid (CP-06, CP-15)
 
 Automated coverage renders flowcharts, sequences and representative chart/UML

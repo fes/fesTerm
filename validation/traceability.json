@@ -34,6 +34,32 @@
   ],
   "coverage": [
     {
+      "id": "proposed-dev-tunnels-bridge",
+      "edges": [
+        "TUNNEL-0[1-5]"
+      ],
+      "requirements": [
+        "docs/adr/0053-separate-dev-tunnels-session-bridge.md#decision"
+      ],
+      "decisions": [
+        "ADR-0053"
+      ],
+      "automated_tests": [],
+      "manual_scenarios": [
+        "DT-01",
+        "DT-02",
+        "DT-03",
+        "DT-04",
+        "DT-05"
+      ],
+      "status": "deferred",
+      "prerequisites": [
+        "Reviewed opt-in standalone bridge and remote backend with explicit operation subset and bounded SDK/network integration",
+        "Legitimate scoped-token provisioning, applicable service-use review and authorized controlled remote host",
+        "Deterministic lifecycle/security tests and real-service desktop evidence; native Entra sign-in remains deferred"
+      ]
+    },
+    {
       "id": "root-lifecycle",
       "edges": [
         "ROOT-*"
