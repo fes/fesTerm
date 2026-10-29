@@ -301,6 +301,9 @@ enum CommandSpec {
     Kill {
         name: String,
     },
+    KillUnattached {
+        expected: festerm_sessiond::NativeSessionIdentity,
+    },
     Attach {
         name: String,
     },
@@ -457,13 +460,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } => run_daemon(name, shell, cols, rows, scrollback_limit_bytes),
         CommandSpec::List => run_list(),
         CommandSpec::Kill { name } => run_kill(name),
+        CommandSpec::KillUnattached { expected } => run_kill_unattached(expected),
         CommandSpec::Attach { name } => run_attach(name),
     }
 }
 
 fn parse_args(args: Vec<String>) -> Result<CommandSpec, Box<dyn std::error::Error>> {
     if args.is_empty() {
-        return Err("usage: festerm-sessiond <start|daemon|list|kill|attach> ...".into());
+        return Err(
+            "usage: festerm-sessiond <start|daemon|list|kill|kill-unattached|attach> ...".into(),
+        );
     }
 
     match args[0].as_str() {
@@ -478,6 +484,34 @@ fn parse_args(args: Vec<String>) -> Result<CommandSpec, Box<dyn std::error::Erro
         "kill" => {
             let name = parse_name_only(&args[1..], "kill")?;
             Ok(CommandSpec::Kill { name })
+        }
+        "kill-unattached" => {
+            let [name_flag, name, pid_flag, pid, created_flag, created, endpoint_flag, endpoint] =
+                &args[1..]
+            else {
+                return Err(
+                    "kill-unattached requires name, PID, creation time and endpoint".into(),
+                );
+            };
+            if name_flag != "--name"
+                || pid_flag != "--pid"
+                || created_flag != "--created-at"
+                || endpoint_flag != "--endpoint"
+            {
+                return Err("invalid kill-unattached identity arguments".into());
+            }
+            let pid = pid.parse::<u32>()?;
+            if pid == 0 || endpoint.is_empty() {
+                return Err("invalid kill-unattached identity".into());
+            }
+            Ok(CommandSpec::KillUnattached {
+                expected: festerm_sessiond::NativeSessionIdentity {
+                    name: validate_name(name.clone())?,
+                    pid,
+                    created_at_unix_ms: created.parse()?,
+                    endpoint: endpoint.clone(),
+                },
+            })
         }
         "attach" => {
             let name = parse_name_only(&args[1..], "attach")?;
@@ -687,7 +721,7 @@ fn run_start(
                     )
                 {
                     return Err(format!(
-                        "session '{name}' uses recovery snapshot schema {}, but this helper supports {}",
+                        "session '{name}' uses recovery snapshot schema {}, but this helper supports schemas 2 and {}",
                         record.snapshot_schema_version,
                         festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
                     )
@@ -2398,6 +2432,43 @@ fn run_kill(name: String) -> Result<(), Box<dyn std::error::Error>> {
     })
 }
 
+fn run_kill_unattached(
+    expected: festerm_sessiond::NativeSessionIdentity,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = festerm_sessiond::runtime_root()?;
+    with_registry_lock(|registry| {
+        kill_unattached_registered_session(
+            &root,
+            registry,
+            &expected,
+            terminate_pid,
+            GENERATION_EXIT_TIMEOUT,
+        )
+    })
+}
+
+fn kill_unattached_registered_session(
+    root: &Path,
+    registry: &mut SessionRegistry,
+    expected: &festerm_sessiond::NativeSessionIdentity,
+    terminate: impl FnOnce(u32) -> Result<(), Box<dyn std::error::Error>>,
+    timeout: Duration,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let current = registry
+        .sessions
+        .get(&expected.name)
+        .ok_or("Selected session is no longer registered; refresh Running Sessions")?;
+    if current.name != expected.name
+        || current.pid != expected.pid
+        || current.created_at_unix_ms != expected.created_at_unix_ms
+        || current.socket != expected.endpoint
+        || current.attached
+    {
+        return Err("Selected session was replaced or attached; refresh Running Sessions".into());
+    }
+    kill_registered_session(root, registry, &expected.name, terminate, timeout)
+}
+
 fn kill_registered_session(
     root: &Path,
     registry: &mut SessionRegistry,
@@ -2589,7 +2660,7 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
         && !festerm_sessiond::snapshot_schema_is_supported(record.snapshot_schema_version)
     {
         return Err(format!(
-            "session '{name}' uses recovery snapshot schema {}, but this helper supports {}",
+            "session '{name}' uses recovery snapshot schema {}, but this helper supports schemas 2 and {}",
             record.snapshot_schema_version,
             festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
         )
@@ -5184,6 +5255,141 @@ mod tests {
     fn invalid_names_are_rejected() {
         let err = validate_name("bad/name".to_owned()).unwrap_err();
         assert!(err.to_string().contains("persistent session name"));
+    }
+
+    #[test]
+    fn kill_unattached_requires_a_complete_valid_generation_identity() {
+        let args: Vec<String> = [
+            "kill-unattached",
+            "--name",
+            "demo",
+            "--pid",
+            "123",
+            "--created-at",
+            "456",
+            "--endpoint",
+            "owned-endpoint",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let CommandSpec::KillUnattached { expected } = parse_args(args.clone()).unwrap() else {
+            panic!("expected generation-pinned termination");
+        };
+        assert_eq!(expected.name, "demo");
+        assert_eq!(expected.pid, 123);
+        assert_eq!(expected.created_at_unix_ms, 456);
+        assert_eq!(expected.endpoint, "owned-endpoint");
+        for count in 1..args.len() {
+            assert!(parse_args(args[..count].to_vec()).is_err());
+        }
+        for (index, invalid) in [
+            (2, "bad/name"),
+            (4, "0"),
+            (4, "invalid"),
+            (6, "-1"),
+            (8, ""),
+        ] {
+            let mut invalid_args = args.clone();
+            invalid_args[index] = invalid.into();
+            assert!(parse_args(invalid_args).is_err());
+        }
+        assert!(matches!(
+            parse_args(vec!["kill".into(), "--name".into(), "demo".into()]).unwrap(),
+            CommandSpec::Kill { .. }
+        ));
+    }
+
+    #[test]
+    fn kill_unattached_refuses_replaced_or_attached_generations_before_signalling() {
+        let fixture = GenerationFixture::new();
+        let record = fixture.record("demo", 1);
+        let _lease = fixture.artifacts(&record, true);
+        let expected = festerm_sessiond::NativeSessionIdentity {
+            name: record.name.clone(),
+            pid: record.pid,
+            created_at_unix_ms: record.created_at_unix_ms,
+            endpoint: record.socket.clone(),
+        };
+        for mismatch in 0..5 {
+            let mut current = record.clone();
+            match mismatch {
+                0 => current.pid += 1,
+                1 => current.created_at_unix_ms += 1,
+                2 => current.socket.push_str("-replacement"),
+                3 => current.attached = true,
+                _ => current.name = "different".into(),
+            }
+            let mut registry = SessionRegistry {
+                sessions: BTreeMap::from([("demo".into(), current)]),
+                ..Default::default()
+            };
+            assert!(kill_unattached_registered_session(
+                &fixture.0,
+                &mut registry,
+                &expected,
+                |_| panic!("a stale or attached discovery entry must never signal a process"),
+                Duration::ZERO,
+            )
+            .is_err());
+            assert!(registry.sessions.contains_key("demo"));
+            assert!(generation_lease_path(&fixture.0, &record).exists());
+        }
+        assert!(kill_unattached_registered_session(
+            &fixture.0,
+            &mut SessionRegistry::default(),
+            &expected,
+            |_| panic!("a missing discovery entry must never signal a process"),
+            Duration::ZERO,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn kill_unattached_cleans_only_the_confirmed_generation_and_retains_failed_retries() {
+        let fixture = GenerationFixture::new();
+        let record = fixture.record("demo", 1);
+        let lease = fixture.artifacts(&record, true);
+        let other = fixture.record("other", 2);
+        let _other_lease = fixture.artifacts(&other, true);
+        let expected = festerm_sessiond::NativeSessionIdentity {
+            name: record.name.clone(),
+            pid: record.pid,
+            created_at_unix_ms: record.created_at_unix_ms,
+            endpoint: record.socket.clone(),
+        };
+        let mut registry = SessionRegistry {
+            sessions: BTreeMap::from([
+                ("demo".into(), record.clone()),
+                ("other".into(), other.clone()),
+            ]),
+            ..Default::default()
+        };
+        assert!(kill_unattached_registered_session(
+            &fixture.0,
+            &mut registry,
+            &expected,
+            |_| Err("controlled denial".into()),
+            Duration::from_millis(20),
+        )
+        .is_err());
+        assert!(registry.sessions.contains_key("demo"));
+        kill_unattached_registered_session(
+            &fixture.0,
+            &mut registry,
+            &expected,
+            |pid| {
+                assert_eq!(pid, expected.pid);
+                FileExt::unlock(&lease)?;
+                Ok(())
+            },
+            Duration::from_millis(20),
+        )
+        .unwrap();
+        fixture.assert_removed(&record);
+        assert!(!registry.sessions.contains_key("demo"));
+        assert!(registry.sessions.contains_key("other"));
+        assert!(generation_lease_path(&fixture.0, &other).exists());
     }
 
     #[test]

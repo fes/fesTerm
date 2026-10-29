@@ -712,7 +712,49 @@ pub struct Terminal {
     scrollback: Scrollback,
 }
 
+// Frozen schema-2 field order: generation is synthesized, not consumed from the wire.
+#[derive(Deserialize)]
+#[serde(remote = "Terminal")]
+struct TerminalSnapshotV2 {
+    parser: Parser,
+    utf8: Utf8Decoder,
+    primary: BufferState,
+    alternate: Option<BufferState>,
+    active_screen: ActiveScreen,
+    #[serde(skip, default = "initial_screen_generation")]
+    screen_generation: u64,
+    modes: TerminalModes,
+    cursor_style: CursorStyle,
+    last_graphic_character: Option<char>,
+    cursor_style_set: bool,
+    tab_stops: Vec<bool>,
+    current_attributes: Attributes,
+    current_protected: bool,
+    protection: ProtectionSource,
+    current_foreground: Color,
+    current_background: Color,
+    title: String,
+    current_hyperlink: Option<Arc<str>>,
+    current_hyperlink_cells_remaining: usize,
+    color_scheme: ColorScheme,
+    reply_queue: Vec<u8>,
+    input_queue: Vec<u8>,
+    reply_queue_overflowed: bool,
+    input_queue_overflowed: bool,
+    scrollback: Scrollback,
+}
+
 impl Terminal {
+    /// Decodes the schema-2 recovery layout, initializing its absent screen generation.
+    ///
+    /// The caller must still validate the snapshot and restore its allocation capacities.
+    pub fn deserialize_recovery_snapshot_v2<'de, D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        TerminalSnapshotV2::deserialize(deserializer)
+    }
+
     pub fn new(dimensions: Dimensions) -> Result<Self, TerminalError> {
         Self::with_scrollback_limit(dimensions, DEFAULT_SCROLLBACK_LIMIT_BYTES)
     }

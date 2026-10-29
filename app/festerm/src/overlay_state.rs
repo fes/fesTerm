@@ -88,6 +88,12 @@ pub(crate) struct PendingSettingsResetConfirmation {
     pub(crate) cancel_focus_requested: bool,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct PendingNativeTerminationConfirmation {
+    pub(crate) session: festerm_sessiond::UnattachedSession,
+    pub(crate) cancel_focus_requested: bool,
+}
+
 /// The prompt raised when closing the **final** view of a document that is
 /// holding unsaved changes (ADR 0034 §7).
 ///
@@ -246,6 +252,7 @@ pub(crate) struct OverlayState {
     pub(crate) pending_paste: Option<PendingPasteConfirmation>,
     pub(crate) pending_file_drop: Option<PendingFileDropConfirmation>,
     pub(crate) pending_settings_reset: Option<PendingSettingsResetConfirmation>,
+    pub(crate) pending_native_termination: Option<PendingNativeTerminationConfirmation>,
     /// A file the reader asked for that could not be opened, and the reason.
     /// Kept so the refusal is said out loud rather than swallowed.
     pub(crate) open_refusal: Option<OpenRefusalNotice>,
@@ -311,6 +318,7 @@ impl OverlayState {
             || self.pending_document_close.is_some()
             || self.pending_file_drop.is_some()
             || self.pending_settings_reset.is_some()
+            || self.pending_native_termination.is_some()
             || self.port_forward_manager.is_some()
             || self.pending_quit.is_some()
             || self.markdown_file_picker.is_some()

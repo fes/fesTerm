@@ -3,6 +3,27 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Native-session upgrade compatibility and deliberate termination
+
+The v0.11.0 selection-generation field changed the positional recovery snapshot
+from schema 2 to schema 3, inadvertently blocking existing v0.10.4 daemons.
+The reader now explicitly decodes the frozen schema-2 layout, initializes the
+new frontend generation, and applies the same structural/allocation limits
+before adopting it. Existing helpers keep writing schema 2; no shell restart
+or registry relabelling is needed. Independent fixtures produced by the
+unmodified released core cover primary/alternate screens, unfinished input,
+continued output, resize/history, and invalid state. New helpers still write
+only schema 3; unknown layouts are refused rather than guessed.
+
+The native Running Sessions rows now have an overflow/right-click Terminate
+action. Confirmation names the destructive target and defaults to Cancel.
+An off-frame bounded helper request checks the selected generation and its
+unattached state under the registry lock before reusing existing process-tree
+termination and cleanup. This prevents a stale menu from killing a replacement
+or newly attached session. Errors remain visible and discovery refreshes;
+saved definitions and tmux/Screen behavior are unchanged. Native signed-package
+and usability qualification remain open under CP-11/CP-12.
+
 ## v0.11.0: deliberate copying, portable Markdown and bounded native rendering
 
 This feature release packages the merged capabilities and repairs since

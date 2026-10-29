@@ -81,19 +81,23 @@ Operational details of protocol v2:
   version**. The current implementation writes schema **3**; it extends the
   authoritative terminal model with the monotonic screen-buffer generation
   required to reject stale presentation identity across alternate-screen
-  transitions and reset. Schema-2 snapshots and legacy v2 records without a
-  schema field (which deserialize as schema **0**) are rejected before
-  attach/replacement rather than silently taking over a live session with an
-  incompatible snapshot.
+  transitions and reset. Schema-2 snapshots are decoded through their explicit
+  frozen field layout and upgraded in memory, initializing the absent screen
+  generation to **1** before ordinary validation and adoption. Existing
+  daemon/registry generations remain schema 2; relabelling a still-running
+  old writer as schema 3 would be incorrect. New helpers emit only schema 3.
+  Legacy v2 records without a schema field (schema **0**) and unknown schemas
+  remain rejected before attach/replacement; there is no speculative fallback
+  from a failed schema-3 decode.
 - The serialized payload remains the helper's own `bincode` encoding of
   `festerm-core::Terminal`, but it is now decoded under the snapshot byte cap
   and then validated structurally before adoption. Screen dimensions, ring
   indices, scrollback row origins/charges, parser bounds, queued-input/reply
   emptiness, and related invariants must all hold or recovery aborts without
   replacing local state. This is intentionally a **same-protocol-epoch**
-  contract, not a long-term archival format: future incompatible layout
-  changes require a new snapshot schema and the existing registry/version
-  negotiation.
+  contract with an explicit schema-2 adapter, not a long-term archival format:
+  future incompatible layout changes require a new snapshot schema and the
+  existing registry/version negotiation or another reviewed adapter.
 - Schemas 2 and 3 retain allocation-capacity accounting for cell text and history
   vectors. Text length is not equivalent to owned capacity, and ordinary
   serialization/clone can otherwise change future history eviction. Charges
@@ -212,6 +216,9 @@ of creating a second, weaker "recovery state" format inside the daemon.
 Changes implementing this ADR must provide evidence for:
 
 - protocol-v2 snapshot decode/reattach handling in the library client,
+- released schema-2 fixtures preserving parser/UTF-8 fragments, primary and
+  alternate screens, history accounting and subsequent schema-3 round trips;
+  supported registry negotiation without relabelling the live daemon;
 - daemon takeover tests proving retained state survives reconnects, resize
   changes, and frontend-owned mirror-control operations,
 - native daemon integration proving large (>1 MiB) output and mode-bearing

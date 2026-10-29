@@ -3056,7 +3056,10 @@ fn show_session_group(
             for (offset, item) in items.iter().enumerate().take(end).skip(first) {
                 let identity = match item.kind {
                     LauncherItemKind::ResumeSession(session) => {
-                        format!("native:{}", session.endpoint)
+                        format!(
+                            "native:{}:{}:{}",
+                            session.endpoint, session.pid, session.created_at_unix_ms
+                        )
                     }
                     LauncherItemKind::ResumeMultiplexerSession(provider, session) => {
                         format!("{provider:?}:{}", session.match_key)
@@ -3087,7 +3090,8 @@ fn show_session_row(
     now_unix_seconds: Option<u64>,
     command: &mut Option<AppCommand>,
 ) {
-    ui.horizontal(|ui| {
+    let mut text_response = None;
+    let row = ui.horizontal(|ui| {
         ui.set_height(44.0);
         let (mark, _) =
             ui.allocate_exact_size(session_mark_size(item.mark().0, 24.0), Sense::hover());
@@ -3095,7 +3099,7 @@ fn show_session_row(
         ui.add_space(8.0);
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.label(
+            let name_response = ui.label(
                 egui::RichText::new(&item.label)
                     .size(LAUNCHER_BODY_TEXT_SIZE)
                     .color(theme::TEXT_PRIMARY),
@@ -3112,19 +3116,58 @@ fn show_session_row(
                     }
                 })
                 .unwrap_or_else(|| item.description.clone());
-            ui.label(
+            let subtitle_response = ui.label(
                 egui::RichText::new(subtitle)
                     .size(LAUNCHER_DETAIL_TEXT_SIZE)
                     .color(theme::TEXT_SECONDARY),
             );
+            text_response = Some(name_response | subtitle_response);
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let LauncherItemKind::ResumeSession(session) = item.kind {
+                let name = format!("More actions for native session {}", item.label);
+                let menu = launcher_button(ui, Icon::OverflowVertical, "", Some(&name), false);
+                egui::Popup::menu(&menu).show(|ui| {
+                    if let Some(action) = show_native_session_menu(ui, session) {
+                        *command = Some(action);
+                    }
+                });
+            }
             let name = format!("Reattach {}", item.label);
             if launcher_button(ui, Icon::Reattach, "Reattach", Some(&name), selected).clicked() {
                 *command = Some(item.command());
             }
         });
     });
+    if let LauncherItemKind::ResumeSession(session) = item.kind {
+        // Selectable labels can own the click instead of the row background.
+        let response = row.response.interact(Sense::click()) | text_response.unwrap();
+        response.context_menu(|ui| {
+            if let Some(action) = show_native_session_menu(ui, session) {
+                *command = Some(action);
+            }
+        });
+    }
+}
+
+fn show_native_session_menu(
+    ui: &mut Ui,
+    session: &festerm_sessiond::UnattachedSession,
+) -> Option<AppCommand> {
+    if ui.button("Reattach").clicked() {
+        ui.close();
+        return Some(AppCommand::ResumeUnattachedSession {
+            session: session.clone(),
+        });
+    }
+    ui.separator();
+    if ui.button("Terminate session...").clicked() {
+        ui.close();
+        return Some(AppCommand::TerminateUnattachedSession {
+            session: session.clone(),
+        });
+    }
+    None
 }
 
 /// A labelled icon button in the New Session surface's own visual language.
@@ -5897,6 +5940,51 @@ mod tests {
     }
 
     #[test]
+    fn native_session_overflow_and_right_click_dispatch_generation_pinned_termination() {
+        for right_click in [false, true] {
+            let selected = festerm_sessiond::UnattachedSession {
+                pid: 123,
+                endpoint: "owned-endpoint".into(),
+                name: "orphaned".into(),
+                shell: "owned-shell".into(),
+                arguments: Vec::new(),
+                working_directory: None,
+                created_at_unix_ms: 456,
+            };
+            let mut harness = harness_with_profiles_grid_and_resumable(
+                Vec::new(),
+                false,
+                1240.0,
+                vec![selected.clone()],
+            );
+            harness.run();
+            if right_click {
+                harness.get_by_label("orphaned").click_secondary();
+            } else {
+                harness
+                    .get_by_label("More actions for native session orphaned")
+                    .click();
+            }
+            harness.run();
+            harness.run();
+            assert!(
+                harness.state().command.is_none(),
+                "opening a menu must not reattach"
+            );
+            assert!(
+                harness.query_by_label("Terminate session...").is_some(),
+                "termination menu must open; right_click={right_click}"
+            );
+            harness.get_by_label("Terminate session...").click();
+            harness.run();
+            assert!(matches!(
+                &harness.state().command,
+                Some(AppCommand::TerminateUnattachedSession { session }) if session == &selected
+            ));
+        }
+    }
+
+    #[test]
     fn tmux_and_screen_sessions_appear_in_their_own_labeled_widgets_and_dispatch_resume() {
         use crate::multiplexer_sessions::MultiplexerSession;
 
@@ -5924,6 +6012,12 @@ mod tests {
         let tmux_top = harness.get_by_label("Reattach build").rect().top();
         let screen_heading_top = harness.get_by_label("screen").rect().top();
         let screen_top = harness.get_by_label("Reattach main").rect().top();
+        assert!(harness
+            .query_by_label("More actions for native session build")
+            .is_none());
+        assert!(harness
+            .query_by_label("More actions for native session main")
+            .is_none());
 
         assert!(
             tmux_heading_top < tmux_top

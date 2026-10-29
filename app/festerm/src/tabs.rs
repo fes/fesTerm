@@ -2371,6 +2371,10 @@ pub enum AppCommand {
         session: crate::multiplexer_sessions::MultiplexerSession,
     },
     RefreshRunningSessions,
+    /// The composition root confirms before dispatching this destructive action.
+    TerminateUnattachedSession {
+        session: festerm_sessiond::UnattachedSession,
+    },
     /// Resets chip layout and status-bar visibility to their defaults after
     /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
     /// user-configurable").
@@ -2575,6 +2579,11 @@ impl Drop for PendingResume {
     }
 }
 
+struct PendingNativeTermination {
+    receiver: std::sync::mpsc::Receiver<Result<(), String>>,
+    handle: std::thread::JoinHandle<()>,
+}
+
 pub struct AppState {
     keyboard_bindings: festerm_config::KeyboardBindings,
     #[cfg(test)]
@@ -2582,6 +2591,7 @@ pub struct AppState {
     pub discovery: crate::discovery::Discovery,
     pub resume_error: Option<String>,
     pending_resume: Option<PendingResume>,
+    pending_native_termination: Option<PendingNativeTermination>,
     tabs: Vec<Tab>,
     active: TabId,
     /// Which tabs were looked at, oldest first, so that closing the active tab
@@ -2715,6 +2725,7 @@ impl AppState {
             discovery: Default::default(),
             resume_error: None,
             pending_resume: None,
+            pending_native_termination: None,
             tabs,
             active,
             activation_history: Vec::new(),
@@ -3776,6 +3787,20 @@ impl AppState {
                 self.discovery.refresh();
                 self.resume_error = None;
             }
+            AppCommand::TerminateUnattachedSession { session } => {
+                self.begin_native_termination(context, move || {
+                    let command = festerm_sessiond::terminate_unattached_session_command(&session)
+                        .map_err(|error| error.to_string())?;
+                    let output =
+                        crate::local_command::output(command, std::time::Duration::from_secs(8))?
+                            .ok_or("fesTerm session helper is unavailable")?;
+                    if output.status.success() {
+                        Ok(())
+                    } else {
+                        Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+                    }
+                });
+            }
             AppCommand::ResumeUnattachedSession { session } => {
                 let context = context.clone();
                 self.begin_resume(move || {
@@ -4783,7 +4808,10 @@ impl AppState {
         &mut self,
         start: impl FnOnce() -> Result<SessionTab, String> + Send + 'static,
     ) {
-        if self.pending_resume.is_some() || !self.show_resumable_sessions {
+        if self.pending_resume.is_some()
+            || self.pending_native_termination.is_some()
+            || !self.show_resumable_sessions
+        {
             return;
         }
         self.resume_error = None;
@@ -4817,6 +4845,45 @@ impl AppState {
         }
     }
 
+    pub fn native_termination_pending(&self) -> bool {
+        self.pending_native_termination.is_some()
+    }
+
+    fn begin_native_termination(
+        &mut self,
+        context: &egui::Context,
+        terminate: impl FnOnce() -> Result<(), String> + Send + 'static,
+    ) {
+        if !self.show_resumable_sessions || self.pending_native_termination.is_some() {
+            return;
+        }
+        if self.pending_resume.is_some() {
+            self.resume_error =
+                Some("Reattach is still in progress. Try again when it finishes.".into());
+            return;
+        }
+        self.resume_error = None;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let context = context.clone();
+        match std::thread::Builder::new()
+            .name("native-session-terminate".into())
+            .spawn(move || {
+                let _ = sender.send(terminate());
+                context.request_repaint();
+            }) {
+            Ok(handle) => {
+                self.pending_native_termination =
+                    Some(PendingNativeTermination { receiver, handle });
+            }
+            Err(error) => {
+                self.resume_error = Some(format!(
+                    "Could not start Terminate: {error}. Refresh to retry."
+                ));
+                self.discovery.refresh();
+            }
+        }
+    }
+
     pub fn update_running_sessions(&mut self, context: &egui::Context) {
         // Only the Launcher shows Running Sessions, and discovery costs a
         // `tmux`/`screen`/daemon probe every couple of seconds. Now that the
@@ -4844,7 +4911,23 @@ impl AppState {
             }
             self.discovery.refresh();
         }
-        if self.pending_resume.is_some() {
+        if self
+            .pending_native_termination
+            .as_ref()
+            .is_some_and(|pending| pending.handle.is_finished())
+        {
+            let pending = self.pending_native_termination.take().unwrap();
+            let _ = pending.handle.join();
+            if let Err(error) = pending
+                .receiver
+                .try_recv()
+                .unwrap_or_else(|_| Err("Termination worker failed".into()))
+            {
+                self.resume_error = Some(format!("Could not terminate: {error} Refresh Running Sessions and try again. No saved profile was removed."));
+            }
+            self.discovery.refresh();
+        }
+        if self.pending_resume.is_some() || self.pending_native_termination.is_some() {
             context.request_repaint_after(std::time::Duration::from_millis(25));
         }
     }
@@ -9503,6 +9586,49 @@ mod tests {
         }
         assert_eq!(state.tabs().len(), 1);
         assert!(matches!(state.active_tab().content, TabContent::Launcher));
+    }
+
+    #[test]
+    fn native_termination_is_bounded_refreshes_inventory_and_surfaces_failures() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.show_resumable_sessions = false;
+        state.begin_native_termination(&context, || panic!("disabled action must not launch"));
+        assert!(!state.native_termination_pending());
+        state.show_resumable_sessions = true;
+        let (release, wait) = std::sync::mpsc::sync_channel(1);
+        state.begin_native_termination(&context, move || {
+            wait.recv_timeout(std::time::Duration::from_secs(3))
+                .unwrap();
+            Err("selected generation is now attached".into())
+        });
+        for _ in 0..1000 {
+            state.begin_native_termination(&context, || {
+                panic!("duplicate termination must not launch")
+            });
+            state.begin_resume(|| panic!("reattach must not race termination"));
+        }
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+        while state.native_termination_pending() {
+            assert!(std::time::Instant::now() < deadline);
+            state.update_running_sessions(&context);
+            std::thread::yield_now();
+        }
+        assert!(state
+            .resume_error
+            .as_deref()
+            .unwrap()
+            .contains("now attached"));
+        assert_eq!(state.tabs().len(), 1);
+        state.begin_native_termination(&context, || Ok(()));
+        while state.native_termination_pending() {
+            assert!(std::time::Instant::now() < deadline);
+            state.update_running_sessions(&context);
+            std::thread::yield_now();
+        }
+        assert!(state.resume_error.is_none());
+        assert_eq!(state.tabs().len(), 1);
     }
 
     #[test]
