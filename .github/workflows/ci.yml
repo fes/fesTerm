@@ -16,6 +16,11 @@ on:
         type: boolean
         required: false
         default: false
+      linux_environment_only:
+        description: Check only the production Ubuntu 24 software Vulkan environment
+        type: boolean
+        required: false
+        default: false
       windows_sampler_diagnostics:
         description: Run bounded opt-in WARP sampler and mixed-renderer diagnostics
         type: boolean
@@ -234,7 +239,7 @@ jobs:
           if-no-files-found: ignore
 
   linux-native-backtrace:
-    if: github.event_name == 'workflow_dispatch' && inputs.linux_native_backtrace
+    if: github.event_name == 'workflow_dispatch' && inputs.linux_native_backtrace && !inputs.linux_environment_only
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -305,3 +310,29 @@ jobs:
           name: linux-native-backtrace
           path: ${{ runner.temp }}/linux-backtrace/*.log
           if-no-files-found: ignore
+
+  production-software-vulkan-environment:
+    if: github.event_name == 'workflow_dispatch' && inputs.linux_native_backtrace && inputs.linux_environment_only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: e74164085a3af1b7c96e9e2376794397bc5d46fd
+      - name: Install the production validation software driver
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
+      - run: python3 scripts/select_headless_vulkan.py --github-env "$GITHUB_ENV"
+      - name: Verify the selected production software ICD
+        run: |
+          test -n "$VK_DRIVER_FILES"
+          cat "$VK_DRIVER_FILES"
+          vulkaninfo --summary > "$RUNNER_TEMP/vulkan.txt"
+          cat "$RUNNER_TEMP/vulkan.txt"
+          grep -q 'PHYSICAL_DEVICE_TYPE_CPU' "$RUNNER_TEMP/vulkan.txt"
+          if grep -Eq 'PHYSICAL_DEVICE_TYPE_(DISCRETE|INTEGRATED|VIRTUAL)_GPU' "$RUNNER_TEMP/vulkan.txt"; then
+            echo 'Unexpected hardware Vulkan device in the software test environment' >&2
+            exit 1
+          fi
