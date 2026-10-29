@@ -361,6 +361,7 @@ pub(crate) struct LocalSourceAuthority {
     canonical_path: PathBuf,
     parent_identity: DirectoryIdentity,
     retained_identity: Option<RetainedFileIdentity>,
+    terminal_link: bool,
 }
 
 /// Denial-only source evidence; never grants authority to read or publish.
@@ -400,6 +401,10 @@ impl RecoveryAuthority {
 }
 
 impl LocalSourceAuthority {
+    pub(crate) fn restrict_terminal_links(&mut self) {
+        self.terminal_link = true;
+    }
+
     pub(crate) fn recovery_authority(&self) -> RecoveryAuthority {
         RecoveryAuthority {
             source: self.clone(),
@@ -723,6 +728,14 @@ pub(crate) fn load_terminal_link(
     path: &Path,
     bounds: DocumentBounds,
 ) -> Result<LoadedDocument, LoadFailure> {
+    let (authority, file) = open_terminal_link_source(path, None)?;
+    load_opened_source(authority, file, bounds)
+}
+
+fn open_terminal_link_source(
+    path: &Path,
+    expected_parent: Option<DirectoryIdentity>,
+) -> Result<(LocalSourceAuthority, File), LoadFailure> {
     if !path.is_absolute() || path.file_name().is_none() {
         return Err(LoadFailure::NotAFile);
     }
@@ -735,6 +748,9 @@ pub(crate) fn load_terminal_link(
     let directory = open_canonical_directory(parent).map_err(classify_read_error)?;
     let parent_identity =
         DirectoryIdentity::from_directory(&directory).map_err(classify_read_error)?;
+    if expected_parent.is_some_and(|expected| expected != parent_identity) {
+        return Err(LoadFailure::NotAFile);
+    }
     let name = Path::new(path.file_name().ok_or(LoadFailure::NotAFile)?);
     let metadata = directory
         .symlink_metadata(name)
@@ -758,8 +774,39 @@ pub(crate) fn load_terminal_link(
         canonical_path,
         parent_identity,
         retained_identity: None,
+        terminal_link: true,
     };
-    load_opened_source(source_authority, file, bounds)
+    Ok((source_authority, file))
+}
+
+pub(crate) fn load_source(
+    path: &Path,
+    authority: &LocalSourceAuthority,
+    bounds: DocumentBounds,
+) -> Result<LoadedDocument, LoadFailure> {
+    if authority.terminal_link {
+        let (current, file) =
+            open_terminal_link_source(authority.canonical_path(), Some(authority.parent_identity))?;
+        load_opened_source(current, file, bounds)
+    } else {
+        load(path, bounds)
+    }
+}
+
+pub(crate) fn freshness_for_source(
+    path: &Path,
+    authority: &LocalSourceAuthority,
+    known: Generation,
+) -> Freshness {
+    if authority.terminal_link {
+        match open_terminal_link_source(authority.canonical_path(), Some(authority.parent_identity))
+        {
+            Ok((_, file)) => freshness_opened_file(&file, known),
+            Err(error) => Freshness::Gone(error),
+        }
+    } else {
+        freshness(path, known)
+    }
 }
 
 fn load_opened_source(
@@ -850,6 +897,13 @@ pub(crate) fn source_authority_is_current(
     authority: &LocalSourceAuthority,
     generation: Generation,
 ) -> bool {
+    if authority.terminal_link {
+        return open_terminal_link_source(
+            authority.canonical_path(),
+            Some(authority.parent_identity),
+        )
+        .is_ok_and(|(_, file)| generation.matches_file(&file));
+    }
     let Some(parent) = authority.canonical_path.parent() else {
         return false;
     };
@@ -865,6 +919,13 @@ pub(crate) fn source_authority_identity_is_current(
     authority: &LocalSourceAuthority,
     generation: Generation,
 ) -> bool {
+    if authority.terminal_link {
+        return open_terminal_link_source(
+            authority.canonical_path(),
+            Some(authority.parent_identity),
+        )
+        .is_ok_and(|(_, file)| generation.identity_matches_file(&file));
+    }
     let Some(parent) = authority.canonical_path.parent() else {
         return false;
     };
@@ -940,6 +1001,7 @@ fn open_canonical_source(
             canonical_path: canonical_path.to_path_buf(),
             parent_identity,
             retained_identity,
+            terminal_link: false,
         },
         file,
     ))
@@ -954,29 +1016,30 @@ pub fn freshness(path: &Path, known: Generation) -> Freshness {
                 Ok(file) => file,
                 Err(error) => return Freshness::Gone(classify_read_error(error)),
             };
-            if known.metadata_matches_file(&file) {
-                return Freshness::Unchanged;
-            }
-            let length = match file.metadata() {
-                Ok(metadata) => metadata.len(),
-                Err(error) => return Freshness::Gone(classify_read_error(error)),
-            };
-            if length > DocumentBounds::MAX_BYTES as u64 {
-                return Freshness::Gone(LoadFailure::Refused(RefusalReason::TooLarge {
-                    bytes: usize::try_from(length).unwrap_or(usize::MAX),
-                    limit: DocumentBounds::MAX_BYTES,
-                }));
-            }
-            let current = match Generation::from_file(&file) {
-                Ok(current) => current,
-                Err(error) => return Freshness::Gone(classify_read_error(error)),
-            };
-            if current == known {
-                Freshness::Unchanged
-            } else {
-                Freshness::Changed(current)
-            }
+            freshness_opened_file(&file, known)
         }
+        Err(error) => Freshness::Gone(classify_read_error(error)),
+    }
+}
+
+fn freshness_opened_file(file: &File, known: Generation) -> Freshness {
+    if known.metadata_matches_file(file) {
+        return Freshness::Unchanged;
+    }
+    let length = match file.metadata() {
+        Ok(metadata) if metadata.is_file() => metadata.len(),
+        Ok(_) => return Freshness::Gone(LoadFailure::NotAFile),
+        Err(error) => return Freshness::Gone(classify_read_error(error)),
+    };
+    if length > DocumentBounds::MAX_BYTES as u64 {
+        return Freshness::Gone(LoadFailure::Refused(RefusalReason::TooLarge {
+            bytes: usize::try_from(length).unwrap_or(usize::MAX),
+            limit: DocumentBounds::MAX_BYTES,
+        }));
+    }
+    match Generation::from_file(file) {
+        Ok(current) if current == known => Freshness::Unchanged,
+        Ok(current) => Freshness::Changed(current),
         Err(error) => Freshness::Gone(classify_read_error(error)),
     }
 }
@@ -1346,6 +1409,7 @@ fn source_authority_for_save(path: &Path, parent: &Path) -> Result<SaveDirectory
             canonical_path: canonical_parent.join(file_name),
             parent_identity,
             retained_identity: None,
+            terminal_link: false,
         },
         target,
         #[cfg(windows)]

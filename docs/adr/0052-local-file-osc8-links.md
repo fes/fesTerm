@@ -41,6 +41,15 @@ this walk. Windows rejects mapped network roots and derives the retained file
 name from its handle, not a second pathname traversal. Existing platform
 security crates continue owning native operations.
 
+The retained source authority carries this policy through background checks,
+refresh, reload, saves and save-conflict comparison reads. Each read repeats
+the no-follow walk from the retained canonical path and verifies the original
+parent identity before opening the child; replacing a regular file within that
+parent remains supported. Reusing an existing buffer upgrades its policy and
+retires older background registrations without discarding edits. Explicit
+Save As authorizes a new destination through the existing save protocol.
+Ordinary document opens keep their existing alias/network behavior.
+
 ## Alternatives considered
 
 - Add `file` to the external web allowlist: rejected; that grants OS-handler
@@ -87,7 +96,11 @@ require the TI-10 evidence; automated checks do not promote those gates.
   `terminal_file_links_refuse_remote_serial_stale_closed_and_unsafe_targets`,
   `terminal_file_link_load_is_bounded_and_rejects_non_files`,
   `terminal_file_link_load_never_follows_file_or_parent_symlinks`,
-  `terminal_file_link_load_refuses_junction_redirection`.
+  `terminal_file_link_load_refuses_junction_redirection`,
+  `terminal_file_link_refresh_and_save_preserve_no_follow_policy`,
+  `terminal_file_link_dirty_refresh_keeps_edits_and_bounded_conflict_source`,
+  `terminal_file_link_refresh_never_follows_replaced_file_or_parent`,
+  `terminal_file_link_refresh_never_follows_replaced_parent_junction`.
 - **Native/manual evidence required:** TI-10 on Windows, macOS and Linux,
   including Copilot-produced file links, modifier/context gestures and
   native path preview/clipboard readability; TI-17 frozen-link interaction.

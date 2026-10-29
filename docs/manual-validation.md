@@ -31,12 +31,18 @@ conservative limits.
 Automated parser, UI and application tests cover strict decoding, exact
 modifier/context intent, decoded destination Copy, source-generation changes,
 remote/serial refusal, bounded text loading, no-follow file/parent traversal,
-Windows junction refusal and reuse of unsaved documents. Native/manual
+Windows junction refusal and reuse of unsaved documents. Post-admission tests
+also replace files/parents, exercise the production background-check executor
+and explicit refresh/reload/conflict reads, and preserve the policy after saves
+and buffer reuse; regular-file replacement still reloads or presents a dirty
+conflict. Native/manual
 qualification remains pending on Windows, macOS and Linux: emit a file link
 from Copilot and a controlled local producer; hover, Ctrl/Cmd-click and
 Shift+right-click Open/Copy; verify the internal Markdown/text surface,
 clipboard-native path, history/frozen-copy behavior and screen-reader preview.
-Repeat with symlink/junction, foreign-host and remote/serial targets, confirming
+Repeat with symlink/junction, foreign-host and remote/serial targets, including
+parent substitution after a successful open and subsequent automatic/explicit
+refresh, confirming
 honest refusal and no browser/file-association launch. This does not certify
 all producer renderers or OS-mounted filesystem locality.
 

@@ -385,7 +385,7 @@ pub(super) fn execute(request: &Request, save: bool) -> Result {
         );
         let conflict = matches!(result, Err(SaveFailure::Conflict(_)))
             .then(|| {
-                document_store::load(&request.path, request.bounds)
+                document_store::load_source(&request.path, &request.authority, request.bounds)
                     .ok()
                     .map(Box::new)
             })
@@ -393,7 +393,11 @@ pub(super) fn execute(request: &Request, save: bool) -> Result {
         return Result::Saved(result, conflict);
     }
     Result::Checked(
-        match document_store::freshness(&request.path, request.generation) {
+        match document_store::freshness_for_source(
+            &request.path,
+            &request.authority,
+            request.generation,
+        ) {
             document_store::Freshness::Unchanged => {
                 Check::Current(document_store::source_authority_identity_is_current(
                     &request.authority,
@@ -401,7 +405,8 @@ pub(super) fn execute(request: &Request, save: bool) -> Result {
                 ))
             }
             document_store::Freshness::Changed(_) => {
-                match document_store::load(&request.path, request.bounds) {
+                match document_store::load_source(&request.path, &request.authority, request.bounds)
+                {
                     Ok(loaded) => Check::Loaded(Box::new(loaded)),
                     Err(error) => Check::Failed(error),
                 }

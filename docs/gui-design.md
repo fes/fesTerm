@@ -3052,6 +3052,11 @@ roots are refused. The existing regular-file, text and document-size limits
 apply. Refusal never invokes a shell, remote fetch or external application.
 Copy remains available for syntactically valid but unavailable file targets.
 
+The no-follow policy persists for background freshness checks, refresh/reload,
+save-conflict source reads and ordinary saves, including reused document
+buffers. Reads stay bound to the retained canonical source and original parent
+identity; only a new explicit Save As authorizes a different destination.
+
 An unterminated OSC 8 range is cleared by a hard line/index boundary, SGR
 reset, terminal reset, or primary/alternate-screen transition, and is capped
 at 4,096 printed cells. This prevents a hostile remote producer from silently

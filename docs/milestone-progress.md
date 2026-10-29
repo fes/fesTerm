@@ -19,6 +19,12 @@ retains unsaved buffers when a document is already open. Remote OSC 8 mapping
 and native usability qualification remain explicit follow-ups, not implicit
 permissions granted by a localhost URI.
 
+PR review caught that automatic freshness/reload and save-conflict reads could
+lose the initial no-follow policy. Retained source authority now preserves it
+through those paths, ordinary saves and buffer reuse. Replacement-parent
+identity is checked before opening a child, while legitimate regular-file
+replacement and dirty-buffer conflict handling remain supported.
+
 ## v0.11.1: recovering existing native sessions safely
 
 This patch release packages the native-session upgrade repair and confirmed
