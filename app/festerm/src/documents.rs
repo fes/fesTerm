@@ -2062,6 +2062,8 @@ mod tests {
         fs::write(other.join("report.md"), "private target\n").unwrap();
         let mut registry = DocumentRegistry::new();
         let id = registry.open_terminal_link(&path).unwrap();
+        // Unlink the open child so Windows permits renaming its parent.
+        fs::remove_file(&path).unwrap();
         fs::rename(&source, root.join("retired")).unwrap();
         let status = std::process::Command::new("cmd.exe")
             .args(["/D", "/C", "mklink", "/J"])
