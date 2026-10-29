@@ -15,10 +15,17 @@ tree `c85f549ade0315537adc6589bffbd6faf7cefb79`, executable SHA-256
 The control is source `b58dcf3cb5bdb90b9c7df7b95f517b8bdc85b836`,
 tree `d2841e06012f6682aae68d6bffc5bf6a3338604b`, executable SHA-256
 `4937a40fa4aa37a2d920d44e1832fb717fe57dc35bc3bd40e7f46284fd60e9bf`.
-The control differs only by restoring main `a9273c43`'s three renderer files
-and their directly dependent document-retention test module. Both include the
-same integrated Markdown fixes, diagnostics, profiler and Ubuntu CI workaround.
-Both releases were built from the same fixed source path with Rust 1.98.1 and
+That measured control commit was local and is not published. Its exact tree
+remains reproducible from durable history: start at candidate `a44ea5c7` and
+restore `app/festerm/src/direct2d/document_retention.rs` plus
+`vendor/egui-wgpu/src/{renderer,retained,winit}.rs` from main `a9273c43`.
+An automated evidence test reconstructs and requires the recorded tree hash.
+This post-measurement preservation does not relabel the historical receipt or
+executable. The control therefore differs only in the three renderer files and
+their directly dependent document-retention test module; both arms otherwise
+include the same integrated Markdown fixes, diagnostics, profiler and Ubuntu
+CI workaround. Both releases were built from the same fixed source path with
+Rust 1.98.1 and
 `cargo build --release --locked -p festerm --bin festerm --message-format=json`.
 Later documentation commits are not relabelled as measured source.
 

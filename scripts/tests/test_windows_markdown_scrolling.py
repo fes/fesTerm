@@ -2,15 +2,19 @@
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "check-windows-markdown-scrolling.ps1"
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "scripts" / "check-windows-markdown-scrolling.ps1"
+EVIDENCE = ROOT / "validation" / "windows-warp" / "native-prefix-navigation-20261028.json"
 
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 is required")
@@ -602,6 +606,206 @@ $script:receiptObject.source_revision = 'main'
 Reject { Assert-MarkdownSourceReceipt 'binary' 'receipt' 'source' }
 """
         )
+
+
+class NativePrefixNavigationEvidenceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.evidence = json.loads(EVIDENCE.read_text(encoding="utf-8"))
+
+    def test_control_tree_is_reconstructible_from_published_history(self):
+        reconstruction = self.evidence["control_reconstruction"]
+        self.assertFalse(reconstruction["measured_revision_published"])
+        self.assertEqual(
+            reconstruction["candidate_basis_revision"],
+            self.evidence["receipts"]["candidate"]["source_revision"],
+        )
+        self.assertEqual(
+            reconstruction["reconstructed_tree"],
+            self.evidence["receipts"]["control"]["source_tree"],
+        )
+        for revision in (
+            reconstruction["candidate_basis_revision"],
+            reconstruction["restore_revision"],
+        ):
+            available = subprocess.run(
+                ["git", "cat-file", "-e", f"{revision}^{{commit}}"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            if available.returncode:
+                self.skipTest("full evidence history is unavailable in this shallow checkout")
+        candidate_tree = subprocess.run(
+            [
+                "git",
+                "rev-parse",
+                f"{reconstruction['candidate_basis_revision']}^{{tree}}",
+            ],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        self.assertEqual(candidate_tree, self.evidence["receipts"]["candidate"]["source_tree"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = os.environ.copy()
+            environment["GIT_INDEX_FILE"] = str(Path(directory) / "index")
+            subprocess.run(
+                ["git", "read-tree", reconstruction["candidate_basis_revision"]],
+                cwd=ROOT,
+                env=environment,
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "reset",
+                    "--quiet",
+                    reconstruction["restore_revision"],
+                    "--",
+                    *reconstruction["restored_paths"],
+                ],
+                cwd=ROOT,
+                env=environment,
+                check=True,
+            )
+            tree = subprocess.run(
+                ["git", "write-tree"],
+                cwd=ROOT,
+                env=environment,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        self.assertEqual(tree, reconstruction["reconstructed_tree"])
+
+    def test_final_block_is_balanced_and_identity_bound(self):
+        runs = self.evidence["runs"]
+        self.assertEqual(len(runs), 33)
+        self.assertEqual(sum(run["status"] == "passed" for run in runs), 31)
+        final = [run for run in runs if run["run"].startswith("balanced-03-")]
+        self.assertEqual(len(final), 20)
+        expected_surfaces = {
+            "editor300": "editor",
+            "prose": "markdown_preview",
+            "rust20": "markdown_preview",
+            "rust300": "markdown_preview",
+            "table30": "markdown_preview",
+        }
+        for case, surface in expected_surfaces.items():
+            observations = [run for run in final if run["case"] == case]
+            self.assertEqual(
+                [run["kind"] for run in observations],
+                ["control", "candidate", "candidate", "control"],
+            )
+            self.assertEqual(len({run["fixture_sha256"] for run in observations}), 1)
+            for run in observations:
+                self.assertEqual(run["status"], "passed")
+                self.assertEqual(run["surface"], surface)
+                self.assertEqual(
+                    run["source_revision"],
+                    self.evidence["receipts"][run["kind"]]["source_revision"],
+                )
+                self.assertEqual(run["exit_code"], 0)
+                self.assertFalse(run["forced_termination"])
+                self.assertTrue(run["pointer_restored"])
+                self.assertTrue(run["artifacts_revalidated"])
+                self.assertTrue(run["source_identity_revalidated"])
+                self.assertEqual(run["cleanup_errors"], [])
+                self.assertEqual(
+                    [burst["requested_direction"] for burst in run["bursts"]],
+                    ["down", "up", "down", "up", "down"],
+                )
+                self.assertTrue(
+                    all(
+                        burst["settled"]
+                        and not burst["settle_timed_out"]
+                        and abs(burst["actual_offset_delta"]) > 199
+                        for burst in run["bursts"]
+                    )
+                )
+
+    def test_published_cpu_and_retention_ranges_match_raw_observations(self):
+        expected_reductions = {
+            "editor300": 40.8,
+            "prose": 45.4,
+            "rust20": 47.0,
+            "rust300": 53.5,
+            "table30": 32.5,
+        }
+        final = [
+            run
+            for run in self.evidence["runs"]
+            if run["run"].startswith("balanced-03-")
+        ]
+        for case, expected_reduction in expected_reductions.items():
+            observations = [run for run in final if run["case"] == case]
+            control_cpu = sum(
+                run["measurement"]["process_cpu_seconds"]
+                for run in observations
+                if run["kind"] == "control"
+            )
+            candidate_cpu = sum(
+                run["measurement"]["process_cpu_seconds"]
+                for run in observations
+                if run["kind"] == "candidate"
+            )
+            self.assertEqual(round(100 * (1 - candidate_cpu / control_cpu), 1), expected_reduction)
+            for run in observations:
+                measurement = run["measurement"]
+                self.assertTrue(
+                    math.isclose(
+                        measurement["cpu_percent_one_core"],
+                        100
+                        * measurement["process_cpu_seconds"]
+                        / measurement["wall_seconds"],
+                    )
+                )
+                timing = measurement["host_frame_timing"]
+                self.assertEqual(
+                    timing["samples"],
+                    timing["root_frame_inclusive_end"]
+                    - timing["root_frame_exclusive_start"],
+                )
+                before = measurement["counters_before"]
+                after = measurement["counters_after"]
+                self.assertEqual(
+                    timing["samples"],
+                    after["RootSamples"] - before["RootSamples"],
+                )
+                if run["kind"] == "control":
+                    self.assertIsNone(before["PartialReused"])
+                    self.assertIsNone(after["PartialReused"])
+                    self.assertEqual(run["partial_reuse_prefix_signature_job_pairs"], [])
+                    continue
+                self.assertIn(after["PartialReused"] - before["PartialReused"], range(58, 95))
+                self.assertIn(after["Reused"] - before["Reused"], range(8, 16))
+                self.assertIn(after["Rebuilt"] - before["Rebuilt"], range(14, 16))
+                prefix = 6 if case == "editor300" else 9
+                self.assertTrue(
+                    all(
+                        pair[0] == prefix
+                        for pair in run["partial_reuse_prefix_signature_job_pairs"]
+                    )
+                )
+
+    def test_rejected_observations_remain_adverse(self):
+        failed = [run for run in self.evidence["runs"] if run["status"] == "failed"]
+        self.assertEqual(
+            {(run["kind"], len(run["bursts"])) for run in failed},
+            {("control", 4), ("candidate", 3)},
+        )
+        for run in failed:
+            self.assertEqual(
+                run["rejection"],
+                "unchanged 3-second scroll-settle deadline",
+            )
+            self.assertTrue(run["forced_termination"])
+            self.assertTrue(run["pointer_restored"])
+            self.assertTrue(run["artifacts_revalidated"])
+            self.assertTrue(run["source_identity_revalidated"])
 
 
 if __name__ == "__main__":
