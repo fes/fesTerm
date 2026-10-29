@@ -32,6 +32,16 @@
     ],
     "reconstructed_tree": "d2841e06012f6682aae68d6bffc5bf6a3338604b"
   },
+  "manual_log_annotations": {
+    "covered_by_result_sha256": false,
+    "raw_logs_published": false,
+    "fields": [
+      "partial_reuse_prefix_signature_job_pairs",
+      "max_logged_texture_bytes",
+      "max_logged_signature_bytes"
+    ],
+    "geometry_binding": "Maxima can include startup frames before the recorded measured client geometry."
+  },
   "geometry": {
     "logical": [
       640,
@@ -71,7 +81,8 @@
     "Host nearest-rank p50/p95 cover only each measured root-frame range; not GPU completion or physical latency.",
     "Frame counts and idle-hit proportions differ; wheel messages and presents are not one-to-one.",
     "Earlier prose settle rejections in both arms remain rejected; no deadline relaxation or normalized-away drift.",
-    "Receipt is builder provenance, not cryptographic source attestation; raw private logs remain local."
+    "Receipt is builder provenance, not cryptographic source attestation; raw private logs remain local.",
+    "Prefix/signature pairs and logged byte maxima are manual annotations from those private logs, are not covered by result_sha256, and can include startup geometry."
   ],
   "earlier_precomparison_attempts": [
     {

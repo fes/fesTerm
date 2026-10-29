@@ -230,7 +230,8 @@ Changing frames remain expensive, and capture-inclusive observations do not
 qualify input-to-display latency. No indefinite near-zero-CPU freeze was
 reproduced. Retain **Manual pending / Usability pending** for the broader
 matrix, including native mutable-callback/device recovery, hardware/multi-window,
-OS clipboard and sustained pointer dragging. ADR 0046 remains Proposed.
+OS clipboard and sustained pointer dragging. ADR 0046 accepts only the bounded
+qualified-route architecture; these broader CP-18 gates remain open.
 
 #### Supported-route rollout regression qualification
 

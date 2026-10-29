@@ -68,11 +68,13 @@ two observations per arm do not establish statistical confidence or eliminate
 tail stalls. The table still has substantial WARP cost.
 
 Candidate measured intervals contain 58-94 partial reuses, separately from
-8-15 exact hits and 14-15 rebuilds. Native partial-reuse logs show a nine-job
-prefix of 11-14 jobs in Markdown and six of ten in Edit. Old control
-partial/prefix fields remain null, not zero. Logged resource sizes and all
-per-run counters remain in the numeric record; they are not process peak
-memory or long-duration resource qualification.
+8-15 exact hits and 14-15 rebuilds. Manually transcribed annotations from the
+private native logs report a nine-job prefix of 11-14 jobs in Markdown and six
+of ten in Edit; these annotations and logged byte maxima are not covered by
+each `result_sha256`. Old control partial/prefix fields remain null, not zero.
+Logged maxima can include startup geometry and are not process peak memory or
+long-duration resource qualification. Result-bound counters remain in the
+numeric record.
 
 Two earlier all-case invocations were rejected at the unchanged three-second
 prose settle deadline: one control after four bursts and one candidate after

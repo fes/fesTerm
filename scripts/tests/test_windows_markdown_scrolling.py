@@ -14,6 +14,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "check-windows-markdown-scrolling.ps1"
+OPTIONAL_SCRIPT = ROOT / "scripts" / "run-optional-validation.ps1"
 EVIDENCE = ROOT / "validation" / "windows-warp" / "native-prefix-navigation-20261028.json"
 
 
@@ -22,7 +23,7 @@ class MarkdownScrollingTests(unittest.TestCase):
     def probe(self, body):
         environment = os.environ.copy()
         environment["FESTERM_SCROLL_SCRIPT"] = str(SCRIPT)
-        environment["FESTERM_OPTIONAL_SCRIPT"] = str(SCRIPT.with_name("run-optional-validation.ps1"))
+        environment["FESTERM_OPTIONAL_SCRIPT"] = str(OPTIONAL_SCRIPT)
         result = subprocess.run(
             [
                 shutil.which("pwsh"),
@@ -728,6 +729,17 @@ class NativePrefixNavigationEvidenceTests(unittest.TestCase):
                 )
 
     def test_published_cpu_and_retention_ranges_match_raw_observations(self):
+        annotations = self.evidence["manual_log_annotations"]
+        self.assertFalse(annotations["covered_by_result_sha256"])
+        self.assertFalse(annotations["raw_logs_published"])
+        self.assertEqual(
+            set(annotations["fields"]),
+            {
+                "partial_reuse_prefix_signature_job_pairs",
+                "max_logged_texture_bytes",
+                "max_logged_signature_bytes",
+            },
+        )
         expected_reductions = {
             "editor300": 40.8,
             "prose": 45.4,
@@ -806,6 +818,21 @@ class NativePrefixNavigationEvidenceTests(unittest.TestCase):
             self.assertTrue(run["pointer_restored"])
             self.assertTrue(run["artifacts_revalidated"])
             self.assertTrue(run["source_identity_revalidated"])
+
+
+class OptionalValidationContractTests(unittest.TestCase):
+    def test_default_result_is_unique_and_explicit_results_never_overwrite(self):
+        script = OPTIONAL_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn(
+            '"optional-validation-{0}.txt" -f [Guid]::NewGuid().ToString(\'N\')',
+            script,
+        )
+        self.assertNotIn("'optional-validation-result.txt'", script)
+        self.assertEqual(
+            script.count("[IO.FileMode]::CreateNew"),
+            2,
+            "both full and Markdown-only aggregate results must fail closed",
+        )
 
 
 if __name__ == "__main__":

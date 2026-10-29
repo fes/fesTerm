@@ -83,7 +83,8 @@ configuration and activation IPC, actual adapter and geometry proof, observed
 scroll offsets, bounded input/drain intervals, and normal owned-window exit.
 Real-pointer control requires separate explicit opt-in and yields to other
 desktop interaction. Host-return timing is not GPU completion or display
-latency. Architecture acceptance and measured rollout remain subject to review.
+Latency. This ADR records architecture acceptance; broader measured rollout
+remains subject to the qualifications below.
 
 ## Validation impact
 

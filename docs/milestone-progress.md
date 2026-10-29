@@ -1009,8 +1009,10 @@ historical application hashes are not substituted. A failed orchestration
 attempt is preserved separately: explicit process waiting repaired missing
 results without changing the candidate. Hosted background variability is
 retained, not excluded or called dedicated-hardware/native-latency evidence.
-Architecture/vendor/graph/trace records agree; ADR 0046 stays Proposed pending
-final merge acceptance, and the broader native matrix stays pending.
+At that publication, architecture/vendor/graph/trace records agreed and ADR
+0046 stayed Proposed pending final merge acceptance. The later ADR 0051
+integration review accepted the bounded policy; the broader native matrix
+stays pending.
 
 ## Preserving selection ownership and separate clicks during batching
 

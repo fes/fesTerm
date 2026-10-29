@@ -1006,14 +1006,15 @@ forward/reverse/Shift drags and ordinary cross-paragraph selection have
 deterministic evidence. Native latency, OS clipboard routing and complete
 cross-widget batching remain unqualified.
 
-Proposed ADR 0046 adds an exact complete-frame pixel oracle for eligible
+Accepted ADR 0046 adds an exact complete-frame pixel oracle for eligible
 `EDIT-09`/`MD-04` document surfaces without changing input or document ownership.
 The host shares the bounded prefix image and rejects mutable/unknown inputs.
 CP-18 now records fresh source/test-binary-bound all-miss evidence from
 Windows x64 run 38100443816; all three independent ABBA controls passed.
-Final architectural merge acceptance, hardware, device recovery and broader
-native latency remain pending. Application hashes cannot identify the separate
-test executable; hosted timing is not physical-latency evidence.
+Final integration review accepted the bounded architecture. Hardware, device
+recovery and broader native latency remain pending. Application hashes cannot
+identify the separate test executable; hosted timing is not physical-latency
+evidence.
 
 ## Coverage map to the GUI design
 

@@ -4,7 +4,7 @@ param(
     [string] $ResultPath = $(if ($env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH) {
         $env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH
     } else {
-        'optional-validation-result.txt'
+        "optional-validation-{0}.txt" -f [Guid]::NewGuid().ToString('N')
     })
 )
 
