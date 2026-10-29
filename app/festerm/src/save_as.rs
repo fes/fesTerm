@@ -107,8 +107,21 @@ impl SaveAsPicker {
     /// `start_dir` is the directory to open in; `suggested_name` is the file
     /// name to prefill (the document's current file name).
     pub(crate) fn new(start_dir: PathBuf, suggested_name: String, repaint: egui::Context) -> Self {
+        Self::with_loader(
+            start_dir,
+            suggested_name,
+            repaint,
+            LocalDirectoryLoader::new("festerm-gui-save-as-local".to_owned()),
+        )
+    }
+
+    fn with_loader(
+        start_dir: PathBuf,
+        suggested_name: String,
+        repaint: egui::Context,
+        local_loader: LocalDirectoryLoader,
+    ) -> Self {
         let (event_sender, event_receiver) = mpsc::channel();
-        let local_loader = LocalDirectoryLoader::new("festerm-gui-save-as-local".to_owned());
         let mut picker = Self {
             pane: SftpPaneState::new(SftpPath::local(start_dir)),
             file_name: suggested_name,
@@ -122,6 +135,27 @@ impl SaveAsPicker {
         let start = picker.pane.current_path.clone();
         picker.load(start);
         picker
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        start_dir: PathBuf,
+        suggested_name: String,
+        repaint: egui::Context,
+    ) -> Self {
+        Self::with_loader(
+            start_dir,
+            suggested_name,
+            repaint,
+            LocalDirectoryLoader::paused_for_test(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn complete_pending_for_test(&mut self) {
+        // Test-controlled pickers have no worker; drive this after every load.
+        self.local_loader.run_pending_for_test();
+        self.poll();
     }
 
     fn load(&mut self, path: SftpPath) {
@@ -967,11 +1001,12 @@ mod tests {
     fn save_as_nested_panel_controls_respect_inherited_pointer_clipping() {
         let directory = TemporaryDirectory::new("inherited-pointer-clip");
         directory.file("NOTES.md", "# Owned unchanged fixture\n");
-        let picker = SaveAsPicker::new(
+        let mut picker = SaveAsPicker::new_for_test(
             directory.path.clone(),
             "NOTES.md".to_owned(),
             egui::Context::default(),
         );
+        picker.complete_pending_for_test();
         let mut harness = Harness::builder()
             .with_size(egui::vec2(752.0, 516.0))
             .build_ui_state(
@@ -992,13 +1027,6 @@ mod tests {
             );
         harness.ctx.set_theme(egui::ThemePreference::Dark);
         harness.ctx.set_visuals(theme::default_visuals());
-        for _ in 0..200 {
-            harness.step();
-            if !harness.state().0.pane.loading {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
         assert!(!harness.state().0.pane.loading);
         harness.run_steps(3);
         let positions = [
@@ -1055,11 +1083,12 @@ mod tests {
             } else {
                 "target-file.md"
             };
-            let picker = SaveAsPicker::new(
+            let mut picker = SaveAsPicker::new_for_test(
                 directory.path.clone(),
                 "frozen-name.md".to_owned(),
                 egui::Context::default(),
             );
+            picker.complete_pending_for_test();
             let mut harness = Harness::builder()
                 .with_size(egui::vec2(752.0, 516.0))
                 .build_ui_state(
@@ -1077,13 +1106,6 @@ mod tests {
                 );
             harness.ctx.set_theme(egui::ThemePreference::Dark);
             harness.ctx.set_visuals(theme::default_visuals());
-            for _ in 0..200 {
-                harness.step();
-                if !harness.state().0.pane.loading {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(2));
-            }
             assert!(!harness.state().0.pane.loading);
             harness.run_steps(3);
             let position = harness.get_by_label(target).rect().center();
@@ -1129,6 +1151,9 @@ mod tests {
                 }
             }
             if folder {
+                harness.state_mut().0.complete_pending_for_test();
+                harness.step();
+                assert!(!harness.state().0.pane.loading);
                 assert_eq!(
                     harness.state().0.current_directory(),
                     Some(directory.path.join(target))

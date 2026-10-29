@@ -6813,10 +6813,11 @@ impl FesTermApp {
         directory: std::path::PathBuf,
         context: &egui::Context,
     ) {
-        // A missing fixture directory intentionally exercises the real worker's
+        // A missing fixture directory intentionally exercises the real loader's
         // error path, rather than falling back to the user's home directory.
-        self.overlays.markdown_file_picker =
-            Some(MarkdownFilePicker::new(directory, context.clone()));
+        let mut picker = MarkdownFilePicker::new_for_test(directory, context.clone());
+        picker.complete_pending_for_test();
+        self.overlays.markdown_file_picker = Some(picker);
     }
 
     #[cfg(test)]
@@ -6830,11 +6831,10 @@ impl FesTermApp {
         self.state
             .dispatch(AppCommand::OpenTextEditor { path: source }, context);
         assert!(self.state.active_document().is_some());
-        self.overlays.save_as_picker = Some(crate::save_as::SaveAsPicker::new(
-            directory,
-            name,
-            context.clone(),
-        ));
+        let mut picker =
+            crate::save_as::SaveAsPicker::new_for_test(directory, name, context.clone());
+        picker.complete_pending_for_test();
+        self.overlays.save_as_picker = Some(picker);
     }
 
     #[cfg(test)]
@@ -9613,13 +9613,6 @@ mod tests {
                     &context,
                 );
                 let mut harness = dialog_style_harness(app, egui::vec2(752.0, 516.0));
-                for _ in 0..200 {
-                    harness.step();
-                    if harness.query_by_label("NOTES.md").is_some() {
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(2));
-                }
                 harness.get_by_label("NOTES.md");
                 harness.set_size(size);
                 harness.run_steps(3);
@@ -9696,21 +9689,16 @@ mod tests {
                             &egui::Context::default(),
                         );
                     }
-                    app.overlays.markdown_file_picker =
-                        Some(MarkdownFilePicker::new(target, egui::Context::default()));
+                    let mut picker =
+                        MarkdownFilePicker::new_for_test(target, egui::Context::default());
+                    picker.complete_pending_for_test();
+                    app.overlays.markdown_file_picker = Some(picker);
                     let mut harness = dialog_style_harness(app, egui::vec2(752.0, 516.0));
                     let expected = if missing {
                         "Could not load the folder."
                     } else {
                         "NOTES.md"
                     };
-                    for _ in 0..200 {
-                        harness.step();
-                        if harness.query_by_label(expected).is_some() {
-                            break;
-                        }
-                        thread::sleep(Duration::from_millis(2));
-                    }
                     harness.get_by_label(expected);
                     harness.set_size(size);
                     harness.run_steps(3);
@@ -9800,6 +9788,15 @@ mod tests {
                             .contains(ancestor.rect().center()));
                         ancestor.click();
                         harness.step();
+                        harness
+                            .state_mut()
+                            .overlays
+                            .markdown_file_picker
+                            .as_mut()
+                            .unwrap()
+                            .complete_pending_for_test();
+                        harness.step();
+                        harness.get_by_label("decisions");
                         assert_eq!(
                             harness
                                 .state()
@@ -9843,15 +9840,18 @@ mod tests {
                                 .dispatch(AppCommand::ToggleShowSessionDetails, &context);
                         }
                         let modal = if save_as {
-                            app.overlays.save_as_picker = Some(crate::save_as::SaveAsPicker::new(
+                            let mut picker = crate::save_as::SaveAsPicker::new_for_test(
                                 directory,
                                 "NOTES.md".to_owned(),
                                 context,
-                            ));
+                            );
+                            picker.complete_pending_for_test();
+                            app.overlays.save_as_picker = Some(picker);
                             "text_editor_save_as"
                         } else {
-                            app.overlays.markdown_file_picker =
-                                Some(MarkdownFilePicker::new(directory, context));
+                            let mut picker = MarkdownFilePicker::new_for_test(directory, context);
+                            picker.complete_pending_for_test();
+                            app.overlays.markdown_file_picker = Some(picker);
                             "markdown_file_picker"
                         };
                         let mut harness = dialog_style_harness(app, size);
@@ -9860,13 +9860,6 @@ mod tests {
                         } else {
                             "NOTES.md"
                         };
-                        for _ in 0..200 {
-                            harness.step();
-                            if harness.query_by_label(expected).is_some() {
-                                break;
-                            }
-                            thread::sleep(Duration::from_millis(2));
-                        }
                         harness.get_by_label(expected);
                         assert_style_modal_inside_root(&harness, modal);
                         assert_style_modal_action(&harness, modal, "Cancel");

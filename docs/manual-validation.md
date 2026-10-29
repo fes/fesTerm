@@ -436,7 +436,20 @@ cover ownership, failure reporting and cleanup. Affected PRs retain mobile
 unit/dependency/build checks but skip CoreSimulator preparation/runtime smoke;
 that experimental evidence runs nightly at 08:17 UTC on the default branch
 or via manual dispatch, not as a desktop merge gate. Failures still fail those
-runs and retain their artifacts (#303); no retry or guard/deadline change.
+runs and retain their artifacts (#303); no failed attempt is retried. During
+the existing three-second startup grace, the harness observes the first-UI
+marker once per second and records the actual grace plus poll 1, 2 or 3 when
+first observed. The prior exact PID/executable check, screenshot/PNG validation,
+second liveness check and final marker evaluation then run unchanged, including
+accepting a marker first observed post-capture. No application/process deadline
+or pass/fail guard changes before #303's required attribution. A first-UI
+failure or process death remains failed evidence; CoreSimulator application
+deadlines and all ownership/capture guards remain unchanged.
+Pre-capture liveness failure records readiness with capture `not-attempted`
+and blocks the screenshot exactly as before.
+An in-memory readiness record is created before capture and written to the
+manifest after a controlled screenshot timeout or invalid PNG unwinds. An
+external hard job termination can still preempt that final write.
 Review an explicit runtime merge gate when mobile product support is accepted.
 The manifest and PNGs are review evidence, not automatic rendering,
 keyboard or lifecycle acceptance. Physical-device and most interaction
@@ -445,7 +458,7 @@ read-only `--prepare-only` before compilation to initialize cold CoreSimulator c
 (runner-images #12862; local tracker #303). Preparation has a separate 180-second
 bound, produces `prepared` rather than app `pass` evidence, and never retries or
 mutates existing devices. The subsequent inventory, application and capture
-deadlines and all ownership/UI/cleanup checks remain unchanged. Failed
+command deadlines and all ownership/cleanup guards remain unchanged. Failed
 preparation and command durations are retained in the same evidence artifact.
 A local iPhone 17/iOS 26.5/Xcode 27 run
 visually covered Terminal, Compact stacked Files, Markdown wrapping and

@@ -3,6 +3,52 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Removing wall-clock races from CI evidence
+
+A survey of 500 recent workflow runs separated ordinary failing PR iterations
+from repeated same-source failures. The repaired cases were oracle races rather
+than demonstrated product failures. Windows issue #412 recorded one
+independently constructed document highlighted while its comparison document
+used plain text. Their separate 40 ms production parse budgets provide a
+concrete race path, but the hosted receipt did not instrument the parser deeply
+enough to prove that causal timing. The comparison was invalid regardless:
+production views of one document share syntax state. The oracle now shares
+that document. A feature-gated test-support parse primes deterministic spans
+without the production deadline, and the live oracle still requires populated
+syntax spans before retaining complete shape, accessibility, command and
+cache-invalidation comparisons. Production parsing keeps its 40 ms bound.
+Sibling input/payload oracles use explicitly plain-text fixtures because their
+independent documents and duplicate event streams are the behavior under test;
+`ordered_layout_sweep_preserves_utf8_syntax_and_find_formats` retains
+deterministic syntax/find formatting coverage.
+
+The Save As clipping regression and sibling Save As/Open picker layout checks
+similarly polled real background directory workers for only about 400 ms.
+Their owned fixtures now drive the existing paused-loader seam synchronously
+and still perform real directory enumeration before the full clipping/layout
+assertions. Neither repair adds sleeps, retries, larger production budgets or
+weaker equality checks.
+
+Hosted run 40656917043 preserved a live process with no first-UI marker after
+the fixed three-second delay; that receipt cannot distinguish slow cold
+renderer initialization from a renderer failure. The harness therefore
+instruments that hypothesis without changing acceptance: the existing
+three-second grace now observes the marker once per second and records its
+actual duration plus poll 1, 2 or 3 when first seen. The original exact-process,
+screenshot/PNG, second-liveness and final-marker sequence remains, including
+acceptance when the marker is first observed post-capture. No command deadline,
+retry or pass/fail guard changes before #303's required attribution. A process
+that never reaches first UI or dies still produces failed evidence.
+Pre-capture liveness failure retains readiness as `not-attempted` and blocks
+the screenshot exactly as before.
+The in-memory readiness record is created before capture, so controlled
+screenshot stalls and invalid PNGs retain timing and capture errors when the
+attempt unwinds and writes its manifest. A hard job termination can still
+preempt that write.
+Independent `simctl install`, launch and screenshot command stalls remain
+failed experimental evidence under #303; their deadlines, test-owned-device
+guards and non-gating nightly/manual policy are unchanged.
+
 ## Qualifying native Markdown scrolling before claiming a WARP repair
 
 The small offscreen Markdown benchmark did not install the application's

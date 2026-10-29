@@ -60,7 +60,25 @@ merge gates. PR build checks retain the `simulator-build` name; nightly/manual
 runs use `experimental-simulator-smoke` so runtime evidence cannot overwrite
 the build-check context when dispatched on a PR branch.
 Runtime failures still fail those runs and preserve receipts;
-no retry, deadline, ownership, first-UI/liveness or capture guard is relaxed.
+no failed attempt is retried, and CoreSimulator application-command deadlines
+plus ownership and capture guards remain unchanged.
+
+**Readiness instrumentation update (owner-requested 2026-10-28):** after each successful
+`simctl launch`, the existing three-second startup grace is split into three
+one-second first-UI observations. The receipt records the actual grace duration
+and whether the marker first appeared at poll 1, 2 or 3. After that unchanged
+grace, the harness retains the prior exact PID/executable check, screenshot,
+PNG validation, second liveness check and final marker evaluation; a marker
+first observed after capture remains accepted exactly as before. No
+application/process deadline or pass/fail guard changes before #303's required
+attribution. A process that never reaches first UI or dies while waiting still
+gets failed evidence.
+If the pre-capture liveness guard fails, readiness is retained with capture
+marked `not-attempted` and the screenshot remains blocked as before.
+The in-memory capture record is created before capture and persisted when a
+controlled screenshot timeout or invalid PNG unwinds, retaining readiness and
+capture-error evidence. An external hard job termination can still prevent the
+final manifest write.
 This changes when experimental evidence is collected, not mobile feasibility
 acceptance or desktop branch protection. Review an explicit runtime merge gate
 when mobile product support is accepted; #303 remains the runner-stability
@@ -230,8 +248,11 @@ accessibility and physical-device acceptance remain open on iPad.
   preparation regressions
   `test_ios_smoke_read_only_preparation_is_not_application_evidence` and
   `test_ios_smoke_preparation_cannot_build_or_run_an_application`;
+  `test_ios_smoke_waits_for_delayed_first_ui_without_retrying_launch` and
+  `test_ios_smoke_live_process_without_ui_fails_and_preserves_capture`;
   `scripts/tests/test_ios_simulator_smoke.py` for isolated device ownership,
-  runtime selection, failure/cleanup behavior and live-process-without-UI rejection; `scripts/smoke-ios-simulator.py
+  runtime selection, failure/cleanup behavior, bounded delayed-first-UI
+  readiness and live-process-without-UI rejection; `scripts/smoke-ios-simulator.py
   --run` in nightly/manual CI or opt-in local validation for iPhone/iPad
   launch-survival, first UI callback, terminate/relaunch and PNG capture.
   Only devices created by that invocation may be shut down/deleted. Artifacts

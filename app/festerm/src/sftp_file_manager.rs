@@ -125,7 +125,7 @@ impl LocalDirectoryLoader {
     }
 
     #[cfg(test)]
-    fn paused_for_test() -> Self {
+    pub(crate) fn paused_for_test() -> Self {
         Self {
             shared: Arc::new(LocalDirectoryLoadShared {
                 pending: Mutex::new(None),
@@ -146,7 +146,7 @@ impl LocalDirectoryLoader {
     }
 
     #[cfg(test)]
-    fn run_pending_for_test(&self) {
+    pub(crate) fn run_pending_for_test(&self) {
         let task = self
             .shared
             .pending
@@ -6536,6 +6536,18 @@ impl MarkdownFilePicker {
         let local_loader =
             LocalDirectoryLoader::new("festerm-gui-markdown-picker-local".to_owned());
         Self::with_local_loader(start_dir, repaint, local_loader)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(start_dir: PathBuf, repaint: egui::Context) -> Self {
+        Self::with_local_loader(start_dir, repaint, LocalDirectoryLoader::paused_for_test())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn complete_pending_for_test(&mut self) {
+        // Test-controlled pickers have no worker; drive this after every load.
+        self.local_loader.run_pending_for_test();
+        self.poll();
     }
 
     fn with_local_loader(

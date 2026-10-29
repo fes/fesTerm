@@ -7,6 +7,9 @@ authors.workspace = true
 repository.workspace = true
 description = "Bounded tree-sitter syntax highlighting for fesTerm's editor and Markdown preview."
 
+[features]
+test-support = []
+
 # The grammar set is closed and every grammar is recorded with its licence
 # (ADR 0035 §3). Adding one is an ordinary, reviewable change to this list.
 [dependencies]

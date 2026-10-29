@@ -20,8 +20,13 @@ DEVICE = {"family": "iPhone", "model": "iPhone Test", "device_type": "phone",
 
 
 class FakeRunner:
-    def __init__(self, fail=None, created=OWNED, first_ui=True):
+    def __init__(self, fail=None, created=OWNED, first_ui=True, first_ui_on_screenshot=False,
+                 invalid_png=False):
         self.first_ui = first_ui
+        self.first_ui_on_screenshot = first_ui_on_screenshot
+        self.invalid_png = invalid_png
+        self.polls_since_launch = 0
+        self.stderr = None
         self.calls = []
         self.fail = fail
         self.created = created
@@ -31,17 +36,28 @@ class FakeRunner:
         if self.fail and self.fail(args):
             raise RuntimeError("injected failure")
         if args[0] == "ps":
+            if "timeout" in kwargs:
+                raise AssertionError("process probes must retain the runner's default deadline")
+            self.polls_since_launch += 1
             return "/private/Simulator/fesTermSpike.app/festerm-mobile\n"
         command = args[2]
         if command == "create":
             return self.created + "\n"
         if command == "launch":
-            stderr = next(a.split("=", 1)[1] for a in args if a.startswith("--stderr="))
-            Path(stderr).write_text("festerm-mobile: first UI built\n" if self.first_ui else "renderer failed\n")
+            self.stderr = next(a.split("=", 1)[1] for a in args if a.startswith("--stderr="))
+            self.polls_since_launch = 0
+            Path(self.stderr).write_text("festerm-mobile: first UI built\n"
+                                         if self.first_ui
+                                         else "renderer pending\n")
             return smoke.BUNDLE_ID + ": 1234\n"
         if command == "io":
-            Path(args[-1]).write_bytes(b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13)
-                                     + b"IHDR" + struct.pack(">II", 1170, 2532))
+            if self.first_ui_on_screenshot:
+                Path(self.stderr).write_text("festerm-mobile: first UI built\n")
+            contents = b"not a screenshot" if self.invalid_png else (
+                b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13)
+                + b"IHDR" + struct.pack(">II", 1170, 2532)
+            )
+            Path(args[-1]).write_bytes(contents)
         return ""
 
 
@@ -138,6 +154,13 @@ class IosSimulatorSmokeTests(unittest.TestCase):
             self.assertEqual(result["status"], "fail")
             self.assertEqual(run.calls[-1], ("xcrun", "simctl", "delete", OWNED))
             self.assertFalse(any(EXISTING in call for call in run.calls))
+            if failure == "ps":
+                self.assertIn("liveness_error", result["captures"][0])
+                self.assertEqual(result["captures"][0]["screenshot_status"], "not-attempted")
+            if failure == "io":
+                self.assertGreater(result["captures"][0]["readiness_polls"], 0)
+                self.assertEqual(result["captures"][0]["screenshot_status"], "fail")
+                self.assertIn("screenshot_error", result["captures"][0])
 
     def test_ios_smoke_refuses_existing_udid_and_reports_cleanup_failure(self):
         for run in (FakeRunner(created=EXISTING), FakeRunner(fail=lambda c: c[2] == "delete")):
@@ -149,14 +172,63 @@ class IosSimulatorSmokeTests(unittest.TestCase):
 
     def test_ios_smoke_live_process_without_ui_fails_and_preserves_capture(self):
         run = FakeRunner(first_ui=False)
+        pauses = []
+        with tempfile.TemporaryDirectory() as directory:
+            result = smoke.exercise_device(run, DEVICE, Path("fixture.app"), Path(directory),
+                                           {EXISTING}, pause=pauses.append)
+            self.assertEqual(result["status"], "fail")
+            self.assertFalse(result["captures"][0]["first_ui_built"])
+            self.assertEqual(result["captures"][0]["readiness_polls"],
+                             smoke.FIRST_UI_OBSERVATION_POLLS)
+            self.assertTrue((Path(directory) / result["captures"][0]["screenshot"]).exists())
+            self.assertIn("first UI", result["error"])
+        self.assertEqual(pauses, [1] * smoke.FIRST_UI_OBSERVATION_POLLS)
+        self.assertEqual(run.calls[-1], ("xcrun", "simctl", "delete", OWNED))
+
+    def test_ios_smoke_waits_for_delayed_first_ui_without_retrying_launch(self):
+        run = FakeRunner(first_ui=False)
+        pauses = []
+
+        def reveal_on_third_observation(seconds):
+            pauses.append(seconds)
+            if len(pauses) % smoke.FIRST_UI_OBSERVATION_POLLS == 0:
+                Path(run.stderr).write_text("festerm-mobile: first UI built\n")
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = smoke.exercise_device(run, DEVICE, Path("fixture.app"), Path(directory),
+                                           {EXISTING}, pause=reveal_on_third_observation)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual([capture["readiness_polls"] for capture in result["captures"]], [3, 3])
+        self.assertEqual([capture["first_ui_observed_at"] for capture in result["captures"]],
+                         ["poll-3", "poll-3"])
+        self.assertEqual(pauses, [1] * 6)
+        self.assertEqual(sum(c[:3] == ("xcrun", "simctl", "launch") for c in run.calls), 2)
+
+    def test_ios_smoke_observes_the_final_grace_interval(self):
+        clock = [0.0]
+
+        def pause(seconds):
+            clock[0] += seconds
+
+        polls, elapsed, first_poll, first_seconds = smoke.observe_first_ui(
+            Path("missing-stderr.log"),
+            pause=pause,
+            monotonic=lambda: clock[0],
+            marker_present=lambda _stderr: clock[0] >= 3.0,
+        )
+        self.assertEqual(polls, 3)
+        self.assertEqual(elapsed, 3.0)
+        self.assertEqual(first_poll, 3)
+        self.assertEqual(first_seconds, 3.0)
+
+    def test_ios_smoke_preserves_post_capture_marker_acceptance(self):
+        run = FakeRunner(first_ui=False, first_ui_on_screenshot=True)
         with tempfile.TemporaryDirectory() as directory:
             result = smoke.exercise_device(run, DEVICE, Path("fixture.app"), Path(directory),
                                            {EXISTING}, pause=lambda _: None)
-            self.assertEqual(result["status"], "fail")
-            self.assertFalse(result["captures"][0]["first_ui_built"])
-            self.assertTrue((Path(directory) / result["captures"][0]["screenshot"]).exists())
-            self.assertIn("first UI", result["error"])
-        self.assertEqual(run.calls[-1], ("xcrun", "simctl", "delete", OWNED))
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual([capture["first_ui_observed_at"] for capture in result["captures"]],
+                         ["post-capture", "post-capture"])
 
     def test_ios_smoke_rejects_missing_or_invalid_capture(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -164,6 +236,14 @@ class IosSimulatorSmokeTests(unittest.TestCase):
             path.write_bytes(b"not a screenshot")
             with self.assertRaises(RuntimeError):
                 smoke.png_dimensions(path)
+        run = FakeRunner(invalid_png=True)
+        with tempfile.TemporaryDirectory() as directory:
+            result = smoke.exercise_device(run, DEVICE, Path("fixture.app"), Path(directory),
+                                           {EXISTING}, pause=lambda _: None)
+        self.assertEqual(result["status"], "fail")
+        self.assertGreater(result["captures"][0]["readiness_polls"], 0)
+        self.assertEqual(result["captures"][0]["screenshot_status"], "fail")
+        self.assertIn("Missing PNG", result["captures"][0]["screenshot_error"])
 
 
 if __name__ == "__main__":

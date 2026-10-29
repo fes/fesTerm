@@ -3444,13 +3444,44 @@ mod tests {
     fn document_layout_editor_pair(
         text: &str,
     ) -> [(egui::Context, SharedDocuments, TextEditorTab); 2] {
+        document_layout_editor_pair_with_shared_document(text, false)
+    }
+
+    fn document_layout_editor_shared_pair(
+        text: &str,
+    ) -> [(egui::Context, SharedDocuments, TextEditorTab); 2] {
+        document_layout_editor_pair_with_shared_document(text, true)
+    }
+
+    fn document_layout_editor_pair_with_shared_document(
+        text: &str,
+        shared: bool,
+    ) -> [(egui::Context, SharedDocuments, TextEditorTab); 2] {
         let tab = TabId::next_for_test();
-        std::array::from_fn(|index| {
+        let shared_document = shared.then(|| {
             let documents = DocumentRegistry::shared();
             let id =
                 documents
                     .borrow_mut()
                     .create_untitled("layout", "fixture.py", text.as_bytes());
+            assert!(!documents
+                .borrow_mut()
+                .get_mut(id)
+                .unwrap()
+                .syntax_spans_without_budget_for_test(0..text.len())
+                .is_empty());
+            (documents, id)
+        });
+        std::array::from_fn(|index| {
+            let (documents, id) = shared_document.clone().unwrap_or_else(|| {
+                let documents = DocumentRegistry::shared();
+                let id = documents.borrow_mut().create_untitled(
+                    "layout",
+                    "fixture.txt",
+                    text.as_bytes(),
+                );
+                (documents, id)
+            });
             let mut editor = TextEditorTab::new(id, &documents);
             editor.tab = Some(tab);
             editor.layout.ordinary = index == 0;
@@ -3517,7 +3548,8 @@ mod tests {
                 .map(|index| format!("def value_{index}(): return \"café 漢字 {index}\"\n"))
                 .collect::<String>()
         );
-        let mut pair = document_layout_editor_pair(&text);
+        let mut pair = document_layout_editor_shared_pair(&text);
+        assert!(std::rc::Rc::ptr_eq(&pair[0].1, &pair[1].1));
         let wide = vec2(1180.0, 760.0);
         for frame in 0..3 {
             document_layout_editor_frame(&mut pair, frame, wide, Vec::new());
@@ -3591,22 +3623,20 @@ mod tests {
             assert_eq!(pair[1].2.layout.preparations, 0, "{control}: warm");
         }
         let weak = Arc::downgrade(&pair[1].2.layout.prepared.as_ref().unwrap().galley);
-        let mut rebound = None;
+        let rebound = pair[0].1.borrow_mut().create_untitled(
+            "layout",
+            "rebound",
+            b"same revision, different identity",
+        );
         for (_, documents, editor) in &mut pair {
-            let id = documents.borrow_mut().create_untitled(
-                "layout",
-                "rebound",
-                b"same revision, different identity",
-            );
-            rebound = Some(id);
-            editor.rebind(id, documents);
+            editor.rebind(rebound, documents);
             assert!(editor.layout.prepared.is_none());
         }
         document_layout_editor_frame(&mut pair, 45, wide, Vec::new());
         assert!(pair[1].2.layout.preparations > 0);
         assert_eq!(
             pair[1].2.layout.prepared.as_ref().unwrap().document,
-            rebound.unwrap()
+            rebound
         );
         // Egui may retain the prior galley in its ordinary cache; our view
         // no longer owns it, regardless of the old renderer/output's lifetime.
