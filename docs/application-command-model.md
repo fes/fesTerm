@@ -95,6 +95,13 @@ encoder.
 
 ## Invocation Surfaces
 
+Terminal OSC 8 activation enters `OpenTerminalHyperlink` with the originating
+tab and lifecycle generation plus a redacted target. The application preserves
+the web-only `OpenExternalLink` OS sink. Absolute local file URIs instead
+require the same local source generation and enter the no-follow internal
+document-opening path; SSH/SFTP and serial cannot grant client-local access.
+Presentation eligibility and decoded previews are not filesystem authority.
+
 The following surfaces should reuse the command model:
 
 - session launcher;

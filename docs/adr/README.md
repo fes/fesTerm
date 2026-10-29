@@ -51,6 +51,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0052: Session-Bound Local File OSC 8 Links](0052-local-file-osc8-links.md) - local-only internal document opening; OS URL handlers remain web-only, native TI-10 qualification pending
+
 - [ADR 0050: Offline Mermaid Preview Without a Browser](0050-native-mermaid-preview.md) - owner-selected native rendering; desktop visual/accessibility qualification remains CP-06/CP-15
 
 - [ADR 0044: Bounded Ordinary Terminal Row Paint Cache](0044-bounded-ordinary-terminal-row-paint-cache.md) - issue #327's internal presentation repair; independent gates and 52-run cleanup qualification complete, owner accepts the residual shaped-heavy CPU tradeoff under #334; external PR review remains required

@@ -2032,23 +2032,6 @@ impl FesTermApp {
         })
     }
 
-    fn request_external_link(&mut self, target: &str, context: &egui::Context) {
-        let Some(target) = festerm_core::normalize_external_web_url(target) else {
-            self.overlays.transient_notice = Some((
-                "This link is not a valid web address.".to_owned(),
-                Instant::now() + Duration::from_secs(3),
-            ));
-            context.request_repaint();
-            return;
-        };
-        self.state.dispatch(
-            AppCommand::OpenExternalLink {
-                target: ExternalLinkTarget::new(target),
-            },
-            context,
-        );
-    }
-
     fn start_stored_password_profile(&mut self, profile_id: String, context: &egui::Context) {
         // Derive a manual-recovery strategy from the saved profile's
         // durable-session configuration (ADR 0018), so clicking a saved
@@ -6089,6 +6072,7 @@ impl FesTermApp {
                         session.apply_frontend_terminal_configuration(scrollback_limit);
                         ui.ctx().request_repaint();
                     }
+                    session.prepare_terminal_link_context();
                     session.view.set_font_set(terminal_font_set);
                     let host_key_prompt = session.host_key_prompt().cloned();
                     let password_prompt = host_key_prompt
@@ -6174,7 +6158,12 @@ impl FesTermApp {
                         deferred_pastes = session.view.take_paste_requests();
                         clipboard_read_requested = session.view.take_clipboard_read_request();
                         deferred_find_request = session.view.take_find_request();
-                        deferred_links = session.view.take_link_requests();
+                        deferred_links = session
+                            .view
+                            .take_link_requests()
+                            .into_iter()
+                            .map(|link| (session.controller.lifecycle_generation(), link))
+                            .collect();
                         if session.view.take_context_action_request() {
                             deferred_terminal_path_open = Some(active_tab_id);
                         }
@@ -6230,8 +6219,15 @@ impl FesTermApp {
         for action in deferred_history_actions {
             self.dispatch_terminal_history_action(action, ui.ctx());
         }
-        for link in deferred_links {
-            self.request_external_link(link.as_ref(), ui.ctx());
+        for (lifecycle_generation, link) in deferred_links {
+            self.state.dispatch(
+                AppCommand::OpenTerminalHyperlink {
+                    tab_id: active_tab_id,
+                    lifecycle_generation,
+                    target: ExternalLinkTarget::new(link.to_string()),
+                },
+                ui.ctx(),
+            );
         }
         if let Some(action) = inspector_action {
             let context = ui.ctx().clone();
@@ -7264,6 +7260,47 @@ mod tests {
             );
         harness.run();
         (harness, transport)
+    }
+
+    #[test]
+    fn terminal_file_link_opens_from_production_view_routing() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = std::fs::canonicalize(directory.path())
+            .unwrap()
+            .join("report one.md");
+        std::fs::write(&path, "# OSC 8 document\n").unwrap();
+        let uri = crate::terminal_paths::file_uri_for_test(&path);
+        let (mut harness, _) = keyboard_harness();
+        let tab_id = harness.state().state.active();
+        let session = harness.state_mut().state.session_tab_mut(tab_id).unwrap();
+        session.inspector_transport = crate::tabs::InspectorTransport::Local { persistence: None };
+        session
+            .terminal
+            .ingest(format!("\x1b]8;;{uri}\x07OPEN\x1b]8;;\x07").as_bytes());
+        harness.run();
+        let point = harness
+            .state()
+            .state
+            .session_tab(tab_id)
+            .unwrap()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap()
+            .min
+            + egui::vec2(2.0, 2.0);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::COMMAND,
+            });
+        }
+        harness.run();
+        assert_ne!(harness.state().state.active(), tab_id);
+        assert!(harness.state().state.active_editor_options().is_some());
+        assert!(harness.state().state.session_tab(tab_id).is_some());
     }
 
     #[test]

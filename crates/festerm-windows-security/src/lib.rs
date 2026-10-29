@@ -15,7 +15,7 @@ mod imp {
             fs::OpenOptionsExt,
             io::{AsRawHandle, FromRawHandle, OwnedHandle},
         },
-        path::Path,
+        path::{Path, PathBuf},
         ptr,
     };
 
@@ -57,11 +57,11 @@ mod imp {
             TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
         },
         Storage::FileSystem::{
-            FileBasicInfo, FileDispositionInfo, GetFileInformationByHandle,
-            GetFileInformationByHandleEx, SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-            DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_ENCRYPTED,
-            FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
-            FILE_DELETE_CHILD, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
+            FileBasicInfo, FileDispositionInfo, GetDriveTypeW, GetFileInformationByHandle,
+            GetFileInformationByHandleEx, GetFinalPathNameByHandleW, SetFileInformationByHandle,
+            BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY,
+            FILE_ATTRIBUTE_ENCRYPTED, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
+            FILE_BASIC_INFO, FILE_DELETE_CHILD, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
             FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_READ_EA, FILE_SHARE_DELETE,
             FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, READ_CONTROL, SYNCHRONIZE,
             WRITE_DAC, WRITE_OWNER,
@@ -1457,6 +1457,48 @@ mod imp {
     /// reparse point.
     pub fn open_file_no_reparse(directory: &File, name: &Path) -> io::Result<File> {
         open_file_no_reparse_with_access(directory, name, GENERIC_READ)
+    }
+
+    /// Rejects mapped network drives before a terminal hyperlink opens its root.
+    pub fn require_local_disk_root(root: &Path) -> io::Result<()> {
+        let root: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
+        // The root is a terminated, owned UTF-16 string for this call.
+        let kind = unsafe { GetDriveTypeW(root.as_ptr()) };
+        if matches!(kind, 2 | 3 | 5 | 6) {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a local disk is required",
+            ))
+        }
+    }
+
+    /// Gets the canonical name of an already retained file, without reopening its pathname.
+    pub fn opened_file_path(file: &File) -> io::Result<PathBuf> {
+        use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+        let mut buffer = vec![0u16; 32_768];
+        // The borrowed file handle and writable buffer remain live for this call.
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                file.as_raw_handle() as HANDLE,
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
+                0,
+            )
+        };
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if length as usize >= buffer.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the file name is too long",
+            ));
+        }
+        Ok(PathBuf::from(OsString::from_wide(
+            &buffer[..length as usize],
+        )))
     }
 
     /// Retains a no-follow file for generation, content, and security checks
@@ -3192,9 +3234,9 @@ pub use imp::{
     is_current_user_only, lock_directory_path_without_delete_sharing, open_file_no_reparse,
     open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
     open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
-    open_file_no_reparse_for_verification, rename_file_noreplace,
-    restrict_default_dacl_to_current_user, restrict_to_current_user, same_file_identity,
-    secure_staging_parent, security_metadata, security_metadata_matches, staging_parent_matches,
-    DefaultDaclGuard, SecurityMetadata, SecurityPrivilegeGuard, StagingParentSecurity,
-    UnsupportedSecurityMetadata,
+    open_file_no_reparse_for_verification, opened_file_path, rename_file_noreplace,
+    require_local_disk_root, restrict_default_dacl_to_current_user, restrict_to_current_user,
+    same_file_identity, secure_staging_parent, security_metadata, security_metadata_matches,
+    staging_parent_matches, DefaultDaclGuard, SecurityMetadata, SecurityPrivilegeGuard,
+    StagingParentSecurity, UnsupportedSecurityMetadata,
 };

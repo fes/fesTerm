@@ -361,6 +361,7 @@ pub(crate) struct LocalSourceAuthority {
     canonical_path: PathBuf,
     parent_identity: DirectoryIdentity,
     retained_identity: Option<RetainedFileIdentity>,
+    terminal_link: bool,
 }
 
 /// Denial-only source evidence; never grants authority to read or publish.
@@ -400,6 +401,10 @@ impl RecoveryAuthority {
 }
 
 impl LocalSourceAuthority {
+    pub(crate) fn restrict_terminal_links(&mut self) {
+        self.terminal_link = true;
+    }
+
     pub(crate) fn recovery_authority(&self) -> RecoveryAuthority {
         RecoveryAuthority {
             source: self.clone(),
@@ -713,8 +718,102 @@ impl SaveFailure {
 /// Reads a file into an editable document.
 pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadFailure> {
     let canonical_path = fs::canonicalize(path).map_err(classify_read_error)?;
-    let (mut source_authority, mut file) =
+    let (source_authority, file) =
         open_canonical_source(&canonical_path).map_err(classify_read_error)?;
+    load_opened_source(source_authority, file, bounds)
+}
+
+/// Opens an explicitly authorized terminal file link without following aliases.
+pub(crate) fn load_terminal_link(
+    path: &Path,
+    bounds: DocumentBounds,
+) -> Result<LoadedDocument, LoadFailure> {
+    let (authority, file) = open_terminal_link_source(path, None)?;
+    load_opened_source(authority, file, bounds)
+}
+
+fn open_terminal_link_source(
+    path: &Path,
+    expected_parent: Option<DirectoryIdentity>,
+) -> Result<(LocalSourceAuthority, File), LoadFailure> {
+    if !path.is_absolute() || path.file_name().is_none() {
+        return Err(LoadFailure::NotAFile);
+    }
+    #[cfg(windows)]
+    festerm_windows_security::require_local_disk_root(
+        path.ancestors().last().ok_or(LoadFailure::NotAFile)?,
+    )
+    .map_err(classify_read_error)?;
+    let parent = path.parent().ok_or(LoadFailure::NotAFile)?;
+    let directory = open_canonical_directory(parent).map_err(classify_read_error)?;
+    let parent_identity =
+        DirectoryIdentity::from_directory(&directory).map_err(classify_read_error)?;
+    if expected_parent.is_some_and(|expected| expected != parent_identity) {
+        return Err(LoadFailure::NotAFile);
+    }
+    let name = Path::new(path.file_name().ok_or(LoadFailure::NotAFile)?);
+    let metadata = directory
+        .symlink_metadata(name)
+        .map_err(classify_read_error)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(LoadFailure::NotAFile);
+    }
+    let parent_file = directory.into_std_file();
+    #[cfg(unix)]
+    let file = festerm_unix_security::open_file_nofollow(&parent_file, name)
+        .map_err(classify_read_error)?;
+    #[cfg(windows)]
+    let file = festerm_windows_security::open_file_no_reparse(&parent_file, name)
+        .map_err(classify_read_error)?;
+    #[cfg(windows)]
+    let canonical_path =
+        festerm_windows_security::opened_file_path(&file).map_err(classify_read_error)?;
+    #[cfg(not(windows))]
+    let canonical_path = path.to_path_buf();
+    let source_authority = LocalSourceAuthority {
+        canonical_path,
+        parent_identity,
+        retained_identity: None,
+        terminal_link: true,
+    };
+    Ok((source_authority, file))
+}
+
+pub(crate) fn load_source(
+    path: &Path,
+    authority: &LocalSourceAuthority,
+    bounds: DocumentBounds,
+) -> Result<LoadedDocument, LoadFailure> {
+    if authority.terminal_link {
+        let (current, file) =
+            open_terminal_link_source(authority.canonical_path(), Some(authority.parent_identity))?;
+        load_opened_source(current, file, bounds)
+    } else {
+        load(path, bounds)
+    }
+}
+
+pub(crate) fn freshness_for_source(
+    path: &Path,
+    authority: &LocalSourceAuthority,
+    known: Generation,
+) -> Freshness {
+    if authority.terminal_link {
+        match open_terminal_link_source(authority.canonical_path(), Some(authority.parent_identity))
+        {
+            Ok((_, file)) => freshness_opened_file(&file, known),
+            Err(error) => Freshness::Gone(error),
+        }
+    } else {
+        freshness(path, known)
+    }
+}
+
+fn load_opened_source(
+    mut source_authority: LocalSourceAuthority,
+    mut file: File,
+    bounds: DocumentBounds,
+) -> Result<LoadedDocument, LoadFailure> {
     let metadata = file.metadata().map_err(classify_read_error)?;
     if !metadata.is_file() {
         return Err(LoadFailure::NotAFile);
@@ -798,6 +897,13 @@ pub(crate) fn source_authority_is_current(
     authority: &LocalSourceAuthority,
     generation: Generation,
 ) -> bool {
+    if authority.terminal_link {
+        return open_terminal_link_source(
+            authority.canonical_path(),
+            Some(authority.parent_identity),
+        )
+        .is_ok_and(|(_, file)| generation.matches_file(&file));
+    }
     let Some(parent) = authority.canonical_path.parent() else {
         return false;
     };
@@ -813,6 +919,13 @@ pub(crate) fn source_authority_identity_is_current(
     authority: &LocalSourceAuthority,
     generation: Generation,
 ) -> bool {
+    if authority.terminal_link {
+        return open_terminal_link_source(
+            authority.canonical_path(),
+            Some(authority.parent_identity),
+        )
+        .is_ok_and(|(_, file)| generation.identity_matches_file(&file));
+    }
     let Some(parent) = authority.canonical_path.parent() else {
         return false;
     };
@@ -888,6 +1001,7 @@ fn open_canonical_source(
             canonical_path: canonical_path.to_path_buf(),
             parent_identity,
             retained_identity,
+            terminal_link: false,
         },
         file,
     ))
@@ -902,29 +1016,30 @@ pub fn freshness(path: &Path, known: Generation) -> Freshness {
                 Ok(file) => file,
                 Err(error) => return Freshness::Gone(classify_read_error(error)),
             };
-            if known.metadata_matches_file(&file) {
-                return Freshness::Unchanged;
-            }
-            let length = match file.metadata() {
-                Ok(metadata) => metadata.len(),
-                Err(error) => return Freshness::Gone(classify_read_error(error)),
-            };
-            if length > DocumentBounds::MAX_BYTES as u64 {
-                return Freshness::Gone(LoadFailure::Refused(RefusalReason::TooLarge {
-                    bytes: usize::try_from(length).unwrap_or(usize::MAX),
-                    limit: DocumentBounds::MAX_BYTES,
-                }));
-            }
-            let current = match Generation::from_file(&file) {
-                Ok(current) => current,
-                Err(error) => return Freshness::Gone(classify_read_error(error)),
-            };
-            if current == known {
-                Freshness::Unchanged
-            } else {
-                Freshness::Changed(current)
-            }
+            freshness_opened_file(&file, known)
         }
+        Err(error) => Freshness::Gone(classify_read_error(error)),
+    }
+}
+
+fn freshness_opened_file(file: &File, known: Generation) -> Freshness {
+    if known.metadata_matches_file(file) {
+        return Freshness::Unchanged;
+    }
+    let length = match file.metadata() {
+        Ok(metadata) if metadata.is_file() => metadata.len(),
+        Ok(_) => return Freshness::Gone(LoadFailure::NotAFile),
+        Err(error) => return Freshness::Gone(classify_read_error(error)),
+    };
+    if length > DocumentBounds::MAX_BYTES as u64 {
+        return Freshness::Gone(LoadFailure::Refused(RefusalReason::TooLarge {
+            bytes: usize::try_from(length).unwrap_or(usize::MAX),
+            limit: DocumentBounds::MAX_BYTES,
+        }));
+    }
+    match Generation::from_file(file) {
+        Ok(current) if current == known => Freshness::Unchanged,
+        Ok(current) => Freshness::Changed(current),
         Err(error) => Freshness::Gone(classify_read_error(error)),
     }
 }
@@ -1294,6 +1409,7 @@ fn source_authority_for_save(path: &Path, parent: &Path) -> Result<SaveDirectory
             canonical_path: canonical_parent.join(file_name),
             parent_identity,
             retained_identity: None,
+            terminal_link: false,
         },
         target,
         #[cfg(windows)]
@@ -2856,6 +2972,68 @@ mod tests {
         let extended = SaveFailure::WindowsExtendedAttributes;
         assert!(extended.detail().contains("WSL ownership or mode"));
         assert!(extended.detail().contains("Nothing was written"));
+    }
+
+    #[test]
+    fn terminal_file_link_load_is_bounded_and_rejects_non_files() {
+        let directory = TemporaryDirectory::new("terminal-file-link");
+        let root = fs::canonicalize(&directory.path).unwrap();
+        let path = root.join("report.md");
+        fs::write(&path, "# Safe\n").unwrap();
+        let loaded = load_terminal_link(&path, DocumentBounds::default()).unwrap();
+        assert_eq!(loaded.document.text(), "# Safe\n");
+        assert!(matches!(
+            load_terminal_link(&path, DocumentBounds::new(2, 2, 2)),
+            Err(LoadFailure::Refused(RefusalReason::TooLarge { .. }))
+        ));
+        assert!(load_terminal_link(&root, DocumentBounds::default()).is_err());
+        fs::write(&path, b"binary\0content").unwrap();
+        assert!(matches!(
+            load_terminal_link(&path, DocumentBounds::default()),
+            Err(LoadFailure::Refused(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_file_link_load_never_follows_file_or_parent_symlinks() {
+        let directory = TemporaryDirectory::new("terminal-file-link-alias");
+        let root = fs::canonicalize(&directory.path).unwrap();
+        fs::write(root.join("report.md"), "# Safe\n").unwrap();
+        std::os::unix::fs::symlink(root.join("report.md"), root.join("alias.md")).unwrap();
+        std::os::unix::fs::symlink(&root, root.join("alias-dir")).unwrap();
+        for path in [root.join("alias.md"), root.join("alias-dir/report.md")] {
+            assert!(load_terminal_link(&path, DocumentBounds::default()).is_err());
+        }
+        let fifo = root.join("pipe.md");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRUSR).unwrap();
+        assert!(load_terminal_link(&fifo, DocumentBounds::default()).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_file_link_load_refuses_junction_redirection() {
+        let directory = TemporaryDirectory::new("terminal-file-link-junction");
+        let root = fs::canonicalize(&directory.path).unwrap();
+        let real = root.join("real");
+        fs::create_dir(&real).unwrap();
+        fs::write(real.join("report.md"), "# Safe\n").unwrap();
+        let alias = root.join("alias");
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&alias)
+            .arg(&real)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "owned junction fixture creation failed");
+        let result = load_terminal_link(&alias.join("report.md"), DocumentBounds::default());
+        fs::remove_dir(&alias).unwrap();
+        assert!(
+            result.is_err(),
+            "terminal file links must not follow junctions"
+        );
     }
 
     #[test]

@@ -3,6 +3,28 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Local document links without an OS-opening capability
+
+Copilot could emit real OSC 8 file links while fesTerm silently discarded
+their metadata under its web-only policy. The repair preserves narrowly
+validated absolute local-file metadata without widening the web URL opener.
+Modifier/context activation pins its source session generation and opens only
+an internal document from a local session. Decoded destination previews and
+Copy path make the actual file visible rather than trusting its label.
+
+The file-open path walks retained no-follow directories and a regular-file
+handle, refusing aliases, device/network spellings and Windows mapped network
+roots before document reads. It shares existing bounded text validation and
+retains unsaved buffers when a document is already open. Remote OSC 8 mapping
+and native usability qualification remain explicit follow-ups, not implicit
+permissions granted by a localhost URI.
+
+PR review caught that automatic freshness/reload and save-conflict reads could
+lose the initial no-follow policy. Retained source authority now preserves it
+through those paths, ordinary saves and buffer reuse. Replacement-parent
+identity is checked before opening a child, while legitimate regular-file
+replacement and dirty-buffer conflict handling remain supported.
+
 ## v0.11.1: recovering existing native sessions safely
 
 This patch release packages the native-session upgrade repair and confirmed

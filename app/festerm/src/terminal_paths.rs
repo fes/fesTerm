@@ -399,6 +399,38 @@ pub(crate) fn open_local_command(
     }
 }
 
+pub(crate) fn explicit_local_file_path(target: &str) -> Option<PathBuf> {
+    let decoded = festerm_core::local_file_hyperlink_path(target)?;
+    #[cfg(windows)]
+    let decoded = decoded.strip_prefix('/')?.replace('/', "\\");
+    #[cfg(not(windows))]
+    if decoded.as_bytes().get(2) == Some(&b':') {
+        return None;
+    }
+    let path = PathBuf::from(decoded);
+    (path.is_absolute() && path.file_name().is_some()).then_some(path)
+}
+
+#[cfg(test)]
+pub(crate) fn file_uri_for_test(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    let text = text.strip_prefix("//?/").unwrap_or(&text);
+    let mut uri = if text.starts_with('/') {
+        "file://"
+    } else {
+        "file:///"
+    }
+    .to_owned();
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b':' | b'-' | b'_' | b'.') {
+            uri.push(char::from(byte));
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    uri
+}
+
 pub(crate) fn bind_live_remote_request(
     requestor: LiveRemoteFileRequestor,
     request: RemoteTerminalPathOpenRequest,

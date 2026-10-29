@@ -405,6 +405,42 @@ impl DocumentRegistry {
         ))
     }
 
+    pub(crate) fn open_terminal_link(&mut self, path: &Path) -> Result<DocumentId, OpenFailure> {
+        let origin = LocalOrigin::new(path)
+            .map(DocumentOrigin::Local)
+            .map_err(OpenFailure::Origin)?;
+        let loaded =
+            document_store::load_terminal_link(path, self.bounds).map_err(OpenFailure::Load)?;
+        let existing = self
+            .documents
+            .iter()
+            .filter(|(_, document)| {
+                document.origin.key() == origin.key()
+                    || document
+                        .source_authority
+                        .as_ref()
+                        .is_some_and(|authority| authority.matches(&loaded.source_authority))
+            })
+            .map(|(id, _)| *id)
+            .min();
+        if let Some(id) = existing {
+            let document = self.documents.get_mut(&id).expect("matched document");
+            document.invalidate_background();
+            if let Some(authority) = &mut document.source_authority {
+                authority.restrict_terminal_links();
+            }
+            self.retain(id);
+            return Ok(id);
+        }
+        Ok(self.insert(
+            origin,
+            loaded.document,
+            Some(loaded.generation),
+            Some(loaded.source_authority),
+            loaded.read_only,
+        ))
+    }
+
     fn current_keyed_local(&mut self, origin: &DocumentOrigin) -> Option<DocumentId> {
         let key = origin.key();
         let id = self.by_key.get(&key).copied()?;
@@ -874,7 +910,14 @@ impl DocumentRegistry {
                 SaveOutcome::Saved
             }
             Err(SaveFailure::Conflict(_)) => {
-                let conflict = conflict_for(&path, bounds);
+                let conflict = conflict_for(
+                    &path,
+                    document
+                        .source_authority
+                        .as_ref()
+                        .expect("loaded local source"),
+                    bounds,
+                );
                 document.conflict = Some(conflict.clone());
                 SaveOutcome::Conflict(conflict)
             }
@@ -1366,7 +1409,11 @@ impl DocumentRegistry {
         };
 
         document.checked = Instant::now();
-        let outcome = match document_store::freshness(&path, known) {
+        let authority = document
+            .source_authority
+            .as_ref()
+            .expect("loaded local source");
+        let outcome = match document_store::freshness_for_source(&path, authority, known) {
             Freshness::Unchanged => {
                 let authority_current =
                     document.source_authority.as_ref().is_some_and(|authority| {
@@ -1387,7 +1434,7 @@ impl DocumentRegistry {
                     }
                 }
             }
-            Freshness::Changed(_) => match document_store::load(&path, bounds) {
+            Freshness::Changed(_) => match document_store::load_source(&path, authority, bounds) {
                 Ok(loaded) if !document.text.is_dirty() => {
                     document.background_load_error = None;
                     document.text = loaded.document;
@@ -1465,7 +1512,14 @@ impl DocumentRegistry {
             return None;
         };
         let path = origin.path().to_path_buf();
-        match document_store::load(&path, bounds) {
+        match document_store::load_source(
+            &path,
+            document
+                .source_authority
+                .as_ref()
+                .expect("loaded local source"),
+            bounds,
+        ) {
             Ok(loaded) => {
                 document.text = loaded.document;
                 document.background_load_error = None;
@@ -1845,11 +1899,15 @@ impl DocumentRegistry {
     }
 }
 
-fn conflict_for(path: &Path, bounds: DocumentBounds) -> festerm_document::ConflictState {
+fn conflict_for(
+    path: &Path,
+    authority: &LocalSourceAuthority,
+    bounds: DocumentBounds,
+) -> festerm_document::ConflictState {
     let conflict = festerm_document::ConflictState::new(
         "This file changed somewhere else while you were editing it.",
     );
-    match document_store::load(path, bounds) {
+    match document_store::load_source(path, authority, bounds) {
         Ok(loaded) => conflict.with_source_text(loaded.document.text()),
         Err(_) => conflict,
     }
@@ -1907,6 +1965,162 @@ mod tests {
         let document = registry.get_mut(id).unwrap();
         let end = document.text().text().len();
         document.text_mut().replace(end..end, text).unwrap();
+    }
+
+    #[test]
+    fn terminal_file_link_refresh_and_save_preserve_no_follow_policy() {
+        let directory = TemporaryDirectory::new("terminal-link-refresh");
+        let path = fs::canonicalize(directory.file("report.md", "first\n")).unwrap();
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_terminal_link(&path).unwrap();
+        let replacement = directory.file("replacement.md", "second\n");
+        #[cfg(windows)]
+        fs::remove_file(&path).unwrap();
+        fs::rename(replacement, &path).unwrap();
+        assert_eq!(registry.refresh(id), Some(RefreshOutcome::Reloaded));
+        type_into(&mut registry, id, "mine\n");
+        assert_eq!(registry.save(id), Some(SaveOutcome::Saved));
+        assert_eq!(
+            registry.reload_from_source(id),
+            Some(RefreshOutcome::Reloaded)
+        );
+        assert_eq!(registry.get(id).unwrap().text().text(), "second\nmine\n");
+        #[cfg(unix)]
+        {
+            let other = directory.file("other.md", "private target\n");
+            fs::remove_file(&path).unwrap();
+            std::os::unix::fs::symlink(other, &path).unwrap();
+            assert_terminal_link_replacement_refused(&mut registry, id, "second\nmine\n");
+        }
+    }
+
+    #[test]
+    fn terminal_file_link_dirty_refresh_keeps_edits_and_bounded_conflict_source() {
+        let directory = TemporaryDirectory::new("terminal-link-dirty-refresh");
+        let path = fs::canonicalize(directory.file("report.md", "first\n")).unwrap();
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_terminal_link(&path).unwrap();
+        type_into(&mut registry, id, "mine\n");
+        let replacement = directory.file("replacement.md", "theirs\n");
+        #[cfg(windows)]
+        fs::remove_file(&path).unwrap();
+        fs::rename(replacement, &path).unwrap();
+        assert_eq!(registry.refresh(id), Some(RefreshOutcome::Conflict));
+        let document = registry.get(id).unwrap();
+        assert_eq!(document.text().text(), "first\nmine\n");
+        assert_eq!(document.conflict().unwrap().source_text(), Some("theirs\n"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_file_link_refresh_never_follows_replaced_file_or_parent() {
+        for replacement in 0..3 {
+            for reuse in [false, true] {
+                let directory = TemporaryDirectory::new("terminal-link-replacement");
+                let root = fs::canonicalize(&directory.path).unwrap();
+                let source = root.join("source");
+                let other = root.join("other");
+                fs::create_dir(&source).unwrap();
+                fs::create_dir(&other).unwrap();
+                let path = source.join("report.md");
+                fs::write(&path, "original\n").unwrap();
+                fs::write(other.join("report.md"), "private target\n").unwrap();
+                let mut registry = DocumentRegistry::new();
+                let existing = reuse.then(|| registry.open_local(&path).unwrap());
+                let id = registry.open_terminal_link(&path).unwrap();
+                if let Some(existing) = existing {
+                    assert_eq!(existing, id);
+                }
+                if replacement == 1 {
+                    fs::rename(&source, root.join("retired")).unwrap();
+                    std::os::unix::fs::symlink(&other, &source).unwrap();
+                } else if replacement == 2 {
+                    let retired = root.join("retired");
+                    fs::rename(&source, &retired).unwrap();
+                    fs::create_dir(&source).unwrap();
+                    fs::hard_link(retired.join("report.md"), &path).unwrap();
+                } else {
+                    fs::remove_file(&path).unwrap();
+                    std::os::unix::fs::symlink(other.join("report.md"), &path).unwrap();
+                }
+                assert_terminal_link_replacement_refused(&mut registry, id, "original\n");
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_file_link_refresh_never_follows_replaced_parent_junction() {
+        let directory = TemporaryDirectory::new("terminal-link-junction-replacement");
+        let root = fs::canonicalize(&directory.path).unwrap();
+        let source = root.join("source");
+        let other = root.join("other");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&other).unwrap();
+        let path = source.join("report.md");
+        fs::write(&path, "original\n").unwrap();
+        fs::write(other.join("report.md"), "private target\n").unwrap();
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_terminal_link(&path).unwrap();
+        // Unlink the open child so Windows permits renaming its parent.
+        fs::remove_file(&path).unwrap();
+        fs::rename(&source, root.join("retired")).unwrap();
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&source)
+            .arg(&other)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "owned junction fixture creation failed");
+        assert_terminal_link_replacement_refused(&mut registry, id, "original\n");
+        fs::remove_dir(&source).unwrap();
+    }
+
+    fn assert_terminal_link_replacement_refused(
+        registry: &mut DocumentRegistry,
+        id: DocumentId,
+        expected: &str,
+    ) {
+        let document = registry.get(id).unwrap();
+        let request = local_io::Request::new(
+            id,
+            document.io_epoch,
+            document.text.revision(),
+            document.generation.unwrap(),
+            document.source_authority.clone().unwrap(),
+            match &document.origin {
+                DocumentOrigin::Local(origin) => origin.path().to_path_buf(),
+                _ => unreachable!(),
+            },
+            document.availability.clone(),
+            None,
+            None,
+            Instant::now(),
+            None,
+            registry.bounds(),
+            Arc::new(local_io::Control::default()),
+        );
+        assert!(matches!(
+            local_io::execute(&request, false),
+            local_io::Result::Checked(local_io::Check::Failed(_))
+        ));
+        assert!(
+            conflict_for(&request.path, &request.authority, registry.bounds())
+                .source_text()
+                .is_none()
+        );
+        assert!(matches!(
+            registry.refresh(id),
+            Some(RefreshOutcome::Unavailable(_))
+        ));
+        assert_eq!(
+            registry.reload_from_source(id),
+            Some(RefreshOutcome::Unreadable)
+        );
+        assert_eq!(registry.get(id).unwrap().text().text(), expected);
+        assert!(registry.get(id).unwrap().conflict().is_none());
     }
 
     #[test]

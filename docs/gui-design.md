@@ -3030,10 +3030,32 @@ OS-handler command; ordinary
 clicks retain terminal selection/mouse behavior. Context actions **Open link**
 and **Copy link** appear only over a real link range. Copying terminal text
 copies visible text, not the hidden URI. Only absolute HTTP and HTTPS URLs with
-a host may open; malformed, whitespace-bearing, non-ASCII, local-file, mail,
-script, and unknown-scheme targets are rejected. Parser filtering is repeated
-authoritatively at launch time. Links remain usable in read-only history and
-are excluded from diagnostics.
+a host may reach the OS URL handler; malformed, whitespace-bearing, non-ASCII,
+mail, script, and unknown-scheme targets are rejected. Parser filtering is
+repeated authoritatively at launch time. Links remain usable in read-only
+history and are excluded from diagnostics.
+
+ADR 0052 adds absolute `file:` OSC 8 metadata with empty or localhost
+authority. File-link Open is available only in a local session and opens an
+internal text/Markdown document, never an OS file association. The command pins
+the originating tab and lifecycle generation; stale, closed, SSH/SFTP and
+serial sources cannot authorize a local file read. Hover/menu previews and
+**Copy path** expose the strictly decoded destination (native Windows drive
+spelling where applicable), not the producer's label. Ordinary clicking does
+not activate it.
+
+Raw Windows paths and relative OSC 8 targets, foreign hosts, UNC/device
+namespaces, alternate streams, malformed encoding, control/bidi characters and
+query/fragment semantics are not supported. No-follow directory/file handles
+refuse symlinks and junctions before content reads; Windows mapped network
+roots are refused. The existing regular-file, text and document-size limits
+apply. Refusal never invokes a shell, remote fetch or external application.
+Copy remains available for syntactically valid but unavailable file targets.
+
+The no-follow policy persists for background freshness checks, refresh/reload,
+save-conflict source reads and ordinary saves, including reused document
+buffers. Reads stay bound to the retained canonical source and original parent
+identity; only a new explicit Save As authorizes a different destination.
 
 An unterminated OSC 8 range is cleared by a hard line/index boundary, SGR
 reset, terminal reset, or primary/alternate-screen transition, and is capped
