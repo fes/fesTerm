@@ -231,6 +231,10 @@ $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
 pwsh -NoProfile -File scripts\run-optional-validation.ps1
 ```
 
+The PowerShell entry point creates and prints a unique
+`optional-validation-<guid>.txt` result filename unless
+`FESTERM_OPTIONAL_VALIDATION_RESULT_PATH` or `-ResultPath` selects one.
+
 On Windows, the PowerShell entry point delegates the reviewed ConPTY staging
 and retention smoke to `stage-conpty.ps1 -RunSmoke`; do not duplicate its
 download or staging behavior. The suite remains opt-in because host GUI,

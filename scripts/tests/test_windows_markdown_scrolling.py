@@ -740,6 +740,16 @@ class NativePrefixNavigationEvidenceTests(unittest.TestCase):
                 "max_logged_signature_bytes",
             },
         )
+        self.assertIn("startup frames", annotations["geometry_binding"])
+        self.assertIn("not a measured zero", annotations["empty_control_pairs"])
+        self.assertTrue(
+            any(
+                "manual annotations" in limitation
+                for limitation in self.evidence["limitations"]
+            )
+        )
+        for run in self.evidence["runs"]:
+            self.assertLessEqual(set(annotations["fields"]), set(run))
         expected_reductions = {
             "editor300": 40.8,
             "prose": 45.4,
@@ -821,7 +831,7 @@ class NativePrefixNavigationEvidenceTests(unittest.TestCase):
 
 
 class OptionalValidationContractTests(unittest.TestCase):
-    def test_default_result_is_unique_and_explicit_results_never_overwrite(self):
+    def test_powershell_default_result_is_unique_and_explicit_results_never_overwrite(self):
         script = OPTIONAL_SCRIPT.read_text(encoding="utf-8")
         self.assertIn(
             '"optional-validation-{0}.txt" -f [Guid]::NewGuid().ToString(\'N\')',
@@ -833,6 +843,42 @@ class OptionalValidationContractTests(unittest.TestCase):
             2,
             "both full and Markdown-only aggregate results must fail closed",
         )
+        self.assertIn("Write-OptionalResultLocation $resultFullPath", script)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 is required")
+    def test_powershell_parameter_default_generates_distinct_result_names(self):
+        result = subprocess.run(
+            [
+                shutil.which("pwsh"),
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                r"""
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile(
+    $env:FESTERM_OPTIONAL_SCRIPT, [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw 'Optional validation script does not parse.' }
+$binding = [scriptblock]::Create($ast.ParamBlock.Extent.Text + "`n`$ResultPath")
+$first = & $binding
+$second = & $binding
+$explicit = & $binding -ResultPath 'chosen-result.txt'
+@{ First = $first; Second = $second; Explicit = $explicit } | ConvertTo-Json -Compress
+""",
+            ],
+            env={**os.environ, "FESTERM_OPTIONAL_SCRIPT": str(OPTIONAL_SCRIPT)},
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        values = json.loads(result.stdout)
+        self.assertNotEqual(values["First"], values["Second"])
+        self.assertRegex(values["First"], r"^optional-validation-[0-9a-f]{32}\.txt$")
+        self.assertRegex(values["Second"], r"^optional-validation-[0-9a-f]{32}\.txt$")
+        self.assertEqual(values["Explicit"], "chosen-result.txt")
 
 
 if __name__ == "__main__":

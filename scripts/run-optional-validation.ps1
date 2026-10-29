@@ -50,6 +50,11 @@ if ($env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
     throw 'Set FESTERM_RUN_OPTIONAL_VALIDATION=1 to run optional validation.'
 }
 
+function Write-OptionalResultLocation {
+    param([string] $Path)
+    Write-Host ("Optional validation result: {0}" -f [IO.Path]::GetFileName($Path))
+}
+
 function Invoke-MarkdownScrollingValidation {
     if ($env:OS -ne 'Windows_NT') { throw 'Native Markdown scrolling requires Windows.' }
     foreach ($name in @('FESTERM_MARKDOWN_SCROLL_EXE', 'FESTERM_MARKDOWN_SCROLL_RECEIPT',
@@ -67,6 +72,7 @@ if ($MarkdownScrollingOnly) {
     if (Test-Path -LiteralPath $resultFullPath) {
         throw 'ResultPath already exists; optional validation evidence is never overwritten.'
     }
+    Write-OptionalResultLocation $resultFullPath
     $resultStream = [IO.File]::Open(
         $resultFullPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
     $resultWriter = [IO.StreamWriter]::new(
@@ -110,6 +116,7 @@ $resultFullPath = [IO.Path]::GetFullPath($ResultPath)
 if (Test-Path -LiteralPath $resultFullPath) {
     throw 'ResultPath already exists; optional validation evidence is never overwritten.'
 }
+Write-OptionalResultLocation $resultFullPath
 $resultStream = [IO.File]::Open(
     $resultFullPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
 $resultWriter = [IO.StreamWriter]::new(

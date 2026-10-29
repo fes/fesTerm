@@ -2,8 +2,10 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-10
-- **Accepted:** 2026-10-29, final integration review confirmed the bounded
-  supported-route policy after all-miss provenance and exact-prefix native evidence
+- **Accepted:** 2026-10-28, final integration review on
+  [PR 411](https://github.com/fes/fesTerm/pull/411) confirmed the bounded
+  supported-route policy after all-miss provenance and exact-prefix native
+  evidence
 - **Supersedes:** None; extends ADR 0041 without changing terminal-prefix policy
 
 ## Context

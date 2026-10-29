@@ -586,6 +586,10 @@ $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
 pwsh -NoProfile -File scripts\run-optional-validation.ps1
 ```
 
+Without an explicit result path, the PowerShell entry point creates and prints
+a unique `optional-validation-<guid>.txt` filename so repeated runs never
+overwrite prior evidence.
+
 This retains the existing reviewed ConPTY staging path and Windows OS-input
 smoke rather than reimplementing them in VM code.
 

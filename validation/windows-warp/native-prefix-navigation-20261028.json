@@ -40,7 +40,8 @@
       "max_logged_texture_bytes",
       "max_logged_signature_bytes"
     ],
-    "geometry_binding": "Maxima can include startup frames before the recorded measured client geometry."
+    "geometry_binding": "Maxima can include startup frames before the recorded measured client geometry.",
+    "empty_control_pairs": "An empty array means the old control emitted no prefix-pair log records; it is not a measured zero."
   },
   "geometry": {
     "logical": [

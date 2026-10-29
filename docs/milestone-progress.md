@@ -1082,9 +1082,11 @@ CPU/completed-render regression ceiling, so idle reuse cannot mask copy/allocati
 overhead. That bounded control passed. The application therefore defaults
 retention on for the already-qualified Windows x64 DX12 CPU/BGRA route, with
 `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` as an explicit escape hatch. Hardware
-paths and generic vendor defaults are unchanged. The ADR remains Proposed
-pending independent architectural review; neither rollout nor CPU improvement
-claims a fix for the original freeze or physical display-latency acceptance.
+paths and generic vendor defaults are unchanged. The ADR remained Proposed
+pending independent architectural review at this historical stage. Final
+integration review later accepted the bounded policy; neither rollout nor CPU
+improvement claims a fix for the original freeze or physical display-latency
+acceptance.
 
 ## Preserving text-selection anchors when native events share a frame
 

@@ -1011,10 +1011,10 @@ Accepted ADR 0046 adds an exact complete-frame pixel oracle for eligible
 The host shares the bounded prefix image and rejects mutable/unknown inputs.
 CP-18 now records fresh source/test-binary-bound all-miss evidence from
 Windows x64 run 38100443816; all three independent ABBA controls passed.
-Final integration review accepted the bounded architecture. Hardware, device
-recovery and broader native latency remain pending. Application hashes cannot
-identify the separate test executable; hosted timing is not physical-latency
-evidence.
+Final integration review on PR 411 accepted the bounded architecture on
+2026-10-28. Hardware, device recovery and broader native latency remain
+pending. Application hashes cannot identify the separate test executable;
+hosted timing is not physical-latency evidence.
 
 ## Coverage map to the GUI design
 

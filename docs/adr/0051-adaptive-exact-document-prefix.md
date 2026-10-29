@@ -2,8 +2,9 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-27
-- **Accepted:** 2026-10-28, explicit owner approval of the renderer-wide policy;
-  broader CP-18 hardware/resource/usability gates remain open
+- **Accepted:** 2026-10-28, owner-authorized final integration review on
+  [PR 411](https://github.com/fes/fesTerm/pull/411) accepted the renderer-wide
+  policy; broader CP-18 hardware/resource/usability gates remain open
 - **Supersedes:** None; extends ADRs 0041 and 0046
 
 ## Context
@@ -83,7 +84,7 @@ configuration and activation IPC, actual adapter and geometry proof, observed
 scroll offsets, bounded input/drain intervals, and normal owned-window exit.
 Real-pointer control requires separate explicit opt-in and yields to other
 desktop interaction. Host-return timing is not GPU completion or display
-Latency. This ADR records architecture acceptance; broader measured rollout
+latency. This ADR records architecture acceptance; broader measured rollout
 remains subject to the qualifications below.
 
 ## Validation impact
