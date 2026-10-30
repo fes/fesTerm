@@ -90,7 +90,7 @@ pub struct Session {
     kex: SessionKexState<ClientKex>,
     common: CommonSession<Arc<Config>>,
     receiver: Receiver<Msg>,
-    sender: UnboundedSender<Reply>,
+    sender: ReplySender,
     channels: HashMap<ChannelId, ChannelRef>,
     target_window_size: u32,
     pending_reads: Vec<Vec<u8>>,
@@ -109,6 +109,52 @@ impl Drop for Session {
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
+enum ReplySender {
+    Unbounded(UnboundedSender<Reply>),
+    Bounded(Sender<Reply>),
+}
+
+impl From<UnboundedSender<Reply>> for ReplySender {
+    fn from(value: UnboundedSender<Reply>) -> Self { Self::Unbounded(value) }
+}
+
+impl ReplySender {
+    fn send(&self, reply: Reply) -> Result<(), ()> {
+        match self {
+            Self::Unbounded(sender) => sender.send(reply).map_err(|_| ()),
+            Self::Bounded(sender) => sender.try_send(reply).map_err(|_| ()),
+        }
+    }
+}
+
+enum ReplyReceiver {
+    Unbounded(UnboundedReceiver<Reply>),
+    Bounded(Receiver<Reply>),
+}
+
+impl ReplyReceiver {
+    async fn recv(&mut self) -> Option<Reply> {
+        match self {
+            Self::Unbounded(receiver) => receiver.recv().await,
+            Self::Bounded(receiver) => receiver.recv().await,
+        }
+    }
+}
+
+fn reply_channel(maximum: Option<usize>) -> (ReplySender, ReplyReceiver) {
+    match maximum {
+        Some(maximum) => {
+            let (sender, receiver) = channel(maximum.max(1));
+            (ReplySender::Bounded(sender), ReplyReceiver::Bounded(receiver))
+        }
+        None => {
+            let (sender, receiver) = unbounded_channel();
+            (ReplySender::Unbounded(sender), ReplyReceiver::Unbounded(receiver))
+        }
+    }
+}
+
+#[derive(Debug)]
 enum Reply {
     AuthSuccess,
     AuthFailure {
@@ -274,7 +320,7 @@ pub enum DisconnectReason<E: From<crate::Error> + Send> {
 /// the request/response cycle.
 pub struct Handle<H: Handler> {
     sender: Sender<Msg>,
-    receiver: UnboundedReceiver<Reply>,
+    receiver: ReplyReceiver,
     join: russh_util::runtime::JoinHandle<Result<(), H::Error>>,
     channel_buffer_size: usize,
 }
@@ -1025,7 +1071,7 @@ where
     let sshid = stream.read_ssh_id().await?;
 
     let (handle_sender, session_receiver) = channel(10);
-    let (session_sender, handle_receiver) = unbounded_channel();
+    let (session_sender, handle_receiver) = reply_channel(config.maximum_pending_replies);
     if config.maximum_packet_size > 65535 {
         error!(
             "Maximum packet size ({:?}) should not larger than a TCP packet (65535)",
@@ -1109,13 +1155,13 @@ impl Session {
         target_window_size: u32,
         common: CommonSession<Arc<Config>>,
         receiver: Receiver<Msg>,
-        sender: UnboundedSender<Reply>,
+        sender: impl Into<ReplySender>,
     ) -> Self {
         let (inbound_channel_sender, inbound_channel_receiver) = channel(10);
         Self {
             common,
             receiver,
-            sender,
+            sender: sender.into(),
             kex: SessionKexState::Idle,
             target_window_size,
             inbound_channel_sender,
@@ -1752,6 +1798,14 @@ mod tests {
 
     struct TestHandler;
 
+    #[tokio::test]
+    async fn bounded_auth_replies_fail_closed_instead_of_accumulating() {
+        let (sender, mut receiver) = reply_channel(Some(1));
+        sender.send(Reply::ChannelOpenFailure).unwrap();
+        assert!(sender.send(Reply::ChannelOpenFailure).is_err());
+        assert!(matches!(receiver.recv().await, Some(Reply::ChannelOpenFailure)));
+    }
+
     impl Handler for TestHandler {
         type Error = crate::Error;
 
@@ -2128,6 +2182,10 @@ impl Default for GexParams {
 /// The configuration of clients.
 #[derive(Debug)]
 pub struct Config {
+    /// Optional fail-closed bound on authentication/control replies. `None`
+    /// preserves the original client behavior. Bounded users disconnect on
+    /// unsolicited reply floods rather than accumulating an unbounded queue.
+    pub maximum_pending_replies: Option<usize>,
     /// The client ID string sent at the beginning of the protocol.
     pub client_id: SshId,
     /// The bytes and time limits before key re-exchange.
@@ -2157,6 +2215,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Config {
         Config {
+            maximum_pending_replies: None,
             client_id: SshId::Standard(Cow::Borrowed(concat!(
                 "SSH-2.0-",
                 env!("CARGO_PKG_NAME"),

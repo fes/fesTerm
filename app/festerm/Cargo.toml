@@ -7,6 +7,10 @@ authors.workspace = true
 repository.workspace = true
 description = "A scratch, multi-platform SSH/terminal client."
 
+[features]
+default = ["experimental-dev-tunnels"]
+experimental-dev-tunnels = ["dep:festerm-tunnel-bridge", "dep:festerm-tunnel-client", "dep:tokio-util"]
+
 [dependencies]
 cap-fs-ext = "4.0.3"
 cap-std = "4.0.3"
@@ -25,6 +29,9 @@ festerm-macos-window = { path = "../../crates/festerm-macos-window" }
 festerm-pty = { path = "../../crates/festerm-pty" }
 festerm-session = { path = "../../crates/festerm-session" }
 festerm-sessiond = { path = "../../crates/festerm-sessiond" }
+festerm-tunnel-bridge = { path = "../../crates/festerm-tunnel-bridge", optional = true, features = ["relay"] }
+festerm-tunnel-client = { path = "../../crates/festerm-tunnel-client", optional = true }
+tokio-util = { version = "0.7", features = ["rt"], optional = true }
 festerm-secret-store = { path = "../../crates/festerm-secret-store" }
 festerm-serial = { path = "../../crates/festerm-serial" }
 festerm-ssh = { path = "../../crates/festerm-ssh" }

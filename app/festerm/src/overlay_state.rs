@@ -208,6 +208,7 @@ impl PendingQuitConfirmation {
 }
 
 pub(crate) struct PendingPasswordStore {
+    pub(crate) expected_profile: festerm_config::Profile,
     pub(crate) receiver: mpsc::Receiver<Result<SecretReference, SecretStoreError>>,
     pub(crate) profile_id: String,
     pub(crate) store: std::sync::Arc<dyn SecretStore>,
@@ -248,6 +249,7 @@ impl OpenRefusalNotice {
 /// of these instead of five separate `Option` fields.
 #[derive(Default)]
 pub(crate) struct OverlayState {
+    pub(crate) native_tunnel: bool,
     pub(crate) pending_close: Option<PendingCloseConfirmation>,
     pub(crate) pending_paste: Option<PendingPasteConfirmation>,
     pub(crate) pending_file_drop: Option<PendingFileDropConfirmation>,
@@ -314,7 +316,8 @@ impl OverlayState {
     }
 
     pub(crate) fn blocks_terminal_input_except_paste(&self) -> bool {
-        self.pending_close.is_some()
+        self.native_tunnel
+            || self.pending_close.is_some()
             || self.pending_document_close.is_some()
             || self.pending_file_drop.is_some()
             || self.pending_settings_reset.is_some()

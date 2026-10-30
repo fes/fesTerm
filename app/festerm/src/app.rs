@@ -1,4 +1,7 @@
 mod confirmations;
+#[cfg(feature = "experimental-dev-tunnels")]
+#[path = "tunnel_workflow.rs"]
+mod tunnel_workflow;
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -421,6 +424,8 @@ pub struct FesTermApp {
     /// available.
     secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
     secure_storage_feedback: Option<&'static str>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    native_tunnel: Option<tunnel_workflow::Workflow>,
     /// Widget that owned focus immediately before Inspector opened, when it
     /// remains a meaningful restoration target.
     inspector_restore_focus: Option<egui::Id>,
@@ -505,6 +510,18 @@ pub struct FesTermApp {
     palette_build_count: Cell<usize>,
     #[cfg(test)]
     native_menu_shortcut_build_count: Cell<usize>,
+}
+
+#[cfg(feature = "experimental-dev-tunnels")]
+impl FesTermApp {
+    pub(crate) fn install_experimental_tunnel(
+        &mut self,
+        launch: crate::tunnel_activation::Launch,
+        context: &egui::Context,
+    ) {
+        self.state
+            .dispatch(AppCommand::ConnectDevTunnel(launch), context);
+    }
 }
 
 /// Distinguishes the one window that owns application-scoped host
@@ -886,6 +903,8 @@ impl FesTermApp {
             configuration_reloader: ConfigurationReloader::unavailable(),
             secret_store,
             secure_storage_feedback: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            native_tunnel: None,
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
@@ -1861,11 +1880,50 @@ impl FesTermApp {
     /// editing"). The in-memory configuration only changes after the atomic
     /// file write succeeds, matching every other automatic-save path here.
     fn save_profile(&mut self, profile: festerm_config::Profile) -> bool {
-        self.apply_configuration_save(
+        #[cfg(feature = "experimental-dev-tunnels")]
+        let previous = self
+            .state
+            .configuration()
+            .profile(profile.identifier())
+            .cloned();
+        let saved = self.apply_configuration_save(
             self.state.configuration().with_profile(profile),
             ConfigurationStartupStatus::ProfileSaveFailure,
             crate::configuration_startup::ConfigurationReloader::save_profile,
-        )
+        );
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if saved {
+            self.retire_native_tunnel_credentials(previous.as_ref());
+        }
+        saved
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn import_public_tunnel_profile(
+        &mut self,
+        import: crate::tunnel_profile_import::PublicProfileImport,
+    ) {
+        let result = self
+            .configuration_reloader
+            .tunnel_import_directory()
+            .map_err(|_| {
+                "The imported profile could not be saved. Configuration location unavailable."
+            })
+            .and_then(|directory| {
+                import.save(self.state.configuration(), &directory, |replacement| {
+                    self.configuration_reloader
+                        .save_configuration(replacement)
+                        .is_ok()
+                })
+            });
+        match result {
+            Ok(configuration) => {
+                self.state.replace_configuration(configuration);
+                self.configuration_status = ConfigurationStartupStatus::ProfileSaved;
+                self.secure_storage_feedback = Some("Public profile saved. Authenticate separately in Advanced with a scoped connect token; import did not connect or sign in.");
+            }
+            Err(message) => self.secure_storage_feedback = Some(message),
+        }
     }
 
     /// Deletes a profile the user has already confirmed in the Profiles
@@ -1873,11 +1931,18 @@ impl FesTermApp {
     /// a profile still referenced by a saved workspace tab, surfacing that
     /// as an ordinary save failure rather than silently orphaning the tab.
     fn delete_profile(&mut self, identifier: &str) {
-        self.apply_configuration_save(
+        #[cfg(feature = "experimental-dev-tunnels")]
+        let previous = self.state.configuration().profile(identifier).cloned();
+        let deleted = self.apply_configuration_save(
             self.state.configuration().without_profile(identifier),
             ConfigurationStartupStatus::ProfileDeleteFailure,
             crate::configuration_startup::ConfigurationReloader::delete_profile,
         );
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if deleted {
+            self.retire_native_tunnel_credentials(previous.as_ref());
+        }
+        let _ = deleted;
     }
 
     /// Reorders a saved profile after a drag-to-reorder gesture on the
@@ -2236,6 +2301,10 @@ impl FesTermApp {
         launch_after_store: Option<StoredCredentialLaunch>,
         context: &egui::Context,
     ) {
+        let Some(expected_profile) = self.state.configuration().profile(&profile_id).cloned()
+        else {
+            return;
+        };
         let Ok(store) = self.secret_store.as_ref() else {
             self.secure_storage_feedback = self
                 .secret_store
@@ -2247,20 +2316,21 @@ impl FesTermApp {
         };
         if self.overlays.pending_password_store.is_some() {
             self.secure_storage_feedback =
-                Some("A saved SSH credential update is already in progress. Please wait.");
+                Some("A saved profile credential update is already in progress. Please wait.");
             return;
         }
         let store = Arc::clone(store);
         let worker_store = Arc::clone(&store);
         let (sender, receiver) = mpsc::sync_channel(1);
         match thread::Builder::new()
-            .name("festerm-store-ssh-credential".to_owned())
+            .name("festerm-store-profile-credential".to_owned())
             .spawn(move || {
                 let secret = make_secret();
                 let _ = sender.send(worker_store.put(&secret));
             }) {
             Ok(_) => {
                 self.overlays.pending_password_store = Some(PendingPasswordStore {
+                    expected_profile,
                     receiver,
                     profile_id,
                     store,
@@ -2268,7 +2338,7 @@ impl FesTermApp {
                     credential_kind,
                 });
                 self.secure_storage_feedback =
-                    Some("Saving SSH credential in native secure storage…");
+                    Some("Saving profile credential in native secure storage…");
                 context.request_repaint();
             }
             Err(_) => {
@@ -2285,17 +2355,31 @@ impl FesTermApp {
         };
         match pending.receiver.try_recv() {
             Ok(Ok(reference)) => {
+                if self.state.configuration().profile(&pending.profile_id)
+                    != Some(&pending.expected_profile)
+                {
+                    let _ = pending.store.delete(&reference);
+                    self.secure_storage_feedback = Some("Profile changed while its credential was being saved. No binding was changed; retry explicitly.");
+                    return;
+                }
                 let previous_reference = self
                     .state
                     .configuration()
                     .profile(&pending.profile_id)
                     .and_then(festerm_config::Profile::credential_reference)
                     .map(festerm_secret_store::SecretReference::duplicate_for_transport);
-                let replacement = self.state.configuration().with_ssh_credential(
-                    &pending.profile_id,
-                    reference.duplicate_for_transport(),
-                    pending.credential_kind,
-                );
+                let replacement = if pending.expected_profile.as_dev_tunnel().is_some() {
+                    self.state.configuration().with_tunnel_connect_credential(
+                        &pending.profile_id,
+                        reference.duplicate_for_transport(),
+                    )
+                } else {
+                    self.state.configuration().with_ssh_credential(
+                        &pending.profile_id,
+                        reference.duplicate_for_transport(),
+                        pending.credential_kind,
+                    )
+                };
                 let saved = replacement.as_ref().ok().and_then(|configuration| {
                     self.configuration_reloader
                         .save_configuration(configuration)
@@ -2307,12 +2391,12 @@ impl FesTermApp {
                     self.configuration_status = ConfigurationStartupStatus::PasswordCredentialSaved;
                     self.secure_storage_feedback = match previous_reference {
                         Some(previous) => match pending.store.delete(&previous) {
-                            Ok(_) => Some("SSH credential saved in native secure storage."),
+                            Ok(_) => Some("Profile credential saved in native secure storage."),
                             Err(_) => Some(
-                                "SSH credential saved, but the previous native secret could not be removed.",
+                                "Profile credential saved, but the previous native secret could not be removed.",
                             ),
                         },
-                        None => Some("SSH credential saved in native secure storage."),
+                        None => Some("Profile credential saved in native secure storage."),
                     };
                     if let Some(launch) = pending.launch_after_store {
                         match launch {
@@ -5049,6 +5133,15 @@ impl FesTermApp {
         let status = session.status_bar_label();
         let chip_status = session.chip_status();
         let transport = match &session.inspector_transport {
+            InspectorTransport::DevTunnel {
+                host,
+                port,
+                account,
+            } => TransportFacts::DevTunnel {
+                host,
+                port: *port,
+                account: account.as_ref().map(|(id, login)| (*id, login.as_str())),
+            },
             InspectorTransport::Local { .. } => TransportFacts::Local,
             InspectorTransport::Ssh {
                 username,
@@ -5100,8 +5193,10 @@ impl FesTermApp {
             | InspectorTransport::Ssh { .. }
             | InspectorTransport::Sftp { .. }
             | InspectorTransport::Serial { .. } => None,
+            InspectorTransport::DevTunnel { .. } => None,
         };
         let type_label = match session.inspector_transport {
+            InspectorTransport::DevTunnel { .. } => "Experimental Dev Tunnel",
             InspectorTransport::Local { .. } => "Local shell",
             InspectorTransport::Ssh { .. } => "SSH",
             InspectorTransport::Sftp { .. } => "SFTP",
@@ -5109,6 +5204,7 @@ impl FesTermApp {
         };
         let state_message = match chip_status {
             ChipStatus::Failed => Some(match session.inspector_transport {
+                InspectorTransport::DevTunnel { .. } => "Experimental tunnel refused. Verify host binding, the same unattached session generation and a fresh scoped connect token; reopen explicitly. No automatic reconnect.",
                 InspectorTransport::Local { .. } => {
                     "The local shell could not start. Review Diagnostics for the failure detail."
                 }
@@ -5654,6 +5750,8 @@ impl FesTermApp {
     }
 
     pub(crate) fn frame_logic(&mut self, context: &egui::Context) {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        self.poll_native_tunnel(context);
         if context.input(|i| i.viewport().close_requested()) {
             let accepted = self.evaluate_close_request(context);
             // Nothing cancelled the close, so this window really is going
@@ -6019,6 +6117,17 @@ impl FesTermApp {
                     );
                 }
                 TabContent::Profiles => {
+                    if let Some(status) = secure_storage_status.filter(|_| {
+                        cfg!(feature = "experimental-dev-tunnels")
+                            || self
+                                .state
+                                .configuration()
+                                .profiles()
+                                .iter()
+                                .any(|profile| profile.as_dev_tunnel().is_some())
+                    }) {
+                        ui.colored_label(theme::TEXT_SECONDARY, status);
+                    }
                     let pending_edit = self.state.take_pending_profile_edit();
                     let pending_create = self.state.take_pending_profile_create();
                     screen_command = screens::show_profiles(
@@ -6278,6 +6387,69 @@ impl FesTermApp {
         }
         if let Some(command) = screen_command {
             match command {
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::ImportPublicDevTunnelProfile { import } => {
+                    self.import_public_tunnel_profile(import);
+                }
+                AppCommand::StartConfiguredDevTunnelProfile { profile_id } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    if self
+                        .state
+                        .configuration()
+                        .profile(&profile_id)
+                        .and_then(Profile::as_dev_tunnel)
+                        .is_some_and(|profile| profile.tunnel_name().is_some())
+                    {
+                        self.begin_native_tunnel(profile_id, false, true, true, ui.ctx());
+                    } else if let Ok(store) = &self.secret_store {
+                        self.state.start_configured_tunnel_profile(
+                            profile_id,
+                            Arc::clone(store),
+                            &ui.ctx().clone(),
+                        );
+                    } else {
+                        self.secure_storage_feedback = Some("Native connect credential storage is unavailable. Use the profile editor's connect-once option.");
+                    }
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    {
+                        let _ = profile_id;
+                        self.secure_storage_feedback = Some(
+                            "Dev Tunnel connections require an experimental-dev-tunnels build.",
+                        );
+                    }
+                }
+                AppCommand::NativeDevTunnel {
+                    profile_id,
+                    sign_in,
+                    remember,
+                    connect,
+                } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.begin_native_tunnel(profile_id, sign_in, remember, connect, ui.ctx());
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    {
+                        let _ = (profile_id, sign_in, remember, connect);
+                    }
+                }
+                AppCommand::StoreDevTunnelConnectToken { profile_id, token } => {
+                    if !token.is_valid() {
+                        self.secure_storage_feedback = Some("Enter one nonempty connect token (at most 16 KiB, without whitespace). No credential was stored.");
+                    } else if cfg!(feature = "experimental-dev-tunnels")
+                        && self
+                            .state
+                            .configuration()
+                            .profile(&profile_id)
+                            .is_some_and(|profile| profile.as_dev_tunnel().is_some())
+                    {
+                        self.store_credential_for_profile(
+                            profile_id,
+                            festerm_config::CredentialKind::Password,
+                            move || token.into_stored_secret(),
+                            None,
+                            &ui.ctx().clone(),
+                        );
+                    }
+                }
                 AppCommand::OpenMarkdownWorkspace => {
                     self.open_markdown_file_picker(&ui.ctx().clone());
                 }
@@ -6583,6 +6755,8 @@ impl FesTermApp {
 
         self.show_about(ui.ctx(), about_escape);
 
+        #[cfg(feature = "experimental-dev-tunnels")]
+        self.show_native_tunnel(ui.ctx(), escape_pressed);
         self.show_transient_notice(ui.ctx());
 
         // Autosave the workspace exactly once per frame that actually
@@ -6986,6 +7160,8 @@ impl FesTermApp {
             configuration_reloader: ConfigurationReloader::unavailable(),
             secret_store: Ok(Arc::new(MemorySecretStore::new())),
             secure_storage_feedback: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            native_tunnel: None,
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
@@ -15201,6 +15377,58 @@ mod tests {
         harness.step();
         harness.run();
         harness
+    }
+
+    #[test]
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn public_tunnel_import_app_command_saves_without_connecting_or_replacing_profiles() {
+        let directory = tempfile::Builder::new()
+            .prefix("public-tunnel-command-tests-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let path = directory.path().join("config.toml");
+        let mut harness = harness_with_configuration(Configuration::empty());
+        harness.state_mut().configuration_reloader =
+            ConfigurationReloader::from_path_for_test(path.clone());
+        harness.run();
+        let count = harness.state().state.tabs().len();
+        let import = crate::tunnel_profile_import::PublicProfileImport::parse(
+            &crate::tunnel_profile_import::fixture_json().to_string(),
+        )
+        .unwrap();
+        harness
+            .state_mut()
+            .import_public_tunnel_profile(import.clone());
+        assert_eq!(harness.state().state.tabs().len(), count);
+        assert_eq!(
+            harness.state().configuration_status,
+            ConfigurationStartupStatus::ProfileSaved
+        );
+        let saved = harness.state().state.configuration().clone();
+        let profile = saved.profile("server-one").unwrap();
+        assert!(profile.credential_reference().is_none());
+        assert!(profile.as_dev_tunnel().unwrap().identity().is_none());
+        assert_eq!(
+            Configuration::parse(&fs::read_to_string(&path).unwrap()).unwrap(),
+            saved
+        );
+        harness.state_mut().import_public_tunnel_profile(import);
+        assert_eq!(harness.state().state.configuration(), &saved);
+        assert_eq!(harness.state().state.tabs().len(), count);
+        assert!(harness
+            .state()
+            .secure_storage_feedback
+            .unwrap()
+            .contains("already exists"));
+
+        let mut renamed = crate::tunnel_profile_import::fixture_json();
+        renamed["name"] = serde_json::json!("save-failure");
+        harness.state_mut().configuration_reloader = ConfigurationReloader::unavailable();
+        harness.state_mut().import_public_tunnel_profile(
+            crate::tunnel_profile_import::PublicProfileImport::parse(&renamed.to_string()).unwrap(),
+        );
+        assert_eq!(harness.state().state.configuration(), &saved);
+        assert_eq!(harness.state().state.tabs().len(), count);
     }
 
     #[test]

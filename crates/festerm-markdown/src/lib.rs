@@ -188,6 +188,8 @@ impl LocalMarkdownSource {
 /// Validated remote Markdown source identity pinned to one verified SFTP origin.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemoteMarkdownSource {
+    session_binding: Option<String>,
+    dev_tunnel: bool,
     host: String,
     port: u16,
     owner: RemoteSourceOwner,
@@ -219,6 +221,8 @@ impl RemoteMarkdownSource {
         )?;
         let remote_path = normalize_non_empty(remote_path.into(), MarkdownSourceError::EmptyPath)?;
         Ok(Self {
+            session_binding: None,
+            dev_tunnel: false,
             host: host.to_ascii_lowercase(),
             port,
             owner,
@@ -230,6 +234,19 @@ impl RemoteMarkdownSource {
 
     pub fn host(&self) -> &str {
         &self.host
+    }
+
+    pub fn with_dev_tunnel_provider(mut self) -> Self {
+        self.dev_tunnel = true;
+        self
+    }
+    pub const fn is_dev_tunnel(&self) -> bool {
+        self.dev_tunnel
+    }
+
+    pub fn with_live_binding(mut self, binding: impl Into<String>) -> Self {
+        self.session_binding = Some(binding.into());
+        self
     }
 
     pub const fn port(&self) -> u16 {

@@ -72,6 +72,128 @@ pub enum Profile {
     Local(LocalProfileConfiguration),
     Ssh(SshProfileConfiguration),
     Serial(SerialProfileConfiguration),
+    DevTunnel(DevTunnelProfileConfiguration),
+}
+
+/// Secret-free operator-trusted destination metadata. The file is read and
+/// pinned once per explicit launch; it is not authority to change a live tab.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevTunnelProfileConfiguration {
+    id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    destination_file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tunnel_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    identity: Option<DevTunnelIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    trusted_host: Option<DevTunnelHost>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    credential_id: Option<CredentialReference>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevTunnelIdentity {
+    pub account_id: u64,
+    pub login: String,
+    credential_id: CredentialReference,
+}
+impl DevTunnelIdentity {
+    pub fn credential_reference(&self) -> &SecretReference {
+        self.credential_id.as_secret_reference()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevTunnelHost {
+    pub tunnel_id: String,
+    pub cluster: String,
+    pub host_id: String,
+    pub public_key: String,
+    pub port: u16,
+}
+
+impl DevTunnelProfileConfiguration {
+    pub fn identifier(&self) -> &str {
+        &self.id
+    }
+    pub fn destination_file(&self) -> &str {
+        &self.destination_file
+    }
+    pub fn tunnel_name(&self) -> Option<&str> {
+        self.tunnel_name.as_deref()
+    }
+    pub fn identity(&self) -> Option<&DevTunnelIdentity> {
+        self.identity.as_ref()
+    }
+    pub fn trusted_host(&self) -> Option<&DevTunnelHost> {
+        self.trusted_host.as_ref()
+    }
+    pub fn credential_reference(&self) -> Option<&SecretReference> {
+        self.credential_id
+            .as_ref()
+            .map(CredentialReference::as_secret_reference)
+    }
+    fn validate(&self) -> Result<(), ConfigError> {
+        validate_identifier(&self.id)?;
+        let native = self.tunnel_name.as_deref();
+        if native.is_some_and(|name| {
+            name.is_empty()
+                || name.len() > 201
+                || !name.bytes().all(|b| {
+                    b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'.')
+                })
+                || name.split('.').any(|part| {
+                    part.is_empty()
+                        || part.len() > 100
+                        || part.starts_with('-')
+                        || part.ends_with('-')
+                })
+                || name.matches('.').count() > 1
+        }) || (native.is_some() && !self.destination_file.is_empty())
+            || (native.is_none() && self.destination_file.is_empty())
+            || self.destination_file.len() > 4096
+            || contains_control_character(&self.destination_file)
+            || contains_secret_bearing_value(&self.destination_file)
+        {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
+        }
+        if self.identity.as_ref().is_some_and(|identity| {
+            identity.account_id == 0
+                || identity.login.is_empty()
+                || identity.login.len() > 39
+                || !identity
+                    .login
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        }) || (native.is_none() && (self.identity.is_some() || self.trusted_host.is_some()))
+        {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
+        }
+        if let Some(host) = &self.trusted_host {
+            if host.port == 0
+                || [
+                    &host.tunnel_id,
+                    &host.cluster,
+                    &host.host_id,
+                    &host.public_key,
+                ]
+                .iter()
+                .any(|value| {
+                    value.is_empty()
+                        || value.len() > 4096
+                        || value.chars().any(char::is_control)
+                        || contains_secret_bearing_value(value)
+                })
+            {
+                return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -87,6 +209,79 @@ fn is_default_remote_profile_kind(kind: &RemoteProfileKind) -> bool {
 }
 
 impl Profile {
+    pub fn dev_tunnel(
+        identifier: impl Into<String>,
+        destination_file: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let profile = Self::DevTunnel(DevTunnelProfileConfiguration {
+            id: identifier.into(),
+            destination_file: destination_file.into(),
+            tunnel_name: None,
+            identity: None,
+            trusted_host: None,
+            credential_id: None,
+        });
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    pub fn named_dev_tunnel(
+        identifier: impl Into<String>,
+        tunnel: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let profile = Self::DevTunnel(DevTunnelProfileConfiguration {
+            id: identifier.into(),
+            destination_file: String::new(),
+            tunnel_name: Some(tunnel.into()),
+            identity: None,
+            trusted_host: None,
+            credential_id: None,
+        });
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    pub fn with_tunnel_identity(
+        mut self,
+        account_id: u64,
+        login: String,
+        identity_reference: SecretReference,
+        connect_reference: SecretReference,
+        host: DevTunnelHost,
+    ) -> Result<Self, ConfigError> {
+        let Self::DevTunnel(profile) = &mut self else {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
+        };
+        profile.identity = Some(DevTunnelIdentity {
+            account_id,
+            login,
+            credential_id: CredentialReference::new(identity_reference),
+        });
+        profile.trusted_host = Some(host);
+        profile.credential_id = Some(CredentialReference::new(connect_reference));
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn as_dev_tunnel(&self) -> Option<&DevTunnelProfileConfiguration> {
+        if let Self::DevTunnel(profile) = self {
+            Some(profile)
+        } else {
+            None
+        }
+    }
+
+    pub fn with_tunnel_connect_credential(
+        mut self,
+        reference: SecretReference,
+    ) -> Result<Self, ConfigError> {
+        let Self::DevTunnel(profile) = &mut self else {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
+        };
+        profile.credential_id = Some(CredentialReference::new(reference));
+        self.validate()?;
+        Ok(self)
+    }
     /// Creates a local-shell profile with direct executable arguments.
     pub fn local(
         identifier: impl Into<String>,
@@ -253,7 +448,7 @@ impl Profile {
                 ))
             }
             Self::Ssh(profile) => profile.persistence = persistence,
-            Self::Serial(_) => {
+            Self::Serial(_) | Self::DevTunnel(_) => {
                 return Err(ConfigError::new(
                     ConfigErrorKind::PersistenceRequiresLocalOrSshProfile,
                 ))
@@ -269,6 +464,7 @@ impl Profile {
             Self::Local(profile) => profile.identifier(),
             Self::Ssh(profile) => profile.identifier(),
             Self::Serial(profile) => profile.identifier(),
+            Self::DevTunnel(profile) => profile.identifier(),
         }
     }
 
@@ -276,7 +472,7 @@ impl Profile {
     pub fn as_local(&self) -> Option<&LocalProfileConfiguration> {
         match self {
             Self::Local(profile) => Some(profile),
-            Self::Ssh(_) | Self::Serial(_) => None,
+            Self::Ssh(_) | Self::Serial(_) | Self::DevTunnel(_) => None,
         }
     }
 
@@ -284,7 +480,7 @@ impl Profile {
     pub fn as_ssh(&self) -> Option<&SshProfileConfiguration> {
         match self {
             Self::Ssh(profile) => Some(profile),
-            Self::Local(_) | Self::Serial(_) => None,
+            Self::Local(_) | Self::Serial(_) | Self::DevTunnel(_) => None,
         }
     }
 
@@ -292,14 +488,17 @@ impl Profile {
     pub fn as_serial(&self) -> Option<&SerialProfileConfiguration> {
         match self {
             Self::Serial(profile) => Some(profile),
-            Self::Local(_) | Self::Ssh(_) => None,
+            Self::Local(_) | Self::Ssh(_) | Self::DevTunnel(_) => None,
         }
     }
 
     /// Returns this SSH profile's opaque native-store SSH-password reference, if set.
     pub fn credential_reference(&self) -> Option<&SecretReference> {
-        self.as_ssh()
-            .and_then(SshProfileConfiguration::credential_reference)
+        match self {
+            Self::Ssh(profile) => profile.credential_reference(),
+            Self::DevTunnel(profile) => profile.credential_reference(),
+            _ => None,
+        }
     }
 
     /// Returns this profile's durable-session provider and name,
@@ -309,7 +508,7 @@ impl Profile {
         match self {
             Self::Local(profile) => profile.persistence(),
             Self::Ssh(profile) => profile.persistence(),
-            Self::Serial(_) => None,
+            Self::Serial(_) | Self::DevTunnel(_) => None,
         }
     }
 
@@ -318,6 +517,7 @@ impl Profile {
             Self::Local(profile) => profile.validate(),
             Self::Ssh(profile) => profile.validate(),
             Self::Serial(profile) => profile.validate(),
+            Self::DevTunnel(profile) => profile.validate(),
         }
     }
 }

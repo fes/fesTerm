@@ -1,5 +1,56 @@
 # Milestone Progress Narrative
 
+The 2026-10-30 isolated macOS-to-Debian-ARM64 Pi Dev Tunnel test now passes
+actual GUI shell input/output, including the integrated native service-app flow.
+Relay WebSockets explicitly
+select a local Rustls provider to survive the desktop's combined ring/aws-lc
+feature graph without changing process defaults or certificate checks. Native
+GitHub account validation previously succeeded while management lookup returned
+HTTP 401 for fesTerm's own OAuth registration (#429); that historical failure
+does not describe the integrated SDK-published service application.
+Reusable per-user host setup, public profile
+import and six-platform helper bundles/installers are implemented locally, not
+published; native signing and clean-machine qualification remain release
+prerequisites under [#432](https://github.com/fes/fesTerm/issues/432).
+Hosted Windows diagnosis distinguished servicing-owned system roots from
+foreign-account grants in runner-profile temporary storage. Private-ancestor
+policy now admits only the exact servicing SID in addition to the prior
+principals, rejects foreign directory-self deletion, and preserves both
+current-user-only final objects and the separate document-save staging policy.
+Policy-validated user/system-temporary fixtures avoid changing runner ACLs or
+requiring elevation on an ordinary user installation. Native Windows
+installer/service acceptance remains pending under #432.
+The first corrected Windows run passed all 26 bridge-library tests, then exposed
+a remaining binary fixture rooted in the checkout. All positive private-storage
+fixtures now share the test-only builder across library/setup/bridge roots.
+Managed fixtures retain native runtime spelling and ordinary paths, and
+health/worker locking reuses the daemon's native contention classifier.
+Publication and broader qualification remain gated on current
+Visual Studio-family usage-rights clarification; the owner authorized bounded
+service-application research and integration tests. The same-valid-token
+comparison for the former registration returned HTTP 401 with
+or without fesTerm's public client ID; that discrepancy is not a proven fix.
+An owner-authorized isolated follow-up using the SDK-published Dev Tunnels
+GitHub App now passes GitHub account verification and account/existing-tunnel
+metadata HTTP 200 with both ordinary and client-ID-qualified authorization
+([evidence](https://github.com/fes/fesTerm/issues/429#issuecomment-6527525291)).
+That diagnostic established an accepted credential path without changing product
+registration or saved credentials; connect tokens and refresh/persistence were
+not exercised. The owner's subsequent full-integration request now selects the
+SDK-published service application in the experimental product, binds private
+vault identity V2 to application and numeric account, and requires explicit
+sign-in for legacy/mismatched bindings. The standard code button now copies and
+opens GitHub in one click, with no display-time clipboard/browser action.
+The owner subsequently confirmed native sign-in, one-click clipboard/browser
+delivery, approved pinned attachment and real Pi shell input/output. A private
+leased native-store checker passed real secretless refresh, renewed-pair
+save/reload, account reverification and fresh scoped-token discovery with the
+saved host binding unchanged. The owner then confirmed saved-profile reconnect
+after desktop restart without another GitHub sign-in. Actual expiry/revocation,
+two-account, other-platform and keyboard/accessibility qualification remain
+separate from this partial DT-07 result and the unresolved usage-rights/release
+gates.
+
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
@@ -22,6 +73,23 @@ MOB-06 obligations.
 
 ## Remote access without making the daemon a network service
 
+The owner approved an explicit installer-owned user auto-start service, stable
+host identity and idempotent reruns. Healthy reruns reuse the original private
+tunnel and exact shell generation; stale or unexplained partial state refuses
+instead of creating replacements. Service stop removes its bridge process
+group, not the independently started daemon. The public JSON paste flow previews
+the server/fingerprint and requires a new-profile confirmation, with credentials
+and host approval remaining separate. A real isolated macOS dummy-worker service
+smoke passed registration, repeat/start/collision checks and child shutdown;
+this is not real-cloud, signed-release or Linux/Windows service qualification.
+
+The GitHub device prompt now renders its short user code as a monospace
+button. Explicit activation copies that code through the ordinary clipboard
+output path without approving the account or changing the waiting state.
+Normal and narrow headless dialogs cover no idle/press-only writes, exact
+release activation and retained sign-in state. Native macOS clipboard delivery and browser opening were owner-confirmed;
+keyboard/screen-reader usability remains DT-07 evidence.
+
 The existing VS Code tunnel proposal depended on Microsoft's distributed
 server, leaving separate licensing, identity and internal-protocol gates.
 The owner requested an independent Dev Tunnels route instead. Proposed
@@ -34,16 +102,16 @@ hot upgrades are not implied.
 The selected experimental bootstrap uses explicitly provisioned scoped tokens
 from an official GitHub-authenticated Dev Tunnels CLI first, not borrowed
 VS Code credentials or an unqualified native Entra registration.
-Dev Tunnel is planned as a peer connection/profile kind, with independent
-profile/session credential bindings so different GitHub accounts can be used
-concurrently without an application-global current token.
-The owner also requires detected paths and OSC 8 file links to open through
-the source SSH or Dev Tunnel filesystem capability. The design extends the
-common origin-aware resolver with a bounded bridge reader, not shell-command
-interpolation or a fallback to an identically named client-local file.
 Implementation, bounded SDK integration, service-use suitability and real
 remote/native evidence remain prerequisites. This proposal changes no runtime
 behavior or milestone acceptance status.
+
+The subsequent implementation initially required explicit Cargo features.
+The owner then requested ordinary desktop availability and an isolated
+interactive test instance. Desktop and bridge builds now include those
+features by default, while connection/host startup still requires explicit
+intent and credentials. This changes neither the experimental status nor the
+outstanding real-relay, two-account and native qualification obligations.
 
 ## Local document links without an OS-opening capability
 
@@ -6484,3 +6552,83 @@ not a blanket Markdown responsiveness repair. Drawing still dominates and
 document-coordinate retention remains behind native route qualification and
 architecture review. Native acceptance remains open under CP-18; the complete
 per-case evidence and limitations are in `validation/windows-warp/README.md`.
+
+## Experimental source-bound Dev Tunnels bridge
+
+### Native identity without a desktop helper
+
+The owner next requested Name/Tunnel connection with concise existing-form
+controls, then clarified that authentication must also work from an eventual
+iOS host. The client therefore uses shared Rust GitHub device authorization,
+not the desktop CLI or somebody else's OAuth identity. A native identity broker
+verifies each account, separates rotating identity credentials from scoped
+connection authority, and serializes native-store publication against profile
+edits/cancellation. Tunnel-name lookup and Cancel-default host approval precede
+a small pinned read-only discovery operation; daemon admission/ownership stays
+unchanged. Legacy scoped-token profiles remain compatible.
+
+Deterministic OAuth/discovery/profile/UI regressions exercise this boundary.
+The owner subsequently registered the project-owned application under
+`fesLabs-core` and enabled device flow. Its public client ID is now included
+in default builds, so users need no build configuration or application
+registration. Explicit build overrides remain supported, including an
+empty/invalid override that honestly disables sign-in. Actual service
+acceptance and native browser/refresh/iOS evidence remain open in
+[#429](https://github.com/fes/fesTerm/issues/429); registration is not a
+successful end-to-end sign-in.
+
+The first experimental slice separates cloud transport from the local daemon:
+a bounded standalone relay exports one deliberately selected generation with
+atomic no-takeover admission. Recovery is adopted before live events, query
+replies retain daemon ownership, and disconnect never kills the shell.
+Peer profiles bind independently provisioned GitHub-first scoped credentials
+through native-store references rather than a global current account.
+
+Detected and explicit OSC 8 remote files now converge through a source-bound
+capability: authenticated live SFTP or an explicitly enabled bounded bridge
+read. Provider and connection generations remain part of snapshot identity;
+remote localhost never grants client-local authority. The implementation and
+limits are in [the experiment guide](dev-tunnels-experiment.md).
+Deterministic tests are not service/native acceptance: DT-01–DT-06, independent
+security review and non-Windows qualification remain open.
+
+The controlled GitHub-hosted probe reached endpoint registration and WebSocket
+upgrade, then exposed an SDK/modern-russh interoperability gap: the outer
+protocol's literal `none` host-key sentinel is not a cryptographic algorithm
+or a valid `ssh-key` extension name. An explicit no-key/no-KEX preference now
+encodes that sentinel without inventing a host key. A real in-memory outer
+handshake and normal-client refusal regression keep this TLS-only outer mode
+separate from ordinary SSH and the pinned encrypted inner transport.
+
+Constructor success then exposed a second gap: the real service immediately
+closed the anonymous outer connection because the modern adapter omitted the
+SDK's `none` MAC and sent `NEWKEYS` during a skip-exchange handshake. Explicit
+outer-only negotiation and lifetime supervision fix that mismatch without
+weakening ordinary or inner SSH. Qualification now holds the real relay open
+and exercises actual recovery, executed PowerShell output and bounded file
+RPCs, refuses changed pins/generations, then explicitly reopens the same shell
+with its prior state intact. One private GitHub/Windows fixture passed these
+checks; cross-platform, two-account and native GUI acceptance remain open.
+
+### Native sign-in compatibility and dialog sizing
+
+Live browser authorization exposed an overly strict local account check:
+GitHub's managed usernames include an underscore, which both the native
+identity broker and saved-profile validator rejected. Both now accept that
+documented format while retaining ASCII/length bounds and numeric account
+binding. Sign-in, private identity restoration, refresh and profile round-trip
+regressions reproduce the rejection before the fix and pass afterward.
+Fixed-stage diagnostics identify failures without logging account values,
+authorization codes, credentials or service response bodies.
+
+The sign-in modal also reused the shared confirmation sizing helper instead
+of shrinking to its shortest label. Structural tests cover readable desktop
+width and narrow viewports without introducing a separate dialog paradigm.
+Isolated test launches preserve the normal browser environment rather than
+substituting an empty browser profile. The corrected live retry passed GitHub
+account checks, then failed at tunnel lookup. The lookup had collapsed every
+SDK failure into access denial; it now distinguishes missing tunnels, actual
+authorization refusal, rate limits and connection/service/response failures,
+without logging raw SDK errors, URLs or response bodies. The exact live
+lookup status and remote host type remain unknown. Successful tunnel-service
+authorization and host discovery remain DT-07 follow-up, not passed gates.

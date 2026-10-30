@@ -15,22 +15,131 @@ technology, visual judgment, reference-application screen semantics, or a real
 usability question. A reproducible failure should become the smallest suitable
 fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
-## Proposed direct Dev Tunnels bridge (DT-01 through DT-06)
+## Experimental direct Dev Tunnels bridge (DT-01 through DT-07)
 
-These are deferred evidence obligations for proposed
-[ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md), not instructions to
-enable an existing feature or claims of completed native qualification.
+Windows managed-host qualification must exercise servicing-owned system
+ancestors and refuse foreign directory-delete, child-delete and ACL/owner
+mutation permissions without repairing existing ACLs. The exact
+TrustedInstaller SID is admitted only for ancestors; final private objects stay
+current-user-only. Hosted policy/fixture tests are not clean-machine installer,
+native-service or credential-lifecycle acceptance under #432.
+
+Publication and broader qualification remain gated on clarification of
+standalone fesTerm usage rights, as recorded in ADR 0053. The owner subsequently
+authorized the bounded service-application tests and integration below; the current service terms
+and Microsoft's clarification of Visual Studio-family use are not resolved
+by the SDK's MIT license or by successful scoped-token tests.
+
+A subsequent isolated comparison used the same fresh fesTerm-owned OAuth-app credential:
+GitHub account verification succeeded before and after, but both ordinary
+`github <token>` and `github client_id=<fesTerm-public-id> <token>`
+authorization received HTTP 401 with `invalid_token` on user limits and the
+selected tunnel. This rules out the missing client ID as a sufficient fix,
+not every possible application/token-eligibility issue. Credentials were held
+only in memory and discarded; no reusable credential has been created.
+
+The owner then authorized a separate fresh, memory-only diagnostic using the
+SDK-published Dev Tunnels GitHub App `Iv1.e7b89e013f801f03`, with no OAuth-app
+permission scopes. GitHub account verification passed before and after;
+account limits and existing tunnel metadata each returned HTTP 200 with both
+ordinary and client-ID-qualified authorization. This establishes an accepted
+service-application credential path, not production fesTerm integration.
+No connect token was requested, no response body or credential was persisted,
+and the probe exited successfully. A refresh credential was available, but
+refresh was not exercised. Three unit tests, strict Clippy and build passed.
+[Status/correlation evidence](https://github.com/fes/fesTerm/issues/429#issuecomment-6527525291)
+alone does not qualify product consent, native vault persistence,
+connect-token/host discovery, expiry/revocation, two-account behavior or
+standalone usage rights.
+
+The subsequent integrated macOS desktop test on 2026-10-30 passed native
+service-application sign-in, one-click clipboard/browser delivery, account/host
+approval and scoped connect-token/pinned-host discovery against a dedicated
+private Debian 13 ARM64 Pi bridge. The owner confirmed actual GUI input/output;
+the screenshot records `hostname` returning `fes-rp5`. After closing the
+isolated app, a task-private checker acquired that saved profile's identity
+lease, loaded V2 credentials from the native store, verified the account,
+performed real secretless refresh, saved/reloaded the renewed pair, reverified
+the account and minted a fresh scoped connect token with the saved host binding
+unchanged. No credential values were logged or exported. The owner confirmed
+the restarted GUI reconnected using the saved profile without another GitHub
+sign-in, then closed the test window. The installed app, canonical checkout
+and original Pi service/tunnel remained unchanged. This narrows DT-01/03/07,
+not actual expiry/revocation, two-account or broad platform/usability gates.
+
+For DT-07, activate the displayed device-code button by pointer and keyboard,
+paste into the GitHub device page, and verify exact code delivery with no
+automatic account approval. The standard **Copy code and open GitHub** button
+must produce exactly one clipboard copy and one fixed device-page browser open
+on activation, never on display. The tooltip and button must remain
+usable in narrow windows and with a screen reader. Headless normal/narrow
+regressions prove explicit clipboard output and unchanged waiting state, not
+native clipboard delivery, keyboard traversal or accessibility usability.
+
+On 2026-10-30 an isolated macOS PR-427 build connected to an explicitly owned
+private Debian 13 ARM64 Pi bridge. A pinned encrypted probe executed shell
+input/output; after fixing the full app's dual-provider Rustls startup panic,
+the owner confirmed actual GUI terminal input/output. The installed app and
+original port-1313 service stayed unchanged. This is partial DT-01/02 scoped-token
+evidence, not native OAuth, clean-machine installer or broad platform acceptance.
+The native flow passed GitHub `/user` verification but management lookup logged
+`stage=tunnel-lookup-http`, `http_status=401`; root cause is not established.
+Standalone helper release bundles/installers are implemented but unpublished.
+Before release, qualify native signing/notarization and clean-machine GitHub
+login/runtime/credential storage, foreground Ctrl+C/shell retention and
+existing-service preservation on all six platform/architecture combinations.
+Mock archive/process tests do not establish these native gates.
+
+The owner subsequently approved idempotent reruns, public-JSON profile import
+and a dedicated per-user auto-start service. Qualify Linux systemd user,
+macOS LaunchAgent and Windows least-privileged logon-task creation/collision/
+restart/logoff behavior with unrelated sentinel services left unchanged.
+Repeat setup while the exact shell is occupied: the existing healthy service,
+host key, tunnel and profile JSON must stay unchanged, with no second login
+or takeover. Stopped service recovery may resume only its recorded live
+generation; missing/replaced daemons, changed CLI account, corrupt/permissive
+identity and uncertain partial cloud provisioning must refuse without creating
+replacement resources. Verify key files/DACLs, missing-key refusal, clipboard
+paste preview/fingerprint, explicit new-profile save, restart persistence and
+separate authentication. Reboot does not preserve the old daemon shell;
+auto-start must not silently create another. Protected signing, actual native
+credential storage, clean-machine setup and physical import usability remain
+native acceptance gates.
+
+An explicitly gated macOS LaunchAgent smoke passed with an isolated dummy
+worker, including repeat/start/foreign-definition checks, service-stop child
+shutdown and exact owned-resource cleanup. It used no cloud credentials or
+real daemon. This narrows the local registration/lifetime uncertainty, not
+signing, logon/reboot, clean-machine or end-to-end tunnel acceptance. Remaining
+native installer/service/import evidence is tracked in
+[#432](https://github.com/fes/fesTerm/issues/432).
+
+These are remaining real-service/native obligations for
+[ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md). The default-included experimental
+[implementation](dev-tunnels-experiment.md) has deterministic evidence,
+not completed native qualification.
+The owner's explicit default-enablement request changes availability only;
+the initial failed relay-lifetime attempts remain failed evidence. After the
+anonymous outer MAC/`NEWKEYS` fix (`3ae9bdf2`), a private GitHub-provisioned
+Windows fixture passed held-host and real Session qualification: recovery
+adoption, executed shell input/output, file snapshot SHA-256, bounds/namespace
+refusals, changed pins/generations, and explicit detach/reopen preserving the
+same shell state. Independent source reviews through that fix found no
+high-confidence vulnerabilities. This partial DT-01/02/03/06 evidence does not
+qualify physical GUI behavior beyond the separately recorded Pi fixture, actual two-account operation,
+bridge restart, expiry/revocation or native usability.
 Use dedicated, explicitly authorized test tunnels/sessions; never alter or
 terminate unrelated shells. Keep all failed attempts as failed evidence.
 
 | ID | Scenario | Evidence class | Prerequisite / current result |
 | --- | --- | --- | --- |
-| DT-01 | Provision private dedicated tunnels with scoped host/connect tokens through GitHub first; use independent profiles from two authorized GitHub accounts concurrently in one instance and rotate one binding without affecting/retargeting the other. Verify transient versus explicitly stored credentials, selected host binding, denied/wrong/expired credentials, secret redaction, service policy and cleanup ownership. | Real-service functional + security/policy | Deferred: reviewed bridge/backend, supported token provisioning, two authorized account/tunnel fixtures and controlled hosts, and service-use review. Native in-app sign-in and Entra/MFA/Conditional Access remain separate future scope; one-account evidence does not qualify the two-account case. |
-| DT-02 | Attach a supported exact remote session; exercise PowerShell/cmd on native Windows and shells/TUIs on Linux/macOS, Unicode, keyboard/mouse modes, Ctrl+C, resize and output/backpressure. | Real-service functional + native usability | Deferred: DT-01 and deterministic protocol/bounds tests; automate controlled PTY checks, retain physical-input/rendering/accessibility judgments. |
-| DT-03 | Disconnect/restart client and bridge; verify same daemon-owned process and ordered recovery without duplicate replies or stale input; refuse changed identities and unconfirmed takeover. | Controlled lifecycle automation + native functional | Deferred: supported attach/adoption and ownership admission; record actual bridge/daemon/OS versions. |
+| DT-01 | Use GitHub-first official CLI provisioning for private dedicated tunnels and scoped host/connect tokens. Exercise peer profile/editor/launcher/Inspector routing, separate profiles/accounts and simultaneous sessions, transient/native-store isolation and replacement without live retargeting. Verify host binding, denied/wrong/expired credentials, secret redaction, service policy and cleanup ownership. | Real-service functional + security/policy | Partial: deterministic profile/routing/rotation tests, independent source review, the private GitHub/Windows scoped-token fixture and native macOS/Pi credential-store refresh/reload passed. Expired/revoked credentials, other native stores and actual two-account qualification remain pending. Native Entra/MFA/Conditional Access is separate future scope. |
+| DT-02 | Attach a supported exact remote session; exercise PowerShell/cmd on native Windows and shells/TUIs on Linux/macOS, Unicode, keyboard/mouse modes, Ctrl+C, resize and output/backpressure. | Real-service functional + native usability | Partial: controlled Windows recovery adoption and executed PowerShell input/output passed. Broader shell/TUI, resize, backpressure and physical-input/rendering/accessibility judgments remain open. |
+| DT-03 | Disconnect/restart client and bridge; verify same daemon-owned process and ordered recovery without duplicate replies or stale input; refuse changed identities and unconfirmed takeover. | Controlled lifecycle automation + native functional | Partial: explicit client detach/reopen preserved the Windows shell's state and recovered prior output; changed host pins/generations refused. Native macOS/Pi reconnect after desktop exit and saved-identity refresh passed without another GitHub sign-in. Bridge restart and broader native lifecycle evidence remain open. |
 | DT-04 | Exercise only advertised inventory/create/terminate operations; reject stale generations, preserve occupied/replacement sessions and verify Cancel defaults and uncertain-result handling. | Deterministic/headless automation + native usability | Deferred: implemented operation subset and command routing. Missing operations are unsupported, not passed by omission. |
 | DT-05 | Rotate/reject/revoke credentials, lose the relay, restart/upgrade the bridge and separately test logoff/reboot/daemon termination boundaries. | Real-service/platform lifecycle + usability | Deferred: DT-01/03; record observed established-stream revocation behavior. No daemon hot-upgrade or reboot-survival claim. |
-| DT-06 | In SSH and Dev Tunnel sessions, open both detected paths and OSC 8 file targets into remote text/Markdown snapshots. Use different local/remote contents at an otherwise identical path; remote Windows/POSIX namespaces, `localhost`, trustworthy/unknown cwd, foreign authorities, binary/non-file/oversize refusal, interrupted reads, reconnect/profile/account changes and document reuse across providers. | Deterministic production-routing/security automation + controlled real-service/native usability | Deferred: shared generation-bound filesystem capability, reviewed bounded bridge read-file operation and SSH/SFTP reuse. Automate source isolation/content oracles; retain actual modifiers/context gestures, readability, accessibility and native clipboard delivery for review. No client-local or OS-handler fallback is permitted. |
+| DT-06 | From SSH/SFTP and Dev Tunnel sessions, deliberately open detected and OSC 8 remote Windows/POSIX text/Markdown paths, including source-relative file:///localhost, misleading labels, absent capability, foreign authorities, oversized/non-text content and stale/disconnected/changed bindings. Verify independent profiles/accounts and no client-local, OS-handler or shell-command fallback. | Deterministic routing/security + native real-service usability | Partial: shared capability/resolver, bounded bridge read RPC and snapshot identity implemented. Native Windows/Linux/macOS and real two-account qualification remain pending. |
+| DT-07 | Using the explicitly selected and consented service GitHub App, exercise Name/Tunnel editor and Launcher, one-click code-copy/browser open, native device flow, actual account confirmation, connect-token mint, labeled-port/pinned-host discovery, changed-host Cancel default, expiry/refresh/revocation, independent accounts and stale/cancelled saves. Verify no CLI dependency, secret leakage or mutation of live sessions. | Deterministic auth/discovery/UI + real-service/native security/usability | Partial: SDK-published service application, terse standard dialog, exact device/refresh contracts, application/account-bound V2 vault encoding, legacy/cross-app refusal and stale/cancelled publication have automated coverage. Native macOS/Pi sign-in, one-click clipboard/browser delivery, approved pinned attachment and actual shell input/output passed. A private checker passed real secretless refresh, native-store save/reload, account reverification and fresh scoped-token discovery with unchanged host binding; the owner confirmed saved-profile reconnect after desktop restart without another sign-in. Remaining [#429](https://github.com/fes/fesTerm/issues/429) gates include actual expiry/revocation, two accounts, other native platforms and keyboard/accessibility. iOS runtime/Keychain/mobile GUI and standalone usage rights remain unqualified. |
 
 ## Offline Mermaid (CP-06, CP-15)
 
@@ -44,6 +153,10 @@ interactive diagram nodes; previews remain inert images under ADR 0050's
 conservative limits.
 
 ## Local file OSC 8 links (TI-10, TI-17)
+
+Remote/serial refusal in the local-file checks means refusal of client-local
+authority. Source-bound SSH/SFTP and Dev Tunnel remote-file reads are a separate
+positive path under `DT-06`; they never inherit local no-follow read/save authority.
 
 Automated parser, UI and application tests cover strict decoding, exact
 modifier/context intent, decoded destination Copy, source-generation changes,

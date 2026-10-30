@@ -9,6 +9,27 @@ mod imp {
 
     const MAX_SECURITY_ATTRIBUTE_BYTES: usize = 8 * 1024 * 1024;
 
+    /// Returns an ordinary user's OS identity, refusing elevated/setuid setup.
+    pub fn current_user_id() -> io::Result<u32> {
+        let effective = nix::unistd::Uid::effective();
+        if effective.is_root() || effective != nix::unistd::Uid::current() {
+            return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        }
+        Ok(effective.as_raw())
+    }
+
+    /// Resolves the current user's home from the OS account database, not HOME.
+    pub fn current_user_home() -> io::Result<std::path::PathBuf> {
+        let uid = nix::unistd::Uid::from_raw(current_user_id()?);
+        let user = nix::unistd::User::from_uid(uid)
+            .map_err(io::Error::from)?
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+        if !user.dir.is_absolute() {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
+        Ok(user.dir)
+    }
+
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct SecurityMetadata {
         uid: u32,
@@ -220,6 +241,111 @@ mod imp {
         }
     }
 
+    /// Verifies an owner-only object without changing an existing access policy.
+    pub fn is_current_user_only(file: &File, directory: bool) -> io::Result<bool> {
+        let metadata = file.metadata()?;
+        let security = security_metadata(file)?;
+        let acl = {
+            #[cfg(target_os = "macos")]
+            {
+                !security.acl.is_empty()
+            }
+            #[cfg(target_os = "linux")]
+            {
+                security.attributes.iter().any(|(name, _)| {
+                    name == "system.posix_acl_access" || name == "system.posix_acl_default"
+                })
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            {
+                return Err(io::Error::from(io::ErrorKind::Unsupported));
+            }
+        };
+        Ok(private_storage_owner_and_mode(
+            metadata.uid(),
+            nix::unistd::Uid::effective().as_raw(),
+            security.mode,
+            directory,
+        ) && metadata.is_dir() == directory
+            && (directory || (metadata.is_file() && metadata.nlink() == 1))
+            && !acl)
+    }
+
+    pub(crate) const fn private_storage_owner_and_mode(
+        actual_uid: u32,
+        current_uid: u32,
+        mode: u32,
+        directory: bool,
+    ) -> bool {
+        actual_uid == current_uid && mode == if directory { 0o700 } else { 0o600 }
+    }
+
+    /// Refuses ancestors whose entries another ordinary account can replace.
+    pub fn trusted_private_storage_ancestor(directory: &File) -> io::Result<()> {
+        let metadata = directory.metadata()?;
+        if !metadata.is_dir()
+            || (metadata.uid() != 0 && metadata.uid() != nix::unistd::Uid::effective().as_raw())
+            || metadata.mode() & 0o022 != 0
+        {
+            return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        }
+        secure_staging_parent(directory).map(|_| ())
+    }
+
+    /// Creates only one directory relative to a retained safe parent.
+    pub fn create_private_directory(directory: &File, name: &Path) -> io::Result<File> {
+        one_component(name)?;
+        nix::sys::stat::mkdirat(directory, name, nix::sys::stat::Mode::S_IRWXU)
+            .map_err(io::Error::from)?;
+        let file = open_directory_read_nofollow(directory, name)?;
+        make_private_directory(&file)?;
+        Ok(file)
+    }
+
+    /// Opens a regular read/write file without following its final component.
+    /// Creation never replaces an existing entry.
+    pub fn open_private_file(directory: &File, name: &Path, create_new: bool) -> io::Result<File> {
+        use nix::{
+            fcntl::{openat, OFlag},
+            sys::stat::Mode,
+        };
+        one_component(name)?;
+        let flags = OFlag::O_RDWR
+            | OFlag::O_CLOEXEC
+            | OFlag::O_NOFOLLOW
+            | OFlag::O_NONBLOCK
+            | if create_new {
+                OFlag::O_CREAT | OFlag::O_EXCL
+            } else {
+                OFlag::empty()
+            };
+        let file = File::from(
+            openat(directory, name, flags, Mode::S_IRUSR | Mode::S_IWUSR)
+                .map_err(io::Error::from)?,
+        );
+        if !file.metadata()?.is_file() {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        if create_new {
+            make_private(&file)?;
+        }
+        Ok(file)
+    }
+
+    /// Atomically replaces one entry inside an already verified private
+    /// directory. Callers must validate the existing target before replacement.
+    pub fn replace_private_file(directory: &File, source: &Path, target: &Path) -> io::Result<()> {
+        one_component(source)?;
+        one_component(target)?;
+        nix::fcntl::renameat(directory, source, directory, target).map_err(io::Error::from)
+    }
+
+    /// Removes one caller-owned staging entry relative to its retained parent.
+    pub fn remove_private_staging_file(directory: &File, name: &Path) -> io::Result<()> {
+        one_component(name)?;
+        nix::unistd::unlinkat(directory, name, nix::unistd::UnlinkatFlags::NoRemoveDir)
+            .map_err(io::Error::from)
+    }
     fn open_nofollow(directory: &File, name: &Path, flags: nix::fcntl::OFlag) -> io::Result<File> {
         use nix::{
             fcntl::{openat, OFlag},
@@ -758,6 +884,17 @@ mod imp {
         use super::*;
 
         #[test]
+        fn private_storage_rejects_foreign_ownership_and_nonprivate_modes() {
+            assert!(private_storage_owner_and_mode(501, 501, 0o700, true));
+            assert!(private_storage_owner_and_mode(501, 501, 0o600, false));
+            assert!(!private_storage_owner_and_mode(502, 501, 0o600, false));
+            assert!(!private_storage_owner_and_mode(0, 501, 0o700, true));
+            assert!(!private_storage_owner_and_mode(501, 501, 0o755, true));
+            assert!(!private_storage_owner_and_mode(501, 501, 0o640, false));
+            assert!(!private_storage_owner_and_mode(501, 501, 0o1600, false));
+        }
+
+        #[test]
         fn unsupported_no_overwrite_rename_errors_are_non_retryable() {
             for error in [
                 nix::errno::Errno::EINVAL,
@@ -772,10 +909,13 @@ mod imp {
 
 #[cfg(unix)]
 pub use imp::{
+    create_private_directory, current_user_home, current_user_id, is_current_user_only,
     make_private, make_private_directory, open_directory_read_nofollow,
-    open_directory_search_nofollow, open_file_nofollow, preserve_security_metadata,
-    rename_noreplace, reopen_directory_read, secure_staging_parent, security_metadata,
-    security_metadata_matches, staging_parent_matches, SecurityMetadata, StagingParentSecurity,
+    open_directory_search_nofollow, open_file_nofollow, open_private_file,
+    preserve_security_metadata, remove_private_staging_file, rename_noreplace,
+    reopen_directory_read, replace_private_file, secure_staging_parent, security_metadata,
+    security_metadata_matches, staging_parent_matches, trusted_private_storage_ancestor,
+    SecurityMetadata, StagingParentSecurity,
 };
 
 #[cfg(all(test, unix))]

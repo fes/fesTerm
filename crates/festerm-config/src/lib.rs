@@ -31,10 +31,11 @@ pub use errors::{
 pub use file_io::ConfigurationState;
 pub use keyboard::{Chord, KeyboardAction, KeyboardBindings, KeyboardOverride, KeyboardScope};
 pub use profiles::{
-    CredentialKind, KnownHostEntry, LocalProfileConfiguration, PersistenceConfiguration,
-    PersistenceProviderKind, Profile, ProfileUsageEntry, RemoteProfileKind, SerialDataBits,
-    SerialFlowControl, SerialParity, SerialProfileConfiguration, SerialStopBits,
-    SshPortForwardConfiguration, SshPortForwardDirection, SshProfileConfiguration,
+    CredentialKind, DevTunnelHost, DevTunnelIdentity, DevTunnelProfileConfiguration,
+    KnownHostEntry, LocalProfileConfiguration, PersistenceConfiguration, PersistenceProviderKind,
+    Profile, ProfileUsageEntry, RemoteProfileKind, SerialDataBits, SerialFlowControl, SerialParity,
+    SerialProfileConfiguration, SerialStopBits, SshPortForwardConfiguration,
+    SshPortForwardDirection, SshProfileConfiguration,
 };
 pub use session_names::{
     DurableSessionAlias, DurableSessionIdentity, SessionAlias, MAX_DURABLE_SESSION_ALIASES,
@@ -220,6 +221,22 @@ impl Configuration {
         profile.credential_kind = kind;
         replacement.validate()?;
         Ok(replacement)
+    }
+
+    /// Replaces only the selected Dev Tunnel profile's connect capability
+    /// reference. A new reference is generated on rotation, never shared
+    /// through a global current-account slot.
+    pub fn with_tunnel_connect_credential(
+        &self,
+        identifier: &str,
+        reference: SecretReference,
+    ) -> Result<Self, ConfigError> {
+        let profile = self
+            .profile(identifier)
+            .ok_or_else(|| ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile))?
+            .clone()
+            .with_tunnel_connect_credential(reference)?;
+        self.with_profile(profile)
     }
 
     /// Returns a complete replacement with `profile` inserted, or replacing
@@ -585,6 +602,8 @@ impl Configuration {
         }
 
         let mut identifiers = HashSet::with_capacity(self.profiles.len());
+        let mut credential_users = std::collections::HashMap::new();
+        let mut tunnel_references = HashSet::new();
         for profile in &self.profiles {
             validate_identifier(profile.identifier())?;
             if !identifiers.insert(profile.identifier()) {
@@ -593,6 +612,26 @@ impl Configuration {
                 ));
             }
             profile.validate()?;
+            if let Some(identity) = profile
+                .as_dev_tunnel()
+                .and_then(|profile| profile.identity())
+            {
+                let reference = identity.credential_reference();
+                *credential_users.entry(reference).or_insert(0usize) += 1;
+                tunnel_references.insert(reference);
+            }
+            if let Some(reference) = profile.credential_reference() {
+                *credential_users.entry(reference).or_insert(0usize) += 1;
+                if profile.as_dev_tunnel().is_some() {
+                    tunnel_references.insert(reference);
+                }
+            }
+        }
+        if tunnel_references
+            .iter()
+            .any(|reference| credential_users.get(reference).copied().unwrap_or(0) != 1)
+        {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
         }
         let mut known_hosts = HashSet::with_capacity(self.known_hosts.len());
         for entry in &self.known_hosts {
@@ -755,8 +794,10 @@ fn inspect_profile_for_secret_material(value: &toml::Value) -> Result<(), Config
     let toml::Value::Table(profile) = value else {
         return inspect_value_for_secret_material(value, false);
     };
-    let is_ssh = matches!(profile.get("kind"), Some(toml::Value::String(kind)) if kind == "ssh");
-    inspect_table_for_secret_material(profile, is_ssh)
+    let supports_reference = matches!(profile.get("kind"), Some(toml::Value::String(kind)) if kind == "ssh" || kind == "dev_tunnel");
+    let dev_tunnel =
+        matches!(profile.get("kind"), Some(toml::Value::String(kind)) if kind == "dev_tunnel");
+    inspect_table_for_secret_material(profile, supports_reference, dev_tunnel, false)
 }
 
 fn inspect_value_for_secret_material(
@@ -774,7 +815,7 @@ fn inspect_value_for_secret_material(
             Ok(())
         }
         toml::Value::Table(values) => {
-            inspect_table_for_secret_material(values, allow_credential_id)
+            inspect_table_for_secret_material(values, allow_credential_id, false, false)
         }
         _ => Ok(()),
     }
@@ -783,8 +824,26 @@ fn inspect_value_for_secret_material(
 fn inspect_table_for_secret_material(
     values: &toml::map::Map<String, toml::Value>,
     allow_credential_id: bool,
+    allow_tunnel_identity: bool,
+    allow_public_account_login: bool,
 ) -> Result<(), ConfigError> {
     for (key, value) in values {
+        // These public identifiers have their own bounded grammar; words such
+        // as "token" in an account login or tunnel alias are not credentials.
+        if ((key == "tunnel_name" && allow_tunnel_identity)
+            || (key == "login" && allow_public_account_login))
+            && value.is_str()
+        {
+            continue;
+        }
+        if key == "identity" && allow_tunnel_identity {
+            if let toml::Value::Table(identity) = value {
+                inspect_table_for_secret_material(identity, true, false, true)?;
+            } else {
+                inspect_value_for_secret_material(value, false)?;
+            }
+            continue;
+        }
         if key == "credential_id" && allow_credential_id {
             let toml::Value::String(reference) = value else {
                 return Err(ConfigError::new(
@@ -852,6 +911,114 @@ mod tests {
     use std::{path::PathBuf, process, sync::atomic::Ordering};
 
     const CREDENTIAL_REFERENCE: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+    #[test]
+    fn native_tunnel_profiles_keep_identity_connect_and_account_bindings_independent() {
+        let identity = SecretReference::generate();
+        let make = |name, account, identity: SecretReference| {
+            Profile::named_dev_tunnel(name, "owned.usw3")
+                .unwrap()
+                .with_tunnel_identity(
+                    account,
+                    format!("account-{account}_acme"),
+                    identity,
+                    SecretReference::generate(),
+                    DevTunnelHost {
+                        tunnel_id: "owned".into(),
+                        cluster: "usw3".into(),
+                        host_id: "host".into(),
+                        public_key: "owned-pin".into(),
+                        port: 47461,
+                    },
+                )
+                .unwrap()
+        };
+        let one = make("one", 42, identity.duplicate_for_transport());
+        let two = make("two", 99, SecretReference::generate());
+        let configuration = Configuration::new(vec![one.clone(), two.clone()]).unwrap();
+        let serialized = configuration.to_toml().unwrap();
+        assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+        assert!(!serialized.contains("destination_file"));
+        assert!(serialized.contains("tunnel_name = \"owned.usw3\""));
+        let public_names = Profile::named_dev_tunnel("public-names", "token-tunnel.usw3")
+            .unwrap()
+            .with_tunnel_identity(
+                71,
+                "secret-agent".into(),
+                SecretReference::generate(),
+                SecretReference::generate(),
+                DevTunnelHost {
+                    tunnel_id: "owned".into(),
+                    cluster: "usw3".into(),
+                    host_id: "host".into(),
+                    public_key: "owned-pin".into(),
+                    port: 47461,
+                },
+            )
+            .unwrap();
+        let public_names = Configuration::new(vec![public_names]).unwrap();
+        assert_eq!(
+            Configuration::parse(&public_names.to_toml().unwrap()).unwrap(),
+            public_names
+        );
+        let forbidden = serialized.replacen(
+            "[profiles.identity]",
+            "[profiles.identity]\naccess_token = \"PRIVATE_MUST_REFUSE\"",
+            1,
+        );
+        assert!(Configuration::parse(&forbidden).is_err());
+        assert!(Configuration::new(vec![
+            one.clone(),
+            make("other", 42, identity.duplicate_for_transport())
+        ])
+        .is_err());
+        let changed = configuration
+            .with_profile(Profile::named_dev_tunnel("one", "changed.usw3").unwrap())
+            .unwrap();
+        assert_eq!(changed.profile("two"), Some(&two));
+        assert!(changed
+            .profile("one")
+            .unwrap()
+            .as_dev_tunnel()
+            .unwrap()
+            .identity()
+            .is_none());
+        assert_eq!(
+            one.as_dev_tunnel().unwrap().identity().unwrap().account_id,
+            42
+        );
+        for invalid in [
+            "file:///tmp/x",
+            "https://example.test",
+            "owned..usw3",
+            "-",
+            "owned.",
+        ] {
+            assert!(Profile::named_dev_tunnel("invalid", invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn dev_tunnel_profiles_roundtrip_without_secrets_and_refuse_shared_credential_bindings() {
+        let make_profile = |id| {
+            Profile::dev_tunnel(id, r"C:\owned\destination.json")
+                .unwrap()
+                .with_tunnel_connect_credential(
+                    SecretReference::parse(CREDENTIAL_REFERENCE).unwrap(),
+                )
+                .unwrap()
+        };
+        let first = make_profile("github-one");
+        let configuration = Configuration::new(vec![first.clone()]).unwrap();
+        let serialized = configuration.to_toml().unwrap();
+        assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+        assert!(Configuration::new(vec![first, make_profile("github-two")]).is_err());
+        assert!(Configuration::new(vec![
+            Profile::dev_tunnel("github-one", r"C:\owned\one.json").unwrap(),
+            Profile::dev_tunnel("github-two", r"C:\owned\two.json").unwrap(),
+        ])
+        .is_ok());
+    }
 
     #[test]
     fn automatic_update_checks_are_on_until_the_user_says_otherwise() {

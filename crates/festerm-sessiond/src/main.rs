@@ -75,6 +75,7 @@ fn sessiond_trace(message: impl std::fmt::Display) {
 }
 
 const CLIENT_POLL_INTERVAL: Duration = Duration::from_millis(20);
+static DAEMON_GENERATION: OnceLock<u128> = OnceLock::new();
 #[cfg(windows)]
 const WINDOWS_CLIENT_READ_TIMEOUT: Duration = Duration::from_millis(250);
 /// How long shutdown waits for a worker thread before detaching it.
@@ -919,6 +920,7 @@ fn run_daemon(
         Err(env::VarError::NotPresent) => now_ms(),
         Err(error) => return Err(error.into()),
     };
+    let _ = DAEMON_GENERATION.set(generation);
     let record = generation_record(
         &runtime_root,
         GenerationRecordSpec {
@@ -1257,16 +1259,20 @@ fn accept_unix_clients(
 ) -> io::Result<()> {
     loop {
         match listener.accept() {
-            Ok((stream, _)) => {
+            Ok((mut stream, _)) => {
                 stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL))?;
                 stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))?;
-                if let Err(error) = replace_active(
+                let Some(recovery_limit) = admit_client(&mut stream, active)? else {
+                    continue;
+                };
+                if let Err(error) = replace_active_limited(
                     active,
                     retired_clients,
                     stream,
                     terminal,
                     client_input_tx.clone(),
                     next_generation,
+                    recovery_limit,
                 ) {
                     eprintln!("fesTerm rejected a replacement session client: {error}");
                     return Ok(());
@@ -1593,13 +1599,18 @@ fn accept_windows_clients(
         sessiond_trace("accept_windows_clients: new client");
         stream.set_read_timeout(WINDOWS_CLIENT_READ_TIMEOUT);
         stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
-        if let Err(error) = replace_active(
+        let recovery_limit = match admit_client(&mut stream, active) {
+            Ok(Some(limit)) => limit,
+            _ => return,
+        };
+        if let Err(error) = replace_active_limited(
             active,
             retired_clients,
             stream,
             terminal,
             client_input_tx.clone(),
             next_generation,
+            recovery_limit,
         ) {
             eprintln!("fesTerm rejected a replacement session client: {error}");
         }
@@ -1671,6 +1682,7 @@ struct ActiveClient {
     thread: thread::JoinHandle<io::Result<()>>,
 }
 
+#[cfg(all(test, windows))]
 fn replace_active<S: Read + Write + Send + 'static>(
     active: &mut Option<ActiveClient>,
     retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
@@ -1679,7 +1691,80 @@ fn replace_active<S: Read + Write + Send + 'static>(
     input: mpsc::SyncSender<ClientInput>,
     next_generation: &mut u64,
 ) -> io::Result<()> {
-    let recovery = festerm_sessiond::encode_recovery_snapshot(terminal)
+    replace_active_limited(
+        active,
+        retired_clients,
+        replacement,
+        terminal,
+        input,
+        next_generation,
+        usize::MAX,
+    )
+}
+
+/// This runs on the sole daemon admission loop, not an independent registry
+/// check. No other client can become active between refusal and replacement.
+fn admit_client(
+    stream: &mut (impl Read + Write),
+    active: &Option<ActiveClient>,
+) -> io::Result<Option<usize>> {
+    let mut request = [0; festerm_sessiond::ADMISSION_BYTES];
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut offset = 0;
+    while offset < request.len() && Instant::now() < deadline {
+        match stream.read(&mut request[offset..]) {
+            Ok(0) => return Ok(None),
+            Ok(count) => offset += count,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::TimedOut
+                        | io::ErrorKind::WouldBlock
+                        | io::ErrorKind::Interrupted
+                ) =>
+            {
+                continue
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let expected = festerm_sessiond::encode_admission(
+        process::id(),
+        *DAEMON_GENERATION.get().unwrap_or(&0),
+        request[4] == 1,
+        u32::from_be_bytes(request[25..29].try_into().expect("fixed admission")),
+    );
+    let occupied = active
+        .as_ref()
+        .is_some_and(|client| !client.thread.is_finished());
+    if offset != request.len()
+        || request != expected
+        || request[4] > 1
+        || (request[4] == 0 && occupied)
+    {
+        stream.write_all(&[0])?;
+        return Ok(None);
+    }
+    let limit = u32::from_be_bytes(request[25..29].try_into().expect("fixed admission")) as usize;
+    if limit == 0 {
+        stream.write_all(&[0])?;
+        return Ok(None);
+    }
+    stream.write_all(&[1])?;
+    Ok(Some(limit.min(768 * 1024 * 1024)))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replace_active_limited<S: Read + Write + Send + 'static>(
+    active: &mut Option<ActiveClient>,
+    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+    replacement: S,
+    terminal: &Terminal,
+    input: mpsc::SyncSender<ClientInput>,
+    next_generation: &mut u64,
+    recovery_limit: usize,
+) -> io::Result<()> {
+    let recovery = festerm_sessiond::encode_recovery_snapshot_with_limit(terminal, recovery_limit)
         .map_err(|error| io::Error::other(error.to_string()))?;
     let generation = *next_generation;
     sessiond_trace(format_args!("replace_active: generation={generation}"));
@@ -2634,6 +2719,39 @@ fn write_attach_recovery<W: Write>(
     output.flush()
 }
 
+fn begin_attach_admission(
+    stream: &mut (impl Read + Write),
+    record: &SessionRecord,
+) -> io::Result<()> {
+    if record.protocol_version < 3 {
+        return Ok(());
+    }
+    stream.write_all(&festerm_sessiond::encode_admission(
+        record.pid,
+        record.created_at_unix_ms,
+        true,
+        768 * 1024 * 1024,
+    ))?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut reply = [0];
+    loop {
+        match stream.read(&mut reply) {
+            Ok(1) if reply[0] == 1 => return Ok(()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::TimedOut
+                        | io::ErrorKind::WouldBlock
+                        | io::ErrorKind::Interrupted
+                ) && Instant::now() < deadline =>
+            {
+                continue
+            }
+            _ => return Err(io::Error::other("daemon admission refused")),
+        }
+    }
+}
+
 fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
     let registry = load_registry()?;
@@ -2672,6 +2790,7 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
         let mut stream = UnixStream::connect(&record.socket)?;
         stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL))?;
         stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))?;
+        begin_attach_admission(&mut stream, record)?;
         forward_attach_duplex(
             &mut stream,
             record.protocol_version,
@@ -2686,6 +2805,7 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
             Pipe::connect(&record.socket, WORKER_JOIN_TIMEOUT, &AtomicBool::new(false))?;
         stream.set_read_timeout(CLIENT_POLL_INTERVAL);
         stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
+        begin_attach_admission(&mut stream, record)?;
         forward_attach_duplex(
             &mut stream,
             record.protocol_version,
@@ -3386,6 +3506,61 @@ mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
+
+    #[cfg(unix)]
+    fn connect_admitted_test_client(path: &Path) -> UnixStream {
+        let mut stream = UnixStream::connect(path).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .write_all(&festerm_sessiond::encode_admission(
+                process::id(),
+                0,
+                true,
+                768 * 1024 * 1024,
+            ))
+            .unwrap();
+        let mut response = [0];
+        stream.read_exact(&mut response).unwrap();
+        assert_eq!(response, [1]);
+        stream
+    }
+
+    #[test]
+    fn exclusive_admission_refuses_occupied_or_changed_generation_without_retiring_it() {
+        let (output, _events) = mpsc::sync_channel(1);
+        let (finish, wait) = mpsc::sync_channel(1);
+        let stolen = Arc::new(AtomicBool::new(false));
+        let active = Some(ActiveClient {
+            generation: 7,
+            output,
+            stolen: stolen.clone(),
+            thread: thread::spawn(move || {
+                let _ = wait.recv();
+                Ok(())
+            }),
+        });
+        let request = festerm_sessiond::encode_admission(process::id(), 0, false, 1024);
+        let mut stream = io::Cursor::new(request.to_vec());
+        assert!(admit_client(&mut stream, &active).unwrap().is_none());
+        assert!(!stolen.load(Ordering::Acquire));
+        assert_eq!(active.as_ref().unwrap().generation, 7);
+        assert_eq!(stream.into_inner()[festerm_sessiond::ADMISSION_BYTES], 0);
+
+        let mut stale = io::Cursor::new(
+            festerm_sessiond::encode_admission(process::id(), 1, true, 1024).to_vec(),
+        );
+        assert!(admit_client(&mut stale, &active).unwrap().is_none());
+        assert!(!stolen.load(Ordering::Acquire));
+        finish.send(()).unwrap();
+        let Some(client) = active else { unreachable!() };
+        client.thread.join().unwrap().unwrap();
+
+        let mut free = io::Cursor::new(request.to_vec());
+        assert_eq!(admit_client(&mut free, &None).unwrap(), Some(1024));
+        assert_eq!(free.into_inner()[festerm_sessiond::ADMISSION_BYTES], 1);
+    }
 
     struct AttachmentDropProbe(Rc<Cell<usize>>);
 
@@ -4470,7 +4645,7 @@ mod tests {
             )
         });
 
-        let mut first = UnixStream::connect(&socket_path).unwrap();
+        let mut first = connect_admitted_test_client(&socket_path);
         let _ = read_recovery_terminal(&mut first);
         acknowledge_recovery(&mut first);
 
@@ -4509,7 +4684,7 @@ mod tests {
         );
         let _ = read_server_recovery_sync(&mut first);
 
-        let mut second = UnixStream::connect(&socket_path).unwrap();
+        let mut second = connect_admitted_test_client(&socket_path);
         let recovered = read_recovery_terminal(&mut second);
         acknowledge_recovery(&mut second);
         read_server_stolen(&mut first);
@@ -4601,7 +4776,7 @@ mod tests {
             ClientLoopEvent::OutputBuffered
         );
 
-        let mut first = UnixStream::connect(&socket_path).unwrap();
+        let mut first = connect_admitted_test_client(&socket_path);
         first
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
@@ -4627,7 +4802,7 @@ mod tests {
             ClientLoopEvent::OutputBuffered
         );
 
-        let mut rejected = UnixStream::connect(&socket_path).unwrap();
+        let mut rejected = connect_admitted_test_client(&socket_path);
         rejected
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
@@ -4642,7 +4817,7 @@ mod tests {
             command => panic!("unexpected command: {command:?}"),
         }
 
-        let mut second = UnixStream::connect(&socket_path).unwrap();
+        let mut second = connect_admitted_test_client(&socket_path);
         second
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
@@ -4672,7 +4847,7 @@ mod tests {
             command => panic!("expected resize command, received {command:?}"),
         }
 
-        let mut third = UnixStream::connect(&socket_path).unwrap();
+        let mut third = connect_admitted_test_client(&socket_path);
         third
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
@@ -4716,7 +4891,7 @@ mod tests {
     fn idle_client_disconnect_is_detected_without_pty_output() {
         use std::{
             io::{self, Read},
-            os::unix::net::{UnixListener, UnixStream},
+            os::unix::net::UnixListener,
             sync::{mpsc, Mutex},
         };
 
@@ -4759,7 +4934,7 @@ mod tests {
             )
         });
 
-        let mut client = UnixStream::connect(&socket_path).unwrap();
+        let mut client = connect_admitted_test_client(&socket_path);
         let _ = read_recovery_terminal(&mut client);
         acknowledge_recovery(&mut client);
         let deadline = std::time::Instant::now() + Duration::from_secs(2);

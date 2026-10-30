@@ -1717,6 +1717,45 @@ reference a supported agent, key location, or secure-storage record without
 storing the secret itself. Only available authentication choices appear.
 Terminal dimensions and inferred remote platform do not belong in profiles.
 
+The ADR 0053 experiment, included in default desktop builds, adds a peer **Dev Tunnel** kind to
+Launcher, Profiles and Inspector. The preferred editor reuses the destination
+form's labeled **Name** and **Tunnel** fields and concise **Sign in with GitHub**,
+**Connect**, **Connect once**, **Save profile** and **Cancel** controls.
+Save target edits before sign-in. Device authorization displays the short code
+as a standard monospace button with a **Copy code and open GitHub** tooltip.
+One explicit activation copies the code and opens the fixed GitHub device URL,
+without advancing sign-in or approving a host. Merely displaying the dialog
+does neither. Name **Microsoft Dev Tunnels** as the application being authorized;
+keep ordinary labels/buttons, bounded progress and content-free errors concise.
+Use the shared viewport-bounded confirmation sizing with a preferred 520-point
+content width for every sign-in stage, rather than shrinking to the code or
+shortest status. Ordinary instructions remain on one line where space allows;
+narrow windows still constrain the dialog to the viewport.
+The SDK-published service GitHub App is included in default builds; no
+per-user app registration is required. An explicitly empty, invalid or different
+build override reports unavailable setup, not another app's consent flow.
+Legacy/unbound native-vault identities request a new explicit sign-in, not
+silent migration or cross-application refresh. Live native acceptance remains
+tracked in [#429](https://github.com/fes/fesTerm/issues/429).
+The verified account and host fingerprint require Cancel-default approval on
+first use/account change or changed host. Independent profiles have distinct
+identity/refresh and scoped-connect references, no global current account.
+Rotation preserves live launch bindings; duplication or changing the tunnel
+clears bindings. Connect once uses a fresh transient identity and never rotates
+a saved profile's credentials. Advanced retains legacy destination-file/token
+input. Inventory/create/takeover/terminate and filesystem writes are unavailable.
+**Paste setup JSON** opens a bounded public-metadata input followed by
+**Preview**. Show the tunnel/server and host fingerprint, require explicit
+confirmation and **Save imported profile**, then return to the editor without
+connecting or signing in. Import rejects credentials, credential references,
+unknown fields, unsafe URLs and invalid host/generation bindings; invalid raw
+input never enters diagnostics or configuration. Save uses the application
+command model to publish managed metadata and a new credential-free profile
+transactionally; name collisions refuse, and Cancel discards the staged blob.
+Authentication and first/changed-host approval remain separate.
+Inspector shows the account captured by that launch, never the profile's later
+current account. GitHub principal metadata is not presented as the remote OS user.
+
 Multi-field edits are staged behind Save; Cancel discards them and validation
 stays beside the relevant field. Delete requires confirmation and reports
 workspace references. Duplicate creates a distinct profile with an editable
@@ -3035,11 +3074,11 @@ mail, script, and unknown-scheme targets are rejected. Parser filtering is
 repeated authoritatively at launch time. Links remain usable in read-only
 history and are excluded from diagnostics.
 
-ADR 0052 adds absolute `file:` OSC 8 metadata with empty or localhost
-authority. File-link Open is available only in a local session and opens an
-internal text/Markdown document, never an OS file association. The command pins
-the originating tab and lifecycle generation; stale, closed, SSH/SFTP and
-serial sources cannot authorize a local file read. Hover/menu previews and
+ADR 0052 adds absolute local `file:` OSC 8 metadata with empty or localhost
+authority. Local File-link Open opens an internal text/Markdown document,
+never an OS file association. The command pins the originating tab and
+lifecycle generation; stale, closed, SSH/SFTP, Dev Tunnel and serial sources
+cannot authorize a client-local file read. Hover/menu previews and
 **Copy path** expose the strictly decoded destination (native Windows drive
 spelling where applicable), not the producer's label. Ordinary clicking does
 not activate it.
@@ -3051,6 +3090,16 @@ refuse symlinks and junctions before content reads; Windows mapped network
 roots are refused. The existing regular-file, text and document-size limits
 apply. Refusal never invokes a shell, remote fetch or external application.
 Copy remains available for syntactically valid but unavailable file targets.
+
+ADR 0053 extends this through a shared source-bound filesystem capability.
+Detected paths and explicit OSC 8 file metadata from SSH/SFTP or Dev Tunnel
+use only that originating live authenticated capability and remote OS path
+semantics. Empty/localhost file authorities mean the source host, not the
+client. Provider, endpoint, profile and connection generations bind read-only
+text/Markdown snapshots. Missing/stale capabilities, foreign authorities and
+unsupported namespaces refuse without local, OS-handler or shell fallback.
+Bridge reads require explicit operator enablement and are bounded regular-file
+reads, not arbitrary filesystem commands. See `DT-06` for native qualification.
 
 The no-follow policy persists for background freshness checks, refresh/reload,
 save-conflict source reads and ordinary saves, including reused document

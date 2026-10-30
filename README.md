@@ -3,6 +3,15 @@
 A cross-platform graphical terminal emulator and native SSH client, written in
 Rust.
 
+A [direct Dev Tunnels experiment](docs/dev-tunnels-experiment.md), included in default desktop builds,
+exports one existing daemon session through a separate bridge. It is
+GitHub-provisioned and not production-qualified. Native GitHub device sign-in
+and tunnel-name discovery use the SDK-published Microsoft Dev Tunnels GitHub
+application, without a client secret or per-user registration; broader native
+service qualification remains open under
+[#429](https://github.com/fes/fesTerm/issues/429);
+advanced scoped-token activation remains available.
+
 > [!NOTE]
 > **AI authorship:** fesTerm's code, tests, documentation, and first-party
 > assets were written entirely by GitHub Copilot under human guidance. The

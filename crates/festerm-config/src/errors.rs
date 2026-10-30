@@ -38,6 +38,7 @@ pub enum ConfigErrorKind {
     UnknownProfileReference,
     InvalidLocalProfile,
     InvalidSshProfile,
+    InvalidDevTunnelProfile,
     InvalidSshPortForwardConfiguration,
     DuplicateSshPortForward,
     InvalidSerialProfile,
@@ -124,6 +125,7 @@ impl fmt::Display for ConfigError {
             ConfigErrorKind::InvalidLocalProfile => formatter.write_str(
                 "local profile metadata must use non-empty, control-character-free executable, arguments, and working_directory values without secret-bearing options",
             ),
+            ConfigErrorKind::InvalidDevTunnelProfile => formatter.write_str("Dev Tunnel profile has an invalid destination or credential binding"),
             ConfigErrorKind::InvalidSshProfile => formatter.write_str(
                 "SSH profile metadata must contain a host, nonzero port, safe username and terminal type, and at least 2 columns by 1 row",
             ),

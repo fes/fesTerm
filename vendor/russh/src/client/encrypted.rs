@@ -456,7 +456,8 @@ impl Session {
                     let _ = sender.send(ChannelMsg::OpenFailure(reason_code.clone())).await;
                 }
 
-                let _ = self.sender.send(Reply::ChannelOpenFailure);
+                self.sender.send(Reply::ChannelOpenFailure)
+                    .map_err(|_| crate::Error::SendError)?;
 
                 client
                     .channel_open_failure(channel_num, reason_code, &descr, &language, self)

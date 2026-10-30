@@ -11,7 +11,7 @@ mod imp {
         fs::{File, OpenOptions},
         io, mem,
         os::windows::{
-            ffi::OsStrExt,
+            ffi::{OsStrExt, OsStringExt},
             fs::OpenOptionsExt,
             io::{AsRawHandle, FromRawHandle, OwnedHandle},
         },
@@ -39,7 +39,7 @@ mod imp {
         },
         Security::{
             AclSizeInformation, AddAccessAllowedAceEx, AdjustTokenPrivileges,
-            Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
+            Authorization::{ConvertStringSidToSidW, GetSecurityInfo, SE_FILE_OBJECT},
             CreateWellKnownSid, DuplicateTokenEx, EqualSid, GetAce, GetAclInformation,
             GetKernelObjectSecurity, GetLengthSid, GetSecurityDescriptorControl,
             GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, GetTokenInformation,
@@ -490,22 +490,47 @@ mod imp {
         Ok(sid)
     }
 
+    fn trusted_installer_sid() -> io::Result<Vec<u8>> {
+        let name: Vec<u16> = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let mut sid = ptr::null_mut();
+        if unsafe { ConvertStringSidToSidW(name.as_ptr(), &raw mut sid) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let length = unsafe { GetLengthSid(sid) } as usize;
+        let bytes = unsafe { std::slice::from_raw_parts(sid.cast::<u8>(), length) }.to_vec();
+        unsafe { LocalFree(sid) };
+        Ok(bytes)
+    }
+
     fn trusted_parent_sid(
         sid: *mut core::ffi::c_void,
         user: *mut core::ffi::c_void,
         system: &[u8],
         administrators: &[u8],
+        servicing: Option<&[u8]>,
     ) -> bool {
         (unsafe { EqualSid(sid, user) }) != 0
             || (unsafe { EqualSid(sid, system.as_ptr().cast_mut().cast()) }) != 0
             || (unsafe { EqualSid(sid, administrators.as_ptr().cast_mut().cast()) }) != 0
+            || servicing.is_some_and(|servicing| {
+                (unsafe { EqualSid(sid, servicing.as_ptr().cast_mut().cast()) }) != 0
+            })
     }
 
-    fn staging_parent_security(directory: &File) -> io::Result<Option<StagingParentSecurity>> {
+    fn staging_parent_security(
+        directory: &File,
+        servicing: Option<&[u8]>,
+    ) -> io::Result<Option<StagingParentSecurity>> {
         const ACCESS_ALLOWED_OBJECT_ACE_TYPE: u8 = 5;
         const ACCESS_ALLOWED_CALLBACK_ACE_TYPE: u8 = 9;
         const ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE: u8 = 11;
         const DANGEROUS: u32 = FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER | GENERIC_ALL;
+        // Unlike a locked document-save parent, an absolute-path ancestor must
+        // not let another user rename/delete the directory itself.
+        let dangerous = DANGEROUS | if servicing.is_some() { DELETE } else { 0 };
 
         let mut token = ptr::null_mut();
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
@@ -551,7 +576,7 @@ mod imp {
         if owner.is_null()
             || dacl_present == 0
             || dacl.is_null()
-            || !trusted_parent_sid(owner, user.User.Sid, &system, &administrators)
+            || !trusted_parent_sid(owner, user.User.Sid, &system, &administrators, servicing)
         {
             return Ok(None);
         }
@@ -591,7 +616,7 @@ mod imp {
                     .add(mem::size_of::<ACE_HEADER>())
                     .cast::<u32>()
             };
-            if mask & DANGEROUS == 0 {
+            if mask & dangerous == 0 {
                 continue;
             }
             if header.AceType != 0
@@ -605,6 +630,7 @@ mod imp {
                 user.User.Sid,
                 &system,
                 &administrators,
+                servicing,
             ) {
                 return Ok(None);
             }
@@ -616,7 +642,16 @@ mod imp {
     /// Returns the coherent owner/DACL snapshot when the parent is trusted,
     /// or `None` when its current access policy permits untrusted mutation.
     pub fn secure_staging_parent(directory: &File) -> io::Result<Option<StagingParentSecurity>> {
-        staging_parent_security(directory)
+        staging_parent_security(directory, None)
+    }
+
+    /// Validates private-storage ancestors, including Windows servicing-owned
+    /// system directories. The final private object must still be user-only.
+    pub fn trusted_private_storage_ancestor(directory: &File) -> io::Result<()> {
+        let servicing = trusted_installer_sid()?;
+        staging_parent_security(directory, Some(&servicing))?
+            .map(|_| ())
+            .ok_or_else(|| io::Error::from(io::ErrorKind::PermissionDenied))
     }
 
     pub fn staging_parent_matches(
@@ -1055,6 +1090,73 @@ mod imp {
         current_user_only_security(file, token_user.User.Sid)
     }
 
+    /// Resolves an ordinary unelevated account and the OS system directory
+    /// without trusting environment variables or invoking helper programs.
+    pub fn current_user_service_context() -> io::Result<(String, PathBuf)> {
+        use windows_sys::Win32::Security::{
+            Authorization::ConvertSidToStringSidW, TokenElevation, WinLocalServiceSid,
+            WinNetworkServiceSid, TOKEN_ELEVATION,
+        };
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            #[link_name = "GetSystemDirectoryW"]
+            fn get_system_directory_w(buffer: *mut u16, size: u32) -> u32;
+        }
+
+        let mut token = ptr::null_mut();
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let elevation = token_information(token.as_raw_handle(), TokenElevation)?;
+        let elevation = unsafe { &*elevation.as_ptr().cast::<TOKEN_ELEVATION>() };
+        if elevation.TokenIsElevated != 0 {
+            return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        }
+        let user = token_information(token.as_raw_handle(), TokenUser)?;
+        let user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+        for kind in [WinLocalSystemSid, WinLocalServiceSid, WinNetworkServiceSid] {
+            let sid = well_known_sid(kind)?;
+            if unsafe { EqualSid(user.User.Sid, sid.as_ptr().cast_mut().cast()) } != 0 {
+                return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+            }
+        }
+        let mut sid = ptr::null_mut();
+        if unsafe { ConvertSidToStringSidW(user.User.Sid, &raw mut sid) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let account = (|| {
+            // String SIDs have a much smaller documented bound; retain a
+            // defensive cap while reading the OS-owned terminated buffer.
+            let mut length = 0usize;
+            while length < 256 && unsafe { *sid.add(length) } != 0 {
+                length += 1;
+            }
+            if length == 256 {
+                return Err(io::Error::from(io::ErrorKind::InvalidData));
+            }
+            String::from_utf16(unsafe { std::slice::from_raw_parts(sid, length) })
+                .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))
+        })();
+        unsafe { LocalFree(sid.cast()) };
+        let account = account?;
+        let mut directory = vec![0u16; 32768];
+        let length =
+            unsafe { get_system_directory_w(directory.as_mut_ptr(), directory.len() as u32) };
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if length as usize >= directory.len() {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
+        directory.truncate(length as usize);
+        let directory = PathBuf::from(std::ffi::OsString::from_wide(&directory));
+        if !directory.is_absolute() {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
+        Ok((account, directory))
+    }
+
     fn current_user_only_security(
         file: &File,
         user_sid: *mut core::ffi::c_void,
@@ -1459,6 +1561,40 @@ mod imp {
         open_file_no_reparse_with_access(directory, name, GENERIC_READ)
     }
 
+    /// Opens one regular file for private state and lock updates without
+    /// following reparse points or replacing an existing entry.
+    pub fn open_file_read_write_no_reparse(directory: &File, name: &Path) -> io::Result<File> {
+        open_file_no_reparse_with_access(
+            directory,
+            name,
+            GENERIC_READ | windows_sys::Win32::Foundation::GENERIC_WRITE,
+        )
+    }
+
+    /// Retains one directory relative to an exact parent without following
+    /// reparse points or crossing to another volume.
+    pub fn open_directory_no_reparse(directory: &File, name: &Path) -> io::Result<File> {
+        let file = open_relative(
+            directory,
+            name,
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            FILE_OPEN,
+            FILE_DIRECTORY_FILE,
+            ptr::null(),
+        )?;
+        let information = file_information(&file)?;
+        if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || information.dwVolumeSerialNumber != file_information(directory)?.dwVolumeSerialNumber
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a same-volume regular directory is required",
+            ));
+        }
+        Ok(file)
+    }
+
     /// Rejects mapped network drives before a terminal hyperlink opens its root.
     pub fn require_local_disk_root(root: &Path) -> io::Result<()> {
         let root: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -1702,6 +1838,30 @@ mod imp {
         target_directory: &File,
         target: &Path,
     ) -> io::Result<()> {
+        rename_file(source, target_directory, target, false)
+    }
+
+    /// Atomically replaces a caller-verified private state entry. The caller
+    /// must release existing target handles before publication.
+    pub fn replace_private_file(
+        source: &File,
+        target_directory: &File,
+        target: &Path,
+    ) -> io::Result<()> {
+        rename_file(source, target_directory, target, true)
+    }
+
+    /// Removes a caller-owned staging file by its exact retained handle.
+    pub fn remove_private_staging_file(file: &File) -> io::Result<()> {
+        delete_directory_by_handle(file)
+    }
+
+    fn rename_file(
+        source: &File,
+        target_directory: &File,
+        target: &Path,
+        replace: bool,
+    ) -> io::Result<()> {
         if target.components().next().is_none()
             || target
                 .components()
@@ -1727,7 +1887,7 @@ mod imp {
         let mut storage = vec![0usize; (size as usize).div_ceil(mem::size_of::<usize>())];
         let information = storage.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
         unsafe {
-            (*information).Anonymous.ReplaceIfExists = false;
+            (*information).Anonymous.ReplaceIfExists = replace;
             (*information).RootDirectory = target_directory.as_raw_handle() as HANDLE;
             (*information).FileNameLength = name_bytes;
             ptr::copy_nonoverlapping(
@@ -2638,10 +2798,17 @@ mod imp {
                 .open(&directory.0)
                 .unwrap();
             assert!(secure_staging_parent(&directory_handle).unwrap().is_some());
+            assert!(trusted_private_storage_ancestor(&directory_handle).is_ok());
 
             make_unprotected(&directory_handle);
 
             assert!(secure_staging_parent(&directory_handle).unwrap().is_none());
+            assert_eq!(
+                trusted_private_storage_ancestor(&directory_handle)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::PermissionDenied
+            );
         }
 
         #[test]
@@ -2663,7 +2830,158 @@ mod imp {
                 user.User.Sid,
                 &system,
                 &administrators,
+                None,
             ));
+        }
+
+        #[test]
+        fn private_storage_ancestor_trust_adds_only_the_exact_servicing_sid() {
+            let mut token = ptr::null_mut();
+            assert_ne!(
+                unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) },
+                0
+            );
+            let token = unsafe { OwnedHandle::from_raw_handle(token) };
+            let user = token_information(token.as_raw_handle(), TokenUser).unwrap();
+            let user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+            let system = well_known_sid(WinLocalSystemSid).unwrap();
+            let administrators = well_known_sid(WinBuiltinAdministratorsSid).unwrap();
+            let servicing = trusted_installer_sid().unwrap();
+            assert!(!trusted_parent_sid(
+                servicing.as_ptr().cast_mut().cast(),
+                user.User.Sid,
+                &system,
+                &administrators,
+                None,
+            ));
+            assert!(trusted_parent_sid(
+                servicing.as_ptr().cast_mut().cast(),
+                user.User.Sid,
+                &system,
+                &administrators,
+                Some(&servicing),
+            ));
+            for kind in [
+                windows_sys::Win32::Security::WinLocalServiceSid,
+                WinNetworkServiceSid,
+                windows_sys::Win32::Security::WinBuiltinUsersSid,
+                windows_sys::Win32::Security::WinWorldSid,
+            ] {
+                let sid = well_known_sid(kind).unwrap();
+                assert!(!trusted_parent_sid(
+                    sid.as_ptr().cast_mut().cast(),
+                    user.User.Sid,
+                    &system,
+                    &administrators,
+                    Some(&servicing),
+                ));
+            }
+        }
+
+        #[test]
+        fn private_storage_ancestors_refuse_foreign_directory_delete_access() {
+            let directory = TemporaryDirectory::new();
+            let handle = OpenOptions::new()
+                .access_mode(GENERIC_READ | WRITE_DAC)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(&directory.0)
+                .unwrap();
+            let mut token = ptr::null_mut();
+            assert_ne!(
+                unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) },
+                0
+            );
+            let token = unsafe { OwnedHandle::from_raw_handle(token) };
+            let user = token_information(token.as_raw_handle(), TokenUser).unwrap();
+            let user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+            let everyone = well_known_sid(windows_sys::Win32::Security::WinWorldSid).unwrap();
+            let mut storage = [0usize; 128];
+            let acl = storage.as_mut_ptr().cast::<ACL>();
+            assert_ne!(
+                unsafe { InitializeAcl(acl, mem::size_of_val(&storage) as u32, ACL_REVISION) },
+                0
+            );
+            for (sid, access) in [
+                (user.User.Sid, FILE_ALL_ACCESS),
+                (everyone.as_ptr().cast_mut().cast(), DELETE),
+            ] {
+                assert_ne!(
+                    unsafe { AddAccessAllowedAceEx(acl, ACL_REVISION, 0, access, sid) },
+                    0
+                );
+            }
+            let mut descriptor = SECURITY_DESCRIPTOR::default();
+            assert_ne!(
+                unsafe { InitializeSecurityDescriptor((&raw mut descriptor).cast(), 1) },
+                0
+            );
+            assert_ne!(
+                unsafe { SetSecurityDescriptorDacl((&raw mut descriptor).cast(), 1, acl, 0) },
+                0
+            );
+            assert_ne!(
+                unsafe {
+                    SetKernelObjectSecurity(
+                        handle.as_raw_handle() as HANDLE,
+                        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                        (&raw mut descriptor).cast(),
+                    )
+                },
+                0
+            );
+            assert!(secure_staging_parent(&handle).unwrap().is_some());
+            assert_eq!(
+                trusted_private_storage_ancestor(&handle)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::PermissionDenied
+            );
+        }
+
+        #[test]
+        fn private_state_read_write_and_replacement_preserve_protected_dacl() {
+            use std::io::{Read, Seek, Write};
+            let root_path = std::env::current_dir().unwrap();
+            let root = lock_directory_path_without_delete_sharing(&root_path).unwrap();
+            let name = format!(
+                ".windows-private-state-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
+            let directory = create_current_user_only_directory(&root, Path::new(&name)).unwrap();
+            let mut first = create_current_user_only_file(&directory, Path::new("state")).unwrap();
+            first.write_all(b"old").unwrap();
+            let mut opened =
+                open_file_read_write_no_reparse(&directory, Path::new("state")).unwrap();
+            assert!(is_current_user_only(&opened).unwrap());
+            opened.rewind().unwrap();
+            opened.write_all(b"new").unwrap();
+            opened.rewind().unwrap();
+            let mut updated = Vec::new();
+            opened.read_to_end(&mut updated).unwrap();
+            assert_eq!(updated, b"new");
+            // Match checkpoint publication: validation handles close first.
+            drop(opened);
+            drop(first);
+            let mut second =
+                create_current_user_only_file(&directory, Path::new("staging")).unwrap();
+            second.write_all(b"replacement").unwrap();
+            second.sync_all().unwrap();
+            replace_private_file(&second, &directory, Path::new("state")).unwrap();
+            let mut replaced = open_file_no_reparse(&directory, Path::new("state")).unwrap();
+            let mut bytes = Vec::new();
+            replaced.read_to_end(&mut bytes).unwrap();
+            assert_eq!(bytes, b"replacement");
+            assert!(is_current_user_only(&replaced).unwrap());
+            make_unprotected(&second);
+            assert!(!is_current_user_only(&second).unwrap());
+            drop(replaced);
+            drop(second);
+            drop(directory);
+            std::fs::remove_dir_all(root_path.join(name)).unwrap();
         }
 
         fn make_unprotected(file: &File) {
@@ -3229,14 +3547,16 @@ mod imp {
 pub use imp::{
     apply_security_metadata, create_current_user_only_directory, create_current_user_only_file,
     create_current_user_only_file_exclusive, create_current_user_only_file_exclusive_with_audit,
-    create_current_user_only_file_with_audit, delete_directory_by_handle,
-    disable_std_handle_inheritance, enable_security_privilege, file_change_time,
-    is_current_user_only, lock_directory_path_without_delete_sharing, open_file_no_reparse,
-    open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
-    open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
-    open_file_no_reparse_for_verification, opened_file_path, rename_file_noreplace,
-    require_local_disk_root, restrict_default_dacl_to_current_user, restrict_to_current_user,
-    same_file_identity, secure_staging_parent, security_metadata, security_metadata_matches,
-    staging_parent_matches, DefaultDaclGuard, SecurityMetadata, SecurityPrivilegeGuard,
+    create_current_user_only_file_with_audit, current_user_service_context,
+    delete_directory_by_handle, disable_std_handle_inheritance, enable_security_privilege,
+    file_change_time, is_current_user_only, lock_directory_path_without_delete_sharing,
+    open_directory_no_reparse, open_file_no_reparse, open_file_no_reparse_for_capture,
+    open_file_no_reparse_for_move, open_file_no_reparse_for_security_capture,
+    open_file_no_reparse_for_security_verification, open_file_no_reparse_for_verification,
+    open_file_read_write_no_reparse, opened_file_path, remove_private_staging_file,
+    rename_file_noreplace, replace_private_file, require_local_disk_root,
+    restrict_default_dacl_to_current_user, restrict_to_current_user, same_file_identity,
+    secure_staging_parent, security_metadata, security_metadata_matches, staging_parent_matches,
+    trusted_private_storage_ancestor, DefaultDaclGuard, SecurityMetadata, SecurityPrivilegeGuard,
     StagingParentSecurity, UnsupportedSecurityMetadata,
 };

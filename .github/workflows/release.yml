@@ -451,10 +451,284 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  helper-bundles:
+    name: Build standalone helpers (${{ matrix.platform }}-${{ matrix.arch }})
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            arch: x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - platform: linux
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - platform: macos
+            arch: x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - platform: macos
+            arch: aarch64
+            runner: macos-15
+            target: aarch64-apple-darwin
+          - platform: windows
+            arch: x86_64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+          - platform: windows
+            arch: aarch64
+            runner: windows-11-vs2026-arm
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    environment: release
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      HELPER_PLATFORM: ${{ matrix.platform }}
+      HELPER_ARCH: ${{ matrix.arch }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+      - name: Add native LLVM to PATH
+        if: matrix.platform == 'windows' && matrix.arch == 'aarch64'
+        shell: pwsh
+        run: |
+          $llvmBin = 'C:\Program Files\LLVM\bin'
+          if (-not (Test-Path (Join-Path $llvmBin 'clang.exe') -PathType Leaf)) {
+            throw "Native LLVM is unavailable at $llvmBin"
+          }
+          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Build only native standalone helpers with inbox ConPTY
+        run: |
+          set -euo pipefail
+          host=$(rustc -vV | sed -n 's/^host: //p' | tr -d '\r')
+          test "$host" = '${{ matrix.target }}'
+          cargo build --locked --release -p festerm-sessiond -p festerm-tunnel-bridge --bins
+          cargo metadata --locked --format-version 1 --filter-platform "$host" > helper-metadata.json
+      - name: Stage native Windows signing input and dependency notices
+        if: matrix.platform == 'windows'
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, shutil, sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          import build_tunnel_bundle as bundle
+          root = Path.cwd()
+          bundle.validate_version(os.environ["VERSION"], root)
+          notices = bundle.third_party_notices(
+              json.loads(Path("helper-metadata.json").read_text(encoding="utf-8")),
+              os.environ["VERSION"], root,
+          )
+          destination = Path("helper-input")
+          destination.mkdir()
+          for name in bundle.entry_names("windows")[:3]:
+              source = Path("target/release") / name
+              if source.is_symlink() or not source.is_file() or source.stat().st_size == 0:
+                  raise ValueError(f"Missing regular helper executable: {name}")
+              shutil.copyfile(source, destination / name)
+          (destination / "THIRD_PARTY_NOTICES.txt").write_bytes(notices)
+          (destination / "VERSION").write_text(os.environ["VERSION"] + "\n", encoding="ascii", newline="\n")
+          PY
+      - name: Sign and verify all macOS helper executables
+        if: matrix.platform == 'macos'
+        env:
+          APPLE_API_ISSUER: ${{ vars.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ vars.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          test -n "$APPLE_API_ISSUER"
+          test -n "$APPLE_API_KEY"
+          test -n "$APPLE_API_KEY_P8"
+          test -n "$APPLE_CERTIFICATE"
+          test -n "$APPLE_CERTIFICATE_PASSWORD"
+          test -n "$APPLE_SIGNING_IDENTITY"
+          umask 077
+          mkdir helper-signing helper-notarize
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          Path("helper-signing/certificate.p12").write_bytes(
+              base64.b64decode("".join(os.environ["APPLE_CERTIFICATE"].split()), validate=True)
+          )
+          Path("helper-signing/AuthKey.p8").write_text(
+              os.environ["APPLE_API_KEY_P8"], encoding="utf-8"
+          )
+          PY
+          keychain="$GITHUB_WORKSPACE/helper-signing/release.keychain-db"
+          password=$(openssl rand -hex 32)
+          echo "::add-mask::$password"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import helper-signing/certificate.p12 -k "$keychain" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$password" "$keychain" >/dev/null
+          for binary in festerm-sessiond festerm-tunnel-bridge festerm-tunnel-setup; do
+            codesign --force --options runtime --timestamp \
+              --keychain "$keychain" --sign "$APPLE_SIGNING_IDENTITY" \
+              --identifier "dev.fes.$binary" "target/release/$binary"
+            codesign --verify --strict --verbose=2 "target/release/$binary"
+            cp "target/release/$binary" "helper-notarize/$binary"
+          done
+          # notarytool accepts ZIP, not tar.gz. Native CLI tickets cannot be
+          # stapled; submit the exact signed bytes before distributing them.
+          ditto -c -k helper-notarize helper-notarization.zip
+          xcrun notarytool submit helper-notarization.zip \
+            --key "$GITHUB_WORKSPACE/helper-signing/AuthKey.p8" \
+            --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" \
+            --wait --output-format json > helper-notarization.json
+          python -c 'import json; assert json.load(open("helper-notarization.json"))["status"] == "Accepted"'
+      - name: Remove macOS signing credentials
+        if: always() && matrix.platform == 'macos'
+        run: |
+          set -euo pipefail
+          keychain="$GITHUB_WORKSPACE/helper-signing/release.keychain-db"
+          if test -f "$keychain"; then
+            security delete-keychain "$keychain"
+          fi
+          rm -rf helper-signing helper-notarize helper-notarization.zip
+      - name: Package deterministic Unix helper bundle
+        if: matrix.platform != 'windows'
+        run: |
+          set -euo pipefail
+          python scripts/build_tunnel_bundle.py \
+            --version "$VERSION" --platform "$HELPER_PLATFORM" --arch "$HELPER_ARCH" \
+            --metadata helper-metadata.json
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: matrix.platform != 'windows'
+        with:
+          name: release-tunnel-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: matrix.platform == 'windows'
+        with:
+          name: helper-signing-input-windows-${{ matrix.arch }}
+          path: helper-input/*
+          if-no-files-found: error
+          retention-days: 1
+
+  helper-windows-sign:
+    name: Sign standalone Windows helpers (${{ matrix.arch }})
+    needs: [validate, helper-bundles]
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    # Azure's signing client runs on x64; ARM64 binaries were built natively.
+    runs-on: windows-2025
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: helper-signing-input-windows-${{ matrix.arch }}
+          path: helper-input
+      - name: Require protected signing configuration and exact native build input
+        shell: pwsh
+        env:
+          AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_PROFILE: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+        run: |
+          foreach ($name in @(
+            'AZURE_ARTIFACT_SIGNING_ACCOUNT', 'AZURE_ARTIFACT_SIGNING_ENDPOINT',
+            'AZURE_ARTIFACT_SIGNING_PROFILE', 'AZURE_CLIENT_ID',
+            'AZURE_SUBSCRIPTION_ID', 'AZURE_TENANT_ID'
+          )) {
+            if ([string]::IsNullOrWhiteSpace((Get-Item "env:$name").Value)) {
+              throw "Missing protected release value: $name"
+            }
+          }
+          $expected = @(
+            'festerm-sessiond.exe', 'festerm-tunnel-bridge.exe',
+            'festerm-tunnel-setup.exe', 'THIRD_PARTY_NOTICES.txt', 'VERSION'
+          )
+          $actual = @(Get-ChildItem helper-input -Force)
+          if ($actual.Count -ne $expected.Count -or
+              @(Compare-Object ($expected | Sort-Object) ($actual.Name | Sort-Object)).Count -ne 0) {
+            throw 'Unexpected helper signing input'
+          }
+          foreach ($file in $actual) {
+            if ($file.PSIsContainer -or $file.Length -eq 0 -or
+                ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+              throw 'Expected nonempty regular signing input files'
+            }
+          }
+          if ([IO.File]::ReadAllText((Resolve-Path helper-input/VERSION)) -cne "$env:VERSION`n") {
+            throw 'Native build VERSION mismatch'
+          }
+          $expectedMachine = if ('${{ matrix.arch }}' -eq 'aarch64') { 0xAA64 } else { 0x8664 }
+          foreach ($name in $expected | Where-Object { $_.EndsWith('.exe') }) {
+            $bytes = [IO.File]::ReadAllBytes((Resolve-Path "helper-input/$name"))
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+            if ([BitConverter]::ToUInt16($bytes, $peOffset + 4) -ne $expectedMachine) {
+              throw "Unexpected PE architecture: $name"
+            }
+          }
+      - uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign all three helper executables
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          files: |
+            ${{ github.workspace }}\helper-input\festerm-sessiond.exe
+            ${{ github.workspace }}\helper-input\festerm-tunnel-bridge.exe
+            ${{ github.workspace }}\helper-input\festerm-tunnel-setup.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify Authenticode and package signed helpers
+        shell: pwsh
+        run: |
+          foreach ($name in @('festerm-sessiond', 'festerm-tunnel-bridge', 'festerm-tunnel-setup')) {
+            if ((Get-AuthenticodeSignature "helper-input/$name.exe").Status -ne 'Valid') {
+              throw "Helper is not Authenticode-valid: $name"
+            }
+          }
+          python scripts/build_tunnel_bundle.py --version $env:VERSION `
+            --platform windows --arch '${{ matrix.arch }}' `
+            --binary-dir helper-input --notices helper-input/THIRD_PARTY_NOTICES.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Helper packaging failed' }
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: release-tunnel-windows-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub Release
     if: needs.validate.outputs.publish == 'true'
-    needs: [validate, macos, windows, linux]
+    needs: [validate, macos, windows, linux, helper-bundles, helper-windows-sign]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: release
@@ -477,6 +751,10 @@ jobs:
           path: font-downloads
       - name: Verify optional font assets against this release's catalog
         run: python3 scripts/manage_bundled_font.py --stage-downloads font-downloads
+      - name: Stage standalone helper installers
+        run: |
+          set -euo pipefail
+          cp scripts/install-dev-tunnel.sh scripts/install-dev-tunnel.ps1 dist/
       - name: Verify release payload
         run: |
           set -euo pipefail
@@ -494,10 +772,26 @@ jobs:
             "fesTerm-${VERSION}-linux-aarch64.AppImage"
             "fesTerm-${VERSION}-linux-aarch64.AppImage.sig"
             "fesTerm-${VERSION}-linux-aarch64.deb"
+            "install-dev-tunnel.sh"
+            "install-dev-tunnel.ps1"
           )
+          for platform in linux macos windows; do
+            extension=tar.gz
+            if [[ "$platform" == windows ]]; then extension=zip; fi
+            for arch in x86_64 aarch64; do
+              archive="fesTerm-tunnel-${VERSION}-${platform}-${arch}.${extension}"
+              expected+=("$archive" "$archive.sha256")
+              python3 -c \
+                'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from build_tunnel_bundle import verify_bundle; verify_bundle(Path(sys.argv[1]), sys.argv[2], sys.argv[3])' \
+                "dist/$archive" "$VERSION" "$platform"
+              (cd dist && sha256sum --strict --check "$archive.sha256")
+            done
+          done
           for artifact in "${expected[@]}"; do
             test -s "dist/$artifact"
           done
+          # 13 desktop assets, 12 helper archives/checksums, 2 installers.
+          test "${#expected[@]}" -eq 27
           test "$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq "${#expected[@]}"
       - name: Generate release notes and signed update manifest
         run: |

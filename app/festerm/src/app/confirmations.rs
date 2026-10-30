@@ -23,7 +23,11 @@ use super::{bounded_paste_preview, confirmation_width, paste_line_count, FesTerm
 /// centred layout has something to centre against.
 const DIALOG_BUTTON_HEIGHT: f32 = 28.0;
 
-fn prepare_confirmation(ui: &mut egui::Ui, context: &egui::Context, preferred_width: f32) {
+pub(super) fn prepare_confirmation(
+    ui: &mut egui::Ui,
+    context: &egui::Context,
+    preferred_width: f32,
+) {
     let size = modal_content_size(
         context.content_rect().size(),
         &egui::Frame::popup(ui.style()),
@@ -84,6 +88,7 @@ impl FesTermApp {
                                     CloseConsequence::TerminateLocalProcess
                                 }
                                 InspectorTransport::Ssh { .. }
+                                | InspectorTransport::DevTunnel { .. }
                                 | InspectorTransport::Sftp { .. } => {
                                     CloseConsequence::DisconnectSsh
                                 }

@@ -14,6 +14,10 @@ mod direct2d_probe;
 mod discovery;
 mod document_activation;
 mod document_layout;
+#[cfg(feature = "experimental-dev-tunnels")]
+mod tunnel_activation;
+#[cfg(feature = "experimental-dev-tunnels")]
+mod tunnel_profile_import;
 // Every entry point here is exercised by its own tests and is called for real
 // once the editor tab lands; the allowance goes with it.
 #[allow(dead_code)]
@@ -37,6 +41,7 @@ mod owned_fixture_paths;
 #[cfg(test)]
 mod performance_fixtures;
 mod port_forward_draft;
+mod remote_files;
 mod save_as;
 mod screens;
 mod search;
@@ -129,8 +134,21 @@ fn primary_viewport_builder(
 
 fn main() -> eframe::Result<()> {
     let diagnostics = diagnostics::init();
-    let activation = document_activation::parse_env_activation_args()
-        .and_then(|cli| document_activation::prepare_startup(cli, None));
+    #[cfg(feature = "experimental-dev-tunnels")]
+    let tunnel_launch = match tunnel_activation::parse_env() {
+        Ok(launch) => launch,
+        Err(_) => return show_document_activation_error("Experimental tunnel setup refused. Supply trusted destination metadata and a dedicated connect token through private input.".into()),
+    };
+    #[cfg(feature = "experimental-dev-tunnels")]
+    let tunnel_requested = tunnel_launch.is_some();
+    #[cfg(not(feature = "experimental-dev-tunnels"))]
+    let tunnel_requested = false;
+    let activation = if tunnel_requested {
+        Ok(document_activation::StartupAction::IndependentNoActivation)
+    } else {
+        document_activation::parse_env_activation_args()
+            .and_then(|cli| document_activation::prepare_startup(cli, None))
+    };
     let (activation_queue, _activation_server) = match activation {
         Ok(document_activation::StartupAction::Primary { queue, server }) => (queue, Some(server)),
         Ok(document_activation::StartupAction::IndependentNoActivation) => {
@@ -211,6 +229,10 @@ fn main() -> eframe::Result<()> {
             );
             app.install_native_menu(&creation_context.egui_ctx);
             app.install_wake_monitor(&creation_context.egui_ctx);
+            #[cfg(feature = "experimental-dev-tunnels")]
+            if let Some(launch) = tunnel_launch {
+                app.install_experimental_tunnel(launch, &creation_context.egui_ctx);
+            }
             let mut application = FesTermApplication::new(app);
             application.install_document_activation(activation_queue, &creation_context.egui_ctx);
             application

@@ -52,6 +52,8 @@ pub(crate) use settings::{show_settings, SettingsViewModel};
 /// One selectable launch option in the Launcher list: the fixed default
 /// local shell, or a saved local/SSH profile.
 enum LauncherItemKind<'a> {
+    NewDevTunnel,
+    DevTunnelProfile(&'a str),
     LocalDefault,
     NewSsh,
     NewSftp,
@@ -95,6 +97,7 @@ struct LauncherItem<'a> {
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ProfileTableKind {
+    DevTunnel,
     Local,
     Ssh,
     Sftp,
@@ -104,6 +107,7 @@ enum ProfileTableKind {
 impl ProfileTableKind {
     fn type_label(self) -> &'static str {
         match self {
+            Self::DevTunnel => "Dev Tunnel",
             Self::Local => "Local",
             Self::Ssh => "SSH",
             Self::Sftp => "SFTP",
@@ -113,6 +117,7 @@ impl ProfileTableKind {
 
     fn mark(self) -> (Icon, egui::Color32) {
         match self {
+            Self::DevTunnel => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
             Self::Local => (Icon::LocalTerminal, theme::ICON_SESSION_LOCAL),
             Self::Ssh => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
             Self::Sftp => (Icon::FileTransfer, theme::ICON_SESSION_FILE_TRANSFER),
@@ -133,6 +138,9 @@ struct ProfileTableItem {
 impl ProfileTableItem {
     fn connect_command(&self) -> AppCommand {
         match self.kind {
+            ProfileTableKind::DevTunnel => AppCommand::StartConfiguredDevTunnelProfile {
+                profile_id: self.identifier.clone(),
+            },
             ProfileTableKind::Local => AppCommand::StartConfiguredLocalProfile {
                 profile_id: self.identifier.clone(),
             },
@@ -185,6 +193,7 @@ impl<'a> LauncherItem<'a> {
 impl LauncherItem<'_> {
     fn profile_table_item(&self) -> ProfileTableItem {
         let kind = match self.kind {
+            LauncherItemKind::DevTunnelProfile(_) => ProfileTableKind::DevTunnel,
             LauncherItemKind::LocalProfile(_) => ProfileTableKind::Local,
             LauncherItemKind::SshProfile(_) => ProfileTableKind::Ssh,
             LauncherItemKind::SftpProfile(_) => ProfileTableKind::Sftp,
@@ -207,6 +216,7 @@ impl LauncherItem<'_> {
     fn profile_id(&self) -> Option<&str> {
         match self.kind {
             LauncherItemKind::LocalDefault
+            | LauncherItemKind::NewDevTunnel
             | LauncherItemKind::NewSsh
             | LauncherItemKind::NewSftp
             | LauncherItemKind::NewSerial
@@ -214,6 +224,7 @@ impl LauncherItem<'_> {
             | LauncherItemKind::ResumeSession(_)
             | LauncherItemKind::ResumeMultiplexerSession(..) => None,
             LauncherItemKind::LocalProfile(id)
+            | LauncherItemKind::DevTunnelProfile(id)
             | LauncherItemKind::SshProfile(id)
             | LauncherItemKind::SftpProfile(id)
             | LauncherItemKind::SerialProfile(id) => Some(id),
@@ -226,6 +237,9 @@ impl LauncherItem<'_> {
     /// distinction survives for a user who cannot separate the hues.
     fn mark(&self) -> (Icon, egui::Color32) {
         match self.kind {
+            LauncherItemKind::NewDevTunnel | LauncherItemKind::DevTunnelProfile(_) => {
+                (Icon::SshRemote, theme::ICON_SESSION_REMOTE)
+            }
             LauncherItemKind::LocalDefault
             | LauncherItemKind::LocalProfile(_)
             | LauncherItemKind::ResumeSession(_)
@@ -247,6 +261,14 @@ impl LauncherItem<'_> {
 
     fn command(&self) -> AppCommand {
         match self.kind {
+            LauncherItemKind::NewDevTunnel => AppCommand::CreateProfile {
+                kind: NewProfileKind::DevTunnel,
+            },
+            LauncherItemKind::DevTunnelProfile(profile_id) => {
+                AppCommand::StartConfiguredDevTunnelProfile {
+                    profile_id: profile_id.to_owned(),
+                }
+            }
             LauncherItemKind::LocalDefault => {
                 unreachable!("the Local Shell item opens a launch form, not an AppCommand")
             }
@@ -3342,7 +3364,7 @@ pub fn show_launcher(
     let profiles = configuration.profiles();
     let customize_local_shell = configuration.interface_settings().customize_local_shell();
     let now_unix_seconds = unix_now_seconds();
-    // The five launch cards: one per session type fesTerm can start from
+    // The base launch cards: one per session type fesTerm can start from
     // nothing, in the order a new user meets them.
     let mut items = vec![
         LauncherItem::untabulated(
@@ -3371,6 +3393,13 @@ pub fn show_launcher(
             LauncherItemKind::NewMarkdown,
         ),
     ];
+    if cfg!(feature = "experimental-dev-tunnels") {
+        items.push(LauncherItem::untabulated(
+            "Dev Tunnel · Experimental".into(),
+            "Attach an existing exported remote session".into(),
+            LauncherItemKind::NewDevTunnel,
+        ));
+    }
     let fixed_end = items.len();
     // Resumable, unattached `festerm-sessiond` sessions (feature request
     // #70) lead the Running Sessions panel. An already-attached
@@ -3432,6 +3461,14 @@ pub fn show_launcher(
     let profiles_start = items.len();
     items.extend(profiles.iter().map(|profile| {
         let (kind, type_label, location) = match profile {
+            Profile::DevTunnel(tunnel) => (
+                LauncherItemKind::DevTunnelProfile(profile.identifier()),
+                "Dev Tunnel",
+                tunnel
+                    .tunnel_name()
+                    .unwrap_or(tunnel.destination_file())
+                    .to_owned(),
+            ),
             Profile::Local(local) => (
                 LauncherItemKind::LocalProfile(profile.identifier()),
                 "Local",
@@ -4200,7 +4237,16 @@ fn show_saved_profiles_panel(
                                             ("SSH", NewProfileKind::Ssh),
                                             ("SFTP", NewProfileKind::Sftp),
                                             ("Serial", NewProfileKind::Serial),
+                                            (
+                                                "Dev Tunnel · Experimental",
+                                                NewProfileKind::DevTunnel,
+                                            ),
                                         ] {
+                                            if kind == NewProfileKind::DevTunnel
+                                                && !cfg!(feature = "experimental-dev-tunnels")
+                                            {
+                                                continue;
+                                            }
                                             if ui.button(label).clicked() {
                                                 *command = Some(AppCommand::CreateProfile { kind });
                                                 ui.close();
@@ -6431,8 +6477,8 @@ mod tests {
         assert!(harness
             .query_by_label("development — Local · cargo")
             .is_some());
-        // Past the five launch cards to the first saved profile.
-        for _ in 0..5 {
+        let launch_cards = 5 + usize::from(cfg!(feature = "experimental-dev-tunnels"));
+        for _ in 0..launch_cards {
             harness.key_press(egui::Key::ArrowDown);
             harness.run();
         }

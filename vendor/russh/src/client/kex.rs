@@ -146,10 +146,13 @@ impl ClientKex {
                         self.cause.session_id(),
                     )?;
 
-                    output.write_packet(|w| {
-                        msg::NEWKEYS.encode(w)?;
-                        Ok(())
-                    })?;
+                    // Only the anonymous no-host-key transport omits NEWKEYS.
+                    if names.key.is_some() {
+                        output.write_packet(|w| {
+                            msg::NEWKEYS.encode(w)?;
+                            Ok(())
+                        })?;
+                    }
 
                     return Ok(KexProgress::Done {
                         newkeys,

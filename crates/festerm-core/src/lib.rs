@@ -1721,7 +1721,7 @@ mod tests {
             "https://github.com@evil.example/login",
             "mailto:user@example.com",
             "javascript:alert(1)",
-            "file://other-host/etc/passwd",
+            "file://user@other-host/etc/passwd",
         ] {
             let mut terminal = terminal(8, 1);
             terminal.ingest(format!("\x1b]8;;{target}\x1b\\X").as_bytes());

@@ -17,6 +17,9 @@ enum ProfilesScreenMode {
     EditLocal(LocalProfileDraft),
     EditSsh(SshProfileDraft),
     EditSerial(SerialProfileDraft),
+    EditDevTunnel(DevTunnelProfileDraft),
+    #[cfg(feature = "experimental-dev-tunnels")]
+    ImportPublicDevTunnel(PublicTunnelImportDraft),
     ConfirmDelete {
         identifier: String,
         references: usize,
@@ -29,12 +32,90 @@ struct ProfilesScreenState {
     profile_search: String,
 }
 
+#[cfg(feature = "experimental-dev-tunnels")]
+#[derive(Clone, Default)]
+struct PublicTunnelImportDraft {
+    text: zeroize::Zeroizing<String>,
+    preview: Option<crate::tunnel_profile_import::PublicProfileImport>,
+    confirmed: bool,
+    focus_cancel: bool,
+    error: Option<&'static str>,
+}
+
+#[derive(Clone, Default)]
+struct DevTunnelProfileDraft {
+    original_id: Option<String>,
+    name: String,
+    destination_file: String,
+    tunnel: String,
+    legacy: bool,
+    saved: Option<Profile>,
+    credential: Option<Arc<festerm_secret_store::SecretReference>>,
+    token: zeroize::Zeroizing<String>,
+    error: Option<String>,
+}
+
+impl DevTunnelProfileDraft {
+    fn from_profile(profile: &festerm_config::DevTunnelProfileConfiguration) -> Self {
+        Self {
+            original_id: Some(profile.identifier().to_owned()),
+            name: profile.identifier().to_owned(),
+            destination_file: profile.destination_file().to_owned(),
+            tunnel: profile.tunnel_name().unwrap_or_default().to_owned(),
+            legacy: profile.tunnel_name().is_none(),
+            saved: Some(Profile::DevTunnel(profile.clone())),
+            credential: profile
+                .credential_reference()
+                .map(|reference| Arc::new(reference.duplicate_for_transport())),
+            ..Self::default()
+        }
+    }
+
+    fn build(&self) -> Result<Profile, festerm_config::ConfigError> {
+        if !self.legacy {
+            if let Some(saved) = &self.saved {
+                if saved
+                    .as_dev_tunnel()
+                    .is_some_and(|profile| profile.tunnel_name() == Some(self.tunnel.trim()))
+                {
+                    return Ok(saved.clone());
+                }
+            }
+            return Profile::named_dev_tunnel(
+                self.original_id.as_deref().unwrap_or(self.name.trim()),
+                self.tunnel.trim(),
+            );
+        }
+        let profile = Profile::dev_tunnel(
+            self.original_id.as_deref().unwrap_or(self.name.trim()),
+            self.destination_file.trim(),
+        )?;
+        match &self.credential {
+            Some(reference) => {
+                profile.with_tunnel_connect_credential(reference.duplicate_for_transport())
+            }
+            None => Ok(profile),
+        }
+    }
+}
+
 fn profiles_state_id(tab_id: TabId) -> egui::Id {
     egui::Id::new(("profiles_state", tab_id))
 }
 
 fn profile_table_item(profile: &Profile, configuration: &Configuration) -> ProfileTableItem {
     let (kind, location, subtitle) = match profile {
+        Profile::DevTunnel(tunnel) => (
+            ProfileTableKind::DevTunnel,
+            tunnel
+                .tunnel_name()
+                .unwrap_or(tunnel.destination_file())
+                .to_owned(),
+            tunnel
+                .identity()
+                .map(|identity| format!("GitHub · {}", identity.login))
+                .unwrap_or_else(|| "Experimental".to_owned()),
+        ),
         Profile::Local(local) => (
             ProfileTableKind::Local,
             local.executable().to_owned(),
@@ -435,7 +516,9 @@ impl SshProfileDraft {
                     .map_err(|error| error.to_string())?,
             ),
             Profile::Ssh(ssh) => Profile::Ssh(ssh),
-            Profile::Local(_) | Profile::Serial(_) => unreachable!("Profile::ssh returns SSH"),
+            Profile::Local(_) | Profile::Serial(_) | Profile::DevTunnel(_) => {
+                unreachable!("Profile::ssh returns SSH")
+            }
         };
         let profile = match (self.profile_kind, self.durable_session.persistence()?) {
             (RemoteProfileKind::Ssh, Some(persistence)) => profile
@@ -710,6 +793,9 @@ pub(crate) fn show_profiles(
     if let Some(identifier) = pending_edit {
         if let Some(profile) = configuration.profile(&identifier) {
             state.mode = match profile {
+                Profile::DevTunnel(tunnel) => {
+                    ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::from_profile(tunnel))
+                }
                 Profile::Local(local) => {
                     ProfilesScreenMode::EditLocal(LocalProfileDraft::from_profile(local))
                 }
@@ -725,6 +811,9 @@ pub(crate) fn show_profiles(
 
     if let Some(kind) = pending_create {
         state.mode = match kind {
+            NewProfileKind::DevTunnel => {
+                ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::default())
+            }
             NewProfileKind::Local => {
                 ProfilesScreenMode::EditLocal(LocalProfileDraft::new(local_default_provider))
             }
@@ -747,6 +836,154 @@ pub(crate) fn show_profiles(
         ui.vertical(|ui| {
             ui.set_max_width(content_width);
     match &mut state.mode {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        ProfilesScreenMode::ImportPublicDevTunnel(draft) => {
+            show_bounded_content_scroll(ui, (tab_id, "import_public_tunnel"), |ui| {
+                ui.heading("Import public Dev Tunnel profile");
+                ui.label("Paste the public setup JSON printed by the remote host. Never paste tokens or credentials.");
+                ui.small("Import saves metadata only. It does not sign in, approve an account, connect, accept a changed host, or take over a session.");
+                if let Some(preview) = draft.preview.clone() {
+                    let destination = preview.destination();
+                    ui.label(format!("Profile: {}", preview.name()));
+                    ui.label(format!("Tunnel: {}.{}:{}", destination.tunnel_id, destination.cluster, destination.port));
+                    ui.label(format!("Server: {}", destination.endpoint.host_id));
+                    ui.label(format!("Session: {} · PID {} · generation {}", destination.target.name, destination.target.pid, destination.target.generation));
+                    ui.label(format!("Host fingerprint: {}", preview.fingerprint()));
+                    let duplicate = configuration.profile(preview.name()).is_some();
+                    if duplicate {
+                        ui.colored_label(theme::STATUS_ERROR, "A profile with this name already exists. Import will not replace it.");
+                    }
+                    ui.checkbox(&mut draft.confirmed, "I verified the server and fingerprint; save public profile only.");
+                    ui.small("Authenticate separately after saving: open this profile's Advanced section and supply a scoped connect token privately. Native GitHub name discovery remains unqualified (#429).");
+                    ui.horizontal_wrapped(|ui| {
+                        let cancel = ui.button("Cancel");
+                        if draft.focus_cancel { cancel.request_focus(); draft.focus_cancel = false; }
+                        if cancel.clicked() { next_mode = Some(ProfilesScreenMode::List); }
+                        if ui.button("Paste different JSON").clicked() {
+                            draft.preview = None;
+                            draft.confirmed = false;
+                        } else if ui.add_enabled(draft.confirmed && !duplicate, egui::Button::new("Save imported profile")).clicked() {
+                            command = Some(AppCommand::ImportPublicDevTunnelProfile { import: preview.clone() });
+                            next_mode = Some(ProfilesScreenMode::List);
+                        }
+                    });
+                } else {
+                    let input = ui.add(TextEdit::multiline(&mut *draft.text)
+                        .id(egui::Id::new((tab_id, "public_tunnel_json")))
+                        .hint_text("Public setup JSON")
+                        .char_limit(crate::tunnel_profile_import::MAX_IMPORT_BYTES)
+                        .desired_rows(8)
+                        .desired_width(f32::INFINITY));
+                    input.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Public setup JSON"));
+                    if draft.text.len() > crate::tunnel_profile_import::MAX_IMPORT_BYTES {
+                        draft.text = zeroize::Zeroizing::new(String::new());
+                        draft.error = Some("Public setup JSON must be at most 64 KiB.");
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() { next_mode = Some(ProfilesScreenMode::List); }
+                        if ui.button("Preview public profile").clicked() {
+                            match crate::tunnel_profile_import::PublicProfileImport::parse(&draft.text) {
+                                Ok(preview) => {
+                                    draft.preview = Some(preview);
+                                    draft.confirmed = false;
+                                    draft.focus_cancel = true;
+                                    draft.error = None;
+                                }
+                                Err(error) => draft.error = Some(error),
+                            }
+                            draft.text = zeroize::Zeroizing::new(String::new());
+                        }
+                    });
+                }
+                if let Some(error) = draft.error {
+                    ui.colored_label(theme::STATUS_ERROR, error);
+                }
+            });
+        }
+        ProfilesScreenMode::EditDevTunnel(draft) => {
+            if let Some(profile) = draft.original_id.as_deref().and_then(|id| configuration.profile(id))
+                .and_then(Profile::as_dev_tunnel) {
+                draft.saved = Some(Profile::DevTunnel(profile.clone()));
+                draft.credential = profile.credential_reference()
+                    .map(|reference| Arc::new(reference.duplicate_for_transport()));
+            }
+            show_bounded_content_scroll(ui, (tab_id, "edit_dev_tunnel_profile"), |ui| {
+                ui.heading("Dev Tunnel");
+                ui.small("Experimental");
+                #[cfg(feature = "experimental-dev-tunnels")]
+                if draft.original_id.is_none() && ui.button("Paste setup JSON").clicked() {
+                    next_mode = Some(ProfilesScreenMode::ImportPublicDevTunnel(PublicTunnelImportDraft::default()));
+                }
+                ui.add_enabled_ui(draft.original_id.is_none(), |ui| {
+                    profile_text_edit(ui, tab_id, "tunnel_name", "Name", &mut draft.name);
+                });
+                if !draft.legacy {
+                    profile_text_edit(ui, tab_id, "native_tunnel", "Tunnel", &mut draft.tunnel);
+                    let current = draft.original_id.as_deref().and_then(|id| configuration.profile(id));
+                    let saved = draft.build().ok().as_ref() == current && current.is_some();
+                    let account = current.and_then(Profile::as_dev_tunnel).and_then(|profile| profile.identity());
+                    ui.label(account.map(|account| format!("GitHub · {}", account.login))
+                        .unwrap_or_else(|| "Not signed in".into()));
+                    ui.horizontal(|ui| {
+                        let enabled = saved && cfg!(feature = "experimental-dev-tunnels");
+                        if ui.add_enabled(enabled, egui::Button::new("Sign in with GitHub")).clicked() {
+                            command = Some(AppCommand::NativeDevTunnel {
+                                profile_id: draft.original_id.clone().expect("saved profile"),
+                                sign_in: true, remember: true, connect: false,
+                            });
+                        }
+                        if ui.add_enabled(enabled, egui::Button::new("Connect")).clicked() {
+                            command = Some(AppCommand::StartConfiguredDevTunnelProfile {
+                                profile_id: draft.original_id.clone().expect("saved profile"),
+                            });
+                        }
+                        if ui.add_enabled(enabled, egui::Button::new("Connect once")).clicked() {
+                            command = Some(AppCommand::NativeDevTunnel {
+                                profile_id: draft.original_id.clone().expect("saved profile"),
+                                sign_in: true, remember: false, connect: true,
+                            });
+                        }
+                    });
+                    if !saved { ui.small("Save changes to sign in."); }
+                }
+                ui.collapsing("Advanced", |ui| {
+                    ui.checkbox(&mut draft.legacy, "Use destination file");
+                    if draft.legacy {
+                        profile_text_edit(ui, tab_id, "tunnel_destination", "Destination JSON file", &mut draft.destination_file);
+                        ui.add(TextEdit::singleline(&mut *draft.token).password(true).char_limit(16 * 1024).hint_text("Connect token"));
+                        ui.horizontal(|ui| {
+                            if ui.add_enabled(draft.original_id.is_some() && !draft.token.is_empty() && cfg!(feature = "experimental-dev-tunnels"), egui::Button::new("Store token")).clicked() {
+                                command = Some(AppCommand::StoreDevTunnelConnectToken {
+                                    profile_id: draft.original_id.clone().expect("saved profile"),
+                                    token: crate::tabs::TunnelConnectToken::new(std::mem::take(&mut *draft.token)),
+                                });
+                            }
+                            if ui.add_enabled(!draft.token.is_empty() && !draft.destination_file.trim().is_empty() && cfg!(feature = "experimental-dev-tunnels"), egui::Button::new("Connect once")).clicked() {
+                                command = Some(AppCommand::ConnectTransientDevTunnel {
+                                    destination_file: draft.destination_file.trim().to_owned(),
+                                    token: crate::tabs::TunnelConnectToken::new(std::mem::take(&mut *draft.token)),
+                                });
+                            }
+                        });
+                    }
+                });
+                if let Some(error) = &draft.error { ui.colored_label(theme::STATUS_ERROR, error); }
+                ui.horizontal(|ui| {
+                    if ui.button("Save profile").clicked() {
+                        match draft.build() {
+                            Ok(profile) => {
+                                draft.original_id = Some(profile.identifier().to_owned());
+                                command = Some(AppCommand::SaveProfile { profile });
+                                if draft.legacy { next_mode = Some(ProfilesScreenMode::List); }
+                            }
+                            Err(error) => draft.error = Some(error.to_string()),
+                        }
+                    }
+                    if ui.button("Cancel").clicked() { next_mode = Some(ProfilesScreenMode::List); }
+                });
+                if !cfg!(feature = "experimental-dev-tunnels") { ui.label("Connection support requires a build with experimental-dev-tunnels enabled."); }
+            });
+        }
         ProfilesScreenMode::List => {
             let now_unix_seconds = unix_now_seconds();
             let query = state.profile_search.trim().to_lowercase();
@@ -808,12 +1045,18 @@ pub(crate) fn show_profiles(
                                 )),
                             ),
                             ("SSH", ProfilesScreenMode::EditSsh(SshProfileDraft::default())),
+                            ("Dev Tunnel · Experimental", ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::default())),
                             ("SFTP", ProfilesScreenMode::EditSsh(SshProfileDraft::new_sftp())),
                             (
                                 "Serial",
                                 ProfilesScreenMode::EditSerial(SerialProfileDraft::default()),
                             ),
                         ] {
+                            if matches!(mode, ProfilesScreenMode::EditDevTunnel(_))
+                                && !cfg!(feature = "experimental-dev-tunnels")
+                            {
+                                continue;
+                            }
                             if ui.button(label).clicked() {
                                 next_mode = Some(mode.clone());
                                 ui.close();
@@ -883,6 +1126,7 @@ pub(crate) fn show_profiles(
                                     }
                                     ProfileTableAction::Edit => {
                                         next_mode = Some(match profile {
+                                            Profile::DevTunnel(tunnel) => ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::from_profile(tunnel)),
                                             Profile::Local(local) => ProfilesScreenMode::EditLocal(
                                                 LocalProfileDraft::from_profile(local),
                                             ),
@@ -897,6 +1141,15 @@ pub(crate) fn show_profiles(
                                     ProfileTableAction::Duplicate => {
                                         let duplicate_name = format!("{}-copy", item.identifier);
                                         next_mode = Some(match profile {
+                                            Profile::DevTunnel(tunnel) => {
+                                                let mut draft = DevTunnelProfileDraft::from_profile(tunnel);
+                                                draft.original_id = None;
+                                                draft.name = duplicate_name;
+                                                // Duplication never silently shares another profile's credential.
+                                                draft.credential = None;
+                                                draft.saved = None;
+                                                ProfilesScreenMode::EditDevTunnel(draft)
+                                            }
                                             Profile::Local(local) => {
                                                 let mut draft = LocalProfileDraft::from_profile(local);
                                                 draft.original_id = None;
@@ -1477,27 +1730,259 @@ mod tests {
     fn profiles_harness(
         configuration: festerm_config::Configuration,
     ) -> Harness<'static, ProfilesHarnessState> {
-        Harness::builder()
-            .with_size(egui::vec2(560.0, 640.0))
-            .build_ui_state(
-                |ui, state: &mut ProfilesHarnessState| {
-                    if let Some(command) = show_profiles(
-                        ui,
-                        state.tab_id,
-                        &state.configuration,
-                        None,
-                        None,
-                        PersistenceProviderKind::FestermSessiond,
-                    ) {
-                        state.command = Some(command);
-                    }
-                },
-                ProfilesHarnessState {
-                    tab_id: AppState::for_test().active(),
-                    configuration,
-                    command: None,
+        profiles_harness_at_size(configuration, egui::vec2(560.0, 640.0))
+    }
+
+    fn profiles_harness_at_size(
+        configuration: festerm_config::Configuration,
+        size: egui::Vec2,
+    ) -> Harness<'static, ProfilesHarnessState> {
+        Harness::builder().with_size(size).build_ui_state(
+            |ui, state: &mut ProfilesHarnessState| {
+                if let Some(command) = show_profiles(
+                    ui,
+                    state.tab_id,
+                    &state.configuration,
+                    None,
+                    None,
+                    PersistenceProviderKind::FestermSessiond,
+                ) {
+                    state.command = Some(command);
+                }
+            },
+            ProfilesHarnessState {
+                tab_id: AppState::for_test().active(),
+                configuration,
+                command: None,
+            },
+        )
+    }
+
+    #[test]
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn public_tunnel_import_ui_remains_bounded_at_normal_and_narrow_widths() {
+        for width in [320.0, 752.0] {
+            let mut harness =
+                profiles_harness_at_size(Configuration::empty(), egui::vec2(width, 640.0));
+            let tab = harness.state().tab_id;
+            harness.ctx.data_mut(|data| {
+                data.insert_temp(
+                    profiles_state_id(tab),
+                    ProfilesScreenState {
+                        mode: ProfilesScreenMode::ImportPublicDevTunnel(PublicTunnelImportDraft {
+                            preview: Some(
+                                crate::tunnel_profile_import::PublicProfileImport::parse(
+                                    &crate::tunnel_profile_import::fixture_json().to_string(),
+                                )
+                                .unwrap(),
+                            ),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                )
+            });
+            harness.run();
+            for label in ["Cancel", "Paste different JSON", "Save imported profile"] {
+                let node = harness.get_by_label(label);
+                let bounds = node.rect();
+                assert!(
+                    bounds.left() >= 0.0 && bounds.right() <= width,
+                    "{label} at {width}: {bounds:?}"
+                );
+            }
+            assert!(harness.state().command.is_none());
+            harness.get_by_label("Cancel").click();
+            harness.run();
+            assert!(harness.state().command.is_none());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn public_tunnel_import_ui_previews_pins_and_requires_explicit_save_confirmation() {
+        let mut harness = profiles_harness(Configuration::empty());
+        harness.run();
+        harness.get_by_label("New Profile").click();
+        harness.run();
+        harness.get_by_label("Dev Tunnel · Experimental").click();
+        harness.run();
+        harness.get_by_label("Paste setup JSON").click();
+        harness.run();
+        harness.get_by_label("Public setup JSON").click();
+        harness
+            .get_by_label("Public setup JSON")
+            .type_text(&crate::tunnel_profile_import::fixture_json().to_string());
+        harness.run();
+        assert!(harness.state().command.is_none());
+        harness.get_by_label("Preview public profile").click();
+        harness.run();
+        harness.get_by_label("Profile: server-one");
+        harness.get_by_label("Tunnel: owned.usw3:47461");
+        harness.get_by_label("Server: owned-host");
+        assert!(harness
+            .get_by_label("Save imported profile")
+            .accesskit_node()
+            .is_disabled());
+        assert!(harness.state().command.is_none());
+        harness
+            .get_by_label("I verified the server and fingerprint; save public profile only.")
+            .click();
+        harness.run();
+        harness.get_by_label("Save imported profile").click();
+        harness.run();
+        assert!(matches!(harness.state().command,
+            Some(AppCommand::ImportPublicDevTunnelProfile { ref import })
+                if import.name() == "server-one" && import.fingerprint().starts_with("SHA256:")));
+        assert!(
+            harness.state().configuration.profiles().is_empty(),
+            "widgets must not write configuration"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn public_tunnel_import_ui_cancel_duplicate_and_invalid_input_never_dispatch() {
+        let existing = Profile::named_dev_tunnel("server-one", "other.usw3").unwrap();
+        let mut harness = profiles_harness(Configuration::new(vec![existing]).unwrap());
+        let tab = harness.state().tab_id;
+        harness.ctx.data_mut(|data| {
+            data.insert_temp(
+                profiles_state_id(tab),
+                ProfilesScreenState {
+                    mode: ProfilesScreenMode::ImportPublicDevTunnel(PublicTunnelImportDraft {
+                        text: zeroize::Zeroizing::new("{\"token\":\"private-canary\"}".into()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
                 },
             )
+        });
+        harness.run();
+        harness.get_by_label("Preview public profile").click();
+        harness.run();
+        let state = harness
+            .ctx
+            .data(|data| data.get_temp::<ProfilesScreenState>(profiles_state_id(tab)))
+            .unwrap();
+        let ProfilesScreenMode::ImportPublicDevTunnel(draft) = state.mode else {
+            panic!("import mode");
+        };
+        assert!(draft.text.is_empty());
+        assert!(draft.error.is_some());
+        assert!(harness.state().command.is_none());
+        harness.get_by_label("Public setup JSON").click();
+        harness
+            .get_by_label("Public setup JSON")
+            .type_text(&crate::tunnel_profile_import::fixture_json().to_string());
+        harness.run();
+        harness.get_by_label("Preview public profile").click();
+        harness.run();
+        harness
+            .get_by_label("I verified the server and fingerprint; save public profile only.")
+            .click();
+        harness.run();
+        assert!(harness
+            .get_by_label("Save imported profile")
+            .accesskit_node()
+            .is_disabled());
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert!(harness.state().command.is_none());
+        assert_eq!(harness.state().configuration.profiles().len(), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn native_auth_profile_editor_routes_concise_controls_and_requires_saved_target() {
+        let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+        let mut harness = profiles_harness(Configuration::new(vec![profile]).unwrap());
+        harness.run();
+        click_profile_action(&mut harness, "owned", "Edit");
+        harness.get_by_label("Tunnel");
+        harness.get_by_label("Not signed in");
+        harness.get_by_label("Sign in with GitHub").click();
+        harness.run();
+        assert!(matches!(harness.state().command,
+            Some(AppCommand::NativeDevTunnel { ref profile_id, sign_in:true, remember:true, connect:false })
+                if profile_id == "owned"));
+        harness.state_mut().command = None;
+        harness.get_by_label("Tunnel").click();
+        harness.get_by_label("Tunnel").type_text("-changed");
+        harness.run();
+        harness.get_by_label("Save changes to sign in.");
+        harness.get_by_label("Save profile").click();
+        harness.run();
+        assert!(matches!(harness.state().command,
+            Some(AppCommand::SaveProfile { ref profile })
+                if profile.as_dev_tunnel().unwrap().tunnel_name() == Some("owned.usw3-changed")));
+    }
+
+    #[test]
+    fn native_auth_profile_draft_preserves_only_unchanged_target_bindings() {
+        let profile = Profile::named_dev_tunnel("owned", "owned.usw3")
+            .unwrap()
+            .with_tunnel_identity(
+                42,
+                "owner".into(),
+                festerm_secret_store::SecretReference::generate(),
+                festerm_secret_store::SecretReference::generate(),
+                festerm_config::DevTunnelHost {
+                    tunnel_id: "owned".into(),
+                    cluster: "usw3".into(),
+                    host_id: "host".into(),
+                    public_key: "pin".into(),
+                    port: 47461,
+                },
+            )
+            .unwrap();
+        let mut draft = DevTunnelProfileDraft::from_profile(profile.as_dev_tunnel().unwrap());
+        assert_eq!(draft.build().unwrap(), profile);
+        draft.tunnel = "changed.usw3".into();
+        let changed = draft.build().unwrap();
+        assert!(changed.as_dev_tunnel().unwrap().identity().is_none());
+        assert!(changed.credential_reference().is_none());
+        assert!(changed.as_dev_tunnel().unwrap().trusted_host().is_none());
+        assert!(profile.as_dev_tunnel().unwrap().identity().is_some());
+    }
+
+    #[test]
+    fn dev_tunnel_profile_routes_as_a_peer_and_editor_preserves_rotated_credential() {
+        let initial =
+            festerm_secret_store::SecretReference::parse("550e8400-e29b-41d4-a716-446655440000")
+                .unwrap();
+        let replacement =
+            festerm_secret_store::SecretReference::parse("550e8400-e29b-41d4-a716-446655440001")
+                .unwrap();
+        let profile = Profile::dev_tunnel("github-owned", r"C:\owned\destination.json")
+            .unwrap()
+            .with_tunnel_connect_credential(initial)
+            .unwrap();
+        let configuration = Configuration::new(vec![profile]).unwrap();
+        let mut harness = profiles_harness(configuration);
+        harness.run();
+        click_profile_action(&mut harness, "github-owned", "Connect");
+        assert!(matches!(harness.state().command,
+            Some(AppCommand::StartConfiguredDevTunnelProfile { ref profile_id })
+                if profile_id == "github-owned"));
+        harness.state_mut().command = None;
+        click_profile_action(&mut harness, "github-owned", "Edit");
+        harness.state_mut().configuration = harness
+            .state()
+            .configuration
+            .with_tunnel_connect_credential("github-owned", replacement.duplicate_for_transport())
+            .unwrap();
+        harness.run();
+        harness.get_by_label("Save profile").click();
+        harness.run();
+        let Some(AppCommand::SaveProfile { profile }) = &harness.state().command else {
+            panic!("profile editor must use centralized save command");
+        };
+        assert!(profile.credential_reference() == Some(&replacement));
+        assert_eq!(
+            profile.as_dev_tunnel().unwrap().destination_file(),
+            r"C:\owned\destination.json"
+        );
     }
 
     #[test]

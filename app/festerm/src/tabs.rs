@@ -150,6 +150,8 @@ pub(crate) fn session_notifier_for_test(context: &egui::Context) -> Arc<dyn Sess
 pub enum ApplicationSession {
     Local(LocalPtySession),
     Persistent(PersistentSession),
+    #[cfg_attr(not(feature = "experimental-dev-tunnels"), allow(dead_code))]
+    DevTunnel(PersistentSession),
     Ssh(SshSession),
     Sftp(SftpTerminalSession),
     Serial(SerialSession),
@@ -277,7 +279,9 @@ impl std::error::Error for ConfiguredSshProfileLaunchError {}
 impl ApplicationSession {
     pub fn take_recovered_terminal(&self) -> Option<Terminal> {
         match self {
-            Self::Persistent(session) => session.take_recovered_terminal(),
+            Self::Persistent(session) | Self::DevTunnel(session) => {
+                session.take_recovered_terminal()
+            }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => None,
             #[cfg(test)]
             Self::TestSsh(_) => None,
@@ -286,7 +290,9 @@ impl ApplicationSession {
 
     pub fn recovery_protocol_is_authoritative(&self) -> bool {
         match self {
-            Self::Persistent(session) => session.recovery_protocol_is_authoritative(),
+            Self::Persistent(session) | Self::DevTunnel(session) => {
+                session.recovery_protocol_is_authoritative()
+            }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => false,
             #[cfg(test)]
             Self::TestSsh(_) => false,
@@ -303,7 +309,7 @@ impl ApplicationSession {
         let resolver = match self {
             Self::Ssh(session) => session.host_key_decision_resolver(),
             Self::Sftp(session) => session.host_key_decision_resolver(),
-            Self::Local(_) | Self::Persistent(_) | Self::Serial(_) => {
+            Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => {
                 return Err(HostKeyTrustResolutionError::NotRemoteSession)
             }
             #[cfg(test)]
@@ -325,7 +331,7 @@ impl ApplicationSession {
         let resolver = match self {
             Self::Ssh(session) => session.password_decision_resolver(),
             Self::Sftp(session) => session.password_decision_resolver(),
-            Self::Local(_) | Self::Persistent(_) | Self::Serial(_) => {
+            Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => {
                 return Err(PasswordResolutionError::NotRemoteSession)
             }
             #[cfg(test)]
@@ -373,7 +379,11 @@ impl ApplicationSession {
     fn try_check_liveness(&self) -> Result<(), SshLivenessCheckError> {
         match self {
             Self::Ssh(session) => session.try_check_liveness(),
-            Self::Local(_) | Self::Persistent(_) | Self::Sftp(_) | Self::Serial(_) => Ok(()),
+            Self::Local(_)
+            | Self::Persistent(_)
+            | Self::DevTunnel(_)
+            | Self::Sftp(_)
+            | Self::Serial(_) => Ok(()),
             #[cfg(test)]
             Self::TestSsh(_) => Ok(()),
         }
@@ -385,7 +395,11 @@ impl ApplicationSession {
             Self::Ssh(session) => session.lifecycle() == SessionLifecycle::Running,
             #[cfg(test)]
             Self::TestSsh(session) => session.lifecycle() == SessionLifecycle::Running,
-            Self::Local(_) | Self::Persistent(_) | Self::Sftp(_) | Self::Serial(_) => false,
+            Self::Local(_)
+            | Self::Persistent(_)
+            | Self::DevTunnel(_)
+            | Self::Sftp(_)
+            | Self::Serial(_) => false,
         }
     }
 
@@ -398,9 +412,11 @@ impl ApplicationSession {
             Self::Ssh(session) => session.try_add_port_forward(forward),
             #[cfg(test)]
             Self::TestSsh(session) => session.try_add_port_forward(forward),
-            Self::Local(_) | Self::Persistent(_) | Self::Sftp(_) | Self::Serial(_) => {
-                Err(SshPortForwardRequestError::NotRunning)
-            }
+            Self::Local(_)
+            | Self::Persistent(_)
+            | Self::DevTunnel(_)
+            | Self::Sftp(_)
+            | Self::Serial(_) => Err(SshPortForwardRequestError::NotRunning),
         }
     }
 
@@ -418,9 +434,11 @@ impl ApplicationSession {
             Self::TestSsh(session) => {
                 session.try_remove_port_forward(direction, bind_host, bind_port)
             }
-            Self::Local(_) | Self::Persistent(_) | Self::Sftp(_) | Self::Serial(_) => {
-                Err(SshPortForwardRequestError::NotRunning)
-            }
+            Self::Local(_)
+            | Self::Persistent(_)
+            | Self::DevTunnel(_)
+            | Self::Sftp(_)
+            | Self::Serial(_) => Err(SshPortForwardRequestError::NotRunning),
         }
     }
 
@@ -430,9 +448,11 @@ impl ApplicationSession {
             Self::Ssh(session) => session.try_query_port_forwards(),
             #[cfg(test)]
             Self::TestSsh(session) => session.try_query_port_forwards(),
-            Self::Local(_) | Self::Persistent(_) | Self::Sftp(_) | Self::Serial(_) => {
-                Err(SshPortForwardRequestError::NotRunning)
-            }
+            Self::Local(_)
+            | Self::Persistent(_)
+            | Self::DevTunnel(_)
+            | Self::Sftp(_)
+            | Self::Serial(_) => Err(SshPortForwardRequestError::NotRunning),
         }
     }
 
@@ -444,7 +464,11 @@ impl ApplicationSession {
                     directories.local().to_path_buf(),
                 )
             }),
-            Self::Local(_) | Self::Persistent(_) | Self::Ssh(_) | Self::Serial(_) => None,
+            Self::Local(_)
+            | Self::Persistent(_)
+            | Self::DevTunnel(_)
+            | Self::Ssh(_)
+            | Self::Serial(_) => None,
             #[cfg(test)]
             Self::TestSsh(session) => session.terminal_file_cwd().map(|cwd| (cwd, PathBuf::new())),
         }
@@ -454,7 +478,7 @@ impl ApplicationSession {
         match self {
             Self::Ssh(session) => session.verified_host_key_fingerprint(),
             Self::Sftp(session) => session.verified_host_key_fingerprint(),
-            Self::Local(_) | Self::Persistent(_) | Self::Serial(_) => None,
+            Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => None,
             #[cfg(test)]
             Self::TestSsh(session) => session.terminal_file_fingerprint(),
         }
@@ -464,7 +488,7 @@ impl ApplicationSession {
         match self {
             Self::Ssh(session) => Some(session.remote_file_requestor()),
             Self::Sftp(session) => Some(session.remote_file_requestor()),
-            Self::Local(_) | Self::Persistent(_) | Self::Serial(_) => None,
+            Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => None,
             #[cfg(test)]
             Self::TestSsh(_) => None,
         }
@@ -479,7 +503,7 @@ impl Session for ApplicationSession {
     fn id(&self) -> SessionId {
         match self {
             Self::Local(session) => session.id(),
-            Self::Persistent(session) => session.id(),
+            Self::Persistent(session) | Self::DevTunnel(session) => session.id(),
             Self::Ssh(session) => session.id(),
             Self::Sftp(session) => session.id(),
             Self::Serial(session) => session.id(),
@@ -491,7 +515,7 @@ impl Session for ApplicationSession {
     fn lifecycle(&self) -> SessionLifecycle {
         match self {
             Self::Local(session) => session.lifecycle(),
-            Self::Persistent(session) => session.lifecycle(),
+            Self::Persistent(session) | Self::DevTunnel(session) => session.lifecycle(),
             Self::Ssh(session) => session.lifecycle(),
             Self::Sftp(session) => session.lifecycle(),
             Self::Serial(session) => session.lifecycle(),
@@ -503,7 +527,7 @@ impl Session for ApplicationSession {
     fn metrics(&self) -> SessionMetrics {
         match self {
             Self::Local(session) => session.metrics(),
-            Self::Persistent(session) => session.metrics(),
+            Self::Persistent(session) | Self::DevTunnel(session) => session.metrics(),
             Self::Ssh(session) => session.metrics(),
             Self::Sftp(session) => session.metrics(),
             Self::Serial(session) => session.metrics(),
@@ -515,7 +539,7 @@ impl Session for ApplicationSession {
     fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError> {
         match self {
             Self::Local(session) => session.try_send_input(bytes),
-            Self::Persistent(session) => session.try_send_input(bytes),
+            Self::Persistent(session) | Self::DevTunnel(session) => session.try_send_input(bytes),
             Self::Ssh(session) => session.try_send_input(bytes),
             Self::Sftp(session) => session.try_send_input(bytes),
             Self::Serial(session) => session.try_send_input(bytes),
@@ -527,7 +551,7 @@ impl Session for ApplicationSession {
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
         match self {
             Self::Local(session) => session.try_resize(size),
-            Self::Persistent(session) => session.try_resize(size),
+            Self::Persistent(session) | Self::DevTunnel(session) => session.try_resize(size),
             Self::Ssh(session) => session.try_resize(size),
             Self::Sftp(session) => session.try_resize(size),
             Self::Serial(session) => session.try_resize(size),
@@ -539,7 +563,7 @@ impl Session for ApplicationSession {
     fn try_shutdown(&self) -> Result<(), SessionSendError> {
         match self {
             Self::Local(session) => session.try_shutdown(),
-            Self::Persistent(session) => session.try_shutdown(),
+            Self::Persistent(session) | Self::DevTunnel(session) => session.try_shutdown(),
             Self::Ssh(session) => session.try_shutdown(),
             Self::Sftp(session) => session.try_shutdown(),
             Self::Serial(session) => session.try_shutdown(),
@@ -551,7 +575,7 @@ impl Session for ApplicationSession {
     fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError> {
         match self {
             Self::Local(session) => session.try_recv_event(),
-            Self::Persistent(session) => session.try_recv_event(),
+            Self::Persistent(session) | Self::DevTunnel(session) => session.try_recv_event(),
             Self::Ssh(session) => session.try_recv_event(),
             Self::Sftp(session) => session.try_recv_event(),
             Self::Serial(session) => session.try_recv_event(),
@@ -563,7 +587,7 @@ impl Session for ApplicationSession {
     fn shutdown(&self, timeout: std::time::Duration) -> Result<ShutdownResult, ShutdownError> {
         match self {
             Self::Local(session) => session.shutdown(timeout),
-            Self::Persistent(session) => session.shutdown(timeout),
+            Self::Persistent(session) | Self::DevTunnel(session) => session.shutdown(timeout),
             Self::Ssh(session) => session.shutdown(timeout),
             Self::Sftp(session) => session.shutdown(timeout),
             Self::Serial(session) => session.shutdown(timeout),
@@ -577,6 +601,7 @@ impl Session for ApplicationSession {
 /// and presentation view. `SessionController` remains the sole terminal
 /// writer.
 pub struct SessionTab {
+    remote_files: Option<crate::remote_files::RemoteFileCapability>,
     pub terminal: Terminal,
     pub controller: SessionController<ApplicationSession>,
     pub view: TerminalView,
@@ -642,6 +667,12 @@ impl LiveSessionCounts {
 /// Narrow transport metadata safe for application chrome. Keeping this owned
 /// by the tab prevents egui code from reaching into PTY or SSH backends.
 pub enum InspectorTransport {
+    #[cfg_attr(not(feature = "experimental-dev-tunnels"), allow(dead_code))]
+    DevTunnel {
+        host: String,
+        port: u16,
+        account: Option<(u64, String)>,
+    },
     Local {
         persistence: Option<InspectorPersistence>,
     },
@@ -690,7 +721,9 @@ fn durable_session_label_for(transport: &InspectorTransport) -> Option<String> {
         InspectorTransport::Local { persistence } | InspectorTransport::Ssh { persistence, .. } => {
             persistence.as_ref()
         }
-        InspectorTransport::Sftp { .. } | InspectorTransport::Serial { .. } => None,
+        InspectorTransport::Sftp { .. }
+        | InspectorTransport::Serial { .. }
+        | InspectorTransport::DevTunnel { .. } => None,
     }?;
     Some(format!(
         "{} · {}",
@@ -791,6 +824,9 @@ struct FrozenTerminalAuthority {
 }
 
 struct PendingTerminalPathOpen {
+    source_generation: u64,
+    source: TabId,
+    origin: Option<TerminalFilesystemOrigin>,
     receiver: Receiver<TerminalPathWorkerResult>,
     handle: Option<JoinHandle<()>>,
 }
@@ -853,6 +889,12 @@ impl SessionTab {
     }
 
     fn set_scrollback_limit(&mut self, preference: ScrollbackLimitPreference) {
+        if matches!(
+            self.inspector_transport,
+            InspectorTransport::DevTunnel { .. }
+        ) {
+            return;
+        }
         let authoritative = self
             .controller
             .session()
@@ -872,6 +914,12 @@ impl SessionTab {
     }
 
     fn apply_color_scheme(&mut self) {
+        if matches!(
+            self.inspector_transport,
+            InspectorTransport::DevTunnel { .. }
+        ) {
+            return;
+        }
         let scheme = festerm_ui_egui::terminal_color_scheme();
         let authoritative = self
             .controller
@@ -1376,6 +1424,7 @@ impl SessionTab {
             }
         };
         Self {
+            remote_files: None,
             terminal,
             controller,
             view: TerminalView::default(),
@@ -1487,12 +1536,15 @@ impl SessionTab {
         Ok(())
     }
 
-    fn live_remote_file_requestor(&self) -> Option<LiveRemoteFileRequestor> {
+    fn live_remote_file_requestor(&self) -> Option<crate::remote_files::RemoteFileCapability> {
         matches!(self.controller.lifecycle(), Some(SessionLifecycle::Running))
             .then(|| {
-                self.controller
-                    .session()
-                    .and_then(ApplicationSession::live_remote_file_requestor)
+                self.remote_files.clone().or_else(|| {
+                    self.controller
+                        .session()
+                        .and_then(ApplicationSession::live_remote_file_requestor)
+                        .map(crate::remote_files::RemoteFileCapability::Sftp)
+                })
             })
             .flatten()
     }
@@ -1505,10 +1557,34 @@ impl SessionTab {
             |requestor| requestor.transport_generation(),
         );
         let verified_host_key_fingerprint = self
-            .controller
-            .session()
-            .and_then(ApplicationSession::verified_host_key_fingerprint);
+            .live_remote_file_requestor()
+            .and_then(|files| files.verified_endpoint_identity())
+            .or_else(|| {
+                self.controller
+                    .session()
+                    .and_then(ApplicationSession::verified_host_key_fingerprint)
+            });
         match &self.inspector_transport {
+            InspectorTransport::DevTunnel { host, port, .. } => {
+                Some(TerminalFilesystemOrigin::Remote(RemoteTerminalOrigin {
+                    session_binding: self
+                        .live_remote_file_requestor()
+                        .map_or_else(String::new, |files| files.binding_key()),
+                    provider: self.live_remote_file_requestor().map_or(
+                        crate::remote_files::RemoteFileProvider::DevTunnelPosix,
+                        |files| files.provider(),
+                    ),
+                    host: host.clone(),
+                    port: *port,
+                    username: "remote OS user".into(),
+                    profile_identifier: self.profile_identifier.clone(),
+                    lifecycle_generation,
+                    verified_host_key_fingerprint,
+                    live_transport_available: live_transport_available
+                        && self.live_remote_file_requestor().is_some(),
+                    trusted_working_directory: None,
+                }))
+            }
             InspectorTransport::Local { .. } => {
                 Some(TerminalFilesystemOrigin::Local(LocalTerminalOrigin {
                     home_directory: Some(local_home_directory()),
@@ -1520,6 +1596,10 @@ impl SessionTab {
                 port,
                 ..
             } => Some(TerminalFilesystemOrigin::Remote(RemoteTerminalOrigin {
+                session_binding: self
+                    .live_remote_file_requestor()
+                    .map_or_else(String::new, |files| files.binding_key()),
+                provider: crate::remote_files::RemoteFileProvider::Sftp,
                 host: host.clone(),
                 port: *port,
                 username: username.clone(),
@@ -1535,6 +1615,10 @@ impl SessionTab {
                 port,
                 ..
             } => Some(TerminalFilesystemOrigin::Remote(RemoteTerminalOrigin {
+                session_binding: self
+                    .live_remote_file_requestor()
+                    .map_or_else(String::new, |files| files.binding_key()),
+                provider: crate::remote_files::RemoteFileProvider::Sftp,
                 host: host.clone(),
                 port: *port,
                 username: username.clone(),
@@ -1595,6 +1679,12 @@ impl SessionTab {
     /// Whether closing this tab still ends an owned transport attempt or live
     /// transport and therefore requires explicit destructive confirmation.
     pub fn close_requires_confirmation(&self) -> bool {
+        if matches!(
+            self.inspector_transport,
+            InspectorTransport::DevTunnel { .. }
+        ) {
+            return false;
+        }
         !matches!(
             &self.inspector_transport,
             InspectorTransport::Local {
@@ -1610,6 +1700,7 @@ impl SessionTab {
     /// Content-free locality/transport text for the status bar.
     pub fn system_label(&self) -> &'static str {
         match &self.inspector_transport {
+            InspectorTransport::DevTunnel { .. } => "Remote · Experimental Dev Tunnel",
             InspectorTransport::Ssh { .. } => "Remote",
             InspectorTransport::Sftp { .. } => "Remote",
             InspectorTransport::Serial { .. } => "Serial",
@@ -1649,7 +1740,9 @@ impl SessionTab {
             (_, ChipStatus::Exited) => "Exited",
             (InspectorTransport::Local { .. }, ChipStatus::Connected) => "Running",
             (
-                InspectorTransport::Ssh { .. } | InspectorTransport::Sftp { .. },
+                InspectorTransport::Ssh { .. }
+                | InspectorTransport::Sftp { .. }
+                | InspectorTransport::DevTunnel { .. },
                 ChipStatus::Connected,
             ) => "Connected",
             (InspectorTransport::Serial { .. }, ChipStatus::Connected) => "Open",
@@ -1668,6 +1761,12 @@ impl SessionTab {
         let Some(SessionLifecycle::Disconnected(error)) = self.controller.lifecycle() else {
             return None;
         };
+        if matches!(
+            self.inspector_transport,
+            InspectorTransport::DevTunnel { .. }
+        ) {
+            return Some("Experimental tunnel disconnected. Verify the pinned host, same unattached session generation and a fresh scoped connect token; reopen explicitly. Queued input is discarded, never replayed.");
+        }
         (matches!(
             self.inspector_transport,
             InspectorTransport::Local {
@@ -1780,6 +1879,7 @@ impl SessionTab {
             Some(ApplicationSession::TestSsh(_)) => true,
             Some(ApplicationSession::Local(_))
             | Some(ApplicationSession::Persistent(_))
+            | Some(ApplicationSession::DevTunnel(_))
             | Some(ApplicationSession::Sftp(_))
             | Some(ApplicationSession::Serial(_))
             | None => false,
@@ -1948,6 +2048,7 @@ pub enum NewProfileKind {
     Ssh,
     Sftp,
     Serial,
+    DevTunnel,
     SshFromDraft(SshProfileDraftSeed),
 }
 
@@ -1978,6 +2079,29 @@ pub struct SshProfileDraftSeed {
 /// copy of these operations.
 #[derive(Debug)]
 pub enum AppCommand {
+    #[cfg(feature = "experimental-dev-tunnels")]
+    ImportPublicDevTunnelProfile {
+        import: crate::tunnel_profile_import::PublicProfileImport,
+    },
+    NativeDevTunnel {
+        profile_id: String,
+        sign_in: bool,
+        remember: bool,
+        connect: bool,
+    },
+    StartConfiguredDevTunnelProfile {
+        profile_id: String,
+    },
+    StoreDevTunnelConnectToken {
+        profile_id: String,
+        token: TunnelConnectToken,
+    },
+    ConnectTransientDevTunnel {
+        destination_file: String,
+        token: TunnelConnectToken,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    ConnectDevTunnel(crate::tunnel_activation::Launch),
     /// "New Tab opens the session launcher" (`docs/gui-design.md`
     /// "Interaction Conventions").
     OpenLauncher,
@@ -2437,6 +2561,7 @@ impl AppCommand {
             | Self::StartConfiguredSshProfile { profile_id }
             | Self::StartConfiguredSftpProfile { profile_id }
             | Self::StartConfiguredSerialProfile { profile_id }
+            | Self::StartConfiguredDevTunnelProfile { profile_id }
             | Self::StartStoredPasswordSshProfile { profile_id, .. } => Some(profile_id),
             _ => None,
         }
@@ -2448,6 +2573,38 @@ impl AppCommand {
 /// It has no public getter and redacts `Debug`, so application commands remain
 /// safe to inspect in UI tests and diagnostics.
 pub struct PasswordToStore(String);
+
+/// One session-only connect capability. Never OAuth or a bridge host token.
+pub struct TunnelConnectToken(zeroize::Zeroizing<String>);
+pub(crate) const TUNNEL_TOKEN_STORE_PREFIX: &[u8] = b"fesTerm:dev-tunnel-connect:v1\0";
+impl TunnelConnectToken {
+    pub(crate) fn is_valid(&self) -> bool {
+        !self.0.is_empty()
+            && self.0.len() <= 16 * 1024
+            && self.0.bytes().all(|byte| byte.is_ascii_graphic())
+    }
+
+    pub(crate) fn new(value: String) -> Self {
+        Self(zeroize::Zeroizing::new(value))
+    }
+    #[cfg(feature = "experimental-dev-tunnels")]
+    pub(crate) fn into_secret_bytes(self) -> SecretBytes {
+        SecretBytes::copy_from_slice(self.0.as_bytes())
+    }
+    pub(crate) fn into_stored_secret(self) -> SecretBytes {
+        let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(
+            TUNNEL_TOKEN_STORE_PREFIX.len() + self.0.len(),
+        ));
+        bytes.extend_from_slice(TUNNEL_TOKEN_STORE_PREFIX);
+        bytes.extend_from_slice(self.0.as_bytes());
+        SecretBytes::copy_from_slice(&bytes)
+    }
+}
+impl std::fmt::Debug for TunnelConnectToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TunnelConnectToken([REDACTED])")
+    }
+}
 
 /// A normalized external URL whose contents stay out of command diagnostics.
 pub struct ExternalLinkTarget(String);
@@ -2579,6 +2736,7 @@ fn native_alias_identity(
 }
 
 struct PendingResume {
+    requires_running_sessions: bool,
     target: TabId,
     receiver: std::sync::mpsc::Receiver<Result<SessionTab, String>>,
     handle: Option<std::thread::JoinHandle<()>>,
@@ -2988,7 +3146,9 @@ impl AppState {
             }
             match session.inspector_transport {
                 InspectorTransport::Local { .. } => counts.local += 1,
-                InspectorTransport::Ssh { .. } | InspectorTransport::Sftp { .. } => counts.ssh += 1,
+                InspectorTransport::Ssh { .. }
+                | InspectorTransport::Sftp { .. }
+                | InspectorTransport::DevTunnel { .. } => counts.ssh += 1,
                 InspectorTransport::Serial { .. } => counts.serial += 1,
             }
         }
@@ -3470,6 +3630,33 @@ impl AppState {
             self.pending_profile_usage = Some(profile_id.to_owned());
         }
         match command {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            AppCommand::ConnectDevTunnel(launch) => {
+                self.start_tunnel_launch(None, move || Ok(launch), context);
+            }
+            AppCommand::ConnectTransientDevTunnel {
+                destination_file,
+                token,
+            } => {
+                #[cfg(feature = "experimental-dev-tunnels")]
+                self.start_tunnel_launch(
+                    None,
+                    move || {
+                        crate::tunnel_activation::Launch::from_secret(
+                            std::path::Path::new(&destination_file),
+                            token.into_secret_bytes(),
+                        )
+                    },
+                    context,
+                );
+                #[cfg(not(feature = "experimental-dev-tunnels"))]
+                {
+                    let _ = (destination_file, token);
+                    self.resume_error = Some(
+                        "Dev Tunnel connections require an experimental-dev-tunnels build.".into(),
+                    );
+                }
+            }
             AppCommand::OpenLauncher => self.open_launcher(),
             AppCommand::OpenWindow => self.window_open_requested = true,
             AppCommand::MoveTabToWindow {
@@ -3576,9 +3763,14 @@ impl AppState {
             | AppCommand::StoreSshPassword { .. }
             | AppCommand::StoreSftpPassword { .. }
             | AppCommand::StoreProfilePassword { .. }
+            | AppCommand::StoreDevTunnelConnectToken { .. }
+            | AppCommand::NativeDevTunnel { .. }
+            | AppCommand::StartConfiguredDevTunnelProfile { .. }
             | AppCommand::StoreProfilePrivateKey { .. }
             | AppCommand::StartConfiguredSshProfile { .. }
             | AppCommand::StartConfiguredSftpProfile { .. } => {}
+            #[cfg(feature = "experimental-dev-tunnels")]
+            AppCommand::ImportPublicDevTunnelProfile { .. } => {}
             AppCommand::OpenTextEditor { path } => {
                 if let Some(failure) = self.open_text_editor(&path) {
                     self.open_refusal = Some((path, failure));
@@ -4430,6 +4622,22 @@ impl AppState {
                 return;
             }
         }
+        if let Some(TerminalFilesystemOrigin::Remote(origin)) =
+            source.and_then(SessionTab::terminal_filesystem_origin)
+        {
+            if let Some(request) =
+                crate::terminal_paths::explicit_remote_file_request(&target, &origin)
+            {
+                self.open_terminal_path_request(tab_id, request, context);
+            } else {
+                self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                    title: None, acknowledgement_path: None, name: "Remote file link".into(), path: target,
+                    headline: "This remote file link cannot be opened".into(),
+                    detail: "The URI must address an unambiguous supported path on this source's verified live filesystem capability. No local or OS fallback is permitted.".into(),
+                });
+            }
+            return;
+        }
         let path = source
             .filter(|session| {
                 matches!(
@@ -4462,6 +4670,15 @@ impl AppState {
         else {
             return;
         };
+        self.open_terminal_path_request(tab_id, request, context);
+    }
+
+    fn open_terminal_path_request(
+        &mut self,
+        tab_id: TabId,
+        request: TerminalPathOpenRequest,
+        context: &egui::Context,
+    ) {
         match request {
             TerminalPathOpenRequest::Local(request) => {
                 self.dispatch(open_local_command(&request), context);
@@ -4480,11 +4697,15 @@ impl AppState {
                 let Some(session) = self.session_tab(tab_id) else {
                     return;
                 };
+                let origin = session.terminal_filesystem_origin();
+                let source_generation = session.controller.lifecycle_generation();
                 let generation = session.live_remote_file_requestor().map_or_else(
                     || session.controller.lifecycle_generation(),
                     |requestor| requestor.transport_generation(),
                 );
-                if generation != request.lifecycle_generation {
+                if generation != request.lifecycle_generation
+                    || !matches!(&origin, Some(TerminalFilesystemOrigin::Remote(origin)) if request.matches_origin(origin))
+                {
                     self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
                         title: None,
                         acknowledgement_path: None,
@@ -4545,6 +4766,9 @@ impl AppState {
                     Ok(handle) => self
                         .pending_terminal_path_opens
                         .push(PendingTerminalPathOpen {
+                            source_generation,
+                            source: tab_id,
+                            origin,
                             receiver,
                             handle: Some(handle),
                         }),
@@ -4575,7 +4799,25 @@ impl AppState {
                     if let Some(handle) = pending.handle.take() {
                         let _ = handle.join();
                     }
-                    self.dispatch(*command, context);
+                    if self.session_tab(pending.source).is_some_and(|session| {
+                        session.controller.lifecycle_generation() == pending.source_generation
+                    }) && self
+                        .session_tab(pending.source)
+                        .and_then(SessionTab::terminal_filesystem_origin)
+                        == pending.origin
+                        && self
+                            .session_tab(pending.source)
+                            .and_then(SessionTab::live_remote_file_requestor)
+                            .is_some_and(|files| files.verified_endpoint_identity().is_some())
+                    {
+                        self.dispatch(*command, context);
+                    } else {
+                        self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                            title: None, acknowledgement_path: None, name: "Remote snapshot".into(), path: "remote path".into(),
+                            headline: "The source binding changed".into(),
+                            detail: "The file result was discarded because its originating profile, verified endpoint, or live session generation no longer matches.".into(),
+                        });
+                    }
                 }
                 Ok(TerminalPathWorkerResult::OpenRefusal(notice)) => {
                     let mut pending = self.pending_terminal_path_opens.remove(index);
@@ -4598,7 +4840,7 @@ impl AppState {
                         name: "remote path".to_owned(),
                         path: "remote path".to_owned(),
                         headline: "This remote path could not be opened".to_owned(),
-                        detail: "The background SFTP worker stopped before returning a result."
+                        detail: "The remote filesystem worker stopped before returning a result."
                             .to_owned(),
                     });
                 }
@@ -4884,9 +5126,17 @@ impl AppState {
         &mut self,
         start: impl FnOnce() -> Result<SessionTab, String> + Send + 'static,
     ) {
+        self.begin_attach(start, true);
+    }
+
+    fn begin_attach(
+        &mut self,
+        start: impl FnOnce() -> Result<SessionTab, String> + Send + 'static,
+        require_running_sessions: bool,
+    ) {
         if self.pending_resume.is_some()
             || self.pending_native_termination.is_some()
-            || !self.show_resumable_sessions
+            || (require_running_sessions && !self.show_resumable_sessions)
         {
             return;
         }
@@ -4907,6 +5157,7 @@ impl AppState {
         match handle {
             Ok(handle) => {
                 self.pending_resume = Some(PendingResume {
+                    requires_running_sessions: require_running_sessions,
                     target: self.active,
                     receiver,
                     handle: Some(handle),
@@ -4919,6 +5170,66 @@ impl AppState {
                 self.discovery.refresh();
             }
         }
+    }
+    #[cfg(feature = "experimental-dev-tunnels")]
+    pub(crate) fn start_configured_tunnel_profile(
+        &mut self,
+        profile_id: String,
+        store: Arc<dyn SecretStore>,
+        context: &egui::Context,
+    ) {
+        let Some(profile) = self
+            .configuration
+            .profile(&profile_id)
+            .filter(|profile| profile.as_dev_tunnel().is_some())
+            .cloned()
+        else {
+            return;
+        };
+        // Capture the exact profile/reference before scheduling secret lookup.
+        // Rotation always creates a fresh reference, never mutates this binding.
+        self.start_tunnel_launch(
+            Some(profile_id),
+            move || crate::tunnel_activation::Launch::from_profile(&profile, store.as_ref()),
+            context,
+        );
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    pub(crate) fn start_tunnel_launch(
+        &mut self,
+        profile_id: Option<String>,
+        load: impl FnOnce() -> std::io::Result<crate::tunnel_activation::Launch> + Send + 'static,
+        context: &egui::Context,
+    ) {
+        if self.pending_resume.is_some() || self.pending_native_termination.is_some() {
+            self.resume_error = Some(
+                "Another attach is in progress. Wait before connecting another profile.".into(),
+            );
+            return;
+        }
+        self.pending_profile_usage = profile_id.clone();
+        let context = context.clone();
+        self.open_launcher();
+        self.begin_attach(move || {
+                let launch = load().map_err(|_| "Dev Tunnel destination or connect credential unavailable. Check this profile's trusted metadata and native credential.".to_owned())?;
+                let host = launch.destination.tunnel_id.clone();
+                let port = launch.destination.port;
+                let name = launch.destination.target.name.clone();
+                let account = launch.account.clone().map(|account| (account.id, account.login));
+                let mut files = None;
+                let result = launch.start(make_notifier(&context)).map(|remote| {
+                    files = remote.files.map(crate::remote_files::RemoteFileCapability::DevTunnel);
+                    ApplicationSession::DevTunnel(remote.session)
+                });
+                let mut tab = SessionTab::from_session_result(result, Dimensions::new(80,24).expect("default dimensions"), SessionResultMeta {
+                    label: &name, launch_secondary: Some("Experimental Dev Tunnel · attach only".into()),
+                    profile_identifier: profile_id, session_name: "Dev Tunnel",
+                    inspector_transport: InspectorTransport::DevTunnel {host, port, account}, ssh_password_retry: None,
+                });
+                tab.remote_files = files;
+                Ok(tab)
+            }, false);
     }
 
     pub fn native_termination_pending(&self) -> bool {
@@ -4977,7 +5288,8 @@ impl AppState {
         }) {
             let mut pending = self.pending_resume.take().unwrap();
             let _ = pending.handle.take().unwrap().join();
-            let still_requested = self.show_resumable_sessions
+            let still_requested = (!pending.requires_running_sessions
+                || self.show_resumable_sessions)
                 && self.active == pending.target
                 && matches!(self.active_tab().content, TabContent::Launcher);
             match pending.receiver.try_recv().unwrap_or_else(|_| Err("Reattach worker failed".into())) {
@@ -5976,6 +6288,7 @@ impl SessionTab {
             SessionController::for_test(ApplicationSession::TestSsh(session.clone()));
         controller.set_lifecycle_for_test(SessionLifecycle::Running);
         Self {
+            remote_files: None,
             terminal: Terminal::new(dimensions).expect("terminal allocation"),
             controller,
             view: TerminalView::default(),
@@ -6038,6 +6351,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
 
     fn alias_test_configuration() -> Configuration {
         let directory = std::env::current_dir().unwrap();
@@ -6089,6 +6403,298 @@ mod tests {
         let mut tab = SessionTab::for_test_ssh(fake.clone(), "deploy", "ssh.example.test", 22);
         tab.profile_identifier = profile.map(str::to_owned);
         (tab, fake)
+    }
+
+    #[test]
+    fn dev_tunnel_origin_never_grants_local_filesystem_or_implicit_reconnect_authority() {
+        let (mut tab, _) = alias_test_session(None);
+        tab.inspector_transport = InspectorTransport::DevTunnel {
+            host: "test-tunnel".into(),
+            port: 47461,
+            account: None,
+        };
+        let Some(TerminalFilesystemOrigin::Remote(origin)) = tab.terminal_filesystem_origin()
+        else {
+            panic!("tunnel must remain remote, never Local");
+        };
+        assert!(!origin.live_transport_available);
+        assert!(origin.trusted_working_directory.is_none());
+        assert!(origin.verified_host_key_fingerprint.is_none());
+        assert!(tab.live_remote_file_requestor().is_none());
+        assert!(!tab.close_requires_confirmation());
+        assert_eq!(tab.system_label(), "Remote · Experimental Dev Tunnel");
+    }
+
+    fn remote_file_fixture(
+        provider: crate::remote_files::RemoteFileProvider,
+        gate: Option<Arc<std::sync::Barrier>>,
+    ) -> (SessionTab, Arc<crate::remote_files::TestFiles>) {
+        let (mut tab, _) = alias_test_session(Some("bound-profile"));
+        let files = Arc::new(crate::remote_files::TestFiles {
+            provider,
+            generation: 7,
+            endpoint: "verified-owned-endpoint".into(),
+            connected: std::sync::atomic::AtomicBool::new(true),
+            paths: std::sync::Mutex::new(Vec::new()),
+            bytes: b"bounded remote snapshot\n".to_vec(),
+            gate,
+        });
+        if provider != crate::remote_files::RemoteFileProvider::Sftp {
+            tab.inspector_transport = InspectorTransport::DevTunnel {
+                host: "owned-tunnel".into(),
+                port: 47461,
+                account: None,
+            };
+        }
+        tab.remote_files = Some(crate::remote_files::RemoteFileCapability::Test(
+            files.clone(),
+        ));
+        (tab, files)
+    }
+
+    #[test]
+    fn native_auth_live_account_and_file_binding_remain_pinned_after_profile_account_change() {
+        let profile = |id| {
+            festerm_config::Profile::named_dev_tunnel("bound-profile", "owned.usw3")
+                .unwrap()
+                .with_tunnel_identity(
+                    id,
+                    format!("account-{id}"),
+                    festerm_secret_store::SecretReference::generate(),
+                    festerm_secret_store::SecretReference::generate(),
+                    festerm_config::DevTunnelHost {
+                        tunnel_id: "owned".into(),
+                        cluster: "usw3".into(),
+                        host_id: "host".into(),
+                        public_key: "pin".into(),
+                        port: 47461,
+                    },
+                )
+                .unwrap()
+        };
+        let mut state = AppState::for_test();
+        state.replace_configuration(Configuration::new(vec![profile(42)]).unwrap());
+        let (mut tab, _) = remote_file_fixture(
+            crate::remote_files::RemoteFileProvider::DevTunnelPosix,
+            None,
+        );
+        tab.inspector_transport = InspectorTransport::DevTunnel {
+            host: "owned".into(),
+            port: 47461,
+            account: Some((42, "account-42".into())),
+        };
+        state.place_session(tab);
+        let source = state.active;
+        let Some(TerminalFilesystemOrigin::Remote(before)) = state
+            .session_tab(source)
+            .unwrap()
+            .terminal_filesystem_origin()
+        else {
+            panic!("remote source")
+        };
+        state.replace_configuration(Configuration::new(vec![profile(99)]).unwrap());
+        let live = state.session_tab(source).unwrap();
+        assert!(matches!(&live.inspector_transport,
+            InspectorTransport::DevTunnel {account:Some((42,login)),..} if login == "account-42"));
+        let Some(TerminalFilesystemOrigin::Remote(after)) = live.terminal_filesystem_origin()
+        else {
+            panic!("remote source")
+        };
+        assert_eq!(before.session_binding, after.session_binding);
+        assert_eq!(before.profile_identifier, after.profile_identifier);
+        assert!(after.live_transport_available);
+        assert_eq!(after.username, "remote OS user");
+    }
+
+    fn finish_remote_file_open(state: &mut AppState, context: &egui::Context) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !state.pending_terminal_path_opens.is_empty() {
+            assert!(
+                Instant::now() < deadline,
+                "bounded remote open did not finish"
+            );
+            state.update_pending_terminal_path_opens(context);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn detected_and_osc8_paths_share_bound_ssh_and_dev_tunnel_document_routing() {
+        use crate::remote_files::RemoteFileProvider;
+        let context = egui::Context::default();
+        for provider in [
+            RemoteFileProvider::Sftp,
+            RemoteFileProvider::DevTunnelPosix,
+            RemoteFileProvider::DevTunnelWindows,
+        ] {
+            for explicit in [false, true] {
+                for extension in ["txt", "md"] {
+                    let mut state = AppState::for_test();
+                    let (tab, files) = remote_file_fixture(provider, None);
+                    state.place_session(tab);
+                    let source = state.active;
+                    let session = state.session_tab_mut(source).unwrap();
+                    let path = if provider == RemoteFileProvider::DevTunnelWindows {
+                        format!("C:/owned/report.{extension}")
+                    } else {
+                        format!("/srv/report.{extension}")
+                    };
+                    if explicit {
+                        let uri_path = if path.starts_with('/') {
+                            path.clone()
+                        } else {
+                            format!("/{path}")
+                        };
+                        session.terminal.ingest(format!("\x1b]8;;file://localhost{uri_path}\x07misleading-local-name.txt\x1b]8;;\x07").as_bytes());
+                        let target = session
+                            .terminal
+                            .cell(0, 0)
+                            .unwrap()
+                            .hyperlink()
+                            .unwrap()
+                            .to_owned();
+                        let generation = session.controller.lifecycle_generation();
+                        state.dispatch(
+                            AppCommand::OpenTerminalHyperlink {
+                                tab_id: source,
+                                lifecycle_generation: generation,
+                                target: ExternalLinkTarget::new(target),
+                            },
+                            &context,
+                        );
+                    } else {
+                        session.terminal.ingest(path.as_bytes());
+                        let origin = session.terminal_filesystem_origin();
+                        session.terminal_path.menu = resolve_context_menu_action(
+                            &session.terminal,
+                            festerm_ui_egui::TerminalContextTarget {
+                                content_position: festerm_core::ContentPosition {
+                                    column: 3,
+                                    absolute_row: 0,
+                                },
+                                generation: 1,
+                            },
+                            origin.as_ref(),
+                        );
+                        state.dispatch(
+                            AppCommand::OpenTerminalDetectedPath { tab_id: source },
+                            &context,
+                        );
+                    }
+                    finish_remote_file_open(&mut state, &context);
+                    assert_eq!(
+                        files.paths.lock().unwrap().as_slice(),
+                        std::slice::from_ref(&path)
+                    );
+                    if extension == "md" {
+                        let TabContent::MarkdownViewer(viewer) = &state.active_tab().content else {
+                            panic!("remote Markdown snapshot expected");
+                        };
+                        assert!(viewer.local_path().is_none());
+                        assert_eq!(viewer.chip_secondary(), "Markdown · Remote");
+                        continue;
+                    }
+                    let TabContent::TextEditor(editor) = &state.active_tab().content else {
+                        panic!("remote text snapshot expected");
+                    };
+                    let registry = state.documents.borrow();
+                    let document = registry.get(editor.document()).unwrap();
+                    let festerm_document::DocumentOrigin::Remote(origin) = document.origin() else {
+                        panic!("remote bytes must never acquire local identity");
+                    };
+                    assert_eq!(origin.path(), path);
+                    assert_eq!(origin.is_dev_tunnel(), provider != RemoteFileProvider::Sftp);
+                    assert!(document.origin().key().to_string().starts_with(
+                        if provider == RemoteFileProvider::Sftp {
+                            "sftp:"
+                        } else {
+                            "dev-tunnel:"
+                        }
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn remote_file_non_text_snapshots_are_refused_without_creating_local_documents() {
+        use crate::remote_files::{RemoteFileCapability, RemoteFileProvider};
+        let context = egui::Context::default();
+        for provider in [RemoteFileProvider::Sftp, RemoteFileProvider::DevTunnelPosix] {
+            let mut state = AppState::for_test();
+            let (mut tab, files) = remote_file_fixture(provider, None);
+            tab.remote_files = None;
+            let mut files = Arc::try_unwrap(files).unwrap();
+            files.bytes = vec![0, 0xff, 0xfe];
+            tab.remote_files = Some(RemoteFileCapability::Test(Arc::new(files)));
+            state.place_session(tab);
+            let source = state.active;
+            let generation = state
+                .session_tab(source)
+                .unwrap()
+                .controller
+                .lifecycle_generation();
+            state.dispatch(
+                AppCommand::OpenTerminalHyperlink {
+                    tab_id: source,
+                    lifecycle_generation: generation,
+                    target: ExternalLinkTarget::new("file:///srv/report.txt".into()),
+                },
+                &context,
+            );
+            finish_remote_file_open(&mut state, &context);
+            assert!(matches!(state.active_tab().content, TabContent::Session(_)));
+            assert!(state.take_open_refusal_notice().is_some());
+        }
+    }
+
+    #[test]
+    fn remote_file_results_are_discarded_after_source_profile_or_generation_changes() {
+        use crate::remote_files::RemoteFileProvider;
+        let context = egui::Context::default();
+        for change_profile in [false, true] {
+            let mut state = AppState::for_test();
+            let gate = Arc::new(std::sync::Barrier::new(2));
+            let (tab, files) =
+                remote_file_fixture(RemoteFileProvider::DevTunnelPosix, Some(gate.clone()));
+            state.place_session(tab);
+            let source = state.active;
+            let generation = state
+                .session_tab(source)
+                .unwrap()
+                .controller
+                .lifecycle_generation();
+            state.dispatch(
+                AppCommand::OpenTerminalHyperlink {
+                    tab_id: source,
+                    lifecycle_generation: generation,
+                    target: ExternalLinkTarget::new("file:///srv/report.txt".into()),
+                },
+                &context,
+            );
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while files.paths.lock().unwrap().is_empty() {
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            if change_profile {
+                state.session_tab_mut(source).unwrap().profile_identifier =
+                    Some("different-profile".into());
+            } else {
+                state
+                    .session_tab_mut(source)
+                    .unwrap()
+                    .controller
+                    .advance_lifecycle_generation();
+            }
+            gate.wait();
+            finish_remote_file_open(&mut state, &context);
+            assert!(matches!(state.active_tab().content, TabContent::Session(_)));
+            assert_eq!(
+                state.take_open_refusal_notice().unwrap().headline,
+                "The source binding changed"
+            );
+        }
     }
 
     #[test]
@@ -8099,6 +8705,8 @@ mod tests {
                 generation: 7,
             },
             &TerminalFilesystemOrigin::Remote(RemoteTerminalOrigin {
+                session_binding: "test-source".into(),
+                provider: crate::remote_files::RemoteFileProvider::Sftp,
                 host: "ssh.example.test".to_owned(),
                 port: 22,
                 username: "deploy".to_owned(),
@@ -8384,6 +8992,9 @@ mod tests {
             state
                 .pending_terminal_path_opens
                 .push(PendingTerminalPathOpen {
+                    source_generation: 0,
+                    source: state.active,
+                    origin: None,
                     receiver,
                     handle: None,
                 });
