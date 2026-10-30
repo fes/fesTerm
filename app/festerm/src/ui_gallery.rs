@@ -1098,6 +1098,7 @@ fn render_launcher(
                 &resumable_sessions,
                 &tmux_sessions,
                 &screen_sessions,
+                &[],
             );
         },
         (),
@@ -1232,6 +1233,7 @@ fn render_launcher_form(
                 &[],
                 &[],
                 &[],
+                &[],
             );
         },
         (),
@@ -1299,6 +1301,7 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         confirm_session_close: true,
         prefer_powershell: true,
         extend_dev_tunnel_lifetime: false,
+        show_running_dev_tunnels: false,
         dev_tunnel_extension_days: 30,
         dev_tunnel_accounts: Vec::new(),
         customize_local_shell: false,

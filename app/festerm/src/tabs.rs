@@ -2097,6 +2097,9 @@ pub enum AppCommand {
     },
     /// Saves a native Dev Tunnel profile and immediately connects it, signing
     /// in first when it has no account.
+    SaveAndConnectRunningDevTunnel {
+        locator: String,
+    },
     SaveAndConnectDevTunnel {
         profile: festerm_config::Profile,
     },
@@ -2454,6 +2457,7 @@ pub enum AppCommand {
     TogglePreferPowershell,
     /// Toggles whether Dev Tunnel sign-in/connect extends the tunnel's lifetime.
     ToggleExtendDevTunnelLifetime,
+    ToggleShowRunningDevTunnels,
     SetDevTunnelExtensionDays(u32),
     /// Toggles whether the default Local Shell launcher card opens its
     /// executable/arguments/directory form instead of launching immediately.
@@ -2808,6 +2812,7 @@ pub struct AppState {
     prefer_powershell: bool,
     customize_local_shell: bool,
     extend_dev_tunnel_lifetime: bool,
+    show_running_dev_tunnels: bool,
     dev_tunnel_extension_days: u32,
     /// Whether the open-tab list and active tab persist across restarts
     /// (`docs/gui-design.md` "Workspace restore"). Off by default and,
@@ -2934,6 +2939,7 @@ impl AppState {
             prefer_powershell: settings.prefer_powershell(),
             customize_local_shell: settings.customize_local_shell(),
             extend_dev_tunnel_lifetime: settings.extend_dev_tunnel_lifetime(),
+            show_running_dev_tunnels: settings.show_running_dev_tunnels(),
             dev_tunnel_extension_days: settings.dev_tunnel_extension_days(),
             restore_workspace: settings.restore_workspace(),
             terminal_font: settings.terminal_font(),
@@ -3216,6 +3222,7 @@ impl AppState {
         self.confirm_session_close = settings.confirm_session_close();
         self.prefer_powershell = settings.prefer_powershell();
         self.extend_dev_tunnel_lifetime = settings.extend_dev_tunnel_lifetime();
+        self.show_running_dev_tunnels = settings.show_running_dev_tunnels();
         self.dev_tunnel_extension_days = settings.dev_tunnel_extension_days();
         self.restore_workspace = settings.restore_workspace();
         self.terminal_font = settings.terminal_font();
@@ -3453,6 +3460,10 @@ impl AppState {
         self.prefer_powershell
     }
 
+    pub const fn show_running_dev_tunnels(&self) -> bool {
+        self.show_running_dev_tunnels
+    }
+
     pub const fn extend_dev_tunnel_lifetime(&self) -> bool {
         self.extend_dev_tunnel_lifetime
     }
@@ -3495,6 +3506,7 @@ impl AppState {
         .with_terminal_typography(self.terminal_font, self.terminal_ligatures)
         .with_prefer_powershell(self.prefer_powershell)
         .with_extend_dev_tunnel_lifetime(self.extend_dev_tunnel_lifetime)
+        .with_show_running_dev_tunnels(self.show_running_dev_tunnels)
         .with_dev_tunnel_extension_days(self.dev_tunnel_extension_days)
         .with_customize_local_shell(self.customize_local_shell)
         .with_emoji_presentation(self.emoji_presentation)
@@ -3805,6 +3817,7 @@ impl AppState {
             | AppCommand::AddDevTunnelAccount
             | AppCommand::RemoveDevTunnelAccount { .. }
             | AppCommand::SaveAndConnectDevTunnel { .. }
+            | AppCommand::SaveAndConnectRunningDevTunnel { .. }
             | AppCommand::NativeDevTunnel { .. }
             | AppCommand::StartConfiguredDevTunnelProfile { .. }
             | AppCommand::StoreProfilePrivateKey { .. }
@@ -3966,6 +3979,9 @@ impl AppState {
             }
             AppCommand::TogglePreferPowershell => {
                 self.prefer_powershell = !self.prefer_powershell;
+            }
+            AppCommand::ToggleShowRunningDevTunnels => {
+                self.show_running_dev_tunnels = !self.show_running_dev_tunnels;
             }
             AppCommand::ToggleExtendDevTunnelLifetime => {
                 self.extend_dev_tunnel_lifetime = !self.extend_dev_tunnel_lifetime;
@@ -4155,6 +4171,8 @@ impl AppState {
                 self.prefer_powershell = InterfaceSettings::DEFAULT.prefer_powershell();
                 self.extend_dev_tunnel_lifetime =
                     InterfaceSettings::DEFAULT.extend_dev_tunnel_lifetime();
+                self.show_running_dev_tunnels =
+                    InterfaceSettings::DEFAULT.show_running_dev_tunnels();
                 self.dev_tunnel_extension_days =
                     InterfaceSettings::DEFAULT.dev_tunnel_extension_days();
                 self.customize_local_shell = InterfaceSettings::DEFAULT.customize_local_shell();

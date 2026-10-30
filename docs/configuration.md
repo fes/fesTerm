@@ -290,7 +290,7 @@ The optional `[settings]` table includes these interface preferences:
 `"single-row-scroll"`), `status_bar_visible` (default `true`),
 `show_session_details` (default `false`), `confirm_session_close` (default
 `false`), `prefer_powershell` (default `true`), `extend_dev_tunnel_lifetime`
-(default `false`), `dev_tunnel_extension_days` (default `30`, clamped to
+(default `false`), `show_running_dev_tunnels` (default `false`), `dev_tunnel_extension_days` (default `30`, clamped to
 1-365), `customize_local_shell` (default `false`), `restore_workspace` (default `true`), `terminal_font`
 (`"jet-brains-mono"`, `"iosevka-term"`, `"julia-mono"`, or `"maple-mono"`;
 default `"jet-brains-mono"`), `terminal_ligatures` (default `true`),
@@ -528,3 +528,9 @@ Successful document broadcasts do not rename other current logical views.
 connect ask the service to move the tunnel's expiry `dev_tunnel_extension_days`
 days forward. Only the tunnel's owner can do so; a refused or failed extension
 is logged and never blocks the connection.
+
+`show_running_dev_tunnels = true` lists the first signed-in account's running
+bridge tunnels that have no saved profile in New Session. The list is cached
+for a minute (the Running Sessions refresh button re-lists). Choosing one saves
+an unsigned profile linked to that account and connects; nothing is saved
+unless you do.

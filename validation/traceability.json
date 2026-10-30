@@ -117,7 +117,7 @@
     },
     {
       "id": "native-dev-tunnels-identity-discovery",
-      "edges": ["TUNNEL-0[789]", "TUNNEL-1[01]"],
+      "edges": ["TUNNEL-0[789]", "TUNNEL-1[012]"],
       "requirements": ["docs/adr/0053-separate-dev-tunnels-session-bridge.md#native-github-identity-and-name-discovery", "docs/gui-design.md#profile-editing"],
       "decisions": ["ADR-0053"],
       "automated_tests": [
@@ -133,6 +133,7 @@
         "native_service_selection_refuses_ordinary_tunnels_ambiguity_and_missing_pins",
         "native_service_lookup_distinguishes_denial_missing_tunnels_and_service_failures",
         "profiles_share_one_account_and_keep_separate_connect_credentials",
+        "a_running_dev_tunnel_row_saves_and_connects_by_locator",
         "native_auth_completion_is_discarded_after_profile_edit_without_publishing_credentials",
         "native_auth_cancel_wins_before_ready_credentials_are_published",
         "native_auth_refresh_publishes_only_the_bound_profile_identity_and_rejects_stale_rotation",

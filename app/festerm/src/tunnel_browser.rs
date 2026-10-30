@@ -117,6 +117,20 @@ impl Browser {
     }
 }
 
+/// Lists an account's tunnels with its stored credential, refreshing it when
+/// needed. The caller holds the account lease.
+pub(super) async fn list_for_account(
+    account: DevTunnelAccount,
+    store: &Arc<dyn SecretStore>,
+    cancel: &CancellationToken,
+) -> Result<Vec<TunnelSummary>, Error> {
+    let client_id = identity::registered_client_id().ok_or(Error::Registration)?;
+    match run(Some(account), store, client_id, cancel, &|_| true).await? {
+        Outcome::Listed(_, tunnels) => Ok(tunnels),
+        Outcome::Signed(_) => Err(Error::Response),
+    }
+}
+
 enum Outcome {
     Listed(String, Vec<TunnelSummary>),
     Signed(DevTunnelAccount),
@@ -166,6 +180,17 @@ async fn run(
     }
     let tunnels = service::list(&identity, cancel).await?;
     Ok(Outcome::Listed(identity.account.login.clone(), tunnels))
+}
+
+/// The name a tunnel is listed under.
+pub(super) fn display_name(summary: &TunnelSummary) -> String {
+    summary
+        .name
+        .as_deref()
+        .or(summary.description.as_deref())
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or(&summary.locator)
+        .to_owned()
 }
 
 /// A profile identifier that does not collide with an existing profile.
@@ -438,6 +463,21 @@ impl FesTermApp {
         }
     }
 
+    /// Saves an unsigned profile for `tunnel` linked to `account`; returns its
+    /// identifier.
+    pub(super) fn create_profile_from_summary(
+        &mut self,
+        tunnel: &TunnelSummary,
+        account: Option<String>,
+    ) -> Option<String> {
+        let configuration = self.state.configuration();
+        let id = unique_profile_id(tunnel, |id| configuration.profile(id).is_some());
+        Profile::named_dev_tunnel(id.clone(), tunnel.locator.clone())
+            .and_then(|profile| profile.with_tunnel_account_selection(account))
+            .is_ok_and(|profile| self.save_profile(profile))
+            .then_some(id)
+    }
+
     fn create_profile_from_tunnel(&mut self, tunnel: &TunnelSummary) {
         let configuration = self.state.configuration();
         let account = self
@@ -451,10 +491,7 @@ impl FesTermApp {
                     .map(|account| account.identifier().to_owned()),
                 _ => None,
             });
-        let id = unique_profile_id(tunnel, |id| configuration.profile(id).is_some());
-        let saved = Profile::named_dev_tunnel(id, tunnel.locator.clone())
-            .and_then(|profile| profile.with_tunnel_account_selection(account))
-            .is_ok_and(|profile| self.save_profile(profile));
+        let saved = self.create_profile_from_summary(tunnel, account).is_some();
         self.secure_storage_feedback = Some(if saved {
             "Dev Tunnel profile created. Open it and choose Connect."
         } else {

@@ -1,5 +1,8 @@
 mod confirmations;
 #[cfg(feature = "experimental-dev-tunnels")]
+#[path = "running_tunnels.rs"]
+mod running_tunnels;
+#[cfg(feature = "experimental-dev-tunnels")]
 #[path = "tunnel_browser.rs"]
 mod tunnel_browser;
 #[cfg(feature = "experimental-dev-tunnels")]
@@ -431,6 +434,8 @@ pub struct FesTermApp {
     native_tunnel: Option<tunnel_workflow::Workflow>,
     #[cfg(feature = "experimental-dev-tunnels")]
     tunnel_browser: Option<tunnel_browser::Browser>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    running_tunnels: running_tunnels::RunningTunnels,
     /// Widget that owned focus immediately before Inspector opened, when it
     /// remains a meaningful restoration target.
     inspector_restore_focus: Option<egui::Id>,
@@ -912,6 +917,8 @@ impl FesTermApp {
             native_tunnel: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             tunnel_browser: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            running_tunnels: Default::default(),
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
@@ -6099,6 +6106,15 @@ impl FesTermApp {
                 );
             }
         }
+        #[cfg(feature = "experimental-dev-tunnels")]
+        let running_tunnel_rows = if matches!(self.state.active_tab().content, TabContent::Launcher)
+        {
+            self.running_tunnel_rows(ui.ctx())
+        } else {
+            Vec::new()
+        };
+        #[cfg(not(feature = "experimental-dev-tunnels"))]
+        let running_tunnel_rows = Vec::new();
         {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
@@ -6122,6 +6138,7 @@ impl FesTermApp {
                         &self.state.discovery.inventory.native,
                         &self.state.discovery.inventory.tmux,
                         &self.state.discovery.inventory.screen,
+                        &running_tunnel_rows,
                     );
                 }
                 TabContent::Settings => {
@@ -6135,6 +6152,7 @@ impl FesTermApp {
                             confirm_session_close: self.state.confirm_session_close(),
                             prefer_powershell: self.state.prefer_powershell(),
                             extend_dev_tunnel_lifetime: self.state.extend_dev_tunnel_lifetime(),
+                            show_running_dev_tunnels: self.state.show_running_dev_tunnels(),
                             dev_tunnel_extension_days: self.state.dev_tunnel_extension_days(),
                             dev_tunnel_accounts: self.dev_tunnel_account_rows(),
                             customize_local_shell: self.state.customize_local_shell(),
@@ -6484,6 +6502,19 @@ impl FesTermApp {
                     #[cfg(not(feature = "experimental-dev-tunnels"))]
                     let _ = account;
                 }
+                AppCommand::SaveAndConnectRunningDevTunnel { locator } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.save_and_connect_running_tunnel(&locator, ui.ctx());
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    let _ = locator;
+                }
+                AppCommand::RefreshRunningSessions => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.running_tunnels.invalidate();
+                    let context = ui.ctx().clone();
+                    self.state
+                        .dispatch(AppCommand::RefreshRunningSessions, &context);
+                }
                 AppCommand::SaveAndConnectDevTunnel { profile } => {
                     #[cfg(feature = "experimental-dev-tunnels")]
                     {
@@ -6630,6 +6661,7 @@ impl FesTermApp {
                 | AppCommand::ToggleConfirmSessionClose
                 | AppCommand::TogglePreferPowershell
                 | AppCommand::ToggleExtendDevTunnelLifetime
+                | AppCommand::ToggleShowRunningDevTunnels
                 | AppCommand::SetDevTunnelExtensionDays(_)
                 | AppCommand::ToggleQuickSwitchOverlay
                 | AppCommand::ToggleCompactLauncherGrid
@@ -7246,6 +7278,8 @@ impl FesTermApp {
             native_tunnel: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             tunnel_browser: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            running_tunnels: Default::default(),
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,

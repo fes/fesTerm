@@ -54,6 +54,8 @@ pub(crate) use settings::{show_settings, SettingsViewModel};
 enum LauncherItemKind<'a> {
     NewDevTunnel,
     DevTunnelProfile(&'a str),
+    /// A running tunnel of the signed-in account that has no saved profile.
+    RunningTunnel(&'a RunningTunnelRow),
     LocalDefault,
     NewSsh,
     NewSftp,
@@ -77,6 +79,13 @@ enum LauncherItemKind<'a> {
         PersistenceProviderKind,
         &'a crate::multiplexer_sessions::MultiplexerSession,
     ),
+}
+
+/// A running Dev Tunnel offered in New Session, with no saved profile yet.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunningTunnelRow {
+    pub locator: String,
+    pub label: String,
 }
 
 struct LauncherItem<'a> {
@@ -221,6 +230,7 @@ impl LauncherItem<'_> {
             | LauncherItemKind::NewSftp
             | LauncherItemKind::NewSerial
             | LauncherItemKind::NewMarkdown
+            | LauncherItemKind::RunningTunnel(_)
             | LauncherItemKind::ResumeSession(_)
             | LauncherItemKind::ResumeMultiplexerSession(..) => None,
             LauncherItemKind::LocalProfile(id)
@@ -237,9 +247,9 @@ impl LauncherItem<'_> {
     /// distinction survives for a user who cannot separate the hues.
     fn mark(&self) -> (Icon, egui::Color32) {
         match self.kind {
-            LauncherItemKind::NewDevTunnel | LauncherItemKind::DevTunnelProfile(_) => {
-                (Icon::DevTunnel, theme::ICON_SESSION_REMOTE)
-            }
+            LauncherItemKind::NewDevTunnel
+            | LauncherItemKind::DevTunnelProfile(_)
+            | LauncherItemKind::RunningTunnel(_) => (Icon::DevTunnel, theme::ICON_SESSION_REMOTE),
             LauncherItemKind::LocalDefault
             | LauncherItemKind::LocalProfile(_)
             | LauncherItemKind::ResumeSession(_)
@@ -269,6 +279,9 @@ impl LauncherItem<'_> {
                     profile_id: profile_id.to_owned(),
                 }
             }
+            LauncherItemKind::RunningTunnel(row) => AppCommand::SaveAndConnectRunningDevTunnel {
+                locator: row.locator.clone(),
+            },
             LauncherItemKind::LocalDefault => {
                 unreachable!("the Local Shell item opens a launch form, not an AppCommand")
             }
@@ -1288,6 +1301,7 @@ struct LauncherState {
     festerm_group_expanded: bool,
     tmux_group_expanded: bool,
     screen_group_expanded: bool,
+    tunnel_group_expanded: bool,
 }
 
 impl Default for LauncherState {
@@ -1313,6 +1327,7 @@ impl Default for LauncherState {
             festerm_group_expanded: true,
             tmux_group_expanded: true,
             screen_group_expanded: true,
+            tunnel_group_expanded: true,
         }
     }
 }
@@ -3093,6 +3108,7 @@ fn show_session_group(
                     LauncherItemKind::ResumeMultiplexerSession(provider, session) => {
                         format!("{provider:?}:{}", session.match_key)
                     }
+                    LauncherItemKind::RunningTunnel(row) => format!("tunnel:{}", row.locator),
                     _ => unreachable!("running groups contain only resumable sessions"),
                 };
                 ui.push_id(identity, |ui| {
@@ -3162,8 +3178,13 @@ fn show_session_row(
                     }
                 });
             }
-            let name = format!("Reattach {}", item.label);
-            if launcher_button(ui, Icon::Reattach, "Reattach", Some(&name), selected).clicked() {
+            let verb = if matches!(item.kind, LauncherItemKind::RunningTunnel(_)) {
+                "Connect"
+            } else {
+                "Reattach"
+            };
+            let name = format!("{verb} {}", item.label);
+            if launcher_button(ui, Icon::Reattach, verb, Some(&name), selected).clicked() {
                 *command = Some(item.command());
             }
         });
@@ -3367,6 +3388,7 @@ pub fn show_launcher(
     resumable_sessions: &[festerm_sessiond::UnattachedSession],
     tmux_sessions: &[crate::multiplexer_sessions::MultiplexerSession],
     screen_sessions: &[crate::multiplexer_sessions::MultiplexerSession],
+    running_tunnels: &[RunningTunnelRow],
 ) -> Option<AppCommand> {
     let profiles = configuration.profiles();
     let customize_local_shell = configuration.interface_settings().customize_local_shell();
@@ -3464,6 +3486,14 @@ pub fn show_launcher(
         );
         item.last_used_unix_seconds = session.started_at_unix_seconds();
         item
+    }));
+    let screen_sessions_end = items.len();
+    items.extend(running_tunnels.iter().map(|row| {
+        LauncherItem::untabulated(
+            row.label.clone(),
+            "Running · saves a profile and connects".to_owned(),
+            LauncherItemKind::RunningTunnel(row),
+        )
     }));
     // Saved profiles fill the Saved Profiles table. Each profile appears
     // exactly once, under the type it was saved as: an SSH profile's SFTP
@@ -3893,6 +3923,7 @@ pub fn show_launcher(
                                 fixed_end,
                                 festerm_sessions_end,
                                 tmux_sessions_end,
+                                screen_sessions_end,
                                 profiles_start,
                                 now_unix_seconds,
                                 state,
@@ -3919,6 +3950,7 @@ pub fn show_launcher(
                             fixed_end,
                             festerm_sessions_end,
                             tmux_sessions_end,
+                            screen_sessions_end,
                             profiles_start,
                             now_unix_seconds,
                             state,
@@ -4310,6 +4342,7 @@ fn show_running_sessions_panel(
     fixed_end: usize,
     festerm_sessions_end: usize,
     tmux_sessions_end: usize,
+    screen_sessions_end: usize,
     profiles_start: usize,
     now_unix_seconds: Option<u64>,
     state: &mut LauncherState,
@@ -4351,7 +4384,12 @@ fn show_running_sessions_panel(
                     let ranges = [
                         ("fesTerm Native (sessiond)", fixed_end, festerm_sessions_end),
                         ("tmux", festerm_sessions_end, tmux_sessions_end),
-                        ("screen", tmux_sessions_end, profiles_start),
+                        ("screen", tmux_sessions_end, screen_sessions_end),
+                        (
+                            "My running Dev Tunnels",
+                            screen_sessions_end,
+                            profiles_start,
+                        ),
                     ];
                     // The expansion flags travel through the closure as one
                     // array rather than as three borrows of `state`, so the
@@ -4361,10 +4399,11 @@ fn show_running_sessions_panel(
                         state.festerm_group_expanded,
                         state.tmux_group_expanded,
                         state.screen_group_expanded,
+                        state.tunnel_group_expanded,
                     ];
                     let selected = state.selected;
                     let body = |ui: &mut Ui,
-                                expanded: &mut [bool; 3],
+                                expanded: &mut [bool; 4],
                                 command: &mut Option<AppCommand>| {
                         let mut any = false;
                         for (index, (title, start, end)) in ranges.into_iter().enumerate() {
@@ -4420,6 +4459,7 @@ fn show_running_sessions_panel(
                         state.festerm_group_expanded,
                         state.tmux_group_expanded,
                         state.screen_group_expanded,
+                        state.tunnel_group_expanded,
                     ] = expanded;
                 },
             );
@@ -4729,6 +4769,7 @@ mod tests {
                         &[],
                         &[],
                         &[],
+                        &[],
                     ) {
                         state.command = Some(command);
                     }
@@ -4770,6 +4811,7 @@ mod tests {
                         &resumable_sessions,
                         &[],
                         &[],
+                        &[],
                     ) {
                         state.command = Some(command);
                     }
@@ -4802,6 +4844,7 @@ mod tests {
                         &[],
                         &tmux_sessions,
                         &screen_sessions,
+                        &[],
                     ) {
                         state.command = Some(command);
                     }
@@ -5031,6 +5074,7 @@ mod tests {
                         &native,
                         &tmux,
                         &screen,
+                        &[],
                     ) {
                         state.command = Some(command);
                     }
@@ -6635,6 +6679,48 @@ mod tests {
     }
 
     #[test]
+    fn a_running_dev_tunnel_row_saves_and_connects_by_locator() {
+        let rows = vec![RunningTunnelRow {
+            locator: "abc123.use".to_owned(),
+            label: "build-box".to_owned(),
+        }];
+        let configuration = Configuration::new(Vec::new()).expect("test configuration is valid");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1240.0, 880.0))
+            .build_ui_state(
+                move |ui, state: &mut LauncherHarnessState| {
+                    if let Some(command) = show_launcher(
+                        ui,
+                        state.tab_id,
+                        &state.configuration,
+                        true,
+                        None,
+                        false,
+                        &[],
+                        &[],
+                        &[],
+                        &rows,
+                    ) {
+                        state.command = Some(command);
+                    }
+                },
+                LauncherHarnessState {
+                    tab_id: AppState::for_test().active(),
+                    configuration,
+                    command: None,
+                },
+            );
+        harness.run();
+        assert!(harness.query_by_label("My running Dev Tunnels").is_some());
+        harness.get_by_label("Connect build-box").click();
+        harness.run();
+        assert!(matches!(
+            &harness.state().command,
+            Some(AppCommand::SaveAndConnectRunningDevTunnel { locator }) if locator == "abc123.use"
+        ));
+    }
+
+    #[test]
     fn the_running_sessions_refresh_control_dispatches_a_refresh_command() {
         let mut harness = harness_with_profiles(Vec::new());
         harness.run();
@@ -6937,6 +7023,7 @@ mod tests {
                         true,
                         None,
                         false,
+                        &[],
                         &[],
                         &[],
                         &[],
