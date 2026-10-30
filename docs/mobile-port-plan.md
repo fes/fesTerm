@@ -113,6 +113,12 @@ callback retires transport and sensitive prompts without a subsequent UI frame.
 Suspension/reconnect is explicit and starts a fresh shell.
 The offline host stays the default and Files/README remain previews.
 
+The local development-device packager accepts `--live-ssh` for preflight and
+build, auditing the selected graph and recording mode/features separately from
+native validation. It reuses existing local development signing without store
+distribution. The mobile host README documents the complete command and
+manual install/demo route; the default packager still builds the offline fixture.
+
 MOB-06 tracks the missing controlled SSH and physical-device evidence.
 Feature-enabled tests, target checks and a separate linked Simulator artifact
 must pass, but do not establish native usability. The Termius-inspired

@@ -29,6 +29,12 @@ and restrict the requested entitlements. The bundle embeds private
 provisioning metadata in a fresh private output directory, outside Simulator
 artifacts. Keep that output local. A signed-build receipt explicitly records
 native validation as not run and does not replace device execution evidence.
+Use `--live-ssh` for both preflight and build to select the transient SSH
+prototype; without it the app remains an offline fixture. The selected feature
+graph is checked before compilation and live bundles include the local-network
+purpose string, with no additional entitlements. Mode-labeled private output
+and receipts distinguish the builds; neither is uploaded or installed by the
+script. See MOB-06 for the separate controlled-host/device demo acceptance.
 
 ### Store-mediated release
 
@@ -148,4 +154,3 @@ implementation should get its own ADR (per ADR 0031's closing bullet) that
 references this document and states explicitly that ADR 0021 does not cover
 mobile, so a future reader does not assume the desktop updater work was
 meant to reach mobile builds.
-
