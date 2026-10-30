@@ -146,8 +146,13 @@ impl ClientKex {
                         self.cause.session_id(),
                     )?;
 
-                    // The non-standard anonymous exchange installs no keys and
-                    // does not send NEWKEYS (matching the Dev Tunnels transport).
+                    // Only the anonymous no-host-key transport omits NEWKEYS.
+                    if names.key.is_some() {
+                        output.write_packet(|w| {
+                            msg::NEWKEYS.encode(w)?;
+                            Ok(())
+                        })?;
+                    }
 
                     return Ok(KexProgress::Done {
                         newkeys,

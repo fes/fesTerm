@@ -39,9 +39,13 @@ inner tunnel remain unchanged. This mode is only for independently
 authenticated/encrypted transports (the allowlisted TLS relay); it is not an
 SSH fallback. Bridge regressions perform an actual outer no-key handshake and
 prove that a normal encrypted client refuses that same peer.
-The anonymous client/server skip-exchange path does not emit `NEWKEYS`, matching
-the upstream SDK's no-key exchange. Signed/encrypted key exchanges still emit
-and require `NEWKEYS` unchanged.
+Only the anonymous client/server skip-exchange path with no negotiated host key
+omits `NEWKEYS`, matching the upstream SDK's no-key exchange. Existing no-KEX
+preferences with a host-key algorithm retain their `NEWKEYS` packet, including
+the raw malformed-input regression fixtures. Their connection helper also has
+a bounded handshake deadline so negotiation regressions fail rather than hang
+the test suite. Signed/encrypted key exchanges still emit and require `NEWKEYS`
+unchanged.
 The pinned legacy SDK's default MAC list includes `none`; modern ordinary
 defaults do not. The explicit anonymous preference advertises only `none`
 rather than accidentally omitting the relay's only supported MAC.

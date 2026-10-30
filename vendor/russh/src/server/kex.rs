@@ -139,7 +139,13 @@ impl ServerKex {
                         self.cause.session_id(),
                     )?;
 
-                    // As on the client, the anonymous exchange has no NEWKEYS.
+                    // Only the anonymous no-host-key transport omits NEWKEYS.
+                    if names.key.is_some() {
+                        output.write_packet(|w| {
+                            msg::NEWKEYS.encode(w)?;
+                            Ok(())
+                        })?;
+                    }
 
                     return Ok(KexProgress::Done {
                         newkeys,

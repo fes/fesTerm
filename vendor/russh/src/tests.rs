@@ -829,9 +829,13 @@ pub(crate) mod raw_no_crypto {
 
     impl RawSession {
         pub(crate) async fn connect() -> Self {
-            let mut stream = Self::connect_without_kex().await;
-            raw_client_no_crypto_kex(&mut stream.stream).await.unwrap();
-            stream
+            tokio::time::timeout(Duration::from_secs(3), async {
+                let mut stream = Self::connect_without_kex().await;
+                raw_client_no_crypto_kex(&mut stream.stream).await.unwrap();
+                stream
+            })
+            .await
+            .expect("raw test handshake timed out")
         }
 
         pub(crate) async fn connect_without_kex() -> Self {
