@@ -421,6 +421,10 @@ user cannot rename an ancestor itself. Windows positive fixtures first try user
 temporary storage, then system temporary storage only when accessible and
 policy-compliant. Refused candidates are diagnosed and all-candidate failure
 fails the test; no runner ACL is repaired or test skipped.
+The same test-only fixture builder is shared by library and both binary test
+roots, avoiding unsafe checkout ancestors or Windows verbatim-path prefixes.
+Managed health/worker contention uses the daemon's existing native lock-error
+classifier; contention is not assumed to map only to `WouldBlock` on Windows.
 
 Setup prints a versioned **public** profile JSON wrapper. Client import bounds
 and validates it, previews the tunnel/host fingerprint and requires explicit
@@ -642,6 +646,8 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   also verifies private ancestors still refuse a null DACL.
   `private_storage_ancestors_refuse_foreign_directory_delete_access` covers
   ancestor self-renaming permission separately from unchanged save staging.
+  `managed_healthy_reuse_preserves_metadata_and_refuses_a_dead_generation`
+  covers both health and worker contention with platform-native runtime paths.
   Real user-service/login/reboot behavior and native clipboard/accessibility
   remain explicit native/manual gates.
   Further tests/evidence required include real bridge process death and native

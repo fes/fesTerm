@@ -11,6 +11,11 @@ use std::{
     time::Duration,
 };
 
+#[cfg(test)]
+use festerm_tunnel_bridge::setup_storage;
+#[cfg(test)]
+mod test_support;
+
 fn main() {
     if run().is_err() {
         eprintln!("Experimental Dev Tunnel bridge stopped/refused. Verify the exact unattached protocol-3 session, dedicated host token, preprovisioned port and service access. No session was created or terminated.");
@@ -235,12 +240,8 @@ mod tests {
                 std::fs::remove_dir_all(&self.0).unwrap();
             }
         }
-        let path = std::env::current_dir().unwrap().join(format!(
-            ".bridge-existing-identity-test-{}",
-            uuid::Uuid::new_v4()
-        ));
-        let directory =
-            festerm_tunnel_bridge::setup_storage::private_directory(&path, true).unwrap();
+        let path = crate::test_support::private_directory(".bridge-existing-identity-test");
+        let directory = setup_storage::private_directory(&path, false).unwrap();
         let owned = OwnedDirectory(path);
         let key = owned.0.join("host-identity.key");
         assert!(load_host_identity(Some(&key), true).is_err());

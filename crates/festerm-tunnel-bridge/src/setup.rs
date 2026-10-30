@@ -19,6 +19,11 @@ const CLI_TIMEOUT: Duration = Duration::from_secs(60);
 mod managed_setup;
 mod service_install;
 
+#[cfg(test)]
+use festerm_tunnel_bridge::setup_storage;
+#[cfg(test)]
+mod test_support;
+
 fn refused(stage: &'static str) -> io::Error {
     io::Error::other(stage)
 }

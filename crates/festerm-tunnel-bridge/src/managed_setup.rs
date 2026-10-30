@@ -168,7 +168,7 @@ fn healthy_record(directory: &File, record: &Installation) -> io::Result<Option<
     let health = lock(directory, "health.lock")?;
     match FileExt::try_lock_shared(&health) {
         Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+        Err(error) if festerm_sessiond::lock_is_contended(&error) => return Ok(None),
         Err(error) => return Err(error),
     }
     let worker = lock(directory, "worker.lock")?;
@@ -177,7 +177,7 @@ fn healthy_record(directory: &File, record: &Installation) -> io::Result<Option<
             FileExt::unlock(&worker)?;
             Ok(None)
         }
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+        Err(error) if festerm_sessiond::lock_is_contended(&error) => {
             exact_target_alive(
                 &record.runtime_root,
                 record
@@ -675,11 +675,8 @@ mod tests {
 
     #[test]
     fn managed_checkpoint_and_lock_are_private_and_reusable() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .canonicalize()
-            .unwrap()
-            .join(format!("festerm-managed-state-{}", uuid::Uuid::new_v4()));
-        let directory = setup_storage::private_directory(&root, true).unwrap();
+        let root = crate::test_support::private_directory("festerm-managed-state");
+        let directory = setup_storage::private_directory(&root, false).unwrap();
         let first = lock(&directory, "installer.lock").unwrap();
         refuse_orphaned_state(&root).unwrap();
         setup_storage::write_new_private(&directory, Path::new("host-identity.key"), b"fixture")
@@ -688,10 +685,9 @@ mod tests {
         fs::remove_file(root.join("host-identity.key")).unwrap();
         first.try_lock_exclusive().unwrap();
         let second = lock(&directory, "installer.lock").unwrap();
-        assert_eq!(
-            second.try_lock_exclusive().unwrap_err().kind(),
-            io::ErrorKind::WouldBlock
-        );
+        assert!(festerm_sessiond::lock_is_contended(
+            &second.try_lock_exclusive().unwrap_err()
+        ));
         FileExt::unlock(&first).unwrap();
         second.try_lock_exclusive().unwrap();
         drop(first);
@@ -721,13 +717,15 @@ mod tests {
 
     #[test]
     fn managed_healthy_reuse_preserves_metadata_and_refuses_a_dead_generation() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .canonicalize()
-            .unwrap()
-            .join(format!("festerm-managed-reuse-{}", uuid::Uuid::new_v4()));
-        let directory = setup_storage::private_directory(&root, true).unwrap();
-        let application = setup_storage::private_directory(&root.join("festerm"), true).unwrap();
-        let runtime_root = root.join("festerm/sessiond");
+        let root = crate::test_support::private_directory("festerm-managed-reuse");
+        let directory = setup_storage::private_directory(&root, false).unwrap();
+        #[cfg(unix)]
+        let application_name = "festerm";
+        #[cfg(windows)]
+        let application_name = "fesTerm";
+        let application_path = root.join(application_name);
+        let application = setup_storage::private_directory(&application_path, true).unwrap();
+        let runtime_root = application_path.join("sessiond");
         let runtime = setup_storage::private_directory(&runtime_root, true).unwrap();
         let id = uuid::Uuid::new_v4();
         let pid = std::process::id();
@@ -781,6 +779,11 @@ mod tests {
         setup_storage::write_new_private(&directory, Path::new(READY), &ready).unwrap();
         let worker = lock(&directory, "worker.lock").unwrap();
         worker.try_lock_exclusive().unwrap();
+        let health = lock(&directory, "health.lock").unwrap();
+        health.try_lock_exclusive().unwrap();
+        assert!(healthy_record(&directory, &record).unwrap().is_none());
+        FileExt::unlock(&health).unwrap();
+        drop(health);
         let before = setup_storage::read_private(&directory, Path::new(CONFIG), 65536).unwrap();
         for _ in 0..2 {
             let reused = healthy_record(&directory, &record).unwrap().unwrap();
@@ -801,7 +804,7 @@ mod tests {
         drop(directory);
         fs::remove_file(runtime_root.join(lease_name)).unwrap();
         fs::remove_dir(runtime_root).unwrap();
-        fs::remove_dir(root.join("festerm")).unwrap();
+        fs::remove_dir(application_path).unwrap();
         for name in [CONFIG, READY, "worker.lock", "health.lock"] {
             fs::remove_file(root.join(name)).unwrap();
         }

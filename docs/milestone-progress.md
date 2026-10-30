@@ -20,6 +20,11 @@ current-user-only final objects and the separate document-save staging policy.
 Policy-validated user/system-temporary fixtures avoid changing runner ACLs or
 requiring elevation on an ordinary user installation. Native Windows
 installer/service acceptance remains pending under #432.
+The first corrected Windows run passed all 26 bridge-library tests, then exposed
+a remaining binary fixture rooted in the checkout. All positive private-storage
+fixtures now share the test-only builder across library/setup/bridge roots.
+Managed fixtures retain native runtime spelling and ordinary paths, and
+health/worker locking reuses the daemon's native contention classifier.
 Publication and broader qualification remain gated on current
 Visual Studio-family usage-rights clarification; the owner authorized bounded
 service-application research and integration tests. The same-valid-token

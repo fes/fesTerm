@@ -11,6 +11,9 @@ pub mod setup_storage;
 #[cfg(feature = "relay")]
 pub mod transport;
 
+#[cfg(all(test, feature = "relay"))]
+mod test_support;
+
 #[cfg(feature = "relay")]
 fn reserve_sequence(counter: &std::sync::atomic::AtomicU64) -> std::io::Result<u64> {
     use std::sync::atomic::Ordering;

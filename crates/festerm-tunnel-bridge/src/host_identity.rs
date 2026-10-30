@@ -136,7 +136,7 @@ mod tests {
     struct OwnedDirectory(PathBuf);
     impl OwnedDirectory {
         fn new() -> Self {
-            Self(setup_storage::test_private_directory(
+            Self(crate::test_support::private_directory(
                 ".bridge-identity-test",
             ))
         }
