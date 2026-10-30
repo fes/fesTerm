@@ -10,6 +10,28 @@ update feed — and should not be read as an extension of ADR 0021.
 
 ## Why the desktop model does not transfer
 
+### Active development-device prototype
+
+The owner authorized campaign [#422](https://github.com/fes/fesTerm/issues/422)
+on 2026-10-30: a functional SSH terminal on a physical iPhone/iPad. The
+development-device packaging slice (#426) uses
+`scripts/build-ios-device.py` with an existing local Apple Development
+identity and explicit device-provisioned profile. See the
+[mobile host instructions](../app/festerm-mobile/README.md#development-signed-physical-device-build)
+for preflight, build and manual installation. This is local development
+signing, separate from the distribution credentials and store pipeline below.
+No App Store Connect key, enrollment, store upload or desktop release change
+is needed by this script. Native signing/install evidence remains pending.
+
+The portable checks validate profile expiry, team, explicit app ID,
+certificate and device membership; require a valid local signing identity;
+and restrict the requested entitlements. The bundle embeds private
+provisioning metadata in a fresh private output directory, outside Simulator
+artifacts. Keep that output local. A signed-build receipt explicitly records
+native validation as not run and does not replace device execution evidence.
+
+### Store-mediated release
+
 ADR 0021 exists because fesTerm ships its own binary and update channel with
 no store gatekeeper: `cargo-packager` builds platform-native installers,
 `cargo-packager-updater` verifies signed update artifacts against a
@@ -126,3 +148,4 @@ implementation should get its own ADR (per ADR 0031's closing bullet) that
 references this document and states explicitly that ADR 0021 does not cover
 mobile, so a future reader does not assume the desktop updater work was
 meant to reach mobile builds.
+

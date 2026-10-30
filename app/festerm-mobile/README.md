@@ -32,15 +32,66 @@ can misleadingly report only a disabled software-keyboard toggle.
 **Keyboard Capture** is a separate control, not the hardware-keyboard setting.
 Older Simulator.app preferences do not configure Device Hub.
 
-The generated app bundle is a local development artifact, not an IPA or
-TestFlight build. Physical devices still require a separately provisioned and
-signed application; that packaging is outside this slice. Device compilation
-can be checked on a Mac with:
+The generated Simulator app bundle is a local development artifact, not a
+physical-device app, IPA or TestFlight build. Device compilation can be checked
+on a Mac with:
 
 ```sh
 rustup target add aarch64-apple-ios
 IPHONEOS_DEPLOYMENT_TARGET=15.0 cargo check --locked -p festerm-mobile --target aarch64-apple-ios
 ```
+
+## Development-signed physical-device build
+
+Campaign [#422](https://github.com/fes/fesTerm/issues/422) targets a real SSH
+terminal on iPhone/iPad, with Termius for iOS as the interaction reference.
+The current host remains offline; packaging it does not implement SSH or
+establish native feasibility. The first packaging slice under
+[#426](https://github.com/fes/fesTerm/issues/426) uses existing local signing
+credentials rather than waiting for a TestFlight pipeline.
+
+On a Mac with full Xcode selected, prepare an **Apple Development** identity
+with its private key in the local keychain, an explicit registered bundle ID,
+and an unexpired **iOS App Development** provisioning profile containing that
+app, certificate and physical device UDID. An App Store/ad-hoc distribution
+profile, wildcard app ID or macOS Developer ID identity will be refused.
+Select the exact local certificate hash with:
+
+```sh
+security find-identity -v -p codesigning
+```
+
+Run preflight before spending time compiling. Substitute your local values;
+keep the profile outside the repository and do not share its decoded contents:
+
+```sh
+python3 scripts/build-ios-device.py \
+  --profile /private/path/festerm-development.mobileprovision \
+  --identity YOUR_40_HEX_CERTIFICATE_SHA1 \
+  --team YOURTEAMID \
+  --bundle-id your.registered.festerm.app \
+  --device YOUR_PROVISIONED_DEVICE_UDID \
+  --preflight-only
+```
+
+Remove `--preflight-only` to build `aarch64-apple-ios` with the selected
+`iphoneos` SDK, embed the profile, sign with minimal development entitlements
+and verify the signature. The script prints a fresh app path below
+`target/ios-device/development-*/fesTermSpike.app`. This private directory
+contains provisioning/device metadata: do not upload it as a CI artifact or
+commit it. Its `build-receipt.json` records source commit/dirty state,
+executable hash and toolchain, with `native_validation: not-run`; it excludes
+profile content, device UDID and signing identity. Only clean-source receipts
+can be attributed solely to a commit.
+
+Connect and trust the selected device, enable Developer Mode when required,
+and use Xcode's device-management interface to install the printed `.app` on
+that provisioned device. Launch it on-device and record MOB-01–05 results,
+including the persistent keyboard and Termius-inspired touch interactions.
+The script never installs, launches, enrolls an account, downloads profiles,
+or uploads a build. Local signing can require keychain approval. Native build,
+install and rendering remain pending until exercised on a provisioned Mac
+and device; portable packaging tests do not certify them.
 
 ## Automated Simulator launch evidence
 
@@ -194,3 +245,4 @@ on that iPhone and the Wide terminal surface on an isolated iPad Pro 13-inch
 (M5) Simulator. Those local captures are bounded visual evidence, not
 qualification of iPad workflow interaction, rotation, multitasking,
 accessibility or a physical device.
+
