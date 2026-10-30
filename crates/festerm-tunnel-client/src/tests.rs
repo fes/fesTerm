@@ -1,36 +1,36 @@
 use super::*;
 
 #[test]
-fn native_http_requests_use_owned_public_device_contracts_and_sensitive_account_headers() {
+fn native_http_requests_use_service_app_device_contracts_and_sensitive_account_headers() {
     let http = Https::new().unwrap();
     for (operation, endpoint, expected) in [
         (
             IdentityRequest::Device {
-                client_id: "ownedApp",
+                client_id: identity::SERVICE_CLIENT_ID,
             },
             "https://github.com/login/device/code",
-            vec![("client_id", "ownedApp"), ("scope", "read:user")],
+            vec![("client_id", identity::SERVICE_CLIENT_ID)],
         ),
         (
             IdentityRequest::Poll {
-                client_id: "ownedApp",
+                client_id: identity::SERVICE_CLIENT_ID,
                 device_code: "PRIVATE_DEVICE",
             },
             "https://github.com/login/oauth/access_token",
             vec![
-                ("client_id", "ownedApp"),
+                ("client_id", identity::SERVICE_CLIENT_ID),
                 ("device_code", "PRIVATE_DEVICE"),
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ],
         ),
         (
             IdentityRequest::Refresh {
-                client_id: "ownedApp",
+                client_id: identity::SERVICE_CLIENT_ID,
                 refresh_token: "PRIVATE_REFRESH",
             },
             "https://github.com/login/oauth/access_token",
             vec![
-                ("client_id", "ownedApp"),
+                ("client_id", identity::SERVICE_CLIENT_ID),
                 ("refresh_token", "PRIVATE_REFRESH"),
                 ("grant_type", "refresh_token"),
             ],
@@ -46,6 +46,7 @@ fn native_http_requests_use_owned_public_device_contracts_and_sensitive_account_
                 .map(|(key, value)| (key.into_owned(), value.into_owned()))
                 .collect();
         assert!(!fields.contains_key("client_secret"));
+        assert!(!fields.contains_key("scope"));
         assert_eq!(
             fields,
             expected

@@ -1,9 +1,64 @@
 # Milestone Progress Narrative
 
+The 2026-10-30 isolated macOS-to-Debian-ARM64 Pi Dev Tunnel test now passes
+actual GUI shell input/output, including the integrated native service-app flow.
+Relay WebSockets explicitly
+select a local Rustls provider to survive the desktop's combined ring/aws-lc
+feature graph without changing process defaults or certificate checks. Native
+GitHub account validation previously succeeded while management lookup returned
+HTTP 401 for fesTerm's own OAuth registration (#429); that historical failure
+does not describe the integrated SDK-published service application.
+Reusable per-user host setup, public profile
+import and six-platform helper bundles/installers are implemented locally, not
+published; native signing and clean-machine qualification remain release
+prerequisites under [#432](https://github.com/fes/fesTerm/issues/432).
+Publication and broader qualification remain gated on current
+Visual Studio-family usage-rights clarification; the owner authorized bounded
+service-application research and integration tests. The same-valid-token
+comparison for the former registration returned HTTP 401 with
+or without fesTerm's public client ID; that discrepancy is not a proven fix.
+An owner-authorized isolated follow-up using the SDK-published Dev Tunnels
+GitHub App now passes GitHub account verification and account/existing-tunnel
+metadata HTTP 200 with both ordinary and client-ID-qualified authorization
+([evidence](https://github.com/fes/fesTerm/issues/429#issuecomment-6527525291)).
+That diagnostic established an accepted credential path without changing product
+registration or saved credentials; connect tokens and refresh/persistence were
+not exercised. The owner's subsequent full-integration request now selects the
+SDK-published service application in the experimental product, binds private
+vault identity V2 to application and numeric account, and requires explicit
+sign-in for legacy/mismatched bindings. The standard code button now copies and
+opens GitHub in one click, with no display-time clipboard/browser action.
+The owner subsequently confirmed native sign-in, one-click clipboard/browser
+delivery, approved pinned attachment and real Pi shell input/output. A private
+leased native-store checker passed real secretless refresh, renewed-pair
+save/reload, account reverification and fresh scoped-token discovery with the
+saved host binding unchanged. The owner then confirmed saved-profile reconnect
+after desktop restart without another GitHub sign-in. Actual expiry/revocation,
+two-account, other-platform and keyboard/accessibility qualification remain
+separate from this partial DT-07 result and the unresolved usage-rights/release
+gates.
+
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
 ## Remote access without making the daemon a network service
+
+The owner approved an explicit installer-owned user auto-start service, stable
+host identity and idempotent reruns. Healthy reruns reuse the original private
+tunnel and exact shell generation; stale or unexplained partial state refuses
+instead of creating replacements. Service stop removes its bridge process
+group, not the independently started daemon. The public JSON paste flow previews
+the server/fingerprint and requires a new-profile confirmation, with credentials
+and host approval remaining separate. A real isolated macOS dummy-worker service
+smoke passed registration, repeat/start/collision checks and child shutdown;
+this is not real-cloud, signed-release or Linux/Windows service qualification.
+
+The GitHub device prompt now renders its short user code as a monospace
+button. Explicit activation copies that code through the ordinary clipboard
+output path without approving the account or changing the waiting state.
+Normal and narrow headless dialogs cover no idle/press-only writes, exact
+release activation and retained sign-in state. Native macOS clipboard delivery and browser opening were owner-confirmed;
+keyboard/screen-reader usability remains DT-07 evidence.
 
 The existing VS Code tunnel proposal depended on Microsoft's distributed
 server, leaving separate licensing, identity and internal-protocol gates.

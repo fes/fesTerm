@@ -14,6 +14,10 @@ Local modifications:
 - `connections` exports only the WebSocket adapter/helpers and errors; it uses
   modern vendored russh and rustls. The product uses only direct connections.
 - Direct WebSockets cap message/frame size at 1 MiB and write buffer at 2 MiB.
+- Direct/proxied TLS WebSockets select aws-lc explicitly per connector with
+  native roots and normal certificate/hostname verification, without setting
+  a process-wide crypto provider. The full desktop app also enables ring;
+  implicit Rustls provider selection would otherwise panic on first relay use.
 - The management JSON success path reads at most 64 KiB; errors omit body
   content on the endpoint-registration path. The caller disables redirects
   and sets a 20-second HTTP timeout.

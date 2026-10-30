@@ -4,10 +4,12 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::{valid_token, Error, IdentityRequest, IdentityTransport, RESPONSE_LIMIT};
+use crate::{Error, IdentityRequest, IdentityTransport, RESPONSE_LIMIT, valid_token};
 
 pub const VERIFICATION_URI: &str = "https://github.com/login/device";
-const STORE_PREFIX: &[u8] = b"FESTERM_GITHUB_IDENTITY_V1\0";
+pub const SERVICE_CLIENT_ID: &str = "Iv1.e7b89e013f801f03";
+const STORE_PREFIX: &[u8] = b"FESTERM_GITHUB_IDENTITY_V2\0";
+const LEGACY_STORE_PREFIX: &[u8] = b"FESTERM_GITHUB_IDENTITY_V1\0";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -35,6 +37,7 @@ impl Account {
 /// encoding; it is deliberately not interchangeable with a scoped connect token.
 pub struct Identity {
     pub account: Account,
+    client_id: String,
     access_token: String,
     refresh_token: Option<String>,
     expires_at: Option<u64>,
@@ -44,6 +47,7 @@ pub struct Identity {
 #[serde(deny_unknown_fields)]
 struct StoredIdentity {
     account: Account,
+    client_id: String,
     access_token: String,
     refresh_token: Option<String>,
     expires_at: Option<u64>,
@@ -75,6 +79,7 @@ impl Identity {
         let mut bytes = Zeroizing::new(STORE_PREFIX.to_vec());
         let record = StoredIdentity {
             account: self.account.clone(),
+            client_id: self.client_id.clone(),
             access_token: self.access_token.clone(),
             refresh_token: self.refresh_token.clone(),
             expires_at: self.expires_at,
@@ -86,14 +91,28 @@ impl Identity {
         }
         Ok(bytes)
     }
-    pub fn decode_private(bytes: &[u8], expected_account: u64) -> Result<Self, Error> {
+    pub fn decode_private(
+        bytes: &[u8],
+        expected_account: u64,
+        expected_client_id: &str,
+    ) -> Result<Self, Error> {
         if bytes.len() > RESPONSE_LIMIT {
             return Err(Error::Response);
         }
+        if !valid_client_id(expected_client_id) {
+            return Err(Error::Registration);
+        }
+        if bytes.starts_with(LEGACY_STORE_PREFIX) {
+            return Err(Error::IdentityChanged);
+        }
         let bytes = bytes.strip_prefix(STORE_PREFIX).ok_or(Error::Response)?;
         let mut record: StoredIdentity = crate::decode(bytes)?;
+        if record.client_id != expected_client_id {
+            return Err(Error::IdentityChanged);
+        }
         let identity = Self {
             account: record.account.clone(),
+            client_id: record.client_id.clone(),
             access_token: std::mem::take(&mut record.access_token),
             refresh_token: record.refresh_token.take(),
             expires_at: record.expires_at,
@@ -141,6 +160,9 @@ impl Identity {
         if !valid_client_id(client_id) {
             return Err(Error::Registration);
         }
+        if self.client_id != client_id {
+            return Err(Error::IdentityChanged);
+        }
         if !self.can_refresh() {
             return Err(Error::Expired);
         }
@@ -153,7 +175,7 @@ impl Identity {
         let mut poll: Poll = crate::decode(&bytes)?;
         if poll.error.is_some()
             || poll.token_type.as_deref() != Some("bearer")
-            || !minimal_scope(poll.scope.as_deref())
+            || !app_scope(poll.scope.as_deref())
         {
             return Err(Error::Denied);
         }
@@ -168,6 +190,7 @@ impl Identity {
         }
         Ok(Self {
             account,
+            client_id: self.client_id.clone(),
             access_token: access.to_string(),
             refresh_token: Some(refresh.to_string()),
             expires_at: expiry(poll.expires_in)?,
@@ -245,9 +268,11 @@ impl Drop for Poll {
 }
 
 pub fn registered_client_id() -> Option<&'static str> {
-    option_env!("FESTERM_GITHUB_CLIENT_ID")
-        .or(Some("Ov23li7bESpHMwpvoQua"))
-        .filter(|id| valid_client_id(id))
+    configured_client_id(option_env!("FESTERM_GITHUB_CLIENT_ID"))
+}
+fn configured_client_id(override_id: Option<&str>) -> Option<&str> {
+    let id = override_id.unwrap_or(SERVICE_CLIENT_ID);
+    (id == SERVICE_CLIENT_ID).then_some(id)
 }
 fn valid_client_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')
@@ -323,7 +348,7 @@ pub async fn sign_in(
         if poll.token_type.as_deref() != Some("bearer") {
             return Err(response_error("device-token-type"));
         }
-        if !minimal_scope(poll.scope.as_deref()) {
+        if !app_scope(poll.scope.as_deref()) {
             return Err(response_error("device-token-scope"));
         }
         let access_token = Zeroizing::new(
@@ -345,6 +370,7 @@ pub async fn sign_in(
         }
         return Ok(Identity {
             account,
+            client_id: client_id.to_owned(),
             access_token: access_token.to_string(),
             refresh_token: poll.refresh_token.take(),
             expires_at: expiry(poll.expires_in)?,
@@ -358,12 +384,8 @@ fn now_seconds() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |time| time.as_secs())
 }
-fn minimal_scope(scope: Option<&str>) -> bool {
-    scope.is_none_or(|scope| {
-        scope
-            .split([',', ' '])
-            .all(|scope| scope.is_empty() || scope == "read:user")
-    })
+fn app_scope(scope: Option<&str>) -> bool {
+    scope.is_none_or(str::is_empty)
 }
 fn oauth_error(error: &str) -> Error {
     match error {
@@ -486,8 +508,61 @@ mod tests {
         }
     }
     const GRANT: &str = r#"{"device_code":"PRIVATE_DEVICE","user_code":"ABCD-1234","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}"#;
-    const TOKEN: &str = r#"{"access_token":"PRIVATE_ACCESS","refresh_token":"PRIVATE_REFRESH","token_type":"bearer","scope":"read:user","expires_in":3600,"refresh_token_expires_in":7200}"#;
+    const TOKEN: &str = r#"{"access_token":"PRIVATE_ACCESS","refresh_token":"PRIVATE_REFRESH","token_type":"bearer","scope":"","expires_in":3600,"refresh_token_expires_in":7200}"#;
     const USER: &str = r#"{"id":42,"login":"owned-account","name":"ignored"}"#;
+
+    #[test]
+    fn native_registration_selects_service_app_and_refuses_unqualified_overrides() {
+        assert_eq!(configured_client_id(None), Some(SERVICE_CLIENT_ID));
+        assert_eq!(
+            configured_client_id(Some(SERVICE_CLIENT_ID)),
+            Some(SERVICE_CLIENT_ID)
+        );
+        for id in [
+            "",
+            "invalid id",
+            "Ov23li7bESpHMwpvoQua",
+            "01ab8ac9400c4e429b23",
+        ] {
+            assert_eq!(configured_client_id(Some(id)), None);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn native_identity_binds_application_and_refuses_legacy_or_cross_app_refresh() {
+        let http = Fake::new(&[GRANT, TOKEN, USER]);
+        let original = sign_in(
+            &http,
+            "ownedApp",
+            Some(42),
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .unwrap();
+        let encoded = original.encode_private().unwrap();
+        assert!(encoded.starts_with(STORE_PREFIX));
+        assert!(Identity::decode_private(&encoded, 42, "ownedApp").is_ok());
+        assert_eq!(
+            Identity::decode_private(&encoded, 42, "differentApp").unwrap_err(),
+            Error::IdentityChanged
+        );
+        let legacy = Zeroizing::new([LEGACY_STORE_PREFIX, b"PRIVATE_LEGACY_CREDENTIAL"].concat());
+        assert_eq!(
+            Identity::decode_private(&legacy, 42, "ownedApp").unwrap_err(),
+            Error::IdentityChanged
+        );
+        let unused = Fake::new(&[]);
+        assert_eq!(
+            original
+                .refresh(&unused, "differentApp", &CancellationToken::new())
+                .await
+                .unwrap_err(),
+            Error::IdentityChanged
+        );
+        assert!(unused.requests.lock().unwrap().is_empty());
+        assert!(!Error::IdentityChanged.to_string().contains("PRIVATE"));
+    }
 
     #[tokio::test(start_paused = true)]
     async fn native_device_flow_respects_interval_slowdown_and_private_identity_binding() {
@@ -529,12 +604,12 @@ mod tests {
         );
         assert!(!format!("{identity:?}").contains("PRIVATE"));
         let encoded = identity.encode_private().unwrap();
-        assert!(Identity::decode_private(&encoded, 42).is_ok());
+        assert!(Identity::decode_private(&encoded, 42, "ownedApp").is_ok());
         assert!(matches!(
-            Identity::decode_private(&encoded, 99),
+            Identity::decode_private(&encoded, 99, "ownedApp"),
             Err(Error::AccountChanged)
         ));
-        assert!(Identity::decode_private(b"ordinary-connect-token", 42).is_err());
+        assert!(Identity::decode_private(b"ordinary-connect-token", 42, "ownedApp").is_err());
         assert!(!identity.needs_sign_in());
         assert!(identity.can_refresh());
     }
@@ -554,7 +629,7 @@ mod tests {
         .unwrap();
         assert_eq!(identity.account.login, "managed-user_acme");
         let stored = identity.encode_private().unwrap();
-        let restored = Identity::decode_private(&stored, 42).unwrap();
+        let restored = Identity::decode_private(&stored, 42, "ownedApp").unwrap();
         let refresh = Fake::new(&[TOKEN, MANAGED_USER]);
         let rotated = restored
             .refresh(&refresh, "ownedApp", &CancellationToken::new())
@@ -566,12 +641,14 @@ mod tests {
             "managed\nuser_acme",
             "managed user_acme",
         ] {
-            assert!(Account {
-                id: 42,
-                login: login.into()
-            }
-            .validate()
-            .is_err());
+            assert!(
+                Account {
+                    id: 42,
+                    login: login.into()
+                }
+                .validate()
+                .is_err()
+            );
         }
     }
 
@@ -637,7 +714,7 @@ mod tests {
             .await
             .unwrap();
         let refresh = Fake::new(&[
-            r#"{"access_token":"PRIVATE_NEW_ACCESS","refresh_token":"PRIVATE_NEW_REFRESH","token_type":"bearer","scope":"read:user","expires_in":7200}"#,
+            r#"{"access_token":"PRIVATE_NEW_ACCESS","refresh_token":"PRIVATE_NEW_REFRESH","token_type":"bearer","scope":"","expires_in":7200}"#,
             USER,
         ]);
         let renewed = original
@@ -683,16 +760,18 @@ mod tests {
             .unwrap_err(),
             Error::Response
         );
-        let broad = Fake::new(&[
-            GRANT,
+        for token in [
             r#"{"access_token":"PRIVATE_ACCESS","token_type":"bearer","scope":"repo"}"#,
-        ]);
-        assert_eq!(
-            sign_in(&broad, "ownedApp", None, &CancellationToken::new(), |_| {})
-                .await
-                .unwrap_err(),
-            Error::Response
-        );
-        assert_eq!(broad.requests.lock().unwrap().len(), 2);
+            r#"{"access_token":"PRIVATE_ACCESS","token_type":"bearer","scope":"read:user"}"#,
+        ] {
+            let broad = Fake::new(&[GRANT, token]);
+            assert_eq!(
+                sign_in(&broad, "ownedApp", None, &CancellationToken::new(), |_| {})
+                    .await
+                    .unwrap_err(),
+                Error::Response
+            );
+            assert_eq!(broad.requests.lock().unwrap().len(), 2);
+        }
     }
 }

@@ -1,6 +1,7 @@
 use std::sync::{
+    Arc, OnceLock,
     atomic::{AtomicBool, Ordering},
-    mpsc, Arc, OnceLock,
+    mpsc,
 };
 use std::time::Duration;
 
@@ -12,8 +13,9 @@ use festerm_tunnel_bridge::{
     transport,
 };
 use festerm_tunnel_client::{
+    Error, Https,
     identity::{self, Account, DevicePrompt, Identity},
-    service, Error, Https,
+    service,
 };
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -248,8 +250,8 @@ async fn prepare(
         let secret = store
             .get(binding.credential_reference())
             .map_err(|_| Error::Store)?;
-        let identity =
-            secret.with_bytes(|bytes| Identity::decode_private(bytes, binding.account_id))?;
+        let identity = secret
+            .with_bytes(|bytes| Identity::decode_private(bytes, binding.account_id, client_id))?;
         if identity.needs_sign_in() {
             let refreshed = identity.refresh(&http, client_id, cancel).await?;
             let (published, publication) = oneshot::channel();
@@ -562,9 +564,17 @@ impl FesTermApp {
                     ui.label("Connecting…");
                 }
                 Stage::Device(prompt) => {
+                    ui.label("Sign in to Microsoft Dev Tunnels");
                     ui.label("Enter this code on GitHub:");
-                    ui.monospace(&prompt.user_code);
-                    ui.hyperlink_to("Open GitHub", identity::VERIFICATION_URI);
+                    if ui
+                        .button(egui::RichText::new(&prompt.user_code).monospace())
+                        .on_hover_text("Copy code and open GitHub")
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(prompt.user_code.clone());
+                        ui.ctx()
+                            .open_url(egui::OpenUrl::new_tab(identity::VERIFICATION_URI));
+                    }
                     ui.label("Waiting for sign-in…");
                 }
                 Stage::Host {

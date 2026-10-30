@@ -230,11 +230,50 @@ pub async fn connect_directly(
         .max_message_size(Some(1024 * 1024))
         .max_frame_size(Some(1024 * 1024))
         .max_write_buffer_size(2 * 1024 * 1024);
-    let (ws, _) = tokio_tungstenite::connect_async_with_config(ws_req, Some(config), true)
-        .await
-        .map_err(TunnelError::WebSocketError)?;
+    let connector = relay_tls_connector(&ws_req)?;
+    let (ws, _) =
+        tokio_tungstenite::connect_async_tls_with_config(ws_req, Some(config), true, connector)
+            .await
+            .map_err(TunnelError::WebSocketError)?;
 
     Ok(ws)
+}
+
+fn relay_tls_connector(
+    request: &tungstenite::handshake::client::Request,
+) -> Result<Option<tokio_tungstenite::Connector>, tungstenite::Error> {
+    if request.uri().scheme_str() != Some("wss") {
+        return Ok(None);
+    }
+    let native = rustls_native_certs::load_native_certs();
+    if !native.errors.is_empty() {
+        log::warn!(
+            "native root CA certificate loading errors: {:?}",
+            native.errors
+        );
+    }
+    let mut roots = rustls::RootCertStore::empty();
+    let (added, ignored) = roots.add_parsable_certificates(native.certs);
+    log::debug!("Added {added} native root certificates (ignored {ignored})");
+    if roots.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "no native root CA certificates found",
+        )
+        .into());
+    }
+    // The desktop app enables both providers through different HTTPS clients.
+    // Select this connector's provider without changing the process-wide default.
+    let config = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .map_err(io::Error::other)?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    Ok(Some(tokio_tungstenite::Connector::Rustls(
+        std::sync::Arc::new(config),
+    )))
 }
 
 pub async fn connect_via_proxy(
@@ -310,7 +349,9 @@ pub async fn connect_via_proxy(
         .map_err(TunnelError::ProxyHandshakeFailed)?
         .io
         .into_inner();
-    let (ws_stream, _) = tokio_tungstenite::client_async_tls(ws_req, tcp).await?;
+    let connector = relay_tls_connector(&ws_req)?;
+    let (ws_stream, _) =
+        tokio_tungstenite::client_async_tls_with_config(ws_req, tcp, None, connector).await?;
     Ok(ws_stream)
 }
 
@@ -359,6 +400,65 @@ mod test {
     use tokio_tungstenite::connect_async;
 
     use super::{build_websocket_request, AsyncRWWebSocket, AsyncRWWebSocketOptions};
+
+    #[tokio::test]
+    async fn relay_tls_refuses_closed_peer_without_ambiguous_provider_panic() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            drop(stream);
+        });
+        let request = build_websocket_request(&format!("wss://{address}/"), &[]).unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(5), super::connect_directly(request))
+            .await
+            .unwrap();
+        peer.await.unwrap();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn proxy_tls_refuses_closed_peer_without_ambiguous_provider_panic() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let peer = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(stream.read_u8().await.unwrap());
+                assert!(request.len() < 4096);
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                .await
+                .unwrap();
+        });
+        let request = build_websocket_request("wss://localhost/", &[]).unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            super::connect_via_proxy(request, &address.to_string()),
+        )
+        .await
+        .unwrap();
+        peer.await.unwrap();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn relay_tls_connector_preserves_process_provider_and_plain_websockets() {
+        let provider = rustls::crypto::CryptoProvider::get_default().map(std::sync::Arc::as_ptr);
+        let plain = build_websocket_request("ws://localhost/", &[]).unwrap();
+        assert!(super::relay_tls_connector(&plain).unwrap().is_none());
+        let secure = build_websocket_request("wss://localhost/", &[]).unwrap();
+        assert!(matches!(
+            super::relay_tls_connector(&secure).unwrap(),
+            Some(tokio_tungstenite::Connector::Rustls(_))
+        ));
+        assert_eq!(
+            rustls::crypto::CryptoProvider::get_default().map(std::sync::Arc::as_ptr),
+            provider,
+        );
+    }
 
     #[tokio::test]
     async fn test_websocket_stream() {

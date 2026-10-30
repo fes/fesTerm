@@ -1722,14 +1722,20 @@ Launcher, Profiles and Inspector. The preferred editor reuses the destination
 form's labeled **Name** and **Tunnel** fields and concise **Sign in with GitHub**,
 **Connect**, **Connect once**, **Save profile** and **Cancel** controls.
 Save target edits before sign-in. Device authorization displays the short code
-and fixed GitHub system-browser link, bounded progress and content-free errors.
+as a standard monospace button with a **Copy code and open GitHub** tooltip.
+One explicit activation copies the code and opens the fixed GitHub device URL,
+without advancing sign-in or approving a host. Merely displaying the dialog
+does neither. Name **Microsoft Dev Tunnels** as the application being authorized;
+keep ordinary labels/buttons, bounded progress and content-free errors concise.
 Use the shared viewport-bounded confirmation sizing with a preferred 520-point
 content width for every sign-in stage, rather than shrinking to the code or
 shortest status. Ordinary instructions remain on one line where space allows;
 narrow windows still constrain the dialog to the viewport.
-The registered project-owned public client is included in default builds; no
-per-user app registration is required. An explicitly empty/invalid build override
-reports unavailable setup, not fake login. Live native acceptance remains
+The SDK-published service GitHub App is included in default builds; no
+per-user app registration is required. An explicitly empty, invalid or different
+build override reports unavailable setup, not another app's consent flow.
+Legacy/unbound native-vault identities request a new explicit sign-in, not
+silent migration or cross-application refresh. Live native acceptance remains
 tracked in [#429](https://github.com/fes/fesTerm/issues/429).
 The verified account and host fingerprint require Cancel-default approval on
 first use/account change or changed host. Independent profiles have distinct
@@ -1738,6 +1744,15 @@ Rotation preserves live launch bindings; duplication or changing the tunnel
 clears bindings. Connect once uses a fresh transient identity and never rotates
 a saved profile's credentials. Advanced retains legacy destination-file/token
 input. Inventory/create/takeover/terminate and filesystem writes are unavailable.
+**Paste setup JSON** opens a bounded public-metadata input followed by
+**Preview**. Show the tunnel/server and host fingerprint, require explicit
+confirmation and **Save imported profile**, then return to the editor without
+connecting or signing in. Import rejects credentials, credential references,
+unknown fields, unsafe URLs and invalid host/generation bindings; invalid raw
+input never enters diagnostics or configuration. Save uses the application
+command model to publish managed metadata and a new credential-free profile
+transactionally; name collisions refuse, and Cancel discards the staged blob.
+Authentication and first/changed-host approval remain separate.
 Inspector shows the account captured by that launch, never the profile's later
 current account. GitHub principal metadata is not presented as the remote OS user.
 

@@ -1,9 +1,13 @@
 //! Experimental attach-only bridge. Network dependencies are explicitly opt-in.
 #[cfg(feature = "relay")]
 pub mod files;
+#[cfg(feature = "relay")]
+pub mod host_identity;
 pub mod protocol;
 #[cfg(feature = "relay")]
 pub mod relay;
+#[cfg(feature = "relay")]
+pub mod setup_storage;
 #[cfg(feature = "relay")]
 pub mod transport;
 

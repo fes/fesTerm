@@ -114,16 +114,21 @@ browser implementation, daemon, PTY, GUI or platform-vault dependency. The host
 opens the fixed `https://github.com/login/device` URL and provides secure storage.
 The existing mobile host does not yet integrate the runtime or Keychain.
 
-Default builds include public client ID `Ov23li7bESpHMwpvoQua`, registered for
-fesTerm under `fesLabs-core` with device flow enabled. Release builds may
-override it through `FESTERM_GITHUB_CLIENT_ID`, never per profile/user; an
-explicitly empty/invalid override is an honest unavailable state. No borrowed
-app ID or client secret is shipped. Registration is complete; actual
-third-party Dev Tunnels acceptance and native/iOS evidence remain open under
+Default builds use the SDK-published production Microsoft Dev Tunnels GitHub
+App, public client ID `Iv1.e7b89e013f801f03`. The dialog names Microsoft Dev
+Tunnels explicitly. No app secret, VS Code identity or existing application
+credential is used. A retained `FESTERM_GITHUB_CLIENT_ID` build override must
+match this reviewed service registration; empty, malformed and other IDs
+disable sign-in rather than silently selecting a different consent identity.
+No per-user registration is required. Native/iOS qualification remains open under
 [#429](https://github.com/fes/fesTerm/issues/429).
 
-Device authorization posts `client_id` and minimal `read:user` scope to
-`/login/device/code`, shows the short user code and fixed system-browser link,
+Device authorization posts only `client_id`, without OAuth permission scopes,
+to `/login/device/code`. GitHub App permissions come from the service's
+registration, not an OAuth-app scope string; only empty/absent scope responses
+are accepted. The standard monospace code button copies the code and opens
+the fixed GitHub device URL in one explicit activation; displaying the dialog
+does neither. This does not approve an account or host. The client
 then polls `/login/oauth/access_token` with the device grant. Polls respect the
 server interval (at least five seconds), add five on slowdown and stop at
 expiry/cancellation. Responses are capped at 64 KiB, token values at 16 KiB,
@@ -136,7 +141,12 @@ fields remain forbidden and only opaque references name stored credentials.
 Denial, disabled flow, expiry and rate limits never silently restart login.
 
 Every newly issued/refreshed access token is verified through GitHub `/user`;
-stable numeric account ID, not mutable login text, binds credentials. GitHub
+stable numeric account ID and originating public application ID, not mutable
+login text alone, bind credentials. Private native-vault identity encoding V2
+includes that application binding. Legacy V1 and mismatched applications
+require explicit sign-in without forwarding or refreshing the old pair;
+the old vault entry is retired only after a replacement profile is saved.
+GitHub
 device-issued refresh uses the documented public-client exception: client ID,
 refresh grant and refresh token, **without client_secret**. Account-validated
 rotation replaces the complete native-store pair before further discovery and
@@ -165,7 +175,7 @@ atomic no-takeover attachment follows with immutable source/account/profile/
 host/session pins. Profile edits/cancel discard unpublished vault entries.
 
 The supported device/refresh contracts are documented by
-[GitHub](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps).
+[GitHub](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app).
 Secretless web/PKCE exchange is not assumed: its documented token exchange
 still requires a secret. Native sign-in is implemented, not live-qualified.
 
@@ -360,6 +370,51 @@ Closing the bridge withdraws access without deleting unrelated tunnels or
 terminating retained sessions. Only explicitly test-owned/provisioned
 resources may be removed by automated cleanup.
 
+The explicit host setup tool may provision a new private tunnel/marked virtual
+port and a uniquely named local daemon, then host the separate bridge.
+The owner's subsequent explicit approval adds a dedicated **per-user
+auto-start service** and idempotent reruns, not silent deployment during an
+ordinary GUI launch. This is operator-authorized local setup, not a remote create RPC
+or silent helper deployment. Standalone per-platform release bundles and
+installers must verify provenance and preserve existing tools, tunnels and
+services. Linux uses systemd user services, macOS a LaunchAgent, and Windows a
+least-privileged current-user logon task. No elevation, system service, linger
+enablement, password-bearing task or unrelated service mutation is authorized.
+Auto-start means user sign-in (or Linux boot when lingering already exists),
+not survival/replacement of the daemon shell after reboot.
+
+The private installation journal records its unique tunnel, verified CLI
+account, exact daemon PID/generation/endpoint, original runtime namespace and
+service identity. The worker and bridge use that recorded namespace rather
+than the service manager's environment. Privileged execution refuses before
+state/authentication/provisioning mutations. Missing journals with other state
+also refuse; they cannot authorize a fresh tunnel or shell. Healthy
+reruns return the same metadata without login, tunnel/session creation or
+service restart. A stopped service may resume only that same live generation;
+stale/replaced generations refuse. Uncertain interrupted cloud mutations
+remain explicit operator-reconciliation failures, never blind create retries.
+Versioned helper caches are immutable; reruns cannot overwrite live binaries
+or silently upgrade a retained daemon.
+Stopping the service withdraws its entire worker/bridge process group, not
+the independently started session daemon.
+
+Stable relay identity includes its host ID and Ed25519 host key, held in a
+dedicated current-user-only identity file, separate from ordinary metadata.
+The explicit headless-service boundary permits this unencrypted host-key
+file with Unix 0700/0600 or a protected Windows current-user DACL. This is
+not bearer-token storage, an OS-account compromise defense or a substitute
+for disk encryption. Missing/corrupt/permissive identity refuses; service
+startup never silently regenerates it. Host/connect tokens still use bounded
+zeroized memory and stdin only. The official CLI owns its own cached login
+and refresh policy; a changed account or reauthentication requirement refuses
+without borrowing credentials or entering a repeated device-login loop.
+
+Setup prints a versioned **public** profile JSON wrapper. Client import bounds
+and validates it, previews the tunnel/host fingerprint and requires explicit
+profile creation; authentication and host approval remain separate. No token,
+credential reference, client-local path authority or automatic connection is
+imported. Public metadata is not authority to replace an existing profile.
+
 | Event | Intended effect on shell | Required qualification |
 | --- | --- | --- |
 | Client exit, sleep or network loss | Daemon continues; attachment may be lost | Same process/session resumes without replayed input |
@@ -390,6 +445,73 @@ describes public-preview development/testing use, no SLA and no recommendation
 for production workloads. Confirm applicable terms and supported usage before
 advertising a production remote-access product. This ADR is not legal
 clearance, service availability assurance or an SLA.
+
+The 2026-10-30 investigation retrieved the terms currently linked by
+[`aka.ms/devtunnels/tos`](https://aka.ms/devtunnels/tos). Sections 1(a) and
+5(f) restrict the permitted product context and combining the software with
+other applications for others to use. Microsoft's
+[maintainer clarification](https://github.com/microsoft/dev-tunnels/issues/489#issuecomment-2455939910)
+identifies the Visual Studio product family. Standalone fesTerm eligibility
+therefore needs explicit clarification; development/testing-only labeling and
+the SDK's MIT license do not establish that permission. Do not publish the
+installer or broaden qualification without resolving applicable usage
+rights and the supported third-party integration path. The owner's subsequent
+bounded diagnostic/integration tests below do not waive this publication gate.
+
+The pinned SDK's
+[`GitHubAppClientId` contract](https://github.com/microsoft/dev-tunnels/blob/b73b0eb774b86a5b519c300f2f41c9072a66f663/cs/src/Contracts/TunnelServiceProperties.cs#L223-L230)
+directs clients to the service's GitHub application when requesting user
+tokens. It does not establish that an independently registered fesTerm OAuth
+application is accepted. A same-valid-credential comparison passed GitHub
+account verification before and after, but both raw-token and
+`client_id=<fesTerm-public-id>` authorization returned HTTP 401 on account
+limits and tunnel lookup. Missing client ID alone is not the root cause.
+Acceptance of the independent fesTerm OAuth registration remains unconfirmed,
+not proven to be a specific allowlist or scope defect. Open-source follow-up found Microsoft's
+[AHP Swift app](https://github.com/microsoft/agent-host-protocol/blob/0b7b7f9f4ceb2fbd8846557416f765ac73da647d/clients/swift/AHPApp/AHPApp/Views/TunnelListView.swift#L385-L415)
+using a library whose
+[production configuration](https://github.com/rebornix/dev-tunnels-swift/blob/551bda5de3c7b044e9b85c6383f0f207e9672be5/Sources/DevTunnelsClient/Management/TunnelServiceProperties.swift#L23-L28)
+selects the SDK-published service GitHub application. This is a concrete native
+precedent for the documented service contract, not for an independently
+registered caller application. That service identity is distinct from VS
+Code's OAuth registration; using a documented service application is not
+inherently credential borrowing. It still requires explicit user consent,
+applicable usage rights and live qualification before adoption here. Do not
+silently substitute identities, create app secrets or broaden scopes
+speculatively. The experiment guide records the source comparisons.
+
+The owner subsequently authorized an isolated live test of that service
+application on 2026-10-30. Fresh device authorization requested no OAuth-app
+permission scopes, used no client secret and kept credentials only in memory.
+GitHub account verification succeeded before and after; account limits and the
+selected existing tunnel metadata each returned HTTP 200 with both ordinary
+and client-ID-qualified GitHub authorization.
+[Recorded evidence](https://github.com/fes/fesTerm/issues/429#issuecomment-6527525291)
+therefore establishes an accepted service-application credential path, not the
+internal rejection mechanism for independent registrations. No connect token
+was requested; refresh availability was observed but refresh was not tested.
+The probe exited and dropped credentials without changing product registration,
+vault entries, profiles or tunnels/services. Integrating the new application
+contract still requires consent/binding/lifecycle review and product
+qualification; this diagnostic does not resolve standalone usage rights or
+authorize publication.
+
+The owner then requested full local integration of this verified contract.
+The experimental client now selects the published service application,
+rejects unreviewed build overrides, binds stored/refreshed credentials to the
+application and numeric account, and identifies the service in the ordinary
+viewport-bounded dialog. This changes neither daemon nor bridge authority.
+Owner-authorized integration testing is distinct from release/standalone-use
+clearance; the remaining publication and platform gates above are retained.
+The owner subsequently confirmed native macOS-to-Debian-ARM64 Pi attachment,
+one-click clipboard/browser delivery and actual remote shell input/output.
+With that isolated desktop closed, a task-private leased native-store check
+completed real secretless refresh, saved/reloaded the renewed V2 pair,
+reverified the account and minted a fresh scoped connect token without
+changing the saved host binding. The owner then confirmed the restarted
+desktop reconnected with its saved profile without another GitHub sign-in.
+This is partial DT-07/client-restart evidence, not expiry/revocation,
+two-account, all-platform, clean-machine or usage-rights qualification.
 
 The original existing-VS-Code-host request in #296 remains distinct and is
 not closed by this alternative. No Microsoft-distributed VS Code Server,
@@ -459,7 +581,7 @@ Configuration adds a secret-free `dev_tunnel` profile kind; existing documents
 and local takeover semantics remain supported. Protocol 3 adds atomic admission;
 the remote subset never authorizes takeover. Initial desktop scope is
 Windows, Linux and macOS with platform-specific evidence required. Mobile,
-multi-user delegation, unattended services, arbitrary port forwarding,
+multi-user delegation, system-wide/unapproved unattended services, arbitrary port forwarding,
 automatic helper deployment and daemon hot handoff remain out of scope.
 
 ## Validation impact
@@ -468,7 +590,7 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   daemon stays local-only and owns PTY/recovery lifetime; exact session/host
   targeting; bounded network decode and queues; secrets stay outside ordinary
   metadata; remote links never become client-local file authority.
-- **GUI/action edges affected:** `TUNNEL-01`/`02`/`03`/`05`/`06`/`07`/`08`/`09`,
+- **GUI/action edges affected:** `TUNNEL-01`/`02`/`03`/`05`/`06`/`07`/`08`/`09`/`10`,
   `TERM-05` and `TERM-08` have restricted experimental implementation and partial automated evidence;
   `TUNNEL-04` remains deferred/unavailable. Existing local/SSH ownership and close semantics are
   unchanged. Implemented operations must converge on the application command
@@ -485,6 +607,24 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   isolation/stale completion and serialized atomic refresh publication.
   Structural editor routing and bounded pre-admission discovery have regressions;
   no new snapshot baseline is implied.
+  Device-code copying has normal/narrow real-widget activation coverage.
+  The relay TLS regression explicitly enables both ring and aws-lc in the
+  workspace test graph, refuses a closed peer without panic, retains native
+  roots/certificate checks and does not change the process provider.
+  Host-setup unit and owned subprocess tests cover exact new tunnel identity,
+  private state, scoped-token decoding/stdin-only delivery, fixed-stage error
+  redaction, marked ports, no file capability, readiness and Ctrl+C detachment.
+  Bundle/installer tests cover all six artifact shapes, required notices,
+  exact versions/checksums, traversal/duplicate/symlink refusal and changed
+  upstream CLI pins. Published artifacts, native signing and clean-machine
+  install/auth/storage behavior remain required evidence, not mock passes.
+  Reusable setup additionally requires private checkpoint/lock ownership,
+  immutable helper cache, stable host-key/ID reload, strict public import,
+  exact-generation service startup and no reprovisioning on healthy repeat.
+  Service-definition tests must cover argument/XML/specifier escaping,
+  ownership collisions, user-only/non-elevated execution and bounded runners.
+  Real user-service/login/reboot behavior and native clipboard/accessibility
+  remain explicit native/manual gates.
   Further tests/evidence required include real bridge process death and native
   daemon survival, credential expiry/revocation and platform GUI behavior.
   The original planned obligations remain: protocol/schema/length refusal,
@@ -497,7 +637,9 @@ automatic helper deployment and daemon hot handoff remain out of scope.
 - **Native/manual evidence required:** `DT-01` through `DT-07` in
   `docs/manual-validation.md`; service policy/authentication, real PTY/TUI
   input/resize, disconnect/bridge restart and platform lifetimes remain
-  pending. Controlled automation should replace manual checks where possible.
+  pending. Usage rights and supported third-party OAuth application/token
+  eligibility must be clarified before further live qualification or release.
+  Controlled automation should replace manual checks where possible.
 - **Coverage superseded:** No existing local/SSH evidence is retired. Trace
   entries distinguish the partial experimental subset from deferred management
   operations and pending real-service/native qualification.

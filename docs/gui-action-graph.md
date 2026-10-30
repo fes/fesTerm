@@ -503,21 +503,46 @@ bridge. The [experimental subset](dev-tunnels-experiment.md) uses explicit
 peer profiles and advanced CLI-to-GUI activation, GitHub-provisioned scoped tokens and one configured
 existing generation. Attach/detach and actionable disconnect are implemented
 with partial deterministic evidence; real-service/native qualification remains
-pending. Native sign-in/name discovery include the registered project client;
+pending. Native sign-in/name discovery use the SDK-published service GitHub App;
 live qualification remains open under #429;
 inventory/create/takeover/terminate remain unavailable.
+Publication and broader qualification remain gated on standalone usage
+rights in ADR 0053; the owner authorized the bounded integration tests below.
+An owner-authorized isolated service-application diagnostic subsequently
+passed GitHub account verification and account/existing-tunnel metadata
+HTTP 200 with both header forms; see [#429 evidence](https://github.com/fes/fesTerm/issues/429#issuecomment-6527525291).
+It requested no connect token and did not change product registration.
+That diagnostic alone promotes no edge. The subsequent integrated macOS/Pi
+fixture passed native sign-in, one-click clipboard/browser delivery,
+account/host approval, scoped-token discovery and actual terminal input/output.
+A task-private native-store check passed real secretless refresh, renewed-pair
+save/reload, account reverification and fresh scoped-token discovery with the
+same host binding. The owner confirmed saved-profile reconnect after desktop
+restart without another GitHub sign-in. DT-07 remains partial for expiry/
+revocation, two accounts, other native platforms and keyboard/accessibility;
+standalone usage rights remain unresolved.
+
+Explicit host installers are a separate operator-side setup action: a new
+private tunnel/marked virtual port and uniquely named local daemon, with an
+explicitly approved per-user service or controlled foreground mode. They
+never add a remote create RPC or run during GUI startup.
+Release artifacts/signing/clean-machine qualification remain prerequisites.
+The earlier macOS/Pi scoped-token GUI fixture passed independently. The former
+fesTerm-owned registration's HTTP 401 is historical failed evidence, not the
+result of the integrated service-application flow.
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
-| `TUNNEL-01` | Launcher/profile/setup → authenticated remote destination | Select Dev Tunnel Name/Tunnel and native sign-in; Advanced retains trusted metadata and scoped-token input. | Independent concurrent account/profile bindings; immutable launch pins; no global login/token slot, CLI/VS Code client dependency or plaintext persistence; registered project client, live acceptance gate #429. | Cancel leaves existing sessions untouched. | P,H,N; partial |
+| `TUNNEL-01` | Launcher/profile/setup → authenticated remote destination | Select Dev Tunnel Name/Tunnel and native sign-in; Advanced retains trusted metadata and scoped-token input. | Independent concurrent account/profile bindings; immutable launch pins; no global login/token slot, CLI/VS Code client dependency or plaintext persistence; SDK-published service application, remaining live acceptance gate #429. | Cancel leaves existing sessions untouched. | P,H,N; partial |
 | `TUNNEL-02` | Authorized destination → live remote terminal | Attach the one configured existing exact generation. Create/takeover are unavailable. | Atomic daemon admission refuses occupied/replaced targets; bounded validated recovery is adopted before live output and replies remain daemon-owned. | Detach via `TUNNEL-03`. | P,H,N; partial |
 | `TUNNEL-03` | Live/disconnected remote terminal → detached/reopened | Close attachment or explicitly reopen the same selected target with current metadata/token. | Disconnect/bridge restart does not terminate the daemon-owned shell; no input replay, automatic reconnect/takeover or changed-target substitution; remote links grant no client-local reads. | Explicit reopen or close view. | P,H,N; partial |
 | `TUNNEL-04` | Exported session → terminated | Explicitly confirm supported termination of the exact selected generation. | Stale identity/ownership changes refuse; cancellation, EOF and tab close never imply termination; uncertain outcomes reconcile without blind retry. | Refresh bounded inventory. | P,H,N; deferred |
 | `TUNNEL-05` | Connecting/live/disconnected → credential/setup recovery | Token is rejected/expired, host changes or relay is lost; operator deliberately verifies/replaces setup and reopens. | Content-free actionable status, cancellable bounded recovery and no weaker ACL/anonymous fallback; native expiry/revocation timing remains unqualified. | Explicit reopen with current metadata/token. | P,H,N; partial |
 | `TUNNEL-06` | Remote terminal → remote text/Markdown snapshot | Deliberately open a detected path or explicit OSC 8 file target through the originating SSH/SFTP or Dev Tunnel filesystem capability. | Shared resolver/dispatch; source-relative file:///localhost; provider/endpoint/profile/session-generation-bound reads and adoption; native path semantics, bounded regular-file content and no client-local/OS/shell fallback. | Close snapshot or return to source; stale/missing capability refuses. | P,H,N,security; partial |
-| `TUNNEL-07` | Saved Name/Tunnel profile → verified account | Explicit GitHub device sign-in through the system browser; registered project identity is included by default. | Fixed device URL, short code, bounded interval-respecting native polls, minimal read:user scope, /user verification, no CLI/client secret/borrowed ID; cancellation or stale profile discards unpublished credentials. | Cancel or return to editor; explicitly invalid/empty build override is unavailable. | P,H,N,security; partial |
+| `TUNNEL-07` | Saved Name/Tunnel profile → verified account | Explicit GitHub device sign-in naming Microsoft Dev Tunnels; click the standard code button once to copy and open GitHub. SDK-published service application is included by default. | Fixed device URL, short code, bounded interval-respecting polls, no OAuth permission scopes, /user verification, no CLI/client secret/borrowed credentials; clipboard/browser output occurs only on explicit code-button activation and does not approve sign-in. V2 vault credentials bind application and numeric account; legacy/mismatched bindings require new sign-in before any refresh. Cancellation or stale profile discards unpublished credentials. | Cancel or return to editor; empty/invalid/unreviewed build override is unavailable. | P,H,N,security; partial |
 | `TUNNEL-08` | Verified account → trusted bridge → attach | Resolve the named tunnel with connect-only scope; approve account/host fingerprint before read-only discovery. | Exactly one marked bridge port/host (label or exact description), pinned encrypted endpoint, bounded versioned discovery without daemon admission/IPC paths; changed identity needs Cancel-default confirmation. | Cancel preserves all daemon sessions. | P,H,N,security; partial |
 | `TUNNEL-09` | Bound saved profile → refreshed native credential | Explicit Connect may refresh expired device-issued credentials without a client secret. | Account revalidation and serialized atomic native-store replacement before further lookup; identity and connect references remain profile-independent; stale completion refuses; no repeated sign-ins/input replay or mutation of live bindings. | Cancel connection; interrupted/failed rotation requires explicit reauthentication. | P,H,N,security; partial |
+| `TUNNEL-10` | Dev Tunnel editor → public setup preview → new profile | Paste bounded versioned setup JSON; validate tunnel/endpoint/generation and preview its host fingerprint; explicitly create profile. | No tokens/credential bindings or client-local paths in imported data, no silent overwrite, network, sign-in or host approval; authenticate separately through existing flow. | Cancel discards staged import without changing profiles or clipboard. | P,H,N,security; partial |
 
 ## E. Serial lifecycle
 

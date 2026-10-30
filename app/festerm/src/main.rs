@@ -16,6 +16,8 @@ mod document_activation;
 mod document_layout;
 #[cfg(feature = "experimental-dev-tunnels")]
 mod tunnel_activation;
+#[cfg(feature = "experimental-dev-tunnels")]
+mod tunnel_profile_import;
 // Every entry point here is exercised by its own tests and is called for real
 // once the editor tab lands; the allowance goes with it.
 #[allow(dead_code)]

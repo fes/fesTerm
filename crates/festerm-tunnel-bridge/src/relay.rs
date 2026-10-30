@@ -16,7 +16,10 @@ use tunnels::{
     management::{new_tunnel_management, Authorization, TunnelLocator, TunnelRequestOptions},
 };
 
-use crate::protocol::{invalid, Target};
+use crate::{
+    host_identity::HostIdentity,
+    protocol::{invalid, Target},
+};
 
 // Neither relay role grants shell, agent, filesystem, or arbitrary forwarding
 // channels. Dropping each admission handle rejects it before registration.
@@ -309,6 +312,18 @@ pub async fn host(
     port: u16,
     token: &str,
 ) -> io::Result<HostConnection> {
+    host_with_identity(tunnel_id, cluster, port, token, HostIdentity::ephemeral()?).await
+}
+
+/// Reuses a locally trusted signing identity and relay host identifier.
+/// Relay-issued connection URIs remain service-owned and may change.
+pub async fn host_with_identity(
+    tunnel_id: &str,
+    cluster: &str,
+    port: u16,
+    token: &str,
+    identity: HostIdentity,
+) -> io::Result<HostConnection> {
     if port == 0
         || ![tunnel_id, cluster].iter().all(|s| {
             !s.is_empty()
@@ -318,16 +333,12 @@ pub async fn host(
     {
         return Err(stage_error("host.arguments"));
     }
-    let key = russh::keys::PrivateKey::random(
-        &mut russh::keys::key::safe_rng(),
-        russh::keys::Algorithm::Ed25519,
-    )
-    .map_err(|_| stage_error("host.key_generation"))?;
+    let host_id = identity.host_id();
+    let key = identity.into_key();
     let public = key
         .public_key()
         .to_openssh()
         .map_err(|_| stage_error("host.key_encoding"))?;
-    let host_id = uuid::Uuid::new_v4().to_string();
     let request = TunnelEndpoint {
         id: Some(format!("{host_id}-relay")),
         host_id,
@@ -367,7 +378,11 @@ pub async fn host(
         )
         .await
         .map_err(management_error)?;
-    if endpoint.host_public_keys != request.host_public_keys {
+    if endpoint.host_public_keys != request.host_public_keys
+        || endpoint.host_id != request.host_id
+        || endpoint.id != request.id
+        || !matches!(endpoint.connection_mode, TunnelConnectionMode::TunnelRelay)
+    {
         return Err(stage_error("host.endpoint_key_mismatch"));
     }
     let url = endpoint

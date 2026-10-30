@@ -23,6 +23,7 @@ pub enum Error {
     Network,
     Response,
     AccountChanged,
+    IdentityChanged,
     TunnelNotFound,
     Tunnel,
     Ambiguous,
@@ -41,6 +42,7 @@ impl fmt::Display for Error {
             Self::Network => "Connection failed. Try again.",
             Self::Response => "Unexpected service response.",
             Self::AccountChanged => "Account changed. Sign in again.",
+            Self::IdentityChanged => "Sign-in application changed. Sign in again.",
             Self::TunnelNotFound => "Tunnel not found. Check the name and account.",
             Self::Tunnel => "No fesTerm bridge is available for this tunnel.",
             Self::Ambiguous => "This tunnel has multiple hosts or ports.",
@@ -175,7 +177,6 @@ impl Https {
                 let endpoint = match operation {
                     IdentityRequest::Device { client_id } => {
                         form.append_pair("client_id", client_id);
-                        form.append_pair("scope", "read:user");
                         "https://github.com/login/device/code"
                     }
                     IdentityRequest::Poll {

@@ -1898,6 +1898,34 @@ impl FesTermApp {
         saved
     }
 
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn import_public_tunnel_profile(
+        &mut self,
+        import: crate::tunnel_profile_import::PublicProfileImport,
+    ) {
+        let result = self
+            .configuration_reloader
+            .tunnel_import_directory()
+            .map_err(|_| {
+                "The imported profile could not be saved. Configuration location unavailable."
+            })
+            .and_then(|directory| {
+                import.save(self.state.configuration(), &directory, |replacement| {
+                    self.configuration_reloader
+                        .save_configuration(replacement)
+                        .is_ok()
+                })
+            });
+        match result {
+            Ok(configuration) => {
+                self.state.replace_configuration(configuration);
+                self.configuration_status = ConfigurationStartupStatus::ProfileSaved;
+                self.secure_storage_feedback = Some("Public profile saved. Authenticate separately in Advanced with a scoped connect token; import did not connect or sign in.");
+            }
+            Err(message) => self.secure_storage_feedback = Some(message),
+        }
+    }
+
     /// Deletes a profile the user has already confirmed in the Profiles
     /// surface. `Configuration::without_profile` itself rejects deletion of
     /// a profile still referenced by a saved workspace tab, surfacing that
@@ -6359,6 +6387,10 @@ impl FesTermApp {
         }
         if let Some(command) = screen_command {
             match command {
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::ImportPublicDevTunnelProfile { import } => {
+                    self.import_public_tunnel_profile(import);
+                }
                 AppCommand::StartConfiguredDevTunnelProfile { profile_id } => {
                     #[cfg(feature = "experimental-dev-tunnels")]
                     if self
@@ -15345,6 +15377,58 @@ mod tests {
         harness.step();
         harness.run();
         harness
+    }
+
+    #[test]
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn public_tunnel_import_app_command_saves_without_connecting_or_replacing_profiles() {
+        let directory = tempfile::Builder::new()
+            .prefix("public-tunnel-command-tests-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let path = directory.path().join("config.toml");
+        let mut harness = harness_with_configuration(Configuration::empty());
+        harness.state_mut().configuration_reloader =
+            ConfigurationReloader::from_path_for_test(path.clone());
+        harness.run();
+        let count = harness.state().state.tabs().len();
+        let import = crate::tunnel_profile_import::PublicProfileImport::parse(
+            &crate::tunnel_profile_import::fixture_json().to_string(),
+        )
+        .unwrap();
+        harness
+            .state_mut()
+            .import_public_tunnel_profile(import.clone());
+        assert_eq!(harness.state().state.tabs().len(), count);
+        assert_eq!(
+            harness.state().configuration_status,
+            ConfigurationStartupStatus::ProfileSaved
+        );
+        let saved = harness.state().state.configuration().clone();
+        let profile = saved.profile("server-one").unwrap();
+        assert!(profile.credential_reference().is_none());
+        assert!(profile.as_dev_tunnel().unwrap().identity().is_none());
+        assert_eq!(
+            Configuration::parse(&fs::read_to_string(&path).unwrap()).unwrap(),
+            saved
+        );
+        harness.state_mut().import_public_tunnel_profile(import);
+        assert_eq!(harness.state().state.configuration(), &saved);
+        assert_eq!(harness.state().state.tabs().len(), count);
+        assert!(harness
+            .state()
+            .secure_storage_feedback
+            .unwrap()
+            .contains("already exists"));
+
+        let mut renamed = crate::tunnel_profile_import::fixture_json();
+        renamed["name"] = serde_json::json!("save-failure");
+        harness.state_mut().configuration_reloader = ConfigurationReloader::unavailable();
+        harness.state_mut().import_public_tunnel_profile(
+            crate::tunnel_profile_import::PublicProfileImport::parse(&renamed.to_string()).unwrap(),
+        );
+        assert_eq!(harness.state().state.configuration(), &saved);
+        assert_eq!(harness.state().state.tabs().len(), count);
     }
 
     #[test]

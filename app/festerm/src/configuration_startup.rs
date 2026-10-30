@@ -282,6 +282,24 @@ impl ConfigurationReloader {
         Self::from_source_selection(Err(ConfigurationLoadFailure::NativeLocationUnavailable))
     }
 
+    #[cfg(feature = "experimental-dev-tunnels")]
+    pub(crate) fn tunnel_import_directory(&self) -> Result<PathBuf, ConfigurationLoadFailure> {
+        let selected = self.selected_path.as_ref().map_err(|failure| *failure)?;
+        if let Some(directory) = &selected.native_directory {
+            if !directory.exists() {
+                create_native_configuration_directory(directory)
+                    .map_err(|_| ConfigurationLoadFailure::Unreadable)?;
+            }
+        }
+        let parent = selected
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let directory = parent.join("tunnel-profiles");
+        std::path::absolute(directory).map_err(|_| ConfigurationLoadFailure::Unreadable)
+    }
+
     fn initial_load(&self) -> (Configuration, ConfigurationStartupStatus) {
         let path = match &self.selected_path {
             Ok(selected) => &selected.path,

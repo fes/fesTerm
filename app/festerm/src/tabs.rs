@@ -2079,6 +2079,10 @@ pub struct SshProfileDraftSeed {
 /// copy of these operations.
 #[derive(Debug)]
 pub enum AppCommand {
+    #[cfg(feature = "experimental-dev-tunnels")]
+    ImportPublicDevTunnelProfile {
+        import: crate::tunnel_profile_import::PublicProfileImport,
+    },
     NativeDevTunnel {
         profile_id: String,
         sign_in: bool,
@@ -3765,6 +3769,8 @@ impl AppState {
             | AppCommand::StoreProfilePrivateKey { .. }
             | AppCommand::StartConfiguredSshProfile { .. }
             | AppCommand::StartConfiguredSftpProfile { .. } => {}
+            #[cfg(feature = "experimental-dev-tunnels")]
+            AppCommand::ImportPublicDevTunnelProfile { .. } => {}
             AppCommand::OpenTextEditor { path } => {
                 if let Some(failure) = self.open_text_editor(&path) {
                     self.open_refusal = Some((path, failure));
