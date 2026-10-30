@@ -238,9 +238,11 @@ mod tests {
 
     #[test]
     fn private_state_creation_and_replacement_are_bounded_and_exclusive() {
-        let path = std::env::current_dir()
-            .unwrap()
-            .join(format!(".bridge-storage-test-{}", uuid::Uuid::new_v4()));
+        #[cfg(windows)]
+        let parent = std::env::temp_dir();
+        #[cfg(not(windows))]
+        let parent = std::env::current_dir().unwrap();
+        let path = parent.join(format!(".bridge-storage-test-{}", uuid::Uuid::new_v4()));
         let directory = private_directory(&path, true).unwrap();
         let name = Path::new("state.json");
         write_new_private(&directory, name, b"first").unwrap();

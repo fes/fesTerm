@@ -136,9 +136,11 @@ mod tests {
     struct OwnedDirectory(PathBuf);
     impl OwnedDirectory {
         fn new() -> Self {
-            let path = std::env::current_dir()
-                .unwrap()
-                .join(format!(".bridge-identity-test-{}", uuid::Uuid::new_v4()));
+            #[cfg(windows)]
+            let parent = std::env::temp_dir();
+            #[cfg(not(windows))]
+            let parent = std::env::current_dir().unwrap();
+            let path = parent.join(format!(".bridge-identity-test-{}", uuid::Uuid::new_v4()));
             setup_storage::private_directory(&path, true).unwrap();
             Self(path)
         }

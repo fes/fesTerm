@@ -1128,7 +1128,9 @@ mod tests {
                             if marker.is_empty()
                                 || marker.len() % SMOKE_MARKER.len() != 0
                                 || !marker
-                                    .chunks_exact(SMOKE_MARKER.len())
+                                    .as_chunks::<{ SMOKE_MARKER.len() }>()
+                                    .0
+                                    .iter()
                                     .all(|part| part == SMOKE_MARKER)
                             {
                                 return Err(refused("smoke.cleanup_unverified_marker"));
