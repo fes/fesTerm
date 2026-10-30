@@ -29,8 +29,11 @@ Two-finger pinch scales terminal text within the shared zoom limits.
 Affected PRs retain mobile unit/dependency checks, device compilation and
 Simulator app builds. Nightly/manual iOS runs collect isolated iPhone/iPad
 launch and screenshot evidence without gating desktop PRs.
-It is an offline development harness; native iOS feasibility remains pending
-and SSH/mobile product support is not yet implemented.
+The default remains an offline development harness. An opt-in `live-ssh`
+prototype adds one transient connection with explicit host-key/password UI;
+see the [mobile host instructions](app/festerm-mobile/README.md#opt-in-live-ssh-prototype-campaign-422424).
+Native/live-service and physical-device feasibility remain pending; mobile
+product support is not accepted.
 
 Milestones 0 through 5, M7, and M8 are implemented. M6 remains the open
 compatibility acceptance gate because fresh native-window and

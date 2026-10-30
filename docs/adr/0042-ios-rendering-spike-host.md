@@ -152,6 +152,49 @@ panel. Resources stay inert. Reusing the parser adds `festerm-markdown` and its
 `festerm-syntax` dependency to the audited mobile graph; it does not import the
 desktop app, source I/O or native dialogs.
 
+## Opt-in transient SSH prototype extension (campaign #422/#424)
+
+Owner direction on 2026-10-30 advances the smallest functional iOS prototype.
+Independent architectural review on 2026-10-30 approved this feature-gated
+composition as the basis for prototype work; native feasibility and mobile
+product support remain unaccepted. The offline fixture
+and nightly smoke remain the default. The explicit `live-ssh` feature adds
+`festerm-session`, `festerm-ssh` and zeroizing transient credential input to
+the mobile composition root, without importing the desktop app or backends.
+
+The app owns the sole presented Terminal writer. The existing SSH worker
+publishes bounded session events and an event-loop-safe notifier; the app
+processes at most 32 events per UI frame, including while Files/README is
+selected and without repeating the budget during layout retries, ingests output, returns core protocol
+replies, and forwards encoded keyboard/gesture input through the existing
+atomic backend admission. There is no second protocol parser or unbounded
+frontend payload queue. Refused input/replies retire the session with a
+notice; earlier admitted commands may have executed and are never replayed.
+One pending resize coalesces geometry changes with a 100 ms debounce.
+
+The minimal connection form requests host/port/user, then the existing worker
+orders fingerprint review before interactive password authentication. A pin
+is retained only in memory for the same canonical host/port during this app
+session. Unknown hosts require explicit approval; changed pins have Reject
+only. A bounded zeroizing text buffer and sensitive/no-undo password widget
+avoid credential persistence and retained editing snapshots. Native secret
+storage remains Unsupported on iOS; no memory/plaintext persistence fallback
+is introduced. Cancellation and replacement retire prompts and transport
+ownership. A main-thread suspension handle shares only the live connection
+state with the native host, not terminal ownership. The native suspension
+callback clears prompts/passwords and retires transport without waiting for
+a UI frame or synchronous worker shutdown. Resetting the offline fixture
+preserves this callback binding. Reconnection is explicit and starts a fresh shell;
+neither always-live background sockets nor remote process survival is promised.
+
+Terminal focus, accessory keys and gestures yield to connection/auth controls
+and otherwise preserve the approved persistent keyboard and directional helper.
+Termius is the interaction reference; saved-host management, persistent
+credentials, native selection handles and paste affordances remain separate
+follow-ups. Files and README remain inert offline previews. Feature builds
+have a separate Simulator artifact; offline smoke cannot be relabeled as
+live-service evidence.
+
 ## Alternatives considered
 
 - Feature-gate the entire desktop root: much wider work than needed for the
@@ -220,10 +263,18 @@ accessibility and physical-device acceptance remain open on iPad.
 - **Invariants introduced or changed:** additive mobile composition root;
   shared core/renderer and single writer preserved; no desktop session backend
   or updater in the iOS normal/build graph; no retained user input.
-- **GUI/action edges affected:** `MOB-01`, `MOB-02`, `MOB-03`, `MOB-04`,
+- **GUI/action edges affected:** `MOB-06` (opt-in live SSH), `MOB-01`, `MOB-02`, `MOB-03`, `MOB-04`,
   `MOB-05` (isolated preview);
   `ZOOM-02` shares the existing size bounds.
-- **Automated tests required:**
+- **Automated tests required:** Opt-in live host tests:
+  `mobile_live_ssh_pump_uses_core_replies_and_bounded_event_work`,
+  `mobile_live_ssh_hidden_workspaces_keep_pumping_output_and_replies`,
+  `mobile_live_ssh_native_suspension_retires_without_a_ui_frame`,
+  `mobile_live_ssh_input_refusal_retires_session_without_replay`,
+  `mobile_live_ssh_stop_clears_prompts_password_resize_and_stale_output`,
+  `mobile_live_ssh_resize_coalesces_and_rejects_unrepresentable_grids`,
+  `mobile_live_ssh_password_buffer_bounds_unicode_edits_and_take`;
+  feature-enabled desktop tests, iOS device compilation and Simulator linking.
   `scripts/tests/test_ios_device_build.py` covers development-profile admission,
   exact local signing identity, entitlement minimization, non-building preflight,
   device/Simulator separation, failure receipts and private output/receipt policy;
@@ -273,4 +324,3 @@ accessibility and physical-device acceptance remain open on iPad.
 - **Native/manual evidence required:** `MOB-01` through `MOB-05` in
   `docs/manual-validation.md`, on Simulator and a physical iOS device.
 - **Coverage superseded:** None; desktop acceptance is unchanged.
-

@@ -2313,10 +2313,13 @@ dependencies = [
  "festerm-core",
  "festerm-ios-window",
  "festerm-markdown",
+ "festerm-session",
+ "festerm-ssh",
  "festerm-ui-egui",
  "log",
  "raw-window-handle",
  "winit",
+ "zeroize",
 ]
 
 [[package]]

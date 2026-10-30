@@ -655,3 +655,26 @@ integration remain gated by [#429](https://github.com/fes/fesTerm/issues/429).
 - Platform serial-device discovery, permissions, and reconnect policy for the
   later first-class serial transport.
 - Boundaries and trust model for future scripting or plugins.
+
+
+## Opt-in mobile SSH composition (experimental)
+
+Campaign #422/#424 extends the isolated mobile root under ADR 0042's
+architecturally reviewed live-SSH extension, without native/product acceptance.
+The `live-ssh` feature adds the existing session and SSH
+crates, never the desktop root/PTY/sessiond/updater. The app is the sole
+presented terminal writer and processes at most 32 session events per frame.
+The pump runs even while Files/README is selected, once per frame rather than
+per layout pass. The worker notifier wakes the UI; bounded backend queues own payload admission.
+Encoded keyboard input and core protocol replies use that same admission path.
+Refusal retires the connection with no automatic replay, and one pending resize
+coalesces geometry changes. Replacement/suspension drops prompt/transport
+ownership and rejects stale work. A main-thread suspension handle lets the
+native callback retire transport and wipe sensitive prompts without a redraw;
+it never mutates the terminal. Existing SshSession Drop is nonblocking.
+
+Transient zeroizing authentication and memory-only host pins stay outside
+configuration; iOS persistent native storage remains Unsupported. This changes
+the mobile composition dependency graph and requires the ADR/architecture
+review before merge. It does not accept device networking, native input or
+physical iOS feasibility. Desktop contracts are unchanged.
