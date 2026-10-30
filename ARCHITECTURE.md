@@ -634,3 +634,22 @@ Performance benchmarks should initially report trends rather than block every co
 - Platform serial-device discovery, permissions, and reconnect policy for the
   later first-class serial transport.
 - Boundaries and trust model for future scripting or plugins.
+
+
+## Opt-in mobile SSH composition (for review)
+
+Campaign #422/#424 extends the isolated mobile root under ADR 0042's Proposed
+live-SSH extension. The `live-ssh` feature adds the existing session and SSH
+crates, never the desktop root/PTY/sessiond/updater. The app is the sole
+presented terminal writer and processes at most 32 session events per frame.
+The worker notifier wakes the UI; bounded backend queues own payload admission.
+Encoded keyboard input and core protocol replies use that same admission path.
+Refusal retires the connection with no automatic replay, and one pending resize
+coalesces geometry changes. Replacement/suspension drops prompt/transport
+ownership and rejects stale work. Existing SshSession Drop is nonblocking.
+
+Transient zeroizing authentication and memory-only host pins stay outside
+configuration; iOS persistent native storage remains Unsupported. This changes
+the mobile composition dependency graph and requires the ADR/architecture
+review before merge. It does not accept device networking, native input or
+physical iOS feasibility. Desktop contracts are unchanged.

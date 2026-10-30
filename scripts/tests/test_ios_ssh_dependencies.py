@@ -13,6 +13,23 @@ SPEC.loader.exec_module(build)
 
 
 class IosSshDependencyTests(unittest.TestCase):
+    def test_live_feature_graph_is_checked_for_both_mobile_targets(self):
+        with patch.object(build.sys, "argv", ["build", "--check-dependencies", "--live-ssh"]), \
+                patch.object(build, "check_dependencies") as check:
+            self.assertEqual(build.main(), 0)
+        self.assertEqual([call.args for call in check.call_args_list], [
+            ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"),
+            ("aarch64-apple-ios", "festerm-mobile", True),
+            ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"),
+            ("aarch64-apple-ios-sim", "festerm-mobile", True),
+        ])
+
+    def test_live_feature_is_forwarded_to_cargo_graph_inspection(self):
+        with patch.object(build, "run", return_value=subprocess.CompletedProcess([], 0, "festerm-mobile v0.11.1")) as run:
+            build.check_dependencies("aarch64-apple-ios", live_ssh=True)
+        self.assertIn("--features", run.call_args.args)
+        self.assertIn("live-ssh", run.call_args.args)
+
     def test_real_ssh_graph_uses_target_qualified_normal_and_build_dependencies(self):
         output = "festerm-ssh v0.11.1\nfesterm-secret-store v0.11.1\nring v0.17.14\n"
         with patch.object(build, "run", return_value=subprocess.CompletedProcess([], 0, output)) as run:

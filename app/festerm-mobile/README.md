@@ -1,7 +1,8 @@
 # iOS rendering spike
 
-Experimental host for the existing fesTerm Rust core and egui renderer. This
-is **not yet an SSH client**. It combines the original bounded terminal probe
+Experimental host for the existing fesTerm Rust core and egui renderer. The default
+build is an offline fixture; the opt-in `live-ssh` prototype connects one
+transient SSH session, pending native/live-service qualification. It combines the original bounded terminal probe
 with synthetic Files/SFTP and Markdown workspaces so the responsive mobile
 interaction design can be tested before credentials, transport, persistence or
 real file access exist. See
@@ -41,6 +42,47 @@ can be checked on a Mac with:
 rustup target add aarch64-apple-ios
 IPHONEOS_DEPLOYMENT_TARGET=15.0 cargo check --locked -p festerm-mobile --target aarch64-apple-ios
 ```
+
+## Opt-in live SSH prototype (campaign #422/#424)
+
+Build and run the shared mobile host with a transient SSH connection UI:
+
+```sh
+cargo run --locked -p festerm-mobile --features live-ssh
+# On macOS/Xcode, create a separate Simulator bundle:
+python3 scripts/build-ios-spike.py --live-ssh --run
+```
+
+The feature bundle/archive is under `target/ios-spike-live/`, separate from
+the offline smoke bundle. CI links and publishes it as
+`festerm-ios-live-ssh-simulator`. Offline nightly launch evidence continues
+to exercise the default fixture, and does not establish live SSH acceptance.
+
+Open **Connect SSH (prototype)**, enter host/port/username, and choose
+**Connect to host**. This replaces the previous connection with a fresh shell.
+Review the host fingerprint before entering a password. Approved fingerprints
+are pinned only for that canonical host/port during this app run; changed
+keys are rejected. Passwords are transient with bounded sensitive/no-undo
+editing. No saved profiles, persistent trust or credentials are implemented.
+
+The connected terminal uses the existing persistent keyboard, Ctrl/Alt/Esc/Tab
+and directional gesture helper. Connection/auth controls temporarily own input;
+their text must never reach the terminal. The shared core encodes input and
+protocol replies. Refused backend input disconnects with a notice rather than
+silently dropping a command suffix or replaying it. Resize is coalesced; output
+work per frame and backend queues are bounded. Disconnect retains the visible
+terminal until a new connection or **Offline fixture** is selected.
+Suspension requires an explicit new connection; it does not promise remote
+process survival or uninterrupted background networking.
+
+Termius for iOS is the interaction reference. This first form deliberately
+uses one transient connection rather than saved-host navigation. Persistent
+keyboard and the existing arrow helper are retained; paste, native selection
+handles and broader mobile affordances remain #425 follow-up work. Files and
+README stay offline previews. Before acceptance, exercise MOB-06 against an
+owned SSH server on Simulator and provisioned iPhone/iPad, including a remote
+TUI such as Copilot CLI. Feature compilation/linking and fake-session tests
+do not prove native UI, authentication or network operation.
 
 ## Automated Simulator launch evidence
 

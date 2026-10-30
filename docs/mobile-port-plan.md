@@ -7,7 +7,7 @@ and iPad as part of this initial host. Owner-authorized campaign
 [#422](https://github.com/fes/fesTerm/issues/422) now prioritizes the smallest
 live-SSH/device-prototype slice across the later phases. Android and broader
 product capabilities remain deferred. The host is still an offline experiment
-until live integration lands. ADR 0031 supplies the planning
+until the opt-in live integration is explicitly selected and qualified. ADR 0031 supplies the planning
 boundaries; ADR 0042 proposes the concrete additive host/dependency decision.
 
 This document is the companion delivery plan for ADR 0031. It sequences the
@@ -97,6 +97,22 @@ Portable graph-policy tests cover forbidden dependencies, both roots/targets,
 and failed graph inspection. Rust compilation and native/live-service evidence
 are separate gates; next wire one app-owned session to the shared terminal,
 with explicit trust/authentication and bounded event/input routing.
+
+### Opt-in live integration for review
+
+The `live-ssh` host feature adds one transient SSH session and a minimal
+connection/trust/password flow, preserving the shared session/core/renderer
+boundaries. See ADR 0042's Proposed extension and the mobile host README.
+The app-owned pump ingests bounded events, returns terminal replies, coalesces
+resize, and retires refused/stale input without replay. Pins and credentials
+are memory-only. Suspension/reconnect is explicit and starts a fresh shell.
+The offline host stays the default and Files/README remain previews.
+
+MOB-06 tracks the missing controlled SSH and physical-device evidence.
+Feature-enabled tests, target checks and a separate linked Simulator artifact
+must pass, but do not establish native usability. The Termius-inspired
+persistent keyboard and directional helper are preserved; paste/native
+selection handles and persistent-host navigation remain later #425 work.
 
 ### Input affordances
 
@@ -189,4 +205,3 @@ self-hosted signed updates).
 - Plugin/scripting systems — already out of scope for desktop per
   `DESIGN.md` and the 0.1 Architecture-Stability Period; mobile does not
   reopen this.
-

@@ -3296,6 +3296,11 @@
         "ADR-0042"
       ],
       "automated_tests": [
+        "mobile_live_ssh_pump_uses_core_replies_and_bounded_event_work",
+        "mobile_live_ssh_input_refusal_retires_session_without_replay",
+        "mobile_live_ssh_stop_clears_prompts_password_resize_and_stale_output",
+        "mobile_live_ssh_resize_coalesces_and_rejects_unrepresentable_grids",
+        "mobile_live_ssh_password_buffer_bounds_unicode_edits_and_take",
         "mobile_lifecycle_is_idempotent_and_counts_resume_after_suspend",
         "mobile_probe_uses_core_encoding_without_echoing_or_retaining_input",
         "mobile_fixture_renders_at_phone_width_and_preserves_grid_on_memory_warning",
@@ -3327,10 +3332,12 @@
         "MOB-02",
         "MOB-03",
         "MOB-04",
-        "MOB-05"
+        "MOB-05",
+        "MOB-06"
       ],
       "status": "partial",
       "prerequisites": [
+        "MOB-06 opt-in live-ssh host integration requires architectural review and controlled real SSH/physical-device evidence; fake-session routing tests and feature device compilation/Simulator linking do not establish native usability; credentials and host pins are transient, changed pins reject, suspension requires a fresh explicit connection; Termius-inspired connection/input usability and #425 paste/native handles remain pending",
         "affected PRs retain mobile unit/dependency checks, device compilation and Simulator app builds, including vendor-only epaint edits; isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py runs nightly/manual only under a distinct experimental-simulator-smoke check, not the simulator-build PR context or a desktop merge gate while iOS is experimental; failed runs/receipts remain failed (#303), without retry and with unchanged CoreSimulator application/process deadlines and ownership/capture/pass-fail guards; during the existing three-second startup grace, the harness observes the first-UI marker once per second and records the actual grace plus poll 1, 2 or 3 when first observed, then retains the prior exact-process check, screenshot/PNG validation, second liveness check and final marker evaluation, including acceptance when first UI is observed post-capture; pre-capture liveness failure retains readiness with capture marked not-attempted and blocks the screenshot as before; capture records retain readiness in memory before capture and are persisted when controlled screenshot timeouts and invalid PNGs unwind, while external hard termination can still prevent the final manifest write; first-UI failure or process death remains failed evidence; separate read-only prepared receipts are not app-pass evidence; scripts/tests/test_scheduled_workflows.py and test_ios_simulator_smoke.py cover the ADR-0042 workflow policy, readiness observation and preparation separation; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go and runtime merge-gate review before mobile product support"
       ]
     }
