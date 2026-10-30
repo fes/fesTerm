@@ -7,7 +7,11 @@ use festerm_config::{
     EmojiPresentationPreference, ImageMemoryBudgetPreference, ScrollSpeedPreference,
     ScrollbackLimitPreference, SftpPaneOrderPreference, TerminalFontPreference,
 };
-use festerm_ui_egui::{chrome::ChipLayout, theme};
+use festerm_ui_egui::{
+    chrome::ChipLayout,
+    controls::{action_button, ActionButtonRole},
+    theme,
+};
 
 use super::{ssh_paragraph, ssh_section_heading, AppCommand, CONTENT_SCROLLBAR_LANE};
 
@@ -30,6 +34,8 @@ pub(crate) struct SettingsViewModel {
     pub prefer_powershell: bool,
     pub extend_dev_tunnel_lifetime: bool,
     pub dev_tunnel_extension_days: u32,
+    /// `(key, login, profiles using it)` for each shared Dev Tunnel account.
+    pub dev_tunnel_accounts: Vec<(String, String, usize)>,
     pub customize_local_shell: bool,
     pub restore_workspace: bool,
     pub terminal_font: TerminalFontPreference,
@@ -73,6 +79,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         prefer_powershell,
         extend_dev_tunnel_lifetime,
         dev_tunnel_extension_days,
+        dev_tunnel_accounts,
         customize_local_shell,
         restore_workspace,
         terminal_font,
@@ -96,7 +103,11 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
     #[cfg(not(windows))]
     let _ = prefer_powershell;
     #[cfg(not(feature = "experimental-dev-tunnels"))]
-    let _ = (extend_dev_tunnel_lifetime, dev_tunnel_extension_days);
+    let _ = (
+        extend_dev_tunnel_lifetime,
+        dev_tunnel_extension_days,
+        &dev_tunnel_accounts,
+    );
     let state_id = ui.id().with("settings_state");
     let field_id = settings_sftp_directory_field_id(ui);
     let mut state = ui.data(|data| data.get_temp::<SettingsState>(state_id).unwrap_or_default());
@@ -540,6 +551,34 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
 
                         #[cfg(feature = "experimental-dev-tunnels")]
                         {
+                            settings_card(ui, "Dev Tunnel accounts", |ui| {
+                                ssh_paragraph(
+                                    ui,
+                                    "GitHub accounts shared by Dev Tunnel profiles. Sign in once \
+                                     and every profile using the account connects without \
+                                     signing in again.",
+                                );
+                                if dev_tunnel_accounts.is_empty() {
+                                    ssh_paragraph(ui, "No accounts yet.");
+                                }
+                                for (key, login, used_by) in &dev_tunnel_accounts {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(format!(
+                                            "GitHub · {login} · used by {used_by} profile{}",
+                                            if *used_by == 1 { "" } else { "s" }
+                                        ));
+                                        if action_button(ui, ActionButtonRole::Secondary, &format!("Sign out {login}")).clicked() {
+                                            command = Some(AppCommand::RemoveDevTunnelAccount {
+                                                account: key.clone(),
+                                            });
+                                        }
+                                    });
+                                }
+                                if action_button(ui, ActionButtonRole::Secondary, "Add GitHub account").clicked() {
+                                    command = Some(AppCommand::AddDevTunnelAccount);
+                                }
+                            });
+                            ui.add_space(12.0);
                             settings_card(ui, "Dev Tunnels", |ui| {
                                 if settings_toggle_row(
                                     ui,
@@ -1082,6 +1121,7 @@ mod tests {
                             prefer_powershell: true,
                             extend_dev_tunnel_lifetime: false,
                             dev_tunnel_extension_days: 30,
+                            dev_tunnel_accounts: Vec::new(),
                             customize_local_shell: false,
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,
@@ -1772,6 +1812,7 @@ mod tests {
                             prefer_powershell: true,
                             extend_dev_tunnel_lifetime: false,
                             dev_tunnel_extension_days: 30,
+                            dev_tunnel_accounts: Vec::new(),
                             customize_local_shell: false,
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,

@@ -5,7 +5,7 @@ use std::sync::{
 use std::time::Duration;
 
 use eframe::egui;
-use festerm_config::{DevTunnelHost, Profile};
+use festerm_config::{AccountProvider, DevTunnelAccount, DevTunnelHost, Profile};
 use festerm_secret_store::{SecretBytes, SecretReference, SecretStore};
 use festerm_tunnel_bridge::{
     relay::{self, Destination},
@@ -22,7 +22,7 @@ use festerm_ui_egui::{
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use super::FesTermApp;
+use super::{ConfigurationStartupStatus, FesTermApp};
 use crate::{tabs::TunnelConnectToken, tunnel_activation::Launch};
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -66,13 +66,17 @@ fn acquire_identity_lease(
     Ok(file)
 }
 
+pub(super) fn account_lease(
+    account: Option<&DevTunnelAccount>,
+) -> Result<Option<std::fs::File>, Error> {
+    profile_identity_lease(account, true)
+}
+
 fn profile_identity_lease(
-    expected: &Profile,
+    account: Option<&DevTunnelAccount>,
     remember: bool,
 ) -> Result<Option<std::fs::File>, Error> {
-    let identity = expected
-        .as_dev_tunnel()
-        .and_then(|profile| profile.identity());
+    let identity = account;
     if !remember || identity.is_none() {
         return Ok(None);
     }
@@ -100,8 +104,18 @@ impl Drop for Stored {
     }
 }
 
+/// What a successful, remembered sign-in adds to the profile once the user
+/// approves the host.
+struct Binding {
+    /// A freshly signed-in account to add or re-authenticate; `None` when the
+    /// profile's existing account was reused.
+    account: Option<DevTunnelAccount>,
+    connect: SecretReference,
+    host: DevTunnelHost,
+}
+
 struct Prepared {
-    profile: Option<Profile>,
+    binding: Option<Binding>,
     launch: Launch,
     stored: Stored,
 }
@@ -132,6 +146,7 @@ enum Stage {
 
 pub(super) struct Workflow {
     expected: Profile,
+    account: Option<DevTunnelAccount>,
     cancel: CancellationToken,
     receiver: mpsc::Receiver<Event>,
     stage: Stage,
@@ -158,8 +173,10 @@ fn host_metadata(binding: &service::HostBinding) -> DevTunnelHost {
 }
 
 impl Workflow {
+    #[allow(clippy::too_many_arguments)]
     fn start(
         expected: Profile,
+        account: Option<DevTunnelAccount>,
         store: Arc<dyn SecretStore>,
         sign_in: bool,
         remember: bool,
@@ -171,6 +188,7 @@ impl Workflow {
         let (sender, receiver) = mpsc::sync_channel(2);
         let mut workflow = Self {
             expected: expected.clone(),
+            account: account.clone(),
             cancel: cancel.clone(),
             receiver,
             stage: Stage::Working,
@@ -204,7 +222,7 @@ impl Workflow {
                     context.request_repaint();
                     sent
                 };
-                let result = profile_identity_lease(&expected, remember).and_then(|lease| {
+                let result = profile_identity_lease(account.as_ref(), remember).and_then(|lease| {
                     if let Some(lease) = lease {
                         _slot.identity_lease.set(lease).map_err(|_| Error::Busy)?;
                     }
@@ -215,7 +233,7 @@ impl Workflow {
                         tokio::select! {
                             _ = cancel.cancelled() => Err(Error::Cancelled),
                             _ = tokio::time::sleep(Duration::from_secs(1800)) => Err(Error::Expired),
-                            value = prepare(expected, store, client_id, sign_in, remember, extend_days, &cancel, &notify) => value.map(Box::new),
+                            value = prepare(expected, account, store, client_id, sign_in, remember, extend_days, &cancel, &notify) => value.map(Box::new),
                         }
                     }));
                 notify(Event::Complete(result));
@@ -231,6 +249,7 @@ impl Workflow {
 #[allow(clippy::too_many_arguments)]
 async fn prepare(
     expected: Profile,
+    account: Option<DevTunnelAccount>,
     store: Arc<dyn SecretStore>,
     client_id: &str,
     force_sign_in: bool,
@@ -242,7 +261,7 @@ async fn prepare(
     let profile = expected.as_dev_tunnel().ok_or(Error::Tunnel)?;
     let name = profile.tunnel_name().ok_or(Error::Tunnel)?;
     let http = Https::new()?;
-    let new_account = force_sign_in || profile.identity().is_none() || !remember;
+    let new_account = force_sign_in || account.is_none() || !remember;
     let identity = if new_account {
         identity::sign_in(&http, client_id, None, cancel, |prompt| {
             if !notify(Event::Device(prompt)) {
@@ -251,12 +270,12 @@ async fn prepare(
         })
         .await?
     } else {
-        let binding = profile.identity().ok_or(Error::AccountChanged)?;
+        let binding = account.as_ref().ok_or(Error::AccountChanged)?;
         let secret = store
             .get(binding.credential_reference())
             .map_err(|_| Error::Store)?;
         let identity = secret
-            .with_bytes(|bytes| Identity::decode_private(bytes, binding.account_id, client_id))?;
+            .with_bytes(|bytes| Identity::decode_private(bytes, binding.account_id(), client_id))?;
         if identity.needs_sign_in() {
             let refreshed = identity.refresh(&http, client_id, cancel).await?;
             let (published, publication) = oneshot::channel();
@@ -340,20 +359,25 @@ async fn prepare(
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        let identity_ref = if new_account {
+        let new_record = if new_account {
             let encoded = identity.encode_private()?;
             let reference = stored
                 .store
                 .put(&SecretBytes::copy_from_slice(&encoded))
                 .map_err(|_| Error::Store)?;
             stored.references.push(reference.duplicate_for_transport());
-            reference
+            Some(
+                DevTunnelAccount::new(
+                    format!("github-{}", identity.account.login.to_ascii_lowercase()),
+                    AccountProvider::Github,
+                    identity.account.id,
+                    identity.account.login.clone(),
+                    reference,
+                )
+                .map_err(|_| Error::Response)?,
+            )
         } else {
-            profile
-                .identity()
-                .ok_or(Error::AccountChanged)?
-                .credential_reference()
-                .duplicate_for_transport()
+            None
         };
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
@@ -364,18 +388,11 @@ async fn prepare(
         stored
             .references
             .push(connect_ref.duplicate_for_transport());
-        Some(
-            expected
-                .clone()
-                .with_tunnel_identity(
-                    identity.account.id,
-                    identity.account.login.clone(),
-                    identity_ref,
-                    connect_ref,
-                    host,
-                )
-                .map_err(|_| Error::Response)?,
-        )
+        Some(Binding {
+            account: new_record,
+            connect: connect_ref,
+            host,
+        })
     } else {
         None
     };
@@ -383,7 +400,7 @@ async fn prepare(
         return Err(Error::Cancelled);
     }
     Ok(Prepared {
-        profile: updated,
+        binding: updated,
         launch: Launch::from_destination(destination, resolved.connect_token)
             .with_account(identity.account.clone()),
         stored,
@@ -391,6 +408,77 @@ async fn prepare(
 }
 
 impl FesTermApp {
+    /// Commits a remembered sign-in: the account (new or re-authenticated) and
+    /// the profile bound to it are written in one configuration replacement.
+    fn save_tunnel_binding(
+        &mut self,
+        expected: &Profile,
+        existing: Option<&DevTunnelAccount>,
+        binding: Binding,
+    ) -> bool {
+        let Binding {
+            account,
+            connect,
+            host,
+        } = binding;
+        let Some(existing_key) = existing
+            .map(|account| account.identifier().to_owned())
+            .or_else(|| account.as_ref().map(|_| String::new()))
+        else {
+            return false;
+        };
+        let configuration = self.state.configuration().clone();
+        let previous_account_credential = account.as_ref().and_then(|account| {
+            configuration
+                .accounts()
+                .iter()
+                .find(|known| {
+                    known.provider() == account.provider()
+                        && known.account_id() == account.account_id()
+                })
+                .map(|known| known.credential_reference().duplicate_for_transport())
+        });
+        let previous_profile = configuration.profile(expected.identifier()).cloned();
+        let replacement = (|| {
+            let (configuration, key) = match account {
+                Some(account) => configuration.with_account(account)?,
+                None => (configuration, existing_key.clone()),
+            };
+            let profile = expected.clone().with_tunnel_account(key, connect, host)?;
+            configuration.with_profile(profile)
+        })();
+        let new_credential = replacement.as_ref().ok().and_then(|configuration| {
+            let key = configuration
+                .profile(expected.identifier())?
+                .as_dev_tunnel()?
+                .account()?;
+            Some(
+                configuration
+                    .account(key)?
+                    .credential_reference()
+                    .duplicate_for_transport(),
+            )
+        });
+        let saved = self.apply_configuration_save(
+            replacement,
+            ConfigurationStartupStatus::ProfileSaveFailure,
+            crate::configuration_startup::ConfigurationReloader::save_profile,
+        );
+        if saved {
+            if let (Some(old), Some(new), Ok(store)) = (
+                previous_account_credential,
+                new_credential,
+                &self.secret_store,
+            ) {
+                if old != new {
+                    let _ = store.delete(&old);
+                }
+            }
+            self.retire_native_tunnel_credentials(previous_profile.as_ref());
+        }
+        saved
+    }
+
     pub(super) fn retire_native_tunnel_credentials(&self, previous: Option<&Profile>) {
         let Some(previous) = previous else { return };
         let Some(old) = previous
@@ -407,19 +495,8 @@ impl FesTermApp {
             .configuration()
             .profile(previous.identifier())
             .and_then(Profile::as_dev_tunnel);
-        for reference in old
-            .identity()
-            .map(|identity| identity.credential_reference())
-            .into_iter()
-            .chain(old.credential_reference())
-        {
-            let retained = current.is_some_and(|profile| {
-                profile.credential_reference() == Some(reference)
-                    || profile
-                        .identity()
-                        .is_some_and(|identity| identity.credential_reference() == reference)
-            });
-            if !retained {
+        if let Some(reference) = old.credential_reference() {
+            if current.is_none_or(|profile| profile.credential_reference() != Some(reference)) {
                 let _ = store.delete(reference);
             }
         }
@@ -458,12 +535,18 @@ impl FesTermApp {
                 return;
             }
         };
+        let account = profile
+            .as_dev_tunnel()
+            .and_then(|profile| profile.account())
+            .and_then(|key| self.state.configuration().account(key))
+            .cloned();
         let extend_days = self
             .state
             .extend_dev_tunnel_lifetime()
             .then(|| self.state.dev_tunnel_extension_days());
         self.native_tunnel = Some(Workflow::start(
             profile,
+            account,
             store,
             sign_in,
             remember,
@@ -504,9 +587,8 @@ impl FesTermApp {
                 Event::Device(prompt) => workflow.stage = Stage::Device(prompt),
                 Event::Refresh { bytes, published } => {
                     let result = workflow
-                        .expected
-                        .as_dev_tunnel()
-                        .and_then(|profile| profile.identity())
+                        .account
+                        .as_ref()
                         .ok_or(Error::AccountChanged)
                         .and_then(|identity| {
                             self.secret_store
@@ -555,8 +637,9 @@ impl FesTermApp {
             return;
         }
         if let Some(mut ready) = workflow.ready.take() {
-            if let Some(profile) = ready.profile.take() {
-                if !self.save_profile(profile) {
+            if let Some(binding) = ready.binding.take() {
+                if !self.save_tunnel_binding(&workflow.expected, workflow.account.as_ref(), binding)
+                {
                     self.secure_storage_feedback =
                         Some("Account could not be saved. Sign in again.");
                     self.overlays.native_tunnel = false;

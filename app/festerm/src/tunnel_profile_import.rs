@@ -355,10 +355,8 @@ mod tests {
         let other_reference = festerm_secret_store::SecretReference::generate();
         let other = Profile::named_dev_tunnel("native-other", "other.usw3")
             .unwrap()
-            .with_tunnel_identity(
-                42,
-                "owner".into(),
-                festerm_secret_store::SecretReference::generate(),
+            .with_tunnel_account(
+                "github-owner",
                 festerm_secret_store::SecretReference::generate(),
                 festerm_config::DevTunnelHost {
                     tunnel_id: "other".into(),
@@ -373,7 +371,24 @@ mod tests {
             .unwrap()
             .with_tunnel_connect_credential(other_reference.duplicate_for_transport())
             .unwrap();
-        let configuration = Configuration::new(vec![other.clone(), legacy.clone()]).unwrap();
+        let configuration = Configuration::new(Vec::new())
+            .unwrap()
+            .with_account(
+                festerm_config::DevTunnelAccount::new(
+                    "github-owner",
+                    festerm_config::AccountProvider::Github,
+                    42,
+                    "owner",
+                    festerm_secret_store::SecretReference::generate(),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .0
+            .with_profile(other.clone())
+            .unwrap()
+            .with_profile(legacy.clone())
+            .unwrap();
         let saved = import
             .save(
                 &configuration,
@@ -387,7 +402,7 @@ mod tests {
         assert_eq!(restarted.profile("legacy-other"), Some(&legacy));
         let profile = restarted.profile("server-one").unwrap();
         assert!(profile.credential_reference().is_none());
-        assert!(profile.as_dev_tunnel().unwrap().identity().is_none());
+        assert!(profile.as_dev_tunnel().unwrap().account().is_none());
         let path = Path::new(profile.as_dev_tunnel().unwrap().destination_file());
         assert!(path.starts_with(root.path()));
         assert_eq!(

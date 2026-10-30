@@ -90,14 +90,24 @@ Dev Tunnel is a peer connection/profile kind to Local, SSH and Serial, not an
 SSH profile or shell-command alias. The initial implementation includes its
 launcher entry, saved-profile editor, centralized application commands and
 Inspector classification. The normal profile holds a tunnel name, verified
-public account/host metadata and independent opaque native-store **identity**
-and **connect** references. Advanced legacy profiles retain their trusted
+public host metadata, a link to a shared **account**, and an opaque
+native-store **connect** reference. An account (`[[accounts]]`) holds the public
+GitHub login/numeric ID and the opaque native-store **identity** reference; any
+number of profiles name the same account, so one device sign-in serves listing
+and every connection. Accounts are signed in and out independently of
+profiles. Advanced legacy profiles retain their trusted
 destination-file and scoped-token route. Credentials never belong in profiles;
 connect-once identities and connect tokens remain session-only.
 
 Different profiles/accounts/tunnels can coexist in one instance without a
-global current-account/token slot. Sessions from the same profile deliberately
-reuse that reference. Scoped-connect rotation creates a fresh reference;
+global current-account/token slot. A connect reference still belongs to exactly
+one profile and an identity reference to exactly one account; profiles share an
+identity only through the account. Existing profiles with an embedded identity
+migrate into accounts on load, reusing the same vault reference (no new
+sign-in); signing in again as the same GitHub user replaces the account's
+credential and keeps its profiles. Signing an account out deletes its credential
+and unlinks, but keeps, the profiles that used it. Sessions from the same
+profile deliberately reuse that reference. Scoped-connect rotation creates a fresh reference;
 native identity refresh atomically replaces its account-bound pair. Asynchronous
 credential-save completion must still match its original profile. Duplicating
 a profile does not copy its credential. Live launches capture their profile,

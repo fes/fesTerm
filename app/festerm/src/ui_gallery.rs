@@ -1300,6 +1300,7 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         prefer_powershell: true,
         extend_dev_tunnel_lifetime: false,
         dev_tunnel_extension_days: 30,
+        dev_tunnel_accounts: Vec::new(),
         customize_local_shell: false,
         restore_workspace: false,
         terminal_font: TerminalFontPreference::JetBrainsMono,
