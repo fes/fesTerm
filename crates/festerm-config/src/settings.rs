@@ -41,6 +41,10 @@ pub struct InterfaceSettings {
     /// service-side expiry forward. Off by default.
     #[serde(default, skip_serializing_if = "is_false")]
     extend_dev_tunnel_lifetime: bool,
+    /// Whether New Session lists the account's running Dev Tunnels that have
+    /// no saved profile. Off by default; it makes a service request.
+    #[serde(default, skip_serializing_if = "is_false")]
+    show_running_dev_tunnels: bool,
     /// Days a Dev Tunnel is extended by when the option above is on.
     #[serde(
         default = "default_dev_tunnel_extension_days",
@@ -179,6 +183,7 @@ impl InterfaceSettings {
         prefer_powershell: true,
         customize_local_shell: false,
         extend_dev_tunnel_lifetime: false,
+        show_running_dev_tunnels: false,
         dev_tunnel_extension_days: 30,
         restore_workspace: true,
         terminal_font: TerminalFontPreference::JetBrainsMono,
@@ -223,6 +228,11 @@ impl InterfaceSettings {
     ) -> Self {
         self.terminal_font = terminal_font;
         self.terminal_ligatures = terminal_ligatures;
+        self
+    }
+
+    pub const fn with_show_running_dev_tunnels(mut self, show: bool) -> Self {
+        self.show_running_dev_tunnels = show;
         self
     }
 
@@ -356,6 +366,10 @@ impl InterfaceSettings {
 
     pub const fn confirm_session_close(&self) -> bool {
         self.confirm_session_close
+    }
+
+    pub const fn show_running_dev_tunnels(&self) -> bool {
+        self.show_running_dev_tunnels
     }
 
     pub const fn extend_dev_tunnel_lifetime(&self) -> bool {

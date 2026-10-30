@@ -3403,6 +3403,10 @@ schema_version = 99
     fn dev_tunnel_lifetime_extension_defaults_off_for_thirty_days_and_is_bounded() {
         let defaults = InterfaceSettings::DEFAULT;
         assert!(!defaults.extend_dev_tunnel_lifetime());
+        assert!(!defaults.show_running_dev_tunnels());
+        assert!(InterfaceSettings::DEFAULT
+            .with_show_running_dev_tunnels(true)
+            .show_running_dev_tunnels());
         assert_eq!(defaults.dev_tunnel_extension_days(), 30);
         let tuned = defaults
             .clone()

@@ -33,6 +33,7 @@ pub(crate) struct SettingsViewModel {
     pub confirm_session_close: bool,
     pub prefer_powershell: bool,
     pub extend_dev_tunnel_lifetime: bool,
+    pub show_running_dev_tunnels: bool,
     pub dev_tunnel_extension_days: u32,
     /// `(key, login, profiles using it)` for each shared Dev Tunnel account.
     pub dev_tunnel_accounts: Vec<(String, String, usize)>,
@@ -78,6 +79,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         confirm_session_close,
         prefer_powershell,
         extend_dev_tunnel_lifetime,
+        show_running_dev_tunnels,
         dev_tunnel_extension_days,
         dev_tunnel_accounts,
         customize_local_shell,
@@ -105,6 +107,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
     #[cfg(not(feature = "experimental-dev-tunnels"))]
     let _ = (
         extend_dev_tunnel_lifetime,
+        show_running_dev_tunnels,
         dev_tunnel_extension_days,
         &dev_tunnel_accounts,
     );
@@ -580,6 +583,20 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             });
                             ui.add_space(12.0);
                             settings_card(ui, "Dev Tunnels", |ui| {
+                                if settings_toggle_row(
+                                    ui,
+                                    "Show my running tunnels in New Session",
+                                    "List your account's running fesTerm bridge tunnels that \
+                                     have no saved profile, so you can connect without \
+                                     setting one up first. Asks the Dev Tunnels service when \
+                                     New Session opens, at most once a minute. Off by default.",
+                                    show_running_dev_tunnels,
+                                ) {
+                                    command = Some(AppCommand::ToggleShowRunningDevTunnels);
+                                }
+                                ui.add_space(10.0);
+                                ui.separator();
+                                ui.add_space(10.0);
                                 if settings_toggle_row(
                                     ui,
                                     "Extend tunnel lifetime on sign-in",
@@ -1120,6 +1137,7 @@ mod tests {
                             confirm_session_close: true,
                             prefer_powershell: true,
                             extend_dev_tunnel_lifetime: false,
+                            show_running_dev_tunnels: false,
                             dev_tunnel_extension_days: 30,
                             dev_tunnel_accounts: Vec::new(),
                             customize_local_shell: false,
@@ -1811,6 +1829,7 @@ mod tests {
                             confirm_session_close: true,
                             prefer_powershell: true,
                             extend_dev_tunnel_lifetime: false,
+                            show_running_dev_tunnels: false,
                             dev_tunnel_extension_days: 30,
                             dev_tunnel_accounts: Vec::new(),
                             customize_local_shell: false,
