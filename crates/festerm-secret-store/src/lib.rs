@@ -7,8 +7,11 @@
 //! opaque references, rather than secret values, in ordinary configuration.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+#[cfg(not(target_os = "ios"))]
+use std::sync::Arc;
+use std::sync::Mutex;
 
+#[cfg(not(target_os = "ios"))]
 use keyring_core::{CredentialStore, Entry};
 use uuid::Uuid;
 use zeroize::Zeroize;
@@ -52,6 +55,7 @@ impl SecretReference {
         Self(self.0)
     }
 
+    #[cfg(not(target_os = "ios"))]
     fn account_name(&self) -> String {
         self.0.hyphenated().to_string()
     }
@@ -97,6 +101,7 @@ impl SecretBytes {
         &self.0
     }
 
+    #[cfg(not(target_os = "ios"))]
     fn from_vec(bytes: Vec<u8>) -> Self {
         Self(bytes.into_boxed_slice())
     }
@@ -245,12 +250,14 @@ impl SecretReference {
     }
 }
 
+#[cfg(not(target_os = "ios"))]
 struct NativeSecretStore {
     store: Arc<CredentialStore>,
     modifiers: HashMap<&'static str, &'static str>,
     operation_lock: Mutex<()>,
 }
 
+#[cfg(not(target_os = "ios"))]
 impl NativeSecretStore {
     fn new(store: Arc<CredentialStore>, modifiers: HashMap<&'static str, &'static str>) -> Self {
         Self {
@@ -272,6 +279,7 @@ impl NativeSecretStore {
     }
 }
 
+#[cfg(not(target_os = "ios"))]
 impl SecretStore for NativeSecretStore {
     fn put(&self, secret: &SecretBytes) -> Result<SecretReference, SecretStoreError> {
         let _operation = self
@@ -325,6 +333,7 @@ impl SecretStore for NativeSecretStore {
     }
 }
 
+#[cfg(not(target_os = "ios"))]
 fn map_keyring_error(error: keyring_core::Error) -> SecretStoreError {
     match error {
         keyring_core::Error::NoEntry => SecretStoreError::Missing,
@@ -348,6 +357,8 @@ fn map_keyring_error(error: keyring_core::Error) -> SecretStoreError {
 ///
 /// This never falls back to a file, keyutils, plaintext, or
 /// [`MemorySecretStore`].
+/// iOS returns [`SecretStoreError::Unsupported`] until an explicitly reviewed
+/// Keychain backend exists; being Unix does not imply a desktop D-Bus service.
 pub fn native_store() -> Result<Box<dyn SecretStore>, SecretStoreError> {
     native::create()
 }
@@ -380,7 +391,7 @@ mod native {
     }
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "ios"))))]
 mod native {
     use super::*;
 
@@ -401,6 +412,12 @@ mod tests {
 
     assert_not_impl_any!(SecretBytes: Clone, std::fmt::Debug, serde::Serialize);
     assert_not_impl_any!(SecretReference: Clone, std::fmt::Debug);
+
+    #[cfg(target_os = "ios")]
+    #[test]
+    fn ios_native_store_is_unsupported_without_a_persistent_fallback() {
+        assert!(matches!(native_store(), Err(SecretStoreError::Unsupported)));
+    }
 
     #[test]
     fn references_are_random_canonical_uuid_v4_values() {
@@ -513,7 +530,7 @@ mod tests {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows, all(unix, not(target_os = "macos")))))]
+#[cfg(any(target_os = "ios", not(any(target_os = "macos", windows, unix))))]
 mod native {
     use super::*;
 
@@ -521,3 +538,4 @@ mod native {
         Err(SecretStoreError::Unsupported)
     }
 }
+

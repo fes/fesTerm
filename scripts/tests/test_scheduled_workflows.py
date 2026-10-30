@@ -155,6 +155,8 @@ class IosSpikeWorkflowTests(unittest.TestCase):
             "cargo test --locked -p festerm-mobile --lib",
             "python3 scripts/build-ios-spike.py --check-dependencies",
             "cargo check --locked -p festerm-mobile --target aarch64-apple-ios",
+            "cargo check --locked -p festerm-ssh --target aarch64-apple-ios",
+            "python3 -m unittest discover -s scripts/tests -p test_ios_ssh_dependencies.py",
             "python3 scripts/build-ios-spike.py",
         ):
             with self.subTest(command=command):
@@ -221,18 +223,24 @@ class IosSpikeWorkflowTests(unittest.TestCase):
             "app/festerm-mobile/**",
             "crates/festerm-core/**",
             "crates/festerm-ios-window/**",
+            "crates/festerm-secret-store/**",
+            "crates/festerm-session/**",
+            "crates/festerm-ssh/**",
             "crates/festerm-ui-egui/**",
             "crates/festerm-markdown/**",
             "crates/festerm-syntax/**",
             "vendor/egui-winit/**",
             "vendor/egui-wgpu/**",
             "vendor/epaint/**",
+            "vendor/russh/**",
+            "vendor/russh-sftp/**",
             "assets/fonts/**",
             "Cargo.toml",
             "Cargo.lock",
             "scripts/build-ios-spike.py",
             "scripts/smoke-ios-simulator.py",
             "scripts/tests/test_ios_simulator_smoke.py",
+            "scripts/tests/test_ios_ssh_dependencies.py",
             ".github/workflows/ios-spike.yml",
         ):
             with self.subTest(path=path):
