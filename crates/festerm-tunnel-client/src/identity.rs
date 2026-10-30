@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::{Error, IdentityRequest, IdentityTransport, RESPONSE_LIMIT, valid_token};
+use crate::{valid_token, Error, IdentityRequest, IdentityTransport, RESPONSE_LIMIT};
 
 pub const VERIFICATION_URI: &str = "https://github.com/login/device";
 pub const SERVICE_CLIENT_ID: &str = "Iv1.e7b89e013f801f03";
@@ -641,14 +641,12 @@ mod tests {
             "managed\nuser_acme",
             "managed user_acme",
         ] {
-            assert!(
-                Account {
-                    id: 42,
-                    login: login.into()
-                }
-                .validate()
-                .is_err()
-            );
+            assert!(Account {
+                id: 42,
+                login: login.into()
+            }
+            .validate()
+            .is_err());
         }
     }
 

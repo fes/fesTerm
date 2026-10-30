@@ -266,7 +266,7 @@ fn native_auth_profile_changes_retire_only_their_own_vault_entries() {
     assert!(store.get(&connect).is_ok());
     app.state.replace_configuration(
         Configuration::new(vec![
-            Profile::named_dev_tunnel("owned", "changed.usw3").unwrap(),
+            Profile::named_dev_tunnel("owned", "changed.usw3").unwrap()
         ])
         .unwrap(),
     );
@@ -286,18 +286,16 @@ fn native_auth_completion_is_discarded_after_profile_edit_without_publishing_cre
         .put(&SecretBytes::copy_from_slice(b"PRIVATE_IDENTITY"))
         .unwrap();
     let (sender, receiver) = mpsc::sync_channel(2);
-    assert!(
-        sender
-            .send(ready_event(&profile, Arc::clone(&store), &reference))
-            .is_ok()
-    );
+    assert!(sender
+        .send(ready_event(&profile, Arc::clone(&store), &reference))
+        .is_ok());
     let pending = workflow(profile, receiver);
     let cancelled = pending.cancel.clone();
     app.native_tunnel = Some(pending);
     app.overlays.native_tunnel = true;
     app.state.replace_configuration(
         Configuration::new(vec![
-            Profile::named_dev_tunnel("owned", "changed.usw3").unwrap(),
+            Profile::named_dev_tunnel("owned", "changed.usw3").unwrap()
         ])
         .unwrap(),
     );
@@ -328,11 +326,9 @@ fn native_auth_cancel_wins_before_ready_credentials_are_published() {
         .put(&SecretBytes::copy_from_slice(b"PRIVATE_IDENTITY"))
         .unwrap();
     let (sender, receiver) = mpsc::sync_channel(2);
-    assert!(
-        sender
-            .send(ready_event(&profile, Arc::clone(&store), &reference))
-            .is_ok()
-    );
+    assert!(sender
+        .send(ready_event(&profile, Arc::clone(&store), &reference))
+        .is_ok());
     app.native_tunnel = Some(workflow(profile, receiver));
     app.overlays.native_tunnel = true;
     let context = egui::Context::default();
@@ -376,14 +372,12 @@ fn native_auth_refresh_publishes_only_the_bound_profile_identity_and_rejects_sta
     app.secret_store = Ok(Arc::clone(&store));
     let (sender, receiver) = mpsc::sync_channel(2);
     let (published, mut publication) = oneshot::channel();
-    assert!(
-        sender
-            .send(Event::Refresh {
-                bytes: zeroize::Zeroizing::new(b"NEW_PAIR".to_vec()),
-                published,
-            })
-            .is_ok()
-    );
+    assert!(sender
+        .send(Event::Refresh {
+            bytes: zeroize::Zeroizing::new(b"NEW_PAIR".to_vec()),
+            published,
+        })
+        .is_ok());
     app.native_tunnel = Some(workflow(profile.clone(), receiver));
     app.poll_native_tunnel(&egui::Context::default());
     assert_eq!(publication.try_recv().unwrap(), Ok(()));
@@ -398,14 +392,12 @@ fn native_auth_refresh_publishes_only_the_bound_profile_identity_and_rejects_sta
     );
 
     let (published, mut publication) = oneshot::channel();
-    assert!(
-        sender
-            .send(Event::Refresh {
-                bytes: zeroize::Zeroizing::new(b"STALE_PAIR".to_vec()),
-                published,
-            })
-            .is_ok()
-    );
+    assert!(sender
+        .send(Event::Refresh {
+            bytes: zeroize::Zeroizing::new(b"STALE_PAIR".to_vec()),
+            published,
+        })
+        .is_ok());
     app.state.replace_configuration(
         Configuration::new(vec![
             Profile::named_dev_tunnel("owned", "changed.usw3").unwrap(),

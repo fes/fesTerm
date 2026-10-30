@@ -1,7 +1,6 @@
 use std::sync::{
-    Arc, OnceLock,
     atomic::{AtomicBool, Ordering},
-    mpsc,
+    mpsc, Arc, OnceLock,
 };
 use std::time::Duration;
 
@@ -13,9 +12,8 @@ use festerm_tunnel_bridge::{
     transport,
 };
 use festerm_tunnel_client::{
-    Error, Https,
     identity::{self, Account, DevicePrompt, Identity},
-    service,
+    service, Error, Https,
 };
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
