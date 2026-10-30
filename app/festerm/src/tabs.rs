@@ -2083,6 +2083,8 @@ pub enum AppCommand {
     ImportPublicDevTunnelProfile {
         import: crate::tunnel_profile_import::PublicProfileImport,
     },
+    /// Signs in and lists the account's bridge tunnels to create a profile from.
+    BrowseDevTunnels,
     NativeDevTunnel {
         profile_id: String,
         sign_in: bool,
@@ -2297,6 +2299,7 @@ pub enum AppCommand {
     /// Repaints this terminal's local presentation without protocol effects.
     RedrawTerminal(TabId),
     BeginRectangleCopy(TabId),
+    SmartSelect(TabId, festerm_ui_egui::SmartSelectionScope),
     /// Opens a new independent terminal snapshot and immediately asks where
     /// to save it.
     SaveTerminalHistoryAs,
@@ -2434,6 +2437,9 @@ pub enum AppCommand {
     /// builds would otherwise flag it as dead code.
     #[cfg_attr(not(windows), allow(dead_code))]
     TogglePreferPowershell,
+    /// Toggles whether Dev Tunnel sign-in/connect extends the tunnel's lifetime.
+    ToggleExtendDevTunnelLifetime,
+    SetDevTunnelExtensionDays(u32),
     /// Toggles whether the default Local Shell launcher card opens its
     /// executable/arguments/directory form instead of launching immediately.
     ToggleCustomizeLocalShell,
@@ -2786,6 +2792,8 @@ pub struct AppState {
     confirm_session_close: bool,
     prefer_powershell: bool,
     customize_local_shell: bool,
+    extend_dev_tunnel_lifetime: bool,
+    dev_tunnel_extension_days: u32,
     /// Whether the open-tab list and active tab persist across restarts
     /// (`docs/gui-design.md` "Workspace restore"). Off by default and,
     /// unlike the other interface preferences here, deliberately explicit:
@@ -2910,6 +2918,8 @@ impl AppState {
             confirm_session_close: settings.confirm_session_close(),
             prefer_powershell: settings.prefer_powershell(),
             customize_local_shell: settings.customize_local_shell(),
+            extend_dev_tunnel_lifetime: settings.extend_dev_tunnel_lifetime(),
+            dev_tunnel_extension_days: settings.dev_tunnel_extension_days(),
             restore_workspace: settings.restore_workspace(),
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
@@ -3190,6 +3200,8 @@ impl AppState {
         self.show_session_details = settings.show_session_details();
         self.confirm_session_close = settings.confirm_session_close();
         self.prefer_powershell = settings.prefer_powershell();
+        self.extend_dev_tunnel_lifetime = settings.extend_dev_tunnel_lifetime();
+        self.dev_tunnel_extension_days = settings.dev_tunnel_extension_days();
         self.restore_workspace = settings.restore_workspace();
         self.terminal_font = settings.terminal_font();
         self.terminal_ligatures = settings.terminal_ligatures();
@@ -3426,6 +3438,14 @@ impl AppState {
         self.prefer_powershell
     }
 
+    pub const fn extend_dev_tunnel_lifetime(&self) -> bool {
+        self.extend_dev_tunnel_lifetime
+    }
+
+    pub const fn dev_tunnel_extension_days(&self) -> u32 {
+        self.dev_tunnel_extension_days
+    }
+
     pub const fn customize_local_shell(&self) -> bool {
         self.customize_local_shell
     }
@@ -3459,6 +3479,8 @@ impl AppState {
         )
         .with_terminal_typography(self.terminal_font, self.terminal_ligatures)
         .with_prefer_powershell(self.prefer_powershell)
+        .with_extend_dev_tunnel_lifetime(self.extend_dev_tunnel_lifetime)
+        .with_dev_tunnel_extension_days(self.dev_tunnel_extension_days)
         .with_customize_local_shell(self.customize_local_shell)
         .with_emoji_presentation(self.emoji_presentation)
         .with_scroll_speed(self.scroll_speed)
@@ -3764,6 +3786,7 @@ impl AppState {
             | AppCommand::StoreSftpPassword { .. }
             | AppCommand::StoreProfilePassword { .. }
             | AppCommand::StoreDevTunnelConnectToken { .. }
+            | AppCommand::BrowseDevTunnels
             | AppCommand::NativeDevTunnel { .. }
             | AppCommand::StartConfiguredDevTunnelProfile { .. }
             | AppCommand::StoreProfilePrivateKey { .. }
@@ -3878,6 +3901,23 @@ impl AppState {
                     }
                 }
             }
+            AppCommand::SmartSelect(id, scope) => {
+                if id != self.active {
+                    tracing::warn!(target: "festerm::commands", "smart selection target is not active");
+                    return;
+                }
+                if let Some(session) = self.session_tab_mut(id) {
+                    if !session.view.rectangle_copy_active() {
+                        session
+                            .view
+                            .smart_select_at_target(&session.terminal, scope);
+                        egui::Popup::close_all(context);
+                        context.request_repaint();
+                    }
+                } else {
+                    tracing::warn!(target: "festerm::commands", "smart selection target is not a session");
+                }
+            }
             AppCommand::ActivateNextTab => self.activate_relative(1),
             AppCommand::ActivatePreviousTab => self.activate_relative(-1),
             AppCommand::CloseTab(id) | AppCommand::DiscardAndCloseTab(id) => self.close(id),
@@ -3908,6 +3948,14 @@ impl AppState {
             }
             AppCommand::TogglePreferPowershell => {
                 self.prefer_powershell = !self.prefer_powershell;
+            }
+            AppCommand::ToggleExtendDevTunnelLifetime => {
+                self.extend_dev_tunnel_lifetime = !self.extend_dev_tunnel_lifetime;
+            }
+            AppCommand::SetDevTunnelExtensionDays(days) => {
+                self.dev_tunnel_extension_days = InterfaceSettings::DEFAULT
+                    .with_dev_tunnel_extension_days(days)
+                    .dev_tunnel_extension_days();
             }
             AppCommand::ToggleCustomizeLocalShell => {
                 self.customize_local_shell = !self.customize_local_shell;
@@ -4087,6 +4135,10 @@ impl AppState {
                 self.show_session_details = InterfaceSettings::DEFAULT.show_session_details();
                 self.confirm_session_close = InterfaceSettings::DEFAULT.confirm_session_close();
                 self.prefer_powershell = InterfaceSettings::DEFAULT.prefer_powershell();
+                self.extend_dev_tunnel_lifetime =
+                    InterfaceSettings::DEFAULT.extend_dev_tunnel_lifetime();
+                self.dev_tunnel_extension_days =
+                    InterfaceSettings::DEFAULT.dev_tunnel_extension_days();
                 self.customize_local_shell = InterfaceSettings::DEFAULT.customize_local_shell();
                 self.restore_workspace = InterfaceSettings::DEFAULT.restore_workspace();
                 self.terminal_font = InterfaceSettings::DEFAULT.terminal_font();

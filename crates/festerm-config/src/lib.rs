@@ -3140,6 +3140,32 @@ schema_version = 99
     }
 
     #[test]
+    fn dev_tunnel_lifetime_extension_defaults_off_for_thirty_days_and_is_bounded() {
+        let defaults = InterfaceSettings::DEFAULT;
+        assert!(!defaults.extend_dev_tunnel_lifetime());
+        assert_eq!(defaults.dev_tunnel_extension_days(), 30);
+        let tuned = defaults
+            .clone()
+            .with_extend_dev_tunnel_lifetime(true)
+            .with_dev_tunnel_extension_days(90);
+        assert!(tuned.extend_dev_tunnel_lifetime());
+        assert_eq!(tuned.dev_tunnel_extension_days(), 90);
+        assert_eq!(
+            defaults
+                .clone()
+                .with_dev_tunnel_extension_days(0)
+                .dev_tunnel_extension_days(),
+            1
+        );
+        assert_eq!(
+            defaults
+                .with_dev_tunnel_extension_days(u32::MAX)
+                .dev_tunnel_extension_days(),
+            InterfaceSettings::MAX_DEV_TUNNEL_EXTENSION_DAYS
+        );
+    }
+
+    #[test]
     fn scrollback_limit_round_trips_and_defaults_to_sixty_four_mib() {
         let settings =
             InterfaceSettings::DEFAULT.with_scrollback_limit(ScrollbackLimitPreference::MiB16);

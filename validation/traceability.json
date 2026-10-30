@@ -117,7 +117,7 @@
     },
     {
       "id": "native-dev-tunnels-identity-discovery",
-      "edges": ["TUNNEL-0[789]", "TUNNEL-10"],
+      "edges": ["TUNNEL-0[789]", "TUNNEL-1[01]"],
       "requirements": ["docs/adr/0053-separate-dev-tunnels-session-bridge.md#native-github-identity-and-name-discovery", "docs/gui-design.md#profile-editing"],
       "decisions": ["ADR-0053"],
       "automated_tests": [
