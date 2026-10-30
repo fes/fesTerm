@@ -48,6 +48,7 @@
         "private_token_line_preserves_bound_with_lf_crlf_and_invalid_input",
         "endpoint_stage_diagnostics_never_format_request_or_response_material",
         "anonymous_outer_transport_negotiates_none_without_weakening_inner_defaults",
+        "anonymous_wire_peer_requires_none_mac_no_newkeys_and_reports_lifetime",
         "anonymous_none_is_not_an_encrypted_client_fallback",
         "sequence_reservations_fail_closed_before_wrap_and_remain_unique",
         "exclusive_admission_refuses_occupied_or_changed_generation_without_retiring_it",

@@ -93,7 +93,7 @@ impl Preferred {
             kex: Cow::Borrowed(&[kex::NONE]),
             key: Cow::Borrowed(&[]),
             cipher: Cow::Borrowed(&[cipher::NONE]),
-            mac: Cow::Borrowed(SAFE_HMAC_ORDER),
+            mac: Cow::Borrowed(&[mac::NONE]),
             compression: Cow::Borrowed(&[compression::NONE]),
         }
     }

@@ -139,10 +139,7 @@ impl ServerKex {
                         self.cause.session_id(),
                     )?;
 
-                    output.write_packet(|w| {
-                        msg::NEWKEYS.encode(w)?;
-                        Ok(())
-                    })?;
+                    // As on the client, the anonymous exchange has no NEWKEYS.
 
                     return Ok(KexProgress::Done {
                         newkeys,

@@ -115,7 +115,11 @@ fn run() -> io::Result<()> {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => break,
                 incoming = host.connections.recv() => {
-                    let Some(stream) = incoming else { return Err(invalid()); };
+                    let Some(stream) = incoming else {
+                        return Err(std::io::Error::other(
+                            host.failure_category().unwrap_or("host.outer_task_closed"),
+                        ));
+                    };
                     tokio::select! {
                         _ = tokio::signal::ctrl_c() => break,
                         _ = transport::serve_with_files(stream, identity.clone(), files.clone()) => {}

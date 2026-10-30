@@ -260,6 +260,12 @@ pub struct HostConnection {
     pub endpoint: TunnelEndpoint,
     pub connections: mpsc::Receiver<ChannelStream<server::Msg>>,
     cancel: CancellationToken,
+    exit: tokio::sync::watch::Receiver<Option<&'static str>>,
+}
+impl HostConnection {
+    pub fn failure_category(&self) -> Option<&'static str> {
+        *self.exit.borrow()
+    }
 }
 impl Drop for HostConnection {
     fn drop(&mut self) {
@@ -356,6 +362,7 @@ pub async fn host(
     let cancel = CancellationToken::new();
     let stopped = cancel.clone();
     let (tx, connections) = mpsc::channel(1);
+    let (exit_sender, exit) = tokio::sync::watch::channel(None);
     tokio::spawn(async move {
         let server_config = Arc::new(server::Config {
             keys: vec![key],
@@ -366,55 +373,126 @@ pub async fn host(
             inactivity_timeout: Some(Duration::from_secs(120)),
             ..Default::default()
         });
-        loop {
-            let incoming = tokio::select! {
-                _ = stopped.cancelled() => break,
-                value = outer_rx.recv() => match value { Some(value) => value, None => break },
-            };
-            let (channel, permit) = incoming;
-            let (authed, adopted) = oneshot::channel();
-            let handler = Port {
-                port,
-                tx: tx.clone(),
-                opened: false,
-                authed: Some(authed),
-            };
-            // Only one encrypted client is serviced; keeping its permit until
-            // completion also prevents an upstream per-client task backlog.
-            let result = async {
-                let mut running = server::run_stream(server_config.clone(), channel, handler)
-                    .await
-                    .map_err(|_| invalid())?;
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_secs(30)) => return Err(invalid()),
-                    _ = &mut running => return Ok(()),
-                    result = adopted => { result.map_err(|_| invalid())?; }
-                }
-                running
-                    .handle()
-                    .forward_tcpip("127.0.0.1".into(), port as u32)
-                    .await
-                    .map_err(|_| invalid())?;
-                tokio::select! {
-                    _ = stopped.cancelled() => {}
-                    _ = &mut running => {}
-                }
-                Ok::<_, io::Error>(())
-            };
-            tokio::select! { _ = stopped.cancelled() => break, _ = result => {} }
-            drop(permit);
-        }
-        let _ = tokio::time::timeout(
-            Duration::from_secs(2),
-            session.disconnect(russh::Disconnect::ByApplication, "bridge closed", "en"),
-        )
-        .await;
+        let service = async {
+            loop {
+                let incoming = tokio::select! {
+                    _ = stopped.cancelled() => break,
+                    value = outer_rx.recv() => match value { Some(value) => value, None => break },
+                };
+                let (channel, permit) = incoming;
+                let (authed, adopted) = oneshot::channel();
+                let handler = Port {
+                    port,
+                    tx: tx.clone(),
+                    opened: false,
+                    authed: Some(authed),
+                };
+                // Only one encrypted client is serviced; keeping its permit until
+                // completion also prevents an upstream per-client task backlog.
+                let result = async {
+                    let mut running = server::run_stream(server_config.clone(), channel, handler)
+                        .await
+                        .map_err(|_| invalid())?;
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_secs(30)) => return Err(invalid()),
+                        _ = &mut running => return Ok(()),
+                        result = adopted => { result.map_err(|_| invalid())?; }
+                    }
+                    running
+                        .handle()
+                        .forward_tcpip("127.0.0.1".into(), port as u32)
+                        .await
+                        .map_err(|_| invalid())?;
+                    tokio::select! {
+                        _ = stopped.cancelled() => {}
+                        _ = &mut running => {}
+                    }
+                    Ok::<_, io::Error>(())
+                };
+                tokio::select! { _ = stopped.cancelled() => break, _ = result => {} }
+                drop(permit);
+            }
+        };
+        supervise_outer(session, service, stopped.clone(), exit_sender).await;
     });
     Ok(HostConnection {
         endpoint,
         connections,
         cancel,
+        exit,
     })
+}
+
+fn outer_exit_category(result: Result<(), russh::Error>) -> &'static str {
+    use russh::Error;
+    match result {
+        Ok(()) => "host.outer_closed",
+        Err(Error::Disconnect | Error::HUP) => "host.outer_peer_disconnected",
+        Err(Error::Inconsistent) => "host.outer_protocol_inconsistent",
+        Err(Error::PacketAuth) => "host.outer_packet_auth",
+        Err(Error::NotAuthenticated | Error::UnsupportedAuthMethod) => "host.outer_auth_state",
+        Err(Error::NoCommonAlgo { .. }) => "host.outer_algorithm_negotiation",
+        Err(Error::UnknownAlgo) => "host.outer_unknown_algorithm",
+        Err(Error::UnknownKey | Error::WrongServerSig) => "host.outer_key_verification",
+        Err(Error::Kex | Error::KexInit) => "host.outer_key_exchange",
+        Err(Error::PacketSize(_)) => "host.outer_packet_size",
+        Err(Error::WrongChannel | Error::ChannelOpenFailure(_)) => "host.outer_channel_state",
+        Err(Error::SendError | Error::RecvError) => "host.outer_channel",
+        Err(Error::Pending) => "host.outer_pending_limit",
+        Err(Error::DecryptionError) => "host.outer_decryption",
+        Err(Error::Keys(_)) => "host.outer_key_decode",
+        Err(Error::SshKey(_)) => "host.outer_ssh_key_decode",
+        Err(Error::SshEncoding(_)) => "host.outer_encoding",
+        Err(Error::Utf8(_)) => "host.outer_utf8",
+        Err(Error::Join(_)) => "host.outer_task",
+        Err(Error::Elapsed(_)) => "host.outer_deadline",
+        Err(Error::InvalidConfig(_)) => "host.outer_configuration",
+        Err(Error::StrictKeyExchangeViolation { .. }) => "host.outer_strict_exchange",
+        Err(Error::NoAuthMethod | Error::Version) => "host.outer_protocol",
+        Err(Error::RequestDenied) => "host.outer_request_denied",
+        Err(Error::IO(_)) => "host.outer_transport",
+        Err(Error::ConnectionTimeout | Error::KeepaliveTimeout | Error::InactivityTimeout) => {
+            "host.outer_timeout"
+        }
+        Err(_) => "host.outer_other",
+    }
+}
+
+async fn supervise_outer(
+    mut session: client::Handle<Outer>,
+    service: impl std::future::Future<Output = ()>,
+    stopped: CancellationToken,
+    exit: tokio::sync::watch::Sender<Option<&'static str>>,
+) {
+    tokio::pin!(service);
+    let finished = tokio::select! {
+        _ = stopped.cancelled() => false,
+        result = &mut session => {
+            exit.send_replace(Some(outer_exit_category(result)));
+            true
+        },
+        _ = &mut service => {
+            match tokio::time::timeout(Duration::from_secs(2), &mut session).await {
+                Ok(result) => {
+                    exit.send_replace(Some(outer_exit_category(result)));
+                    true
+                }
+                Err(_) => {
+                    if !stopped.is_cancelled() {
+                        exit.send_replace(Some("host.outer_channel_closed"));
+                    }
+                    false
+                }
+            }
+        }
+    };
+    if !finished {
+        let _ = tokio::time::timeout(
+            Duration::from_secs(2),
+            session.disconnect(russh::Disconnect::ByApplication, "bridge closed", "en"),
+        )
+        .await;
+    }
 }
 
 type OuterStream = (ChannelStream<client::Msg>, OwnedSemaphorePermit);
@@ -501,6 +579,139 @@ impl server::Handler for Port {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn anonymous_wire_peer_requires_none_mac_no_newkeys_and_reports_lifetime() {
+        async fn read_packet(io: &mut tokio::io::DuplexStream) -> Vec<u8> {
+            let length = io.read_u32().await.unwrap() as usize;
+            assert!((5..=4096).contains(&length));
+            let mut packet = vec![0; length];
+            io.read_exact(&mut packet).await.unwrap();
+            let padding = packet[0] as usize;
+            assert!(padding >= 4 && padding < length - 1);
+            packet[1..length - padding].to_vec()
+        }
+        async fn write_packet(io: &mut tokio::io::DuplexStream, payload: &[u8]) {
+            let padding = 4 + (8 - (5 + payload.len() + 4) % 8) % 8;
+            let length = u32::try_from(1 + payload.len() + padding).unwrap();
+            io.write_u32(length).await.unwrap();
+            io.write_u8(u8::try_from(padding).unwrap()).await.unwrap();
+            io.write_all(payload).await.unwrap();
+            io.write_all(&vec![0; padding]).await.unwrap();
+        }
+        fn string(out: &mut Vec<u8>, value: &[u8]) {
+            out.extend_from_slice(&u32::try_from(value.len()).unwrap().to_be_bytes());
+            out.extend_from_slice(value);
+        }
+        fn take_string<'a>(input: &mut &'a [u8]) -> &'a [u8] {
+            let length = u32::from_be_bytes(input[..4].try_into().unwrap()) as usize;
+            let result = &input[4..4 + length];
+            *input = &input[4 + length..];
+            result
+        }
+
+        let (client_io, mut peer_io) = tokio::io::duplex(16 * 1024);
+        let (ready, alive) = oneshot::channel();
+        let (stop, stopped) = oneshot::channel();
+        let peer = tokio::spawn(async move {
+            peer_io
+                .write_all(b"SSH-2.0-festerm-test-relay\r\n")
+                .await
+                .unwrap();
+            let mut identified = false;
+            for _ in 0..255 {
+                if peer_io.read_u8().await.unwrap() == b'\n' {
+                    identified = true;
+                    break;
+                }
+            }
+            assert!(identified);
+            let offered = read_packet(&mut peer_io).await;
+            assert_eq!(offered[0], 20);
+            let mut names = &offered[17..];
+            for index in 0..10 {
+                let value = take_string(&mut names);
+                if index == 4 || index == 5 {
+                    assert!(value
+                        .split(|byte| *byte == b',')
+                        .any(|name| name == b"none"));
+                }
+            }
+            let mut kex = vec![20];
+            kex.extend_from_slice(&[0; 16]);
+            for name in [
+                b"none".as_slice(),
+                b"none",
+                b"none",
+                b"none",
+                b"none",
+                b"none",
+                b"none",
+                b"none",
+                b"",
+                b"",
+            ] {
+                string(&mut kex, name);
+            }
+            kex.extend_from_slice(&[0; 5]);
+            write_packet(&mut peer_io, &kex).await;
+            let mut keepalive = vec![80];
+            string(&mut keepalive, b"keepalive@openssh.com");
+            keepalive.push(1);
+            write_packet(&mut peer_io, &keepalive).await;
+            // A real service rejects NEWKEYS here: no keys were exchanged.
+            assert_eq!(read_packet(&mut peer_io).await, [81]);
+            ready.send(()).unwrap();
+            stopped.await.unwrap();
+            let mut disconnect = vec![1];
+            disconnect.extend_from_slice(&11_u32.to_be_bytes());
+            string(&mut disconnect, b"PRIVATE_PEER_DESCRIPTION_NOT_FOR_LOGS");
+            string(&mut disconnect, b"en");
+            write_packet(&mut peer_io, &disconnect).await;
+        });
+        let (tx, _rx) = mpsc::channel(1);
+        let session = tokio::time::timeout(
+            Duration::from_secs(3),
+            client::connect_stream(
+                Arc::new(outer_client_config()),
+                client_io,
+                Outer {
+                    tx,
+                    slots: Arc::new(Semaphore::new(1)),
+                    permit: None,
+                },
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let (exit, mut status) = tokio::sync::watch::channel(None);
+        let supervisor = tokio::spawn(supervise_outer(
+            session,
+            std::future::pending(),
+            CancellationToken::new(),
+            exit,
+        ));
+        tokio::time::timeout(Duration::from_secs(3), alive)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(status.borrow().is_none());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), status.changed())
+                .await
+                .is_err()
+        );
+        stop.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), status.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*status.borrow(), Some("host.outer_closed"));
+        assert!(!format!("{:?}", *status.borrow()).contains("PRIVATE_PEER"));
+        supervisor.await.unwrap();
+        peer.await.unwrap();
+    }
 
     #[tokio::test]
     async fn anonymous_outer_transport_negotiates_none_without_weakening_inner_defaults() {
@@ -597,6 +808,14 @@ mod tests {
         let error = management_error(HttpError::ConnectionError(request_error));
         assert_eq!(error.to_string(), "host.endpoint_update.transport");
         assert!(!format!("{error:?}").contains(marker));
+        assert_eq!(
+            outer_exit_category(Err(russh::Error::InvalidConfig(marker.into()))),
+            "host.outer_configuration"
+        );
+        assert_eq!(
+            outer_exit_category(Err(russh::Error::IO(io::Error::other(marker)))),
+            "host.outer_transport"
+        );
     }
 
     fn key() -> russh::keys::PrivateKey {

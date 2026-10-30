@@ -29,8 +29,7 @@ failed reply send instead of ignoring it. The bounded queue has a focused
 regression in the client tests.
 
 The Dev Tunnels outer relay explicitly uses `Preferred::anonymous_none()`:
-KEX/cipher/compression `none`, retaining ordinary MAC advertisements to match
-the upstream SDK, with an empty typed key preference as the
+KEX/cipher/MAC/compression `none`, with an empty typed key preference as the
 no-host-key sentinel. Only that no-KEX/no-cipher preference advertises and
 accepts the literal SSH wire host-key name `none`; it cannot be constructed as
 an `ssh-key::AlgorithmName`, which requires extension-name syntax. Negotiated
@@ -40,3 +39,9 @@ inner tunnel remain unchanged. This mode is only for independently
 authenticated/encrypted transports (the allowlisted TLS relay); it is not an
 SSH fallback. Bridge regressions perform an actual outer no-key handshake and
 prove that a normal encrypted client refuses that same peer.
+The anonymous client/server skip-exchange path does not emit `NEWKEYS`, matching
+the upstream SDK's no-key exchange. Signed/encrypted key exchanges still emit
+and require `NEWKEYS` unchanged.
+The pinned legacy SDK's default MAC list includes `none`; modern ordinary
+defaults do not. The explicit anonymous preference advertises only `none`
+rather than accidentally omitting the relay's only supported MAC.
