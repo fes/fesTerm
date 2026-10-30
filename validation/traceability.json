@@ -34,6 +34,34 @@
   ],
   "coverage": [
     {
+      "id": "proposed-dev-tunnels-bridge",
+      "edges": [
+        "TUNNEL-0[1-6]"
+      ],
+      "requirements": [
+        "docs/adr/0053-separate-dev-tunnels-session-bridge.md#decision"
+      ],
+      "decisions": [
+        "ADR-0053"
+      ],
+      "automated_tests": [],
+      "manual_scenarios": [
+        "DT-01",
+        "DT-02",
+        "DT-03",
+        "DT-04",
+        "DT-05",
+        "DT-06"
+      ],
+      "status": "deferred",
+      "prerequisites": [
+        "Reviewed opt-in standalone bridge and peer Dev Tunnel profile/session backend with explicit operation subset and bounded SDK/network integration",
+        "Shared generation-bound filesystem capability for detected and OSC 8 remote paths through live SSH/SFTP and bounded bridge file reads, with no client-local fallback",
+        "Legitimate scoped-token provisioning, applicable service-use review and authorized controlled remote host",
+        "Deterministic lifecycle/security/independent-credential-binding tests and real-service desktop evidence, including two authorized GitHub accounts; native in-app sign-in and Entra integration remain deferred"
+      ]
+    },
+    {
       "id": "root-lifecycle",
       "edges": [
         "ROOT-*"
