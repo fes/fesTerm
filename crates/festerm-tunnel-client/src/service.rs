@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tunnels::{
     contracts::{Tunnel, TunnelConnectionMode, TunnelEndpoint},
-    management::{new_tunnel_management, Authorization, TunnelLocator, TunnelRequestOptions},
+    management::{
+        new_tunnel_management, Authorization, HttpError, TunnelLocator, TunnelRequestOptions,
+    },
 };
 use zeroize::{Zeroize, Zeroizing};
 
@@ -68,7 +70,7 @@ pub async fn resolve(
     };
     let tunnel = tokio::select! {
         _ = cancel.cancelled() => return Err(Error::Cancelled),
-        value = management.get_tunnel(&locator, &options) => value.map_err(|_| Error::Denied)?,
+        value = management.get_tunnel(&locator, &options) => value.map_err(management_error)?,
     };
     let resolved = select(tunnel)?;
     identity.confirm_account(&identity_http, cancel).await?;
@@ -85,7 +87,13 @@ pub fn select(mut tunnel: Tunnel) -> Result<ResolvedTunnel, Error> {
         .and_then(|tokens| tokens.remove("connect"))
         .map(Zeroizing::new);
     wipe_tokens(&mut tunnel);
-    let token = token.ok_or(Error::Denied)?;
+    let token = token.ok_or_else(|| {
+        tracing::warn!(
+            stage = "tunnel-connect-token",
+            "Native Dev Tunnel response rejected"
+        );
+        Error::Denied
+    })?;
     select_with_token(tunnel, token)
 }
 
@@ -110,9 +118,34 @@ pub async fn resolve_scoped(
     };
     let tunnel = tokio::select! {
         _ = cancel.cancelled() => return Err(Error::Cancelled),
-        value = management.get_tunnel(&locator, &options) => value.map_err(|_| Error::Denied)?,
+        value = management.get_tunnel(&locator, &options) => value.map_err(management_error)?,
     };
     select_with_token(tunnel, token)
+}
+
+fn management_error(error: HttpError) -> Error {
+    let (error, status) = match error {
+        HttpError::ConnectionError(_) => (Error::Network, None),
+        HttpError::AuthorizationError(_) => (Error::Response, None),
+        HttpError::ResponseError(response) => {
+            let status = response.status_code.as_u16();
+            let error = match status {
+                401 | 403 => Error::Denied,
+                404 => Error::TunnelNotFound,
+                429 => Error::RateLimited,
+                500..=599 => Error::Network,
+                _ => Error::Response,
+            };
+            (error, Some(status))
+        }
+    };
+    tracing::warn!(
+        stage = "tunnel-lookup-http",
+        http_status = ?status,
+        error = ?error,
+        "Native Dev Tunnel lookup failed"
+    );
+    error
 }
 
 fn wipe_tokens(tunnel: &mut Tunnel) {
@@ -180,6 +213,43 @@ fn select_with_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_service_lookup_distinguishes_denial_missing_tunnels_and_service_failures() {
+        for (status, expected) in [
+            (307, Error::Response),
+            (400, Error::Response),
+            (401, Error::Denied),
+            (403, Error::Denied),
+            (404, Error::TunnelNotFound),
+            (429, Error::RateLimited),
+            (500, Error::Network),
+            (503, Error::Network),
+        ] {
+            let error = HttpError::ResponseError(tunnels::management::ResponseError {
+                url: "https://global.rel.tunnels.api.visualstudio.com/tunnels/owned"
+                    .parse()
+                    .unwrap(),
+                status_code: reqwest::StatusCode::from_u16(status).unwrap(),
+                data: Some("PRIVATE_SERVICE_DETAILS".into()),
+                request_id: Some("PRIVATE_REQUEST_ID".into()),
+            });
+            assert_eq!(management_error(error), expected);
+        }
+        assert_eq!(
+            management_error(HttpError::AuthorizationError("PRIVATE_RESPONSE".into())),
+            Error::Response
+        );
+        let connection = reqwest::Client::new()
+            .get("invalid url")
+            .build()
+            .unwrap_err();
+        assert_eq!(
+            management_error(HttpError::ConnectionError(connection)),
+            Error::Network
+        );
+    }
+
     fn tunnel() -> Tunnel {
         serde_json::from_value(serde_json::json!({
             "tunnelId":"owned","clusterId":"usw3","accessTokens":{"connect":"PRIVATE_CONNECT"},

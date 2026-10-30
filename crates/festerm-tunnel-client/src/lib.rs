@@ -23,6 +23,7 @@ pub enum Error {
     Network,
     Response,
     AccountChanged,
+    TunnelNotFound,
     Tunnel,
     Ambiguous,
     Store,
@@ -40,11 +41,12 @@ impl fmt::Display for Error {
             Self::Network => "Connection failed. Try again.",
             Self::Response => "Unexpected service response.",
             Self::AccountChanged => "Account changed. Sign in again.",
+            Self::TunnelNotFound => "Tunnel not found. Check the name and account.",
             Self::Tunnel => "No fesTerm bridge is available for this tunnel.",
             Self::Ambiguous => "This tunnel has multiple hosts or ports.",
             Self::Store => "Secure storage unavailable. Sign in again.",
             Self::Busy => "Another sign-in is finishing. Try again.",
-            Self::RateLimited => "GitHub limit reached. Try later.",
+            Self::RateLimited => "Rate limit reached. Try later.",
         })
     }
 }

@@ -6540,5 +6540,10 @@ The sign-in modal also reused the shared confirmation sizing helper instead
 of shrinking to its shortest label. Structural tests cover readable desktop
 width and narrow viewports without introducing a separate dialog paradigm.
 Isolated test launches preserve the normal browser environment rather than
-substituting an empty browser profile. These repairs are not evidence of
-successful tunnel-service authorization; live requalification remains DT-07.
+substituting an empty browser profile. The corrected live retry passed GitHub
+account checks, then failed at tunnel lookup. The lookup had collapsed every
+SDK failure into access denial; it now distinguishes missing tunnels, actual
+authorization refusal, rate limits and connection/service/response failures,
+without logging raw SDK errors, URLs or response bodies. The exact live
+lookup status and remote host type remain unknown. Successful tunnel-service
+authorization and host discovery remain DT-07 follow-up, not passed gates.

@@ -99,6 +99,7 @@
         "native_http_body_bound_and_cancel_refuse_without_raw_service_details",
         "native_http_requests_use_owned_public_device_contracts_and_sensitive_account_headers",
         "native_service_selection_refuses_ordinary_tunnels_ambiguity_and_missing_pins",
+        "native_service_lookup_distinguishes_denial_missing_tunnels_and_service_failures",
         "native_tunnel_profiles_keep_identity_connect_and_account_bindings_independent",
         "native_auth_completion_is_discarded_after_profile_edit_without_publishing_credentials",
         "native_auth_cancel_wins_before_ready_credentials_are_published",
