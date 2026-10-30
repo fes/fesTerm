@@ -66,9 +66,15 @@ pub fn action_button_enabled(
     role: ActionButtonRole,
     label: &str,
 ) -> Response {
-    scoped_action_button(ui, role, label, |ui, button| {
+    scoped_action_button(ui, role, label, false, |ui, button| {
         ui.add_enabled(enabled, button)
     })
+}
+
+/// An action button whose label is a literal code, such as a device
+/// authorization code, so ambiguous characters stay distinguishable.
+pub fn action_button_monospace(ui: &mut Ui, role: ActionButtonRole, label: &str) -> Response {
+    scoped_action_button(ui, role, label, true, |ui, button| ui.add(button))
 }
 
 pub fn action_button_sized(
@@ -78,13 +84,16 @@ pub fn action_button_sized(
     label: &str,
 ) -> Response {
     let size = size.into();
-    scoped_action_button(ui, role, label, |ui, button| ui.add_sized(size, button))
+    scoped_action_button(ui, role, label, false, |ui, button| {
+        ui.add_sized(size, button)
+    })
 }
 
 fn scoped_action_button(
     ui: &mut Ui,
     role: ActionButtonRole,
     label: &str,
+    monospace: bool,
     add: impl FnOnce(&mut Ui, egui::Button<'_>) -> Response,
 ) -> Response {
     let rest = action_button_visuals(role, false);
@@ -107,9 +116,10 @@ fn scoped_action_button(
         visuals.hovered.fg_stroke = Stroke::new(1.0, hover.foreground);
         // Disabled buttons are faded by `Ui::disable`'s opacity multiplier, so the
         // label colour is the same in both states.
+        let text = RichText::new(label).color(rest.foreground);
         add(
             ui,
-            egui::Button::new(RichText::new(label).color(rest.foreground))
+            egui::Button::new(if monospace { text.monospace() } else { text })
                 .corner_radius(ACTION_BUTTON_CORNER_RADIUS),
         )
     })

@@ -38,13 +38,17 @@ pub(super) fn prepare_confirmation(
     ui.spacing_mut().interact_size.y = DIALOG_BUTTON_HEIGHT;
 }
 
-fn confirmation_body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+pub(super) fn confirmation_body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     egui::ScrollArea::vertical()
         .max_height((ui.available_height() - 2.0 * DIALOG_BUTTON_HEIGHT - 16.0).max(0.0))
         .show(ui, add);
 }
 
-fn dialog_action(ui: &mut egui::Ui, role: ActionButtonRole, label: &str) -> egui::Response {
+pub(super) fn dialog_action(
+    ui: &mut egui::Ui,
+    role: ActionButtonRole,
+    label: &str,
+) -> egui::Response {
     let response = action_button(ui, role, label);
     if response.has_focus() {
         ui.painter().rect_stroke(

@@ -1,0 +1,14 @@
+schema_version = 1
+
+[[profiles]]
+kind = "local"
+id = "controlled"
+executable = "controlled-unused"
+arguments = []
+
+[settings]
+chip_layout = "single-row-scroll"
+status_bar_visible = false
+show_session_details = false
+confirm_session_close = false
+terminal_font = "julia-mono"

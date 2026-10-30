@@ -97,9 +97,9 @@ struct LauncherItem<'a> {
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ProfileTableKind {
-    DevTunnel,
     Local,
     Ssh,
+    DevTunnel,
     Sftp,
     Serial,
 }
@@ -117,7 +117,7 @@ impl ProfileTableKind {
 
     fn mark(self) -> (Icon, egui::Color32) {
         match self {
-            Self::DevTunnel => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
+            Self::DevTunnel => (Icon::DevTunnel, theme::ICON_SESSION_REMOTE),
             Self::Local => (Icon::LocalTerminal, theme::ICON_SESSION_LOCAL),
             Self::Ssh => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
             Self::Sftp => (Icon::FileTransfer, theme::ICON_SESSION_FILE_TRANSFER),
@@ -238,7 +238,7 @@ impl LauncherItem<'_> {
     fn mark(&self) -> (Icon, egui::Color32) {
         match self.kind {
             LauncherItemKind::NewDevTunnel | LauncherItemKind::DevTunnelProfile(_) => {
-                (Icon::SshRemote, theme::ICON_SESSION_REMOTE)
+                (Icon::DevTunnel, theme::ICON_SESSION_REMOTE)
             }
             LauncherItemKind::LocalDefault
             | LauncherItemKind::LocalProfile(_)
@@ -2462,7 +2462,7 @@ fn elided_galley(
 
 fn session_mark_size(mark: Icon, height: f32) -> egui::Vec2 {
     let aspect = match mark {
-        Icon::SshRemote | Icon::Serial => 1.3,
+        Icon::SshRemote | Icon::DevTunnel | Icon::Serial => 1.3,
         _ => 1.0,
     };
     vec2(height * aspect, height)
@@ -2470,10 +2470,11 @@ fn session_mark_size(mark: Icon, height: f32) -> egui::Vec2 {
 
 /// Paints a session-type mark in its optically sized slot.
 ///
-/// Remote marks get the accent globe painted over them: the asset layer is
+/// Remote marks get their accent painted over them: the asset layer is
 /// monochrome by contract, so the two-tone treatment is composed here out of
-/// the complete `SshRemote` mark and the `RemoteGlobe` badge that shares its
-/// coordinates exactly.
+/// the complete `SshRemote` mark and the `RemoteGlobe` badge (or the complete
+/// `DevTunnel` mark and its `RemoteTunnel` overlay) that share coordinates
+/// exactly.
 fn paint_session_mark(painter: &egui::Painter, item: &LauncherItem<'_>, rect: egui::Rect) {
     let (mark, color) = item.mark();
     paint_mark(painter, mark, color, rect);
@@ -2489,8 +2490,14 @@ fn paint_mark(painter: &egui::Painter, mark: Icon, color: egui::Color32, rect: e
     // or connector squeezed into the same square as a document.
     let rect = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(rect.width()));
     icon::paint(painter, mark, rect, color);
-    if matches!(mark, Icon::SshRemote) {
-        icon::paint(painter, Icon::RemoteGlobe, rect, theme::ICON_SESSION_GLOBE);
+    match mark {
+        Icon::SshRemote => {
+            icon::paint(painter, Icon::RemoteGlobe, rect, theme::ICON_SESSION_GLOBE);
+        }
+        Icon::DevTunnel => {
+            icon::paint(painter, Icon::RemoteTunnel, rect, theme::ICON_SESSION_GLOBE);
+        }
+        _ => {}
     }
 }
 
@@ -3394,11 +3401,16 @@ pub fn show_launcher(
         ),
     ];
     if cfg!(feature = "experimental-dev-tunnels") {
-        items.push(LauncherItem::untabulated(
-            "Dev Tunnel · Experimental".into(),
-            "Attach an existing exported remote session".into(),
-            LauncherItemKind::NewDevTunnel,
-        ));
+        // Dev Tunnel is a remote-terminal peer of SSH, so it sits directly
+        // after it: Local Shell, SSH, Dev Tunnel.
+        items.insert(
+            2,
+            LauncherItem::untabulated(
+                "Dev Tunnel · Experimental".into(),
+                "Attach an existing exported remote session".into(),
+                LauncherItemKind::NewDevTunnel,
+            ),
+        );
     }
     let fixed_end = items.len();
     // Resumable, unattached `festerm-sessiond` sessions (feature request
@@ -4235,12 +4247,12 @@ fn show_saved_profiles_panel(
                                         for (label, kind) in [
                                             ("Local Shell", NewProfileKind::Local),
                                             ("SSH", NewProfileKind::Ssh),
-                                            ("SFTP", NewProfileKind::Sftp),
-                                            ("Serial", NewProfileKind::Serial),
                                             (
                                                 "Dev Tunnel · Experimental",
                                                 NewProfileKind::DevTunnel,
                                             ),
+                                            ("SFTP", NewProfileKind::Sftp),
+                                            ("Serial", NewProfileKind::Serial),
                                         ] {
                                             if kind == NewProfileKind::DevTunnel
                                                 && !cfg!(feature = "experimental-dev-tunnels")
@@ -6224,16 +6236,18 @@ mod tests {
     }
 
     #[test]
-    fn tighter_launcher_fits_all_five_cards_on_a_thousand_pixel_window() {
+    fn tighter_launcher_fits_every_card_on_one_row() {
         let labels = [
             "Local Shell — Start a local terminal session",
             "SSH — Connect to a remote host over SSH",
+            #[cfg(feature = "experimental-dev-tunnels")]
+            "Dev Tunnel · Experimental — Attach an existing exported remote session",
             "SFTP — Browse and transfer files",
             "Serial — Connect to a serial device",
             "Markdown — Open a Markdown workspace",
         ];
         for compact in [false, true] {
-            let mut harness = populated_launcher_harness(1000.0, compact);
+            let mut harness = populated_launcher_harness(1200.0, compact);
             harness.run();
             let first = harness.get_by_label(labels[0]).rect();
             assert_eq!(first.height(), if compact { 96.0 } else { 112.0 });
@@ -6241,7 +6255,7 @@ mod tests {
             for label in labels {
                 let rect = harness.get_by_label(label).rect();
                 assert_eq!(rect.top(), first.top(), "{label} wrapped to another row");
-                assert!(rect.left() >= previous_right && rect.right() <= 1000.0);
+                assert!(rect.left() >= previous_right && rect.right() <= 1200.0);
                 previous_right = rect.right();
             }
         }

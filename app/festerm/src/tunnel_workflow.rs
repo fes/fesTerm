@@ -15,6 +15,10 @@ use festerm_tunnel_client::{
     identity::{self, Account, DevicePrompt, Identity},
     service, Error, Https,
 };
+use festerm_ui_egui::{
+    controls::{action_button_monospace, ActionButtonRole},
+    theme,
+};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
@@ -556,16 +560,19 @@ impl FesTermApp {
         egui::Modal::new(egui::Id::new("native_dev_tunnel")).show(context, |ui| {
             super::confirmations::prepare_confirmation(ui, context, 520.0);
             ui.heading("Dev Tunnel");
-            match &mut workflow.stage {
+            let mut approve_label = None;
+            super::confirmations::confirmation_body(ui, |ui| match &workflow.stage {
                 Stage::Working => {
-                    ui.spinner();
-                    ui.label("Connecting…");
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Connecting…");
+                    });
                 }
                 Stage::Device(prompt) => {
                     ui.label("Sign in to Microsoft Dev Tunnels");
                     ui.label("Enter this code on GitHub:");
-                    if ui
-                        .button(egui::RichText::new(&prompt.user_code).monospace())
+                    ui.add_space(6.0);
+                    if action_button_monospace(ui, ActionButtonRole::Secondary, &prompt.user_code)
                         .on_hover_text("Copy code and open GitHub")
                         .clicked()
                     {
@@ -573,13 +580,10 @@ impl FesTermApp {
                         ui.ctx()
                             .open_url(egui::OpenUrl::new_tab(identity::VERIFICATION_URI));
                     }
+                    ui.add_space(6.0);
                     ui.label("Waiting for sign-in…");
                 }
-                Stage::Host {
-                    account,
-                    host,
-                    approval,
-                } => {
+                Stage::Host { account, host, .. } => {
                     ui.label(format!("GitHub · {}", account.login));
                     ui.label(format!(
                         "{}.{} · {}",
@@ -591,47 +595,60 @@ impl FesTermApp {
                         .and_then(|profile| profile.trusted_host())
                     {
                         if previous != host {
-                            ui.strong("Host identity changed.");
+                            ui.add_space(6.0);
+                            ui.colored_label(theme::STATUS_ERROR, "Host identity changed.");
                             if let Ok(fingerprint) = relay::host_fingerprint(&previous.public_key) {
-                                ui.small(format!("Previous: {fingerprint}"));
+                                ui.label(format!("Previous: {fingerprint}"));
                             }
                         }
                     }
+                    ui.add_space(6.0);
                     ui.label("Trust this host?");
                     if let Ok(fingerprint) = relay::host_fingerprint(&host.public_key) {
                         ui.monospace(fingerprint);
                     }
                     if workflow.remember {
-                        ui.small("Uses native secure storage.");
+                        ui.label("Uses native secure storage.");
                     }
-                    if ui
-                        .button(if workflow.connect {
-                            "Connect"
-                        } else {
-                            "Save account"
-                        })
-                        .clicked()
-                    {
-                        if let Some(approval) = approval.take() {
-                            let _ = approval.send(());
-                        }
-                        workflow.stage = Stage::Working;
-                    }
+                    approve_label = Some(if workflow.connect {
+                        "Connect"
+                    } else {
+                        "Save account"
+                    });
                 }
                 Stage::Error(error) => {
                     ui.label(error.to_string());
                 }
-            }
-            let cancel = ui.button(if matches!(workflow.stage, Stage::Error(_)) {
-                "Close"
-            } else {
-                "Cancel"
             });
-            if workflow.focus_cancel {
-                cancel.request_focus();
-                workflow.focus_cancel = false;
-            }
-            dismiss |= cancel.clicked();
+            ui.add_space(10.0);
+            ui.horizontal_wrapped(|ui| {
+                let cancel = super::confirmations::dialog_action(
+                    ui,
+                    ActionButtonRole::Secondary,
+                    if matches!(workflow.stage, Stage::Error(_)) {
+                        "Close"
+                    } else {
+                        "Cancel"
+                    },
+                );
+                if workflow.focus_cancel {
+                    cancel.request_focus();
+                    workflow.focus_cancel = false;
+                }
+                dismiss |= cancel.clicked();
+                if let Some(label) = approve_label {
+                    if super::confirmations::dialog_action(ui, ActionButtonRole::Accent, label)
+                        .clicked()
+                    {
+                        if let Stage::Host { approval, .. } = &mut workflow.stage {
+                            if let Some(approval) = approval.take() {
+                                let _ = approval.send(());
+                            }
+                        }
+                        workflow.stage = Stage::Working;
+                    }
+                }
+            });
         });
         if dismiss {
             self.native_tunnel = None;
