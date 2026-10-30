@@ -197,7 +197,8 @@ impl LiveSsh {
             if self.running {
                 // Geometry is reported after this frame's event pump. Schedule
                 // the debounce even if no output or further input wakes the UI.
-                self.context.request_repaint_after(Duration::from_millis(100));
+                self.context
+                    .request_repaint_after(Duration::from_millis(100));
             }
         }
     }
