@@ -150,6 +150,34 @@ or uploads a build. Local signing can require keychain approval. Native build,
 install and rendering remain pending until exercised on a provisioned Mac
 and device; portable packaging tests do not certify them.
 
+## Headless UI review images
+
+For campaign #422's screenshot review, render the actual mobile widgets with
+repository-owned fixtures, without a native window, user data or SSH worker:
+
+```sh
+python3 scripts/capture-mobile-ui.py
+```
+
+This opt-in generator needs Rust and a working headless wgpu adapter. It writes
+four PNGs (phone/tablet terminal and empty connection form) into a fresh
+`target/mobile-ui-captures/<attempt>/` directory. `--output <new-directory>`
+selects another fresh destination; existing attempts, including failures, are
+never overwritten. The manifest records exact Git commit/dirty state, host OS,
+viewport, image hashes and capture method. The optional aggregate runners
+include it when `FESTERM_RUN_MOBILE_UI_CAPTURE=1` is selected alongside their
+global opt-in. PR iOS CI publishes `festerm-mobile-headless-ui-review` separately
+from Simulator artifacts.
+CI scopes the destination by run ID and attempt so restored build-cache
+directories cannot collide with or be published as a fresh capture.
+
+These are **non-native headless review images**, with a pinned Dark preference
+and a simulated reserved keyboard area. The native system keyboard is not
+rendered. They do not show a live SSH shell or establish UIKit layout, native
+keyboard/touch, Simulator/device rendering or MOB-01–06 acceptance. Inspect
+the PNGs and source attribution before sharing them in chat/PR review. Native
+captures remain separately required; Termius interaction policy is unchanged.
+
 ## Automated Simulator launch evidence
 
 After building on macOS, run:

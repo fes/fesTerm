@@ -64,6 +64,13 @@ session-tab lifecycle.
 
 ## Touch navigation and Termius conventions
 
+Campaign UI reviews use actual-widget screenshots attributed to the tested
+commit and capture environment. `scripts/capture-mobile-ui.py` provides
+phone/tablet headless terminal/connect-form views using controlled offline
+fixtures. Its simulated keyboard reservation has no native keyboard pixels;
+these images support visual discussion, not native/Termius usability acceptance.
+Use actual Simulator/device captures for that evidence and label older references.
+
 The owner selected terminal long-press/drag with a temporary directional helper
 on both iPhone and iPad (2026-09-26). Permanent arrow buttons are removed from
 the default accessory row. The Phase 1 host implements a 450 ms stationary

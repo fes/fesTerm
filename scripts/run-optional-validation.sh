@@ -136,5 +136,15 @@ else
     printf 'suite=terminal-row-cache-profile status=skipped reason=explicit-opt-in\n' >>"$result_path"
 fi
 
+if [ "${FESTERM_RUN_MOBILE_UI_CAPTURE:-}" = "1" ]; then
+    if python3 scripts/capture-mobile-ui.py; then
+        printf 'suite=mobile-ui-capture status=pass evidence=headless-not-native\n' >>"$result_path"
+    else
+        printf 'suite=mobile-ui-capture status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=mobile-ui-capture status=skipped reason=explicit-opt-in\n' >>"$result_path"
+fi
 printf 'status=%s\n' "$status" >>"$result_path"
 [ "$status" = pass ]

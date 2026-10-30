@@ -643,6 +643,17 @@ if ($env:FESTERM_RUN_ROW_CACHE_PROFILE -eq '1') {
     Write-OptionalResult "`nsuite=terminal-row-cache-profile status=skipped reason=explicit-opt-in"
 }
 
+if ($env:FESTERM_RUN_MOBILE_UI_CAPTURE -eq '1') {
+    Invoke-NativeCommand { python "$PSScriptRoot/capture-mobile-ui.py" }
+    if ($LASTEXITCODE -eq 0) {
+        Write-OptionalResult "`nsuite=mobile-ui-capture status=pass evidence=headless-not-native"
+    } else {
+        Write-OptionalResult "`nsuite=mobile-ui-capture status=fail"
+        $status = 'fail'
+    }
+} else {
+    Write-OptionalResult "`nsuite=mobile-ui-capture status=skipped reason=explicit-opt-in"
+}
 Write-OptionalResult "`nstatus=$status"
 } finally {
     $resultWriter.Dispose()
