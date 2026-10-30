@@ -349,15 +349,36 @@ pub(super) struct ConnectionForm {
     port: String,
     error: Option<&'static str>,
     pin: Option<(String, u16, String)>,
+    #[cfg(test)]
+    pub(super) controls: Option<ConnectionControlsGeometry>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(super) struct ConnectionControlsGeometry {
+    pub(super) bounds: egui::Rect,
+    pub(super) connect: egui::Rect,
+    pub(super) clip: egui::Rect,
 }
 
 impl ConnectionForm {
+    pub(super) fn controls_expanded(&self, live: &Option<LiveSsh>) -> bool {
+        self.open
+            || live.as_ref().is_some_and(|connection| {
+                connection.host_prompt.is_some() || connection.password_prompt.is_some()
+            })
+    }
+
     pub(super) fn show(
         &mut self,
         ui: &mut egui::Ui,
         live: &mut Option<LiveSsh>,
         dimensions: Dimensions,
     ) -> bool {
+        #[cfg(test)]
+        {
+            self.controls = None;
+        }
         if let Some(connection) = live.as_mut() {
             ui.label(connection.status);
             if let Some(pin) = &connection.accepted_pin {
@@ -388,6 +409,8 @@ impl ConnectionForm {
         if self.open {
             ui.label("Transient connection · credentials are not saved");
             ui.small("Connect replaces the current session and starts a fresh shell.");
+            #[cfg(test)]
+            let controls_start = ui.cursor().min;
             ui.add(
                 egui::TextEdit::singleline(&mut self.host)
                     .hint_text("Host")
@@ -403,7 +426,16 @@ impl ConnectionForm {
                     .hint_text("Username")
                     .char_limit(255),
             );
-            if ui.button("Connect to host").clicked() {
+            let connect = ui.button("Connect to host");
+            #[cfg(test)]
+            {
+                self.controls = Some(ConnectionControlsGeometry {
+                    bounds: egui::Rect::from_min_max(controls_start, connect.rect.max),
+                    connect: connect.rect,
+                    clip: ui.clip_rect(),
+                });
+            }
+            if connect.clicked() {
                 let port = self.port.parse::<u16>().unwrap_or(0);
                 let identity = HostIdentity::new(&self.host, port).ok();
                 let pin = self

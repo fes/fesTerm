@@ -265,6 +265,17 @@ accessibility and physical-device acceptance remain open on iPad.
 
 ## Validation impact
 
+The #425 connection-form layout correction measures the remaining safe UI
+space before creating its top panel, reserving 45% while the form or trust/auth
+prompt is open and releasing it afterward. Short layouts retain bounded
+scrolling. This fixes the demonstrated self-shrinking panel without changing
+terminal ownership, transport/authentication, persistence or keyboard policy.
+`mobile_connection_form_fits_measured_phone_tablet_space_and_releases_it` and
+`mobile_connection_form_short_layout_scrolls_to_connect_without_terminal_input`
+cover actual-widget geometry, reopening, short-view scrolling and zero terminal
+input. Before/after headless capture is visual evidence; native keyboard/touch,
+rotation, SSH/TUI and physical-device acceptance remain MOB-06 requirements.
+
 The owner-requested iteration screenshot review adds an opt-in, test-only
 `egui_kittest` gallery for actual mobile widgets, with controlled offline
 fixtures and no native host/network/clipboard/user-resource access. It emits

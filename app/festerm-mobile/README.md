@@ -83,6 +83,12 @@ owned SSH server on Simulator and provisioned iPhone/iPad, including a remote
 TUI such as Copilot CLI. Feature compilation/linking and fake-session tests
 do not prove native UI, authentication or network operation.
 
+The connection form and pending host/auth prompts use a bounded 45% of the
+remaining safe space above the measured keyboard. Closing the form restores
+terminal space; short/landscape views scroll the controls vertically. This
+allocation is measured before panel construction so cached form geometry cannot
+shrink the next frame's viewport. Native keyboard/touch usability remains MOB-06.
+
 ## Development-signed physical-device build
 
 Campaign [#422](https://github.com/fes/fesTerm/issues/422) targets a real SSH

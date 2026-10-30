@@ -378,12 +378,22 @@ impl MobileApp {
     fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
         #[cfg(feature = "live-ssh")]
         {
-            egui::Panel::top("mobile-ssh-connection").show(ui, |ui| {
+            // Measure before entering the auto-sized panel. Using its previous
+            // height here creates a shrinking feedback loop on every frame.
+            let controls_height = ui.available_height() * 0.45;
+            let mut panel = egui::Panel::top("mobile-ssh-connection");
+            if self
+                .connection
+                .controls_expanded(&self.sink.live.connection.borrow())
+            {
+                panel = panel.exact_size(controls_height);
+            }
+            panel.show(ui, |ui| {
                 let mut connected = false;
                 ui.add_enabled_ui(lifecycle.active, |ui| {
                     egui::ScrollArea::vertical()
                         .id_salt("mobile-ssh-controls")
-                        .max_height(ui.available_height() * 0.45)
+                        .max_height(controls_height)
                         .show(ui, |ui| {
                             connected = self.connection.show(
                                 ui,
@@ -578,6 +588,109 @@ impl eframe::App for MobileApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "live-ssh")]
+    fn connection_frame(
+        app: &mut MobileApp,
+        context: &egui::Context,
+        size: egui::Vec2,
+        occlusion: f32,
+        events: Vec<egui::Event>,
+    ) {
+        context
+            .run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    time: Some(context.cumulative_frame_nr() as f64 / 60.0),
+                    events,
+                    ..Default::default()
+                },
+                |ui| app.show_with_occlusion(ui, occlusion),
+            )
+            .drop_without_applying_deltas();
+    }
+
+    #[cfg(feature = "live-ssh")]
+    #[test]
+    fn mobile_connection_form_fits_measured_phone_tablet_space_and_releases_it() {
+        for (width, height, occlusion) in [
+            (390.0, 844.0, 0.35),
+            (834.0, 1194.0, 0.30),
+            (1194.0, 834.0, 0.35),
+            (375.0, 1024.0, 0.35),
+            (390.0, 844.0, 0.0),
+        ] {
+            let lifecycle = Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            }));
+            let mut app = MobileApp::new(lifecycle);
+            let context = egui::Context::default();
+            let size = egui::vec2(width, height);
+            // Open/close/reopen after cached panel geometry has settled.
+            for _ in 0..2 {
+                app.connection.open = true;
+                for _ in 0..8 {
+                    connection_frame(&mut app, &context, size, occlusion, vec![]);
+                }
+                let geometry = app.connection.controls.expect("visible connection form");
+                assert!(geometry.clip.contains_rect(geometry.bounds), "{size:?}");
+                assert!(geometry.clip.contains_rect(geometry.connect), "{size:?}");
+                let expanded_grid = app.view.diagnostics().grid_rect.unwrap();
+                assert!(expanded_grid.height() >= 64.0);
+                assert!(app.toolbar_rect.unwrap().bottom() <= height * (1.0 - occlusion) + 1.0);
+                assert_eq!(app.sink.diagnostics.byte_count, 0);
+
+                app.connection.open = false;
+                for _ in 0..8 {
+                    connection_frame(&mut app, &context, size, occlusion, vec![]);
+                }
+                assert!(app.connection.controls.is_none());
+                assert!(
+                    app.view.diagnostics().grid_rect.unwrap().height()
+                        > expanded_grid.height() + 64.0
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "live-ssh")]
+    #[test]
+    fn mobile_connection_form_short_layout_scrolls_to_connect_without_terminal_input() {
+        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        app.connection.open = true;
+        let context = egui::Context::default();
+        let size = egui::vec2(844.0, 390.0);
+        for _ in 0..8 {
+            connection_frame(&mut app, &context, size, 0.35, vec![]);
+        }
+        let geometry = app.connection.controls.unwrap();
+        assert!(!geometry.clip.contains_rect(geometry.connect));
+        connection_frame(
+            &mut app,
+            &context,
+            size,
+            0.35,
+            vec![
+                egui::Event::PointerMoved(geometry.clip.center()),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -600.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        for _ in 0..30 {
+            connection_frame(&mut app, &context, size, 0.35, vec![]);
+        }
+        let geometry = app.connection.controls.unwrap();
+        assert!(geometry.clip.contains_rect(geometry.connect));
+        assert!(app.toolbar_rect.unwrap().bottom() <= size.y * 0.65 + 1.0);
+        assert_eq!(app.sink.diagnostics.byte_count, 0);
+    }
 
     #[test]
     fn mobile_gpu_limits_accept_simulator_downlevel_capabilities() {

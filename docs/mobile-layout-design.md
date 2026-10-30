@@ -132,6 +132,13 @@ defers Termius-style saved-host navigation and credential persistence.
 Changed memory-only pins have Reject only. Disconnect/reconnect clearly
 starts a fresh shell, and Files/README remain offline previews.
 
+The open form and pending host/authentication prompts reserve 45% of the
+measured space remaining after the workspace strip and keyboard/safe-area
+occlusion, computed before constructing the panel. This avoids sizing a scroll
+viewport from its own previous height. Closing the form releases the space;
+short layouts keep vertical scrolling so Connect remains reachable. This is
+the prototype's bounded form allocation, not Termius saved-host navigation.
+
 Connection/authentication controls own keyboard input while active; terminal
 sticky modifiers and gestures must not consume their text. On the connected
 terminal, retain the approved persistent keyboard, accessory row and
