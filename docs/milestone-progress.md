@@ -17,6 +17,9 @@ hot upgrades are not implied.
 The selected experimental bootstrap uses explicitly provisioned scoped tokens
 from an official GitHub-authenticated Dev Tunnels CLI first, not borrowed
 VS Code credentials or an unqualified native Entra registration.
+Dev Tunnel is planned as a peer connection/profile kind, with independent
+profile/session credential bindings so different GitHub accounts can be used
+concurrently without an application-global current token.
 Implementation, bounded SDK integration, service-use suitability and real
 remote/native evidence remain prerequisites. This proposal changes no runtime
 behavior or milestone acceptance status.

@@ -80,6 +80,43 @@ Separate processes may ship in the same signed package. Separation does not
 require an independent installer, service account, privileged broker or
 always-running system service.
 
+### First-class connections and independent credential bindings
+
+Dev Tunnel is a peer connection/profile kind to Local, SSH and Serial, not a
+local-shell command alias or an SSH profile in disguise. The application
+provides its own launcher/profile fields, lifecycle/Inspector identity and
+centralized application-command routing while reusing the common session,
+terminal rendering, clipboard and persistence policy boundaries.
+This first-class frontend is part of the initial implementation, even if
+the first bridge exports only one configured existing daemon session.
+
+Each saved profile holds its own opaque native-secret-store reference for
+the **connect** capability and non-secret destination metadata: tunnel,
+cluster, bridge port and intended exported session. Persisting a token is an
+explicit choice. An unsaved/unsaved-credential launch may retain its connect
+token only in that session's memory. Never use a process-global "current
+GitHub account" or last-entered token as the connection's credential source.
+Host capabilities belong to the remote bridge, not a frontend profile.
+
+Profiles for different GitHub accounts/tunnels can coexist and run
+simultaneously in one application instance. Multiple sessions from the same
+profile may deliberately reuse its intended credential reference; do not
+create persistent secret copies for each tab. Independent profiles do not
+implicitly share a credential slot. Rotation, removal, sign-out or editing
+one binding must not overwrite another profile's credential or silently
+retarget an existing session. Live sessions pin their launch binding and
+lifecycle generation; reconnect remains bound to the selected remote
+host/session and treats an incompatible credential change as requiring
+explicit user resolution.
+
+This is concurrent use of independently provisioned tunnel capabilities,
+not an initial native GitHub OAuth account switcher. Account display labels
+are descriptive metadata, not authorization evidence derived from an
+unverified token. Provisioning with the external CLI may require switching
+its selected account, but doing so cannot change an already running fesTerm
+session. A later native account broker must preserve the same independent
+bindings rather than replacing them with one application-global login.
+
 ### Authentication, authorization and host identity
 
 The initial experimental bootstrap is:
@@ -316,7 +353,10 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   host-key/credential redaction, exact-generation attach/takeover/terminate,
   adoption/output/query ordering, saturation/cancellation, bridge process
   death without daemon death, token-required state, no input replay and
-  remote-origin file-link refusal. These are obligations, not existing tests.
+  remote-origin file-link refusal; peer profile/launcher/command routing,
+  simultaneous independent credential bindings, transient versus opted-in
+  stored credentials, and profile rotation without live-session retargeting.
+  These are obligations, not existing tests.
 - **Native/manual evidence required:** future `DT-01` through `DT-05` in
   `docs/manual-validation.md`; service policy/authentication, real PTY/TUI
   input/resize, disconnect/bridge restart and platform lifetimes remain

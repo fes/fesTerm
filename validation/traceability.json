@@ -54,9 +54,9 @@
       ],
       "status": "deferred",
       "prerequisites": [
-        "Reviewed opt-in standalone bridge and remote backend with explicit operation subset and bounded SDK/network integration",
+        "Reviewed opt-in standalone bridge and peer Dev Tunnel profile/session backend with explicit operation subset and bounded SDK/network integration",
         "Legitimate scoped-token provisioning, applicable service-use review and authorized controlled remote host",
-        "Deterministic lifecycle/security tests and real-service desktop evidence; native Entra sign-in remains deferred"
+        "Deterministic lifecycle/security/independent-credential-binding tests and real-service desktop evidence, including two authorized GitHub accounts; native in-app sign-in and Entra integration remain deferred"
       ]
     },
     {
