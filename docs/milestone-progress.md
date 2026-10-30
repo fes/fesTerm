@@ -3,6 +3,23 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Mobile transport lifetime must not depend on the visible workspace
+
+Independent review of the opt-in live-SSH prototype found two composition gaps:
+Files/README stopped draining transport events, and suspension cleanup waited
+for a redraw that the native host intentionally suppresses. Output and core
+replies now advance independently of the selected workspace, once per UI
+frame even when egui retries layout. A main-thread suspension handle retires
+transport and clears sensitive prompts directly from the native callback,
+without waiting for a worker or touching terminal ownership. Fixture reset
+preserves that callback binding.
+
+Headless/fake-session regressions prove hidden-workspace replies, the frame
+budget and cancellation without another UI frame. Independent architectural
+review approved the feature-gated prototype basis, not mobile product support:
+actual SSH/device, keyboard/touch and physical suspension evidence remain
+MOB-06 obligations.
+
 ## Remote access without making the daemon a network service
 
 The existing VS Code tunnel proposal depended on Microsoft's distributed

@@ -115,6 +115,26 @@ Volume-button remapping, snippets/history, AI, and file-paste uploads are not
 part of this input slice. File/share-sheet integration belongs with mobile
 SFTP; stored command history needs its own persistence/privacy design.
 
+## Transient live SSH prototype
+
+Campaign #422/#424 uses Termius for iOS as the interaction reference for the
+connection → host review → authentication → terminal flow. The opt-in
+`live-ssh` feature starts with a compact, scroll-bounded host/port/user form
+and explicit fingerprint approval before password input. This deliberately
+defers Termius-style saved-host navigation and credential persistence.
+Changed memory-only pins have Reject only. Disconnect/reconnect clearly
+starts a fresh shell, and Files/README remain offline previews.
+
+Connection/authentication controls own keyboard input while active; terminal
+sticky modifiers and gestures must not consume their text. On the connected
+terminal, retain the approved persistent keyboard, accessory row and
+directional helper. Session output/replies continue while Files/README is
+selected, within the same per-frame budget. Native suspension immediately
+clears sensitive prompts and retires the connection without requiring a redraw;
+resuming requires a new explicit connection. Native Termius comparison, iPhone/iPad layouts and TUI
+usability remain MOB-06 qualification; paste/native selection handles are
+#425 follow-ups, not implied by this connection slice.
+
 ## Phone: SFTP layout
 
 - Stacked Remote-top / Local-bottom panes at the Compact tier, replacing the

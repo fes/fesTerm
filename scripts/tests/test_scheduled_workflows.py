@@ -153,11 +153,16 @@ class IosSpikeWorkflowTests(unittest.TestCase):
         self.assertNotIn("if:", job)
         for command in (
             "cargo test --locked -p festerm-mobile --lib",
+            "cargo test --locked -p festerm-mobile --features live-ssh --lib",
+            "cargo clippy --locked -p festerm-mobile --features live-ssh --all-targets -- -D warnings",
             "python3 scripts/build-ios-spike.py --check-dependencies",
+            "python3 scripts/build-ios-spike.py --check-dependencies --live-ssh",
             "cargo check --locked -p festerm-mobile --target aarch64-apple-ios",
+            "cargo check --locked -p festerm-mobile --features live-ssh --target aarch64-apple-ios",
             "cargo check --locked -p festerm-ssh --target aarch64-apple-ios",
             "python3 -m unittest discover -s scripts/tests -p test_ios_ssh_dependencies.py",
             "python3 scripts/build-ios-spike.py",
+            "python3 scripts/build-ios-spike.py --live-ssh",
         ):
             with self.subTest(command=command):
                 self.assertNotRegex(self.step_running(command), r"(?m)^        if:")

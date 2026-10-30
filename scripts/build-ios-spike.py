@@ -31,9 +31,10 @@ def run(*args: str, **kwargs):
     return subprocess.run(args, cwd=ROOT, check=True, **kwargs)
 
 
-def check_dependencies(target: str, package: str = "festerm-mobile") -> None:
+def check_dependencies(target: str, package: str = "festerm-mobile", live_ssh: bool = False) -> None:
     result = run(
         "cargo", "tree", "--locked", "-p", package, "--target", target,
+        *(["--features", "live-ssh"] if live_ssh else []),
         "--edges", "normal,build", "--prefix", "none", "--format", "{p}",
         capture_output=True, text=True, timeout=120,
     )
@@ -43,8 +44,8 @@ def check_dependencies(target: str, package: str = "festerm-mobile") -> None:
         raise RuntimeError(f"Mobile dependency boundary violated: {sorted(forbidden)}")
 
 
-def bundle_info() -> dict:
-    return {
+def bundle_info(live_ssh: bool = False) -> dict:
+    info = {
         "CFBundleDevelopmentRegion": "en",
         "CFBundleDisplayName": "fesTerm Spike",
         "CFBundleExecutable": "festerm-mobile",
@@ -71,18 +72,24 @@ def bundle_info() -> dict:
             "UIInterfaceOrientationLandscapeRight",
         ],
     }
+    if live_ssh:
+        info["NSLocalNetworkUsageDescription"] = "Connect to SSH hosts you choose on your local network."
+    return info
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", action="store_true", help="install and launch on a booted Simulator")
     parser.add_argument("--simulator", default="booted", help="Simulator UDID (default: booted)")
+    parser.add_argument("--live-ssh", action="store_true", help="include the opt-in live SSH connection UI")
     parser.add_argument("--check-dependencies", action="store_true", help="check mobile/SSH graphs for both iOS targets only; works on Linux")
     args = parser.parse_args()
     if args.check_dependencies:
         for target in ("aarch64-apple-ios", "aarch64-apple-ios-sim"):
             check_dependencies(target)
             check_dependencies(target, "festerm-ssh")
+            if args.live_ssh:
+                check_dependencies(target, "festerm-mobile", True)
         print("iOS mobile/SSH normal/build dependency boundaries passed")
         return 0
     if platform.system() != "Darwin":
@@ -90,15 +97,17 @@ def main() -> int:
     target = "aarch64-apple-ios-sim" if platform.machine() == "arm64" else "x86_64-apple-ios"
     sdk = run("xcrun", "--sdk", "iphonesimulator", "--show-sdk-path", capture_output=True, text=True).stdout.strip()
     run("rustup", "target", "add", target)
-    check_dependencies(target)
+    check_dependencies(target, live_ssh=args.live_ssh)
     env = dict(os.environ, SDKROOT=sdk, IPHONEOS_DEPLOYMENT_TARGET=MINIMUM_IOS)
     run("cargo", "build", "--locked", "-p", "festerm-mobile", "--target", target,
+        *(["--features", "live-ssh"] if args.live_ssh else []),
         "--target-dir", str(ROOT / "target"), env=env)
-    bundle = ROOT / "target" / "ios-spike" / "fesTermSpike.app"
+    output = "ios-spike-live" if args.live_ssh else "ios-spike"
+    bundle = ROOT / "target" / output / "fesTermSpike.app"
     bundle.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "target" / target / "debug" / "festerm-mobile", bundle / "festerm-mobile")
     with (bundle / "Info.plist").open("wb") as stream:
-        plistlib.dump(bundle_info(), stream)
+        plistlib.dump(bundle_info(args.live_ssh), stream)
     run("codesign", "--force", "--sign", "-", str(bundle))
     run("codesign", "--verify", "--strict", str(bundle))
     # Preserve executable permissions when downloaded from Actions artifacts.
@@ -128,4 +137,3 @@ if __name__ == "__main__":
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError) as error:
         print(error, file=sys.stderr)
         sys.exit(1)
-

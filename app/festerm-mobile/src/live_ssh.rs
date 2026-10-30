@@ -1,0 +1,695 @@
+//! Opt-in transient SSH composition. The mobile app remains the terminal writer.
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use eframe::egui;
+use festerm_core::{Dimensions, Terminal};
+use festerm_session::{
+    HostKeyPrompt, PasswordPrompt, Session, SessionEvent, SessionEventNotifier, SessionLifecycle,
+    SessionTryReceiveError, TerminalSize,
+};
+use festerm_ssh::{
+    HostIdentity, HostKeyDecisionResolver, HostTrustDecision, PasswordDecisionResolver,
+    SshAuthentication, SshConnectionProfile, SshSession, SshSessionOptions,
+};
+use zeroize::{Zeroize, Zeroizing};
+
+const EVENT_BUDGET: usize = 32;
+
+#[derive(Default)]
+struct PasswordBuffer(Zeroizing<String>);
+
+impl PasswordBuffer {
+    fn clear(&mut self) {
+        self.0.zeroize();
+    }
+
+    fn take(&mut self) -> String {
+        std::mem::take(&mut *self.0)
+    }
+
+    fn byte_index(&self, character: usize) -> usize {
+        self.0
+            .char_indices()
+            .nth(character)
+            .map_or(self.0.len(), |(index, _)| index)
+    }
+}
+
+impl egui::TextBuffer for PasswordBuffer {
+    fn is_mutable(&self) -> bool {
+        true
+    }
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+    fn insert_text(&mut self, text: &str, character: egui::text::CharIndex) -> usize {
+        let index = self.byte_index(character.0);
+        let remaining = 4096_usize.saturating_sub(self.0.chars().count());
+        let mut next = Zeroizing::new(String::with_capacity(self.0.len() + text.len().min(16384)));
+        next.push_str(&self.0[..index]);
+        let mut inserted = 0;
+        for character in text.chars().take(remaining) {
+            next.push(character);
+            inserted += 1;
+        }
+        next.push_str(&self.0[index..]);
+        self.0 = next; // Wipe the old allocation, including deleted/reallocated content.
+        inserted
+    }
+    fn delete_char_range(&mut self, range: std::ops::Range<egui::text::CharIndex>) {
+        let start = self.byte_index(range.start.0);
+        let end = self.byte_index(range.end.0).max(start);
+        let mut next = Zeroizing::new(String::with_capacity(self.0.len()));
+        next.push_str(&self.0[..start]);
+        next.push_str(&self.0[end..]);
+        self.0 = next;
+    }
+    fn clear(&mut self) {
+        PasswordBuffer::clear(self);
+    }
+    fn take(&mut self) -> String {
+        PasswordBuffer::take(self)
+    }
+    fn type_id(&self) -> std::any::TypeId {
+        std::any::TypeId::of::<Self>()
+    }
+}
+
+fn session_size(dimensions: Dimensions) -> Result<TerminalSize, &'static str> {
+    let columns = u16::try_from(dimensions.columns()).map_err(|_| "Terminal too wide")?;
+    let rows = u16::try_from(dimensions.rows()).map_err(|_| "Terminal too tall")?;
+    TerminalSize::new(columns, rows).map_err(|_| "Invalid terminal dimensions")
+}
+
+struct Repaint(egui::Context);
+
+impl SessionEventNotifier for Repaint {
+    fn notify(&self) {
+        self.0.request_repaint();
+    }
+}
+
+pub(super) struct LiveSsh {
+    identity: HostIdentity,
+    context: egui::Context,
+    session: Option<Arc<dyn Session>>,
+    host_resolver: Option<HostKeyDecisionResolver>,
+    password_resolver: Option<PasswordDecisionResolver>,
+    host_prompt: Option<HostKeyPrompt>,
+    password_prompt: Option<PasswordPrompt>,
+    password: PasswordBuffer,
+    pending_resize: Option<(Dimensions, Instant)>,
+    running: bool,
+    pub(super) status: &'static str,
+    pub(super) accepted_pin: Option<String>,
+}
+
+impl LiveSsh {
+    pub(super) fn connect(
+        host: &str,
+        port: u16,
+        username: &str,
+        dimensions: Dimensions,
+        pin: Option<&str>,
+        context: &egui::Context,
+    ) -> Result<Self, &'static str> {
+        let identity = HostIdentity::new(host, port).map_err(|_| "Invalid SSH host or port")?;
+        let size = session_size(dimensions)?;
+        let profile = SshConnectionProfile::new(
+            identity.clone(),
+            username,
+            SshConnectionProfile::DEFAULT_TERMINAL_TYPE,
+            size,
+        )
+        .map_err(|_| "Invalid SSH username")?;
+        let mut options = SshSessionOptions::new();
+        if let Some(pin) = pin {
+            options = options.with_known_host_fingerprint(pin);
+        }
+        let session = SshSession::start_with_notifier_and_options(
+            profile,
+            SshAuthentication::Interactive,
+            options,
+            Arc::new(Repaint(context.clone())),
+        )
+        .map_err(|_| "Could not start SSH worker")?;
+        let host_resolver = Some(session.host_key_decision_resolver());
+        let password_resolver = Some(session.password_decision_resolver());
+        Ok(Self {
+            identity,
+            context: context.clone(),
+            session: Some(Arc::new(session)),
+            host_resolver,
+            password_resolver,
+            host_prompt: None,
+            password_prompt: None,
+            password: PasswordBuffer::default(),
+            pending_resize: None,
+            running: false,
+            status: "Connecting",
+            accepted_pin: pin.map(str::to_owned),
+        })
+    }
+
+    pub(super) fn input_enabled(&self) -> bool {
+        self.running && self.host_prompt.is_none() && self.password_prompt.is_none()
+    }
+
+    pub(super) fn can_reset(&self) -> bool {
+        self.session.is_none()
+    }
+
+    pub(super) fn stop(&mut self, status: &'static str) {
+        self.running = false;
+        self.status = status;
+        self.password.clear();
+        self.host_prompt = None;
+        self.password_prompt = None;
+        self.pending_resize = None;
+        self.host_resolver = None;
+        self.password_resolver = None;
+        if let Some(session) = self.session.take() {
+            let _ = session.try_shutdown();
+        }
+    }
+
+    pub(super) fn send(&mut self, bytes: &[u8]) {
+        if !self.input_enabled() || bytes.is_empty() {
+            return;
+        }
+        if let Some(session) = &self.session {
+            if session.try_send_input(bytes).is_err() {
+                // Never drop part of a command and then accept its continuation.
+                // The backend admission is atomic; make refusal explicit and
+                // retire this session rather than replay input on a new shell.
+                self.stop(
+                    "Input rejected; disconnected. Earlier accepted input may have executed.",
+                );
+            }
+        }
+    }
+
+    pub(super) fn resize(&mut self, dimensions: Dimensions) {
+        if self.pending_resize.map(|(size, _)| size) != Some(dimensions) {
+            self.pending_resize = Some((dimensions, Instant::now()));
+            if self.running {
+                // Geometry is reported after this frame's event pump. Schedule
+                // the debounce even if no output or further input wakes the UI.
+                self.context
+                    .request_repaint_after(Duration::from_millis(100));
+            }
+        }
+    }
+
+    pub(super) fn poll(&mut self, terminal: &mut Terminal, context: &egui::Context) {
+        let Some(session) = self.session.clone() else {
+            return;
+        };
+        for _ in 0..EVENT_BUDGET {
+            match session.try_recv_event() {
+                Ok(SessionEvent::Output(bytes)) => {
+                    terminal.ingest(&bytes);
+                    let replies = terminal.drain_replies();
+                    if !replies.is_empty() && session.try_send_input(&replies).is_err() {
+                        self.stop("Terminal reply rejected; disconnected");
+                        return;
+                    }
+                }
+                Ok(SessionEvent::HostKeyVerification(prompt)) => {
+                    self.status = "Review SSH host key";
+                    self.host_prompt = Some(prompt);
+                }
+                Ok(SessionEvent::PasswordRequested(prompt)) => {
+                    self.status = "SSH password required";
+                    self.password.clear();
+                    self.password_prompt = Some(prompt);
+                }
+                Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => {
+                    self.running = true;
+                    self.status = "Connected";
+                }
+                Ok(SessionEvent::Lifecycle(SessionLifecycle::Starting)) => {
+                    self.running = false;
+                    self.status = "Connecting";
+                }
+                Ok(SessionEvent::Lifecycle(_)) | Ok(SessionEvent::Error(_)) => {
+                    self.stop("Session ended or connection lost. Connect again for a fresh shell.");
+                    return;
+                }
+                Ok(SessionEvent::RecoverySync(_)) => {
+                    self.stop("Unsupported recovery event; disconnected");
+                    return;
+                }
+                Ok(_) => {}
+                Err(SessionTryReceiveError::Empty) => break,
+                Err(SessionTryReceiveError::Closed) => {
+                    self.stop("SSH worker closed");
+                    return;
+                }
+            }
+        }
+        if session.metrics().event_queue_depth > 0 {
+            context.request_repaint();
+        }
+        if let Some((dimensions, changed)) = self.pending_resize {
+            if self.running {
+                if changed.elapsed() >= Duration::from_millis(100) {
+                    let Ok(size) = session_size(dimensions) else {
+                        self.stop("Terminal size cannot be represented by SSH; disconnected");
+                        return;
+                    };
+                    if session.try_resize(size).is_ok() {
+                        self.pending_resize = None;
+                    }
+                }
+                // One coalesced pending size; no unbounded resize queue or busy loop.
+                if self.pending_resize.is_some() {
+                    context.request_repaint_after(Duration::from_millis(100));
+                }
+            }
+        }
+    }
+
+    pub(super) fn prompts(&mut self, ui: &mut egui::Ui) {
+        if let Some(prompt) = self.host_prompt.clone() {
+            ui.label(format!("{}:{}", prompt.host(), prompt.port()));
+            ui.monospace(prompt.sha256_fingerprint());
+            if prompt.is_key_change() {
+                ui.colored_label(
+                    egui::Color32::RED,
+                    "Host key changed. Verify independently; this attempt must be rejected.",
+                );
+            }
+            ui.horizontal(|ui| {
+                if !prompt.is_key_change() && ui.button("Trust for this app session").clicked() {
+                    let resolved = self.host_resolver.as_ref().is_some_and(|resolver| {
+                        resolver
+                            .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                            .is_ok()
+                    });
+                    if resolved {
+                        self.accepted_pin = Some(prompt.sha256_fingerprint().to_owned());
+                        self.host_prompt = None;
+                        self.status = "Authenticating";
+                    } else {
+                        self.stop("Host-key request expired; connect again");
+                    }
+                }
+                if ui.button("Reject").clicked() {
+                    self.stop("Host key rejected");
+                }
+            });
+        }
+        if let Some(prompt) = self.password_prompt.clone() {
+            ui.label(format!(
+                "Password for {}@{}",
+                prompt.username(),
+                prompt.host()
+            ));
+            if prompt.previous_attempt_failed() {
+                ui.label("Authentication failed. Try again or disconnect.");
+            }
+            ui.add(
+                egui::TextEdit::singleline(&mut self.password)
+                    .password(true)
+                    .sensitive(true)
+                    .char_limit(4096),
+            );
+            if ui.button("Authenticate").clicked() {
+                let mut password = Zeroizing::new(self.password.take());
+                let resolved = self.password_resolver.as_ref().is_some_and(|resolver| {
+                    resolver
+                        .resolve(&prompt, std::mem::take(&mut *password))
+                        .is_ok()
+                });
+                if resolved {
+                    self.password_prompt = None;
+                    self.status = "Authenticating";
+                } else {
+                    self.stop("Password request expired; connect again");
+                }
+            }
+        }
+    }
+}
+
+impl Drop for LiveSsh {
+    fn drop(&mut self) {
+        self.stop("Disconnected");
+    }
+}
+
+#[derive(Default)]
+pub(super) struct ConnectionForm {
+    pub(super) open: bool,
+    host: String,
+    username: String,
+    port: String,
+    error: Option<&'static str>,
+    pin: Option<(String, u16, String)>,
+}
+
+impl ConnectionForm {
+    pub(super) fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        live: &mut Option<LiveSsh>,
+        dimensions: Dimensions,
+    ) -> bool {
+        if let Some(connection) = live.as_mut() {
+            ui.label(connection.status);
+            if let Some(pin) = &connection.accepted_pin {
+                self.pin = Some((
+                    connection.identity.host().to_owned(),
+                    connection.identity.port(),
+                    pin.clone(),
+                ));
+            }
+            connection.prompts(ui);
+            if ui.button("Disconnect").clicked() {
+                connection.stop("Disconnected. Connect again for a fresh shell.");
+            }
+        }
+        if ui
+            .button(if self.open {
+                "Close connection form"
+            } else {
+                "Connect SSH (prototype)"
+            })
+            .clicked()
+        {
+            self.open = !self.open;
+            if self.port.is_empty() {
+                self.port = "22".to_owned();
+            }
+        }
+        if self.open {
+            ui.label("Transient connection · credentials are not saved");
+            ui.small("Connect replaces the current session and starts a fresh shell.");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.host)
+                    .hint_text("Host")
+                    .char_limit(253),
+            );
+            ui.add(
+                egui::TextEdit::singleline(&mut self.port)
+                    .hint_text("Port")
+                    .char_limit(5),
+            );
+            ui.add(
+                egui::TextEdit::singleline(&mut self.username)
+                    .hint_text("Username")
+                    .char_limit(255),
+            );
+            if ui.button("Connect to host").clicked() {
+                let port = self.port.parse::<u16>().unwrap_or(0);
+                let identity = HostIdentity::new(&self.host, port).ok();
+                let pin = self
+                    .pin
+                    .as_ref()
+                    .filter(|(host, known_port, _)| {
+                        identity.as_ref().is_some_and(|identity| {
+                            identity.host() == host && *known_port == identity.port()
+                        })
+                    })
+                    .map(|(_, _, pin)| pin.as_str());
+                match LiveSsh::connect(&self.host, port, &self.username, dimensions, pin, ui.ctx())
+                {
+                    Ok(connection) => {
+                        *live = Some(connection);
+                        self.error = None;
+                        self.open = false;
+                        return true;
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+            }
+        }
+        if let Some(error) = self.error {
+            ui.label(error);
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use festerm_session::{
+        SessionId, SessionMetrics, SessionOperation, SessionSendError, ShutdownError,
+        ShutdownResult,
+    };
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct FakeSession {
+        events: Mutex<VecDeque<SessionEvent>>,
+        input: Mutex<Vec<Vec<u8>>>,
+        resizes: Mutex<Vec<TerminalSize>>,
+        rejected: bool,
+        shutdowns: Mutex<usize>,
+    }
+
+    impl Session for FakeSession {
+        fn id(&self) -> SessionId {
+            SessionId::next()
+        }
+        fn lifecycle(&self) -> SessionLifecycle {
+            SessionLifecycle::Running
+        }
+        fn metrics(&self) -> SessionMetrics {
+            SessionMetrics {
+                event_queue_depth: self.events.lock().unwrap().len(),
+                ..Default::default()
+            }
+        }
+        fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError> {
+            if self.rejected {
+                return Err(SessionSendError::Full {
+                    operation: SessionOperation::Input,
+                    capacity: 1,
+                });
+            }
+            self.input.lock().unwrap().push(bytes.to_vec());
+            Ok(())
+        }
+        fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
+            self.resizes.lock().unwrap().push(size);
+            Ok(())
+        }
+        fn try_shutdown(&self) -> Result<(), SessionSendError> {
+            *self.shutdowns.lock().unwrap() += 1;
+            Ok(())
+        }
+        fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError> {
+            self.events
+                .lock()
+                .unwrap()
+                .pop_front()
+                .ok_or(SessionTryReceiveError::Empty)
+        }
+        fn shutdown(&self, _timeout: Duration) -> Result<ShutdownResult, ShutdownError> {
+            panic!("UI must never synchronously wait for shutdown")
+        }
+    }
+
+    fn connection(session: Arc<FakeSession>) -> LiveSsh {
+        LiveSsh {
+            identity: HostIdentity::new("example.test", 22).unwrap(),
+            context: egui::Context::default(),
+            session: Some(session),
+            host_resolver: None,
+            password_resolver: None,
+            host_prompt: None,
+            password_prompt: None,
+            password: PasswordBuffer::default(),
+            pending_resize: None,
+            running: true,
+            status: "Connected",
+            accepted_pin: None,
+        }
+    }
+
+    fn terminal() -> Terminal {
+        Terminal::with_scrollback_limit(Dimensions::new(80, 24).unwrap(), 4096).unwrap()
+    }
+
+    #[test]
+    fn mobile_live_ssh_pump_uses_core_replies_and_bounded_event_work() {
+        let session = Arc::new(FakeSession::default());
+        session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::Output(b"hello\x1b[6n".to_vec()));
+        let mut live = connection(session.clone());
+        live.poll(&mut terminal(), &egui::Context::default());
+        assert_eq!(*session.input.lock().unwrap(), vec![b"\x1b[1;6R".to_vec()]);
+        for _ in 0..EVENT_BUDGET + 1 {
+            session
+                .events
+                .lock()
+                .unwrap()
+                .push_back(SessionEvent::Lifecycle(SessionLifecycle::Running));
+        }
+        live.poll(&mut terminal(), &egui::Context::default());
+        assert_eq!(session.events.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn mobile_live_ssh_hidden_workspaces_keep_pumping_output_and_replies() {
+        use crate::{workspaces::Workspace, Lifecycle, MobileApp};
+        use std::{cell::Cell, rc::Rc};
+
+        for workspace in [Workspace::Files, Workspace::Markdown] {
+            let session = Arc::new(FakeSession::default());
+            session
+                .events
+                .lock()
+                .unwrap()
+                .push_back(SessionEvent::Output(b"hidden\x1b[6n".to_vec()));
+            for _ in 0..EVENT_BUDGET {
+                session
+                    .events
+                    .lock()
+                    .unwrap()
+                    .push_back(SessionEvent::Lifecycle(SessionLifecycle::Running));
+            }
+            let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            })));
+            app.terminal = terminal();
+            *app.sink.live.connection.borrow_mut() = Some(connection(session.clone()));
+            app.switch_workspace(workspace);
+            let context = egui::Context::default();
+            context
+                .run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(390.0, 844.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| app.show(ui),
+                )
+                .drop_without_applying_deltas();
+            assert_eq!(app.workspace, workspace);
+            assert_eq!(*session.input.lock().unwrap(), vec![b"\x1b[1;7R".to_vec()]);
+            assert_eq!(session.events.lock().unwrap().len(), 1);
+            context
+                .run_ui(egui::RawInput::default(), |ui| app.show(ui))
+                .drop_without_applying_deltas();
+            assert!(session.events.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn mobile_live_ssh_native_suspension_retires_without_a_ui_frame() {
+        use crate::{Lifecycle, MobileApp, SuspensionHandle};
+        use std::{cell::Cell, rc::Rc};
+
+        let suspension = SuspensionHandle::default();
+        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle::default())))
+            .with_suspension(suspension.clone());
+        let session = Arc::new(FakeSession::default());
+        for shutdowns in 1..=2 {
+            app.sink.reset();
+            let mut live = connection(session.clone());
+            live.password.0.push_str("synthetic-secret");
+            live.host_prompt = Some(HostKeyPrompt::new("example.test", 22, "SHA256:fixture"));
+            live.resize(Dimensions::new(90, 30).unwrap());
+            *app.sink.live.connection.borrow_mut() = Some(live);
+
+            suspension.suspend();
+            suspension.suspend();
+
+            let connection = app.sink.live.connection.borrow();
+            let live = connection.as_ref().unwrap();
+            assert!(live.session.is_none());
+            assert!(!live.input_enabled());
+            assert!(live.password.0.is_empty());
+            assert!(live.host_prompt.is_none());
+            assert!(live.password_prompt.is_none());
+            assert!(live.pending_resize.is_none());
+            assert!(live.status.starts_with("Suspended"));
+            assert_eq!(*session.shutdowns.lock().unwrap(), shutdowns);
+        }
+    }
+
+    #[test]
+    fn mobile_live_ssh_input_refusal_retires_session_without_replay() {
+        let session = Arc::new(FakeSession {
+            rejected: true,
+            ..Default::default()
+        });
+        let mut live = connection(session.clone());
+        live.send(b"command");
+        assert!(live.session.is_none());
+        assert!(!live.input_enabled());
+        assert!(live.status.starts_with("Input rejected"));
+        live.send(b"continuation\n");
+        assert!(session.input.lock().unwrap().is_empty());
+        assert_eq!(*session.shutdowns.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn mobile_live_ssh_stop_clears_prompts_password_resize_and_stale_output() {
+        let session = Arc::new(FakeSession::default());
+        let mut live = connection(session.clone());
+        live.password.0.push_str("synthetic-secret");
+        live.host_prompt = Some(HostKeyPrompt::new("example.test", 22, "SHA256:fixture"));
+        live.resize(Dimensions::new(90, 30).unwrap());
+        live.send(b"blocked by trust prompt");
+        assert!(session.input.lock().unwrap().is_empty());
+        live.stop("Suspended");
+        assert!(live.password.0.is_empty());
+        assert!(live.host_prompt.is_none());
+        assert!(live.pending_resize.is_none());
+        session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::Output(b"stale\x1b[6n".to_vec()));
+        live.poll(&mut terminal(), &egui::Context::default());
+        assert_eq!(session.events.lock().unwrap().len(), 1);
+        assert!(session.input.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn mobile_live_ssh_resize_coalesces_and_rejects_unrepresentable_grids() {
+        let session = Arc::new(FakeSession::default());
+        let mut live = connection(session.clone());
+        live.resize(Dimensions::new(90, 30).unwrap());
+        live.resize(Dimensions::new(100, 40).unwrap());
+        live.pending_resize.as_mut().unwrap().1 = Instant::now() - Duration::from_millis(200);
+        live.poll(&mut terminal(), &egui::Context::default());
+        assert_eq!(
+            *session.resizes.lock().unwrap(),
+            vec![TerminalSize::new(100, 40).unwrap()]
+        );
+        assert!(session_size(Dimensions::new(65536, 1).unwrap()).is_err());
+    }
+
+    #[test]
+    fn mobile_live_ssh_password_buffer_bounds_unicode_edits_and_take() {
+        use egui::text::CharIndex;
+        use egui::TextBuffer;
+        let mut password = PasswordBuffer::default();
+        assert_eq!(password.insert_text("a中é", CharIndex(0)), 3);
+        password.delete_char_range(CharIndex(1)..CharIndex(2));
+        assert_eq!(password.as_str(), "aé");
+        assert_eq!(password.insert_text("x", CharIndex(1)), 1);
+        assert_eq!(password.as_str(), "axé");
+        let value = Zeroizing::new(password.take());
+        assert_eq!(value.as_str(), "axé");
+        assert!(password.as_str().is_empty());
+        assert_eq!(password.insert_text(&"x".repeat(5000), CharIndex(0)), 4096);
+        password.clear();
+        assert!(password.as_str().is_empty());
+    }
+}
