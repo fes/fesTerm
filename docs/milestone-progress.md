@@ -6483,10 +6483,14 @@ a small pinned read-only discovery operation; daemon admission/ownership stays
 unchanged. Legacy scoped-token profiles remain compatible.
 
 Deterministic OAuth/discovery/profile/UI regressions exercise this boundary.
-The project public-client registration, actual service acceptance and native
-browser/refresh/iOS evidence are deliberately still open in
-[#429](https://github.com/fes/fesTerm/issues/429); missing registration produces
-an honest unavailable message, not a fake successful sign-in.
+The owner subsequently registered the project-owned application under
+`fesLabs-core` and enabled device flow. Its public client ID is now included
+in default builds, so users need no build configuration or application
+registration. Explicit build overrides remain supported, including an
+empty/invalid override that honestly disables sign-in. Actual service
+acceptance and native browser/refresh/iOS evidence remain open in
+[#429](https://github.com/fes/fesTerm/issues/429); registration is not a
+successful end-to-end sign-in.
 
 The first experimental slice separates cloud transport from the local daemon:
 a bounded standalone relay exports one deliberately selected generation with

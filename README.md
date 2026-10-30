@@ -6,8 +6,9 @@ Rust.
 A [direct Dev Tunnels experiment](docs/dev-tunnels-experiment.md), included in default desktop builds,
 exports one existing daemon session through a separate bridge. It is
 GitHub-provisioned and not production-qualified. Native GitHub device sign-in
-and tunnel-name discovery are implemented but registration/live qualification
-remain blocked on [#429](https://github.com/fes/fesTerm/issues/429);
+and tunnel-name discovery use fesTerm's registered public OAuth client by
+default; live authorization/service qualification remains open under
+[#429](https://github.com/fes/fesTerm/issues/429);
 advanced scoped-token activation remains available.
 
 > [!NOTE]

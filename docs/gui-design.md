@@ -1723,8 +1723,10 @@ form's labeled **Name** and **Tunnel** fields and concise **Sign in with GitHub*
 **Connect**, **Connect once**, **Save profile** and **Cancel** controls.
 Save target edits before sign-in. Device authorization displays the short code
 and fixed GitHub system-browser link, bounded progress and content-free errors.
-Missing application-wide registration reports unavailable setup, not fake login
-or a per-user app-registration task ([#429](https://github.com/fes/fesTerm/issues/429)).
+The registered project-owned public client is included in default builds; no
+per-user app registration is required. An explicitly empty/invalid build override
+reports unavailable setup, not fake login. Live native acceptance remains
+tracked in [#429](https://github.com/fes/fesTerm/issues/429).
 The verified account and host fingerprint require Cancel-default approval on
 first use/account change or changed host. Independent profiles have distinct
 identity/refresh and scoped-connect references, no global current account.

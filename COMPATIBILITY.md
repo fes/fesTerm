@@ -12,9 +12,10 @@ daemon attach/detach and optional bounded remote file snapshots. It is
 experimental; `DT-01`–`DT-06` real-service/native qualification remains open.
 Inventory/create/takeover/terminate remain unavailable. Native GitHub device
 authorization, account-bound refresh and tunnel-name discovery have deterministic
-coverage, not live qualification: project registration/service acceptance is
-pending [#429](https://github.com/fes/fesTerm/issues/429). Builds without the
-project public client ID honestly report sign-in unavailable. This is not a
+coverage, not live qualification: the project-owned public client is registered
+and included in default builds; actual service acceptance remains pending
+[#429](https://github.com/fes/fesTerm/issues/429). An explicitly empty/invalid
+build override reports sign-in unavailable. This is not a
 production, mobile or multi-account service-qualification claim.
 
 The baseline is commonly relied-upon xterm behavior, augmented by pragmatic modern extensions. fesTerm is not attempting to reproduce every historical xterm feature or every private extension from another terminal.

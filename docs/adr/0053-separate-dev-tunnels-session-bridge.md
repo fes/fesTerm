@@ -22,7 +22,7 @@ tunnel-scoped host/connect tokens, with **GitHub authentication through the
 official Dev Tunnels CLI as the first supported provisioning route**.
 The owner subsequently requested a native, iOS-compatible client workflow:
 fesTerm-owned GitHub device authorization and tunnel-name discovery are now
-implemented behind project registration/live acceptance
+implemented with the registered project-owned public client; live acceptance
 [#429](https://github.com/fes/fesTerm/issues/429). Native Entra remains deferred. This does
 not authorize borrowing another application's OAuth identity or extracting
 its cached credentials.
@@ -114,11 +114,12 @@ browser implementation, daemon, PTY, GUI or platform-vault dependency. The host
 opens the fixed `https://github.com/login/device` URL and provides secure storage.
 The existing mobile host does not yet integrate the runtime or Keychain.
 
-The application-wide public client ID is supplied by the release build through
-`FESTERM_GITHUB_CLIENT_ID`, never by each profile/user. Missing registration is
-an honest unavailable state. No borrowed app ID or client secret is shipped.
-Project-owned OAuth registration, device-flow enablement, actual third-party
-Dev Tunnels acceptance and native/iOS evidence remain open under
+Default builds include public client ID `Ov23li7bESpHMwpvoQua`, registered for
+fesTerm under `fesLabs-core` with device flow enabled. Release builds may
+override it through `FESTERM_GITHUB_CLIENT_ID`, never per profile/user; an
+explicitly empty/invalid override is an honest unavailable state. No borrowed
+app ID or client secret is shipped. Registration is complete; actual
+third-party Dev Tunnels acceptance and native/iOS evidence remain open under
 [#429](https://github.com/fes/fesTerm/issues/429).
 
 Device authorization posts `client_id` and minimal `read:user` scope to
@@ -422,7 +423,8 @@ session, with peer profiles, explicit CLI-to-GUI attach/detach, optional bounded
 file reads and ordered terminal controls.
 Inventory, create, takeover, terminate and automatic reconnect are unavailable;
 they are not simulated by this subset. Native identity/name discovery is
-implemented with deterministic coverage, registration/live gate #429 pending.
+implemented with deterministic coverage and the registered public client;
+live qualification under #429 remains pending.
 
 The standalone bridge uses the pinned official SDK's management/contracts and
 WebSocket adapter with a narrowly ported modern-russh relay handshake.

@@ -82,7 +82,7 @@
       "prerequisites": [
         "Remaining real GitHub-provisioned service/native desktop qualification beyond the reviewed Windows fixture",
         "Controlled two-account real-service evidence; mock isolation is not service qualification",
-        "Native Entra and non-Windows qualification remain deferred; native GitHub registration/live acceptance is tracked in #429"
+        "Native Entra and non-Windows qualification remain deferred; native GitHub live acceptance is tracked in #429 (registered public client included)"
       ]
     },
     {
@@ -114,7 +114,7 @@
       "manual_scenarios": ["DT-07"],
       "status": "partial",
       "prerequisites": [
-        "#429: registered fesTerm-owned public OAuth client, device-flow enablement and actual third-party GitHub to Dev Tunnels authorization",
+        "#429: actual third-party GitHub to Dev Tunnels authorization using the registered fesTerm-owned public client included in default builds",
         "Native browser/account consent, refresh/revocation, two-account and desktop usability qualification",
         "Future iOS host/runtime and Keychain integration; portable Rust does not qualify the mobile product"
       ]

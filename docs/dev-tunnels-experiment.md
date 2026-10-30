@@ -19,8 +19,8 @@ terminate. Reopen explicitly after disconnect; queued input is discarded.
 
 There is no remote inventory, create, takeover, terminate, automatic reconnect,
 SSH/SFTP fallback or VS Code Server dependency. Native GitHub sign-in/refresh
-and tunnel-name discovery are implemented but registration/live qualification
-remain blocked by [#429](https://github.com/fes/fesTerm/issues/429).
+and tunnel-name discovery use the registered fesTerm-owned public client;
+live qualification remains open under [#429](https://github.com/fes/fesTerm/issues/429).
 Unsupported operations have no wire operation. Dev Tunnel is a peer profile,
 launcher and Inspector type, not a local/SSH disguise. Remote links have
 **no client-local file authority**. Optional bridge file reads are described
@@ -63,8 +63,10 @@ code. Verify the displayed account and host fingerprint against the remote
 operator before approval; Cancel is the default. **Connect** also starts sign-in
 when necessary. Launcher and Profiles use the same commands.
 
-The build/release owner must register the fesTerm-owned public OAuth application
-once, enable device flow and supply its public client ID application-wide:
+Default builds include the fesTerm-owned public OAuth client
+`Ov23li7bESpHMwpvoQua`, registered under `fesLabs-core` with device flow
+enabled. Users do not register an application or set an environment variable.
+Build/release owners may override the application-wide public ID:
 
 ```powershell
 $env:FESTERM_GITHUB_CLIENT_ID = 'PROJECT_OWNED_PUBLIC_CLIENT_ID'
@@ -72,10 +74,11 @@ cargo build -p festerm
 ```
 
 The ID is public build configuration, **not a secret or per-user registration
-task**. No real project ID is currently provisioned. Without it, sign-in
-honestly reports unavailable. Registration and actual GitHub→Dev Tunnels service
-acceptance are pending [#429](https://github.com/fes/fesTerm/issues/429);
-deterministic auth tests do not establish that live gate.
+task**. An explicitly empty or invalid override disables sign-in with an honest
+unavailable message. No client secret is needed or shipped. Registration is
+complete; actual GitHub→Dev Tunnels service acceptance, user consent and native
+refresh remain pending [#429](https://github.com/fes/fesTerm/issues/429);
+deterministic auth tests do not establish those live gates.
 
 The client uses native GitHub device authorization with `read:user`, no
 client secret, local listener, helper process or other application's credentials.

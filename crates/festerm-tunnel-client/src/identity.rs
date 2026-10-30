@@ -245,7 +245,9 @@ impl Drop for Poll {
 }
 
 pub fn registered_client_id() -> Option<&'static str> {
-    option_env!("FESTERM_GITHUB_CLIENT_ID").filter(|id| valid_client_id(id))
+    option_env!("FESTERM_GITHUB_CLIENT_ID")
+        .or(Some("Ov23li7bESpHMwpvoQua"))
+        .filter(|id| valid_client_id(id))
 }
 fn valid_client_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')
