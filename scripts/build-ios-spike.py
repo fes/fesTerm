@@ -31,7 +31,7 @@ def check_dependencies(target: str) -> None:
     result = run(
         "cargo", "tree", "--locked", "-p", "festerm-mobile", "--target", target,
         "--edges", "normal,build", "--prefix", "none", "--format", "{p}",
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=120,
     )
     names = {line.split()[0] for line in result.stdout.splitlines() if line.strip()}
     forbidden = names & FORBIDDEN
@@ -120,6 +120,7 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (subprocess.CalledProcessError, RuntimeError) as error:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError) as error:
         print(error, file=sys.stderr)
         sys.exit(1)
+

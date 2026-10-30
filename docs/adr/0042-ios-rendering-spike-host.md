@@ -50,7 +50,17 @@ part of the shipping graph.
 
 Simulator packaging is a separate unsigned-distribution development script
 (ad-hoc code signature only), not a modification of desktop release trust.
-No signing credentials, provisioning profiles or store uploads are involved.
+No signing credentials, provisioning profiles or store uploads are involved
+in that Simulator path. Owner-authorized campaign #422/#426 adds a separate
+local development-device packager, `scripts/build-ios-device.py`, using an
+existing local Apple Development identity and an explicit device-provisioned
+profile. It validates app/team/certificate/device membership and expiry,
+requests only the minimal development entitlements, builds with the device
+SDK, and signs/verifies a fresh private bundle. It does not install, enroll,
+provision, distribute or upload; the embedded profile stays in local private
+output. Portable policy tests are not native signing/install acceptance.
+This additive packaging path changes no runtime dependency or ownership
+boundary; the host remains an offline fixture pending the live-SSH slice.
 
 **Experimental CI policy (owner-approved 2026-10-03):** affected PRs retain
 mobile unit/dependency checks, device compilation and Simulator app builds.
@@ -214,6 +224,9 @@ accessibility and physical-device acceptance remain open on iPad.
   `MOB-05` (isolated preview);
   `ZOOM-02` shares the existing size bounds.
 - **Automated tests required:**
+  `scripts/tests/test_ios_device_build.py` covers development-profile admission,
+  exact local signing identity, entitlement minimization, non-building preflight,
+  device/Simulator separation, failure receipts and private output/receipt policy;
   `mobile_gpu_limits_accept_simulator_downlevel_capabilities`,
   `mobile_lifecycle_is_idempotent_and_counts_resume_after_suspend`,
   `mobile_probe_uses_core_encoding_without_echoing_or_retaining_input`,
@@ -260,3 +273,4 @@ accessibility and physical-device acceptance remain open on iPad.
 - **Native/manual evidence required:** `MOB-01` through `MOB-05` in
   `docs/manual-validation.md`, on Simulator and a physical iOS device.
 - **Coverage superseded:** None; desktop acceptance is unchanged.
+
