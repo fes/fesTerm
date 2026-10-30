@@ -13,6 +13,10 @@ SPEC.loader.exec_module(build)
 
 
 class IosSshDependencyTests(unittest.TestCase):
+    def test_only_live_bundle_declares_local_network_use_for_selected_ssh_hosts(self):
+        self.assertNotIn("NSLocalNetworkUsageDescription", build.bundle_info())
+        self.assertIn("SSH hosts you choose", build.bundle_info(True)["NSLocalNetworkUsageDescription"])
+
     def test_live_feature_graph_is_checked_for_both_mobile_targets(self):
         with patch.object(build.sys, "argv", ["build", "--check-dependencies", "--live-ssh"]), \
                 patch.object(build, "check_dependencies") as check:

@@ -44,8 +44,8 @@ def check_dependencies(target: str, package: str = "festerm-mobile", live_ssh: b
         raise RuntimeError(f"Mobile dependency boundary violated: {sorted(forbidden)}")
 
 
-def bundle_info() -> dict:
-    return {
+def bundle_info(live_ssh: bool = False) -> dict:
+    info = {
         "CFBundleDevelopmentRegion": "en",
         "CFBundleDisplayName": "fesTerm Spike",
         "CFBundleExecutable": "festerm-mobile",
@@ -72,6 +72,9 @@ def bundle_info() -> dict:
             "UIInterfaceOrientationLandscapeRight",
         ],
     }
+    if live_ssh:
+        info["NSLocalNetworkUsageDescription"] = "Connect to SSH hosts you choose on your local network."
+    return info
 
 
 def main() -> int:
@@ -104,7 +107,7 @@ def main() -> int:
     bundle.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "target" / target / "debug" / "festerm-mobile", bundle / "festerm-mobile")
     with (bundle / "Info.plist").open("wb") as stream:
-        plistlib.dump(bundle_info(), stream)
+        plistlib.dump(bundle_info(args.live_ssh), stream)
     run("codesign", "--force", "--sign", "-", str(bundle))
     run("codesign", "--verify", "--strict", str(bundle))
     # Preserve executable permissions when downloaded from Actions artifacts.
