@@ -93,6 +93,7 @@ impl SessionEventNotifier for Repaint {
 
 pub(super) struct LiveSsh {
     identity: HostIdentity,
+    context: egui::Context,
     session: Option<Arc<dyn Session>>,
     host_resolver: Option<HostKeyDecisionResolver>,
     password_resolver: Option<PasswordDecisionResolver>,
@@ -138,6 +139,7 @@ impl LiveSsh {
         let password_resolver = Some(session.password_decision_resolver());
         Ok(Self {
             identity,
+            context: context.clone(),
             session: Some(Arc::new(session)),
             host_resolver,
             password_resolver,
@@ -192,6 +194,11 @@ impl LiveSsh {
     pub(super) fn resize(&mut self, dimensions: Dimensions) {
         if self.pending_resize.map(|(size, _)| size) != Some(dimensions) {
             self.pending_resize = Some((dimensions, Instant::now()));
+            if self.running {
+                // Geometry is reported after this frame's event pump. Schedule
+                // the debounce even if no output or further input wakes the UI.
+                self.context.request_repaint_after(Duration::from_millis(100));
+            }
         }
     }
 
@@ -491,6 +498,7 @@ mod tests {
     fn connection(session: Arc<FakeSession>) -> LiveSsh {
         LiveSsh {
             identity: HostIdentity::new("example.test", 22).unwrap(),
+            context: egui::Context::default(),
             session: Some(session),
             host_resolver: None,
             password_resolver: None,
