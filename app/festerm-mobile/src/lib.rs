@@ -675,7 +675,12 @@ mod tests {
             &context,
             size,
             0.35,
-            vec![egui::Event::PointerMoved(geometry.clip.center())],
+            // The ScrollArea shrinks horizontally to its controls; its clip
+            // spans the full panel, so that clip's center can miss the hit area.
+            vec![egui::Event::PointerMoved(egui::pos2(
+                geometry.connect.center().x,
+                geometry.clip.center().y,
+            ))],
         );
         connection_frame(
             &mut app,
