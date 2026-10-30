@@ -3,7 +3,7 @@
 //! credentials, clipboard reads or personal filesystem resources.
 
 use super::*;
-use egui_kittest::Harness;
+use egui_kittest::{kittest::Queryable, Harness};
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf, process::Command};
 
@@ -41,8 +41,7 @@ fn capture_mobile_ui_gallery() {
                 active: true,
                 ..Default::default()
             }));
-            let mut app = MobileApp::new(lifecycle);
-            app.connection.open = connect;
+            let app = MobileApp::new(lifecycle);
             let mut harness = Harness::builder()
                 .with_size(egui::vec2(width, height))
                 .build_ui_state(
@@ -56,12 +55,19 @@ fn capture_mobile_ui_gallery() {
                 .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
             harness.remove_cursor();
             harness.run();
+            if connect {
+                harness.get_by_label("Connect SSH (prototype)").click();
+                harness.run();
+            }
             let image = harness.render().expect("headless mobile rendering");
             let state = if connect { "connect" } else { "terminal" };
             let filename = format!("{family}-{state}.png");
             let path = output.join(&filename);
             image.save(&path).expect("save mobile review PNG");
-            let hash = format!("{:x}", Sha256::digest(fs::read(&path).expect("read PNG")));
+            let hash: String = Sha256::digest(fs::read(&path).expect("read PNG"))
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
             images.push(serde_json::json!({
                 "image": filename,
                 "state": state,
