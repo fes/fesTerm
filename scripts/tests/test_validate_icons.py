@@ -46,6 +46,8 @@ class IconValidationTests(unittest.TestCase):
         generated = icons.build_runtime_geometry(self.canonical_icons())
         self.assertIn("Icon::SshRemote => 1.0,", generated)
         self.assertIn("Icon::RemoteGlobe => 1.0,", generated)
+        self.assertIn("Icon::DevTunnel => 1.0,", generated)
+        self.assertIn("Icon::RemoteTunnel => 1.0,", generated)
         self.assertIn("Icon::Serial => 1.25,", generated)
         self.assertIn("_ => 1.75,", generated)
 
@@ -99,6 +101,61 @@ class IconValidationTests(unittest.TestCase):
             path.write_text(document, encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "nested <svg>"):
                 icons.validate(path)
+
+    def test_dev_tunnel_keeps_the_exact_ssh_terminal_source_paths(self):
+        ssh = icons.validate(icons.SOURCE / "ssh-remote.svg")
+        tunnel = icons.validate(icons.SOURCE / "dev-tunnel.svg")
+        self.assertEqual(tunnel.attrib, ssh.attrib)
+        self.assertEqual(len(tunnel), 4)
+        for expected, actual in zip(list(ssh)[:2], list(tunnel)[:2]):
+            self.assertEqual(actual.tag, expected.tag)
+            self.assertEqual(actual.attrib, expected.attrib)
+
+    def test_remote_tunnel_is_an_exact_overlay_not_a_recentered_icon(self):
+        complete = icons.validate(icons.SOURCE / "dev-tunnel.svg")
+        overlay = icons.validate(icons.SOURCE / "remote-tunnel.svg")
+        self.assertEqual(complete.attrib, overlay.attrib)
+        self.assertEqual(len(overlay), 2)
+        for expected, actual in zip(list(complete)[2:], overlay):
+            self.assertEqual(actual.tag, expected.tag)
+            self.assertEqual(actual.attrib, expected.attrib)
+        overlay_geometry = icons.runtime_primitives(overlay)
+        self.assertEqual(len(overlay_geometry), 4)
+        self.assertEqual(icons.runtime_primitives(complete)[-4:], overlay_geometry)
+
+    def test_tunnel_strokes_fit_inside_the_source_viewbox(self):
+        for name in ("dev-tunnel", "remote-tunnel"):
+            with self.subTest(name=name):
+                root = icons.validate(icons.SOURCE / f"{name}.svg")
+                half_stroke = icons.number(root, "stroke-width") / 2
+                for primitive in icons.runtime_primitives(root):
+                    self.assertIsInstance(primitive, icons.Polyline)
+                    for point in primitive.points:
+                        self.assertTrue(
+                            all(half_stroke <= v <= 24 - half_stroke for v in point)
+                        )
+
+    def test_review_sheet_fits_every_icon_card_including_the_last_row(self):
+        sheet = ET.fromstring(icons.build_sheet(self.canonical_icons()))
+        width, height = float(sheet.attrib["width"]), float(sheet.attrib["height"])
+        cards = [
+            element for element in sheet
+            if element.tag.endswith("}rect") and "x" in element.attrib
+        ]
+        self.assertEqual(len(cards), len(self.canonical_icons()))
+        for card in cards:
+            self.assertLessEqual(
+                float(card.attrib["x"]) + float(card.attrib["width"]), width
+            )
+            self.assertLessEqual(
+                float(card.attrib["y"]) + float(card.attrib["height"]) + 32, height
+            )
+
+    def test_committed_review_sheet_matches_canonical_svgs(self):
+        self.assertEqual(
+            icons.SHEET.read_text(encoding="utf-8"),
+            icons.build_sheet(self.canonical_icons()),
+        )
 
 
 if __name__ == "__main__":

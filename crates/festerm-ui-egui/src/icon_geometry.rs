@@ -115,6 +115,61 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
                 (8.0, 18.0),
             ]),
         ],
+        Icon::DevTunnel => &[
+            Primitive::Polyline(&[
+                (16.0, 9.2),
+                (16.0, 6.4),
+                (15.8325, 5.5581),
+                (15.3556, 4.8444),
+                (14.6419, 4.3675),
+                (13.8, 4.2),
+                (3.4, 4.2),
+                (2.5581, 4.3675),
+                (1.8444, 4.8444),
+                (1.3675, 5.5581),
+                (1.2, 6.4),
+                (1.2, 16.8),
+                (1.3675, 17.6419),
+                (1.8444, 18.3556),
+                (2.5581, 18.8325),
+                (3.4, 19.0),
+                (12.6, 19.0),
+            ]),
+            Primitive::Polyline(&[
+                (5.0, 8.8),
+                (7.7, 11.5),
+                (5.0, 14.2),
+            ]),
+            Primitive::Polyline(&[
+                (9.4, 14.2),
+                (12.3, 14.2),
+            ]),
+            Primitive::Polyline(&[
+                (14.2, 20.4),
+                (14.2, 15.2),
+                (14.5197, 13.5927),
+                (15.4302, 12.2302),
+                (16.7927, 11.3197),
+                (18.4, 11.0),
+                (20.0073, 11.3197),
+                (21.3698, 12.2302),
+                (22.2803, 13.5927),
+                (22.6, 15.2),
+                (22.6, 20.4),
+            ]),
+            Primitive::Polyline(&[
+                (18.4, 15.7),
+                (18.4, 16.0),
+            ]),
+            Primitive::Polyline(&[
+                (18.4, 17.8),
+                (18.4, 18.3),
+            ]),
+            Primitive::Polyline(&[
+                (18.4, 20.0),
+                (18.4, 20.7),
+            ]),
+        ],
         Icon::Diagnostics => &[
             Primitive::Polyline(&[
                 (3.0, 12.0),
@@ -648,6 +703,33 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
                 (18.3, 10.9),
             ]),
         ],
+        Icon::RemoteTunnel => &[
+            Primitive::Polyline(&[
+                (14.2, 20.4),
+                (14.2, 15.2),
+                (14.5197, 13.5927),
+                (15.4302, 12.2302),
+                (16.7927, 11.3197),
+                (18.4, 11.0),
+                (20.0073, 11.3197),
+                (21.3698, 12.2302),
+                (22.2803, 13.5927),
+                (22.6, 15.2),
+                (22.6, 20.4),
+            ]),
+            Primitive::Polyline(&[
+                (18.4, 15.7),
+                (18.4, 16.0),
+            ]),
+            Primitive::Polyline(&[
+                (18.4, 17.8),
+                (18.4, 18.3),
+            ]),
+            Primitive::Polyline(&[
+                (18.4, 20.0),
+                (18.4, 20.7),
+            ]),
+        ],
         Icon::RenderedView => &[
             Primitive::Polyline(&[
                 (3.0, 12.0),
@@ -1051,10 +1133,12 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
 
 fn icon_stroke_width(icon: Icon) -> f32 {
     match icon {
+        Icon::DevTunnel => 1.0,
         Icon::FileTransfer => 1.5,
         Icon::LocalTerminal => 1.25,
         Icon::MarkdownDocument => 1.5,
         Icon::RemoteGlobe => 1.0,
+        Icon::RemoteTunnel => 1.0,
         Icon::RunningSessions => 1.5,
         Icon::Serial => 1.25,
         Icon::SshRemote => 1.0,
