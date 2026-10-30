@@ -59,6 +59,8 @@ fn capture_mobile_ui_gallery() {
                 harness.get_by_label("Connect SSH (prototype)").click();
                 harness.run();
             }
+            harness.remove_cursor();
+            harness.run();
             let image = harness.render().expect("headless mobile rendering");
             let state = if connect { "connect" } else { "terminal" };
             let filename = format!("{family}-{state}.png");

@@ -171,12 +171,6 @@ from Simulator artifacts.
 CI scopes the destination by run ID and attempt so restored build-cache
 directories cannot collide with or be published as a fresh capture.
 
-When artifact downloads are unavailable to the review worker, CI also selects
-`--emit-review-data`: a bounded, hash-checked export of only these four controlled
-PNGs and their manifest into API-readable log records. It accepts only the
-fixed gallery filenames and rejects oversized, symlinked or mismatched images.
-It is not a general file exporter and must only be used with this fixture gallery.
-
 These are **non-native headless review images**, with a pinned Dark preference
 and a simulated reserved keyboard area. The native system keyboard is not
 rendered. They do not show a live SSH shell or establish UIKit layout, native

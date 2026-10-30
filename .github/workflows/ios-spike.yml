@@ -64,7 +64,7 @@ jobs:
       - run: cargo clippy --locked -p festerm-mobile --features live-ssh --all-targets -- -D warnings
       - name: Capture non-native mobile UI review images
         timeout-minutes: 10
-        run: python3 scripts/capture-mobile-ui.py --output "$FESTERM_MOBILE_UI_REVIEW_DIR" --emit-review-data
+        run: python3 scripts/capture-mobile-ui.py --output "$FESTERM_MOBILE_UI_REVIEW_DIR"
       - name: Upload non-native mobile UI review images
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         if: always()

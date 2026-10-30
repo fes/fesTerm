@@ -1,8 +1,5 @@
 """Capture invocation policy without a local Rust/GPU toolchain."""
 import importlib.util
-import hashlib
-import json
-import io
 from pathlib import Path
 import subprocess
 import tempfile
@@ -16,45 +13,6 @@ SPEC.loader.exec_module(capture)
 
 
 class MobileCaptureTests(unittest.TestCase):
-    def fixture(self, output):
-        images = []
-        for family in ("phone", "tablet"):
-            for state in ("terminal", "connect"):
-                name = f"{family}-{state}.png"
-                payload = b"synthetic image bytes"
-                (output / name).write_bytes(payload)
-                images.append({"image": name, "sha256": hashlib.sha256(payload).hexdigest()})
-        manifest = {"images": images, "source_commit": "synthetic-source"}
-        (output / "manifest.json").write_text(json.dumps(manifest))
-        return manifest
-
-    def test_review_transport_exports_only_hash_checked_controlled_images(self):
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory)
-            self.fixture(output)
-            with patch("sys.stdout", new_callable=io.StringIO) as stream:
-                capture.emit_review_data(output)
-            records = stream.getvalue().splitlines()
-            self.assertEqual(len(records), 5)
-            self.assertTrue(records[0].startswith('MOBILE_UI_MANIFEST '))
-            self.assertTrue(all(line.startswith('MOBILE_UI_PNG ') for line in records[1:]))
-
-    def test_review_transport_refuses_foreign_names_corruption_and_oversize_before_export(self):
-        for refusal in ("foreign", "hash", "oversize"):
-            with self.subTest(refusal=refusal), tempfile.TemporaryDirectory() as directory:
-                output = Path(directory)
-                manifest = self.fixture(output)
-                if refusal == "foreign":
-                    manifest["images"][0]["image"] = "../private.txt"
-                    (output / "manifest.json").write_text(json.dumps(manifest))
-                else:
-                    (output / "phone-terminal.png").write_bytes(
-                        b"changed" if refusal == "hash" else b"x" * (512 * 1024 + 1))
-                with patch("sys.stdout", new_callable=io.StringIO) as stream:
-                    with self.assertRaises(ValueError):
-                        capture.emit_review_data(output)
-                self.assertEqual(stream.getvalue(), "")
-
     def test_existing_output_is_refused_without_touching_evidence_or_running_cargo(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "previous"
