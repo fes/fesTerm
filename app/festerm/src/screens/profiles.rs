@@ -50,6 +50,8 @@ struct DevTunnelProfileDraft {
     destination_file: String,
     tunnel: String,
     legacy: bool,
+    /// Key of the shared account selected for this profile.
+    account: Option<String>,
     saved: Option<Profile>,
     credential: Option<Arc<festerm_secret_store::SecretReference>>,
     token: zeroize::Zeroizing<String>,
@@ -64,6 +66,7 @@ impl DevTunnelProfileDraft {
             destination_file: profile.destination_file().to_owned(),
             tunnel: profile.tunnel_name().unwrap_or_default().to_owned(),
             legacy: profile.tunnel_name().is_none(),
+            account: profile.account().map(str::to_owned),
             saved: Some(Profile::DevTunnel(profile.clone())),
             credential: profile
                 .credential_reference()
@@ -79,13 +82,16 @@ impl DevTunnelProfileDraft {
                     .as_dev_tunnel()
                     .is_some_and(|profile| profile.tunnel_name() == Some(self.tunnel.trim()))
                 {
-                    return Ok(saved.clone());
+                    return saved
+                        .clone()
+                        .with_tunnel_account_selection(self.account.clone());
                 }
             }
             return Profile::named_dev_tunnel(
                 self.original_id.as_deref().unwrap_or(self.name.trim()),
                 self.tunnel.trim(),
-            );
+            )?
+            .with_tunnel_account_selection(self.account.clone());
         }
         let profile = Profile::dev_tunnel(
             self.original_id.as_deref().unwrap_or(self.name.trim()),
@@ -113,8 +119,9 @@ fn profile_table_item(profile: &Profile, configuration: &Configuration) -> Profi
                 .unwrap_or(tunnel.destination_file())
                 .to_owned(),
             tunnel
-                .identity()
-                .map(|identity| format!("GitHub · {}", identity.login))
+                .account()
+                .and_then(|key| configuration.account(key))
+                .map(|account| format!("GitHub · {}", account.login()))
                 .unwrap_or_else(|| "Experimental".to_owned()),
         ),
         Profile::Local(local) => (
@@ -937,10 +944,6 @@ pub(crate) fn show_profiles(
                 if draft.original_id.is_none() && action_button(ui, ActionButtonRole::Secondary, "Paste setup JSON").clicked() {
                     next_mode = Some(ProfilesScreenMode::ImportPublicDevTunnel(PublicTunnelImportDraft::default()));
                 }
-                #[cfg(feature = "experimental-dev-tunnels")]
-                if draft.original_id.is_none() && action_button(ui, ActionButtonRole::Secondary, "Browse my tunnels").clicked() {
-                    command = Some(AppCommand::BrowseDevTunnels);
-                }
                 ui.add_enabled_ui(draft.original_id.is_none(), |ui| {
                     profile_text_edit(ui, tab_id, "tunnel_name", "Name", &mut draft.name);
                 });
@@ -948,18 +951,42 @@ pub(crate) fn show_profiles(
                     profile_text_edit(ui, tab_id, "native_tunnel", "Tunnel", &mut draft.tunnel);
                     let current = draft.original_id.as_deref().and_then(|id| configuration.profile(id));
                     let saved = draft.build().ok().as_ref() == current && current.is_some();
-                    let account = current.and_then(Profile::as_dev_tunnel).and_then(|profile| profile.identity());
-                    ui.label(account.map(|account| format!("GitHub · {}", account.login))
-                        .unwrap_or_else(|| "Not signed in".into()));
+                    let selected = draft.account.as_deref().and_then(|key| configuration.account(key));
+                    egui::ComboBox::from_label("Account")
+                        .selected_text(selected.map(|account| format!("GitHub · {}", account.login()))
+                            .unwrap_or_else(|| "Not signed in".into()))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut draft.account, None, "Not signed in");
+                            for account in configuration.accounts() {
+                                ui.selectable_value(
+                                    &mut draft.account,
+                                    Some(account.identifier().to_owned()),
+                                    format!("GitHub · {}", account.login()),
+                                );
+                            }
+                        });
+                    ui.horizontal_wrapped(|ui| {
+                        if action_button_enabled(ui, cfg!(feature = "experimental-dev-tunnels"), ActionButtonRole::Secondary, "Add GitHub account").clicked() {
+                            command = Some(AppCommand::AddDevTunnelAccount);
+                        }
+                        if let Some(key) = draft.account.clone() {
+                            if action_button_enabled(ui, cfg!(feature = "experimental-dev-tunnels"), ActionButtonRole::Secondary, "Pick from my tunnels").clicked() {
+                                command = Some(AppCommand::BrowseDevTunnels { account: key });
+                            }
+                        }
+                    });
                     ui.horizontal_wrapped(|ui| {
                         let enabled = saved && cfg!(feature = "experimental-dev-tunnels");
-                        if action_button_enabled(ui, enabled, ActionButtonRole::Secondary, "Sign in with GitHub").clicked() {
-                            command = Some(AppCommand::NativeDevTunnel {
-                                profile_id: draft.original_id.clone().expect("saved profile"),
-                                sign_in: true, remember: true, connect: false,
-                            });
+                        if action_button_enabled(ui, cfg!(feature = "experimental-dev-tunnels") && !draft.tunnel.trim().is_empty(), ActionButtonRole::Accent, "Save & connect").clicked() {
+                            match draft.build() {
+                                Ok(profile) => {
+                                    draft.original_id = Some(profile.identifier().to_owned());
+                                    command = Some(AppCommand::SaveAndConnectDevTunnel { profile });
+                                }
+                                Err(error) => draft.error = Some(error.to_string()),
+                            }
                         }
-                        if action_button_enabled(ui, enabled, ActionButtonRole::Accent, "Connect").clicked() {
+                        if action_button_enabled(ui, enabled, ActionButtonRole::Secondary, "Connect").clicked() {
                             command = Some(AppCommand::StartConfiguredDevTunnelProfile {
                                 profile_id: draft.original_id.clone().expect("saved profile"),
                             });
@@ -971,7 +998,7 @@ pub(crate) fn show_profiles(
                             });
                         }
                     });
-                    if !saved { ssh_paragraph(ui, "Save changes to sign in."); }
+                    if !saved { ssh_paragraph(ui, "Save & connect signs in, saves, and connects in one step."); }
                 }
                 ui.collapsing("Advanced", |ui| {
                     ui.checkbox(&mut draft.legacy, "Use destination file");
@@ -1942,7 +1969,8 @@ mod tests {
             });
             harness.run();
             for label in [
-                "Sign in with GitHub",
+                "Add GitHub account",
+                "Save & connect",
                 "Connect",
                 "Connect once",
                 "Save profile",
@@ -1977,17 +2005,23 @@ mod tests {
         harness.run();
         click_profile_action(&mut harness, "owned", "Edit");
         harness.get_by_label("Tunnel");
-        harness.get_by_label("Not signed in");
-        harness.get_by_label("Sign in with GitHub").click();
+        harness.get_by_label("Add GitHub account").click();
         harness.run();
-        assert!(matches!(harness.state().command,
-            Some(AppCommand::NativeDevTunnel { ref profile_id, sign_in:true, remember:true, connect:false })
-                if profile_id == "owned"));
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::AddDevTunnelAccount)
+        ));
         harness.state_mut().command = None;
         harness.get_by_label("Tunnel").click();
         harness.get_by_label("Tunnel").type_text("-changed");
         harness.run();
-        harness.get_by_label("Save changes to sign in.");
+        harness.get_by_label("Save & connect signs in, saves, and connects in one step.");
+        harness.get_by_label("Save & connect").click();
+        harness.run();
+        assert!(matches!(harness.state().command,
+            Some(AppCommand::SaveAndConnectDevTunnel { ref profile })
+                if profile.as_dev_tunnel().unwrap().tunnel_name() == Some("owned.usw3-changed")));
+        harness.state_mut().command = None;
         harness.get_by_label("Save profile").click();
         harness.run();
         assert!(matches!(harness.state().command,
@@ -1999,10 +2033,8 @@ mod tests {
     fn native_auth_profile_draft_preserves_only_unchanged_target_bindings() {
         let profile = Profile::named_dev_tunnel("owned", "owned.usw3")
             .unwrap()
-            .with_tunnel_identity(
-                42,
-                "owner".into(),
-                festerm_secret_store::SecretReference::generate(),
+            .with_tunnel_account(
+                "github-owner",
                 festerm_secret_store::SecretReference::generate(),
                 festerm_config::DevTunnelHost {
                     tunnel_id: "owned".into(),
@@ -2017,10 +2049,13 @@ mod tests {
         assert_eq!(draft.build().unwrap(), profile);
         draft.tunnel = "changed.usw3".into();
         let changed = draft.build().unwrap();
-        assert!(changed.as_dev_tunnel().unwrap().identity().is_none());
+        assert_eq!(
+            changed.as_dev_tunnel().unwrap().account(),
+            Some("github-owner")
+        );
         assert!(changed.credential_reference().is_none());
         assert!(changed.as_dev_tunnel().unwrap().trusted_host().is_none());
-        assert!(profile.as_dev_tunnel().unwrap().identity().is_some());
+        assert!(profile.as_dev_tunnel().unwrap().account().is_some());
     }
 
     #[test]

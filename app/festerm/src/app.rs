@@ -6136,6 +6136,7 @@ impl FesTermApp {
                             prefer_powershell: self.state.prefer_powershell(),
                             extend_dev_tunnel_lifetime: self.state.extend_dev_tunnel_lifetime(),
                             dev_tunnel_extension_days: self.state.dev_tunnel_extension_days(),
+                            dev_tunnel_accounts: self.dev_tunnel_account_rows(),
                             customize_local_shell: self.state.customize_local_shell(),
                             restore_workspace: self.state.restore_workspace(),
                             terminal_font: self.state.terminal_font(),
@@ -6467,9 +6468,32 @@ impl FesTermApp {
                         );
                     }
                 }
-                AppCommand::BrowseDevTunnels => {
+                AppCommand::BrowseDevTunnels { account } => {
                     #[cfg(feature = "experimental-dev-tunnels")]
-                    self.begin_tunnel_browser(ui.ctx());
+                    self.begin_tunnel_browser(Some(account), ui.ctx());
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    let _ = account;
+                }
+                AppCommand::AddDevTunnelAccount => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.begin_tunnel_browser(None, ui.ctx());
+                }
+                AppCommand::RemoveDevTunnelAccount { account } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.remove_dev_tunnel_account(&account);
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    let _ = account;
+                }
+                AppCommand::SaveAndConnectDevTunnel { profile } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    {
+                        let id = profile.identifier().to_owned();
+                        if self.save_profile(profile) {
+                            self.begin_native_tunnel(id, false, true, true, ui.ctx());
+                        }
+                    }
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    let _ = profile;
                 }
                 AppCommand::NativeDevTunnel {
                     profile_id,
@@ -15467,7 +15491,7 @@ mod tests {
         let saved = harness.state().state.configuration().clone();
         let profile = saved.profile("server-one").unwrap();
         assert!(profile.credential_reference().is_none());
-        assert!(profile.as_dev_tunnel().unwrap().identity().is_none());
+        assert!(profile.as_dev_tunnel().unwrap().account().is_none());
         assert_eq!(
             Configuration::parse(&fs::read_to_string(&path).unwrap()).unwrap(),
             saved

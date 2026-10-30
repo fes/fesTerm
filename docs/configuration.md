@@ -76,6 +76,13 @@ port = 22
 username = "alice"
 sftp_gui_mode = false
 
+[[accounts]]
+id = "github-alice"
+provider = "github"
+account_id = 4242
+login = "alice"
+credential_id = "550e8400-e29b-41d4-a716-446655440001"
+
 [[known_hosts]]
 host = "build.example"
 port = 2200

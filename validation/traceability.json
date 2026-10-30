@@ -132,7 +132,7 @@
         "native_identity_binds_application_and_refuses_legacy_or_cross_app_refresh",
         "native_service_selection_refuses_ordinary_tunnels_ambiguity_and_missing_pins",
         "native_service_lookup_distinguishes_denial_missing_tunnels_and_service_failures",
-        "native_tunnel_profiles_keep_identity_connect_and_account_bindings_independent",
+        "profiles_share_one_account_and_keep_separate_connect_credentials",
         "native_auth_completion_is_discarded_after_profile_edit_without_publishing_credentials",
         "native_auth_cancel_wins_before_ready_credentials_are_published",
         "native_auth_refresh_publishes_only_the_bound_profile_identity_and_rejects_stale_rotation",
