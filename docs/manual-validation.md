@@ -17,6 +17,13 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
 ## Experimental direct Dev Tunnels bridge (DT-01 through DT-07)
 
+Windows managed-host qualification must exercise servicing-owned system
+ancestors and refuse foreign directory-delete, child-delete and ACL/owner
+mutation permissions without repairing existing ACLs. The exact
+TrustedInstaller SID is admitted only for ancestors; final private objects stay
+current-user-only. Hosted policy/fixture tests are not clean-machine installer,
+native-service or credential-lifecycle acceptance under #432.
+
 Publication and broader qualification remain gated on clarification of
 standalone fesTerm usage rights, as recorded in ADR 0053. The owner subsequently
 authorized the bounded service-application tests and integration below; the current service terms

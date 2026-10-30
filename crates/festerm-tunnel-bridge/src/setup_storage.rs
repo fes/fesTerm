@@ -34,9 +34,7 @@ fn ancestor(directory: &File) -> io::Result<()> {
     }
     #[cfg(windows)]
     {
-        festerm_windows_security::secure_staging_parent(directory)?
-            .map(|_| ())
-            .ok_or_else(|| io::Error::from(io::ErrorKind::PermissionDenied))
+        festerm_windows_security::trusted_private_storage_ancestor(directory)
     }
 }
 
@@ -233,17 +231,46 @@ pub fn replace_private(directory: &File, name: &Path, bytes: &[u8]) -> io::Resul
 }
 
 #[cfg(test)]
+pub(crate) fn test_private_directory(prefix: &str) -> std::path::PathBuf {
+    #[cfg(windows)]
+    let parents = [
+        std::env::temp_dir(),
+        // Hosted runner profiles grant another account direct administrator
+        // access. Use system temp rather than weakening the ancestor policy.
+        std::path::PathBuf::from(std::env::var_os("SystemRoot").expect("Windows system directory"))
+            .join("Temp"),
+    ];
+    #[cfg(not(windows))]
+    let parents = [std::env::current_dir().unwrap()];
+    let name = format!("{prefix}-{}", uuid::Uuid::new_v4());
+    let mut failures = Vec::new();
+    for parent in parents {
+        let path = parent.join(&name);
+        match private_directory(&path, true) {
+            Ok(directory) => {
+                drop(directory);
+                return path;
+            }
+            Err(error) => {
+                eprintln!(
+                    "private fixture candidate refused: {}: {error}",
+                    path.display()
+                );
+                failures.push((path, error));
+            }
+        }
+    }
+    panic!("no accessible policy-compliant private fixture directory: {failures:?}");
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn private_state_creation_and_replacement_are_bounded_and_exclusive() {
-        #[cfg(windows)]
-        let parent = std::env::temp_dir();
-        #[cfg(not(windows))]
-        let parent = std::env::current_dir().unwrap();
-        let path = parent.join(format!(".bridge-storage-test-{}", uuid::Uuid::new_v4()));
-        let directory = private_directory(&path, true).unwrap();
+        let path = test_private_directory(".bridge-storage-test");
+        let directory = private_directory(&path, false).unwrap();
         let name = Path::new("state.json");
         write_new_private(&directory, name, b"first").unwrap();
         assert!(write_new_private(&directory, name, b"overwrite").is_err());

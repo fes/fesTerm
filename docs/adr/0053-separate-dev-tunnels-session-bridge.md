@@ -409,6 +409,19 @@ zeroized memory and stdin only. The official CLI owns its own cached login
 and refresh policy; a changed account or reauthentication requirement refuses
 without borrowing credentials or entering a repeated device-login loop.
 
+Windows private-storage ancestor validation additionally recognizes the exact
+`NT SERVICE\TrustedInstaller` SID, which owns normal OS-volume/system directories.
+This servicing identity joins the current user, SYSTEM and Administrators only
+for ancestors; final directories/files still require protected current-user-only
+ownership/DACLs. Other service accounts, ordinary users and foreign direct
+administrator-account grants remain refused. The existing document-save staging
+policy is unchanged. Absolute-path ancestors additionally reject foreign
+directory `DELETE` access, not only child-deletion/ACL/owner mutation, so another
+user cannot rename an ancestor itself. Windows positive fixtures first try user
+temporary storage, then system temporary storage only when accessible and
+policy-compliant. Refused candidates are diagnosed and all-candidate failure
+fails the test; no runner ACL is repaired or test skipped.
+
 Setup prints a versioned **public** profile JSON wrapper. Client import bounds
 and validates it, previews the tunnel/host fingerprint and requires explicit
 profile creation; authentication and host approval remain separate. No token,
@@ -623,6 +636,12 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   exact-generation service startup and no reprovisioning on healthy repeat.
   Service-definition tests must cover argument/XML/specifier escaping,
   ownership collisions, user-only/non-elevated execution and bounded runners.
+  `private_storage_ancestor_trust_adds_only_the_exact_servicing_sid` distinguishes
+  the private-storage exception from unchanged save staging and rejects unrelated
+  services/users. `staging_parent_rejects_a_dacl_that_allows_child_substitution`
+  also verifies private ancestors still refuse a null DACL.
+  `private_storage_ancestors_refuse_foreign_directory_delete_access` covers
+  ancestor self-renaming permission separately from unchanged save staging.
   Real user-service/login/reboot behavior and native clipboard/accessibility
   remain explicit native/manual gates.
   Further tests/evidence required include real bridge process death and native

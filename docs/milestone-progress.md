@@ -12,6 +12,14 @@ Reusable per-user host setup, public profile
 import and six-platform helper bundles/installers are implemented locally, not
 published; native signing and clean-machine qualification remain release
 prerequisites under [#432](https://github.com/fes/fesTerm/issues/432).
+Hosted Windows diagnosis distinguished servicing-owned system roots from
+foreign-account grants in runner-profile temporary storage. Private-ancestor
+policy now admits only the exact servicing SID in addition to the prior
+principals, rejects foreign directory-self deletion, and preserves both
+current-user-only final objects and the separate document-save staging policy.
+Policy-validated user/system-temporary fixtures avoid changing runner ACLs or
+requiring elevation on an ordinary user installation. Native Windows
+installer/service acceptance remains pending under #432.
 Publication and broader qualification remain gated on current
 Visual Studio-family usage-rights clarification; the owner authorized bounded
 service-application research and integration tests. The same-valid-token

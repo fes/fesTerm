@@ -39,7 +39,7 @@ mod imp {
         },
         Security::{
             AclSizeInformation, AddAccessAllowedAceEx, AdjustTokenPrivileges,
-            Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
+            Authorization::{ConvertStringSidToSidW, GetSecurityInfo, SE_FILE_OBJECT},
             CreateWellKnownSid, DuplicateTokenEx, EqualSid, GetAce, GetAclInformation,
             GetKernelObjectSecurity, GetLengthSid, GetSecurityDescriptorControl,
             GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, GetTokenInformation,
@@ -490,22 +490,47 @@ mod imp {
         Ok(sid)
     }
 
+    fn trusted_installer_sid() -> io::Result<Vec<u8>> {
+        let name: Vec<u16> = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let mut sid = ptr::null_mut();
+        if unsafe { ConvertStringSidToSidW(name.as_ptr(), &raw mut sid) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let length = unsafe { GetLengthSid(sid) } as usize;
+        let bytes = unsafe { std::slice::from_raw_parts(sid.cast::<u8>(), length) }.to_vec();
+        unsafe { LocalFree(sid) };
+        Ok(bytes)
+    }
+
     fn trusted_parent_sid(
         sid: *mut core::ffi::c_void,
         user: *mut core::ffi::c_void,
         system: &[u8],
         administrators: &[u8],
+        servicing: Option<&[u8]>,
     ) -> bool {
         (unsafe { EqualSid(sid, user) }) != 0
             || (unsafe { EqualSid(sid, system.as_ptr().cast_mut().cast()) }) != 0
             || (unsafe { EqualSid(sid, administrators.as_ptr().cast_mut().cast()) }) != 0
+            || servicing.is_some_and(|servicing| {
+                (unsafe { EqualSid(sid, servicing.as_ptr().cast_mut().cast()) }) != 0
+            })
     }
 
-    fn staging_parent_security(directory: &File) -> io::Result<Option<StagingParentSecurity>> {
+    fn staging_parent_security(
+        directory: &File,
+        servicing: Option<&[u8]>,
+    ) -> io::Result<Option<StagingParentSecurity>> {
         const ACCESS_ALLOWED_OBJECT_ACE_TYPE: u8 = 5;
         const ACCESS_ALLOWED_CALLBACK_ACE_TYPE: u8 = 9;
         const ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE: u8 = 11;
         const DANGEROUS: u32 = FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER | GENERIC_ALL;
+        // Unlike a locked document-save parent, an absolute-path ancestor must
+        // not let another user rename/delete the directory itself.
+        let dangerous = DANGEROUS | if servicing.is_some() { DELETE } else { 0 };
 
         let mut token = ptr::null_mut();
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
@@ -551,7 +576,7 @@ mod imp {
         if owner.is_null()
             || dacl_present == 0
             || dacl.is_null()
-            || !trusted_parent_sid(owner, user.User.Sid, &system, &administrators)
+            || !trusted_parent_sid(owner, user.User.Sid, &system, &administrators, servicing)
         {
             return Ok(None);
         }
@@ -591,7 +616,7 @@ mod imp {
                     .add(mem::size_of::<ACE_HEADER>())
                     .cast::<u32>()
             };
-            if mask & DANGEROUS == 0 {
+            if mask & dangerous == 0 {
                 continue;
             }
             if header.AceType != 0
@@ -605,6 +630,7 @@ mod imp {
                 user.User.Sid,
                 &system,
                 &administrators,
+                servicing,
             ) {
                 return Ok(None);
             }
@@ -616,7 +642,16 @@ mod imp {
     /// Returns the coherent owner/DACL snapshot when the parent is trusted,
     /// or `None` when its current access policy permits untrusted mutation.
     pub fn secure_staging_parent(directory: &File) -> io::Result<Option<StagingParentSecurity>> {
-        staging_parent_security(directory)
+        staging_parent_security(directory, None)
+    }
+
+    /// Validates private-storage ancestors, including Windows servicing-owned
+    /// system directories. The final private object must still be user-only.
+    pub fn trusted_private_storage_ancestor(directory: &File) -> io::Result<()> {
+        let servicing = trusted_installer_sid()?;
+        staging_parent_security(directory, Some(&servicing))?
+            .map(|_| ())
+            .ok_or_else(|| io::Error::from(io::ErrorKind::PermissionDenied))
     }
 
     pub fn staging_parent_matches(
@@ -2762,10 +2797,17 @@ mod imp {
                 .open(&directory.0)
                 .unwrap();
             assert!(secure_staging_parent(&directory_handle).unwrap().is_some());
+            assert!(trusted_private_storage_ancestor(&directory_handle).is_ok());
 
             make_unprotected(&directory_handle);
 
             assert!(secure_staging_parent(&directory_handle).unwrap().is_none());
+            assert_eq!(
+                trusted_private_storage_ancestor(&directory_handle)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::PermissionDenied
+            );
         }
 
         #[test]
@@ -2787,7 +2829,112 @@ mod imp {
                 user.User.Sid,
                 &system,
                 &administrators,
+                None,
             ));
+        }
+
+        #[test]
+        fn private_storage_ancestor_trust_adds_only_the_exact_servicing_sid() {
+            let mut token = ptr::null_mut();
+            assert_ne!(
+                unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) },
+                0
+            );
+            let token = unsafe { OwnedHandle::from_raw_handle(token) };
+            let user = token_information(token.as_raw_handle(), TokenUser).unwrap();
+            let user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+            let system = well_known_sid(WinLocalSystemSid).unwrap();
+            let administrators = well_known_sid(WinBuiltinAdministratorsSid).unwrap();
+            let servicing = trusted_installer_sid().unwrap();
+            assert!(!trusted_parent_sid(
+                servicing.as_ptr().cast_mut().cast(),
+                user.User.Sid,
+                &system,
+                &administrators,
+                None,
+            ));
+            assert!(trusted_parent_sid(
+                servicing.as_ptr().cast_mut().cast(),
+                user.User.Sid,
+                &system,
+                &administrators,
+                Some(&servicing),
+            ));
+            for kind in [
+                windows_sys::Win32::Security::WinLocalServiceSid,
+                WinNetworkServiceSid,
+                windows_sys::Win32::Security::WinBuiltinUsersSid,
+                windows_sys::Win32::Security::WinWorldSid,
+            ] {
+                let sid = well_known_sid(kind).unwrap();
+                assert!(!trusted_parent_sid(
+                    sid.as_ptr().cast_mut().cast(),
+                    user.User.Sid,
+                    &system,
+                    &administrators,
+                    Some(&servicing),
+                ));
+            }
+        }
+
+        #[test]
+        fn private_storage_ancestors_refuse_foreign_directory_delete_access() {
+            let directory = TemporaryDirectory::new();
+            let handle = OpenOptions::new()
+                .access_mode(GENERIC_READ | WRITE_DAC)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(&directory.0)
+                .unwrap();
+            let mut token = ptr::null_mut();
+            assert_ne!(
+                unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) },
+                0
+            );
+            let token = unsafe { OwnedHandle::from_raw_handle(token) };
+            let user = token_information(token.as_raw_handle(), TokenUser).unwrap();
+            let user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+            let everyone = well_known_sid(windows_sys::Win32::Security::WinWorldSid).unwrap();
+            let mut storage = [0usize; 128];
+            let acl = storage.as_mut_ptr().cast::<ACL>();
+            assert_ne!(
+                unsafe { InitializeAcl(acl, mem::size_of_val(&storage) as u32, ACL_REVISION) },
+                0
+            );
+            for (sid, access) in [
+                (user.User.Sid, FILE_ALL_ACCESS),
+                (everyone.as_ptr().cast_mut().cast(), DELETE),
+            ] {
+                assert_ne!(
+                    unsafe { AddAccessAllowedAceEx(acl, ACL_REVISION, 0, access, sid) },
+                    0
+                );
+            }
+            let mut descriptor = SECURITY_DESCRIPTOR::default();
+            assert_ne!(
+                unsafe { InitializeSecurityDescriptor((&raw mut descriptor).cast(), 1) },
+                0
+            );
+            assert_ne!(
+                unsafe { SetSecurityDescriptorDacl((&raw mut descriptor).cast(), 1, acl, 0) },
+                0
+            );
+            assert_ne!(
+                unsafe {
+                    SetKernelObjectSecurity(
+                        handle.as_raw_handle() as HANDLE,
+                        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                        (&raw mut descriptor).cast(),
+                    )
+                },
+                0
+            );
+            assert!(secure_staging_parent(&handle).unwrap().is_some());
+            assert_eq!(
+                trusted_private_storage_ancestor(&handle)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::PermissionDenied
+            );
         }
 
         #[test]
@@ -3404,6 +3551,6 @@ pub use imp::{
     rename_file_noreplace, replace_private_file, require_local_disk_root,
     restrict_default_dacl_to_current_user, restrict_to_current_user, same_file_identity,
     secure_staging_parent, security_metadata, security_metadata_matches, staging_parent_matches,
-    DefaultDaclGuard, SecurityMetadata, SecurityPrivilegeGuard, StagingParentSecurity,
-    UnsupportedSecurityMetadata,
+    trusted_private_storage_ancestor, DefaultDaclGuard, SecurityMetadata, SecurityPrivilegeGuard,
+    StagingParentSecurity, UnsupportedSecurityMetadata,
 };
