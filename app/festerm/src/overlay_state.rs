@@ -208,6 +208,7 @@ impl PendingQuitConfirmation {
 }
 
 pub(crate) struct PendingPasswordStore {
+    pub(crate) expected_profile: festerm_config::Profile,
     pub(crate) receiver: mpsc::Receiver<Result<SecretReference, SecretStoreError>>,
     pub(crate) profile_id: String,
     pub(crate) store: std::sync::Arc<dyn SecretStore>,

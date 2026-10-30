@@ -11,6 +11,21 @@ import check_validation_traceability as trace
 
 
 class TraceabilityCheckerTests(unittest.TestCase):
+    def test_async_namespaced_tests_are_indexed_without_indexing_helpers(self):
+        source = """#[tokio::test(flavor = "multi_thread")]
+async fn bounded_bridge_recovery() {}
+async fn unannotated_helper() {}
+#[test]
+fn ordinary_test() {}
+"""
+        with patch.object(Path, "exists", return_value=True), patch.object(
+            Path, "rglob", return_value=[Path("owned.rs")]
+        ), patch.object(Path, "read_text", return_value=source):
+            self.assertEqual(
+                trace.rust_test_functions(Path(".")),
+                {"bounded_bridge_recovery", "ordinary_test"},
+            )
+
     def test_github_anchor_handles_punctuation_and_spacing(self):
         self.assertEqual(
             trace.github_anchor("Closing sessions and quitting"),

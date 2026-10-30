@@ -622,6 +622,16 @@ Performance benchmarks should initially report trends rather than block every co
 8. Product-level actions converge on the application command model rather than
    duplicating policy across GUI invocation surfaces.
 
+## Experimental remote session bridge
+
+The opt-in [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md)
+adds a separate network bridge, never cloud dependencies to the daemon/core/UI.
+The app's peer profile and `ApplicationSession::DevTunnel` retain normal
+Session/controller ownership. Its shared `remote_files` capability routes
+detected and explicit file targets to live SFTP or negotiated bridge reads;
+provider/session-bound snapshots are not local document authority.
+Ordinary builds and mobile do not enable relay dependencies.
+
 ## Open Questions
 
 - Exact async runtime and cancellation model.

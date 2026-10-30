@@ -507,6 +507,18 @@ pub struct FesTermApp {
     native_menu_shortcut_build_count: Cell<usize>,
 }
 
+#[cfg(feature = "experimental-dev-tunnels")]
+impl FesTermApp {
+    pub(crate) fn install_experimental_tunnel(
+        &mut self,
+        launch: crate::tunnel_activation::Launch,
+        context: &egui::Context,
+    ) {
+        self.state
+            .dispatch(AppCommand::ConnectDevTunnel(launch), context);
+    }
+}
+
 /// Distinguishes the one window that owns application-scoped host
 /// integration from the additional windows that do not (ADR 0032).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2236,6 +2248,10 @@ impl FesTermApp {
         launch_after_store: Option<StoredCredentialLaunch>,
         context: &egui::Context,
     ) {
+        let Some(expected_profile) = self.state.configuration().profile(&profile_id).cloned()
+        else {
+            return;
+        };
         let Ok(store) = self.secret_store.as_ref() else {
             self.secure_storage_feedback = self
                 .secret_store
@@ -2247,20 +2263,21 @@ impl FesTermApp {
         };
         if self.overlays.pending_password_store.is_some() {
             self.secure_storage_feedback =
-                Some("A saved SSH credential update is already in progress. Please wait.");
+                Some("A saved profile credential update is already in progress. Please wait.");
             return;
         }
         let store = Arc::clone(store);
         let worker_store = Arc::clone(&store);
         let (sender, receiver) = mpsc::sync_channel(1);
         match thread::Builder::new()
-            .name("festerm-store-ssh-credential".to_owned())
+            .name("festerm-store-profile-credential".to_owned())
             .spawn(move || {
                 let secret = make_secret();
                 let _ = sender.send(worker_store.put(&secret));
             }) {
             Ok(_) => {
                 self.overlays.pending_password_store = Some(PendingPasswordStore {
+                    expected_profile,
                     receiver,
                     profile_id,
                     store,
@@ -2268,7 +2285,7 @@ impl FesTermApp {
                     credential_kind,
                 });
                 self.secure_storage_feedback =
-                    Some("Saving SSH credential in native secure storage…");
+                    Some("Saving profile credential in native secure storage…");
                 context.request_repaint();
             }
             Err(_) => {
@@ -2285,17 +2302,31 @@ impl FesTermApp {
         };
         match pending.receiver.try_recv() {
             Ok(Ok(reference)) => {
+                if self.state.configuration().profile(&pending.profile_id)
+                    != Some(&pending.expected_profile)
+                {
+                    let _ = pending.store.delete(&reference);
+                    self.secure_storage_feedback = Some("Profile changed while its credential was being saved. No binding was changed; retry explicitly.");
+                    return;
+                }
                 let previous_reference = self
                     .state
                     .configuration()
                     .profile(&pending.profile_id)
                     .and_then(festerm_config::Profile::credential_reference)
                     .map(festerm_secret_store::SecretReference::duplicate_for_transport);
-                let replacement = self.state.configuration().with_ssh_credential(
-                    &pending.profile_id,
-                    reference.duplicate_for_transport(),
-                    pending.credential_kind,
-                );
+                let replacement = if pending.expected_profile.as_dev_tunnel().is_some() {
+                    self.state.configuration().with_tunnel_connect_credential(
+                        &pending.profile_id,
+                        reference.duplicate_for_transport(),
+                    )
+                } else {
+                    self.state.configuration().with_ssh_credential(
+                        &pending.profile_id,
+                        reference.duplicate_for_transport(),
+                        pending.credential_kind,
+                    )
+                };
                 let saved = replacement.as_ref().ok().and_then(|configuration| {
                     self.configuration_reloader
                         .save_configuration(configuration)
@@ -2307,12 +2338,12 @@ impl FesTermApp {
                     self.configuration_status = ConfigurationStartupStatus::PasswordCredentialSaved;
                     self.secure_storage_feedback = match previous_reference {
                         Some(previous) => match pending.store.delete(&previous) {
-                            Ok(_) => Some("SSH credential saved in native secure storage."),
+                            Ok(_) => Some("Profile credential saved in native secure storage."),
                             Err(_) => Some(
-                                "SSH credential saved, but the previous native secret could not be removed.",
+                                "Profile credential saved, but the previous native secret could not be removed.",
                             ),
                         },
-                        None => Some("SSH credential saved in native secure storage."),
+                        None => Some("Profile credential saved in native secure storage."),
                     };
                     if let Some(launch) = pending.launch_after_store {
                         match launch {
@@ -5049,6 +5080,9 @@ impl FesTermApp {
         let status = session.status_bar_label();
         let chip_status = session.chip_status();
         let transport = match &session.inspector_transport {
+            InspectorTransport::DevTunnel { host, port } => {
+                TransportFacts::DevTunnel { host, port: *port }
+            }
             InspectorTransport::Local { .. } => TransportFacts::Local,
             InspectorTransport::Ssh {
                 username,
@@ -5100,8 +5134,10 @@ impl FesTermApp {
             | InspectorTransport::Ssh { .. }
             | InspectorTransport::Sftp { .. }
             | InspectorTransport::Serial { .. } => None,
+            InspectorTransport::DevTunnel { .. } => None,
         };
         let type_label = match session.inspector_transport {
+            InspectorTransport::DevTunnel { .. } => "Experimental Dev Tunnel",
             InspectorTransport::Local { .. } => "Local shell",
             InspectorTransport::Ssh { .. } => "SSH",
             InspectorTransport::Sftp { .. } => "SFTP",
@@ -5109,6 +5145,7 @@ impl FesTermApp {
         };
         let state_message = match chip_status {
             ChipStatus::Failed => Some(match session.inspector_transport {
+                InspectorTransport::DevTunnel { .. } => "Experimental tunnel refused. Verify host binding, the same unattached session generation and a fresh scoped connect token; reopen explicitly. No automatic reconnect.",
                 InspectorTransport::Local { .. } => {
                     "The local shell could not start. Review Diagnostics for the failure detail."
                 }
@@ -6019,6 +6056,17 @@ impl FesTermApp {
                     );
                 }
                 TabContent::Profiles => {
+                    if let Some(status) = secure_storage_status.filter(|_| {
+                        cfg!(feature = "experimental-dev-tunnels")
+                            || self
+                                .state
+                                .configuration()
+                                .profiles()
+                                .iter()
+                                .any(|profile| profile.as_dev_tunnel().is_some())
+                    }) {
+                        ui.colored_label(theme::TEXT_SECONDARY, status);
+                    }
                     let pending_edit = self.state.take_pending_profile_edit();
                     let pending_create = self.state.take_pending_profile_create();
                     screen_command = screens::show_profiles(
@@ -6278,6 +6326,44 @@ impl FesTermApp {
         }
         if let Some(command) = screen_command {
             match command {
+                AppCommand::StartConfiguredDevTunnelProfile { profile_id } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    if let Ok(store) = &self.secret_store {
+                        self.state.start_configured_tunnel_profile(
+                            profile_id,
+                            Arc::clone(store),
+                            &ui.ctx().clone(),
+                        );
+                    } else {
+                        self.secure_storage_feedback = Some("Native connect credential storage is unavailable. Use the profile editor's connect-once option.");
+                    }
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    {
+                        let _ = profile_id;
+                        self.secure_storage_feedback = Some(
+                            "Dev Tunnel connections require an experimental-dev-tunnels build.",
+                        );
+                    }
+                }
+                AppCommand::StoreDevTunnelConnectToken { profile_id, token } => {
+                    if !token.is_valid() {
+                        self.secure_storage_feedback = Some("Enter one nonempty connect token (at most 16 KiB, without whitespace). No credential was stored.");
+                    } else if cfg!(feature = "experimental-dev-tunnels")
+                        && self
+                            .state
+                            .configuration()
+                            .profile(&profile_id)
+                            .is_some_and(|profile| profile.as_dev_tunnel().is_some())
+                    {
+                        self.store_credential_for_profile(
+                            profile_id,
+                            festerm_config::CredentialKind::Password,
+                            move || token.into_stored_secret(),
+                            None,
+                            &ui.ctx().clone(),
+                        );
+                    }
+                }
                 AppCommand::OpenMarkdownWorkspace => {
                     self.open_markdown_file_picker(&ui.ctx().clone());
                 }

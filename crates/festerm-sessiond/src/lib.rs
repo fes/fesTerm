@@ -155,7 +155,7 @@ fn observe_recovery_allocation_restore() {
 /// Compatibility epoch for registry records and the persistent-session client protocol.
 ///
 /// This changes only when the daemon introduces an incompatible wire format.
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 /// Recovery snapshot schema used by protocol-v2 sessions started by this build.
 pub const RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 3;
 const LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 0;
@@ -578,6 +578,49 @@ impl Drop for PersistentSession {
 }
 
 impl PersistentSession {
+    /// Application adapter for an already negotiated, validated transport.
+    /// This consumes the trusted local framing contract, not arbitrary network
+    /// bytes. Remote adapters must validate/convert snapshots before using it.
+    pub fn from_validated_transport(
+        stream: impl Read + Write + Send + 'static,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        Self::from_stream_with_protocol_and_identity(
+            Box::new(stream),
+            notifier,
+            None,
+            3,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            None,
+        )
+    }
+
+    /// Connects only to the exact selected generation, without takeover, creation
+    /// or reconnect. Protocol 3 admission is serialized by the daemon itself.
+    pub fn resume_exclusive(
+        selected: &NativeSessionIdentity,
+        maximum_recovery_bytes: u32,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        let registry = load_registry()?;
+        let record = registry
+            .sessions
+            .get(&selected.name)
+            .ok_or_else(|| PersistentSessionError::new("exported session is unavailable"))?;
+        if NativeSessionIdentity::from_record(record) != *selected || record.protocol_version != 3 {
+            return Err(PersistentSessionError::new(
+                "exported generation requires a compatible protocol-3 daemon",
+            ));
+        }
+        let connection = connect_record_admitted(
+            record,
+            &AtomicBool::new(false),
+            false,
+            maximum_recovery_bytes,
+        )?;
+        Self::from_stream_with_reconnector(connection, notifier, None)
+    }
+
     pub fn start(
         name: &str,
         profile: &LocalProfile,
@@ -833,21 +876,32 @@ impl PersistentSession {
     /// Returns a newly attached daemon's recovered terminal state, if one has
     /// arrived since the previous call.
     pub fn take_recovered_terminal(&self) -> Option<Terminal> {
+        let terminal = self.take_recovered_terminal_deferred();
+        if terminal.is_some() {
+            self.acknowledge_recovery_adoption();
+        }
+        terminal
+    }
+
+    /// Bridge seam: transferring the snapshot does not yet acknowledge frontend
+    /// adoption. The caller must acknowledge only after the remote app adopts it.
+    pub fn take_recovered_terminal_deferred(&self) -> Option<Terminal> {
         let terminal = self
             .shared
             .recovered_terminal
             .lock()
             .expect("persistent session recovery lock is healthy")
             .take();
-        if terminal.is_some() {
-            self.shared
-                .recovery_adoption_blocked
-                .store(false, Ordering::Release);
-            self.shared
-                .recovery_resize_blocked
-                .store(false, Ordering::Release);
-        }
         terminal
+    }
+
+    pub fn acknowledge_recovery_adoption(&self) {
+        self.shared
+            .recovery_adoption_blocked
+            .store(false, Ordering::Release);
+        self.shared
+            .recovery_resize_blocked
+            .store(false, Ordering::Release);
     }
 
     pub fn recovery_protocol_is_authoritative(&self) -> bool {
@@ -2020,6 +2074,15 @@ fn connect_record_with_cancel(
     record: &SessionRecord,
     cancelled: &AtomicBool,
 ) -> Result<ConnectedSession, PersistentSessionError> {
+    connect_record_admitted(record, cancelled, true, MAX_RECOVERY_SNAPSHOT_BYTES as u32)
+}
+
+fn connect_record_admitted(
+    record: &SessionRecord,
+    cancelled: &AtomicBool,
+    takeover: bool,
+    maximum_recovery_bytes: u32,
+) -> Result<ConnectedSession, PersistentSessionError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(PersistentSessionError::new("session connection cancelled"));
     }
@@ -2035,7 +2098,7 @@ fn connect_record_with_cancel(
             )?;
             Ok(socket.into())
         };
-        let stream = connect().map_err(|error| {
+        let mut stream = connect().map_err(|error| {
             PersistentSessionError::new(format!("could not connect to session daemon: {error}"))
         })?;
         stream
@@ -2044,6 +2107,7 @@ fn connect_record_with_cancel(
         stream
             .set_write_timeout(Some(WRITE_TIMEOUT))
             .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+        admit_record(&mut stream, record, takeover, maximum_recovery_bytes)?;
         Ok(ConnectedSession {
             stream: Box::new(stream),
             protocol_version: record.protocol_version,
@@ -2064,6 +2128,7 @@ fn connect_record_with_cancel(
         })?;
         stream.set_read_timeout(POLL_INTERVAL);
         stream.set_write_timeout(WRITE_TIMEOUT);
+        admit_record(&mut stream, record, takeover, maximum_recovery_bytes)?;
         Ok(ConnectedSession {
             stream: Box::new(stream),
             protocol_version: record.protocol_version,
@@ -2073,6 +2138,57 @@ fn connect_record_with_cancel(
     }
 }
 
+/// Fixed-size local protocol-3 admission. The daemon checks this before
+/// replacing any client; earlier protocol daemons never receive this message.
+pub const ADMISSION_BYTES: usize = 29;
+
+pub fn encode_admission(
+    pid: u32,
+    generation: u128,
+    takeover: bool,
+    maximum_recovery_bytes: u32,
+) -> [u8; ADMISSION_BYTES] {
+    let mut bytes = [0; ADMISSION_BYTES];
+    bytes[..4].copy_from_slice(b"FSA3");
+    bytes[4] = u8::from(takeover);
+    bytes[5..9].copy_from_slice(&pid.to_be_bytes());
+    bytes[9..25].copy_from_slice(&generation.to_be_bytes());
+    bytes[25..].copy_from_slice(&maximum_recovery_bytes.to_be_bytes());
+    bytes
+}
+
+fn admit_record(
+    stream: &mut (impl Read + Write),
+    record: &SessionRecord,
+    takeover: bool,
+    maximum_recovery_bytes: u32,
+) -> Result<(), PersistentSessionError> {
+    if record.protocol_version < 3 {
+        return Ok(());
+    }
+    let request = encode_admission(
+        record.pid,
+        record.created_at_unix_ms,
+        takeover,
+        maximum_recovery_bytes,
+    );
+    stream
+        .write_all(&request)
+        .map_err(|_| PersistentSessionError::new("daemon admission write failed"))?;
+    let mut reply = [0];
+    let deadline = Instant::now() + Duration::from_secs(3);
+    read_protocol_bytes(stream, &mut reply, &mut || {
+        (Instant::now() >= deadline)
+            .then(|| io::Error::new(io::ErrorKind::TimedOut, "admission timed out"))
+    })
+    .map_err(|_| PersistentSessionError::new("daemon admission unavailable"))?;
+    if reply != [1] {
+        return Err(PersistentSessionError::new(
+            "daemon refused occupied or changed generation",
+        ));
+    }
+    Ok(())
+}
 fn ensure_protocol_compatible(record: &SessionRecord) -> Result<(), PersistentSessionError> {
     if !protocol_is_supported(record.protocol_version) {
         return Err(PersistentSessionError::new(format!(
@@ -2675,10 +2791,29 @@ pub fn encode_recovery_snapshot(terminal: &Terminal) -> Result<Vec<u8>, Persiste
     encode_recovery_snapshot_with_limit(terminal, MAX_RECOVERY_SNAPSHOT_BYTES)
 }
 
-fn encode_recovery_snapshot_with_limit(
+pub fn encode_recovery_snapshot_with_limit(
     terminal: &Terminal,
     maximum: usize,
 ) -> Result<Vec<u8>, PersistentSessionError> {
+    if maximum < MAX_RECOVERY_SNAPSHOT_BYTES {
+        if terminal.scrollback_stats().charged_bytes() > maximum {
+            return Err(PersistentSessionError::new(
+                "retained history exceeds recovery request budget",
+            ));
+        }
+        // Check the borrowed state before cloning potentially large history.
+        // Ephemeral input/reply queues disappear in recovery_clone below.
+        let preflight = maximum.saturating_add(2 * festerm_core::TRANSPORT_QUEUE_HIGH_WATERMARK);
+        let encoded_size = bincode_options()
+            .with_limit(preflight as u64)
+            .serialized_size(terminal)
+            .map_err(|_| PersistentSessionError::new("terminal exceeds recovery request budget"))?;
+        if encoded_size > preflight as u64 {
+            return Err(PersistentSessionError::new(
+                "terminal exceeds recovery request budget",
+            ));
+        }
+    }
     let snapshot = terminal.recovery_clone();
     snapshot
         .validate_recovery_snapshot()
@@ -4022,6 +4157,22 @@ mod client_worker_tests {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn constrained_recovery_preflights_history_without_truncating_local_state() {
+        let mut terminal = Terminal::with_scrollback_limit(
+            festerm_core::Dimensions::new(8, 2).unwrap(),
+            1024 * 1024,
+        )
+        .unwrap();
+        terminal.ingest("owned line\r\n".repeat(200).as_bytes());
+        let charged = terminal.scrollback_stats().charged_bytes();
+        assert!(charged > 1024);
+        let error = encode_recovery_snapshot_with_limit(&terminal, 1024).unwrap_err();
+        assert!(error.to_string().contains("retained history exceeds"));
+        assert_eq!(terminal.scrollback_stats().charged_bytes(), charged);
+        assert!(encode_recovery_snapshot(&terminal).is_ok());
+    }
     use std::os::unix::net::UnixStream;
 
     fn connected_test(stream: Box<dyn SessionStream>) -> ConnectedSession {
@@ -4985,8 +5136,8 @@ mod registry_filtering_tests {
             .err()
             .expect("incompatible protocol must fail before connecting")
             .to_string();
-        assert!(error.contains("protocol 2"));
-        assert!(error.contains("supports protocol 2"));
+        assert!(error.contains(&format!("protocol {PROTOCOL_VERSION}")));
+        assert!(error.contains(&format!("supports protocol {PROTOCOL_VERSION}")));
         assert!(error.contains("compatible fesTerm version"));
     }
 
@@ -5335,7 +5486,7 @@ mod registry_filtering_tests {
             .expect("an unreadable record must not look like a missing session")
             .to_string();
         assert!(error.contains("protocol 9"));
-        assert!(error.contains("supports protocol 2"));
+        assert!(error.contains(&format!("supports protocol {PROTOCOL_VERSION}")));
     }
 
     #[test]

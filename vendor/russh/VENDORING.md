@@ -19,3 +19,11 @@ satisfy the repository diff policy.
 
 Keep these changes when updating the vendored crate and rerun the fesTerm SSH,
 credential-lifecycle, security, vendored-russh, and workspace Clippy gates.
+
+The experimental Dev Tunnels adapter additionally opts into
+`client::Config::maximum_pending_replies = Some(16)`. Its synchronous
+authentication/control-reply queue fails closed on overflow instead of allowing
+an unsolicited-reply flood to allocate without bound. The default remains
+`None`, preserving ordinary SSH clients. Channel-open failures now propagate a
+failed reply send instead of ignoring it. The bounded queue has a focused
+regression in the client tests.

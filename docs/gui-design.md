@@ -1717,6 +1717,15 @@ reference a supported agent, key location, or secure-storage record without
 storing the secret itself. Only available authentication choices appear.
 Terminal dimensions and inferred remote platform do not belong in profiles.
 
+The feature-gated ADR 0053 experiment adds a peer **Dev Tunnel** kind to
+Launcher, Profiles and Inspector. Its restricted editor has name, trusted
+destination JSON path and a hidden connect-token field. Save changes metadata;
+Store / replace explicitly creates this saved profile's native-store reference;
+Connect once keeps the credential session-only. Independent profiles/accounts
+have no shared current-login slot. Duplicate clears the credential reference,
+and active sessions retain immutable launch bindings. Native sign-in,
+inventory/create/takeover/terminate and filesystem writes are unavailable.
+
 Multi-field edits are staged behind Save; Cancel discards them and validation
 stays beside the relevant field. Delete requires confirmation and reports
 workspace references. Duplicate creates a distinct profile with an editable
@@ -3035,11 +3044,11 @@ mail, script, and unknown-scheme targets are rejected. Parser filtering is
 repeated authoritatively at launch time. Links remain usable in read-only
 history and are excluded from diagnostics.
 
-ADR 0052 adds absolute `file:` OSC 8 metadata with empty or localhost
-authority. File-link Open is available only in a local session and opens an
-internal text/Markdown document, never an OS file association. The command pins
-the originating tab and lifecycle generation; stale, closed, SSH/SFTP and
-serial sources cannot authorize a local file read. Hover/menu previews and
+ADR 0052 adds absolute local `file:` OSC 8 metadata with empty or localhost
+authority. Local File-link Open opens an internal text/Markdown document,
+never an OS file association. The command pins the originating tab and
+lifecycle generation; stale, closed, SSH/SFTP, Dev Tunnel and serial sources
+cannot authorize a client-local file read. Hover/menu previews and
 **Copy path** expose the strictly decoded destination (native Windows drive
 spelling where applicable), not the producer's label. Ordinary clicking does
 not activate it.
@@ -3051,6 +3060,16 @@ refuse symlinks and junctions before content reads; Windows mapped network
 roots are refused. The existing regular-file, text and document-size limits
 apply. Refusal never invokes a shell, remote fetch or external application.
 Copy remains available for syntactically valid but unavailable file targets.
+
+ADR 0053 extends this through a shared source-bound filesystem capability.
+Detected paths and explicit OSC 8 file metadata from SSH/SFTP or Dev Tunnel
+use only that originating live authenticated capability and remote OS path
+semantics. Empty/localhost file authorities mean the source host, not the
+client. Provider, endpoint, profile and connection generations bind read-only
+text/Markdown snapshots. Missing/stale capabilities, foreign authorities and
+unsupported namespaces refuse without local, OS-handler or shell fallback.
+Bridge reads require explicit operator enablement and are bounded regular-file
+reads, not arbitrary filesystem commands. See `DT-06` for native qualification.
 
 The no-follow policy persists for background freshness checks, refresh/reload,
 save-conflict source reads and ordinary saves, including reused document

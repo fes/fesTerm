@@ -1459,6 +1459,30 @@ mod imp {
         open_file_no_reparse_with_access(directory, name, GENERIC_READ)
     }
 
+    /// Retains one directory relative to an exact parent without following
+    /// reparse points or crossing to another volume.
+    pub fn open_directory_no_reparse(directory: &File, name: &Path) -> io::Result<File> {
+        let file = open_relative(
+            directory,
+            name,
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            FILE_OPEN,
+            FILE_DIRECTORY_FILE,
+            ptr::null(),
+        )?;
+        let information = file_information(&file)?;
+        if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || information.dwVolumeSerialNumber != file_information(directory)?.dwVolumeSerialNumber
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a same-volume regular directory is required",
+            ));
+        }
+        Ok(file)
+    }
+
     /// Rejects mapped network drives before a terminal hyperlink opens its root.
     pub fn require_local_disk_root(root: &Path) -> io::Result<()> {
         let root: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -3231,8 +3255,8 @@ pub use imp::{
     create_current_user_only_file_exclusive, create_current_user_only_file_exclusive_with_audit,
     create_current_user_only_file_with_audit, delete_directory_by_handle,
     disable_std_handle_inheritance, enable_security_privilege, file_change_time,
-    is_current_user_only, lock_directory_path_without_delete_sharing, open_file_no_reparse,
-    open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
+    is_current_user_only, lock_directory_path_without_delete_sharing, open_directory_no_reparse,
+    open_file_no_reparse, open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
     open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
     open_file_no_reparse_for_verification, opened_file_path, rename_file_noreplace,
     require_local_disk_root, restrict_default_dacl_to_current_user, restrict_to_current_user,

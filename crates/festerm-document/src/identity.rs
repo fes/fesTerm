@@ -49,12 +49,21 @@ impl DocumentOrigin {
         DocumentKey(match self {
             Self::Local(local) => format!("local:{}", local.path().display()),
             Self::Remote(remote) => format!(
-                "sftp:{}@{}:{}:{}:{}",
-                remote.owner().key(),
-                remote.host(),
-                remote.port(),
-                remote.verified_host_key_fingerprint(),
-                remote.path()
+                "{}:{:?}",
+                if remote.is_dev_tunnel() {
+                    "dev-tunnel"
+                } else {
+                    "sftp"
+                },
+                (
+                    remote.owner().key(),
+                    remote.host(),
+                    remote.port(),
+                    remote.verified_host_key_fingerprint(),
+                    remote.path(),
+                    remote.lifecycle_generation(),
+                    &remote.session_binding
+                )
             ),
             Self::Untitled(untitled) => format!("untitled:{}", untitled.key()),
         })
@@ -186,6 +195,8 @@ impl LocalOrigin {
 /// A validated SFTP file identity, pinned to one verified origin.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct RemoteOrigin {
+    session_binding: Option<String>,
+    dev_tunnel: bool,
     host: String,
     port: u16,
     owner: RemoteOwner,
@@ -264,6 +275,8 @@ impl RemoteOrigin {
             .ok_or(OriginError::NoFileName)?
             .to_owned();
         Ok(Self {
+            session_binding: None,
+            dev_tunnel: false,
             host,
             port,
             owner,
@@ -276,6 +289,20 @@ impl RemoteOrigin {
 
     pub fn host(&self) -> &str {
         &self.host
+    }
+
+    /// Marks a verified bridge snapshot without claiming an SFTP provider.
+    pub fn with_dev_tunnel_provider(mut self) -> Self {
+        self.dev_tunnel = true;
+        self
+    }
+    pub const fn is_dev_tunnel(&self) -> bool {
+        self.dev_tunnel
+    }
+
+    pub fn with_live_binding(mut self, binding: impl Into<String>) -> Self {
+        self.session_binding = Some(binding.into());
+        self
     }
 
     pub const fn port(&self) -> u16 {
@@ -313,6 +340,11 @@ impl RemoteOrigin {
             path,
             self.lifecycle_generation,
         )
+        .map(|mut origin| {
+            origin.dev_tunnel = self.dev_tunnel;
+            origin.session_binding = self.session_binding.clone();
+            origin
+        })
     }
 }
 

@@ -1,0 +1,104 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+// Generated from ../../../cs/src/Contracts/TunnelOptions.cs
+
+use serde::{Deserialize, Serialize};
+
+// Data contract for `Tunnel` or `TunnelPort` options.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
+pub struct TunnelOptions {
+    // Gets or sets a value indicating whether web-forwarding of this tunnel can run on
+    // any cluster (region) without redirecting to the home cluster. This is only
+    // applicable if the tunnel has a name and web-forwarding uses it.
+    #[serde(default)]
+    pub is_globally_available: bool,
+
+    // Gets or sets a value for `Host` header rewriting to use in web-forwarding of this
+    // tunnel or port. By default, with this property null or empty, web-forwarding uses
+    // "localhost" to rewrite the header. Web-fowarding will use this property instead if
+    // it is not null or empty. Port-level option, if set, takes precedence over this
+    // option on the tunnel level. The option is ignored if IsHostHeaderUnchanged is true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_header: Option<String>,
+
+    // Gets or sets a value indicating whether `Host` header is rewritten or the header
+    // value stays intact. By default, if false, web-forwarding rewrites the host header
+    // with the value from HostHeader property or "localhost". If true, the host header
+    // will be whatever the tunnel's web-forwarding host is, e.g.
+    // tunnel-name-8080.devtunnels.ms. Port-level option, if set, takes precedence over
+    // this option on the tunnel level.
+    #[serde(default)]
+    pub is_host_header_unchanged: bool,
+
+    // Gets or sets a value for `Origin` header rewriting to use in web-forwarding of this
+    // tunnel or port. By default, with this property null or empty, web-forwarding uses
+    // "http(s)://localhost" to rewrite the header. Web-fowarding will use this property
+    // instead if it is not null or empty. Port-level option, if set, takes precedence
+    // over this option on the tunnel level. The option is ignored if
+    // IsOriginHeaderUnchanged is true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_header: Option<String>,
+
+    // Gets or sets a value indicating whether `Origin` header is rewritten or the header
+    // value stays intact. By default, if false, web-forwarding rewrites the origin header
+    // with the value from OriginHeader property or "http(s)://localhost". If true, the
+    // Origin header will be whatever the tunnel's web-forwarding Origin is, e.g.
+    // https://tunnel-name-8080.devtunnels.ms. Port-level option, if set, takes precedence
+    // over this option on the tunnel level.
+    #[serde(default)]
+    pub is_origin_header_unchanged: bool,
+
+    // Gets or sets if inspection is enabled for the tunnel.
+    #[serde(default)]
+    pub is_inspection_enabled: bool,
+
+    // Gets or sets a value indicating whether web requests to a tunnel can use the tunnel
+    // web authentication cookie if they come from a different site. Specifically, this
+    // controls whether the tunnel web-forwarding authentication cookie is marked as
+    // SameSite=None. The default is false, which means the cookie is marked as
+    // SameSite=Lax. This only applies to tunnels that require authentication.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_cross_site_authentication_enabled: Option<bool>,
+
+    // Gets or sets a value indicating whether the tunnel web-forwarding authentication
+    // cookie is set as Partitioned (CHIPS). The default is false. This only applies to
+    // tunnels that require authentication.
+    //
+    // A partitioned cookie always also has SameSite=None for compatbility with browsers
+    // that do not support partitioning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_partitioned_site_authentication_enabled: Option<bool>,
+
+    // Gets or sets a value indicating whether web requests to the tunnel or port can be
+    // directly authenticated with bearer token authentication by supplying an
+    // `Authorization` header with an Entra ID or GitHub token of a user with access to
+    // the tunnel. The default is false, which means only the tunnel web authentication
+    // cookie or `X-Tunnel-Authorization` header can be used for authenticating web
+    // requests to the tunnel.
+    //
+    // When this option is enabled, AND neither a tunnel web authentication cookie nor an
+    // `X-Tunnel-Authorization` header is present in a web request, the tunnel relay will
+    // attempt to authenticate the request using the `Authorization` header with Entra ID
+    // or GitHub credentials. In that case the `Authorization` header will be stripped
+    // from the request before it is forwarded to the host application.  Enabling this
+    // option may be desirable for API tunnels, where clients are likely to have better
+    // support for bearer token authentication using the `Authorization` header. However,
+    // interception of that header could block host applications which themselves
+    // implement bearer token authentication, which is why this option is disabled by
+    // default.  This option does not apply to the tunnel management API, which always
+    // supports bearer token authentication using the `Authorization` header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_bearer_token_authentication_enabled: Option<bool>,
+
+    // Gets or sets the timeout for HTTP requests to the tunnel or port.
+    //
+    // The default timeout is 100 seconds. Set this to 0 to disable the timeout. The
+    // timeout will reset when response headers are received or after successfully reading
+    // or writing any request, response, or streaming data like gRPC or WebSockets. TCP
+    // keep-alives and HTTP/2 protocol pings will not reset the timeout, but WebSocket
+    // pings will. When a request times out, the tunnel relay aborts the request and
+    // returns 504 Gateway Timeout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_timeout_seconds: Option<i32>,
+}

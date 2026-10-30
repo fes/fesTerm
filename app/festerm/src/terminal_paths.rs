@@ -3,10 +3,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::remote_files::{ReadError, RemoteFileCapability, RemoteFileProvider};
 use festerm_core::{ContentPosition, Terminal};
 use festerm_document::{DocumentBounds, RemoteOrigin, RemoteOwner, TextDocument};
 use festerm_markdown::{RemoteMarkdownSource, RemoteSourceOwner};
-use festerm_ssh::{LiveRemoteFileRequestor, RemoteFileReadError, SftpEntryType, SftpPath};
+use festerm_ssh::{RemoteFileReadError, SftpEntryType};
 use festerm_ui_egui::{TerminalContextMenuAction, TerminalContextTarget, TerminalSnapshot};
 
 use crate::overlay_state::OpenRefusalNotice;
@@ -162,6 +163,8 @@ pub(crate) struct LocalTerminalOrigin {
 
 #[derive(Debug)]
 pub(crate) struct RemoteTerminalOrigin {
+    pub session_binding: String,
+    pub provider: RemoteFileProvider,
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -213,6 +216,9 @@ pub(crate) struct LocalTerminalPathOpenRequest {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RemoteTerminalPathOpenRequest {
+    pub session_binding: String,
+    pub provider: RemoteFileProvider,
+    pub verified_endpoint_identity: String,
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -224,9 +230,24 @@ pub(crate) struct RemoteTerminalPathOpenRequest {
 
 #[derive(Clone, Debug)]
 pub(crate) struct LiveRemoteTerminalPathOpenRequest {
-    pub requestor: LiveRemoteFileRequestor,
+    pub requestor: RemoteFileCapability,
     pub verified_host_key_fingerprint: String,
     pub request: RemoteTerminalPathOpenRequest,
+}
+
+impl RemoteTerminalPathOpenRequest {
+    pub(crate) fn matches_origin(&self, origin: &RemoteTerminalOrigin) -> bool {
+        self.provider == origin.provider
+            && self.session_binding == origin.session_binding
+            && self.host == origin.host
+            && self.port == origin.port
+            && self.username == origin.username
+            && self.profile_identifier == origin.profile_identifier
+            && self.lifecycle_generation == origin.lifecycle_generation
+            && origin.verified_host_key_fingerprint.as_deref()
+                == Some(&self.verified_endpoint_identity)
+            && origin.live_transport_available
+    }
 }
 
 #[derive(Debug)]
@@ -247,6 +268,8 @@ impl Clone for TerminalFilesystemOrigin {
 impl Clone for RemoteTerminalOrigin {
     fn clone(&self) -> Self {
         Self {
+            session_binding: self.session_binding.clone(),
+            provider: self.provider,
             host: self.host.clone(),
             port: self.port,
             username: self.username.clone(),
@@ -264,7 +287,9 @@ impl PartialEq for TerminalFilesystemOrigin {
         match (self, other) {
             (Self::Local(left), Self::Local(right)) => left == right,
             (Self::Remote(left), Self::Remote(right)) => {
-                left.host == right.host
+                left.session_binding == right.session_binding
+                    && left.provider == right.provider
+                    && left.host == right.host
                     && left.port == right.port
                     && left.username == right.username
                     && left.profile_identifier == right.profile_identifier
@@ -407,8 +432,20 @@ pub(crate) fn explicit_local_file_path(target: &str) -> Option<PathBuf> {
     if decoded.as_bytes().get(2) == Some(&b':') {
         return None;
     }
+
     let path = PathBuf::from(decoded);
     (path.is_absolute() && path.file_name().is_some()).then_some(path)
+}
+
+pub(crate) fn explicit_remote_file_request(
+    target: &str,
+    origin: &RemoteTerminalOrigin,
+) -> Option<TerminalPathOpenRequest> {
+    let normalized = festerm_core::normalize_terminal_hyperlink(target)?;
+    if !normalized.starts_with("file://") {
+        return None;
+    }
+    resolve_remote_candidate(&normalized, origin).request
 }
 
 #[cfg(test)]
@@ -432,10 +469,16 @@ pub(crate) fn file_uri_for_test(path: &Path) -> String {
 }
 
 pub(crate) fn bind_live_remote_request(
-    requestor: LiveRemoteFileRequestor,
+    requestor: impl Into<RemoteFileCapability>,
     request: RemoteTerminalPathOpenRequest,
 ) -> Result<LiveRemoteTerminalPathOpenRequest, OpenRefusalNotice> {
-    if requestor.transport_generation() != request.lifecycle_generation {
+    let requestor = requestor.into();
+    if requestor.binding_key() != request.session_binding
+        || requestor.provider() != request.provider
+        || requestor.transport_generation() != request.lifecycle_generation
+        || requestor.verified_endpoint_identity().as_deref()
+            != Some(&request.verified_endpoint_identity)
+    {
         return Err(remote_open_refusal(
             &request.remote_path,
             &request.display_path,
@@ -443,7 +486,7 @@ pub(crate) fn bind_live_remote_request(
             "The source transport has changed since the menu opened.",
         ));
     }
-    let Some(verified_host_key_fingerprint) = requestor.verified_host_key_fingerprint() else {
+    let Some(verified_host_key_fingerprint) = requestor.verified_endpoint_identity() else {
         return Err(remote_open_refusal(
             &request.remote_path,
             &request.display_path,
@@ -914,6 +957,12 @@ fn resolve_remote_candidate(
     candidate: &str,
     origin: &RemoteTerminalOrigin,
 ) -> TerminalResolvedPathAction {
+    if is_local_network_or_device_path(candidate) {
+        return disabled_action(
+            candidate.to_owned(),
+            "Remote network and device namespaces are not supported.",
+        );
+    }
     let parsed = match parse_candidate_reference(candidate) {
         Ok(parsed) => parsed,
         Err(error) => return disabled_action(candidate.to_owned(), error.detail()),
@@ -924,11 +973,19 @@ fn resolve_remote_candidate(
                 if !same_remote_host(host, &origin.host) {
                     return disabled_action(
                         format!("{}@{} · {}", origin.username, origin.host, candidate),
-                        "This file URI points at a different host, so fesTerm will not reuse this SSH session for it.",
+                        "This file URI points at a different host, so fesTerm will not reuse this remote session for it.",
                     );
                 }
             }
-            uri.path
+            if origin.provider == RemoteFileProvider::DevTunnelWindows {
+                uri.path
+                    .strip_prefix('/')
+                    .filter(|path| is_windows_absolute(path))
+                    .unwrap_or(&uri.path)
+                    .to_owned()
+            } else {
+                uri.path
+            }
         }
         ParsedPathReference::HomeRelative(_) => {
             return disabled_action(
@@ -937,7 +994,16 @@ fn resolve_remote_candidate(
             );
         }
         ParsedPathReference::AbsolutePosix(path) => path,
-        ParsedPathReference::AbsoluteWindows(path) => remote_windows_to_sftp_path(&path),
+        ParsedPathReference::AbsoluteWindows(path) => match origin.provider {
+            RemoteFileProvider::Sftp => remote_windows_to_sftp_path(&path),
+            RemoteFileProvider::DevTunnelWindows => path,
+            RemoteFileProvider::DevTunnelPosix => {
+                return disabled_action(
+                    candidate.to_owned(),
+                    "Windows paths do not address this POSIX remote host.",
+                )
+            }
+        },
         ParsedPathReference::Relative(relative) => {
             let Some(base) = origin.trusted_working_directory.as_ref() else {
                 return disabled_action(
@@ -949,16 +1015,39 @@ fn resolve_remote_candidate(
         }
     };
 
+    if is_local_network_or_device_path(&resolved) {
+        return disabled_action(
+            candidate.to_owned(),
+            "Remote network and device namespaces are not supported.",
+        );
+    }
+    #[cfg(feature = "experimental-dev-tunnels")]
+    if origin.provider != RemoteFileProvider::Sftp
+        && !festerm_tunnel_bridge::files::valid_path(
+            &resolved,
+            match origin.provider {
+                RemoteFileProvider::DevTunnelWindows => {
+                    festerm_tunnel_bridge::files::PathStyle::Windows
+                }
+                _ => festerm_tunnel_bridge::files::PathStyle::Posix,
+            },
+        )
+    {
+        return disabled_action(
+            candidate.to_owned(),
+            "This path is not an unambiguous absolute path for the remote OS.",
+        );
+    }
     if origin.verified_host_key_fingerprint.is_none() {
         return disabled_action(
             format!("{}@{} · {}", origin.username, origin.host, resolved),
-            "Open the host once through SSH or SFTP first so fesTerm can pin a verified host key before reading files.",
+            "The source session has no verified filesystem endpoint.",
         );
     }
     if !origin.live_transport_available {
         return disabled_action(
             format!("{}@{} · {}", origin.username, origin.host, resolved),
-            "This remote session is not currently connected, so fesTerm cannot reuse its verified SSH/SFTP transport to read files.",
+            "The source session has no connected remote filesystem capability.",
         );
     }
 
@@ -973,6 +1062,12 @@ fn resolve_remote_candidate(
         },
         request: Some(TerminalPathOpenRequest::Remote(
             RemoteTerminalPathOpenRequest {
+                session_binding: origin.session_binding.clone(),
+                provider: origin.provider,
+                verified_endpoint_identity: origin
+                    .verified_host_key_fingerprint
+                    .clone()
+                    .expect("verified above"),
                 host: origin.host.clone(),
                 port: origin.port,
                 username: origin.username.clone(),
@@ -1098,6 +1193,9 @@ fn parse_candidate_reference(
 }
 
 fn parse_file_uri(candidate: &str) -> Result<FileUriReference, PathReferenceParseError> {
+    if candidate.contains(['?', '#']) {
+        return Err(PathReferenceParseError::InvalidFileUri);
+    }
     let rest = candidate
         .strip_prefix("file://")
         .ok_or(PathReferenceParseError::InvalidFileUri)?;
@@ -1186,9 +1284,7 @@ fn join_home(home: &Path, suffix: &str) -> PathBuf {
 }
 
 fn same_remote_host(candidate: &str, expected: &str) -> bool {
-    candidate.trim().eq_ignore_ascii_case(expected)
-        || candidate.trim().eq_ignore_ascii_case("localhost")
-            && expected.eq_ignore_ascii_case("localhost")
+    candidate.eq_ignore_ascii_case(expected) || candidate.eq_ignore_ascii_case("localhost")
 }
 
 pub(crate) fn is_markdown_path(path: &str) -> bool {
@@ -1210,11 +1306,7 @@ fn read_remote_document(request: LiveRemoteTerminalPathOpenRequest) -> TerminalP
             ));
         }
     };
-    let (metadata, bytes) = snapshot.into_parts();
-    let remote_path = match &metadata.path {
-        SftpPath::Remote(path) => path.clone(),
-        SftpPath::Local(_) => request.request.remote_path.clone(),
-    };
+    let (remote_path, bytes) = snapshot.into_parts();
 
     if is_markdown_path(&remote_path) {
         let source = match build_remote_markdown_source(&request, &remote_path) {
@@ -1280,6 +1372,14 @@ fn build_remote_document_origin(
         request.request.lifecycle_generation,
     )
     .ok()
+    .map(|origin| origin.with_live_binding(request.request.session_binding.clone()))
+    .map(|origin| {
+        if request.request.provider == RemoteFileProvider::Sftp {
+            origin
+        } else {
+            origin.with_dev_tunnel_provider()
+        }
+    })
 }
 
 fn build_remote_markdown_source(
@@ -1296,6 +1396,14 @@ fn build_remote_markdown_source(
         request.request.lifecycle_generation,
     )
     .ok()
+    .map(|source| source.with_live_binding(request.request.session_binding.clone()))
+    .map(|source| {
+        if request.request.provider == RemoteFileProvider::Sftp {
+            source
+        } else {
+            source.with_dev_tunnel_provider()
+        }
+    })
 }
 
 fn build_remote_owner(request: &RemoteTerminalPathOpenRequest) -> Option<RemoteOwner> {
@@ -1322,8 +1430,11 @@ fn build_remote_markdown_owner(
 fn remote_read_error_notice(
     remote_path: &str,
     display_path: &str,
-    error: RemoteFileReadError,
+    error: ReadError,
 ) -> OpenRefusalNotice {
+    let ReadError::Sftp(error) = error else {
+        return remote_open_refusal(remote_path, display_path, "This remote file could not be opened", "The bound remote capability refused, exceeded its path/content limits, expired, or disconnected. No local or OS fallback was attempted.");
+    };
     match error {
         RemoteFileReadError::NotRunning => remote_open_refusal(
             remote_path,
@@ -1425,6 +1536,8 @@ mod tests {
 
     fn remote_origin(cwd: Option<&str>) -> TerminalFilesystemOrigin {
         TerminalFilesystemOrigin::Remote(RemoteTerminalOrigin {
+            session_binding: "test-source".into(),
+            provider: RemoteFileProvider::Sftp,
             host: "ssh.example.test".to_owned(),
             port: 22,
             username: "deploy".to_owned(),
@@ -1444,6 +1557,57 @@ mod tests {
             },
             generation: 7,
         }
+    }
+
+    #[test]
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn remote_file_paths_refuse_foreign_namespaces_and_changed_capability_bindings() {
+        let TerminalFilesystemOrigin::Remote(mut origin) = remote_origin(None) else {
+            unreachable!()
+        };
+        origin.provider = RemoteFileProvider::DevTunnelWindows;
+        let Some(TerminalPathOpenRequest::Remote(request)) =
+            explicit_remote_file_request("file://localhost/C:/owned/report.md", &origin)
+        else {
+            panic!("source-relative Windows file URI expected")
+        };
+        assert_eq!(request.remote_path, "C:/owned/report.md");
+        assert!(request.matches_origin(&origin));
+        for uri in [
+            "file://foreign.example/C:/owned/report.md",
+            "file:///C:/owned/report.md:stream",
+            "file:///C:/owned/../report.md",
+            "file:///C:/owned/NUL",
+            "file:///srv/report.md",
+            "file:///C:/owned/report.md?query",
+            "file:///C:/owned/report.md#fragment",
+        ] {
+            assert!(
+                explicit_remote_file_request(uri, &origin).is_none(),
+                "{uri}: normalized {:?}, source {}",
+                festerm_core::normalize_terminal_hyperlink(uri),
+                origin.host
+            );
+        }
+        for changed in 0..6 {
+            let mut other = origin.clone();
+            match changed {
+                0 => other.session_binding.push_str("-other"),
+                1 => other.provider = RemoteFileProvider::Sftp,
+                2 => other.profile_identifier = Some("other-profile".into()),
+                3 => other.lifecycle_generation += 1,
+                4 => other.verified_host_key_fingerprint = Some("changed-endpoint".into()),
+                _ => other.live_transport_available = false,
+            }
+            assert!(!request.matches_origin(&other));
+        }
+        origin.provider = RemoteFileProvider::DevTunnelPosix;
+        assert!(explicit_remote_file_request("file:///C:/owned/report.md", &origin).is_some());
+        assert!(resolve_remote_candidate(r"C:\owned\report.md", &origin)
+            .request
+            .is_none());
+        origin.live_transport_available = false;
+        assert!(explicit_remote_file_request("file:///srv/report.md", &origin).is_none());
     }
 
     #[test]

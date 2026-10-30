@@ -3,6 +3,10 @@
 A cross-platform graphical terminal emulator and native SSH client, written in
 Rust.
 
+An [opt-in direct Dev Tunnels experiment](docs/dev-tunnels-experiment.md)
+exports one existing daemon session through a separate bridge. It is
+GitHub-provisioned, scoped-token-only and not production-qualified.
+
 > [!NOTE]
 > **AI authorship:** fesTerm's code, tests, documentation, and first-party
 > assets were written entirely by GitHub Copilot under human guidance. The

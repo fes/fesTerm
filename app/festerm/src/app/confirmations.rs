@@ -84,6 +84,7 @@ impl FesTermApp {
                                     CloseConsequence::TerminateLocalProcess
                                 }
                                 InspectorTransport::Ssh { .. }
+                                | InspectorTransport::DevTunnel { .. }
                                 | InspectorTransport::Sftp { .. } => {
                                     CloseConsequence::DisconnectSsh
                                 }

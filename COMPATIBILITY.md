@@ -6,6 +6,14 @@ fesTerm measures compatibility in terms of observable application behavior. Reco
 
 ## Compatibility Baseline
 
+The opt-in [Dev Tunnels subset](docs/dev-tunnels-experiment.md) implements
+peer profiles, independently bound scoped credentials, exact-generation
+daemon attach/detach and optional bounded remote file snapshots. It is
+experimental; `DT-01`–`DT-06` real-service/native qualification remains open.
+Inventory/create/takeover/terminate, native OAuth and automatic refresh are
+unavailable. This is not a production or multi-account service-qualification
+claim.
+
 The baseline is commonly relied-upon xterm behavior, augmented by pragmatic modern extensions. fesTerm is not attempting to reproduce every historical xterm feature or every private extension from another terminal.
 
 The sourced implementation references and cross-project lessons that guide this

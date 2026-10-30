@@ -1,7 +1,7 @@
 /// Normalizes passive OSC 8 metadata, not permission to open a target.
 pub fn normalize_terminal_hyperlink(target: &str) -> Option<String> {
     crate::normalize_external_web_url(target)
-        .or_else(|| local_file_uri(target).map(|uri| uri.to_string()))
+        .or_else(|| file_uri(target, false).map(|uri| uri.to_string()))
 }
 
 /// Decodes a syntactically local, absolute file URI without filesystem access.
@@ -12,6 +12,10 @@ pub fn local_file_hyperlink_path(target: &str) -> Option<String> {
 }
 
 fn local_file_uri(target: &str) -> Option<url::Url> {
+    file_uri(target, true)
+}
+
+fn file_uri(target: &str, local_only: bool) -> Option<url::Url> {
     if target.len() > 2_048
         || !target.is_ascii()
         || target
@@ -23,7 +27,10 @@ fn local_file_uri(target: &str) -> Option<url::Url> {
         return None;
     }
     let (authority, path) = target[7..].split_once('/')?;
-    if (!authority.is_empty() && !authority.eq_ignore_ascii_case("localhost"))
+    if (local_only && !authority.is_empty() && !authority.eq_ignore_ascii_case("localhost"))
+        || !authority
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
         || path.is_empty()
         || path.starts_with('/')
     {
@@ -35,6 +42,14 @@ fn local_file_uri(target: &str) -> Option<url::Url> {
         return None;
     }
     let uri = url::Url::parse(target).ok()?;
+    if !authority.is_empty()
+        && !authority.eq_ignore_ascii_case("localhost")
+        && !uri
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case(authority))
+    {
+        return None;
+    }
     safe_file_path(&decode_path(uri.path())?).then_some(uri)
 }
 
@@ -113,7 +128,6 @@ mod tests {
     fn file_hyperlinks_reject_ambiguous_network_device_and_encoded_targets() {
         for uri in [
             "file:relative.md",
-            "file://host/tmp/report.md",
             "file://localhost:80/tmp/report.md",
             "file://user@localhost/tmp/report.md",
             "file:////host/share/report.md",
@@ -143,5 +157,22 @@ mod tests {
             assert!(normalize_terminal_hyperlink(uri).is_none(), "{uri}");
         }
         assert!(normalize_terminal_hyperlink(&format!("file:///{}", "a".repeat(2_048))).is_none());
+    }
+
+    #[test]
+    fn remote_file_authority_is_passive_metadata_not_local_authority() {
+        let target = "file://remote.example/work/report.md";
+        assert_eq!(
+            normalize_terminal_hyperlink(target).as_deref(),
+            Some(target)
+        );
+        assert!(local_file_hyperlink_path(target).is_none());
+        assert!(crate::normalize_external_web_url(target).is_none());
+        if let Some(normalized) =
+            normalize_terminal_hyperlink("file://remote.example/C:/owned/report.md")
+        {
+            assert!(normalized.contains("remote.example"));
+            assert!(local_file_hyperlink_path(&normalized).is_none());
+        }
     }
 }

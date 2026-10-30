@@ -16,6 +16,10 @@ const NARROW_HORIZONTAL_MARGIN: f32 = 16.0;
 
 #[derive(Clone)]
 pub enum TransportFacts<'a> {
+    DevTunnel {
+        host: &'a str,
+        port: u16,
+    },
     Local,
     Ssh {
         username: &'a str,
@@ -205,6 +209,11 @@ pub fn show(
                             }
 
                             match content.transport {
+                                TransportFacts::DevTunnel { host, port } => {
+                                    section_heading(ui, "Experimental Dev Tunnel");
+                                    fact(ui, "Destination", &format!("{host}:{port}"), true);
+                                    fact(ui, "Operations", "Attach / detach only", false);
+                                }
                                 TransportFacts::Local => {
                                     section_heading(ui, "Process");
                                     fact(ui, "Type", "Local shell", false);

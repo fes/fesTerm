@@ -34,9 +34,9 @@
   ],
   "coverage": [
     {
-      "id": "proposed-dev-tunnels-bridge",
+      "id": "experimental-dev-tunnels-bridge",
       "edges": [
-        "TUNNEL-0[1-5]"
+        "TUNNEL-0[12356]"
       ],
       "requirements": [
         "docs/adr/0053-separate-dev-tunnels-session-bridge.md#decision"
@@ -44,20 +44,51 @@
       "decisions": [
         "ADR-0053"
       ],
-      "automated_tests": [],
+      "automated_tests": [
+        "private_token_line_preserves_bound_with_lf_crlf_and_invalid_input",
+        "exclusive_admission_refuses_occupied_or_changed_generation_without_retiring_it",
+        "constrained_recovery_preflights_history_without_truncating_local_state",
+        "bridge_refuses_incompatible_hello_before_daemon_admission",
+        "remote_snapshot_roundtrips_and_rejects_malformed_and_oversized_state",
+        "remote_session_adopts_before_live_output_and_never_owns_query_replies",
+        "encrypted_transport_pins_host_and_exports_only_one_preconfigured_port",
+        "encrypted_transport_refuses_changed_host_key_before_authentication",
+        "saturated_transport_is_bounded_and_drop_cancels_without_retry",
+        "dev_tunnel_profiles_isolate_accounts_and_pin_live_launches_across_rotation",
+        "dev_tunnel_profile_refuses_other_secret_kinds_and_missing_credentials",
+        "dev_tunnel_profiles_roundtrip_without_secrets_and_refuse_shared_credential_bindings",
+        "dev_tunnel_profile_routes_as_a_peer_and_editor_preserves_rotated_credential",
+        "detected_and_osc8_paths_share_bound_ssh_and_dev_tunnel_document_routing",
+        "remote_file_results_are_discarded_after_source_profile_or_generation_changes",
+        "remote_file_non_text_snapshots_are_refused_without_creating_local_documents",
+        "remote_file_paths_refuse_foreign_namespaces_and_changed_capability_bindings",
+        "mismatched_file_response_cannot_satisfy_another_request_or_become_terminal_output",
+        "bridge_regular_file_reads_are_opt_in_bounded_and_admitted_once",
+        "bridge_rejects_wrong_direction_and_oversized_file_frames_before_body_allocation"
+      ],
       "manual_scenarios": [
         "DT-01",
         "DT-02",
         "DT-03",
-        "DT-04",
-        "DT-05"
+        "DT-05",
+        "DT-06"
       ],
-      "status": "deferred",
+      "status": "partial",
       "prerequisites": [
-        "Reviewed opt-in standalone bridge and remote backend with explicit operation subset and bounded SDK/network integration",
-        "Legitimate scoped-token provisioning, applicable service-use review and authorized controlled remote host",
-        "Deterministic lifecycle/security tests and real-service desktop evidence; native Entra sign-in remains deferred"
+        "Independent security review and real GitHub-provisioned service/native desktop qualification",
+        "Controlled two-account real-service evidence; mock isolation is not service qualification",
+        "Native Entra/in-app OAuth sign-in, automatic refresh and non-Windows qualification remain deferred"
       ]
+    },
+    {
+      "id": "deferred-dev-tunnels-session-management",
+      "edges": ["TUNNEL-04"],
+      "requirements": ["docs/adr/0053-separate-dev-tunnels-session-bridge.md#session-protocol-and-lifecycle"],
+      "decisions": ["ADR-0053"],
+      "automated_tests": [],
+      "manual_scenarios": ["DT-04"],
+      "status": "deferred",
+      "prerequisites": ["An explicitly reviewed inventory/create/terminate operation slice; these operations are unavailable in the current bridge"]
     },
     {
       "id": "root-lifecycle",

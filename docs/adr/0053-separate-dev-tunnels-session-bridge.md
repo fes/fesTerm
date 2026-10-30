@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-10-29
 - **Supersedes:** None
-- **Related:** ADRs 0016, 0018, 0025 and 0038; issue #296
+- **Related:** ADRs 0016, 0018, 0025, 0038 and 0052; issue #296
 - **Scope:** Owner-requested experimental remote-access capability; not an M6
   acceptance requirement or a claim of hosted-service qualification.
 
@@ -79,6 +79,25 @@ library seam, without moving the daemon's PTY or mirror ownership.
 Separate processes may ship in the same signed package. Separation does not
 require an independent installer, service account, privileged broker or
 always-running system service.
+
+### First-class connections and independent credential bindings
+
+Dev Tunnel is a peer connection/profile kind to Local, SSH and Serial, not an
+SSH profile or shell-command alias. The initial implementation includes its
+launcher entry, saved-profile editor, centralized application commands and
+Inspector classification. A profile holds an operator-trusted destination
+metadata file reference and its own opaque native-store **connect** credential
+reference. Tokens are stored only after an explicit action; connect-once
+credentials remain session-only. Host/OAuth tokens never belong in profiles.
+
+Different profiles/accounts/tunnels can coexist in one instance without a
+global current-account/token slot. Sessions from the same profile deliberately
+reuse that reference. Rotation creates a fresh reference, and asynchronous
+credential-save completion must still match its original profile. Duplicating
+a profile does not copy its credential. Live launches capture their profile,
+credential value, verified host and exact exported generation; profile edits
+never retarget another live connection. Native OAuth account switching and
+automatic token refresh remain deferred, not implied by this capability model.
 
 ### Authentication, authorization and host identity
 
@@ -198,6 +217,42 @@ must not authorize client-local OSC 8 file reads, local-path inference,
 clipboard access or OS-handler launches. Reuse existing explicit remote
 terminal/clipboard policy, command routing and secret-store boundaries.
 
+### Common filesystem capability for detected and OSC 8 paths
+
+Both detected paths and explicit OSC 8 file targets use the originating
+session's transport-neutral filesystem capability and shared dispatch.
+`file:///...` and `file://localhost/...` from a remote session name that
+**remote** filesystem. Explicit metadata, never its visible label, chooses
+the target. Other authorities must match the verified source host.
+HTTP(S) handling and local ADR 0052 no-follow reads/reloads/saves stay separate.
+
+SSH/SFTP reuses its existing live authenticated SFTP requestor. Dev Tunnel
+negotiates a bounded read-only bridge operation; it never guesses an SSH
+endpoint, reconnects using other credentials, or interpolates shell commands.
+The host must explicitly enable `--allow-file-read`. That grants admitted
+connect-token holders regular-file read authority as the bridge's OS user.
+Without that flag, Open is unavailable; PTY connectivity is not file authority.
+
+The bridge advertises remote Windows/POSIX path semantics. Absolute native
+paths only are accepted; relative paths and home expansion need trustworthy
+provider metadata, not terminal output. Namespace/device/network paths,
+Windows named streams and link/reparse traversal refuse before I/O. Reads
+retain root-to-leaf no-follow handles, stop at 4 MiB, and use one blocking I/O
+reservation across the bridge, retained even after caller cancellation.
+Requests/results have 30-second deadlines. An uninterruptible filesystem call
+can retain that single reservation until completion, but cannot create an
+unbounded worker backlog.
+
+Requests and adoption bind provider, profile, verified endpoint, exact live
+capability/session instance and transport/controller generation. A different
+connection with a matching hostname/path is never substituted. The existing
+bounded text/Markdown surfaces receive read-only remote snapshots with
+provider-specific identity; no remote content enters configuration, workspace
+metadata, logs or automatic caches. Changed/disconnected bindings discard
+pending results. Missing capability, malformed/oversized/non-text content and
+foreign authorities produce refusal, never local/OS fallback. Remote writes
+remain unsupported; explicit local Save As is a separate authorized operation.
+
 ### Bounds, cancellation and reconnection
 
 Set numeric per-message, per-connection and aggregate budgets in code before
@@ -289,6 +344,37 @@ internal terminal RPC or VS Code OAuth client identity is required here.
 - **Build a custom relay/cloud identity service:** unnecessary infrastructure
   expansion. Relay choice remains separable if Dev Tunnels is unsuitable.
 
+## Experimental implementation subset
+
+The opt-in implementation is described in
+[`docs/dev-tunnels-experiment.md`](../dev-tunnels-experiment.md), including exact
+commands and numeric resource bounds. It exports one preconfigured existing
+session, with peer profiles, explicit CLI-to-GUI attach/detach, optional bounded
+file reads and ordered terminal controls.
+Inventory, create, takeover, terminate, automatic reconnect and native in-app
+identity flows are unavailable; they are not simulated by this subset.
+
+The standalone bridge uses the pinned official SDK's management/contracts and
+WebSocket adapter with a narrowly ported modern-russh relay handshake.
+Upstream's legacy unbounded/OpenSSL relay modules are not compiled. Only one
+encrypted client and one preprovisioned port are admitted; channel queues,
+control replies, network frames and recovery allocation are bounded.
+`vendor/dev-tunnels/VENDORING.md` and `vendor/russh/VENDORING.md` record the
+pin, licensing and local changes.
+
+New daemons use local protocol 3: a fixed-size admission request checks the
+exact generation, no-takeover flag and recovery limit on the daemon's serialized
+admission loop **before** replacing an active client. Local clients retain
+protocol-1/2 and schema-2/3 adapters. Remote export requires protocol 3; it never
+upgrades, kills or recreates an older daemon. The bridge asks for an 8-MiB
+recovery cap; the network uses bounded JSON, not the trusted-local bincode
+decoder. After network validation, a client adapter produces trusted local
+framing for the existing Session worker, preserving its adoption/reply policy.
+
+This code remains experimental pending independent security review and
+`DT-01`–`DT-06` real-service/native qualification. GitHub-first provisioning
+does not imply native GitHub OAuth or Entra support in fesTerm.
+
 ## Consequences
 
 The bridge can fail or be updated without replacing the PTY owner. Local-only
@@ -296,8 +382,9 @@ users retain the existing daemon and need no cloud sign-in or new network
 dependencies. New packaging, remote setup, compatibility negotiation and
 credential lifecycle still require deliberate implementation.
 
-No current configuration schema, daemon protocol, accepted capability or
-session behavior changes in this documentation PR. Initial desktop scope is
+Configuration adds a secret-free `dev_tunnel` profile kind; existing documents
+and local takeover semantics remain supported. Protocol 3 adds atomic admission;
+the remote subset never authorizes takeover. Initial desktop scope is
 Windows, Linux and macOS with platform-specific evidence required. Mobile,
 multi-user delegation, unattended services, arbitrary port forwarding,
 automatic helper deployment and daemon hot handoff remain out of scope.
@@ -308,18 +395,31 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   daemon stays local-only and owns PTY/recovery lifetime; exact session/host
   targeting; bounded network decode and queues; secrets stay outside ordinary
   metadata; remote links never become client-local file authority.
-- **GUI/action edges affected:** future `TUNNEL-01` through `TUNNEL-05`, all
-  deferred. Existing local/SSH, terminal ownership and close semantics are
+- **GUI/action edges affected:** `TUNNEL-01`/`02`/`03`/`05`/`06`,
+  `TERM-05` and `TERM-08` have restricted experimental implementation and partial automated evidence;
+  `TUNNEL-04` remains deferred/unavailable. Existing local/SSH ownership and close semantics are
   unchanged. Implemented operations must converge on the application command
   model rather than introducing widget-specific copies.
-- **Automated tests required:** planned protocol/schema/length refusal,
+- **Automated evidence:** bridge tests cover bounded JSON/length refusal,
+  actual in-memory encrypted transport and host-key denial, real Session-worker
+  adoption/output/reply ownership, saturation/cancellation, and daemon atomic
+  admission refusal and borrowed-state recovery-budget preflight. App tests
+  exercise concurrent mocked account/profile bindings and rotation, peer
+  profile command routing, detected/OSC 8 Windows/POSIX text/Markdown dispatch,
+  changed bindings and remote origin without local file authority.
+  Further tests/evidence required include real bridge process death and native
+  daemon survival, credential expiry/revocation and platform GUI behavior.
+  The original planned obligations remain: protocol/schema/length refusal,
   host-key/credential redaction, exact-generation attach/takeover/terminate,
   adoption/output/query ordering, saturation/cancellation, bridge process
   death without daemon death, token-required state, no input replay and
-  remote-origin file-link refusal. These are obligations, not existing tests.
-- **Native/manual evidence required:** future `DT-01` through `DT-05` in
+  independent native credential bindings, transient/stored token isolation,
+  source-bound remote detected/OSC 8 reads and provider-specific snapshots.
+  Real-service/native obligations are not claimed passed by mock tests.
+- **Native/manual evidence required:** `DT-01` through `DT-06` in
   `docs/manual-validation.md`; service policy/authentication, real PTY/TUI
   input/resize, disconnect/bridge restart and platform lifetimes remain
   pending. Controlled automation should replace manual checks where possible.
-- **Coverage superseded:** None. No existing evidence is promoted or retired;
-  trace entries classify this proposal as deferred behind named prerequisites.
+- **Coverage superseded:** No existing local/SSH evidence is retired. Trace
+  entries distinguish the partial experimental subset from deferred management
+  operations and pending real-service/native qualification.

@@ -15,21 +15,23 @@ technology, visual judgment, reference-application screen semantics, or a real
 usability question. A reproducible failure should become the smallest suitable
 fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
-## Proposed direct Dev Tunnels bridge (DT-01 through DT-05)
+## Experimental direct Dev Tunnels bridge (DT-01 through DT-06)
 
-These are deferred evidence obligations for proposed
-[ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md), not instructions to
-enable an existing feature or claims of completed native qualification.
+These are remaining real-service/native obligations for
+[ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md). The opt-in
+[implementation](dev-tunnels-experiment.md) has deterministic evidence,
+not completed native qualification.
 Use dedicated, explicitly authorized test tunnels/sessions; never alter or
 terminate unrelated shells. Keep all failed attempts as failed evidence.
 
 | ID | Scenario | Evidence class | Prerequisite / current result |
 | --- | --- | --- | --- |
-| DT-01 | Provision a private dedicated tunnel with scoped host/connect tokens; verify selected host binding, denied/wrong/expired credentials, secret redaction, applicable service policy and cleanup ownership. | Real-service functional + security/policy | Deferred: reviewed bridge/backend, supported token provisioning, authorized controlled host and service-use review. Native Entra/MFA/Conditional Access remains a separate future scope. |
+| DT-01 | Use GitHub-first official CLI provisioning for private dedicated tunnels and scoped host/connect tokens. Exercise peer profile/editor/launcher/Inspector routing, separate profiles/accounts and simultaneous sessions, transient/native-store isolation and replacement without live retargeting. Verify host binding, denied/wrong/expired credentials, secret redaction, service policy and cleanup ownership. | Real-service functional + security/policy | Partial: deterministic profile/routing/rotation tests exist. Independent review, real-service/native credential-store and actual two-account qualification remain pending. Native Entra/MFA/Conditional Access is separate future scope. |
 | DT-02 | Attach a supported exact remote session; exercise PowerShell/cmd on native Windows and shells/TUIs on Linux/macOS, Unicode, keyboard/mouse modes, Ctrl+C, resize and output/backpressure. | Real-service functional + native usability | Deferred: DT-01 and deterministic protocol/bounds tests; automate controlled PTY checks, retain physical-input/rendering/accessibility judgments. |
 | DT-03 | Disconnect/restart client and bridge; verify same daemon-owned process and ordered recovery without duplicate replies or stale input; refuse changed identities and unconfirmed takeover. | Controlled lifecycle automation + native functional | Deferred: supported attach/adoption and ownership admission; record actual bridge/daemon/OS versions. |
 | DT-04 | Exercise only advertised inventory/create/terminate operations; reject stale generations, preserve occupied/replacement sessions and verify Cancel defaults and uncertain-result handling. | Deterministic/headless automation + native usability | Deferred: implemented operation subset and command routing. Missing operations are unsupported, not passed by omission. |
 | DT-05 | Rotate/reject/revoke credentials, lose the relay, restart/upgrade the bridge and separately test logoff/reboot/daemon termination boundaries. | Real-service/platform lifecycle + usability | Deferred: DT-01/03; record observed established-stream revocation behavior. No daemon hot-upgrade or reboot-survival claim. |
+| DT-06 | From SSH/SFTP and Dev Tunnel sessions, deliberately open detected and OSC 8 remote Windows/POSIX text/Markdown paths, including source-relative file:///localhost, misleading labels, absent capability, foreign authorities, oversized/non-text content and stale/disconnected/changed bindings. Verify independent profiles/accounts and no client-local, OS-handler or shell-command fallback. | Deterministic routing/security + native real-service usability | Partial: shared capability/resolver, bounded bridge read RPC and snapshot identity implemented. Native Windows/Linux/macOS and real two-account qualification remain pending. |
 
 ## Offline Mermaid (CP-06, CP-15)
 
@@ -43,6 +45,10 @@ interactive diagram nodes; previews remain inert images under ADR 0050's
 conservative limits.
 
 ## Local file OSC 8 links (TI-10, TI-17)
+
+Remote/serial refusal in the local-file checks means refusal of client-local
+authority. Source-bound SSH/SFTP and Dev Tunnel remote-file reads are a separate
+positive path under `DT-06`; they never inherit local no-follow read/save authority.
 
 Automated parser, UI and application tests cover strict decoding, exact
 modifier/context intent, decoded destination Copy, source-generation changes,

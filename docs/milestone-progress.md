@@ -6460,3 +6460,20 @@ not a blanket Markdown responsiveness repair. Drawing still dominates and
 document-coordinate retention remains behind native route qualification and
 architecture review. Native acceptance remains open under CP-18; the complete
 per-case evidence and limitations are in `validation/windows-warp/README.md`.
+
+## Experimental source-bound Dev Tunnels bridge
+
+The first experimental slice separates cloud transport from the local daemon:
+a bounded standalone relay exports one deliberately selected generation with
+atomic no-takeover admission. Recovery is adopted before live events, query
+replies retain daemon ownership, and disconnect never kills the shell.
+Peer profiles bind independently provisioned GitHub-first scoped credentials
+through native-store references rather than a global current account.
+
+Detected and explicit OSC 8 remote files now converge through a source-bound
+capability: authenticated live SFTP or an explicitly enabled bounded bridge
+read. Provider and connection generations remain part of snapshot identity;
+remote localhost never grants client-local authority. The implementation and
+limits are in [the experiment guide](dev-tunnels-experiment.md).
+Deterministic tests are not service/native acceptance: DT-01–DT-06, independent
+security review and non-Windows qualification remain open.

@@ -72,6 +72,43 @@ pub enum Profile {
     Local(LocalProfileConfiguration),
     Ssh(SshProfileConfiguration),
     Serial(SerialProfileConfiguration),
+    DevTunnel(DevTunnelProfileConfiguration),
+}
+
+/// Secret-free operator-trusted destination metadata. The file is read and
+/// pinned once per explicit launch; it is not authority to change a live tab.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevTunnelProfileConfiguration {
+    id: String,
+    destination_file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    credential_id: Option<CredentialReference>,
+}
+
+impl DevTunnelProfileConfiguration {
+    pub fn identifier(&self) -> &str {
+        &self.id
+    }
+    pub fn destination_file(&self) -> &str {
+        &self.destination_file
+    }
+    pub fn credential_reference(&self) -> Option<&SecretReference> {
+        self.credential_id
+            .as_ref()
+            .map(CredentialReference::as_secret_reference)
+    }
+    fn validate(&self) -> Result<(), ConfigError> {
+        validate_identifier(&self.id)?;
+        if self.destination_file.is_empty()
+            || self.destination_file.len() > 4096
+            || contains_control_character(&self.destination_file)
+            || contains_secret_bearing_value(&self.destination_file)
+        {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -87,6 +124,38 @@ fn is_default_remote_profile_kind(kind: &RemoteProfileKind) -> bool {
 }
 
 impl Profile {
+    pub fn dev_tunnel(
+        identifier: impl Into<String>,
+        destination_file: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let profile = Self::DevTunnel(DevTunnelProfileConfiguration {
+            id: identifier.into(),
+            destination_file: destination_file.into(),
+            credential_id: None,
+        });
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    pub fn as_dev_tunnel(&self) -> Option<&DevTunnelProfileConfiguration> {
+        if let Self::DevTunnel(profile) = self {
+            Some(profile)
+        } else {
+            None
+        }
+    }
+
+    pub fn with_tunnel_connect_credential(
+        mut self,
+        reference: SecretReference,
+    ) -> Result<Self, ConfigError> {
+        let Self::DevTunnel(profile) = &mut self else {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
+        };
+        profile.credential_id = Some(CredentialReference::new(reference));
+        self.validate()?;
+        Ok(self)
+    }
     /// Creates a local-shell profile with direct executable arguments.
     pub fn local(
         identifier: impl Into<String>,
@@ -253,7 +322,7 @@ impl Profile {
                 ))
             }
             Self::Ssh(profile) => profile.persistence = persistence,
-            Self::Serial(_) => {
+            Self::Serial(_) | Self::DevTunnel(_) => {
                 return Err(ConfigError::new(
                     ConfigErrorKind::PersistenceRequiresLocalOrSshProfile,
                 ))
@@ -269,6 +338,7 @@ impl Profile {
             Self::Local(profile) => profile.identifier(),
             Self::Ssh(profile) => profile.identifier(),
             Self::Serial(profile) => profile.identifier(),
+            Self::DevTunnel(profile) => profile.identifier(),
         }
     }
 
@@ -276,7 +346,7 @@ impl Profile {
     pub fn as_local(&self) -> Option<&LocalProfileConfiguration> {
         match self {
             Self::Local(profile) => Some(profile),
-            Self::Ssh(_) | Self::Serial(_) => None,
+            Self::Ssh(_) | Self::Serial(_) | Self::DevTunnel(_) => None,
         }
     }
 
@@ -284,7 +354,7 @@ impl Profile {
     pub fn as_ssh(&self) -> Option<&SshProfileConfiguration> {
         match self {
             Self::Ssh(profile) => Some(profile),
-            Self::Local(_) | Self::Serial(_) => None,
+            Self::Local(_) | Self::Serial(_) | Self::DevTunnel(_) => None,
         }
     }
 
@@ -292,14 +362,17 @@ impl Profile {
     pub fn as_serial(&self) -> Option<&SerialProfileConfiguration> {
         match self {
             Self::Serial(profile) => Some(profile),
-            Self::Local(_) | Self::Ssh(_) => None,
+            Self::Local(_) | Self::Ssh(_) | Self::DevTunnel(_) => None,
         }
     }
 
     /// Returns this SSH profile's opaque native-store SSH-password reference, if set.
     pub fn credential_reference(&self) -> Option<&SecretReference> {
-        self.as_ssh()
-            .and_then(SshProfileConfiguration::credential_reference)
+        match self {
+            Self::Ssh(profile) => profile.credential_reference(),
+            Self::DevTunnel(profile) => profile.credential_reference(),
+            _ => None,
+        }
     }
 
     /// Returns this profile's durable-session provider and name,
@@ -309,7 +382,7 @@ impl Profile {
         match self {
             Self::Local(profile) => profile.persistence(),
             Self::Ssh(profile) => profile.persistence(),
-            Self::Serial(_) => None,
+            Self::Serial(_) | Self::DevTunnel(_) => None,
         }
     }
 
@@ -318,6 +391,7 @@ impl Profile {
             Self::Local(profile) => profile.validate(),
             Self::Ssh(profile) => profile.validate(),
             Self::Serial(profile) => profile.validate(),
+            Self::DevTunnel(profile) => profile.validate(),
         }
     }
 }

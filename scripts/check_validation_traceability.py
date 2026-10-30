@@ -15,7 +15,7 @@ from pathlib import Path
 EDGE_RE = re.compile(r"^\| `([A-Z][A-Z0-9]*-[0-9]{2})` \|")
 MANUAL_RE = re.compile(r"^\| ([A-Z][A-Z0-9]*-[0-9]{2}) \|")
 TEST_ATTRIBUTE_RE = re.compile(r"#\[(?:[A-Za-z0-9_]+::)*test(?:\([^]]*\))?\]")
-TEST_FUNCTION_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
+TEST_FUNCTION_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
 HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*$")
 ADR_FILE_RE = re.compile(r"^([0-9]{4})-[a-z0-9-]+\.md$")
 VALID_STATUSES = {"automated", "manual", "usability", "partial", "deferred"}

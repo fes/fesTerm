@@ -227,6 +227,15 @@ Command execution should follow the ownership boundaries in `ARCHITECTURE.md`:
 
 ## Evolution
 
+Experimental Dev Tunnel profiles emit `CreateProfile`, `SaveProfile`,
+`StoreDevTunnelConnectToken`, `StartConfiguredDevTunnelProfile` and
+`ConnectTransientDevTunnel`; CLI launch converges through `ConnectDevTunnel`.
+The composition root owns native-store transactions; AppState captures each
+immutable launch binding. Detected paths and `OpenTerminalHyperlink` converge
+on the same source-bound filesystem dispatch and remote snapshot commands.
+Widgets never select another account/transport or perform filesystem reads.
+See [ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md).
+
 Do not design a generalized plugin command API before plugin or scripting work is accepted. The initial command model should solve first-party application actions cleanly while preserving enough typing and separation to expose selected commands later if justified.
 
 A material change that bypasses these rules or moves product policy into individual GUI widgets requires architectural review and, during the 0.1 architecture-stability period, an ADR.
