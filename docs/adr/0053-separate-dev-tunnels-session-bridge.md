@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-10-29
 - **Supersedes:** None
-- **Related:** ADRs 0016, 0018, 0025 and 0038; issue #296
+- **Related:** ADRs 0016, 0018, 0025, 0038 and 0052; issue #296
 - **Scope:** Owner-requested experimental remote-access capability; not an M6
   acceptance requirement or a claim of hosted-service qualification.
 
@@ -235,6 +235,84 @@ must not authorize client-local OSC 8 file reads, local-path inference,
 clipboard access or OS-handler launches. Reuse existing explicit remote
 terminal/clipboard policy, command routing and secret-store boundaries.
 
+### Common filesystem capability for detected and OSC 8 paths
+
+The owner requires **both detected terminal paths and explicit OSC 8 file
+links to open remote files through SSH or Dev Tunnels** in the current
+implementation scope. A working remote PTY alone does not satisfy this.
+This extends ADR 0052's remote-file activation policy without weakening its
+prohibition on remote output authorizing a client-local file read.
+
+Use one application-owned resource-resolution/dispatch path for both
+invocation surfaces, backed by an explicit filesystem capability:
+
+```mermaid
+flowchart TD
+    Detected["Detected path + source session"]
+    Link["OSC 8 target + source session"]
+    Resolve["Common resolver / generation-bound dispatch"]
+    Local["Local bounded document reader"]
+    SSH["Existing authenticated SSH / SFTP reader"]
+    Tunnel["Bounded bridge file-read operation"]
+    Document["Existing text / Markdown document surfaces"]
+    Detected --> Resolve
+    Link --> Resolve
+    Resolve -->|"local origin"| Local
+    Resolve -->|"SSH origin"| SSH
+    Resolve -->|"Dev Tunnel origin"| Tunnel
+    Local --> Document
+    SSH -->|"remote snapshot"| Document
+    Tunnel -->|"remote snapshot"| Document
+```
+
+The current `SessionTab::terminal_filesystem_origin()` and
+`terminal_paths.rs` resolver already distinguish Local from SSH/SFTP origins.
+Generalize their remote-reader seam, currently `LiveRemoteFileRequestor`,
+rather than duplicating path policy in each widget or pretending the bridge
+has an SSH endpoint. Local I/O remains separate from remote snapshot adoption.
+
+- Bind each request and result to its originating profile/credential binding,
+  verified endpoint, filesystem namespace and transport/session generation.
+  Never look up a different live connection merely because its hostname or
+  displayed path matches. Revalidate before I/O/adoption; reconnect, profile
+  edits and changed identities cannot silently retarget a pending open.
+- Resolve OSC 8 activation from its explicit target, not its visible label.
+  Preserve deliberate modifier/context activation. For a remote source,
+  `file:///...` and `file://localhost/...` refer to the **remote** filesystem,
+  not this client. An authority may identify only the verified source host;
+  foreign or ambiguous authorities refuse without a network/local fallback.
+- Interpret paths using the provider's remote filesystem semantics, not the
+  client's `PathBuf` rules. Absolute POSIX and Windows paths remain distinct;
+  relative detected paths and `~` require trustworthy provider cwd/home
+  metadata. Do not infer cwd from prompts, titles or shell-command output.
+  Raw/relative OSC 8 targets remain unsupported unless separately designed.
+- SSH reuses the already authenticated, generation-bound SFTP capability.
+  Dev Tunnel uses a separately negotiated bridge **read-file** operation
+  under the remote OS user; it does not run `cat`, PowerShell or another
+  interpolated shell command, or connect to a guessed SSH service.
+- Reads are regular-file, size/type/encoding bounded, cancellable and
+  backpressured. The bridge validates requested paths and unsupported device/
+  network namespaces before I/O; no general filesystem proxy or arbitrary
+  local IPC endpoint is exposed. Preserve existing SSH/SFTP read semantics
+  and document provider-specific alias/no-follow limitations accurately.
+- Use the existing remote text/Markdown snapshot surfaces and bounds.
+  Document identity includes its provider and verified owner/binding, so an
+  identical path on another account/host cannot reuse the wrong document.
+  Remote writes, automatic local caching and remote-to-local synchronization
+  are not introduced by Open. An explicit local Save As remains a different
+  user-authorized operation.
+- Missing file capability, malformed paths, excessive/non-text content and
+  stale/disconnected sources give actionable refusal. They never fall back
+  to client-local filesystem access, OS file associations or shell execution.
+  HTTP/HTTPS handling and local no-follow read/reload/save protections remain
+  unchanged.
+
+The bridge protocol therefore includes a bounded, capability-negotiated
+read-file request/result in addition to its advertised session operations.
+An older peer without this capability must refuse Open clearly rather than
+misrepresent PTY connectivity as file access. Numeric path, content, request,
+concurrency and aggregate-buffer limits belong in the implementation tests.
+
 ### Bounds, cancellation and reconnection
 
 Set numeric per-message, per-connection and aggregate budgets in code before
@@ -345,21 +423,31 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   daemon stays local-only and owns PTY/recovery lifetime; exact session/host
   targeting; bounded network decode and queues; secrets stay outside ordinary
   metadata; remote links never become client-local file authority.
-- **GUI/action edges affected:** future `TUNNEL-01` through `TUNNEL-05`, all
-  deferred. Existing local/SSH, terminal ownership and close semantics are
-  unchanged. Implemented operations must converge on the application command
-  model rather than introducing widget-specific copies.
+- **GUI/action edges affected:** future `TUNNEL-01` through `TUNNEL-06`, all
+  deferred; `TUNNEL-06` extends remote detected/OSC 8 file opening across SSH
+  and Dev Tunnels. Existing runtime behavior is unchanged by this proposal.
+  Implemented operations must converge on the application command model
+  rather than introducing widget-specific copies.
 - **Automated tests required:** planned protocol/schema/length refusal,
   host-key/credential redaction, exact-generation attach/takeover/terminate,
   adoption/output/query ordering, saturation/cancellation, bridge process
   death without daemon death, token-required state, no input replay and
   remote-origin file-link refusal; peer profile/launcher/command routing,
   simultaneous independent credential bindings, transient versus opted-in
-  stored credentials, and profile rotation without live-session retargeting.
+  stored credentials, and profile rotation without live-session retargeting;
+  detected and explicit OSC 8 production file-open routing through both
+  remote providers, remote-versus-local namespace isolation, cross-platform
+  path handling, stale read/result refusal, bounded non-file/binary/oversize
+  refusal and provider/account-specific document identity.
+  Remote-origin file-link refusal means refusal of client-local access, not
+  unconditional refusal of an authorized remote read.
   These are obligations, not existing tests.
-- **Native/manual evidence required:** future `DT-01` through `DT-05` in
+- **Native/manual evidence required:** future `DT-01` through `DT-06` in
   `docs/manual-validation.md`; service policy/authentication, real PTY/TUI
   input/resize, disconnect/bridge restart and platform lifetimes remain
   pending. Controlled automation should replace manual checks where possible.
-- **Coverage superseded:** None. No existing evidence is promoted or retired;
-  trace entries classify this proposal as deferred behind named prerequisites.
+- **Coverage superseded:** None in this proposal. Implementation must update
+  tests that assume every remote OSC 8 file activation is refused, replacing
+  that assumption with authorized remote-read and no-client-local-fallback
+  cases. No existing evidence is promoted or retired here; trace entries
+  classify this proposal as deferred behind named prerequisites.

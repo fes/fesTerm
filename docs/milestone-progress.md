@@ -20,6 +20,10 @@ VS Code credentials or an unqualified native Entra registration.
 Dev Tunnel is planned as a peer connection/profile kind, with independent
 profile/session credential bindings so different GitHub accounts can be used
 concurrently without an application-global current token.
+The owner also requires detected paths and OSC 8 file links to open through
+the source SSH or Dev Tunnel filesystem capability. The design extends the
+common origin-aware resolver with a bounded bridge reader, not shell-command
+interpolation or a fallback to an identically named client-local file.
 Implementation, bounded SDK integration, service-use suitability and real
 remote/native evidence remain prerequisites. This proposal changes no runtime
 behavior or milestone acceptance status.
