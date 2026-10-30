@@ -397,13 +397,13 @@ impl TerminalView {
     ) {
         let selected = !self.pointer.pressed.iter().any(|pressed| *pressed)
             && hit.is_some_and(|hit| self.selection.infer_smart(snapshot, hit, scope));
-        self.set_transient_smart_selection_feedback(if selected && self.selection.smart.as_ref().is_some_and(|smart| smart.conservative) {
-            "Smart selection: conservative row segment (pane/column boundary). Inspect; Copy separately. Drag replaces; Escape cancels."
-        } else if selected {
-            "Smart selection: inspect highlight; Copy is separate. Drag to replace; Escape cancels. Ctrl+Alt+Shift+S/P/B selects sentence/paragraph/block."
+        if selected {
+            self.clear_smart_selection_feedback();
         } else {
-            "Smart selection unavailable here (blank/border or context limit). Existing selection unchanged; use ordinary drag."
-        });
+            self.set_transient_smart_selection_feedback(
+                "Smart selection unavailable here (blank/border or context limit). Existing selection unchanged; use ordinary drag.",
+            );
+        }
     }
 
     fn set_transient_smart_selection_feedback(&mut self, feedback: impl Into<String>) {
@@ -471,6 +471,33 @@ impl TerminalView {
             TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows),
             &self.selection,
         )
+    }
+
+    /// Selects around the keyboard target, the end of the current selection, or
+    /// the cursor, exactly as the Ctrl+Alt+Shift shortcuts do. It never copies.
+    pub fn smart_select_at_target(
+        &mut self,
+        terminal: &Terminal,
+        scope: crate::SmartSelectionScope,
+    ) {
+        self.history.sync(terminal);
+        let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
+        let hit = self
+            .smart_keyboard_hit
+            .or_else(|| {
+                self.selection
+                    .range_in_snapshot(snapshot)
+                    .map(|range| range.end)
+            })
+            .or_else(|| {
+                let cursor = snapshot.cursor();
+                (self.history.offset_rows == 0).then_some(CellPosition {
+                    column: cursor.column(),
+                    row: cursor.row(),
+                })
+            })
+            .or(Some(CellPosition { column: 0, row: 0 }));
+        self.request_smart_selection(snapshot, hit, scope);
     }
 
     pub fn begin_rectangle_copy(
@@ -1645,11 +1672,25 @@ impl TerminalView {
                     ui,
                     options.context_menu_action.is_some() || self.context_link.is_some(),
                 );
-                let mut rendered_items = self.show_context_target_actions(
+                let mut rendered_items = false;
+                if let Some(text) = selected_text.clone() {
+                    if ui.button("Copy").clicked() {
+                        ui.ctx().copy_text(text);
+                        self.selection.clear();
+                        self.clear_smart_selection_feedback();
+                        self.smart_keyboard_hit = None;
+                        ui.close();
+                    }
+                    rendered_items = true;
+                }
+                if self.show_context_target_actions(
                     ui,
                     options.context_menu_action.as_ref(),
                     selected_text.is_none() && !options.paste_available,
-                );
+                    rendered_items,
+                ) {
+                    rendered_items = true;
+                }
                 if smart_hit.is_some() {
                     if rendered_items {
                         ui.separator();
@@ -1672,19 +1713,6 @@ impl TerminalView {
                             response.request_focus();
                             ui.close();
                         }
-                    }
-                    rendered_items = true;
-                }
-                if let Some(text) = selected_text.clone() {
-                    if rendered_items {
-                        ui.separator();
-                    }
-                    if ui.button("Copy").clicked() {
-                        ui.ctx().copy_text(text);
-                        self.selection.clear();
-                        self.clear_smart_selection_feedback();
-                        self.smart_keyboard_hit = None;
-                        ui.close();
                     }
                     rendered_items = true;
                 }
@@ -1929,8 +1957,15 @@ impl TerminalView {
         ui: &mut Ui,
         action: Option<&TerminalContextMenuAction>,
         resolving: bool,
+        leading_separator: bool,
     ) -> bool {
         let mut rendered_items = false;
+        let will_render = action.is_some()
+            || self.context_link.is_some()
+            || (resolving && self.context_target.is_some());
+        if will_render && leading_separator {
+            ui.separator();
+        }
         if let Some(action) = action {
             show_context_target(ui, &action.preview);
             let clicked = if action.enabled {
@@ -2219,6 +2254,7 @@ impl TerminalView {
                         } else {
                             None
                         },
+                        false,
                         false,
                     );
                 }

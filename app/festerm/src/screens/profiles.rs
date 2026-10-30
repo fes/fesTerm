@@ -937,6 +937,10 @@ pub(crate) fn show_profiles(
                 if draft.original_id.is_none() && action_button(ui, ActionButtonRole::Secondary, "Paste setup JSON").clicked() {
                     next_mode = Some(ProfilesScreenMode::ImportPublicDevTunnel(PublicTunnelImportDraft::default()));
                 }
+                #[cfg(feature = "experimental-dev-tunnels")]
+                if draft.original_id.is_none() && action_button(ui, ActionButtonRole::Secondary, "Browse my tunnels").clicked() {
+                    command = Some(AppCommand::BrowseDevTunnels);
+                }
                 ui.add_enabled_ui(draft.original_id.is_none(), |ui| {
                     profile_text_edit(ui, tab_id, "tunnel_name", "Name", &mut draft.name);
                 });

@@ -28,6 +28,8 @@ pub(crate) struct SettingsViewModel {
     pub show_session_details: bool,
     pub confirm_session_close: bool,
     pub prefer_powershell: bool,
+    pub extend_dev_tunnel_lifetime: bool,
+    pub dev_tunnel_extension_days: u32,
     pub customize_local_shell: bool,
     pub restore_workspace: bool,
     pub terminal_font: TerminalFontPreference,
@@ -69,6 +71,8 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         show_session_details,
         confirm_session_close,
         prefer_powershell,
+        extend_dev_tunnel_lifetime,
+        dev_tunnel_extension_days,
         customize_local_shell,
         restore_workspace,
         terminal_font,
@@ -91,6 +95,8 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
     } = settings;
     #[cfg(not(windows))]
     let _ = prefer_powershell;
+    #[cfg(not(feature = "experimental-dev-tunnels"))]
+    let _ = (extend_dev_tunnel_lifetime, dev_tunnel_extension_days);
     let state_id = ui.id().with("settings_state");
     let field_id = settings_sftp_directory_field_id(ui);
     let mut state = ui.data(|data| data.get_temp::<SettingsState>(state_id).unwrap_or_default());
@@ -221,8 +227,8 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                 if settings_toggle_row(
                                     ui,
                                     "Prefer PowerShell when available",
-                                    "Use the current user's standard Windows app-execution \
-                                     alias for pwsh.exe when it exists. Turn this off to use \
+                                    "Use pwsh.exe (the Windows app-execution alias, PATH or \
+                                     Program Files) when it exists. Turn this off to use \
                                      COMSPEC for new default local sessions.",
                                     prefer_powershell,
                                 ) {
@@ -531,6 +537,46 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                         });
 
                         ui.add_space(12.0);
+
+                        #[cfg(feature = "experimental-dev-tunnels")]
+                        {
+                            settings_card(ui, "Dev Tunnels", |ui| {
+                                if settings_toggle_row(
+                                    ui,
+                                    "Extend tunnel lifetime on sign-in",
+                                    "When you sign in to or connect a Dev Tunnel you own, \
+                                     ask the service to push its expiry forward. A failed \
+                                     extension never blocks the connection. Off by default.",
+                                    extend_dev_tunnel_lifetime,
+                                ) {
+                                    command = Some(AppCommand::ToggleExtendDevTunnelLifetime);
+                                }
+                                ui.add_space(10.0);
+                                ui.separator();
+                                ui.add_space(10.0);
+                                const DAYS: [u32; 6] = [7, 14, 30, 60, 90, 180];
+                                let labels = DAYS.map(|days| format!("{days} days"));
+                                let options: Vec<(&str, bool)> = DAYS
+                                    .iter()
+                                    .zip(&labels)
+                                    .map(|(days, label)| {
+                                        (label.as_str(), *days == dev_tunnel_extension_days)
+                                    })
+                                    .collect();
+                                if let Some(selected) = settings_segmented_row(
+                                    ui,
+                                    "Extension length",
+                                    "How far from now the tunnel's expiry is moved each \
+                                     time. Other values (1-365 days) can be set in the \
+                                     configuration file.",
+                                    &options,
+                                ) {
+                                    command =
+                                        Some(AppCommand::SetDevTunnelExtensionDays(DAYS[selected]));
+                                }
+                            });
+                            ui.add_space(12.0);
+                        }
 
                         settings_card(ui, "SFTP", |ui| {
                             ui.horizontal_top(|ui| {
@@ -1034,6 +1080,8 @@ mod tests {
                             show_session_details: true,
                             confirm_session_close: true,
                             prefer_powershell: true,
+                            extend_dev_tunnel_lifetime: false,
+                            dev_tunnel_extension_days: 30,
                             customize_local_shell: false,
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,
@@ -1722,6 +1770,8 @@ mod tests {
                             show_session_details: true,
                             confirm_session_close: true,
                             prefer_powershell: true,
+                            extend_dev_tunnel_lifetime: false,
+                            dev_tunnel_extension_days: 30,
                             customize_local_shell: false,
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,
