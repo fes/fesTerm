@@ -143,6 +143,22 @@ python3 scripts/build-ios-spike.py --check-dependencies
 cargo run --locked -p festerm-mobile
 ```
 
+The dependency command checks both the offline mobile host and the real
+`festerm-ssh` normal/build graphs on device and ARM64 Simulator targets.
+The iOS workflow separately runs:
+
+```sh
+cargo check --locked -p festerm-ssh --target aarch64-apple-ios
+```
+
+This exposes transport portability blockers before connection-UI integration.
+Desktop secret-service adapters are excluded from iOS, and native persistent
+storage returns Unsupported until a reviewed iOS Keychain backend exists.
+No in-memory/plaintext persistent fallback is substituted. The host remains
+offline; successful graph inspection/compilation does not establish transport
+linking, network connectivity, explicit host trust, keyboard usability or a
+working device SSH session. Live integration is campaign #422/#424.
+
 The last command opens the same UI in a phone-sized desktop window. Desktop
 success does not establish iOS rendering, touch, keyboard or lifecycle support.
 

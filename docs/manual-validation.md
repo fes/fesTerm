@@ -15,6 +15,23 @@ technology, visual judgment, reference-application screen semantics, or a real
 usability question. A reproducible failure should become the smallest suitable
 fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
+## Proposed direct Dev Tunnels bridge (DT-01 through DT-06)
+
+These are deferred evidence obligations for proposed
+[ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md), not instructions to
+enable an existing feature or claims of completed native qualification.
+Use dedicated, explicitly authorized test tunnels/sessions; never alter or
+terminate unrelated shells. Keep all failed attempts as failed evidence.
+
+| ID | Scenario | Evidence class | Prerequisite / current result |
+| --- | --- | --- | --- |
+| DT-01 | Provision private dedicated tunnels with scoped host/connect tokens through GitHub first; use independent profiles from two authorized GitHub accounts concurrently in one instance and rotate one binding without affecting/retargeting the other. Verify transient versus explicitly stored credentials, selected host binding, denied/wrong/expired credentials, secret redaction, service policy and cleanup ownership. | Real-service functional + security/policy | Deferred: reviewed bridge/backend, supported token provisioning, two authorized account/tunnel fixtures and controlled hosts, and service-use review. Native in-app sign-in and Entra/MFA/Conditional Access remain separate future scope; one-account evidence does not qualify the two-account case. |
+| DT-02 | Attach a supported exact remote session; exercise PowerShell/cmd on native Windows and shells/TUIs on Linux/macOS, Unicode, keyboard/mouse modes, Ctrl+C, resize and output/backpressure. | Real-service functional + native usability | Deferred: DT-01 and deterministic protocol/bounds tests; automate controlled PTY checks, retain physical-input/rendering/accessibility judgments. |
+| DT-03 | Disconnect/restart client and bridge; verify same daemon-owned process and ordered recovery without duplicate replies or stale input; refuse changed identities and unconfirmed takeover. | Controlled lifecycle automation + native functional | Deferred: supported attach/adoption and ownership admission; record actual bridge/daemon/OS versions. |
+| DT-04 | Exercise only advertised inventory/create/terminate operations; reject stale generations, preserve occupied/replacement sessions and verify Cancel defaults and uncertain-result handling. | Deterministic/headless automation + native usability | Deferred: implemented operation subset and command routing. Missing operations are unsupported, not passed by omission. |
+| DT-05 | Rotate/reject/revoke credentials, lose the relay, restart/upgrade the bridge and separately test logoff/reboot/daemon termination boundaries. | Real-service/platform lifecycle + usability | Deferred: DT-01/03; record observed established-stream revocation behavior. No daemon hot-upgrade or reboot-survival claim. |
+| DT-06 | In SSH and Dev Tunnel sessions, open both detected paths and OSC 8 file targets into remote text/Markdown snapshots. Use different local/remote contents at an otherwise identical path; remote Windows/POSIX namespaces, `localhost`, trustworthy/unknown cwd, foreign authorities, binary/non-file/oversize refusal, interrupted reads, reconnect/profile/account changes and document reuse across providers. | Deterministic production-routing/security automation + controlled real-service/native usability | Deferred: shared generation-bound filesystem capability, reviewed bounded bridge read-file operation and SSH/SFTP reuse. Automate source isolation/content oracles; retain actual modifiers/context gestures, readability, accessibility and native clipboard delivery for review. No client-local or OS-handler fallback is permitted. |
+
 ## Offline Mermaid (CP-06, CP-15)
 
 Automated coverage renders flowcharts, sequences and representative chart/UML
@@ -457,6 +474,16 @@ installation, cold launch and interaction on provisioned hardware remain
 `native_validation: not-run`. Follow the mobile host README for local setup;
 never publish its embedded provisioning profile as evidence. Review the
 Termius-inspired interaction checklist on-device as well as visible output.
+
+For campaign #422/#424, the dependency gate also inspects the real
+`festerm-ssh` graph on device and Simulator targets and the iOS workflow
+compiles that transport for the device target. Portable graph-policy tests
+are in `scripts/tests/test_ios_ssh_dependencies.py`. iOS native secret
+storage explicitly returns Unsupported; desktop D-Bus is excluded and no
+persistent fallback is selected. These are dependency/compilation checks,
+not a live-session, Simulator-link or hardware qualification receipt.
+Host-key/authentication, shell input/output and physical-device interaction
+remain pending under the campaign; MOB scenarios are not marked accepted.
 
 Automated policy/input/headless-grid tests are in `festerm-mobile`; iOS CI
 checks device compilation and Simulator linking, while the build script checks

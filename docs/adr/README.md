@@ -51,6 +51,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0053: Separate Dev Tunnels Bridge for Remote Persistent Sessions](0053-separate-dev-tunnels-session-bridge.md) - direct transport with a separate same-user bridge; scoped-token bootstrap, daemon ownership preserved, implementation and hosted/native qualification pending
+
 - [ADR 0052: Session-Bound Local File OSC 8 Links](0052-local-file-osc8-links.md) - local-only internal document opening; OS URL handlers remain web-only, native TI-10 qualification pending
 
 - [ADR 0050: Offline Mermaid Preview Without a Browser](0050-native-mermaid-preview.md) - owner-selected native rendering; desktop visual/accessibility qualification remains CP-06/CP-15

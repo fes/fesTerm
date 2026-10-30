@@ -3,6 +3,31 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Remote access without making the daemon a network service
+
+The existing VS Code tunnel proposal depended on Microsoft's distributed
+server, leaving separate licensing, identity and internal-protocol gates.
+The owner requested an independent Dev Tunnels route instead. Proposed
+[ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md) puts cloud transport
+and authentication in a separate same-user bridge while `festerm-sessiond`
+retains protected local IPC, its shell and authoritative recovery state.
+Bridge restarts can therefore be separated from shell lifetime; daemon/ConPTY
+hot upgrades are not implied.
+
+The selected experimental bootstrap uses explicitly provisioned scoped tokens
+from an official GitHub-authenticated Dev Tunnels CLI first, not borrowed
+VS Code credentials or an unqualified native Entra registration.
+Dev Tunnel is planned as a peer connection/profile kind, with independent
+profile/session credential bindings so different GitHub accounts can be used
+concurrently without an application-global current token.
+The owner also requires detected paths and OSC 8 file links to open through
+the source SSH or Dev Tunnel filesystem capability. The design extends the
+common origin-aware resolver with a bounded bridge reader, not shell-command
+interpolation or a fallback to an identically named client-local file.
+Implementation, bounded SDK integration, service-use suitability and real
+remote/native evidence remain prerequisites. This proposal changes no runtime
+behavior or milestone acceptance status.
+
 ## Local document links without an OS-opening capability
 
 Copilot could emit real OSC 8 file links while fesTerm silently discarded

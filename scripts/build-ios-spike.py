@@ -21,20 +21,24 @@ ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_ID = "org.festerm.mobile-spike"
 MINIMUM_IOS = "15.0"
 FORBIDDEN = {"festerm", "festerm-pty", "festerm-sessiond", "festerm-serial", "cargo-packager-updater"}
+DESKTOP_SECRET_BACKENDS = {
+    "apple-native-keyring-store", "windows-native-keyring-store",
+    "zbus-secret-service-keyring-store",
+}
 
 
 def run(*args: str, **kwargs):
     return subprocess.run(args, cwd=ROOT, check=True, **kwargs)
 
 
-def check_dependencies(target: str) -> None:
+def check_dependencies(target: str, package: str = "festerm-mobile") -> None:
     result = run(
-        "cargo", "tree", "--locked", "-p", "festerm-mobile", "--target", target,
+        "cargo", "tree", "--locked", "-p", package, "--target", target,
         "--edges", "normal,build", "--prefix", "none", "--format", "{p}",
         capture_output=True, text=True, timeout=120,
     )
     names = {line.split()[0] for line in result.stdout.splitlines() if line.strip()}
-    forbidden = names & FORBIDDEN
+    forbidden = names & (FORBIDDEN | DESKTOP_SECRET_BACKENDS)
     if forbidden:
         raise RuntimeError(f"Mobile dependency boundary violated: {sorted(forbidden)}")
 
@@ -73,12 +77,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", action="store_true", help="install and launch on a booted Simulator")
     parser.add_argument("--simulator", default="booted", help="Simulator UDID (default: booted)")
-    parser.add_argument("--check-dependencies", action="store_true", help="check both iOS target graphs only; works on Linux")
+    parser.add_argument("--check-dependencies", action="store_true", help="check mobile/SSH graphs for both iOS targets only; works on Linux")
     args = parser.parse_args()
     if args.check_dependencies:
         for target in ("aarch64-apple-ios", "aarch64-apple-ios-sim"):
             check_dependencies(target)
-        print("iOS normal/build dependency boundaries passed")
+            check_dependencies(target, "festerm-ssh")
+        print("iOS mobile/SSH normal/build dependency boundaries passed")
         return 0
     if platform.system() != "Darwin":
         parser.error("Simulator packaging requires macOS and full Xcode; use --check-dependencies here")

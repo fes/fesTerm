@@ -3,8 +3,11 @@
 **Status:** iOS Phase 1 started at the owner's request on 2026-09-26;
 implementation for review under ADR 0042, native feasibility pending.
 The owner also requested the persistent-keyboard/input slice for both iPhone
-and iPad as part of this initial host. Other Phase 2 work, Android and
-Phases 3–5 remain deferred. ADR 0031 supplies the planning
+and iPad as part of this initial host. Owner-authorized campaign
+[#422](https://github.com/fes/fesTerm/issues/422) now prioritizes the smallest
+live-SSH/device-prototype slice across the later phases. Android and broader
+product capabilities remain deferred. The host is still an offline experiment
+until live integration lands. ADR 0031 supplies the planning
 boundaries; ADR 0042 proposes the concrete additive host/dependency decision.
 
 This document is the companion delivery plan for ADR 0031. It sequences the
@@ -70,6 +73,32 @@ and lifecycle behavior before committing to further phases.
   recommendation, not committed product scope.
 
 ## Phase 2 — Input surface
+
+### Live-SSH dependency prerequisite (#424)
+
+Before adding a mobile connection UI, the iOS workflow compiles the existing
+`festerm-ssh` transport for `aarch64-apple-ios` independently of the offline
+host. `scripts/build-ios-spike.py --check-dependencies` checks both the host
+and actual SSH normal/build graphs on device and ARM64 Simulator targets,
+rejecting desktop session backends, updater and native secret-service adapters.
+It does not mean the host has a live session or that the transport has linked
+and connected on a device.
+
+iOS is Unix but does not provide a desktop D-Bus Secret Service. The
+secret-store crate excludes that backend on iOS and `native_store()` returns
+`SecretStoreError::Unsupported`. No memory/plaintext production fallback or
+Keychain backend is selected. Transient authentication can use the SSH
+transport's existing owned, zeroizing credentials; persistent storage remains
+behind the separately reviewed platform backend. Desktop backend selection
+and the secrets ownership contract stay unchanged. This is a narrow dependency
+correction and compilation gate for #424, not acceptance of live-SSH behavior.
+
+Portable graph-policy tests cover forbidden dependencies, both roots/targets,
+and failed graph inspection. Rust compilation and native/live-service evidence
+are separate gates; next wire one app-owned session to the shared terminal,
+with explicit trust/authentication and bounded event/input routing.
+
+### Input affordances
 
 Goal: build the mobile-specific input affordances on top of
 `festerm-core`'s existing GUI-independent keyboard/mouse/paste encoding —
@@ -160,3 +189,4 @@ self-hosted signed updates).
 - Plugin/scripting systems — already out of scope for desktop per
   `DESIGN.md` and the 0.1 Architecture-Stability Period; mobile does not
   reopen this.
+

@@ -6,12 +6,17 @@ on:
       - 'app/festerm-mobile/**'
       - 'crates/festerm-core/**'
       - 'crates/festerm-ios-window/**'
+      - 'crates/festerm-secret-store/**'
+      - 'crates/festerm-session/**'
+      - 'crates/festerm-ssh/**'
       - 'crates/festerm-markdown/**'
       - 'crates/festerm-syntax/**'
       - 'crates/festerm-ui-egui/**'
       - 'vendor/egui-winit/**'
       - 'vendor/egui-wgpu/**'
       - 'vendor/epaint/**'
+      - 'vendor/russh/**'
+      - 'vendor/russh-sftp/**'
       - 'assets/fonts/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -20,6 +25,7 @@ on:
       - 'scripts/smoke-ios-simulator.py'
       - 'scripts/tests/test_ios_simulator_smoke.py'
       - 'scripts/tests/test_ios_device_build.py'
+      - 'scripts/tests/test_ios_ssh_dependencies.py'
       - '.github/workflows/ios-spike.yml'
   schedule:
     - cron: '17 8 * * *'
@@ -54,6 +60,10 @@ jobs:
       - name: Check portable device packaging policy without credentials
         run: python3 -m unittest discover -s scripts/tests -p test_ios_device_build.py
       - run: python3 scripts/build-ios-spike.py --check-dependencies
+      - name: Check portable iOS SSH dependency policy
+        run: python3 -m unittest discover -s scripts/tests -p test_ios_ssh_dependencies.py
+      - name: Compile the real SSH transport for iOS without desktop secret services
+        run: cargo check --locked -p festerm-ssh --target aarch64-apple-ios
       - run: cargo check --locked -p festerm-mobile --target aarch64-apple-ios
       - run: python3 scripts/build-ios-spike.py
       - name: Launch and relaunch on isolated iPhone and iPad Simulators
@@ -74,4 +84,3 @@ jobs:
           name: festerm-ios-simulator-evidence
           path: target/ios-smoke/
           if-no-files-found: warn
-
