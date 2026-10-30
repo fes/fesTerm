@@ -162,6 +162,14 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: python3 scripts/select_headless_vulkan.py --github-env "$GITHUB_ENV"
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Check the opt-in Dev Tunnels feature
+        run: cargo clippy -p festerm -p festerm-tunnel-bridge --all-targets --features festerm/experimental-dev-tunnels,festerm-tunnel-bridge/relay -- -D warnings
+      - name: Test the opt-in bridge protocol and relay
+        run: cargo test -p festerm-tunnel-bridge --features relay
+      - name: Test Dev Tunnel profiles and account isolation
+        run: cargo test -p festerm --features experimental-dev-tunnels dev_tunnel
+      - name: Test shared remote file routing
+        run: cargo test -p festerm --features experimental-dev-tunnels remote_file
       - name: Check the excluded vendored text-selection library
         run: cargo test -p egui --lib
       - name: Check the excluded vendored clipboard integration

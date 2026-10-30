@@ -206,6 +206,18 @@ Microsoft relay; the inner SSH key must match the operator-transferred host
 binding. Proxies/custom relay authorities and management-token runtimes are
 not supported in this first subset.
 
+### Sanitized bootstrap diagnostics
+
+Host bootstrap reports only fixed stage names and numeric management HTTP
+status codes: `host.endpoint_update.http_<status>`, `.transport`, `.timeout`,
+`.decode`, `.authorization`, `host.endpoint_key_mismatch`,
+`host.endpoint_uri_missing`, `relay.uri_validation`,
+`relay.websocket_request`, `relay.websocket_upgrade`, `host.outer_ssh`,
+`host.establishment_timeout`, and `host.metadata_create[.already_exists]`.
+These categories never retain or format the underlying request, response,
+headers, URL, body, request ID or token. A failed stage is not permission to
+disable host pins, broaden token scopes or alter a private tunnel's ACL.
+
 ## Validation and limits
 
 Focused deterministic checks:

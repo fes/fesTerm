@@ -46,6 +46,7 @@
       ],
       "automated_tests": [
         "private_token_line_preserves_bound_with_lf_crlf_and_invalid_input",
+        "endpoint_stage_diagnostics_never_format_request_or_response_material",
         "exclusive_admission_refuses_occupied_or_changed_generation_without_retiring_it",
         "constrained_recovery_preflights_history_without_truncating_local_state",
         "bridge_refuses_incompatible_hello_before_daemon_admission",

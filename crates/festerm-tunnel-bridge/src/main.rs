@@ -77,7 +77,7 @@ fn run() -> io::Result<()> {
             relay::host(&tunnel, &cluster, port, &token),
         )
         .await
-        .map_err(|_| invalid())??;
+        .map_err(|_| std::io::Error::other("host.establishment_timeout"))??;
         drop(token);
         let metadata = Destination {
             file_read: allow_file_read,
@@ -98,8 +98,16 @@ fn run() -> io::Result<()> {
         let file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(path)?;
-        serde_json::to_writer_pretty(file, &metadata).map_err(|_| invalid())?;
+            .open(path)
+            .map_err(|error| {
+                std::io::Error::other(if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    "host.metadata_create.already_exists"
+                } else {
+                    "host.metadata_create"
+                })
+            })?;
+        serde_json::to_writer_pretty(file, &metadata)
+            .map_err(|_| std::io::Error::other("host.metadata_encode"))?;
         eprintln!("Experimental bridge ready: one configured session; attach/detach only.");
         if allow_file_read { eprintln!("Read-only file capability enabled: connect credentials also authorize bounded regular-file reads as this remote OS user."); }
         let files = festerm_tunnel_bridge::files::FileService::new(allow_file_read);

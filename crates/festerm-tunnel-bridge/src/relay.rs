@@ -116,7 +116,7 @@ async fn websocket(
     token: &str,
     role: &str,
 ) -> io::Result<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> {
-    validate_relay_url(url)?;
+    validate_relay_url(url).map_err(|_| stage_error("relay.uri_validation"))?;
     let auth = zeroize::Zeroizing::new(format!("tunnel {token}"));
     let mut request = build_websocket_request(
         url,
@@ -126,16 +126,40 @@ async fn websocket(
             ("User-Agent", "fesTerm-experimental-bridge/1"),
         ],
     )
-    .map_err(|_| invalid())?;
+    .map_err(|_| stage_error("relay.websocket_request"))?;
     if let Some(header) = request.headers_mut().get_mut("Authorization") {
         header.set_sensitive(true);
     }
-    let websocket = connect_directly(request).await.map_err(|_| invalid())?;
+    let websocket = connect_directly(request)
+        .await
+        .map_err(|_| stage_error("relay.websocket_upgrade"))?;
     Ok(AsyncRWWebSocket::new(AsyncRWWebSocketOptions {
         websocket,
         ping_interval: Duration::from_secs(30),
         ping_timeout: Duration::from_secs(10),
     }))
+}
+
+fn stage_error(stage: &'static str) -> io::Error {
+    io::Error::other(stage)
+}
+
+fn management_error(error: tunnels::management::HttpError) -> io::Error {
+    use tunnels::management::HttpError;
+    match error {
+        HttpError::ResponseError(response) => io::Error::other(format!(
+            "host.endpoint_update.http_{}",
+            response.status_code.as_u16()
+        )),
+        HttpError::ConnectionError(error) if error.is_timeout() => {
+            stage_error("host.endpoint_update.timeout")
+        }
+        HttpError::ConnectionError(error) if error.is_decode() => {
+            stage_error("host.endpoint_update.decode")
+        }
+        HttpError::ConnectionError(_) => stage_error("host.endpoint_update.transport"),
+        HttpError::AuthorizationError(_) => stage_error("host.endpoint_update.authorization"),
+    }
 }
 
 fn client_config() -> client::Config {
@@ -248,14 +272,17 @@ pub async fn host(
                 && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
         })
     {
-        return Err(invalid());
+        return Err(stage_error("host.arguments"));
     }
     let key = russh::keys::PrivateKey::random(
         &mut russh::keys::key::safe_rng(),
         russh::keys::Algorithm::Ed25519,
     )
-    .map_err(|_| invalid())?;
-    let public = key.public_key().to_openssh().map_err(|_| invalid())?;
+    .map_err(|_| stage_error("host.key_generation"))?;
+    let public = key
+        .public_key()
+        .to_openssh()
+        .map_err(|_| stage_error("host.key_encoding"))?;
     let host_id = uuid::Uuid::new_v4().to_string();
     let request = TunnelEndpoint {
         id: Some(format!("{host_id}-relay")),
@@ -264,7 +291,7 @@ pub async fn host(
         host_public_keys: vec![public
             .split_whitespace()
             .nth(1)
-            .ok_or_else(invalid)?
+            .ok_or_else(|| stage_error("host.key_encoding"))?
             .to_owned()],
         port_uri_format: None,
         tunnel_uri: None,
@@ -278,7 +305,7 @@ pub async fn host(
         .timeout(Duration::from_secs(20))
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|_| invalid())?;
+        .map_err(|_| stage_error("host.http_client"))?;
     let mut builder = new_tunnel_management("fesTerm-experimental-bridge/1");
     builder.client(http);
     let management: tunnels::management::TunnelManagementClient = builder.into();
@@ -295,15 +322,15 @@ pub async fn host(
             },
         )
         .await
-        .map_err(|_| invalid())?;
+        .map_err(management_error)?;
     if endpoint.host_public_keys != request.host_public_keys {
-        return Err(invalid());
+        return Err(stage_error("host.endpoint_key_mismatch"));
     }
     let url = endpoint
         .tunnel_relay_tunnel_endpoint
         .host_relay_uri
         .as_deref()
-        .ok_or_else(invalid)?;
+        .ok_or_else(|| stage_error("host.endpoint_uri_missing"))?;
     let rw = websocket(url, token, "tunnel-relay-host").await?;
     let (outer_tx, mut outer_rx) = mpsc::channel(1);
     let slots = Arc::new(Semaphore::new(1));
@@ -311,7 +338,8 @@ pub async fn host(
     config.anonymous = true;
     config.preferred.kex = Cow::Owned(vec![russh::kex::NONE]);
     config.preferred.key = Cow::Owned(vec![russh::keys::Algorithm::Other(
-        russh::keys::ssh_key::AlgorithmName::new("none").map_err(|_| invalid())?,
+        russh::keys::ssh_key::AlgorithmName::new("none")
+            .map_err(|_| stage_error("host.outer_ssh_configuration"))?,
     )]);
     config.preferred.cipher = Cow::Owned(vec![russh::cipher::NONE]);
     let session = client::connect_stream(
@@ -324,7 +352,7 @@ pub async fn host(
         },
     )
     .await
-    .map_err(|_| invalid())?;
+    .map_err(|_| stage_error("host.outer_ssh"))?;
     let cancel = CancellationToken::new();
     let stopped = cancel.clone();
     let (tx, connections) = mpsc::channel(1);
@@ -473,6 +501,27 @@ impl server::Handler for Port {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn endpoint_stage_diagnostics_never_format_request_or_response_material() {
+        use tunnels::management::{HttpError, ResponseError};
+        let marker = "DO_NOT_LOG_PRIVATE_TOKEN";
+        let error = management_error(HttpError::ResponseError(ResponseError {
+            url: reqwest::Url::parse(&format!("https://example.invalid/{marker}")).unwrap(),
+            status_code: reqwest::StatusCode::FORBIDDEN,
+            data: Some(marker.into()),
+            request_id: Some(marker.into()),
+        }));
+        assert_eq!(error.to_string(), "host.endpoint_update.http_403");
+        assert!(!format!("{error:?}").contains(marker));
+        let error = management_error(HttpError::AuthorizationError(marker.into()));
+        assert_eq!(error.to_string(), "host.endpoint_update.authorization");
+        assert!(!format!("{error:?}").contains(marker));
+        let request_error = reqwest::Client::new().get(marker).build().unwrap_err();
+        let error = management_error(HttpError::ConnectionError(request_error));
+        assert_eq!(error.to_string(), "host.endpoint_update.transport");
+        assert!(!format!("{error:?}").contains(marker));
+    }
 
     fn key() -> russh::keys::PrivateKey {
         russh::keys::PrivateKey::random(
