@@ -570,6 +570,17 @@ remains blocked on this gate and a hosting go/no-go decision.
 | MOB-04 | iPhone/iPad portrait, landscape and Split View; pinch from rest and from a held arrow gesture; pinch at minimum/maximum text size | Only terminal text scales within 8–32 points; native keyboard/accessory controls remain stable; grid resizes coherently without losing the viewed content. Check precision/jitter with real fingers and immediate reversal at limits. Arrow helper/repeats stop when the second finger takes over; no mouse reports or text are emitted. Either finger lifting, a third contact, blur, rotation/keyboard geometry change and backgrounding cancel; remaining fingers cannot restart input until all lift. An already-started ordinary drag retains ownership; toolbar-origin touches do not pinch. Memory warning preserves text size; Reset fixture restores default. Portable arbitration/layout/bounds tests pass; native feel, visual stability and history anchoring remain manual pending. |
 | MOB-05 | iPhone/iPad portrait, landscape and narrow Split View; switch Terminal/Files/README repeatedly; exercise both transfer directions, README collision choices, progress, Preview/Source/Contents and each heading | Keyboard dismisses outside Terminal and returns without a restart loop; terminal gestures cannot affect Files/README. No category loses in-memory state. Wide Files panes are horizontal; Compact panes are both visible with Remote on top and Local below, so upload moves up and download moves down; Minimal has a reachable pane toggle and transfer queue. Collision actions and progress are bounded and never claim real I/O. Markdown controls never collide, prose wraps, contents is reachable and heading activation changes the selected/visible section. Every screen says synthetic/offline. Record clipping, Dynamic Type and VoiceOver gaps; this does not accept live SSH/SFTP, credentials, file access, full tab lifecycle or restoration. |
 
+For the physical-device prerequisite in MOB-01–05, campaign #422/#426 adds
+`scripts/build-ios-device.py` with a non-building `--preflight-only` mode.
+Portable tests in `scripts/tests/test_ios_device_build.py` cover profile/app/
+team/certificate/device admission, expiry, minimal entitlements, private
+device-bundle separation and honest receipts. Actual Apple signing, Xcode
+installation, cold launch and interaction on provisioned hardware remain
+**native/manual pending**; a `signed` receipt explicitly says
+`native_validation: not-run`. Follow the mobile host README for local setup;
+never publish its embedded provisioning profile as evidence. Review the
+Termius-inspired interaction checklist on-device as well as visible output.
+
 For campaign #422/#424, the dependency gate also inspects the real
 `festerm-ssh` graph on device and Simulator targets and the iOS workflow
 compiles that transport for the device target. Portable graph-policy tests
