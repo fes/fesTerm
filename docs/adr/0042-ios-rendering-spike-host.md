@@ -60,7 +60,12 @@ SDK, and signs/verifies a fresh private bundle. It does not install, enroll,
 provision, distribute or upload; the embedded profile stays in local private
 output. Portable policy tests are not native signing/install acceptance.
 This additive packaging path changes no runtime dependency or ownership
-boundary; the host remains an offline fixture pending the live-SSH slice.
+boundary. The device packager defaults to the offline fixture. Explicit
+`--live-ssh` selects the reviewed transient SSH composition below for both
+dependency preflight and Cargo compilation, adds its local-network purpose
+string and labels fresh private output/receipts with the selected mode.
+Both modes request the same minimal development entitlements; including the
+feature is not evidence of device signing, network access or native usability.
 
 **Experimental CI policy (owner-approved 2026-10-03):** affected PRs retain
 mobile unit/dependency checks, device compilation and Simulator app builds.
@@ -278,6 +283,8 @@ accessibility and physical-device acceptance remain open on iPad.
   `scripts/tests/test_ios_device_build.py` covers development-profile admission,
   exact local signing identity, entitlement minimization, non-building preflight,
   device/Simulator separation, failure receipts and private output/receipt policy;
+  live/offline feature selection, feature-qualified graph refusal before build,
+  live-only local-network metadata and mode-labeled receipts (including failures);
   `mobile_gpu_limits_accept_simulator_downlevel_capabilities`,
   `mobile_lifecycle_is_idempotent_and_counts_resume_after_suspend`,
   `mobile_probe_uses_core_encoding_without_echoing_or_retaining_input`,

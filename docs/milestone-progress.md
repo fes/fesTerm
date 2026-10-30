@@ -56,6 +56,15 @@ gates.
 
 ## Mobile transport lifetime must not depend on the visible workspace
 
+The development-device packager now also accepts an explicit `--live-ssh`
+selection, allowing the integrated transient SSH prototype to reach an owned
+physical device using existing local development-signing prerequisites. The
+offline default, minimal entitlements and private provisioning output remain
+unchanged. Portable tests cover feature-qualified preflight/build selection,
+local-network metadata and mode-labelled pending/signed receipts; they do not
+establish actual signing, installation or the MOB-01 through MOB-06 native
+device/live-SSH acceptance still required by #426.
+
 Independent review of the opt-in live-SSH prototype found two composition gaps:
 Files/README stopped draining transport events, and suspension cleanup waited
 for a redraw that the native host intentionally suppresses. Output and core
