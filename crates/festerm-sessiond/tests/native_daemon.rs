@@ -319,6 +319,127 @@ fn native_discovery_churn_preserves_process_and_rejects_replaced_generations() {
     drop(cleanups);
 }
 
+/// Local and remote (bridge-style, no-takeover) attachment of one daemon
+/// session alternate in both orders: the shell survives each hand-off and
+/// each side is refused while the other is attached.
+#[cfg(unix)]
+#[test]
+fn local_and_remote_attachments_alternate_on_one_session_in_either_order() {
+    use festerm_session::{noop_session_event_notifier, Session, SessionLifecycle};
+    use festerm_sessiond::{list_unattached_sessions_in, PersistentSession};
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("handoff");
+    let name = format!("handoff-{}", std::process::id());
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime.clone(),
+        name: name.clone(),
+    };
+    let registry = runtime.join("festerm").join("sessiond");
+    let shell = pty_test_child(&executable);
+    let args = [
+        "report-pid",
+        "read-line",
+        "echo:L1",
+        "read-line",
+        "echo:R1",
+        "read-line",
+        "echo:L2",
+        "read-line",
+        "echo:R2",
+        "read-line",
+        "echo:L3",
+        "spin",
+    ];
+    launch_session_with(&executable, &runtime, &name, &shell, &args);
+    let inventory = || list_unattached_sessions_in(&registry).unwrap();
+    bounded_poll(|| inventory().len() == 1, "handoff discovery");
+    let selected = inventory().remove(0);
+    let local = |selected: &festerm_sessiond::UnattachedSession| {
+        PersistentSession::resume_discovered_in(selected, &registry, noop_session_event_notifier())
+    };
+    let remote = |identity: &festerm_sessiond::NativeSessionIdentity| {
+        PersistentSession::resume_exclusive_in(
+            identity,
+            &registry,
+            1024 * 1024,
+            noop_session_event_notifier(),
+        )
+    };
+    let send = |session: &PersistentSession, line: &str, tag: &str| {
+        bounded_poll(
+            || matches!(session.lifecycle(), SessionLifecycle::Running),
+            "attachment running",
+        );
+        session.acknowledge_recovery_adoption();
+        session
+            .try_send_input(&test_input(line))
+            .unwrap_or_else(|error| panic!("{tag}: {error:?} {:?}", session.lifecycle()));
+        read_session_until(session, &format!("{tag}:{line}"));
+    };
+
+    // Local first.
+    let first = local(&selected).unwrap();
+    read_session_until(&first, "PID:");
+    let identity = first
+        .native_identity()
+        .expect("a native session has an identity");
+    send(&first, "one", "L1");
+    assert!(
+        remote(&identity).is_err(),
+        "an occupied session refuses the remote path"
+    );
+    bounded_poll(
+        || !inventory().iter().any(|entry| entry.name == name),
+        "attached session leaves the unattached inventory",
+    );
+    drop(first);
+    bounded_poll(|| inventory().len() == 1, "detach rediscovery");
+
+    // Remote next; the same shell answers.
+    let bridge = remote(&identity).expect("a free session admits the remote path");
+    send(&bridge, "two", "R1");
+    assert!(
+        remote(&identity).is_err(),
+        "a second remote attach is refused"
+    );
+
+    // Local resume is refused while the remote path is attached, then works
+    // against the same shell once the remote attachment is gone.
+    assert!(
+        local(&selected).is_err(),
+        "local resume is refused while remote is attached"
+    );
+    drop(bridge);
+    let mut second = None;
+    bounded_poll(
+        || {
+            second = local(&selected).ok();
+            second.is_some()
+        },
+        "local readmission after remote detach",
+    );
+    let second = second.unwrap();
+    send(&second, "three", "L2");
+    assert!(
+        remote(&identity).is_err(),
+        "the remote path is refused while local is attached"
+    );
+    drop(second);
+
+    // Remote again after the local detach.
+    let mut last = None;
+    bounded_poll(
+        || {
+            last = remote(&identity).ok();
+            last.is_some()
+        },
+        "remote readmission after local detach",
+    );
+    let last = last.unwrap();
+    send(&last, "four", "R2");
+}
+
 fn churn_setting(name: &str, default: usize, max: usize) -> usize {
     let value = std::env::var(name)
         .map(|value| {
