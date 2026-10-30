@@ -84,7 +84,7 @@ class DeviceBuildTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         device.require_local_identity(IDENTITY)
 
-    def exercise(self, root, preflight=False, fail_signing=False):
+    def exercise(self, root, preflight=False, fail_signing=False, live_ssh=False, refuse_graph=False):
         local_profile = root / "fixture.mobileprovision"
         local_profile.write_bytes(b"synthetic signed profile")
         calls = []
@@ -113,16 +113,19 @@ class DeviceBuildTests(unittest.TestCase):
                      "--bundle-id", BUNDLE, "--device", UDID]
         if preflight:
             arguments.append("--preflight-only")
+        if live_ssh:
+            arguments.append("--live-ssh")
         with patch.object(device, "ROOT", root), \
                 patch.object(device.platform, "system", return_value="Darwin"), \
                 patch.object(device, "run", side_effect=run), \
-                patch.object(device.spike, "check_dependencies") as graph:
+                patch.object(device.spike, "check_dependencies", side_effect=(
+                    RuntimeError("Mobile dependency boundary violated") if refuse_graph else None)) as graph:
             if fail_signing:
                 with self.assertRaises(subprocess.CalledProcessError):
                     device.main(arguments)
             else:
                 self.assertEqual(device.main(arguments), 0)
-            graph.assert_called_once_with("aarch64-apple-ios")
+            graph.assert_called_once_with("aarch64-apple-ios", live_ssh=live_ssh)
         return calls
 
     def test_preflight_never_builds_signs_or_creates_output(self):
@@ -149,6 +152,11 @@ class DeviceBuildTests(unittest.TestCase):
             receipt = json.loads(receipt_text)
             self.assertEqual(receipt["status"], "signed")
             self.assertEqual(receipt["native_validation"], "not-run")
+            self.assertEqual(receipt["prototype_mode"], "offline-fixture")
+            self.assertEqual(receipt["cargo_features"], [])
+            self.assertNotIn("NSLocalNetworkUsageDescription", info)
+            cargo = next(args for args, _ in calls if args[:2] == ("cargo", "build"))
+            self.assertNotIn("--features", cargo)
             self.assertFalse(receipt["source_dirty"])
             self.assertEqual(receipt["executable_sha256"], hashlib.sha256(b"synthetic executable").hexdigest())
             for private in (UDID, IDENTITY, TEAM, "synthetic signed profile"):
@@ -173,6 +181,56 @@ class DeviceBuildTests(unittest.TestCase):
             self.assertTrue(process.call_args.kwargs["check"])
             device.run("fixture", timeout=1800)
             self.assertEqual(process.call_args.kwargs["timeout"], 1800)
+
+    def test_live_device_build_selects_feature_network_metadata_and_private_mode_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            calls = self.exercise(root, live_ssh=True)
+            output = next((root / "target/ios-device").iterdir())
+            self.assertTrue(output.name.startswith("development-live-ssh-"))
+            self.assertEqual(output.stat().st_mode & 0o777, 0o700)
+            info = plistlib.loads((output / "fesTermSpike.app/Info.plist").read_bytes())
+            self.assertEqual(info["CFBundleSupportedPlatforms"], ["iPhoneOS"])
+            self.assertEqual(info["CFBundleIdentifier"], BUNDLE)
+            self.assertEqual(info["NSLocalNetworkUsageDescription"],
+                             device.spike.bundle_info(True)["NSLocalNetworkUsageDescription"])
+            cargo = next(args for args, _ in calls if args[:2] == ("cargo", "build"))
+            self.assertEqual(cargo[cargo.index("--features") + 1], "live-ssh")
+            self.assertEqual(cargo[cargo.index("--target") + 1], device.TARGET)
+            receipt_text = (output / "build-receipt.json").read_text()
+            receipt = json.loads(receipt_text)
+            self.assertEqual(receipt["prototype_mode"], "live-ssh")
+            self.assertEqual(receipt["cargo_features"], ["live-ssh"])
+            self.assertEqual(receipt["status"], "signed")
+            self.assertEqual(receipt["native_validation"], "not-run")
+            for private in (UDID, IDENTITY, TEAM, "synthetic signed profile"):
+                self.assertNotIn(private, receipt_text)
+            entitlements = plistlib.loads((output / "development-entitlements.plist").read_bytes())
+            self.assertEqual(entitlements, self.admit(profile()))
+
+    def test_live_preflight_checks_selected_graph_without_build_or_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            calls = self.exercise(root, preflight=True, live_ssh=True)
+            self.assertFalse((root / "target").exists())
+            self.assertFalse(any(args[0] in ("cargo", "rustup", "codesign") for args, _ in calls))
+
+    def test_refused_live_dependency_graph_blocks_build_and_signing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(RuntimeError, "dependency boundary violated"):
+                self.exercise(root, live_ssh=True, refuse_graph=True)
+            self.assertFalse((root / "target").exists())
+
+    def test_failed_live_signing_retains_mode_without_native_acceptance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.exercise(root, fail_signing=True, live_ssh=True)
+            receipt = json.loads(next((root / "target/ios-device").glob("*/build-receipt.json")).read_text())
+            self.assertEqual(receipt["status"], "signing-pending")
+            self.assertEqual(receipt["prototype_mode"], "live-ssh")
+            self.assertEqual(receipt["cargo_features"], ["live-ssh"])
+            self.assertEqual(receipt["native_validation"], "not-run")
 
 
 if __name__ == "__main__":

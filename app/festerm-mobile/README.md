@@ -87,8 +87,9 @@ do not prove native UI, authentication or network operation.
 
 Campaign [#422](https://github.com/fes/fesTerm/issues/422) targets a real SSH
 terminal on iPhone/iPad, with Termius for iOS as the interaction reference.
-The default host remains offline; packaging it does not enable the opt-in SSH
-prototype or establish native feasibility. The first packaging slice under
+The default host remains offline; select `--live-ssh` explicitly to package
+the transient SSH prototype. Neither mode establishes native feasibility.
+The packaging path under
 [#426](https://github.com/fes/fesTerm/issues/426) uses existing local signing
 credentials rather than waiting for a TestFlight pipeline.
 
@@ -108,6 +109,7 @@ keep the profile outside the repository and do not share its decoded contents:
 
 ```sh
 python3 scripts/build-ios-device.py \
+  --live-ssh \
   --profile /private/path/festerm-development.mobileprovision \
   --identity YOUR_40_HEX_CERTIFICATE_SHA1 \
   --team YOURTEAMID \
@@ -118,18 +120,31 @@ python3 scripts/build-ios-device.py \
 
 Remove `--preflight-only` to build `aarch64-apple-ios` with the selected
 `iphoneos` SDK, embed the profile, sign with minimal development entitlements
-and verify the signature. The script prints a fresh app path below
-`target/ios-device/development-*/fesTermSpike.app`. This private directory
+and verify the signature. Keep `--live-ssh` on both preflight and build: it
+checks the feature-enabled mobile dependency graph, compiles that feature and
+includes the selected-host local-network usage description. It adds no extra
+signing entitlements. Omit `--live-ssh` from both commands for the offline fixture.
+
+The script prints a fresh app path below
+`target/ios-device/development-live-ssh-*/fesTermSpike.app` for live mode, or
+`target/ios-device/development-*/fesTermSpike.app` for the offline fixture.
+Both use your explicit bundle ID, so installing one replaces an installed app
+with that same ID. This private directory
 contains provisioning/device metadata: do not upload it as a CI artifact or
 commit it. Its `build-receipt.json` records source commit/dirty state,
-executable hash and toolchain, with `native_validation: not-run`; it excludes
+executable hash, toolchain, `prototype_mode` and `cargo_features`, with
+`native_validation: not-run`; it excludes
 profile content, device UDID and signing identity. Only clean-source receipts
 can be attributed solely to a commit.
 
 Connect and trust the selected device, enable Developer Mode when required,
 and use Xcode's device-management interface to install the printed `.app` on
-that provisioned device. Launch it on-device and record MOB-01–05 results,
+that provisioned device. Launch it on-device and record MOB-01–06 results,
 including the persistent keyboard and Termius-inspired touch interactions.
+In live mode, open Connect, enter an owned test host, verify its fingerprint
+through a separate trusted channel, approve it and authenticate. Exercise the
+MOB-06 remote shell/TUI, resize, disconnect and suspension checklist; keep
+credentials and private host/device identifiers out of demo artifacts.
 The script never installs, launches, enrolls an account, downloads profiles,
 or uploads a build. Local signing can require keychain approval. Native build,
 install and rendering remain pending until exercised on a provisioned Mac
