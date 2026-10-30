@@ -11,6 +11,8 @@ use festerm_ui_egui::{
     route_input, EncodedInputSink, InputRoute, InputSinkDiagnostics, TerminalView,
     TerminalViewOptions,
 };
+#[cfg(feature = "live-ssh")]
+use std::cell::RefCell;
 use std::{cell::Cell, rc::Rc};
 
 /// The egui mesh renderer does not need the full WebGPU limits. In particular,
@@ -68,19 +70,35 @@ impl Lifecycle {
     }
 }
 
+/// Retires transport and sensitive prompts on the native thread without a redraw.
+#[cfg(feature = "live-ssh")]
+#[derive(Clone, Default)]
+pub struct SuspensionHandle {
+    connection: Rc<RefCell<Option<live_ssh::LiveSsh>>>,
+}
+
+#[cfg(feature = "live-ssh")]
+impl SuspensionHandle {
+    pub fn suspend(&self) {
+        if let Some(live) = self.connection.borrow_mut().as_mut() {
+            live.stop("Suspended. Connect again for a fresh shell; remote process survival is not guaranteed.");
+        }
+    }
+}
+
 /// Deliberately discards bytes: the spike must not pretend to be a shell or
 /// save what a tester types. Uses the renderer's existing input contract.
 #[derive(Default)]
 pub struct ProbeSink {
     diagnostics: InputSinkDiagnostics,
     #[cfg(feature = "live-ssh")]
-    live: Option<live_ssh::LiveSsh>,
+    live: SuspensionHandle,
 }
 
 impl EncodedInputSink for ProbeSink {
     fn record_encoded_input(&mut self, bytes: &[u8]) {
         #[cfg(feature = "live-ssh")]
-        if let Some(live) = &mut self.live {
+        if let Some(live) = self.live.connection.borrow_mut().as_mut() {
             live.send(bytes);
         }
         self.diagnostics.byte_count = self
@@ -101,11 +119,21 @@ impl EncodedInputSink for ProbeSink {
 
     fn record_terminal_resize(&mut self, dimensions: Dimensions) {
         #[cfg(feature = "live-ssh")]
-        if let Some(live) = &mut self.live {
+        if let Some(live) = self.live.connection.borrow_mut().as_mut() {
             live.resize(dimensions);
         }
         #[cfg(not(feature = "live-ssh"))]
         let _ = dimensions;
+    }
+}
+
+impl ProbeSink {
+    fn reset(&mut self) {
+        self.diagnostics = InputSinkDiagnostics::default();
+        #[cfg(feature = "live-ssh")]
+        {
+            *self.live.connection.borrow_mut() = None;
+        }
     }
 }
 
@@ -147,6 +175,8 @@ pub struct MobileApp {
     markdown: workspaces::MarkdownWorkspace,
     #[cfg(feature = "live-ssh")]
     connection: live_ssh::ConnectionForm,
+    #[cfg(feature = "live-ssh")]
+    polled_frame: Option<u64>,
 }
 
 impl MobileApp {
@@ -169,6 +199,8 @@ impl MobileApp {
             markdown: workspaces::MarkdownWorkspace::default(),
             #[cfg(feature = "live-ssh")]
             connection: live_ssh::ConnectionForm::default(),
+            #[cfg(feature = "live-ssh")]
+            polled_frame: None,
         }
     }
 
@@ -185,6 +217,12 @@ impl MobileApp {
 
     pub fn with_keyboard(mut self, keyboard: Option<festerm_ios_window::KeyboardBridge>) -> Self {
         self.keyboard = keyboard;
+        self
+    }
+
+    #[cfg(feature = "live-ssh")]
+    pub fn with_suspension(mut self, suspension: SuspensionHandle) -> Self {
+        self.sink.live = suspension;
         self
     }
 
@@ -256,9 +294,7 @@ impl MobileApp {
         let lifecycle = self.lifecycle.get();
         if lifecycle.suspensions != self.observed_suspensions {
             #[cfg(feature = "live-ssh")]
-            if let Some(live) = &mut self.sink.live {
-                live.stop("Suspended. Connect again for a fresh shell; remote process survival is not guaranteed.");
-            }
+            self.sink.live.suspend();
             self.gestures.cancel();
             self.control = false;
             self.alt = false;
@@ -273,11 +309,18 @@ impl MobileApp {
                 .zoom_by_factor(font_size / self.view.font_size_points());
             self.observed_memory_warnings = lifecycle.memory_warnings;
         }
+        #[cfg(feature = "live-ssh")]
+        if lifecycle.active && self.polled_frame != Some(ui.ctx().cumulative_frame_nr()) {
+            self.polled_frame = Some(ui.ctx().cumulative_frame_nr());
+            if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
+                live.poll(&mut self.terminal, ui.ctx());
+            }
+        }
         egui::Panel::top("mobile-workspace-tabs").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.strong("fesTerm");
                 #[cfg(feature = "live-ssh")]
-                let live_selected = self.sink.live.is_some();
+                let live_selected = self.sink.live.connection.borrow().is_some();
                 #[cfg(not(feature = "live-ssh"))]
                 let live_selected = false;
                 ui.small(if live_selected {
@@ -332,9 +375,6 @@ impl MobileApp {
     fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
         #[cfg(feature = "live-ssh")]
         {
-            if let Some(live) = &mut self.sink.live {
-                live.poll(&mut self.terminal, ui.ctx());
-            }
             egui::Panel::top("mobile-ssh-connection").show(ui, |ui| {
                 let mut connected = false;
                 ui.add_enabled_ui(lifecycle.active, |ui| {
@@ -344,7 +384,7 @@ impl MobileApp {
                         .show(ui, |ui| {
                             connected = self.connection.show(
                                 ui,
-                                &mut self.sink.live,
+                                &mut self.sink.live.connection.borrow_mut(),
                                 self.terminal.dimensions(),
                             );
                         });
@@ -369,6 +409,8 @@ impl MobileApp {
             && self
                 .sink
                 .live
+                .connection
+                .borrow()
                 .as_ref()
                 .is_none_or(|live| live.input_enabled());
         #[cfg(not(feature = "live-ssh"))]
@@ -376,9 +418,15 @@ impl MobileApp {
         egui::Panel::top("terminal-fixture-status").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 #[cfg(feature = "live-ssh")]
-                let live_selected = self.sink.live.is_some();
+                let live_selected = self.sink.live.connection.borrow().is_some();
                 #[cfg(feature = "live-ssh")]
-                let can_reset = self.sink.live.as_ref().is_none_or(|live| live.can_reset());
+                let can_reset = self
+                    .sink
+                    .live
+                    .connection
+                    .borrow()
+                    .as_ref()
+                    .is_none_or(|live| live.can_reset());
                 #[cfg(not(feature = "live-ssh"))]
                 let live_selected = false;
                 #[cfg(not(feature = "live-ssh"))]
@@ -406,7 +454,7 @@ impl MobileApp {
                     self.gestures.cancel();
                     self.terminal = fixture_terminal();
                     self.view = TerminalView::default();
-                    self.sink = ProbeSink::default();
+                    self.sink.reset();
                     self.control = false;
                     self.alt = false;
                 }

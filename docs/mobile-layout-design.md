@@ -128,8 +128,10 @@ starts a fresh shell, and Files/README remain offline previews.
 Connection/authentication controls own keyboard input while active; terminal
 sticky modifiers and gestures must not consume their text. On the connected
 terminal, retain the approved persistent keyboard, accessory row and
-directional helper. Suspending retires the connection and requires a new
-explicit connection. Native Termius comparison, iPhone/iPad layouts and TUI
+directional helper. Session output/replies continue while Files/README is
+selected, within the same per-frame budget. Native suspension immediately
+clears sensitive prompts and retires the connection without requiring a redraw;
+resuming requires a new explicit connection. Native Termius comparison, iPhone/iPad layouts and TUI
 usability remain MOB-06 qualification; paste/native selection handles are
 #425 follow-ups, not implied by this connection slice.
 

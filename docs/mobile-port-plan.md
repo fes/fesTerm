@@ -98,14 +98,19 @@ and failed graph inspection. Rust compilation and native/live-service evidence
 are separate gates; next wire one app-owned session to the shared terminal,
 with explicit trust/authentication and bounded event/input routing.
 
-### Opt-in live integration for review
+### Opt-in live integration
 
 The `live-ssh` host feature adds one transient SSH session and a minimal
 connection/trust/password flow, preserving the shared session/core/renderer
-boundaries. See ADR 0042's Proposed extension and the mobile host README.
+boundaries. Independent architectural review approved ADR 0042's extension
+as a prototype basis on 2026-10-30; native/product acceptance remains pending.
+See the mobile host README.
 The app-owned pump ingests bounded events, returns terminal replies, coalesces
 resize, and retires refused/stale input without replay. Pins and credentials
-are memory-only. Suspension/reconnect is explicit and starts a fresh shell.
+are memory-only. Output/replies continue across preview workspaces, with one
+bounded pump per frame even during layout retries. The native suspension
+callback retires transport and sensitive prompts without a subsequent UI frame.
+Suspension/reconnect is explicit and starts a fresh shell.
 The offline host stays the default and Files/README remain previews.
 
 MOB-06 tracks the missing controlled SSH and physical-device evidence.

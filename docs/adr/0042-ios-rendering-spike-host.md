@@ -145,15 +145,17 @@ desktop app, source I/O or native dialogs.
 ## Opt-in transient SSH prototype extension (campaign #422/#424)
 
 Owner direction on 2026-10-30 advances the smallest functional iOS prototype.
-This extension remains Proposed for architectural review before merge; it does
-not accept native feasibility or mobile product support. The offline fixture
+Independent architectural review on 2026-10-30 approved this feature-gated
+composition as the basis for prototype work; native feasibility and mobile
+product support remain unaccepted. The offline fixture
 and nightly smoke remain the default. The explicit `live-ssh` feature adds
 `festerm-session`, `festerm-ssh` and zeroizing transient credential input to
 the mobile composition root, without importing the desktop app or backends.
 
 The app owns the sole presented Terminal writer. The existing SSH worker
 publishes bounded session events and an event-loop-safe notifier; the app
-processes at most 32 events per UI frame, ingests output, returns core protocol
+processes at most 32 events per UI frame, including while Files/README is
+selected and without repeating the budget during layout retries, ingests output, returns core protocol
 replies, and forwards encoded keyboard/gesture input through the existing
 atomic backend admission. There is no second protocol parser or unbounded
 frontend payload queue. Refused input/replies retire the session with a
@@ -167,8 +169,12 @@ session. Unknown hosts require explicit approval; changed pins have Reject
 only. A bounded zeroizing text buffer and sensitive/no-undo password widget
 avoid credential persistence and retained editing snapshots. Native secret
 storage remains Unsupported on iOS; no memory/plaintext persistence fallback
-is introduced. Cancellation, replacement and suspension retire prompts and
-transport ownership. Reconnection is explicit and starts a fresh shell;
+is introduced. Cancellation and replacement retire prompts and transport
+ownership. A main-thread suspension handle shares only the live connection
+state with the native host, not terminal ownership. The native suspension
+callback clears prompts/passwords and retires transport without waiting for
+a UI frame or synchronous worker shutdown. Resetting the offline fixture
+preserves this callback binding. Reconnection is explicit and starts a fresh shell;
 neither always-live background sockets nor remote process survival is promised.
 
 Terminal focus, accessory keys and gestures yield to connection/auth controls
@@ -250,7 +256,15 @@ accessibility and physical-device acceptance remain open on iPad.
 - **GUI/action edges affected:** `MOB-06` (opt-in live SSH), `MOB-01`, `MOB-02`, `MOB-03`, `MOB-04`,
   `MOB-05` (isolated preview);
   `ZOOM-02` shares the existing size bounds.
-- **Automated tests required:**\n  Opt-in live host tests: `mobile_live_ssh_pump_uses_core_replies_and_bounded_event_work`, `mobile_live_ssh_input_refusal_retires_session_without_replay`, `mobile_live_ssh_stop_clears_prompts_password_resize_and_stale_output`, `mobile_live_ssh_resize_coalesces_and_rejects_unrepresentable_grids`, `mobile_live_ssh_password_buffer_bounds_unicode_edits_and_take`; feature-enabled desktop tests, iOS device compilation and Simulator linking.\n
+- **Automated tests required:** Opt-in live host tests:
+  `mobile_live_ssh_pump_uses_core_replies_and_bounded_event_work`,
+  `mobile_live_ssh_hidden_workspaces_keep_pumping_output_and_replies`,
+  `mobile_live_ssh_native_suspension_retires_without_a_ui_frame`,
+  `mobile_live_ssh_input_refusal_retires_session_without_replay`,
+  `mobile_live_ssh_stop_clears_prompts_password_resize_and_stale_output`,
+  `mobile_live_ssh_resize_coalesces_and_rejects_unrepresentable_grids`,
+  `mobile_live_ssh_password_buffer_bounds_unicode_edits_and_take`;
+  feature-enabled desktop tests, iOS device compilation and Simulator linking.
   `mobile_gpu_limits_accept_simulator_downlevel_capabilities`,
   `mobile_lifecycle_is_idempotent_and_counts_resume_after_suspend`,
   `mobile_probe_uses_core_encoding_without_echoing_or_retaining_input`,

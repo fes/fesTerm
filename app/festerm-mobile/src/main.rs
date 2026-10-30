@@ -1,5 +1,7 @@
 //! Own the native event loop: iOS cannot use desktop run-on-demand loops.
 
+#[cfg(feature = "live-ssh")]
+use festerm_mobile::SuspensionHandle;
 use festerm_mobile::{Lifecycle, MobileApp};
 use raw_window_handle::HasWindowHandle;
 use std::{cell::Cell, rc::Rc};
@@ -33,6 +35,8 @@ static STARTUP_LOGGER: StartupLogger = StartupLogger;
 struct MobileHost<'a> {
     app: eframe::EframeWinitApplication<'a>,
     lifecycle: Rc<Cell<Lifecycle>>,
+    #[cfg(feature = "live-ssh")]
+    suspension: SuspensionHandle,
 }
 
 impl MobileHost<'_> {
@@ -50,6 +54,8 @@ impl ApplicationHandler<eframe::UserEvent> for MobileHost<'_> {
     }
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(feature = "live-ssh")]
+        self.suspension.suspend();
         self.update_lifecycle(Lifecycle::suspend);
         self.app.suspended(event_loop);
         event_loop.set_control_flow(ControlFlow::Wait);
@@ -108,6 +114,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     event_loop.set_control_flow(ControlFlow::Wait);
     let lifecycle = Rc::new(Cell::new(Lifecycle::default()));
     let app_lifecycle = lifecycle.clone();
+    #[cfg(feature = "live-ssh")]
+    let suspension = SuspensionHandle::default();
+    #[cfg(feature = "live-ssh")]
+    let app_suspension = suspension.clone();
     let viewport = eframe::egui::ViewportBuilder::default();
     #[cfg(not(target_os = "ios"))]
     let viewport = viewport.with_inner_size([390.0, 844.0]);
@@ -126,12 +136,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let keyboard = cc.window_handle().ok().and_then(|handle| {
                 festerm_ios_window::KeyboardBridge::new(handle, move || context.request_repaint())
             });
-            Ok(Box::new(
-                MobileApp::new(app_lifecycle).with_keyboard(keyboard),
-            ))
+            let app = MobileApp::new(app_lifecycle).with_keyboard(keyboard);
+            #[cfg(feature = "live-ssh")]
+            let app = app.with_suspension(app_suspension);
+            Ok(Box::new(app))
         }),
         &event_loop,
     );
-    event_loop.run_app(&mut MobileHost { app, lifecycle })?;
+    event_loop.run_app(&mut MobileHost {
+        app,
+        lifecycle,
+        #[cfg(feature = "live-ssh")]
+        suspension,
+    })?;
     Ok(())
 }

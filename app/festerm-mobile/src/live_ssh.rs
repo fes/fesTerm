@@ -540,6 +540,88 @@ mod tests {
     }
 
     #[test]
+    fn mobile_live_ssh_hidden_workspaces_keep_pumping_output_and_replies() {
+        use crate::{workspaces::Workspace, Lifecycle, MobileApp};
+        use std::{cell::Cell, rc::Rc};
+
+        for workspace in [Workspace::Files, Workspace::Markdown] {
+            let session = Arc::new(FakeSession::default());
+            session
+                .events
+                .lock()
+                .unwrap()
+                .push_back(SessionEvent::Output(b"hidden\x1b[6n".to_vec()));
+            for _ in 0..EVENT_BUDGET {
+                session
+                    .events
+                    .lock()
+                    .unwrap()
+                    .push_back(SessionEvent::Lifecycle(SessionLifecycle::Running));
+            }
+            let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            })));
+            app.terminal = terminal();
+            *app.sink.live.connection.borrow_mut() = Some(connection(session.clone()));
+            app.switch_workspace(workspace);
+            let context = egui::Context::default();
+            context
+                .run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(390.0, 844.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| app.show(ui),
+                )
+                .drop_without_applying_deltas();
+            assert_eq!(app.workspace, workspace);
+            assert_eq!(*session.input.lock().unwrap(), vec![b"\x1b[1;7R".to_vec()]);
+            assert_eq!(session.events.lock().unwrap().len(), 1);
+            context
+                .run_ui(egui::RawInput::default(), |ui| app.show(ui))
+                .drop_without_applying_deltas();
+            assert!(session.events.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn mobile_live_ssh_native_suspension_retires_without_a_ui_frame() {
+        use crate::{Lifecycle, MobileApp, SuspensionHandle};
+        use std::{cell::Cell, rc::Rc};
+
+        let suspension = SuspensionHandle::default();
+        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle::default())))
+            .with_suspension(suspension.clone());
+        let session = Arc::new(FakeSession::default());
+        for shutdowns in 1..=2 {
+            app.sink.reset();
+            let mut live = connection(session.clone());
+            live.password.0.push_str("synthetic-secret");
+            live.host_prompt = Some(HostKeyPrompt::new("example.test", 22, "SHA256:fixture"));
+            live.resize(Dimensions::new(90, 30).unwrap());
+            *app.sink.live.connection.borrow_mut() = Some(live);
+
+            suspension.suspend();
+            suspension.suspend();
+
+            let connection = app.sink.live.connection.borrow();
+            let live = connection.as_ref().unwrap();
+            assert!(live.session.is_none());
+            assert!(!live.input_enabled());
+            assert!(live.password.0.is_empty());
+            assert!(live.host_prompt.is_none());
+            assert!(live.password_prompt.is_none());
+            assert!(live.pending_resize.is_none());
+            assert!(live.status.starts_with("Suspended"));
+            assert_eq!(*session.shutdowns.lock().unwrap(), shutdowns);
+        }
+    }
+
+    #[test]
     fn mobile_live_ssh_input_refusal_retires_session_without_replay() {
         let session = Arc::new(FakeSession {
             rejected: true,
