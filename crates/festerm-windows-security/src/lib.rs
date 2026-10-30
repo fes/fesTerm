@@ -1841,7 +1841,8 @@ mod imp {
         rename_file(source, target_directory, target, false)
     }
 
-    /// Atomically replaces a caller-verified private state entry.
+    /// Atomically replaces a caller-verified private state entry. The caller
+    /// must release existing target handles before publication.
     pub fn replace_private_file(
         source: &File,
         target_directory: &File,
@@ -2958,6 +2959,13 @@ mod imp {
             assert!(is_current_user_only(&opened).unwrap());
             opened.rewind().unwrap();
             opened.write_all(b"new").unwrap();
+            opened.rewind().unwrap();
+            let mut updated = Vec::new();
+            opened.read_to_end(&mut updated).unwrap();
+            assert_eq!(updated, b"new");
+            // Match checkpoint publication: validation handles close first.
+            drop(opened);
+            drop(first);
             let mut second =
                 create_current_user_only_file(&directory, Path::new("staging")).unwrap();
             second.write_all(b"replacement").unwrap();
@@ -2972,8 +2980,6 @@ mod imp {
             assert!(!is_current_user_only(&second).unwrap());
             drop(replaced);
             drop(second);
-            drop(opened);
-            drop(first);
             drop(directory);
             std::fs::remove_dir_all(root_path.join(name)).unwrap();
         }

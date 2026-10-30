@@ -51,6 +51,7 @@
         "concurrent_identity_creation_never_replaces_the_winner",
         "identity_rejects_permissive_files_directories_symlinks_and_hardlinks",
         "private_state_creation_and_replacement_are_bounded_and_exclusive",
+        "private_state_read_write_and_replacement_preserve_protected_dacl",
         "private_storage_ancestor_trust_adds_only_the_exact_servicing_sid",
         "private_storage_ancestors_refuse_foreign_directory_delete_access",
         "staging_parent_rejects_a_dacl_that_allows_child_substitution",
