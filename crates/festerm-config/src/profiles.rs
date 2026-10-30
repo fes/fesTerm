@@ -85,7 +85,12 @@ pub struct DevTunnelProfileConfiguration {
     destination_file: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tunnel_name: Option<String>,
+    /// Key of the shared [`DevTunnelAccount`] this profile signs in with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    account: Option<String>,
+    /// Pre-accounts embedded identity. Read only so existing files migrate
+    /// into `[[accounts]]` on load; never written.
+    #[serde(default, skip_serializing)]
     identity: Option<DevTunnelIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     trusted_host: Option<DevTunnelHost>,
@@ -104,6 +109,85 @@ impl DevTunnelIdentity {
     pub fn credential_reference(&self) -> &SecretReference {
         self.credential_id.as_secret_reference()
     }
+}
+
+/// Who an account belongs to. Only GitHub device sign-in exists today.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountProvider {
+    Github,
+}
+
+/// A signed-in Dev Tunnels account. The refresh credential lives in the secret
+/// store under `credential_id`; any number of profiles name this account by
+/// `id` and share that one credential.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevTunnelAccount {
+    id: String,
+    provider: AccountProvider,
+    account_id: u64,
+    login: String,
+    credential_id: CredentialReference,
+}
+
+impl DevTunnelAccount {
+    pub fn new(
+        id: impl Into<String>,
+        provider: AccountProvider,
+        account_id: u64,
+        login: impl Into<String>,
+        credential: SecretReference,
+    ) -> Result<Self, ConfigError> {
+        let account = Self {
+            id: id.into(),
+            provider,
+            account_id,
+            login: login.into(),
+            credential_id: CredentialReference::new(credential),
+        };
+        account.validate()?;
+        Ok(account)
+    }
+
+    pub fn identifier(&self) -> &str {
+        &self.id
+    }
+    pub const fn provider(&self) -> AccountProvider {
+        self.provider
+    }
+    pub const fn account_id(&self) -> u64 {
+        self.account_id
+    }
+    pub fn login(&self) -> &str {
+        &self.login
+    }
+    pub fn credential_reference(&self) -> &SecretReference {
+        self.credential_id.as_secret_reference()
+    }
+
+    /// The same account signed in again: new credential, same key.
+    pub fn with_credential(mut self, credential: SecretReference) -> Self {
+        self.credential_id = CredentialReference::new(credential);
+        self
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
+        validate_identifier(&self.id)?;
+        if !valid_login(self.account_id, &self.login) {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
+        }
+        Ok(())
+    }
+}
+
+fn valid_login(account_id: u64, login: &str) -> bool {
+    account_id != 0
+        && !login.is_empty()
+        && login.len() <= 39
+        && login
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -126,8 +210,15 @@ impl DevTunnelProfileConfiguration {
     pub fn tunnel_name(&self) -> Option<&str> {
         self.tunnel_name.as_deref()
     }
-    pub fn identity(&self) -> Option<&DevTunnelIdentity> {
-        self.identity.as_ref()
+    /// Key of the shared account this profile signs in with.
+    pub fn account(&self) -> Option<&str> {
+        self.account.as_deref()
+    }
+    pub(crate) fn take_legacy_identity(&mut self) -> Option<DevTunnelIdentity> {
+        self.identity.take()
+    }
+    pub(crate) fn set_account(&mut self, account: Option<String>) {
+        self.account = account;
     }
     pub fn trusted_host(&self) -> Option<&DevTunnelHost> {
         self.trusted_host.as_ref()
@@ -161,15 +252,12 @@ impl DevTunnelProfileConfiguration {
         {
             return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
         }
-        if self.identity.as_ref().is_some_and(|identity| {
-            identity.account_id == 0
-                || identity.login.is_empty()
-                || identity.login.len() > 39
-                || !identity
-                    .login
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-        }) || (native.is_none() && (self.identity.is_some() || self.trusted_host.is_some()))
+        if self.identity.is_some()
+            || self
+                .account
+                .as_deref()
+                .is_some_and(|key| validate_identifier(key).is_err())
+            || (native.is_none() && (self.account.is_some() || self.trusted_host.is_some()))
         {
             return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
         }
@@ -217,6 +305,7 @@ impl Profile {
             id: identifier.into(),
             destination_file: destination_file.into(),
             tunnel_name: None,
+            account: None,
             identity: None,
             trusted_host: None,
             credential_id: None,
@@ -233,6 +322,7 @@ impl Profile {
             id: identifier.into(),
             destination_file: String::new(),
             tunnel_name: Some(tunnel.into()),
+            account: None,
             identity: None,
             trusted_host: None,
             credential_id: None,
@@ -241,24 +331,37 @@ impl Profile {
         Ok(profile)
     }
 
-    pub fn with_tunnel_identity(
+    /// Binds the profile to a shared account together with the host it
+    /// trusts and the connect credential cached for that host.
+    pub fn with_tunnel_account(
         mut self,
-        account_id: u64,
-        login: String,
-        identity_reference: SecretReference,
+        account: impl Into<String>,
         connect_reference: SecretReference,
         host: DevTunnelHost,
     ) -> Result<Self, ConfigError> {
         let Self::DevTunnel(profile) = &mut self else {
             return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
         };
-        profile.identity = Some(DevTunnelIdentity {
-            account_id,
-            login,
-            credential_id: CredentialReference::new(identity_reference),
-        });
+        profile.account = Some(account.into());
         profile.trusted_host = Some(host);
         profile.credential_id = Some(CredentialReference::new(connect_reference));
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Selects the account to sign in with without touching trust state.
+    pub fn with_tunnel_account_selection(
+        mut self,
+        account: Option<String>,
+    ) -> Result<Self, ConfigError> {
+        let Self::DevTunnel(profile) = &mut self else {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
+        };
+        if profile.account != account {
+            profile.trusted_host = None;
+            profile.credential_id = None;
+        }
+        profile.account = account;
         self.validate()?;
         Ok(self)
     }

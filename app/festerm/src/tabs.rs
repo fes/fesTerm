@@ -2083,8 +2083,23 @@ pub enum AppCommand {
     ImportPublicDevTunnelProfile {
         import: crate::tunnel_profile_import::PublicProfileImport,
     },
-    /// Signs in and lists the account's bridge tunnels to create a profile from.
-    BrowseDevTunnels,
+    /// Lists the shared account's bridge tunnels to create a profile from.
+    BrowseDevTunnels {
+        account: String,
+    },
+    /// Signs in with GitHub and stores the result as a shared account. Signing
+    /// in as an account that already exists re-authenticates it.
+    AddDevTunnelAccount,
+    /// Signs an account out: its credential is deleted and profiles using it
+    /// become unauthenticated.
+    RemoveDevTunnelAccount {
+        account: String,
+    },
+    /// Saves a native Dev Tunnel profile and immediately connects it, signing
+    /// in first when it has no account.
+    SaveAndConnectDevTunnel {
+        profile: festerm_config::Profile,
+    },
     NativeDevTunnel {
         profile_id: String,
         sign_in: bool,
@@ -3786,7 +3801,10 @@ impl AppState {
             | AppCommand::StoreSftpPassword { .. }
             | AppCommand::StoreProfilePassword { .. }
             | AppCommand::StoreDevTunnelConnectToken { .. }
-            | AppCommand::BrowseDevTunnels
+            | AppCommand::BrowseDevTunnels { .. }
+            | AppCommand::AddDevTunnelAccount
+            | AppCommand::RemoveDevTunnelAccount { .. }
+            | AppCommand::SaveAndConnectDevTunnel { .. }
             | AppCommand::NativeDevTunnel { .. }
             | AppCommand::StartConfiguredDevTunnelProfile { .. }
             | AppCommand::StoreProfilePrivateKey { .. }
@@ -6506,13 +6524,24 @@ mod tests {
 
     #[test]
     fn native_auth_live_account_and_file_binding_remain_pinned_after_profile_account_change() {
-        let profile = |id| {
-            festerm_config::Profile::named_dev_tunnel("bound-profile", "owned.usw3")
+        let profile = |id: u64| {
+            let (configuration, key) = Configuration::new(Vec::new())
                 .unwrap()
-                .with_tunnel_identity(
-                    id,
-                    format!("account-{id}"),
-                    festerm_secret_store::SecretReference::generate(),
+                .with_account(
+                    festerm_config::DevTunnelAccount::new(
+                        format!("github-{id}"),
+                        festerm_config::AccountProvider::Github,
+                        id,
+                        format!("account-{id}"),
+                        festerm_secret_store::SecretReference::generate(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let profile = festerm_config::Profile::named_dev_tunnel("bound-profile", "owned.usw3")
+                .unwrap()
+                .with_tunnel_account(
+                    key,
                     festerm_secret_store::SecretReference::generate(),
                     festerm_config::DevTunnelHost {
                         tunnel_id: "owned".into(),
@@ -6522,10 +6551,11 @@ mod tests {
                         port: 47461,
                     },
                 )
-                .unwrap()
+                .unwrap();
+            configuration.with_profile(profile).unwrap()
         };
         let mut state = AppState::for_test();
-        state.replace_configuration(Configuration::new(vec![profile(42)]).unwrap());
+        state.replace_configuration(profile(42));
         let (mut tab, _) = remote_file_fixture(
             crate::remote_files::RemoteFileProvider::DevTunnelPosix,
             None,
@@ -6544,7 +6574,7 @@ mod tests {
         else {
             panic!("remote source")
         };
-        state.replace_configuration(Configuration::new(vec![profile(99)]).unwrap());
+        state.replace_configuration(profile(99));
         let live = state.session_tab(source).unwrap();
         assert!(matches!(&live.inspector_transport,
             InspectorTransport::DevTunnel {account:Some((42,login)),..} if login == "account-42"));

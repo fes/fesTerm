@@ -1,5 +1,5 @@
 use super::*;
-use festerm_config::Configuration;
+use festerm_config::{Configuration, DevTunnelAccount};
 use festerm_secret_store::MemorySecretStore;
 
 #[test]
@@ -187,7 +187,7 @@ fn native_auth_identity_lease_refuses_concurrent_credential_rotation_until_final
 }
 
 fn prepared(
-    profile: &Profile,
+    _profile: &Profile,
     store: Arc<dyn SecretStore>,
     reference: SecretReference,
 ) -> Prepared {
@@ -198,7 +198,7 @@ fn prepared(
             "clientRelayUri":"wss://usw3.rel.tunnels.api.visualstudio.com/owned"}
     })).unwrap();
     Prepared {
-        profile: Some(profile.clone()),
+        binding: None,
         launch: Launch::from_destination(
             destination,
             zeroize::Zeroizing::new("PRIVATE_CONNECT".into()),
@@ -212,6 +212,7 @@ fn prepared(
 fn workflow(profile: Profile, receiver: mpsc::Receiver<Event>) -> Workflow {
     Workflow {
         expected: profile,
+        account: None,
         cancel: CancellationToken::new(),
         receiver,
         stage: Stage::Working,
@@ -248,10 +249,8 @@ fn native_auth_profile_changes_retire_only_their_own_vault_entries() {
         .unwrap();
     let profile = Profile::named_dev_tunnel("owned", "owned.usw3")
         .unwrap()
-        .with_tunnel_identity(
-            42,
-            "owner".into(),
-            identity.duplicate_for_transport(),
+        .with_tunnel_account(
+            "github-owner",
             connect.duplicate_for_transport(),
             DevTunnelHost {
                 tunnel_id: "owned".into(),
@@ -262,8 +261,22 @@ fn native_auth_profile_changes_retire_only_their_own_vault_entries() {
             },
         )
         .unwrap();
-    let mut app =
-        FesTermApp::for_test_with_configuration(Configuration::new(vec![profile.clone()]).unwrap());
+    let (configuration, _) = Configuration::new(Vec::new())
+        .unwrap()
+        .with_account(
+            DevTunnelAccount::new(
+                "github-owner",
+                festerm_config::AccountProvider::Github,
+                42,
+                "owner",
+                identity.duplicate_for_transport(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut app = FesTermApp::for_test_with_configuration(
+        configuration.with_profile(profile.clone()).unwrap(),
+    );
     app.secret_store = Ok(Arc::clone(&store));
     app.retire_native_tunnel_credentials(Some(&profile));
     assert!(store.get(&identity).is_ok());
@@ -275,7 +288,7 @@ fn native_auth_profile_changes_retire_only_their_own_vault_entries() {
         .unwrap(),
     );
     app.retire_native_tunnel_credentials(Some(&profile));
-    assert!(store.get(&identity).is_err());
+    assert!(store.get(&identity).is_ok());
     assert!(store.get(&connect).is_err());
     assert!(store.get(&independent).is_ok());
 }
@@ -356,10 +369,8 @@ fn native_auth_refresh_publishes_only_the_bound_profile_identity_and_rejects_sta
         .unwrap();
     let profile = Profile::named_dev_tunnel("owned", "owned.usw3")
         .unwrap()
-        .with_tunnel_identity(
-            42,
-            "owner".into(),
-            reference.duplicate_for_transport(),
+        .with_tunnel_account(
+            "github-owner",
             SecretReference::generate(),
             DevTunnelHost {
                 tunnel_id: "owned".into(),
@@ -371,7 +382,23 @@ fn native_auth_refresh_publishes_only_the_bound_profile_identity_and_rejects_sta
         )
         .unwrap();
     let other = Profile::named_dev_tunnel("independent", "another.usw3").unwrap();
-    let configuration = Configuration::new(vec![profile.clone(), other.clone()]).unwrap();
+    let account = DevTunnelAccount::new(
+        "github-owner",
+        festerm_config::AccountProvider::Github,
+        42,
+        "owner",
+        reference.duplicate_for_transport(),
+    )
+    .unwrap();
+    let configuration = Configuration::new(Vec::new())
+        .unwrap()
+        .with_account(account.clone())
+        .unwrap()
+        .0
+        .with_profile(profile.clone())
+        .unwrap()
+        .with_profile(other.clone())
+        .unwrap();
     let mut app = FesTermApp::for_test_with_configuration(configuration.clone());
     app.secret_store = Ok(Arc::clone(&store));
     let (sender, receiver) = mpsc::sync_channel(2);
@@ -382,7 +409,9 @@ fn native_auth_refresh_publishes_only_the_bound_profile_identity_and_rejects_sta
             published,
         })
         .is_ok());
-    app.native_tunnel = Some(workflow(profile.clone(), receiver));
+    let mut pending = workflow(profile.clone(), receiver);
+    pending.account = Some(account);
+    app.native_tunnel = Some(pending);
     app.poll_native_tunnel(&egui::Context::default());
     assert_eq!(publication.try_recv().unwrap(), Ok(()));
     store
@@ -416,4 +445,66 @@ fn native_auth_refresh_publishes_only_the_bound_profile_identity_and_rejects_sta
         .unwrap()
         .with_bytes(|bytes| assert_eq!(bytes, b"NEW_PAIR"));
     assert!(app.native_tunnel.is_none());
+}
+
+#[test]
+fn remembered_sign_ins_for_one_github_user_share_a_single_account() {
+    let store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let host = || DevTunnelHost {
+        tunnel_id: "owned".into(),
+        cluster: "usw3".into(),
+        host_id: "host".into(),
+        public_key: "pin".into(),
+        port: 47461,
+    };
+    let one = Profile::named_dev_tunnel("one", "one.usw3").unwrap();
+    let two = Profile::named_dev_tunnel("two", "two.usw3").unwrap();
+    let mut app = FesTermApp::for_test_with_configuration(
+        Configuration::new(vec![one.clone(), two.clone()]).unwrap(),
+    );
+    app.secret_store = Ok(Arc::clone(&store));
+    let directory = tempfile::Builder::new()
+        .prefix("tunnel-account-tests-")
+        .tempdir_in(std::env::current_dir().unwrap())
+        .unwrap();
+    app.configuration_reloader =
+        crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+            directory.path().join("config.toml"),
+        );
+    let sign_in = |bytes: &[u8]| {
+        let reference = store.put(&SecretBytes::copy_from_slice(bytes)).unwrap();
+        DevTunnelAccount::new(
+            "github-owner",
+            festerm_config::AccountProvider::Github,
+            42,
+            "owner",
+            reference,
+        )
+        .unwrap()
+    };
+    let first = sign_in(b"FIRST");
+    let first_reference = first.credential_reference().duplicate_for_transport();
+    let binding = |account| Binding {
+        account,
+        connect: SecretReference::generate(),
+        host: host(),
+    };
+    assert!(app.save_tunnel_binding(&one, None, binding(Some(first))));
+    let account = app
+        .state
+        .configuration()
+        .account("github-owner")
+        .unwrap()
+        .clone();
+    // The second profile reuses the account: no new sign-in, no new account.
+    assert!(app.save_tunnel_binding(&two, Some(&account), binding(None)));
+    let configuration = app.state.configuration();
+    assert_eq!(configuration.accounts().len(), 1);
+    assert_eq!(configuration.account_profile_count("github-owner"), 2);
+    // Signing in again replaces the credential and retires the old one.
+    assert!(app.save_tunnel_binding(&one, None, binding(Some(sign_in(b"SECOND")))));
+    let configuration = app.state.configuration();
+    assert_eq!(configuration.accounts().len(), 1);
+    assert_eq!(configuration.account_profile_count("github-owner"), 2);
+    assert!(store.get(&first_reference).is_err());
 }
