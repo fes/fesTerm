@@ -169,6 +169,12 @@ include it when `FESTERM_RUN_MOBILE_UI_CAPTURE=1` is selected alongside their
 global opt-in. PR iOS CI publishes `festerm-mobile-headless-ui-review` separately
 from Simulator artifacts.
 
+When artifact downloads are unavailable to the review worker, CI also selects
+`--emit-review-data`: a bounded, hash-checked export of only these four controlled
+PNGs and their manifest into API-readable log records. It accepts only the
+fixed gallery filenames and rejects oversized, symlinked or mismatched images.
+It is not a general file exporter and must only be used with this fixture gallery.
+
 These are **non-native headless review images**, with a pinned Dark preference
 and a simulated reserved keyboard area. The native system keyboard is not
 rendered. They do not show a live SSH shell or establish UIKit layout, native
