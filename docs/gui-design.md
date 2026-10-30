@@ -34,13 +34,18 @@ deterministic baseline; no model, OCR, download, network or content collection.
 Renderer/core and application/session ownership are unchanged.
 
 The local terminal context menu offers **Smart Select Sentence**, **Smart
-Select Paragraph**, and **Smart Select Block**, before ordinary Copy. Right-click
-remains terminal-owned under mouse reporting; Shift+right-click is the existing
+Select Paragraph**, and **Smart Select Block**, after ordinary Copy and any
+detected-content actions (link, path, file), then Paste and Find. The same three
+commands are in the command palette and act on the keyboard target, current
+selection or cursor. Right-click remains terminal-owned under mouse reporting; Shift+right-click is the existing
 local override. Selection alone never copies or sends input. Inspect the
 highlight, then use existing Copy shortcuts/menu/native Edit. Drag replaces the
 inference with ordinary adjustable selection; Escape cancels inferred selection.
-An unavailable result leaves an existing selection intact and explains that
-ordinary drag is available. There is intentionally no immediate **Smart Copy**:
+A successful inference shows no notice; the highlight is the feedback. An
+unavailable result leaves an existing selection intact and explains that
+ordinary drag is available. Rows painted by a TUI (for example Copilot CLI's
+bulleted, hanging-indent prose) join as one paragraph, but same-indent lines
+without a marker row keep their line breaks so stack traces stay intact. There is intentionally no immediate **Smart Copy**:
 it would skip the inspection step on unqualified layout inference.
 Instruction and refusal feedback expires automatically. Escape is consumed
 only while cancelling an inferred selection or keyboard target; otherwise it

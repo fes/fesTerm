@@ -37,6 +37,16 @@ pub struct InterfaceSettings {
     /// directory immediately.
     #[serde(default, skip_serializing_if = "is_false")]
     customize_local_shell: bool,
+    /// Whether signing in to or connecting a Dev Tunnel also pushes its
+    /// service-side expiry forward. Off by default.
+    #[serde(default, skip_serializing_if = "is_false")]
+    extend_dev_tunnel_lifetime: bool,
+    /// Days a Dev Tunnel is extended by when the option above is on.
+    #[serde(
+        default = "default_dev_tunnel_extension_days",
+        skip_serializing_if = "is_default_dev_tunnel_extension_days"
+    )]
+    dev_tunnel_extension_days: u32,
     /// Whether the open-tab list and active tab persist across restarts.
     /// On by default: reopening where the last session left off is what a
     /// terminal that holds long-lived work is expected to do, and the
@@ -168,6 +178,8 @@ impl InterfaceSettings {
         confirm_session_close: false,
         prefer_powershell: true,
         customize_local_shell: false,
+        extend_dev_tunnel_lifetime: false,
+        dev_tunnel_extension_days: 30,
         restore_workspace: true,
         terminal_font: TerminalFontPreference::JetBrainsMono,
         terminal_ligatures: true,
@@ -213,6 +225,28 @@ impl InterfaceSettings {
         self.terminal_ligatures = terminal_ligatures;
         self
     }
+
+    pub const fn with_extend_dev_tunnel_lifetime(mut self, extend: bool) -> Self {
+        self.extend_dev_tunnel_lifetime = extend;
+        self
+    }
+
+    pub const fn with_dev_tunnel_extension_days(mut self, days: u32) -> Self {
+        self.dev_tunnel_extension_days = Self::clamp_extension_days(days);
+        self
+    }
+
+    const fn clamp_extension_days(days: u32) -> u32 {
+        if days < 1 {
+            1
+        } else if days > Self::MAX_DEV_TUNNEL_EXTENSION_DAYS {
+            Self::MAX_DEV_TUNNEL_EXTENSION_DAYS
+        } else {
+            days
+        }
+    }
+
+    pub const MAX_DEV_TUNNEL_EXTENSION_DAYS: u32 = 365;
 
     pub const fn with_prefer_powershell(mut self, prefer_powershell: bool) -> Self {
         self.prefer_powershell = prefer_powershell;
@@ -322,6 +356,16 @@ impl InterfaceSettings {
 
     pub const fn confirm_session_close(&self) -> bool {
         self.confirm_session_close
+    }
+
+    pub const fn extend_dev_tunnel_lifetime(&self) -> bool {
+        self.extend_dev_tunnel_lifetime
+    }
+
+    /// Always within `1..=MAX_DEV_TUNNEL_EXTENSION_DAYS`, even for a
+    /// hand-edited configuration file.
+    pub const fn dev_tunnel_extension_days(&self) -> u32 {
+        Self::clamp_extension_days(self.dev_tunnel_extension_days)
     }
 
     pub const fn prefer_powershell(&self) -> bool {
@@ -703,6 +747,14 @@ fn deserialize_retired_pulse<'de, D: serde::Deserializer<'de>>(
 
 fn default_show_resumable_sessions() -> bool {
     InterfaceSettings::DEFAULT.show_resumable_sessions
+}
+
+fn default_dev_tunnel_extension_days() -> u32 {
+    InterfaceSettings::DEFAULT.dev_tunnel_extension_days
+}
+
+fn is_default_dev_tunnel_extension_days(days: &u32) -> bool {
+    *days == InterfaceSettings::DEFAULT.dev_tunnel_extension_days
 }
 
 fn default_prefer_powershell() -> bool {

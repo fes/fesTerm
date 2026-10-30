@@ -1298,6 +1298,8 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         show_session_details: true,
         confirm_session_close: true,
         prefer_powershell: true,
+        extend_dev_tunnel_lifetime: false,
+        dev_tunnel_extension_days: 30,
         customize_local_shell: false,
         restore_workspace: false,
         terminal_font: TerminalFontPreference::JetBrainsMono,

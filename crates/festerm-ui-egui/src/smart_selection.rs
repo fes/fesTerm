@@ -19,6 +19,9 @@ pub(crate) struct SmartRow {
     pub last: usize,
     pub text: String,
     pub joined: bool,
+    /// Rows broken by TUI painting rather than terminal soft-wrap that belong
+    /// to one prose run are rejoined with a single space.
+    pub space_join: bool,
     pub soft_wrapped: bool,
 }
 
@@ -54,8 +57,12 @@ impl SmartSelection {
             if current != row.text {
                 return None;
             }
-            if index > 0 && !row.joined {
-                text.push('\n');
+            if index > 0 {
+                if row.space_join {
+                    text.push(' ');
+                } else if !row.joined {
+                    text.push('\n');
+                }
             }
             text.push_str(&current);
         }
@@ -67,6 +74,91 @@ struct Row {
     cells: Vec<(usize, String)>,
     bounded: bool,
     indent: usize,
+    /// Column where text starts after a list/bullet marker, if the row has one.
+    marker_text: Option<usize>,
+    /// Joined to the row above as one prose run across a TUI-painted break.
+    prose_join: bool,
+}
+
+/// Bullets and ordered-list markers as drawn by terminal UIs such as Copilot CLI.
+fn marker_text_column(cells: &[(usize, String)]) -> Option<usize> {
+    let first = cells.iter().position(|(_, text)| !text.trim().is_empty())?;
+    let token_end = cells[first..]
+        .iter()
+        .position(|(_, text)| text.trim().is_empty())
+        .map_or(cells.len(), |offset| first + offset);
+    let token: String = cells[first..token_end]
+        .iter()
+        .map(|(_, t)| t.as_str())
+        .collect();
+    let ordered = token.len() > 1
+        && matches!(token.chars().last(), Some('.' | ')'))
+        && token[..token.len() - 1].chars().all(|c| c.is_ascii_digit());
+    let bullet = matches!(
+        token.as_str(),
+        "●" | "•" | "◦" | "○" | "▪" | "▸" | "▶" | "-" | "*" | "·" | "–"
+    );
+    if !(ordered || bullet) {
+        return None;
+    }
+    cells[token_end..]
+        .iter()
+        .find(|(_, text)| !text.trim().is_empty())
+        .map(|(column, _)| *column)
+}
+
+fn ends_sentence(row: &Row) -> bool {
+    row.cells
+        .iter()
+        .rev()
+        .find(|(_, text)| !text.trim().is_empty())
+        .is_some_and(|(_, text)| {
+            matches!(text.as_str(), "." | "!" | "?" | "。" | "！" | "？" | ":")
+        })
+}
+
+/// Whether `lower` continues the prose of `upper` across a TUI-painted break.
+/// Same-indent rows only count when the run is anchored by a marker row, so
+/// indented stack traces and code keep their explicit line breaks.
+fn prose_continues(
+    snapshot: TerminalSnapshot<'_>,
+    upper: &Row,
+    upper_y: usize,
+    lower: &Row,
+) -> bool {
+    if upper.marker_text == Some(lower.indent) {
+        return true;
+    }
+    if upper.indent != lower.indent
+        || upper.indent == 0
+        || upper.marker_text.is_some()
+        || lower.marker_text.is_some()
+        || ends_sentence(upper)
+    {
+        return false;
+    }
+    let mut budget = MAX_CELLS;
+    let mut byte_budget = MAX_BYTES;
+    let mut y = upper_y;
+    for _ in 0..MAX_ROWS {
+        let Some(previous) = y.checked_sub(1) else {
+            return false;
+        };
+        y = previous;
+        let Some(candidate) = row(snapshot, y, None, &mut budget, &mut byte_budget) else {
+            return false;
+        };
+        if candidate.bounded {
+            return false;
+        }
+        if candidate.marker_text == Some(upper.indent) {
+            return true;
+        }
+        if candidate.indent != upper.indent || candidate.marker_text.is_some() {
+            return false;
+        }
+    }
+    false
 }
 
 fn border(text: &str) -> bool {
@@ -161,6 +253,7 @@ fn row(
         return None;
     }
     let indent = cells[left].0;
+    let marker_text = marker_text_column(&cells[left..right]);
     if !bounded {
         left = 0;
         if snapshot.absolute_row_soft_wrapped(snapshot.content_row_for_viewport_row(y)?)? {
@@ -173,6 +266,8 @@ fn row(
         indent,
         cells: cells[left..right].to_vec(),
         bounded,
+        marker_text,
+        prose_join: false,
     })
 }
 
@@ -231,8 +326,15 @@ pub(crate) fn infer(
                     }
                     break;
                 };
+                let (upper, upper_y, lower) = if upwards {
+                    (&candidate, y, edge)
+                } else {
+                    (edge, last, &candidate)
+                };
+                let prose = !wrapped && prose_continues(snapshot, upper, upper_y, lower);
                 if candidate.bounded
                     || (!wrapped
+                        && !prose
                         && match scope {
                             SmartSelectionScope::Sentence => true,
                             SmartSelectionScope::Paragraph => candidate.indent != edge.indent,
@@ -247,6 +349,14 @@ pub(crate) fn infer(
                 {
                     break;
                 }
+                let mut candidate = candidate;
+                if prose {
+                    if upwards {
+                        rows[0].1.prose_join = true;
+                    } else {
+                        candidate.prose_join = true;
+                    }
+                }
                 if upwards {
                     first = y;
                     rows.insert(0, (y, candidate));
@@ -260,8 +370,16 @@ pub(crate) fn infer(
     let mut mapped = Vec::new();
     let mut clicked = 0;
     let mut text = String::new();
+    let mut space_rows = Vec::new();
     for (y, source) in &rows {
+        if source.prose_join {
+            text.push(' ');
+            space_rows.push(*y);
+        }
         for (column, value) in &source.cells {
+            if source.prose_join && value.trim().is_empty() && mapped_in_row(&mapped, *y) == 0 {
+                continue;
+            }
             if *y == hit.row && *column == hit.column {
                 clicked = text.len();
             }
@@ -303,8 +421,10 @@ pub(crate) fn infer(
             let joined = selected.last().is_some_and(|previous| {
                 snapshot.absolute_row_soft_wrapped(previous.row) == Some(true)
             });
+            let space_join = !selected.is_empty() && space_rows.contains(&y);
             selected.push(SmartRow {
                 row: absolute,
+                space_join,
                 first: column,
                 last: column,
                 text: String::new(),
@@ -322,6 +442,10 @@ pub(crate) fn infer(
         dimensions: snapshot.dimensions(),
         screen_generation: snapshot.screen_generation(),
     })
+}
+
+fn mapped_in_row(mapped: &[(usize, usize, usize, usize)], y: usize) -> usize {
+    mapped.iter().filter(|entry| entry.2 == y).count()
 }
 
 #[cfg(test)]
@@ -411,6 +535,32 @@ mod tests {
         assert_eq!(
             selection_text(TerminalSnapshot::from_terminal(&terminal), &paragraph).as_deref(),
             Some("  at module.rs:12\n  caused by: missing file")
+        );
+    }
+
+    #[test]
+    fn smart_selection_joins_hanging_indent_prose_painted_by_a_tui() {
+        let terminal = make_terminal(
+            40,
+            8,
+            "● Smart selection spans the\r\n  rows of one answer. It then\r\n  stops at a blank row.\r\n\r\n● Another answer.",
+        );
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        let paragraph = select(&terminal, 5, 1, SmartSelectionScope::Paragraph);
+        assert_eq!(
+            selection_text(snapshot, &paragraph).as_deref(),
+            Some("● Smart selection spans the rows of one answer. It then stops at a blank row.")
+        );
+        let sentence = select(&terminal, 5, 1, SmartSelectionScope::Sentence);
+        assert_eq!(
+            selection_text(snapshot, &sentence).as_deref(),
+            Some("● Smart selection spans the rows of one answer.")
+        );
+        let code = make_terminal(40, 4, "  let a = 1;\r\n  let b = 2;");
+        let block = select(&code, 4, 0, SmartSelectionScope::Block);
+        assert_eq!(
+            selection_text(TerminalSnapshot::from_terminal(&code), &block).as_deref(),
+            Some("  let a = 1;\n  let b = 2;")
         );
     }
 

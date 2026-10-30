@@ -164,6 +164,7 @@ impl Workflow {
         sign_in: bool,
         remember: bool,
         connect: bool,
+        extend_days: Option<u32>,
         context: &egui::Context,
     ) -> Self {
         let cancel = CancellationToken::new();
@@ -214,7 +215,7 @@ impl Workflow {
                         tokio::select! {
                             _ = cancel.cancelled() => Err(Error::Cancelled),
                             _ = tokio::time::sleep(Duration::from_secs(1800)) => Err(Error::Expired),
-                            value = prepare(expected, store, client_id, sign_in, remember, &cancel, &notify) => value.map(Box::new),
+                            value = prepare(expected, store, client_id, sign_in, remember, extend_days, &cancel, &notify) => value.map(Box::new),
                         }
                     }));
                 notify(Event::Complete(result));
@@ -227,12 +228,14 @@ impl Workflow {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn prepare(
     expected: Profile,
     store: Arc<dyn SecretStore>,
     client_id: &str,
     force_sign_in: bool,
     remember: bool,
+    extend_days: Option<u32>,
     cancel: &CancellationToken,
     notify: &impl Fn(Event) -> bool,
 ) -> Result<Prepared, Error> {
@@ -277,6 +280,16 @@ async fn prepare(
         .inspect_err(|error| {
             tracing::warn!(stage = "tunnel-lookup", error = ?error, "Native Dev Tunnel setup failed");
         })?;
+    if let Some(days) = extend_days {
+        // Best effort: only the owner may extend, and the connection must not
+        // depend on it.
+        if let Err(error) = service::extend_lifetime(&identity, name, days, cancel).await {
+            if matches!(error, Error::Cancelled) {
+                return Err(error);
+            }
+            tracing::info!(stage = "tunnel-extend", error = ?error, "Dev Tunnel lifetime not extended");
+        }
+    }
     let host = host_metadata(&resolved.binding);
     relay::host_fingerprint(&host.public_key).map_err(|_| Error::Tunnel)?;
     if new_account || profile.trusted_host() != Some(&host) {
@@ -445,8 +458,18 @@ impl FesTermApp {
                 return;
             }
         };
+        let extend_days = self
+            .state
+            .extend_dev_tunnel_lifetime()
+            .then(|| self.state.dev_tunnel_extension_days());
         self.native_tunnel = Some(Workflow::start(
-            profile, store, sign_in, remember, connect, context,
+            profile,
+            store,
+            sign_in,
+            remember,
+            connect,
+            extend_days,
+            context,
         ));
         self.overlays.native_tunnel = true;
         context.request_repaint();
