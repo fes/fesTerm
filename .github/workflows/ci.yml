@@ -21,6 +21,30 @@ permissions:
   contents: read
 
 jobs:
+  bridge-storage-diagnostics:
+    name: Windows bridge storage diagnostics
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Inspect hosted-runner private-storage ancestor policies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($start in @($env:TEMP, $env:GITHUB_WORKSPACE)) {
+            $path = [System.IO.DirectoryInfo]::new($start)
+            while ($null -ne $path) {
+              $acl = Get-Acl -LiteralPath $path.FullName
+              [PSCustomObject]@{
+                Path = $path.FullName
+                Owner = $acl.Owner
+                Sddl = $acl.Sddl
+                Attributes = (Get-Item -Force -LiteralPath $path.FullName).Attributes.ToString()
+              } | ConvertTo-Json -Compress
+              $path = $path.Parent
+            }
+          }
+
   windows-sampler-diagnostics:
     name: opt-in Windows sampler diagnostics
     if: github.event_name == 'workflow_dispatch' && inputs.windows_sampler_diagnostics
