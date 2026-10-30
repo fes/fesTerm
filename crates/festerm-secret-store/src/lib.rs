@@ -538,4 +538,3 @@ mod native {
         Err(SecretStoreError::Unsupported)
     }
 }
-
