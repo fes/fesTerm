@@ -3,14 +3,26 @@ set -euo pipefail
 umask 077
 
 fail() { printf 'fesTerm tunnel setup: %s\n' "$*" >&2; exit 1; }
-usage='Usage: bash install-dev-tunnel.sh VERSION [--install-dependencies]'
-version=${1:-}
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "$usage"
-[[ $# -le 2 ]] || fail "$usage"
+usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies]'
+version=
 install_dependencies=false
-if [[ $# == 2 ]]; then
-    [[ $2 == --install-dependencies ]] || fail "$usage"
-    install_dependencies=true
+for arg in "$@"; do
+    if [[ $arg == --install-dependencies ]]; then
+        install_dependencies=true
+    elif [[ $arg =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -z $version ]]; then
+        version=$arg
+    else
+        fail "$usage"
+    fi
+done
+if [[ -z $version ]]; then
+    # The newest published release; its redirect names the tag without the API.
+    command -v curl >/dev/null || fail 'Missing curl; install the runtime prerequisites first.'
+    latest=$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+        --connect-timeout 20 --max-time 60 --output /dev/null --write-out '%{url_effective}' \
+        https://github.com/fes/fesTerm/releases/latest) || fail 'Could not look up the latest release.'
+    version=${latest##*/v}
+    [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'No published fesTerm release was found; pass VERSION explicitly.'
 fi
 [[ $(id -u) != 0 ]] || fail 'Run as your normal user, not root.'
 case "$(uname -s):$(uname -m)" in
@@ -77,7 +89,8 @@ fetch() {
 }
 asset="fesTerm-tunnel-${version}-${platform}-${arch}.tar.gz"
 base="https://github.com/fes/fesTerm/releases/download/v${version}"
-fetch "$base/$asset.sha256" "$stage/checksum" 1024
+fetch "$base/$asset.sha256" "$stage/checksum" 1024 ||
+    fail "Release v$version has no Dev Tunnel helper bundle for $platform-$arch. Pass a version that publishes one."
 [[ $(wc -l < "$stage/checksum" | tr -d ' ') == 1 ]] || fail 'Malformed archive checksum.'
 read -r digest filename < "$stage/checksum"
 [[ $digest =~ ^[a-f0-9]{64}$ && $filename == "$asset" ]] || fail 'Checksum does not name this exact release.'
@@ -152,4 +165,15 @@ printf 'Installed private helpers: %s\n' "$install"
 printf 'Setup reuses this user installation and its exact tunnel/session; a dedicated per-user service hosts it.\n'
 cleanup
 trap - EXIT
-exec "$install/festerm-tunnel-setup" --managed --devtunnel "$install/devtunnel" --state-dir "$root/state"
+"$install/festerm-tunnel-setup" --managed --devtunnel "$install/devtunnel" --state-dir "$root/state"
+profile="$root/state/festerm-profile.json"
+[[ -f $profile && ! -L $profile ]] || fail 'Setup finished but did not write the connection JSON.'
+copied=false
+for clip in 'pbcopy' 'wl-copy' 'xclip -selection clipboard' 'xsel --clipboard --input'; do
+    if command -v "${clip%% *}" >/dev/null && $clip < "$profile" 2>/dev/null; then copied=true; break; fi
+done
+printf '\n=== fesTerm connection JSON (public; no credentials) ===\n'
+cat -- "$profile"
+printf '\n=== Saved to %s ===\n' "$profile"
+if "$copied"; then printf 'Copied to the clipboard. '; fi
+printf 'In fesTerm: Dev Tunnel profile > Import setup JSON, paste, then sign in with the same GitHub account.\n'
