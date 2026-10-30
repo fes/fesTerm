@@ -154,6 +154,7 @@ class IosSpikeWorkflowTests(unittest.TestCase):
         for command in (
             "cargo test --locked -p festerm-mobile --lib",
             "cargo test --locked -p festerm-mobile --features live-ssh --lib",
+            "cargo clippy --locked -p festerm-mobile --features live-ssh --all-targets -- -D warnings",
             "python3 scripts/build-ios-spike.py --check-dependencies",
             "python3 scripts/build-ios-spike.py --check-dependencies --live-ssh",
             "cargo check --locked -p festerm-mobile --target aarch64-apple-ios",

@@ -1,9 +1,9 @@
 //! iOS feasibility host: offline by default, with opt-in transient live SSH.
 
-mod terminal_gesture;
-mod workspaces;
 #[cfg(feature = "live-ssh")]
 mod live_ssh;
+mod terminal_gesture;
+mod workspaces;
 
 use eframe::egui;
 use festerm_core::{Dimensions, InputEvent, Key, Modifiers, Terminal};
@@ -342,7 +342,11 @@ impl MobileApp {
                         .id_salt("mobile-ssh-controls")
                         .max_height(ui.available_height() * 0.45)
                         .show(ui, |ui| {
-                            connected = self.connection.show(ui, &mut self.sink.live, self.terminal.dimensions());
+                            connected = self.connection.show(
+                                ui,
+                                &mut self.sink.live,
+                                self.terminal.dimensions(),
+                            );
                         });
                 });
                 if connected {
@@ -352,15 +356,21 @@ impl MobileApp {
                         .expect("existing valid bounded grid");
                     let font_size = self.view.font_size_points();
                     self.view = TerminalView::default();
-                    self.view.zoom_by_factor(font_size / self.view.font_size_points());
+                    self.view
+                        .zoom_by_factor(font_size / self.view.font_size_points());
                     self.control = false;
                     self.alt = false;
                 }
             });
         }
         #[cfg(feature = "live-ssh")]
-        let input_ready = lifecycle.active && !self.connection.open
-            && self.sink.live.as_ref().is_none_or(|live| live.input_enabled());
+        let input_ready = lifecycle.active
+            && !self.connection.open
+            && self
+                .sink
+                .live
+                .as_ref()
+                .is_none_or(|live| live.input_enabled());
         #[cfg(not(feature = "live-ssh"))]
         let input_ready = lifecycle.active;
         egui::Panel::top("terminal-fixture-status").show(ui, |ui| {
@@ -377,12 +387,20 @@ impl MobileApp {
                     ui.small("Live SSH prototype · no credential persistence");
                 } else {
                     ui.small(format!(
-                    "Offline terminal · input {} bytes · never executed",
-                    self.sink.diagnostics.byte_count,
+                        "Offline terminal · input {} bytes · never executed",
+                        self.sink.diagnostics.byte_count,
                     ));
                 }
                 if ui
-                    .add_enabled(can_reset, egui::Button::new(if live_selected { "Offline fixture" } else { "Reset" }).sense(egui::Sense::CLICK))
+                    .add_enabled(
+                        can_reset,
+                        egui::Button::new(if live_selected {
+                            "Offline fixture"
+                        } else {
+                            "Reset"
+                        })
+                        .sense(egui::Sense::CLICK),
+                    )
                     .clicked()
                 {
                     self.gestures.cancel();

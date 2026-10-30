@@ -56,6 +56,7 @@ jobs:
         run: python3 scripts/smoke-ios-simulator.py --prepare-only
       - run: cargo test --locked -p festerm-mobile --lib
       - run: cargo test --locked -p festerm-mobile --features live-ssh --lib
+      - run: cargo clippy --locked -p festerm-mobile --features live-ssh --all-targets -- -D warnings
       - run: python3 scripts/build-ios-spike.py --check-dependencies
       - run: python3 scripts/build-ios-spike.py --check-dependencies --live-ssh
       - name: Check portable iOS SSH dependency policy
