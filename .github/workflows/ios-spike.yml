@@ -46,6 +46,7 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
       IPHONEOS_DEPLOYMENT_TARGET: '15.0'
+      FESTERM_MOBILE_UI_REVIEW_DIR: target/mobile-ui-review/${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: dtolnay/rust-toolchain@stable
@@ -63,13 +64,13 @@ jobs:
       - run: cargo clippy --locked -p festerm-mobile --features live-ssh --all-targets -- -D warnings
       - name: Capture non-native mobile UI review images
         timeout-minutes: 10
-        run: python3 scripts/capture-mobile-ui.py --output target/mobile-ui-review --emit-review-data
+        run: python3 scripts/capture-mobile-ui.py --output "$FESTERM_MOBILE_UI_REVIEW_DIR" --emit-review-data
       - name: Upload non-native mobile UI review images
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         if: always()
         with:
           name: festerm-mobile-headless-ui-review
-          path: target/mobile-ui-review/
+          path: ${{ env.FESTERM_MOBILE_UI_REVIEW_DIR }}/
           if-no-files-found: error
       - name: Check portable device packaging policy without credentials
         run: python3 -m unittest discover -s scripts/tests -p test_ios_device_build.py

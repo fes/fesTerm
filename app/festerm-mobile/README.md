@@ -168,6 +168,8 @@ viewport, image hashes and capture method. The optional aggregate runners
 include it when `FESTERM_RUN_MOBILE_UI_CAPTURE=1` is selected alongside their
 global opt-in. PR iOS CI publishes `festerm-mobile-headless-ui-review` separately
 from Simulator artifacts.
+CI scopes the destination by run ID and attempt so restored build-cache
+directories cannot collide with or be published as a fresh capture.
 
 When artifact downloads are unavailable to the review worker, CI also selects
 `--emit-review-data`: a bounded, hash-checked export of only these four controlled

@@ -155,7 +155,7 @@ class IosSpikeWorkflowTests(unittest.TestCase):
             "cargo test --locked -p festerm-mobile --lib",
             "cargo test --locked -p festerm-mobile --features live-ssh --lib",
             "cargo clippy --locked -p festerm-mobile --features live-ssh --all-targets -- -D warnings",
-            "python3 scripts/capture-mobile-ui.py --output target/mobile-ui-review --emit-review-data",
+            'python3 scripts/capture-mobile-ui.py --output "$FESTERM_MOBILE_UI_REVIEW_DIR" --emit-review-data',
             "python3 scripts/build-ios-spike.py --check-dependencies",
             "python3 scripts/build-ios-spike.py --check-dependencies --live-ssh",
             "cargo check --locked -p festerm-mobile --target aarch64-apple-ios",
@@ -175,7 +175,11 @@ class IosSpikeWorkflowTests(unittest.TestCase):
         self.assertIn("if-no-files-found: error", bundle)
         captures = next(step for step in self.steps if "name: festerm-mobile-headless-ui-review" in step)
         self.assertIn("if: always()", captures)
-        self.assertIn("path: target/mobile-ui-review/", captures)
+        self.assertIn("path: ${{ env.FESTERM_MOBILE_UI_REVIEW_DIR }}/", captures)
+        self.assertIn(
+            "FESTERM_MOBILE_UI_REVIEW_DIR: target/mobile-ui-review/${{ github.run_id }}-${{ github.run_attempt }}",
+            self.workflow,
+        )
         self.assertIn("if-no-files-found: error", captures)
 
     def test_ios_native_smoke_runs_only_on_schedule_or_manual_dispatch(self):
