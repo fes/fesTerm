@@ -36,7 +36,7 @@ def check_dependencies(target: str, package: str = "festerm-mobile", live_ssh: b
         "cargo", "tree", "--locked", "-p", package, "--target", target,
         *(["--features", "live-ssh"] if live_ssh else []),
         "--edges", "normal,build", "--prefix", "none", "--format", "{p}",
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=120,
     )
     names = {line.split()[0] for line in result.stdout.splitlines() if line.strip()}
     forbidden = names & (FORBIDDEN | DESKTOP_SECRET_BACKENDS)
@@ -134,6 +134,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (subprocess.CalledProcessError, RuntimeError) as error:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError) as error:
         print(error, file=sys.stderr)
         sys.exit(1)

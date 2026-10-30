@@ -465,6 +465,17 @@ remains blocked on this gate and a hosting go/no-go decision.
 | MOB-05 | iPhone/iPad portrait, landscape and narrow Split View; switch Terminal/Files/README repeatedly; exercise both transfer directions, README collision choices, progress, Preview/Source/Contents and each heading | Keyboard dismisses outside Terminal and returns without a restart loop; terminal gestures cannot affect Files/README. No category loses in-memory state. Wide Files panes are horizontal; Compact panes are both visible with Remote on top and Local below, so upload moves up and download moves down; Minimal has a reachable pane toggle and transfer queue. Collision actions and progress are bounded and never claim real I/O. Markdown controls never collide, prose wraps, contents is reachable and heading activation changes the selected/visible section. Every screen says synthetic/offline. Record clipping, Dynamic Type and VoiceOver gaps; this does not accept live SSH/SFTP, credentials, file access, full tab lifecycle or restoration. |
 | MOB-06 | Opt-in live-SSH build on iPhone/iPad Simulator and provisioned hardware; connect to an owned SSH fixture, review unknown/changed host keys, authenticate/retry/cancel, type Return/Delete/Esc/Tab/Ctrl-C/arrows, resize, run a remote TUI, disconnect/reconnect and suspend/resume | Native/live-service and Termius interaction comparison remain pending. Verify clear live/offline labeling and no terminal input while editing connection/auth fields. Unknown host needs approval before password; a changed in-memory pin has no low-friction accept. Test exact-once input and terminal replies, coalesced remote resize, bounded output under load, refusal notice without automatic command replay, cleared passwords/prompts after cancel/suspend and no stale-session output after replacement. Headless regressions cover output/replies while Files/README is selected and one event budget across layout retries; a native-handle regression covers immediate cancellation and sensitive-state clearing without a UI frame, including after fixture reset. Verify these on actual suspension callbacks and under native load. Connect after suspension is a fresh shell, not a restoration promise. Paste/native selection handles remain #425 follow-up. Portable regressions and feature compilation/linking do not establish SSH/device usability. |
 
+For the physical-device prerequisite in MOB-01–05, campaign #422/#426 adds
+`scripts/build-ios-device.py` with a non-building `--preflight-only` mode.
+Portable tests in `scripts/tests/test_ios_device_build.py` cover profile/app/
+team/certificate/device admission, expiry, minimal entitlements, private
+device-bundle separation and honest receipts. Actual Apple signing, Xcode
+installation, cold launch and interaction on provisioned hardware remain
+**native/manual pending**; a `signed` receipt explicitly says
+`native_validation: not-run`. Follow the mobile host README for local setup;
+never publish its embedded provisioning profile as evidence. Review the
+Termius-inspired interaction checklist on-device as well as visible output.
+
 For campaign #422/#424, the dependency gate also inspects the real
 `festerm-ssh` graph on device and Simulator targets and the iOS workflow
 compiles that transport for the device target. Portable graph-policy tests

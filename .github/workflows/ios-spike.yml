@@ -21,8 +21,10 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'scripts/build-ios-spike.py'
+      - 'scripts/build-ios-device.py'
       - 'scripts/smoke-ios-simulator.py'
       - 'scripts/tests/test_ios_simulator_smoke.py'
+      - 'scripts/tests/test_ios_device_build.py'
       - 'scripts/tests/test_ios_ssh_dependencies.py'
       - '.github/workflows/ios-spike.yml'
   schedule:
@@ -57,6 +59,8 @@ jobs:
       - run: cargo test --locked -p festerm-mobile --lib
       - run: cargo test --locked -p festerm-mobile --features live-ssh --lib
       - run: cargo clippy --locked -p festerm-mobile --features live-ssh --all-targets -- -D warnings
+      - name: Check portable device packaging policy without credentials
+        run: python3 -m unittest discover -s scripts/tests -p test_ios_device_build.py
       - run: python3 scripts/build-ios-spike.py --check-dependencies
       - run: python3 scripts/build-ios-spike.py --check-dependencies --live-ssh
       - name: Check portable iOS SSH dependency policy
