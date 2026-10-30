@@ -920,7 +920,7 @@ mod tests {
                 .unwrap()
                 .with_tunnel_identity(
                     account,
-                    format!("account-{account}"),
+                    format!("account-{account}_acme"),
                     identity,
                     SecretReference::generate(),
                     DevTunnelHost {

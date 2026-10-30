@@ -1723,6 +1723,10 @@ form's labeled **Name** and **Tunnel** fields and concise **Sign in with GitHub*
 **Connect**, **Connect once**, **Save profile** and **Cancel** controls.
 Save target edits before sign-in. Device authorization displays the short code
 and fixed GitHub system-browser link, bounded progress and content-free errors.
+Use the shared viewport-bounded confirmation sizing with a preferred 520-point
+content width for every sign-in stage, rather than shrinking to the code or
+shortest status. Ordinary instructions remain on one line where space allows;
+narrow windows still constrain the dialog to the viewport.
 The registered project-owned public client is included in default builds; no
 per-user app registration is required. An explicitly empty/invalid build override
 reports unavailable setup, not fake login. Live native acceptance remains

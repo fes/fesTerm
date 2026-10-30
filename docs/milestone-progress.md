@@ -6524,3 +6524,21 @@ and exercises actual recovery, executed PowerShell output and bounded file
 RPCs, refuses changed pins/generations, then explicitly reopens the same shell
 with its prior state intact. One private GitHub/Windows fixture passed these
 checks; cross-platform, two-account and native GUI acceptance remain open.
+
+### Native sign-in compatibility and dialog sizing
+
+Live browser authorization exposed an overly strict local account check:
+GitHub's managed usernames include an underscore, which both the native
+identity broker and saved-profile validator rejected. Both now accept that
+documented format while retaining ASCII/length bounds and numeric account
+binding. Sign-in, private identity restoration, refresh and profile round-trip
+regressions reproduce the rejection before the fix and pass afterward.
+Fixed-stage diagnostics identify failures without logging account values,
+authorization codes, credentials or service response bodies.
+
+The sign-in modal also reused the shared confirmation sizing helper instead
+of shrinking to its shortest label. Structural tests cover readable desktop
+width and narrow viewports without introducing a separate dialog paradigm.
+Isolated test launches preserve the normal browser environment rather than
+substituting an empty browser profile. These repairs are not evidence of
+successful tunnel-service authorization; live requalification remains DT-07.

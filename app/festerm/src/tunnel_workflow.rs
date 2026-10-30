@@ -268,7 +268,11 @@ async fn prepare(
             identity
         }
     };
-    let resolved = service::resolve(&identity, name, cancel).await?;
+    let resolved = service::resolve(&identity, name, cancel)
+        .await
+        .inspect_err(|error| {
+            tracing::warn!(stage = "tunnel-lookup", error = ?error, "Native Dev Tunnel setup failed");
+        })?;
     let host = host_metadata(&resolved.binding);
     relay::host_fingerprint(&host.public_key).map_err(|_| Error::Tunnel)?;
     if new_account || profile.trusted_host() != Some(&host) {
@@ -550,6 +554,7 @@ impl FesTermApp {
         };
         let mut dismiss = escape;
         egui::Modal::new(egui::Id::new("native_dev_tunnel")).show(context, |ui| {
+            super::confirmations::prepare_confirmation(ui, context, 520.0);
             ui.heading("Dev Tunnel");
             match &mut workflow.stage {
                 Stage::Working => {

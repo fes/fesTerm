@@ -168,7 +168,7 @@ impl DevTunnelProfileConfiguration {
                 || !identity
                     .login
                     .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
         }) || (native.is_none() && (self.identity.is_some() || self.trusted_host.is_some()))
         {
             return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));

@@ -3,6 +3,75 @@ use festerm_config::Configuration;
 use festerm_secret_store::MemorySecretStore;
 
 #[test]
+fn native_auth_dialog_keeps_instructions_on_one_line_and_within_the_viewport() {
+    for (width, error) in [
+        (1000.0, false),
+        (360.0, false),
+        (1000.0, true),
+        (360.0, true),
+    ] {
+        let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(
+            Configuration::new(vec![profile.clone()]).unwrap(),
+        );
+        let (_sender, receiver) = mpsc::sync_channel(2);
+        let mut pending = workflow(profile, receiver);
+        pending.stage = if error {
+            Stage::Error(Error::Response)
+        } else {
+            Stage::Device(DevicePrompt {
+                user_code: "ABCD-1234".into(),
+            })
+        };
+        let label = if error {
+            Error::Response.to_string()
+        } else {
+            "Enter this code on GitHub:".into()
+        };
+        app.native_tunnel = Some(pending);
+        app.overlays.native_tunnel = true;
+        let context = egui::Context::default();
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 700.0));
+        let input = egui::RawInput {
+            screen_rect: Some(viewport),
+            ..Default::default()
+        };
+        let mut output = egui::FullOutput::default();
+        for _ in 0..3 {
+            output = context.run_ui(input.clone(), |ui| {
+                app.show_native_tunnel(ui.ctx(), false);
+            });
+            output.textures_delta.clear();
+        }
+        let dialog = context
+            .memory(|memory| memory.area_rect(egui::Id::new("native_dev_tunnel")))
+            .expect("the sign-in dialog is visible");
+        assert!(viewport.contains_rect(dialog));
+        if width >= 1000.0 {
+            assert!(dialog.width() >= 480.0, "dialog is too narrow: {dialog:?}");
+        }
+        let instruction = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == label => {
+                    Some((text, shape.clip_rect))
+                }
+                _ => None,
+            })
+            .expect("the sign-in instruction is visible");
+        assert_eq!(instruction.0.galley.rows.len(), 1);
+        let text_rect = instruction
+            .0
+            .galley
+            .rect
+            .translate(instruction.0.pos.to_vec2());
+        assert!(viewport.contains_rect(text_rect));
+        assert!(instruction.1.contains_rect(text_rect));
+    }
+}
+
+#[test]
 fn native_auth_identity_lease_refuses_concurrent_credential_rotation_until_final_owner_drops() {
     let reference = SecretReference::generate();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -216,15 +216,31 @@ impl IdentityTransport for Https {
         cancel: &'a CancellationToken,
     ) -> ResponseFuture<'a> {
         Box::pin(async move {
-            let (oauth, request) = self.build_request(operation)?;
-            let response = tokio::select! {
-                _ = cancel.cancelled() => return Err(Error::Cancelled),
-                result = request.send() => result.map_err(|_| Error::Network)?,
+            let stage = match &operation {
+                IdentityRequest::Device { .. } => "device-grant",
+                IdentityRequest::Poll { .. } => "device-token",
+                IdentityRequest::Account { .. } => "github-account",
+                IdentityRequest::Refresh { .. } => "github-refresh",
             };
-            if !oauth && !response.status().is_success() {
-                return Err(Error::Denied);
+            let mut http_status = None;
+            let result = async {
+                let (oauth, request) = self.build_request(operation)?;
+                let response = tokio::select! {
+                    _ = cancel.cancelled() => return Err(Error::Cancelled),
+                    result = request.send() => result.map_err(|_| Error::Network)?,
+                };
+                http_status = Some(response.status().as_u16());
+                if !oauth && !response.status().is_success() {
+                    return Err(Error::Denied);
+                }
+                bounded_response(response, cancel).await
             }
-            bounded_response(response, cancel).await
+            .await;
+            result.inspect_err(|error| {
+                if *error != Error::Cancelled {
+                    tracing::warn!(stage, http_status = ?http_status, error = ?error, "Native GitHub request failed");
+                }
+            })
         })
     }
 }

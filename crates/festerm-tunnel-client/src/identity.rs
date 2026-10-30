@@ -23,7 +23,7 @@ impl Account {
             || !self
                 .login
                 .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
         {
             return Err(Error::Response);
         }
@@ -273,11 +273,12 @@ pub async fn sign_in(
     struct Failure {
         error: Option<String>,
     }
-    let failure: Failure = crate::decode(&bytes)?;
+    let failure: Failure =
+        crate::decode(&bytes).map_err(|_| response_error("device-grant-json"))?;
     if let Some(error) = failure.error.as_deref() {
         return Err(oauth_error(error));
     }
-    let grant: Grant = crate::decode(&bytes)?;
+    let grant: Grant = crate::decode(&bytes).map_err(|_| response_error("device-grant-fields"))?;
     if !valid_token(&grant.device_code)
         || grant.user_code.is_empty()
         || grant.user_code.len() > 32
@@ -289,7 +290,7 @@ pub async fn sign_in(
         || !(1..=900).contains(&grant.expires_in)
         || !(1..=60).contains(&grant.interval)
     {
-        return Err(Error::Response);
+        return Err(response_error("device-grant-contract"));
     }
     drop(bytes);
     prompt(DevicePrompt {
@@ -308,7 +309,8 @@ pub async fn sign_in(
             _ = tokio::time::sleep_until(expires) => return Err(Error::Expired),
             bytes = transport.request(IdentityRequest::Poll { client_id, device_code: &grant.device_code }, cancel) => bytes?,
         };
-        let mut poll: Poll = crate::decode(&bytes)?;
+        let mut poll: Poll =
+            crate::decode(&bytes).map_err(|_| response_error("device-token-json"))?;
         match poll.error.as_deref() {
             Some("authorization_pending") => continue,
             Some("slow_down") if interval <= 55 => {
@@ -318,17 +320,24 @@ pub async fn sign_in(
             Some(error) => return Err(oauth_error(error)),
             None => {}
         }
-        if poll.token_type.as_deref() != Some("bearer") || !minimal_scope(poll.scope.as_deref()) {
-            return Err(Error::Response);
+        if poll.token_type.as_deref() != Some("bearer") {
+            return Err(response_error("device-token-type"));
         }
-        let access_token = Zeroizing::new(poll.access_token.take().ok_or(Error::Response)?);
+        if !minimal_scope(poll.scope.as_deref()) {
+            return Err(response_error("device-token-scope"));
+        }
+        let access_token = Zeroizing::new(
+            poll.access_token
+                .take()
+                .ok_or_else(|| response_error("device-token-missing"))?,
+        );
         if !valid_token(&access_token)
             || poll
                 .refresh_token
                 .as_deref()
                 .is_some_and(|t| !valid_token(t))
         {
-            return Err(Error::Response);
+            return Err(response_error("device-token-format"));
         }
         let account = account(transport, &access_token, cancel).await?;
         if expected_account.is_some_and(|id| id != account.id) {
@@ -364,8 +373,12 @@ fn oauth_error(error: &str) -> Error {
             Error::Registration
         }
         "rate_limit_exceeded" => Error::RateLimited,
-        _ => Error::Response,
+        _ => response_error("device-oauth-error"),
     }
+}
+fn response_error(stage: &'static str) -> Error {
+    tracing::warn!(stage, "Native GitHub response rejected");
+    Error::Response
 }
 fn expiry(seconds: Option<u64>) -> Result<Option<u64>, Error> {
     seconds
@@ -391,12 +404,14 @@ async fn account(
             cancel,
         )
         .await?;
-    let user: User = crate::decode(&bytes)?;
+    let user: User = crate::decode(&bytes).map_err(|_| response_error("github-account-json"))?;
     let account = Account {
         id: user.id,
         login: user.login,
     };
-    account.validate()?;
+    account
+        .validate()
+        .map_err(|_| response_error("github-account-fields"))?;
     Ok(account)
 }
 
@@ -522,6 +537,42 @@ mod tests {
         assert!(Identity::decode_private(b"ordinary-connect-token", 42).is_err());
         assert!(!identity.needs_sign_in());
         assert!(identity.can_refresh());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn native_device_flow_and_refresh_accept_enterprise_managed_logins() {
+        const MANAGED_USER: &str = r#"{"id":42,"login":"managed-user_acme"}"#;
+        let http = Fake::new(&[GRANT, TOKEN, MANAGED_USER]);
+        let identity = sign_in(
+            &http,
+            "ownedApp",
+            Some(42),
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(identity.account.login, "managed-user_acme");
+        let stored = identity.encode_private().unwrap();
+        let restored = Identity::decode_private(&stored, 42).unwrap();
+        let refresh = Fake::new(&[TOKEN, MANAGED_USER]);
+        let rotated = restored
+            .refresh(&refresh, "ownedApp", &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(rotated.account, identity.account);
+        for login in [
+            "managed/user_acme",
+            "managed\nuser_acme",
+            "managed user_acme",
+        ] {
+            assert!(Account {
+                id: 42,
+                login: login.into()
+            }
+            .validate()
+            .is_err());
+        }
     }
 
     #[tokio::test(start_paused = true)]
