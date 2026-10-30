@@ -6236,7 +6236,7 @@ mod tests {
     }
 
     #[test]
-    fn tighter_launcher_fits_every_card_on_one_row() {
+    fn tighter_launcher_fits_all_five_cards_on_a_thousand_pixel_window() {
         let labels = [
             "Local Shell — Start a local terminal session",
             "SSH — Connect to a remote host over SSH",
