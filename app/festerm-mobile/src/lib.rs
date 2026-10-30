@@ -669,26 +669,38 @@ mod tests {
         }
         let geometry = app.connection.controls.unwrap();
         assert!(!geometry.clip.contains_rect(geometry.connect));
+        let before = geometry;
         connection_frame(
             &mut app,
             &context,
             size,
             0.35,
-            vec![
-                egui::Event::PointerMoved(geometry.clip.center()),
-                egui::Event::MouseWheel {
-                    unit: egui::MouseWheelUnit::Point,
-                    delta: egui::vec2(0.0, -600.0),
-                    phase: egui::TouchPhase::Move,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
+            vec![egui::Event::PointerMoved(geometry.clip.center())],
+        );
+        connection_frame(
+            &mut app,
+            &context,
+            size,
+            0.35,
+            vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -600.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            }],
         );
         for _ in 0..30 {
             connection_frame(&mut app, &context, size, 0.35, vec![]);
         }
         let geometry = app.connection.controls.unwrap();
-        assert!(geometry.clip.contains_rect(geometry.connect));
+        assert!(
+            geometry.clip.contains_rect(geometry.connect),
+            "before clip {:?}, connect {:?}; after clip {:?}, connect {:?}",
+            before.clip,
+            before.connect,
+            geometry.clip,
+            geometry.connect
+        );
         assert!(app.toolbar_rect.unwrap().bottom() <= size.y * 0.65 + 1.0);
         assert_eq!(app.sink.diagnostics.byte_count, 0);
     }
