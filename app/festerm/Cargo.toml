@@ -8,7 +8,7 @@ repository.workspace = true
 description = "A scratch, multi-platform SSH/terminal client."
 
 [features]
-default = []
+default = ["experimental-dev-tunnels"]
 experimental-dev-tunnels = ["dep:festerm-tunnel-bridge"]
 
 [dependencies]

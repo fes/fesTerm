@@ -21,6 +21,13 @@ Implementation, bounded SDK integration, service-use suitability and real
 remote/native evidence remain prerequisites. This proposal changes no runtime
 behavior or milestone acceptance status.
 
+The subsequent implementation initially required explicit Cargo features.
+The owner then requested ordinary desktop availability and an isolated
+interactive test instance. Desktop and bridge builds now include those
+features by default, while connection/host startup still requires explicit
+intent and credentials. This changes neither the experimental status nor the
+outstanding real-relay, two-account and native qualification obligations.
+
 ## Local document links without an OS-opening capability
 
 Copilot could emit real OSC 8 file links while fesTerm silently discarded
@@ -6485,3 +6492,13 @@ or a valid `ssh-key` extension name. An explicit no-key/no-KEX preference now
 encodes that sentinel without inventing a host key. A real in-memory outer
 handshake and normal-client refusal regression keep this TLS-only outer mode
 separate from ordinary SSH and the pinned encrypted inner transport.
+
+Constructor success then exposed a second gap: the real service immediately
+closed the anonymous outer connection because the modern adapter omitted the
+SDK's `none` MAC and sent `NEWKEYS` during a skip-exchange handshake. Explicit
+outer-only negotiation and lifetime supervision fix that mismatch without
+weakening ordinary or inner SSH. Qualification now holds the real relay open
+and exercises actual recovery, executed PowerShell output and bounded file
+RPCs, refuses changed pins/generations, then explicitly reopens the same shell
+with its prior state intact. One private GitHub/Windows fixture passed these
+checks; cross-platform, two-account and native GUI acceptance remain open.

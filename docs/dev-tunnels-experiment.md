@@ -1,6 +1,8 @@
 # Experimental direct Dev Tunnels sessions
 
-This is **opt-in, development/testing-only**, not production qualification.
+This is **experimental, development/testing-only**, not production qualification.
+It is included in default desktop builds at the owner's request; availability
+does not establish real-service or native qualification.
 [ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md) owns the boundary.
 Real-service and native evidence remains in `DT-01`–`DT-06`; deterministic
 tests do not establish service interoperability or usability.
@@ -24,16 +26,19 @@ below; destination metadata is not saved in workspaces.
 History/color preferences remain the remote daemon's configuration in this
 subset; clear/reset use the existing ordered recovery control.
 
-Ordinary builds and mobile do not enable the relay. The GUI adds its remote
-tab through `AppCommand::ConnectDevTunnel`, not widget-owned policy.
+Default desktop builds include the relay and peer profile UI. Mobile remains
+outside this experiment. Building the desktop app with `--no-default-features`
+omits Dev Tunnel connections. The GUI adds its remote tab through
+`AppCommand::ConnectDevTunnel`, not widget-owned policy. No network connection
+or bridge starts until the user explicitly requests one.
 
 ## Build
 
 From the repository root (PowerShell):
 
 ```powershell
-cargo build -p festerm-sessiond -p festerm-tunnel-bridge --features festerm-tunnel-bridge/relay
-cargo build -p festerm --features experimental-dev-tunnels
+cargo build -p festerm-sessiond -p festerm-tunnel-bridge
+cargo build -p festerm
 ```
 
 The debug executables are in the Cargo target's `debug` directory. Stage the
@@ -109,7 +114,7 @@ launch recipe. The tab/Inspector explicitly say Experimental Dev Tunnel.
 
 ### Saved profiles and independent accounts
 
-In the feature-enabled GUI, choose **New profile → Dev Tunnel**, enter a name
+In the GUI, choose **New profile → Dev Tunnel**, enter a name
 and the trusted destination JSON path, then **Save profile**. Reopen that
 profile's editor, enter its connect token in the hidden field and choose
 **Store / replace connect token**. Saving metadata alone does not save that
@@ -219,8 +224,8 @@ headers, URL, body, request ID or token. A failed stage is not permission to
 disable host pins, broaden token scopes or alter a private tunnel's ACL.
 
 The service's anonymous outer SSH layer explicitly negotiates no KEX, host
-key or cipher inside the authenticated TLS WebSocket, preserving the SDK's
-ordinary MAC advertisements. The modern-russh
+key, cipher or MAC inside the authenticated TLS WebSocket and does not send
+`NEWKEYS`, matching the pinned SDK's skip-exchange behavior. The modern-russh
 adapter handles its literal `none` host-key wire sentinel separately from
 cryptographic key algorithm names. This is not a fallback for ordinary SSH:
 the client-to-bridge inner SSH layer remains encrypted and host-key pinned.
@@ -232,18 +237,28 @@ Focused deterministic checks:
 ```powershell
 cargo test -p festerm-tunnel-bridge --features relay
 cargo test -p festerm-sessiond
-cargo test -p festerm --features experimental-dev-tunnels dev_tunnel
-cargo test -p festerm --features experimental-dev-tunnels remote_file
+cargo test -p festerm dev_tunnel
+cargo test -p festerm remote_file
 cargo test -p festerm-core hyperlink
 cargo clippy -p festerm-tunnel-bridge --features relay --all-targets -- -D warnings
-cargo check -p festerm --features experimental-dev-tunnels
+cargo check -p festerm
 python scripts/check_validation_traceability.py
 ```
 
 Use the repository's full workspace/asset checks before publication. Keep
 known environmental Windows privilege/fixture failures as failures, not skips.
-`DT-01`–`DT-06` still require controlled real GitHub-provisioned relay, Windows
-ConPTY, Linux/macOS, terminal/TUI, saturation, disconnect/bridge restart,
-expiry/revocation and native usability evidence. Public-preview Dev Tunnels
+One owner-authorized private GitHub-provisioned Windows relay passed a held-host
+probe and actual remote Session qualification at `3ae9bdf2`: recovery adoption,
+shell-executed output, bounded file contents checked by SHA-256, oversized and
+foreign-namespace refusal, stale host/generation refusal, and explicit
+detach/reopen preserving the same shell state. The original constructor-only
+probe missed immediate relay closure; anonymous MAC/`NEWKEYS` compatibility and
+outer-session supervision now have deterministic regressions.
+
+Independent source reviews through that fix found no high-confidence
+vulnerabilities. This is one Windows/service fixture, not full
+`DT-01`–`DT-06` acceptance. Linux/macOS, actual two-account operation,
+terminal/TUI and physical GUI input, saturation, bridge restart,
+expiry/revocation and native usability evidence remain open. Public-preview Dev Tunnels
 has no SLA; no production, unattended-service, logoff/reboot survival or
 established-stream revocation-timing claim is made.

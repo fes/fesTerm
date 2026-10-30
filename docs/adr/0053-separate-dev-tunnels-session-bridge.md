@@ -309,7 +309,7 @@ it refuses without killing or replacing that daemon.
 
 ### Delivery and unresolved external gates
 
-Publish this proposal separately from implementation. Deliver an opt-in
+Publish this proposal separately from implementation. Deliver an
 experimental code PR with the GitHub-first token bootstrap, explicit supported
 operations, deterministic protocol/lifecycle tests and independent security
 review. Then qualify a controlled real tunnel and remote host; mock tests
@@ -346,7 +346,8 @@ internal terminal RPC or VS Code OAuth client identity is required here.
 
 ## Experimental implementation subset
 
-The opt-in implementation is described in
+The implementation is included in default desktop builds at the owner's
+explicit request, without promoting its qualification status. It is described in
 [`docs/dev-tunnels-experiment.md`](../dev-tunnels-experiment.md), including exact
 commands and numeric resource bounds. It exports one preconfigured existing
 session, with peer profiles, explicit CLI-to-GUI attach/detach, optional bounded
@@ -371,7 +372,8 @@ recovery cap; the network uses bounded JSON, not the trusted-local bincode
 decoder. After network validation, a client adapter produces trusted local
 framing for the existing Session worker, preserving its adoption/reply policy.
 
-This code remains experimental pending independent security review and
+Independent source reviews and one private GitHub/Windows relay/session
+fixture passed; this code remains experimental pending the broader
 `DT-01`–`DT-06` real-service/native qualification. GitHub-first provisioning
 does not imply native GitHub OAuth or Entra support in fesTerm.
 

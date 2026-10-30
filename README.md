@@ -3,7 +3,7 @@
 A cross-platform graphical terminal emulator and native SSH client, written in
 Rust.
 
-An [opt-in direct Dev Tunnels experiment](docs/dev-tunnels-experiment.md)
+A [direct Dev Tunnels experiment](docs/dev-tunnels-experiment.md), included in default desktop builds,
 exports one existing daemon session through a separate bridge. It is
 GitHub-provisioned, scoped-token-only and not production-qualified.
 

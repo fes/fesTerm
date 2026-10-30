@@ -80,7 +80,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "Independent security review and real GitHub-provisioned service/native desktop qualification",
+        "Remaining real GitHub-provisioned service/native desktop qualification beyond the reviewed Windows fixture",
         "Controlled two-account real-service evidence; mock isolation is not service qualification",
         "Native Entra/in-app OAuth sign-in, automatic refresh and non-Windows qualification remain deferred"
       ]

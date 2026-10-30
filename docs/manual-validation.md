@@ -18,17 +18,27 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 ## Experimental direct Dev Tunnels bridge (DT-01 through DT-06)
 
 These are remaining real-service/native obligations for
-[ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md). The opt-in
+[ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md). The default-included experimental
 [implementation](dev-tunnels-experiment.md) has deterministic evidence,
 not completed native qualification.
+The owner's explicit default-enablement request changes availability only;
+the initial failed relay-lifetime attempts remain failed evidence. After the
+anonymous outer MAC/`NEWKEYS` fix (`3ae9bdf2`), a private GitHub-provisioned
+Windows fixture passed held-host and real Session qualification: recovery
+adoption, executed shell input/output, file snapshot SHA-256, bounds/namespace
+refusals, changed pins/generations, and explicit detach/reopen preserving the
+same shell state. Independent source reviews through that fix found no
+high-confidence vulnerabilities. This partial DT-01/02/03/06 evidence does not
+qualify physical GUI behavior, actual two-account operation, Linux/macOS,
+bridge restart, expiry/revocation or native usability.
 Use dedicated, explicitly authorized test tunnels/sessions; never alter or
 terminate unrelated shells. Keep all failed attempts as failed evidence.
 
 | ID | Scenario | Evidence class | Prerequisite / current result |
 | --- | --- | --- | --- |
-| DT-01 | Use GitHub-first official CLI provisioning for private dedicated tunnels and scoped host/connect tokens. Exercise peer profile/editor/launcher/Inspector routing, separate profiles/accounts and simultaneous sessions, transient/native-store isolation and replacement without live retargeting. Verify host binding, denied/wrong/expired credentials, secret redaction, service policy and cleanup ownership. | Real-service functional + security/policy | Partial: deterministic profile/routing/rotation tests exist. Independent review, real-service/native credential-store and actual two-account qualification remain pending. Native Entra/MFA/Conditional Access is separate future scope. |
-| DT-02 | Attach a supported exact remote session; exercise PowerShell/cmd on native Windows and shells/TUIs on Linux/macOS, Unicode, keyboard/mouse modes, Ctrl+C, resize and output/backpressure. | Real-service functional + native usability | Deferred: DT-01 and deterministic protocol/bounds tests; automate controlled PTY checks, retain physical-input/rendering/accessibility judgments. |
-| DT-03 | Disconnect/restart client and bridge; verify same daemon-owned process and ordered recovery without duplicate replies or stale input; refuse changed identities and unconfirmed takeover. | Controlled lifecycle automation + native functional | Deferred: supported attach/adoption and ownership admission; record actual bridge/daemon/OS versions. |
+| DT-01 | Use GitHub-first official CLI provisioning for private dedicated tunnels and scoped host/connect tokens. Exercise peer profile/editor/launcher/Inspector routing, separate profiles/accounts and simultaneous sessions, transient/native-store isolation and replacement without live retargeting. Verify host binding, denied/wrong/expired credentials, secret redaction, service policy and cleanup ownership. | Real-service functional + security/policy | Partial: deterministic profile/routing/rotation tests, independent source review and one private GitHub/Windows scoped-token fixture passed. Native credential-store, expired/revoked credentials and actual two-account qualification remain pending. Native Entra/MFA/Conditional Access is separate future scope. |
+| DT-02 | Attach a supported exact remote session; exercise PowerShell/cmd on native Windows and shells/TUIs on Linux/macOS, Unicode, keyboard/mouse modes, Ctrl+C, resize and output/backpressure. | Real-service functional + native usability | Partial: controlled Windows recovery adoption and executed PowerShell input/output passed. Broader shell/TUI, resize, backpressure and physical-input/rendering/accessibility judgments remain open. |
+| DT-03 | Disconnect/restart client and bridge; verify same daemon-owned process and ordered recovery without duplicate replies or stale input; refuse changed identities and unconfirmed takeover. | Controlled lifecycle automation + native functional | Partial: explicit client detach/reopen preserved the Windows shell's state and recovered prior output; changed host pins/generations refused. Bridge restart and broader native lifecycle evidence remain open. |
 | DT-04 | Exercise only advertised inventory/create/terminate operations; reject stale generations, preserve occupied/replacement sessions and verify Cancel defaults and uncertain-result handling. | Deterministic/headless automation + native usability | Deferred: implemented operation subset and command routing. Missing operations are unsupported, not passed by omission. |
 | DT-05 | Rotate/reject/revoke credentials, lose the relay, restart/upgrade the bridge and separately test logoff/reboot/daemon termination boundaries. | Real-service/platform lifecycle + usability | Deferred: DT-01/03; record observed established-stream revocation behavior. No daemon hot-upgrade or reboot-survival claim. |
 | DT-06 | From SSH/SFTP and Dev Tunnel sessions, deliberately open detected and OSC 8 remote Windows/POSIX text/Markdown paths, including source-relative file:///localhost, misleading labels, absent capability, foreign authorities, oversized/non-text content and stale/disconnected/changed bindings. Verify independent profiles/accounts and no client-local, OS-handler or shell-command fallback. | Deterministic routing/security + native real-service usability | Partial: shared capability/resolver, bounded bridge read RPC and snapshot identity implemented. Native Windows/Linux/macOS and real two-account qualification remain pending. |

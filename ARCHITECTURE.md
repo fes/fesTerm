@@ -624,7 +624,7 @@ Performance benchmarks should initially report trends rather than block every co
 
 ## Experimental remote session bridge
 
-The opt-in [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md)
+The [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md), included in default desktop builds,
 adds a separate network bridge, never cloud dependencies to the daemon/core/UI.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes

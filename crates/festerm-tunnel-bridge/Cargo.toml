@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = []
+default = ["relay"]
 relay = ["dep:tunnels", "dep:russh", "dep:tokio", "dep:tokio-util", "dep:reqwest", "dep:uuid", "dep:flume", "dep:rpassword", "dep:zeroize"]
 
 [dependencies]

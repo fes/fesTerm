@@ -1717,7 +1717,7 @@ reference a supported agent, key location, or secure-storage record without
 storing the secret itself. Only available authentication choices appear.
 Terminal dimensions and inferred remote platform do not belong in profiles.
 
-The feature-gated ADR 0053 experiment adds a peer **Dev Tunnel** kind to
+The ADR 0053 experiment, included in default desktop builds, adds a peer **Dev Tunnel** kind to
 Launcher, Profiles and Inspector. Its restricted editor has name, trusted
 destination JSON path and a hidden connect-token field. Save changes metadata;
 Store / replace explicitly creates this saved profile's native-store reference;

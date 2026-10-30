@@ -6,7 +6,7 @@ fesTerm measures compatibility in terms of observable application behavior. Reco
 
 ## Compatibility Baseline
 
-The opt-in [Dev Tunnels subset](docs/dev-tunnels-experiment.md) implements
+The [Dev Tunnels subset](docs/dev-tunnels-experiment.md), included in default desktop builds, implements
 peer profiles, independently bound scoped credentials, exact-generation
 daemon attach/detach and optional bounded remote file snapshots. It is
 experimental; `DT-01`–`DT-06` real-service/native qualification remains open.
