@@ -2,7 +2,7 @@
 //! Narrow modern-russh port of the pinned SDK relay handshake. Unlike the
 //! upstream host, this admits one encrypted client and one configured port,
 //! with no TCP listeners, port-management API, or unbounded forwarding queues.
-use std::{borrow::Cow, io, sync::Arc, time::Duration};
+use std::{io, sync::Arc, time::Duration};
 
 use russh::{client, server, Channel, ChannelId, ChannelStream};
 use serde::{Deserialize, Serialize};
@@ -174,6 +174,14 @@ fn client_config() -> client::Config {
     }
 }
 
+fn outer_client_config() -> client::Config {
+    client::Config {
+        anonymous: true,
+        preferred: russh::Preferred::anonymous_none(),
+        ..client_config()
+    }
+}
+
 pub struct ClientConnection {
     pub stream: ChannelStream<client::Msg>,
     _session: client::Handle<VerifiedHost>,
@@ -334,16 +342,8 @@ pub async fn host(
     let rw = websocket(url, token, "tunnel-relay-host").await?;
     let (outer_tx, mut outer_rx) = mpsc::channel(1);
     let slots = Arc::new(Semaphore::new(1));
-    let mut config = client_config();
-    config.anonymous = true;
-    config.preferred.kex = Cow::Owned(vec![russh::kex::NONE]);
-    config.preferred.key = Cow::Owned(vec![russh::keys::Algorithm::Other(
-        russh::keys::ssh_key::AlgorithmName::new("none")
-            .map_err(|_| stage_error("host.outer_ssh_configuration"))?,
-    )]);
-    config.preferred.cipher = Cow::Owned(vec![russh::cipher::NONE]);
     let session = client::connect_stream(
-        Arc::new(config),
+        Arc::new(outer_client_config()),
         rw,
         Outer {
             tx: outer_tx,
@@ -501,6 +501,82 @@ impl server::Handler for Port {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn anonymous_outer_transport_negotiates_none_without_weakening_inner_defaults() {
+        struct Relay;
+        impl server::Handler for Relay {
+            type Error = russh::Error;
+        }
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let config = Arc::new(server::Config {
+            preferred: russh::Preferred::anonymous_none(),
+            ..Default::default()
+        });
+        let task = tokio::spawn(async move {
+            server::run_stream(config, server_io, Relay)
+                .await
+                .unwrap()
+                .await
+        });
+        let (tx, _rx) = mpsc::channel(1);
+        let handle = tokio::time::timeout(
+            Duration::from_secs(3),
+            client::connect_stream(
+                Arc::new(outer_client_config()),
+                client_io,
+                Outer {
+                    tx,
+                    slots: Arc::new(Semaphore::new(1)),
+                    permit: None,
+                },
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        drop(handle);
+        task.abort();
+        let _ = task.await;
+        let inner = client_config();
+        assert!(!inner.anonymous);
+        assert!(!inner.preferred.kex.contains(&russh::kex::NONE));
+        assert!(!inner.preferred.cipher.contains(&russh::cipher::NONE));
+        assert!(!inner.preferred.key.is_empty());
+    }
+
+    #[tokio::test]
+    async fn anonymous_none_is_not_an_encrypted_client_fallback() {
+        struct Relay;
+        impl server::Handler for Relay {
+            type Error = russh::Error;
+        }
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let task = tokio::spawn(async move {
+            server::run_stream(
+                Arc::new(server::Config {
+                    preferred: russh::Preferred::anonymous_none(),
+                    ..Default::default()
+                }),
+                server_io,
+                Relay,
+            )
+            .await
+        });
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            client::connect_stream(
+                Arc::new(client_config()),
+                client_io,
+                VerifiedHost("no-accept-any-key-fallback".into()),
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_err());
+        task.abort();
+        let _ = task.await;
+    }
 
     #[test]
     fn endpoint_stage_diagnostics_never_format_request_or_response_material() {

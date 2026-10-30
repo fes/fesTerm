@@ -129,13 +129,7 @@ pub fn start_client(
     let stopped = cancel.clone();
     let (file_tx, file_rx) = flume::bounded(1);
     static NEXT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    let generation = NEXT_GENERATION
-        .fetch_update(
-            std::sync::atomic::Ordering::AcqRel,
-            std::sync::atomic::Ordering::Acquire,
-            |value| value.checked_add(1),
-        )
-        .map_err(|_| invalid())?;
+    let generation = crate::reserve_sequence(&NEXT_GENERATION)?;
     let files = destination.file_read.then(|| FileRequestor {
         sender: file_tx,
         busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),

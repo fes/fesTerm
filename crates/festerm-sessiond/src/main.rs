@@ -1682,7 +1682,7 @@ struct ActiveClient {
     thread: thread::JoinHandle<io::Result<()>>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 fn replace_active<S: Read + Write + Send + 'static>(
     active: &mut Option<ActiveClient>,
     retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
@@ -4891,7 +4891,7 @@ mod tests {
     fn idle_client_disconnect_is_detected_without_pty_output() {
         use std::{
             io::{self, Read},
-            os::unix::net::{UnixListener, UnixStream},
+            os::unix::net::UnixListener,
             sync::{mpsc, Mutex},
         };
 

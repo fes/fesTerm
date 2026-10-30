@@ -246,11 +246,12 @@ impl ServerKex {
                 let exchange = &mut self.exchange;
                 kex.server_dh(exchange, &input.buffer)?;
 
+                let negotiated_key = names.key.as_ref().ok_or(Error::UnknownKey)?;
                 let Some(matching_key_index) = self
                     .config
                     .keys
                     .iter()
-                    .position(|key| is_key_compatible_with_algo(key, &names.key))
+                    .position(|key| is_key_compatible_with_algo(key, negotiated_key))
                 else {
                     debug!("we don't have a host key of type {:?}", names.key);
                     return Err(Error::UnknownKey.into());
@@ -259,7 +260,7 @@ impl ServerKex {
                 // Look up the key we'll be using to sign the exchange hash
                 #[allow(clippy::indexing_slicing)] // key index checked
                 let key = &self.config.keys[matching_key_index];
-                let signature_hash_alg = match &names.key {
+                let signature_hash_alg = match negotiated_key {
                     Algorithm::Rsa { hash } => *hash,
                     _ => None,
                 };

@@ -42,7 +42,7 @@ pub struct Config {
 pub struct Names {
     pub kex: kex::Name,
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub key: Algorithm,
+    pub key: Option<Algorithm>,
     pub cipher: cipher::Name,
     pub client_mac: mac::Name,
     pub server_mac: mac::Name,
@@ -86,6 +86,24 @@ pub(crate) fn is_key_compatible_with_algo(key: &PrivateKey, algo: &Algorithm) ->
 }
 
 impl Preferred {
+    /// Explicit non-standard anonymous transport with no SSH cryptography.
+    /// Only use inside an independently authenticated, encrypted transport.
+    pub const fn anonymous_none() -> Self {
+        Self {
+            kex: Cow::Borrowed(&[kex::NONE]),
+            key: Cow::Borrowed(&[]),
+            cipher: Cow::Borrowed(&[cipher::NONE]),
+            mac: Cow::Borrowed(SAFE_HMAC_ORDER),
+            compression: Cow::Borrowed(&[compression::NONE]),
+        }
+    }
+
+    fn uses_none_host_key(&self) -> bool {
+        self.key.is_empty()
+            && self.kex.as_ref() == [kex::NONE]
+            && self.cipher.as_ref() == [cipher::NONE]
+    }
+
     pub(crate) fn possible_host_key_algos_for_keys(
         &self,
         available_host_keys: &[PrivateKey],
@@ -270,8 +288,17 @@ pub(crate) trait Select {
             None => pref.key.iter().map(ToOwned::to_owned).collect::<Vec<_>>(),
         };
 
-        let (key_both_first, key_algorithm) =
-            Self::select(&possible_host_key_algos[..], &key_list, AlgorithmKind::Key)?;
+        let (key_both_first, key_algorithm) = if pref.uses_none_host_key()
+            && kex_algorithm == kex::NONE
+            && key_list.len() == 1
+            && key_list.first().is_some_and(|key| key == "none")
+        {
+            (true, None)
+        } else {
+            let (first, key) =
+                Self::select(&possible_host_key_algos[..], &key_list, AlgorithmKind::Key)?;
+            (first, Some(key))
+        };
 
         // Cipher
 
@@ -443,7 +470,10 @@ pub(crate) fn write_kex(
         )
         .encode(w)?; // kex algo
 
-        if let Some(server_config) = server_config {
+        if prefs.uses_none_host_key() {
+            // "none" is a protocol sentinel, not an ssh-key extension name.
+            NameList(vec!["none".to_owned()]).encode(w)?;
+        } else if let Some(server_config) = server_config {
             // Only advertise host key algorithms that we have keys for.
             NameList(
                 prefs
@@ -580,8 +610,7 @@ mod tests {
             ],
             true,
         );
-        let names =
-            Server::read_kex(&buf, &Preferred::DEFAULT, None, &KexCause::Initial).unwrap();
+        let names = Server::read_kex(&buf, &Preferred::DEFAULT, None, &KexCause::Initial).unwrap();
         assert_eq!(names.kex, kex::MLKEM768X25519_SHA256);
         assert!(names.ignore_guessed, "wrong guess must be ignored");
     }
@@ -590,8 +619,7 @@ mod tests {
     #[test]
     fn correct_guess_is_not_ignored() {
         let buf = build_kexinit(&["mlkem768x25519-sha256", "curve25519-sha256"], true);
-        let names =
-            Server::read_kex(&buf, &Preferred::DEFAULT, None, &KexCause::Initial).unwrap();
+        let names = Server::read_kex(&buf, &Preferred::DEFAULT, None, &KexCause::Initial).unwrap();
         assert!(!names.ignore_guessed, "correct guess must be honored");
     }
 }

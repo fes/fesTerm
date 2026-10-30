@@ -27,3 +27,16 @@ an unsolicited-reply flood to allocate without bound. The default remains
 `None`, preserving ordinary SSH clients. Channel-open failures now propagate a
 failed reply send instead of ignoring it. The bounded queue has a focused
 regression in the client tests.
+
+The Dev Tunnels outer relay explicitly uses `Preferred::anonymous_none()`:
+KEX/cipher/compression `none`, retaining ordinary MAC advertisements to match
+the upstream SDK, with an empty typed key preference as the
+no-host-key sentinel. Only that no-KEX/no-cipher preference advertises and
+accepts the literal SSH wire host-key name `none`; it cannot be constructed as
+an `ssh-key::AlgorithmName`, which requires extension-name syntax. Negotiated
+host keys are represented as `Option<Algorithm>` internally, and signed
+exchanges require `Some`. All ordinary preferences and the pinned encrypted
+inner tunnel remain unchanged. This mode is only for independently
+authenticated/encrypted transports (the allowlisted TLS relay); it is not an
+SSH fallback. Bridge regressions perform an actual outer no-key handshake and
+prove that a normal encrypted client refuses that same peer.

@@ -78,10 +78,7 @@ impl FileRequestor {
             }
         }
         let _busy = Busy(self.busy.clone());
-        let id = self
-            .next
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_add(1))
-            .map_err(|_| invalid())?;
+        let id = crate::reserve_sequence(&self.next)?;
         let (reply, result) = flume::bounded(1);
         self.sender
             .try_send(FileCall {

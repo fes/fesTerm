@@ -218,6 +218,13 @@ These categories never retain or format the underlying request, response,
 headers, URL, body, request ID or token. A failed stage is not permission to
 disable host pins, broaden token scopes or alter a private tunnel's ACL.
 
+The service's anonymous outer SSH layer explicitly negotiates no KEX, host
+key or cipher inside the authenticated TLS WebSocket, preserving the SDK's
+ordinary MAC advertisements. The modern-russh
+adapter handles its literal `none` host-key wire sentinel separately from
+cryptographic key algorithm names. This is not a fallback for ordinary SSH:
+the client-to-bridge inner SSH layer remains encrypted and host-key pinned.
+
 ## Validation and limits
 
 Focused deterministic checks:

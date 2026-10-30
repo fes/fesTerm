@@ -6477,3 +6477,11 @@ remote localhost never grants client-local authority. The implementation and
 limits are in [the experiment guide](dev-tunnels-experiment.md).
 Deterministic tests are not service/native acceptance: DT-01–DT-06, independent
 security review and non-Windows qualification remain open.
+
+The controlled GitHub-hosted probe reached endpoint registration and WebSocket
+upgrade, then exposed an SDK/modern-russh interoperability gap: the outer
+protocol's literal `none` host-key sentinel is not a cryptographic algorithm
+or a valid `ssh-key` extension name. An explicit no-key/no-KEX preference now
+encodes that sentinel without inventing a host key. A real in-memory outer
+handshake and normal-client refusal regression keep this TLS-only outer mode
+separate from ordinary SSH and the pinned encrypted inner transport.
