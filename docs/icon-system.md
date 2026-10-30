@@ -51,6 +51,7 @@ The intended first enum surface is:
 | `AppMark` | `app-mark.svg` | fesTerm application/product identity |
 | `LocalTerminal` | `local-terminal.svg` | Local shell or local terminal session |
 | `SshRemote` | `ssh-remote.svg` | Generic remote/SSH session; never an OS logo |
+| `DevTunnel` | `dev-tunnel.svg` | Terminal reached through a dev tunnel; distinct from SSH, not a vendor logo or trust indicator |
 | `Serial` | `serial.svg` | Generic local serial-port session; never a vendor logo |
 | `NewSession` | `new-session.svg` | Open the Launcher/new-session flow |
 | `Settings` | `settings.svg` | Global settings |
@@ -79,6 +80,7 @@ The intended first enum surface is:
 | `RunningSessions` | `running-sessions.svg` | The collection of running sessions available to reattach |
 | `FileTransfer` | `file-transfer.svg` | File-transfer (SFTP) session or destination |
 | `RemoteGlobe` | `remote-globe.svg` | The remote/network badge already composited into `SshRemote` |
+| `RemoteTunnel` | `remote-tunnel.svg` | Optional tunnel-only accent overlay already composited into `DevTunnel` |
 | `Proceed` | `proceed.svg` | Proceed into the flow a launch card represents |
 | `NewProfile` | `new-profile.svg` | Create a new saved profile |
 | `SortOrder` | `sort-order.svg` | Change a list's ordering |
@@ -109,6 +111,47 @@ Do not name variants after where they happen to appear (`TopBarSearch`) or
 after visual construction (`ThreeDots`). Names describe intent so launcher,
 shortcuts, chrome, menus, and the command palette can share the same semantic
 asset without coupling their behavior.
+
+## Dev Tunnel construction and integration
+
+`DevTunnel` implements the approved single-arch alternative. Its first two
+SVG paths are copied exactly from `ssh-remote.svg`: the terminal frame,
+prompt chevron, and cursor retain the SSH geometry and 1-unit stroke. Only
+the lower-right modifier changes, from a globe to a symmetric bottom-open
+arch with three centerline marks. This is shared geometry, not automatic SVG
+inheritance. Source and generated-geometry tests protect that relationship;
+a deliberate terminal-body revision must update both icons together.
+
+`RemoteTunnel` contains exactly the final two paths of `DevTunnel`, on the
+same uncropped 24-unit grid. For two-tone presentation, paint `DevTunnel` in
+the existing session-type color and then `RemoteTunnel` in the accent color
+at the **same rectangle**. Do not independently scale or recenter the overlay.
+The complete icon also works by itself in monochrome. Do not add a globe,
+chain, padlock base, vendor logo, gradient, glow, or decorative outer tile.
+The tunnel identifies the transport family, not authentication success,
+connection health, or durable remote-session support.
+
+The icon assets and semantic renderer do not themselves enable the optional
+tunnel capability or change existing SSH profiles. The tunnel feature uses
+`Icon::DevTunnel` for its profile-type selector, saved-profile rows and
+launcher, preserving the SSH optical
+slot/body scale and the existing independent status indicator. Do not
+replace unrelated local, SSH, Serial, SFTP, or Markdown marks.
+
+Wire only the actual tunnel session type to
+these semantic icons; do not infer it from a hostname
+or route ordinary SSH to this mark. Keep color in the application, preserve
+existing row/chip geometry and hit targets, and supply action-specific
+accessible labels at interactive use sites. Do not introduce authentication,
+transport, persistence, or schema changes merely to expose the artwork.
+
+Automated source tests verify terminal-path identity, overlay identity,
+stroke bounds, generated files, and a review canvas that fits the complete
+inventory. Rust tests verify identical generated terminal primitives and
+stroke scaling at 16, 20, 24 px and launcher sizes. Native egui comparison
+on dark/light backgrounds at 1x/2x scale, including disabled/selected rows,
+remains part of the feature-integration visual review; source/raster checks
+alone do not establish native rendering acceptance.
 
 ## Accessibility
 

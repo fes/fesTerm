@@ -1718,7 +1718,12 @@ storing the secret itself. Only available authentication choices appear.
 Terminal dimensions and inferred remote platform do not belong in profiles.
 
 The ADR 0053 experiment, included in default desktop builds, adds a peer **Dev Tunnel** kind to
-Launcher, Profiles and Inspector. The preferred editor reuses the destination
+Launcher, Profiles and Inspector, ordered Local Shell, SSH, Dev Tunnel, then SFTP,
+Serial and Markdown, and marked with the `DevTunnel` tunnel icon rather than the
+SSH globe. The editor and import screens use the same bordered card, section
+headings and shared action buttons as the other profile editors, and the
+sign-in dialog uses the standard confirmation layout (Secondary Cancel first,
+Accent primary second). The preferred editor reuses the destination
 form's labeled **Name** and **Tunnel** fields and concise **Sign in with GitHub**,
 **Connect**, **Connect once**, **Save profile** and **Cancel** controls.
 Save target edits before sign-in. Device authorization displays the short code

@@ -625,6 +625,10 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   Structural editor routing and bounded pre-admission discovery have regressions;
   no new snapshot baseline is implied.
   Device-code copying has normal/narrow real-widget activation coverage.
+  Shared styled buttons retain a literal monospace code; card actions wrap
+  inside narrow editors. Distinct tunnel marks preserve SSH terminal geometry
+  and optical slot sizing, and launcher order has feature-aware coverage.
+  These structural checks do not replace native theme/scale/focus review.
   The relay TLS regression explicitly enables both ring and aws-lc in the
   workspace test graph, refuses a closed peer without panic, retains native
   roots/certificate checks and does not change the process provider.

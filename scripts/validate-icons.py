@@ -22,13 +22,13 @@ ET.register_namespace("", SVG_NS)
 
 EXPECTED = {
     "activate", "app-mark", "auth-required", "back", "clear", "close", "command-palette",
-    "copy", "diagnostics", "disclosure", "disconnect", "error", "file-transfer",
+    "copy", "dev-tunnel", "diagnostics", "disclosure", "disconnect", "error", "file-transfer",
     "home-directory",
     "host-key-verification",
     "edit", "keyboard-shortcuts", "local-terminal", "maximize", "minimize",
     "external-link", "markdown-document", "new-profile", "new-session", "next-match", "outline",
     "overflow", "overflow-vertical", "parent-directory", "paste", "previous-match", "proceed",
-    "profile", "reattach", "reconnect", "refresh", "remote-globe", "rendered-view", "restore",
+    "profile", "reattach", "reconnect", "refresh", "remote-globe", "remote-tunnel", "rendered-view", "restore",
     "running-sessions", "saved-profiles", "search", "secret-storage",
     "section-collapsed", "section-expanded",
     "serial", "session-inspector", "settings", "sort-order", "source-view", "ssh-remote",
@@ -489,7 +489,10 @@ def validate(path: Path) -> ET.Element:
 
 
 def build_sheet(icons: list[tuple[Path, ET.Element, tuple[Primitive, ...]]]) -> str:
-    width, height = 960, 650
+    columns, cell_width, cell_height = 5, 184, 92
+    width = 960
+    # Keep the final row inside the review canvas as the inventory grows.
+    height = max(650, 100 + math.ceil(len(icons) / columns) * cell_height + 16)
     svg = ET.Element(
         f"{{{SVG_NS}}}svg",
         {"viewBox": f"0 0 {width} {height}", "width": str(width), "height": str(height)},
@@ -506,7 +509,6 @@ def build_sheet(icons: list[tuple[Path, ET.Element, tuple[Primitive, ...]]]) -> 
     })
     subtitle.text = "24 px source grid · review at 20 px and 16 px · semantic color supplied by UI code"
 
-    columns, cell_width, cell_height = 5, 184, 92
     for index, (path, source_root, _) in enumerate(icons):
         column, row = index % columns, index // columns
         x, y = 32 + column * cell_width, 100 + row * cell_height

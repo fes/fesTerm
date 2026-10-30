@@ -12,6 +12,8 @@ pub enum Icon {
     AppMark,
     LocalTerminal,
     SshRemote,
+    /// A terminal reached through a dev tunnel; not a connection/trust state.
+    DevTunnel,
     Serial,
     NewSession,
     Settings,
@@ -77,6 +79,9 @@ pub enum Icon {
     /// color is how a surface renders the badge as an accent without the
     /// asset layer owning two-tone art.
     RemoteGlobe,
+    /// Optional accent overlay for `DevTunnel`, painted at the same rectangle.
+    /// The complete `DevTunnel` mark already includes this geometry.
+    RemoteTunnel,
     /// Proceed into the flow a launch card represents.
     Proceed,
     /// Create a new saved profile.
@@ -196,6 +201,7 @@ mod tests {
             Icon::AppMark,
             Icon::LocalTerminal,
             Icon::SshRemote,
+            Icon::DevTunnel,
             Icon::Serial,
             Icon::NewSession,
             Icon::Settings,
@@ -243,13 +249,14 @@ mod tests {
             Icon::Proceed,
             Icon::Reattach,
             Icon::RemoteGlobe,
+            Icon::RemoteTunnel,
             Icon::RunningSessions,
             Icon::SavedProfiles,
             Icon::SectionCollapsed,
             Icon::SectionExpanded,
             Icon::SortOrder,
         ];
-        assert_eq!(icons.len(), 55);
+        assert_eq!(icons.len(), 57);
         let sources =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/source");
         assert_eq!(std::fs::read_dir(sources).unwrap().count(), icons.len());
@@ -259,11 +266,13 @@ mod tests {
     fn source_strokes_scale_at_card_and_profile_row_sizes() {
         let ctx = egui::Context::default();
         let painter = ctx.layer_painter(egui::LayerId::background());
-        for size in [16.0, 20.0, 28.0, 42.0, 50.0] {
+        for size in [16.0, 20.0, 24.0, 28.0, 42.0, 50.0] {
             let rect = Rect::from_min_size(Pos2::ZERO, egui::Vec2::splat(size));
             for (icon, source_width) in [
                 (Icon::SshRemote, 1.0),
                 (Icon::RemoteGlobe, 1.0),
+                (Icon::DevTunnel, 1.0),
+                (Icon::RemoteTunnel, 1.0),
                 (Icon::LocalTerminal, 1.25),
                 (Icon::Serial, 1.25),
                 (Icon::Search, 1.75),
@@ -298,6 +307,47 @@ mod tests {
             .map(|p| p.0)
             .fold(f32::NEG_INFINITY, f32::max);
         assert!((max_x - min_x - 4.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn dev_tunnel_preserves_the_ssh_terminal_geometry() {
+        let ssh = icon_geometry(Icon::SshRemote);
+        let globe = icon_geometry(Icon::RemoteGlobe);
+        let dev_tunnel = icon_geometry(Icon::DevTunnel);
+        let tunnel = icon_geometry(Icon::RemoteTunnel);
+        let terminal = &ssh[..ssh.len() - globe.len()];
+
+        assert!(!terminal.is_empty());
+        assert_eq!(&dev_tunnel[..dev_tunnel.len() - tunnel.len()], terminal);
+        assert_eq!(
+            icon_stroke_width(Icon::DevTunnel),
+            icon_stroke_width(Icon::SshRemote)
+        );
+    }
+
+    #[test]
+    fn remote_tunnel_overlay_matches_the_complete_dev_tunnel_mark() {
+        let tunnel = icon_geometry(Icon::RemoteTunnel);
+        assert!(icon_geometry(Icon::DevTunnel).ends_with(tunnel));
+        assert_eq!(
+            icon_stroke_width(Icon::DevTunnel),
+            icon_stroke_width(Icon::RemoteTunnel)
+        );
+        // One bottom-open arch and three separated centerline marks.
+        assert_eq!(tunnel.len(), 4);
+        let Primitive::Polyline(arch) = tunnel[0] else {
+            panic!("the tunnel must have an open arch outline");
+        };
+        assert_eq!(arch.first(), Some(&(14.2, 20.4)));
+        assert_eq!(arch.last(), Some(&(22.6, 20.4)));
+        for primitive in &tunnel[1..] {
+            let Primitive::Polyline(points) = primitive else {
+                panic!("each centerline mark must be a short line");
+            };
+            assert_eq!(points.len(), 2);
+            assert!(points.iter().all(|point| (point.0 - 18.4).abs() < 0.0001));
+            assert!(points[1].1 > points[0].1);
+        }
     }
 
     #[test]
