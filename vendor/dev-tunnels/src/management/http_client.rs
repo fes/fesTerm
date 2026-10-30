@@ -451,7 +451,7 @@ impl TunnelManagementClient {
             .map_err(HttpError::ConnectionError)?;
 
         if res.status().is_success() {
-            let mut body = Vec::new();
+            let mut body = zeroize::Zeroizing::new(Vec::new());
             while let Some(chunk) = res.chunk().await.map_err(HttpError::ConnectionError)? {
                 if body.len() + chunk.len() > 64 * 1024 {
                     return Err(HttpError::AuthorizationError(
@@ -597,11 +597,14 @@ impl TunnelManagementClient {
         url: Url,
         tunnel_opts: &TunnelRequestOptions,
     ) -> HttpResult<Request> {
-        let authorization = match &tunnel_opts.authorization {
+        let mut authorization = match &tunnel_opts.authorization {
             Some(authorization) => authorization.clone(),
             None => self.authorization.get_authorization().await?,
         };
-        Ok(self.make_tunnel_request_with_authorization(method, url, tunnel_opts, &authorization))
+        let request =
+            self.make_tunnel_request_with_authorization(method, url, tunnel_opts, &authorization);
+        authorization.clear_private();
+        Ok(request)
     }
 
     fn make_tunnel_request_with_authorization(
@@ -616,6 +619,7 @@ impl TunnelManagementClient {
 
         let headers = request.headers_mut();
         if let Some(a) = authorization.as_header() {
+            let a = zeroize::Zeroizing::new(a);
             let mut value = HeaderValue::from_str(&a).unwrap();
             value.set_sensitive(true);
             headers.insert(AUTHORIZATION, value);
@@ -793,29 +797,11 @@ pub fn new_tunnel_management_for_custom_domain(
 
 fn create_full_user_agent(user_agent: &str) -> String {
     let pkg_version = PKG_VERSION.unwrap_or("unknown");
-    let os = os_info::get();
-    let os_info = format!("{}: {} {}", "OS", os.os_type(), os.version());
-
-    let mut full_user_agent = format!(
-        "{}{}{} ({}",
-        user_agent, " Dev-Tunnels-Service-Rust-SDK/", pkg_version, os_info
-    );
-
-    #[cfg(windows)]
-    {
-        use winreg::enums::*;
-        use winreg::RegKey;
-        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-        let key = hklm.open_subkey("SOFTWARE\\Microsoft\\Windows365");
-        if let Ok(id) = key.and_then(|k| k.get_value::<String, _>("PartnerId")) {
-            full_user_agent.push_str("; Windows-Partner-Id: ");
-            full_user_agent.push_str(&id);
-        }
-    }
-
-    full_user_agent.push(')');
-
-    full_user_agent
+    format!(
+        "{user_agent} Dev-Tunnels-Service-Rust-SDK/{pkg_version} (OS: {}; {})",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
 }
 
 impl TunnelClientBuilder {

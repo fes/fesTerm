@@ -82,7 +82,41 @@
       "prerequisites": [
         "Remaining real GitHub-provisioned service/native desktop qualification beyond the reviewed Windows fixture",
         "Controlled two-account real-service evidence; mock isolation is not service qualification",
-        "Native Entra/in-app OAuth sign-in, automatic refresh and non-Windows qualification remain deferred"
+        "Native Entra and non-Windows qualification remain deferred; native GitHub registration/live acceptance is tracked in #429"
+      ]
+    },
+    {
+      "id": "native-dev-tunnels-identity-discovery",
+      "edges": ["TUNNEL-0[789]"],
+      "requirements": ["docs/adr/0053-separate-dev-tunnels-session-bridge.md#native-github-identity-and-name-discovery", "docs/gui-design.md#profile-editing"],
+      "decisions": ["ADR-0053"],
+      "automated_tests": [
+        "native_device_flow_respects_interval_slowdown_and_private_identity_binding",
+        "native_device_flow_denial_expiry_cancel_and_changed_account_refuse",
+        "native_device_flow_refuses_foreign_browser_uris_and_broad_scopes",
+        "native_refresh_returns_a_new_pair_only_after_account_revalidation",
+        "native_http_body_bound_and_cancel_refuse_without_raw_service_details",
+        "native_http_requests_use_owned_public_device_contracts_and_sensitive_account_headers",
+        "native_service_selection_refuses_ordinary_tunnels_ambiguity_and_missing_pins",
+        "native_tunnel_profiles_keep_identity_connect_and_account_bindings_independent",
+        "native_auth_completion_is_discarded_after_profile_edit_without_publishing_credentials",
+        "native_auth_cancel_wins_before_ready_credentials_are_published",
+        "native_auth_refresh_publishes_only_the_bound_profile_identity_and_rejects_stale_rotation",
+        "native_auth_profile_changes_retire_only_their_own_vault_entries",
+        "native_auth_identity_lease_refuses_concurrent_credential_rotation_until_final_owner_drops",
+        "native_auth_live_account_and_file_binding_remain_pinned_after_profile_account_change",
+        "native_auth_profile_editor_routes_concise_controls_and_requires_saved_target",
+        "native_auth_profile_draft_preserves_only_unchanged_target_bindings",
+        "bridge_discovery_is_bounded_read_only_and_never_opens_daemon_ipc",
+        "bridge_discovery_refuses_incompatible_or_nonbridge_responses_without_admission",
+        "encrypted_transport_refuses_changed_host_key_before_authentication"
+      ],
+      "manual_scenarios": ["DT-07"],
+      "status": "partial",
+      "prerequisites": [
+        "#429: registered fesTerm-owned public OAuth client, device-flow enablement and actual third-party GitHub to Dev Tunnels authorization",
+        "Native browser/account consent, refresh/revocation, two-account and desktop usability qualification",
+        "Future iOS host/runtime and Keychain integration; portable Rust does not qualify the mobile product"
       ]
     },
     {

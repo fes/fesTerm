@@ -630,7 +630,18 @@ The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes
 detected and explicit file targets to live SFTP or negotiated bridge reads;
 provider/session-bound snapshots are not local document authority.
-Ordinary builds and mobile do not enable relay dependencies.
+Default desktop builds include the experiment; the current mobile host does
+not integrate it. `festerm-tunnel-client` owns portable native GitHub device
+authorization/refresh and bounded official-service discovery using rustls,
+without CLI, browser implementation, native FFI, daemon or GUI dependencies.
+The host opens the fixed system-browser device URL and supplies native secure
+storage. The app serializes credential rotation, validates profile/account
+bindings before publication and asks Cancel-default account/host consent.
+OAuth identity/refresh and scoped connection credentials use distinct opaque
+references; only scoped connect authority reaches the session runtime.
+Read-only pinned bridge discovery precedes atomic daemon admission.
+Project registration/native service acceptance and future iOS runtime/Keychain
+integration remain gated by [#429](https://github.com/fes/fesTerm/issues/429).
 
 ## Open Questions
 

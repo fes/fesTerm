@@ -6470,6 +6470,24 @@ per-case evidence and limitations are in `validation/windows-warp/README.md`.
 
 ## Experimental source-bound Dev Tunnels bridge
 
+### Native identity without a desktop helper
+
+The owner next requested Name/Tunnel connection with concise existing-form
+controls, then clarified that authentication must also work from an eventual
+iOS host. The client therefore uses shared Rust GitHub device authorization,
+not the desktop CLI or somebody else's OAuth identity. A native identity broker
+verifies each account, separates rotating identity credentials from scoped
+connection authority, and serializes native-store publication against profile
+edits/cancellation. Tunnel-name lookup and Cancel-default host approval precede
+a small pinned read-only discovery operation; daemon admission/ownership stays
+unchanged. Legacy scoped-token profiles remain compatible.
+
+Deterministic OAuth/discovery/profile/UI regressions exercise this boundary.
+The project public-client registration, actual service acceptance and native
+browser/refresh/iOS evidence are deliberately still open in
+[#429](https://github.com/fes/fesTerm/issues/429); missing registration produces
+an honest unavailable message, not a fake successful sign-in.
+
 The first experimental slice separates cloud transport from the local daemon:
 a bounded standalone relay exports one deliberately selected generation with
 atomic no-takeover admission. Recovery is adopted before live events, query

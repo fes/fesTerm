@@ -3,6 +3,7 @@ use std::{fmt, io, path::Path};
 
 pub struct Launch {
     pub destination: Destination,
+    pub account: Option<festerm_tunnel_client::identity::Account>,
     token: zeroize::Zeroizing<String>,
 }
 
@@ -13,6 +14,17 @@ impl fmt::Debug for Launch {
 }
 
 impl Launch {
+    pub fn from_destination(destination: Destination, token: zeroize::Zeroizing<String>) -> Self {
+        Self {
+            destination,
+            token,
+            account: None,
+        }
+    }
+    pub fn with_account(mut self, account: festerm_tunnel_client::identity::Account) -> Self {
+        self.account = Some(account);
+        self
+    }
     pub fn from_secret(path: &Path, secret: festerm_secret_store::SecretBytes) -> io::Result<Self> {
         let token = secret.with_bytes(|bytes| {
             if bytes.is_empty()
@@ -28,7 +40,11 @@ impl Launch {
             ))
         })?;
         let destination = transport::read_destination(path)?;
-        Ok(Self { destination, token })
+        Ok(Self {
+            destination,
+            token,
+            account: None,
+        })
     }
 
     pub fn from_profile(
@@ -74,7 +90,11 @@ pub fn parse_env() -> io::Result<Option<Launch>> {
     }
     let destination = transport::read_destination(Path::new(&args[1]))?;
     let token = transport::read_token(args.len() == 3)?;
-    Ok(Some(Launch { destination, token }))
+    Ok(Some(Launch {
+        destination,
+        token,
+        account: None,
+    }))
 }
 
 #[cfg(test)]

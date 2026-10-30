@@ -20,7 +20,10 @@ fesTerm-owned software at both ends, and selected a separate remote bridge
 process. The first implementation uses explicitly provisioned,
 tunnel-scoped host/connect tokens, with **GitHub authentication through the
 official Dev Tunnels CLI as the first supported provisioning route**.
-Native fesTerm-owned sign-in and Entra integration are deferred. This does
+The owner subsequently requested a native, iOS-compatible client workflow:
+fesTerm-owned GitHub device authorization and tunnel-name discovery are now
+implemented behind project registration/live acceptance
+[#429](https://github.com/fes/fesTerm/issues/429). Native Entra remains deferred. This does
 not authorize borrowing another application's OAuth identity or extracting
 its cached credentials.
 
@@ -67,6 +70,7 @@ SSH server is required by this design.
 | Component | Owns | Must not own |
 | --- | --- | --- |
 | Client application | Commands, connection metadata, consent, visible lifecycle, source classification, presented terminal | Relay internals or remote PTY lifetime |
+| Native identity broker | Device authorization, account-bound refresh, bounded official-service discovery | CLI/browser implementation, daemon/session ownership, platform-vault implementation |
 | Client remote backend | Tunnel connection, bridge protocol, bounded session events and recovery delivery | GUI policy or independent terminal mutation |
 | Remote bridge | Tunnel host connection, credential lifetime, admission, session targeting, translation to protected local daemon APIs | Shell handles, terminal parser/mirror, cloud transcript storage |
 | Remote daemon | Its local session identity, PTY/process lifetime, authoritative recovery mirror and local access enforcement | Dev Tunnels, OAuth, public listeners or relay tokens |
@@ -85,19 +89,84 @@ always-running system service.
 Dev Tunnel is a peer connection/profile kind to Local, SSH and Serial, not an
 SSH profile or shell-command alias. The initial implementation includes its
 launcher entry, saved-profile editor, centralized application commands and
-Inspector classification. A profile holds an operator-trusted destination
-metadata file reference and its own opaque native-store **connect** credential
-reference. Tokens are stored only after an explicit action; connect-once
-credentials remain session-only. Host/OAuth tokens never belong in profiles.
+Inspector classification. The normal profile holds a tunnel name, verified
+public account/host metadata and independent opaque native-store **identity**
+and **connect** references. Advanced legacy profiles retain their trusted
+destination-file and scoped-token route. Credentials never belong in profiles;
+connect-once identities and connect tokens remain session-only.
 
 Different profiles/accounts/tunnels can coexist in one instance without a
 global current-account/token slot. Sessions from the same profile deliberately
-reuse that reference. Rotation creates a fresh reference, and asynchronous
+reuse that reference. Scoped-connect rotation creates a fresh reference;
+native identity refresh atomically replaces its account-bound pair. Asynchronous
 credential-save completion must still match its original profile. Duplicating
 a profile does not copy its credential. Live launches capture their profile,
 credential value, verified host and exact exported generation; profile edits
-never retarget another live connection. Native OAuth account switching and
-automatic token refresh remain deferred, not implied by this capability model.
+never retarget another live connection. Explicit sign-in can select another
+GitHub account only after verified-account/host approval. Refresh is serialized
+and account-bound, not a global login switch or automatic session reconnection.
+
+### Native GitHub identity and name discovery
+
+`festerm-tunnel-client` is portable shared Rust with rustls, typed cancellable
+HTTP boundaries and bounded decoding. It has no CLI/process, callback listener,
+browser implementation, daemon, PTY, GUI or platform-vault dependency. The host
+opens the fixed `https://github.com/login/device` URL and provides secure storage.
+The existing mobile host does not yet integrate the runtime or Keychain.
+
+The application-wide public client ID is supplied by the release build through
+`FESTERM_GITHUB_CLIENT_ID`, never by each profile/user. Missing registration is
+an honest unavailable state. No borrowed app ID or client secret is shipped.
+Project-owned OAuth registration, device-flow enablement, actual third-party
+Dev Tunnels acceptance and native/iOS evidence remain open under
+[#429](https://github.com/fes/fesTerm/issues/429).
+
+Device authorization posts `client_id` and minimal `read:user` scope to
+`/login/device/code`, shows the short user code and fixed system-browser link,
+then polls `/login/oauth/access_token` with the device grant. Polls respect the
+server interval (at least five seconds), add five on slowdown and stop at
+expiry/cancellation. Responses are capped at 64 KiB, token values at 16 KiB,
+requests at 20 seconds, device lifetime at 900 seconds, and the complete UI
+operation at 30 minutes. Errors are content-free; no bodies, codes or tokens
+enter logs, ordinary metadata, arguments, environment variables or files.
+Public tunnel aliases and verified account logins use bounded identifier
+validation rather than keyword-based credential rejection; unknown secret
+fields remain forbidden and only opaque references name stored credentials.
+Denial, disabled flow, expiry and rate limits never silently restart login.
+
+Every newly issued/refreshed access token is verified through GitHub `/user`;
+stable numeric account ID, not mutable login text, binds credentials. GitHub
+device-issued refresh uses the documented public-client exception: client ID,
+refresh grant and refresh token, **without client_secret**. Account-validated
+rotation replaces the complete native-store pair before further discovery and
+only while the original profile still matches. A single bounded worker
+reservation lasts through worker and UI completion. Failed/uncertain rotation
+requires explicit reauthentication; it cannot safely restore an invalidated
+old pair. Stored-identity operations also hold a per-reference OS file lease
+through worker and UI completion, preventing concurrent refresh of one vault
+pair across desktop processes. Only empty coordination files/opaque UUIDs enter
+the application cache; no credential bytes do. Native identity references stay
+stable until explicit account replacement/retirement. Future mobile hosts must
+provide equivalent single-broker coordination with their vault adapter.
+Connect once obtains an independent transient identity and does not
+rotate a saved identity.
+
+The native identity broker uses official SDK `Authorization::Github` only for
+bounded `get_tunnel(include_ports=true, token_scopes=[connect])`, with account
+verification before and after minting. The session runtime receives only the
+scoped connect token. Exactly one host and one port marked
+`festerm-bridge-v1` (label or exact description) are required; ordinary VS Code tunnels, missing pins and
+ambiguous exports fail rather than selecting arbitrary services. First/changed
+account or host requires Cancel-default fingerprint approval. Pinned encrypted
+read-only discovery then returns version, exact exported generation and file
+capabilities before any daemon admission; it exposes no IPC paths. Ordinary
+atomic no-takeover attachment follows with immutable source/account/profile/
+host/session pins. Profile edits/cancel discard unpublished vault entries.
+
+The supported device/refresh contracts are documented by
+[GitHub](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps).
+Secretless web/PKCE exchange is not assumed: its documented token exchange
+still requires a secret. Native sign-in is implemented, not live-qualified.
 
 ### Authentication, authorization and host identity
 
@@ -126,7 +195,7 @@ The initial experimental bootstrap is:
 The [documented token mechanism](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security#tunnel-access)
 currently issues expiring bearer capabilities, described as lasting 24 hours.
 Treat expiry as service-owned, not a hard-coded renewal interval. No automatic
-identity-based renewal is promised for this phase. A host or connect token
+identity-based renewal is available for advanced scoped-only credentials. A host or connect token
 does not grant authority to mint its replacement.
 
 Possession of the admitted connect capability grants access to the exported
@@ -142,11 +211,10 @@ that OS account. The daemon still validates local requests and generations.
 Do not expose a raw Unix socket/named pipe, registry path or local executable
 selection as an unrestricted network proxy.
 
-The bridge/client runtime consumes scoped capabilities rather than GitHub
+The bridge/client session runtime consumes scoped capabilities rather than GitHub
 OAuth tokens; its session protocol does not depend on the provisioning
-identity provider. GitHub-first does not imply a native in-app GitHub sign-in
-flow in this initial token-bootstrap experiment. Such a flow needs its own
-supported application identity/authorization design and qualification.
+identity provider. Native sign-in belongs only to the separate client identity
+broker above; the bridge never receives GitHub OAuth/refresh credentials.
 
 Native Entra sign-in requires a later supported fesTerm application identity,
 confirmed service audience/scopes, consent/onboarding and real tenant/MFA/
@@ -352,8 +420,9 @@ explicit request, without promoting its qualification status. It is described in
 commands and numeric resource bounds. It exports one preconfigured existing
 session, with peer profiles, explicit CLI-to-GUI attach/detach, optional bounded
 file reads and ordered terminal controls.
-Inventory, create, takeover, terminate, automatic reconnect and native in-app
-identity flows are unavailable; they are not simulated by this subset.
+Inventory, create, takeover, terminate and automatic reconnect are unavailable;
+they are not simulated by this subset. Native identity/name discovery is
+implemented with deterministic coverage, registration/live gate #429 pending.
 
 The standalone bridge uses the pinned official SDK's management/contracts and
 WebSocket adapter with a narrowly ported modern-russh relay handshake.
@@ -374,14 +443,14 @@ framing for the existing Session worker, preserving its adoption/reply policy.
 
 Independent source reviews and one private GitHub/Windows relay/session
 fixture passed; this code remains experimental pending the broader
-`DT-01`–`DT-06` real-service/native qualification. GitHub-first provisioning
-does not imply native GitHub OAuth or Entra support in fesTerm.
+`DT-01`–`DT-07` real-service/native qualification. The prior scoped-token
+fixture is not evidence for the new native GitHub flow. Entra is unsupported.
 
 ## Consequences
 
 The bridge can fail or be updated without replacing the PTY owner. Local-only
-users retain the existing daemon and need no cloud sign-in or new network
-dependencies. New packaging, remote setup, compatibility negotiation and
+users retain the existing daemon and need no cloud sign-in; daemon/core/UI
+dependencies remain cloud-free. New packaging, remote setup, compatibility negotiation and
 credential lifecycle still require deliberate implementation.
 
 Configuration adds a secret-free `dev_tunnel` profile kind; existing documents
@@ -397,7 +466,7 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   daemon stays local-only and owns PTY/recovery lifetime; exact session/host
   targeting; bounded network decode and queues; secrets stay outside ordinary
   metadata; remote links never become client-local file authority.
-- **GUI/action edges affected:** `TUNNEL-01`/`02`/`03`/`05`/`06`,
+- **GUI/action edges affected:** `TUNNEL-01`/`02`/`03`/`05`/`06`/`07`/`08`/`09`,
   `TERM-05` and `TERM-08` have restricted experimental implementation and partial automated evidence;
   `TUNNEL-04` remains deferred/unavailable. Existing local/SSH ownership and close semantics are
   unchanged. Implemented operations must converge on the application command
@@ -409,6 +478,11 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   exercise concurrent mocked account/profile bindings and rotation, peer
   profile command routing, detected/OSC 8 Windows/POSIX text/Markdown dispatch,
   changed bindings and remote origin without local file authority.
+  Native identity tests cover interval/slowdown, expiry/denial/cancel, account
+  mismatch, refresh, scope/URI refusal, bounded/redacted HTTP outcomes, profile
+  isolation/stale completion and serialized atomic refresh publication.
+  Structural editor routing and bounded pre-admission discovery have regressions;
+  no new snapshot baseline is implied.
   Further tests/evidence required include real bridge process death and native
   daemon survival, credential expiry/revocation and platform GUI behavior.
   The original planned obligations remain: protocol/schema/length refusal,
@@ -418,7 +492,7 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   independent native credential bindings, transient/stored token isolation,
   source-bound remote detected/OSC 8 reads and provider-specific snapshots.
   Real-service/native obligations are not claimed passed by mock tests.
-- **Native/manual evidence required:** `DT-01` through `DT-06` in
+- **Native/manual evidence required:** `DT-01` through `DT-07` in
   `docs/manual-validation.md`; service policy/authentication, real PTY/TUI
   input/resize, disconnect/bridge restart and platform lifetimes remain
   pending. Controlled automation should replace manual checks where possible.

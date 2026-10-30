@@ -19,6 +19,8 @@ pub const REFUSED: u8 = 9;
 pub const SYNC: u8 = 10;
 pub const EXITED: u8 = 11;
 pub const CAPABILITIES: u8 = 12;
+pub const DISCOVER: u8 = 13;
+pub const DESCRIPTION: u8 = 14;
 pub const FILE_READ: u8 = 20;
 pub const FILE_RESULT: u8 = 21;
 pub const FILE_LIMIT: usize = 4 * 1024 * 1024;
@@ -40,6 +42,14 @@ pub struct Hello {
     pub version: u16,
     pub snapshot_schema: u16,
     pub target: Target,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Description {
+    pub version: u16,
+    pub target: Target,
+    pub files: FileAccess,
 }
 
 #[derive(Clone, Copy, Default, Deserialize, Serialize)]
@@ -97,7 +107,8 @@ pub fn validate_length(kind: u8, length: usize) -> io::Result<()> {
         FILE_READ => 8192,
         FILE_RESULT => FILE_LIMIT + 9,
         SNAPSHOT => SNAPSHOT_LIMIT,
-        HELLO => 4096,
+        HELLO | DESCRIPTION => 4096,
+        DISCOVER => 2,
         INPUT | OUTPUT | SYNC => CHUNK_LIMIT,
         RESIZE | RESIZED => 8,
         CAPABILITIES => 2,

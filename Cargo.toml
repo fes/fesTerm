@@ -13,6 +13,7 @@ members = [
     "crates/festerm-session",
     "crates/festerm-sessiond",
     "crates/festerm-tunnel-bridge",
+    "crates/festerm-tunnel-client",
     "crates/festerm-secret-store",
     "crates/festerm-ssh",
     "crates/festerm-test-support",

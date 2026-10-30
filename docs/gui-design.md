@@ -1718,13 +1718,22 @@ storing the secret itself. Only available authentication choices appear.
 Terminal dimensions and inferred remote platform do not belong in profiles.
 
 The ADR 0053 experiment, included in default desktop builds, adds a peer **Dev Tunnel** kind to
-Launcher, Profiles and Inspector. Its restricted editor has name, trusted
-destination JSON path and a hidden connect-token field. Save changes metadata;
-Store / replace explicitly creates this saved profile's native-store reference;
-Connect once keeps the credential session-only. Independent profiles/accounts
-have no shared current-login slot. Duplicate clears the credential reference,
-and active sessions retain immutable launch bindings. Native sign-in,
-inventory/create/takeover/terminate and filesystem writes are unavailable.
+Launcher, Profiles and Inspector. The preferred editor reuses the destination
+form's labeled **Name** and **Tunnel** fields and concise **Sign in with GitHub**,
+**Connect**, **Connect once**, **Save profile** and **Cancel** controls.
+Save target edits before sign-in. Device authorization displays the short code
+and fixed GitHub system-browser link, bounded progress and content-free errors.
+Missing application-wide registration reports unavailable setup, not fake login
+or a per-user app-registration task ([#429](https://github.com/fes/fesTerm/issues/429)).
+The verified account and host fingerprint require Cancel-default approval on
+first use/account change or changed host. Independent profiles have distinct
+identity/refresh and scoped-connect references, no global current account.
+Rotation preserves live launch bindings; duplication or changing the tunnel
+clears bindings. Connect once uses a fresh transient identity and never rotates
+a saved profile's credentials. Advanced retains legacy destination-file/token
+input. Inventory/create/takeover/terminate and filesystem writes are unavailable.
+Inspector shows the account captured by that launch, never the profile's later
+current account. GitHub principal metadata is not presented as the remote OS user.
 
 Multi-field edits are staged behind Save; Cancel discards them and validation
 stays beside the relevant field. Delete requires confirmation and reports

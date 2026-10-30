@@ -15,7 +15,7 @@ technology, visual judgment, reference-application screen semantics, or a real
 usability question. A reproducible failure should become the smallest suitable
 fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
-## Experimental direct Dev Tunnels bridge (DT-01 through DT-06)
+## Experimental direct Dev Tunnels bridge (DT-01 through DT-07)
 
 These are remaining real-service/native obligations for
 [ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md). The default-included experimental
@@ -42,6 +42,7 @@ terminate unrelated shells. Keep all failed attempts as failed evidence.
 | DT-04 | Exercise only advertised inventory/create/terminate operations; reject stale generations, preserve occupied/replacement sessions and verify Cancel defaults and uncertain-result handling. | Deterministic/headless automation + native usability | Deferred: implemented operation subset and command routing. Missing operations are unsupported, not passed by omission. |
 | DT-05 | Rotate/reject/revoke credentials, lose the relay, restart/upgrade the bridge and separately test logoff/reboot/daemon termination boundaries. | Real-service/platform lifecycle + usability | Deferred: DT-01/03; record observed established-stream revocation behavior. No daemon hot-upgrade or reboot-survival claim. |
 | DT-06 | From SSH/SFTP and Dev Tunnel sessions, deliberately open detected and OSC 8 remote Windows/POSIX text/Markdown paths, including source-relative file:///localhost, misleading labels, absent capability, foreign authorities, oversized/non-text content and stale/disconnected/changed bindings. Verify independent profiles/accounts and no client-local, OS-handler or shell-command fallback. | Deterministic routing/security + native real-service usability | Partial: shared capability/resolver, bounded bridge read RPC and snapshot identity implemented. Native Windows/Linux/macOS and real two-account qualification remain pending. |
+| DT-07 | Using the registered fesTerm-owned public client, exercise Name/Tunnel editor and Launcher, native GitHub browser device flow, actual account confirmation, connect-token mint, labeled-port/pinned-host discovery, changed-host Cancel default, expiry/refresh/revocation, independent accounts and stale/cancelled saves. Verify no CLI dependency, secret leakage or mutation of live sessions. | Deterministic auth/discovery/UI + real-service/native security/usability | Partial: deterministic typed HTTP mocks, bounded decoding, profile CAS/refresh publication, editor routing and pre-admission discovery are implemented. Registration, actual third-party GitHub→Dev Tunnels service acceptance and native expiry/refresh are blocked by [#429](https://github.com/fes/fesTerm/issues/429). iOS runtime/Keychain integration and mobile GUI are deferred; portable Rust is not iOS qualification. |
 
 ## Offline Mermaid (CP-06, CP-15)
 

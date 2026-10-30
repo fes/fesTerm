@@ -21,6 +21,44 @@ use crate::{
 const QUEUE: usize = 16;
 const DEADLINE: Duration = Duration::from_secs(30);
 
+/// Read-only bridge discovery. The relay endpoint key is verified before this
+/// operation; it never opens daemon IPC or reserves an attachment.
+pub async fn discover(
+    endpoint: &tunnels::contracts::TunnelEndpoint,
+    port: u16,
+    token: &str,
+) -> io::Result<Description> {
+    let mut connection = relay::connect_endpoint(endpoint, port, token).await?;
+    let result = discover_stream(&mut connection.stream).await;
+    let closed = connection.close().await;
+    let description = result?;
+    closed?;
+    Ok(description)
+}
+
+async fn discover_stream(
+    stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
+) -> io::Result<Description> {
+    write_frame(stream, DISCOVER, &VERSION.to_be_bytes()).await?;
+    let (kind, bytes) = tokio::time::timeout(DEADLINE, read_frame(stream))
+        .await
+        .map_err(|_| invalid())??;
+    if kind != DESCRIPTION {
+        return Err(invalid());
+    }
+    let description: Description = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    if description.version != VERSION
+        || description.target.pid == 0
+        || description.target.name.is_empty()
+        || description.target.name.len() > 128
+        || description.target.name.chars().any(char::is_control)
+        || description.target.generation.parse::<u128>().is_err()
+    {
+        return Err(invalid());
+    }
+    Ok(description)
+}
+
 pub fn read_token(stdin: bool) -> io::Result<Zeroizing<String>> {
     if stdin {
         return read_token_line(&mut io::stdin().lock());
@@ -389,6 +427,22 @@ pub async fn serve_with_files(
     let (kind, bytes) = tokio::time::timeout(DEADLINE, read_client_frame(&mut stream))
         .await
         .map_err(|_| invalid())??;
+    if kind == DISCOVER {
+        if bytes != VERSION.to_be_bytes() {
+            return Err(invalid());
+        }
+        let description = Description {
+            version: VERSION,
+            target,
+            files: FileAccess {
+                read: file_service.allows_read(),
+                windows_paths: cfg!(windows),
+            },
+        };
+        let bytes = serde_json::to_vec(&description).map_err(|_| invalid())?;
+        write_frame(&mut stream, DESCRIPTION, &bytes).await?;
+        return Ok(());
+    }
     if kind != HELLO {
         return Err(invalid());
     }
@@ -564,7 +618,7 @@ async fn read_frame_inner(
     if from_client
         && !matches!(
             header[0],
-            HELLO | ADOPTED | INPUT | RESIZE | DETACH | SYNC | FILE_READ
+            HELLO | DISCOVER | ADOPTED | INPUT | RESIZE | DETACH | SYNC | FILE_READ
         )
     {
         return Err(invalid());
@@ -662,6 +716,60 @@ mod tests {
     }
 
     struct Wake(AtomicUsize);
+    #[tokio::test]
+    async fn bridge_discovery_is_bounded_read_only_and_never_opens_daemon_ipc() {
+        let (mut client, host) = tokio::io::duplex(8192);
+        let selected = NativeSessionIdentity {
+            name: "test-owned".into(),
+            pid: 7,
+            created_at_unix_ms: 9,
+            endpoint: "must-not-open-this-local-endpoint".into(),
+        };
+        let task = tokio::spawn(serve_with_files(host, selected, FileService::new(true)));
+        let description = discover_stream(&mut client).await.unwrap();
+        assert_eq!(description.target.name, "test-owned");
+        assert_eq!(description.target.generation, "9");
+        assert!(description.files.read);
+        assert_eq!(description.files.windows_paths, cfg!(windows));
+        assert!(task.await.unwrap().is_ok());
+        for (kind, length, client_direction) in [
+            (DISCOVER, 3, true),
+            (DESCRIPTION, 4097, false),
+            (DESCRIPTION, 1, true),
+        ] {
+            let mut header = vec![kind];
+            header.extend_from_slice(&(length as u32).to_be_bytes());
+            assert!(
+                read_frame_inner(&mut std::io::Cursor::new(header), client_direction)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_discovery_refuses_incompatible_or_nonbridge_responses_without_admission() {
+        for response in [
+            serde_json::json!({"version":999,"target":{"name":"owned","pid":7,"generation":"9"},"files":{"read":false,"windows_paths":false}}),
+            serde_json::json!({"version":1,"target":{"name":"owned","pid":7,"generation":"bad"},"files":{"read":false,"windows_paths":false}}),
+            serde_json::json!({"version":1,"target":{"name":"owned","pid":7,"generation":"9"},"files":{"read":false,"windows_paths":false},"endpoint":"private-local-path"}),
+        ] {
+            let (mut client, mut host) = tokio::io::duplex(8192);
+            let task = tokio::spawn(async move {
+                assert_eq!(read_client_frame(&mut host).await.unwrap().0, DISCOVER);
+                write_frame(
+                    &mut host,
+                    DESCRIPTION,
+                    &serde_json::to_vec(&response).unwrap(),
+                )
+                .await
+                .unwrap();
+            });
+            assert!(discover_stream(&mut client).await.is_err());
+            task.await.unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn bridge_refuses_incompatible_hello_before_daemon_admission() {
         for (version, schema, generation) in [

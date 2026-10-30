@@ -3364,7 +3364,7 @@ pub fn show_launcher(
     let profiles = configuration.profiles();
     let customize_local_shell = configuration.interface_settings().customize_local_shell();
     let now_unix_seconds = unix_now_seconds();
-    // The five launch cards: one per session type fesTerm can start from
+    // The base launch cards: one per session type fesTerm can start from
     // nothing, in the order a new user meets them.
     let mut items = vec![
         LauncherItem::untabulated(
@@ -3464,7 +3464,10 @@ pub fn show_launcher(
             Profile::DevTunnel(tunnel) => (
                 LauncherItemKind::DevTunnelProfile(profile.identifier()),
                 "Dev Tunnel",
-                tunnel.destination_file().to_owned(),
+                tunnel
+                    .tunnel_name()
+                    .unwrap_or(tunnel.destination_file())
+                    .to_owned(),
             ),
             Profile::Local(local) => (
                 LauncherItemKind::LocalProfile(profile.identifier()),
@@ -6474,8 +6477,8 @@ mod tests {
         assert!(harness
             .query_by_label("development — Local · cargo")
             .is_some());
-        // Past the five launch cards to the first saved profile.
-        for _ in 0..5 {
+        let launch_cards = 5 + usize::from(cfg!(feature = "experimental-dev-tunnels"));
+        for _ in 0..launch_cards {
             harness.key_press(egui::Key::ArrowDown);
             harness.run();
         }

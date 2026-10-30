@@ -1,4 +1,7 @@
 mod confirmations;
+#[cfg(feature = "experimental-dev-tunnels")]
+#[path = "tunnel_workflow.rs"]
+mod tunnel_workflow;
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -421,6 +424,8 @@ pub struct FesTermApp {
     /// available.
     secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
     secure_storage_feedback: Option<&'static str>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    native_tunnel: Option<tunnel_workflow::Workflow>,
     /// Widget that owned focus immediately before Inspector opened, when it
     /// remains a meaningful restoration target.
     inspector_restore_focus: Option<egui::Id>,
@@ -898,6 +903,8 @@ impl FesTermApp {
             configuration_reloader: ConfigurationReloader::unavailable(),
             secret_store,
             secure_storage_feedback: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            native_tunnel: None,
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
@@ -1873,11 +1880,22 @@ impl FesTermApp {
     /// editing"). The in-memory configuration only changes after the atomic
     /// file write succeeds, matching every other automatic-save path here.
     fn save_profile(&mut self, profile: festerm_config::Profile) -> bool {
-        self.apply_configuration_save(
+        #[cfg(feature = "experimental-dev-tunnels")]
+        let previous = self
+            .state
+            .configuration()
+            .profile(profile.identifier())
+            .cloned();
+        let saved = self.apply_configuration_save(
             self.state.configuration().with_profile(profile),
             ConfigurationStartupStatus::ProfileSaveFailure,
             crate::configuration_startup::ConfigurationReloader::save_profile,
-        )
+        );
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if saved {
+            self.retire_native_tunnel_credentials(previous.as_ref());
+        }
+        saved
     }
 
     /// Deletes a profile the user has already confirmed in the Profiles
@@ -1885,11 +1903,18 @@ impl FesTermApp {
     /// a profile still referenced by a saved workspace tab, surfacing that
     /// as an ordinary save failure rather than silently orphaning the tab.
     fn delete_profile(&mut self, identifier: &str) {
-        self.apply_configuration_save(
+        #[cfg(feature = "experimental-dev-tunnels")]
+        let previous = self.state.configuration().profile(identifier).cloned();
+        let deleted = self.apply_configuration_save(
             self.state.configuration().without_profile(identifier),
             ConfigurationStartupStatus::ProfileDeleteFailure,
             crate::configuration_startup::ConfigurationReloader::delete_profile,
         );
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if deleted {
+            self.retire_native_tunnel_credentials(previous.as_ref());
+        }
+        let _ = deleted;
     }
 
     /// Reorders a saved profile after a drag-to-reorder gesture on the
@@ -5080,9 +5105,15 @@ impl FesTermApp {
         let status = session.status_bar_label();
         let chip_status = session.chip_status();
         let transport = match &session.inspector_transport {
-            InspectorTransport::DevTunnel { host, port } => {
-                TransportFacts::DevTunnel { host, port: *port }
-            }
+            InspectorTransport::DevTunnel {
+                host,
+                port,
+                account,
+            } => TransportFacts::DevTunnel {
+                host,
+                port: *port,
+                account: account.as_ref().map(|(id, login)| (*id, login.as_str())),
+            },
             InspectorTransport::Local { .. } => TransportFacts::Local,
             InspectorTransport::Ssh {
                 username,
@@ -5691,6 +5722,8 @@ impl FesTermApp {
     }
 
     pub(crate) fn frame_logic(&mut self, context: &egui::Context) {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        self.poll_native_tunnel(context);
         if context.input(|i| i.viewport().close_requested()) {
             let accepted = self.evaluate_close_request(context);
             // Nothing cancelled the close, so this window really is going
@@ -6328,7 +6361,15 @@ impl FesTermApp {
             match command {
                 AppCommand::StartConfiguredDevTunnelProfile { profile_id } => {
                     #[cfg(feature = "experimental-dev-tunnels")]
-                    if let Ok(store) = &self.secret_store {
+                    if self
+                        .state
+                        .configuration()
+                        .profile(&profile_id)
+                        .and_then(Profile::as_dev_tunnel)
+                        .is_some_and(|profile| profile.tunnel_name().is_some())
+                    {
+                        self.begin_native_tunnel(profile_id, false, true, true, ui.ctx());
+                    } else if let Ok(store) = &self.secret_store {
                         self.state.start_configured_tunnel_profile(
                             profile_id,
                             Arc::clone(store),
@@ -6343,6 +6384,19 @@ impl FesTermApp {
                         self.secure_storage_feedback = Some(
                             "Dev Tunnel connections require an experimental-dev-tunnels build.",
                         );
+                    }
+                }
+                AppCommand::NativeDevTunnel {
+                    profile_id,
+                    sign_in,
+                    remember,
+                    connect,
+                } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.begin_native_tunnel(profile_id, sign_in, remember, connect, ui.ctx());
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    {
+                        let _ = (profile_id, sign_in, remember, connect);
                     }
                 }
                 AppCommand::StoreDevTunnelConnectToken { profile_id, token } => {
@@ -6669,6 +6723,8 @@ impl FesTermApp {
 
         self.show_about(ui.ctx(), about_escape);
 
+        #[cfg(feature = "experimental-dev-tunnels")]
+        self.show_native_tunnel(ui.ctx(), escape_pressed);
         self.show_transient_notice(ui.ctx());
 
         // Autosave the workspace exactly once per frame that actually
@@ -7072,6 +7128,8 @@ impl FesTermApp {
             configuration_reloader: ConfigurationReloader::unavailable(),
             secret_store: Ok(Arc::new(MemorySecretStore::new())),
             secure_storage_feedback: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            native_tunnel: None,
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,

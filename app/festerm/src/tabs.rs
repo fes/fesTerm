@@ -668,7 +668,11 @@ impl LiveSessionCounts {
 /// by the tab prevents egui code from reaching into PTY or SSH backends.
 pub enum InspectorTransport {
     #[cfg_attr(not(feature = "experimental-dev-tunnels"), allow(dead_code))]
-    DevTunnel { host: String, port: u16 },
+    DevTunnel {
+        host: String,
+        port: u16,
+        account: Option<(u64, String)>,
+    },
     Local {
         persistence: Option<InspectorPersistence>,
     },
@@ -1561,7 +1565,7 @@ impl SessionTab {
                     .and_then(ApplicationSession::verified_host_key_fingerprint)
             });
         match &self.inspector_transport {
-            InspectorTransport::DevTunnel { host, port } => {
+            InspectorTransport::DevTunnel { host, port, .. } => {
                 Some(TerminalFilesystemOrigin::Remote(RemoteTerminalOrigin {
                     session_binding: self
                         .live_remote_file_requestor()
@@ -2075,6 +2079,12 @@ pub struct SshProfileDraftSeed {
 /// copy of these operations.
 #[derive(Debug)]
 pub enum AppCommand {
+    NativeDevTunnel {
+        profile_id: String,
+        sign_in: bool,
+        remember: bool,
+        connect: bool,
+    },
     StartConfiguredDevTunnelProfile {
         profile_id: String,
     },
@@ -3750,6 +3760,7 @@ impl AppState {
             | AppCommand::StoreSftpPassword { .. }
             | AppCommand::StoreProfilePassword { .. }
             | AppCommand::StoreDevTunnelConnectToken { .. }
+            | AppCommand::NativeDevTunnel { .. }
             | AppCommand::StartConfiguredDevTunnelProfile { .. }
             | AppCommand::StoreProfilePrivateKey { .. }
             | AppCommand::StartConfiguredSshProfile { .. }
@@ -5179,7 +5190,7 @@ impl AppState {
     }
 
     #[cfg(feature = "experimental-dev-tunnels")]
-    fn start_tunnel_launch(
+    pub(crate) fn start_tunnel_launch(
         &mut self,
         profile_id: Option<String>,
         load: impl FnOnce() -> std::io::Result<crate::tunnel_activation::Launch> + Send + 'static,
@@ -5199,6 +5210,7 @@ impl AppState {
                 let host = launch.destination.tunnel_id.clone();
                 let port = launch.destination.port;
                 let name = launch.destination.target.name.clone();
+                let account = launch.account.clone().map(|account| (account.id, account.login));
                 let mut files = None;
                 let result = launch.start(make_notifier(&context)).map(|remote| {
                     files = remote.files.map(crate::remote_files::RemoteFileCapability::DevTunnel);
@@ -5207,7 +5219,7 @@ impl AppState {
                 let mut tab = SessionTab::from_session_result(result, Dimensions::new(80,24).expect("default dimensions"), SessionResultMeta {
                     label: &name, launch_secondary: Some("Experimental Dev Tunnel · attach only".into()),
                     profile_identifier: profile_id, session_name: "Dev Tunnel",
-                    inspector_transport: InspectorTransport::DevTunnel {host, port}, ssh_password_retry: None,
+                    inspector_transport: InspectorTransport::DevTunnel {host, port, account}, ssh_password_retry: None,
                 });
                 tab.remote_files = files;
                 Ok(tab)
@@ -6393,6 +6405,7 @@ mod tests {
         tab.inspector_transport = InspectorTransport::DevTunnel {
             host: "test-tunnel".into(),
             port: 47461,
+            account: None,
         };
         let Some(TerminalFilesystemOrigin::Remote(origin)) = tab.terminal_filesystem_origin()
         else {
@@ -6424,12 +6437,67 @@ mod tests {
             tab.inspector_transport = InspectorTransport::DevTunnel {
                 host: "owned-tunnel".into(),
                 port: 47461,
+                account: None,
             };
         }
         tab.remote_files = Some(crate::remote_files::RemoteFileCapability::Test(
             files.clone(),
         ));
         (tab, files)
+    }
+
+    #[test]
+    fn native_auth_live_account_and_file_binding_remain_pinned_after_profile_account_change() {
+        let profile = |id| {
+            festerm_config::Profile::named_dev_tunnel("bound-profile", "owned.usw3")
+                .unwrap()
+                .with_tunnel_identity(
+                    id,
+                    format!("account-{id}"),
+                    festerm_secret_store::SecretReference::generate(),
+                    festerm_secret_store::SecretReference::generate(),
+                    festerm_config::DevTunnelHost {
+                        tunnel_id: "owned".into(),
+                        cluster: "usw3".into(),
+                        host_id: "host".into(),
+                        public_key: "pin".into(),
+                        port: 47461,
+                    },
+                )
+                .unwrap()
+        };
+        let mut state = AppState::for_test();
+        state.replace_configuration(Configuration::new(vec![profile(42)]).unwrap());
+        let (mut tab, _) = remote_file_fixture(
+            crate::remote_files::RemoteFileProvider::DevTunnelPosix,
+            None,
+        );
+        tab.inspector_transport = InspectorTransport::DevTunnel {
+            host: "owned".into(),
+            port: 47461,
+            account: Some((42, "account-42".into())),
+        };
+        state.place_session(tab);
+        let source = state.active;
+        let Some(TerminalFilesystemOrigin::Remote(before)) = state
+            .session_tab(source)
+            .unwrap()
+            .terminal_filesystem_origin()
+        else {
+            panic!("remote source")
+        };
+        state.replace_configuration(Configuration::new(vec![profile(99)]).unwrap());
+        let live = state.session_tab(source).unwrap();
+        assert!(matches!(&live.inspector_transport,
+            InspectorTransport::DevTunnel {account:Some((42,login)),..} if login == "account-42"));
+        let Some(TerminalFilesystemOrigin::Remote(after)) = live.terminal_filesystem_origin()
+        else {
+            panic!("remote source")
+        };
+        assert_eq!(before.session_binding, after.session_binding);
+        assert_eq!(before.profile_identifier, after.profile_identifier);
+        assert!(after.live_transport_available);
+        assert_eq!(after.username, "remote OS user");
     }
 
     fn finish_remote_file_open(state: &mut AppState, context: &egui::Context) {

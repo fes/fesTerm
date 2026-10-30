@@ -230,6 +230,11 @@ Command execution should follow the ownership boundaries in `ARCHITECTURE.md`:
 Experimental Dev Tunnel profiles emit `CreateProfile`, `SaveProfile`,
 `StoreDevTunnelConnectToken`, `StartConfiguredDevTunnelProfile` and
 `ConnectTransientDevTunnel`; CLI launch converges through `ConnectDevTunnel`.
+Native Name/Tunnel profiles emit `NativeDevTunnel` for explicit GitHub device
+sign-in or transient connection, and `StartConfiguredDevTunnelProfile` for
+normal launch. The composition root, not widgets, owns cancellable auth,
+profile/account compare-before-publication, native credential rotation,
+Cancel-default host approval and bounded pre-admission discovery.
 The composition root owns native-store transactions; AppState captures each
 immutable launch binding. Detected paths and `OpenTerminalHyperlink` converge
 on the same source-bound filesystem dispatch and remote snapshot commands.

@@ -186,17 +186,47 @@ pub struct ClientConnection {
     pub stream: ChannelStream<client::Msg>,
     _session: client::Handle<VerifiedHost>,
 }
+pub fn host_fingerprint(key: &str) -> io::Result<String> {
+    if key.len() > 4096 {
+        return Err(invalid());
+    }
+    let key = russh::keys::parse_public_key_base64(key).map_err(|_| invalid())?;
+    Ok(key.fingerprint(russh::keys::HashAlg::Sha256).to_string())
+}
 
 pub async fn connect(destination: &Destination, token: &str) -> io::Result<ClientConnection> {
-    if destination.version != 1
-        || destination.port == 0
-        || destination.endpoint.host_public_keys.len() != 1
-        || destination.endpoint.host_public_keys[0].len() > 4096
+    if destination.version != 1 {
+        return Err(invalid());
+    }
+    connect_endpoint(&destination.endpoint, destination.port, token).await
+}
+
+impl ClientConnection {
+    pub(crate) async fn close(self) -> io::Result<()> {
+        self._session
+            .disconnect(russh::Disconnect::ByApplication, "complete", "")
+            .await
+            .map_err(|_| invalid())?;
+        tokio::time::timeout(Duration::from_secs(5), self._session)
+            .await
+            .map(|_| ())
+            .map_err(|_| invalid())
+    }
+}
+
+pub async fn connect_endpoint(
+    endpoint: &TunnelEndpoint,
+    port: u16,
+    token: &str,
+) -> io::Result<ClientConnection> {
+    if port == 0
+        || endpoint.host_public_keys.len() != 1
+        || endpoint.host_public_keys[0].is_empty()
+        || endpoint.host_public_keys[0].len() > 4096
     {
         return Err(invalid());
     }
-    let url = destination
-        .endpoint
+    let url = endpoint
         .tunnel_relay_tunnel_endpoint
         .client_relay_uri
         .as_deref()
@@ -205,7 +235,7 @@ pub async fn connect(destination: &Destination, token: &str) -> io::Result<Clien
     let mut session = client::connect_stream(
         Arc::new(client_config()),
         rw,
-        VerifiedHost(destination.endpoint.host_public_keys[0].clone()),
+        VerifiedHost(endpoint.host_public_keys[0].clone()),
     )
     .await
     .map_err(|_| invalid())?;
@@ -218,7 +248,7 @@ pub async fn connect(destination: &Destination, token: &str) -> io::Result<Clien
         return Err(invalid());
     }
     let stream = session
-        .channel_open_direct_tcpip("127.0.0.1", destination.port as u32, "127.0.0.1", 0)
+        .channel_open_direct_tcpip("127.0.0.1", port as u32, "127.0.0.1", 0)
         .await
         .map_err(|_| invalid())?
         .into_stream();
@@ -898,13 +928,17 @@ mod tests {
             .channel_open_direct_tcpip("127.0.0.1", 47461, "127.0.0.1", 0)
             .await
             .is_err());
-        client
-            .disconnect(russh::Disconnect::ByApplication, "test complete", "en")
-            .await
-            .unwrap();
         drop(accepted);
-        drop(channel);
-        server.abort();
+        ClientConnection {
+            stream: channel,
+            _session: client,
+        }
+        .close()
+        .await
+        .unwrap();
+        assert!(tokio::time::timeout(Duration::from_secs(3), server)
+            .await
+            .is_ok());
     }
 
     #[tokio::test]

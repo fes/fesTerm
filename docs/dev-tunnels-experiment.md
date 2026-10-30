@@ -4,7 +4,7 @@ This is **experimental, development/testing-only**, not production qualification
 It is included in default desktop builds at the owner's request; availability
 does not establish real-service or native qualification.
 [ADR 0053](adr/0053-separate-dev-tunnels-session-bridge.md) owns the boundary.
-Real-service and native evidence remains in `DT-01`–`DT-06`; deterministic
+Real-service and native evidence remains in `DT-01`–`DT-07`; deterministic
 tests do not establish service interoperability or usability.
 
 ## What exists
@@ -18,7 +18,9 @@ sole presented-terminal writer. EOF, tab close and bridge death detach, never
 terminate. Reopen explicitly after disconnect; queued input is discarded.
 
 There is no remote inventory, create, takeover, terminate, automatic reconnect,
-token refresh, native sign-in, SSH/SFTP fallback or VS Code Server dependency.
+SSH/SFTP fallback or VS Code Server dependency. Native GitHub sign-in/refresh
+and tunnel-name discovery are implemented but registration/live qualification
+remain blocked by [#429](https://github.com/fes/fesTerm/issues/429).
 Unsupported operations have no wire operation. Dev Tunnel is a peer profile,
 launcher and Inspector type, not a local/SSH disguise. Remote links have
 **no client-local file authority**. Optional bridge file reads are described
@@ -26,8 +28,10 @@ below; destination metadata is not saved in workspaces.
 History/color preferences remain the remote daemon's configuration in this
 subset; clear/reset use the existing ordered recovery control.
 
-Default desktop builds include the relay and peer profile UI. Mobile remains
-outside this experiment. Building the desktop app with `--no-default-features`
+Default desktop builds include the relay and peer profile UI. Shared native
+auth/discovery is host-independent Rust; mobile runtime/Keychain/GUI integration
+remains future work, not claimed iOS qualification.
+Building the desktop app with `--no-default-features`
 omits Dev Tunnel connections. The GUI adds its remote tab through
 `AppCommand::ConnectDevTunnel`, not widget-owned policy. No network connection
 or bridge starts until the user explicitly requests one.
@@ -49,7 +53,61 @@ hot-upgrade. Existing protocol-1/2 daemons and schema-2/3 local recovery remain
 supported by local clients; **remote export requires protocol 3**. Older
 frontends that support only protocol 2 must refuse a new protocol-3 daemon.
 
-## GitHub-first provisioning and secret input
+## Native Name/Tunnel connection
+
+The preferred client needs no CLI, metadata transfer or token paste.
+Choose **New profile → Dev Tunnel**, enter **Name** and **Tunnel** (logical
+alias or `tunnel-id.cluster`), and **Save profile**. Choose **Sign in with
+GitHub**, open the fixed GitHub system-browser link and enter its short device
+code. Verify the displayed account and host fingerprint against the remote
+operator before approval; Cancel is the default. **Connect** also starts sign-in
+when necessary. Launcher and Profiles use the same commands.
+
+The build/release owner must register the fesTerm-owned public OAuth application
+once, enable device flow and supply its public client ID application-wide:
+
+```powershell
+$env:FESTERM_GITHUB_CLIENT_ID = 'PROJECT_OWNED_PUBLIC_CLIENT_ID'
+cargo build -p festerm
+```
+
+The ID is public build configuration, **not a secret or per-user registration
+task**. No real project ID is currently provisioned. Without it, sign-in
+honestly reports unavailable. Registration and actual GitHub→Dev Tunnels service
+acceptance are pending [#429](https://github.com/fes/fesTerm/issues/429);
+deterministic auth tests do not establish that live gate.
+
+The client uses native GitHub device authorization with `read:user`, no
+client secret, local listener, helper process or other application's credentials.
+It verifies `/user` after every issued/refreshed token and before/after
+connect-token minting. Saved identity/refresh and scoped-connect credentials
+have separate native-store references per profile; ordinary TOML stores only
+public account/host metadata and opaque references. Device-issued refresh
+uses the documented secretless flow, serializes replacement and revalidates the
+account. A per-identity OS file lease protects stored credential operations
+across desktop processes through final publication; cache files contain only
+opaque UUID names, never credentials. Identity references remain stable until
+explicit account replacement or retirement. Interrupted/failed rotation may require explicit sign-in; there is no
+silent repeated login, CLI logout, global current account or keystroke retry.
+Connect once obtains an independent transient identity without changing saved
+credentials. Changing a tunnel or duplicating a profile clears its bindings;
+editing/rotating never retargets already-running sessions.
+
+Official bounded service lookup must find exactly one relay host and one
+preprovisioned port marked **`festerm-bridge-v1`** (label or exact description).
+The operator assigns that marker through supported service administration before starting the bridge;
+the host-only runtime cannot manage ports. Ordinary VS Code tunnels, missing
+host keys and ambiguous exports refuse. First/changed account or host needs
+explicit Cancel-default approval. Pinned encrypted read-only bridge discovery
+returns only the exported generation and capabilities, without opening daemon
+IPC or attaching. Existing atomic no-takeover admission follows.
+
+Legacy profiles still load unchanged. **Advanced → Use destination file**
+retains the operator-metadata/token route below; it is not the normal native UI.
+Separate native iOS runtime/Keychain integration and all real browser/account/
+refresh/usability evidence remain `DT-07`, not implied by portable Rust.
+
+## Host provisioning and advanced secret input
 
 Use the official Dev Tunnels CLI and the intended authorized GitHub account:
 
@@ -58,10 +116,12 @@ devtunnel user login --github
 devtunnel user show
 devtunnel create YOUR_TEST_TUNNEL --expiration 4h
 devtunnel port create YOUR_TEST_TUNNEL -p 47461
+devtunnel port update YOUR_TEST_TUNNEL -p 47461 --description festerm-bridge-v1
 ```
 
-Do **not** add anonymous or organization-wide ACLs. The runtime cannot create
-ports, mint tokens or change ACLs. Provision separate `host` and `connect`
+Do **not** add anonymous or organization-wide ACLs. The bridge/session runtime
+cannot create ports or change ACLs; only the separate native identity broker
+requests connect scope. For advanced activation, provision separate `host` and `connect`
 tokens with `devtunnel token YOUR_TEST_TUNNEL --scopes host` and
 `--scopes connect`. These are bearer capabilities, not GitHub OAuth tokens.
 Keep their output in memory/private input, never a transcript or ordinary file.
@@ -70,8 +130,8 @@ For the CLI's own token input use its documented `-t -` stdin form.
 
 An existing `gh` or VS Code account is not an interchangeable Dev Tunnels
 credential. Never extract another application's caches, use its OAuth client
-ID or feed its GitHub OAuth token to the bridge. Native fesTerm sign-in and
-Entra integration remain deferred.
+ID or feed its GitHub OAuth token to the bridge. The native client broker is
+separate; the bridge still consumes only scoped host authority. Entra remains deferred.
 
 Both executables accept a hidden console prompt by default.
 GUI builds without an attached console should use the profile editor or
@@ -114,18 +174,17 @@ launch recipe. The tab/Inspector explicitly say Experimental Dev Tunnel.
 
 ### Saved profiles and independent accounts
 
-In the GUI, choose **New profile → Dev Tunnel**, enter a name
-and the trusted destination JSON path, then **Save profile**. Reopen that
-profile's editor, enter its connect token in the hidden field and choose
-**Store / replace connect token**. Saving metadata alone does not save that
-field. Launch it through the Launcher or Profiles table. Alternatively,
-**Connect once (do not save token)** creates a transient session.
+For the advanced legacy route, choose **New profile → Dev Tunnel → Advanced →
+Use destination file**, enter a name and trusted destination JSON path, then
+**Save profile**. Reopen its editor's Advanced section, enter the connect token
+in the hidden field and choose **Store token**. Saving metadata alone does not
+save that field. Launch through Launcher or Profiles, or use **Connect once**.
 
 Configuration contains only the destination-file path and opaque native-store
 reference. Each saved profile has its own reference; duplication clears it.
 Different profiles can consume connect tokens deliberately provisioned from
 different GitHub accounts simultaneously. There is no global account/token
-slot, native OAuth sign-in or automatic refresh. Sessions launched from one
+slot or automatic renewal for scoped-only credentials. Sessions launched from one
 profile may reuse its intended reference, but capture their own destination,
 token, endpoint/host key, daemon generation and connection binding. Profile
 edits or credential replacement do not retarget already-running sessions.
@@ -184,6 +243,9 @@ the dedicated test tunnel when finished. Do not terminate existing sessions.
 | SSH auth/control replies | 16; overflow fails the connection closed |
 | WebSocket message/frame/write buffer | 1 MiB / 1 MiB / 2 MiB |
 | Management response body | 64 KiB, redirects disabled |
+| Native OAuth body / token / HTTP request | 64 KiB / 16 KiB / 20 s; redirects disabled, HTTPS only |
+| Native device / approval / whole operation | ≤900 s / 300 s / 1800 s; one worker, two pending events |
+| Read-only discovery request / response | Version-only 2 bytes / ≤4 KiB; no daemon IPC or admission |
 | Establishment / adoption / write deadlines | 30 s each; local admission read at most 2 s |
 | File capability / request / result | Negotiated before admission / 8 KiB / 4 MiB plus 9-byte result header |
 | Concurrent file reads / queue | One globally reserved native job / one pending client request |

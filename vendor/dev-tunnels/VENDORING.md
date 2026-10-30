@@ -3,7 +3,8 @@
 - Upstream: https://github.com/microsoft/dev-tunnels
 - Revision: `b73b0eb774b86a5b519c300f2f41c9072a66f663`
 - Source: `rs/`, plus upstream `LICENSE` (MIT, retained).
-- Experimental desktop-only consumer: `festerm-tunnel-bridge`, `relay` feature.
+- Experimental consumers: desktop bridge (`relay`) and portable native
+  identity/discovery client (management/contracts only).
 
 Local modifications:
 
@@ -20,6 +21,12 @@ Local modifications:
   Ports are preprovisioned. Runtime never calls create/delete-port APIs.
 - Management Authorization headers are marked sensitive for request Debug
   redaction; the first-party WebSocket caller does the same.
+- Native discovery uses official GitHub authorization and connect-only token
+  scopes. Retained authorization, header temporaries and bounded JSON bodies
+  are wiped on drop; raw service errors never reach product diagnostics.
+- User-Agent uses compile-time OS/architecture only, not OS inspection helpers,
+  subprocesses or Windows registry/partner identifiers. `os_info` is removed
+  so the native client has no desktop-helper dependency for this purpose.
 - The bounded modern-russh relay handshake is in the first-party bridge crate,
   derived from the upstream MIT implementation. One host/client/port scope,
   pinned host binding and bounded queues replace generic forwarding.

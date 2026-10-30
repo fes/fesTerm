@@ -21,6 +21,15 @@ pub enum Authorization {
 }
 
 impl Authorization {
+    pub(crate) fn clear_private(&mut self) {
+        use zeroize::Zeroize;
+        match self {
+            Self::AAD(token) | Self::Github(token) | Self::Tunnel(token) | Self::Bearer(token) => {
+                token.zeroize()
+            }
+            Self::Anonymous => {}
+        }
+    }
     pub fn as_header(&self) -> Option<String> {
         match self {
             Authorization::AAD(token) => Some(format!("aad {}", token)),
@@ -37,6 +46,12 @@ pub trait AuthorizationProvider: Send + Sync {
 }
 
 pub(crate) struct StaticAuthorizationProvider(pub Authorization);
+
+impl Drop for Authorization {
+    fn drop(&mut self) {
+        self.clear_private();
+    }
+}
 
 impl AuthorizationProvider for StaticAuthorizationProvider {
     fn get_authorization(&self) -> BoxFuture<'_, Result<Authorization, HttpError>> {
