@@ -265,6 +265,17 @@ accessibility and physical-device acceptance remain open on iPad.
 
 ## Validation impact
 
+The owner-requested iteration screenshot review adds an opt-in, test-only
+`egui_kittest` gallery for actual mobile widgets, with controlled offline
+fixtures and no native host/network/clipboard/user-resource access. It emits
+phone/tablet terminal/connect-form PNGs and an exact-source/hash manifest into
+fresh, non-overwritten output. PR CI uploads a distinct headless review
+artifact; optional aggregate runners expose the same capture path. Dev-only
+capture dependencies do not enter either iOS shipping graph. Simulated
+keyboard reservation and headless pixels do not qualify native rendering,
+keyboard/touch, live SSH or physical-device acceptance. No runtime ownership,
+Termius interaction or experimental native smoke policy changes.
+
 - **Invariants introduced or changed:** additive mobile composition root;
   shared core/renderer and single writer preserved; no desktop session backend
   or updater in the iOS normal/build graph; no retained user input.

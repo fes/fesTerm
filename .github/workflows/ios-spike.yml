@@ -22,9 +22,11 @@ on:
       - 'Cargo.lock'
       - 'scripts/build-ios-spike.py'
       - 'scripts/build-ios-device.py'
+      - 'scripts/capture-mobile-ui.py'
       - 'scripts/smoke-ios-simulator.py'
       - 'scripts/tests/test_ios_simulator_smoke.py'
       - 'scripts/tests/test_ios_device_build.py'
+      - 'scripts/tests/test_ios_ui_capture.py'
       - 'scripts/tests/test_ios_ssh_dependencies.py'
       - '.github/workflows/ios-spike.yml'
   schedule:
@@ -59,6 +61,16 @@ jobs:
       - run: cargo test --locked -p festerm-mobile --lib
       - run: cargo test --locked -p festerm-mobile --features live-ssh --lib
       - run: cargo clippy --locked -p festerm-mobile --features live-ssh --all-targets -- -D warnings
+      - name: Capture non-native mobile UI review images
+        timeout-minutes: 10
+        run: python3 scripts/capture-mobile-ui.py --output target/mobile-ui-review
+      - name: Upload non-native mobile UI review images
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: always()
+        with:
+          name: festerm-mobile-headless-ui-review
+          path: target/mobile-ui-review/
+          if-no-files-found: error
       - name: Check portable device packaging policy without credentials
         run: python3 -m unittest discover -s scripts/tests -p test_ios_device_build.py
       - run: python3 scripts/build-ios-spike.py --check-dependencies

@@ -5,6 +5,9 @@ mod live_ssh;
 mod terminal_gesture;
 mod workspaces;
 
+#[cfg(all(test, feature = "live-ssh"))]
+mod ui_gallery;
+
 use eframe::egui;
 use festerm_core::{Dimensions, InputEvent, Key, Modifiers, Terminal};
 use festerm_ui_egui::{

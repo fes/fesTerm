@@ -2310,6 +2310,7 @@ name = "festerm-mobile"
 version = "0.11.1"
 dependencies = [
  "eframe",
+ "egui_kittest",
  "festerm-core",
  "festerm-ios-window",
  "festerm-markdown",
@@ -2318,6 +2319,8 @@ dependencies = [
  "festerm-ui-egui",
  "log",
  "raw-window-handle",
+ "serde_json",
+ "sha2 0.11.0",
  "winit",
  "zeroize",
 ]

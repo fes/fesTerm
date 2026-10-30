@@ -155,6 +155,7 @@ class IosSpikeWorkflowTests(unittest.TestCase):
             "cargo test --locked -p festerm-mobile --lib",
             "cargo test --locked -p festerm-mobile --features live-ssh --lib",
             "cargo clippy --locked -p festerm-mobile --features live-ssh --all-targets -- -D warnings",
+            "python3 scripts/capture-mobile-ui.py --output target/mobile-ui-review",
             "python3 scripts/build-ios-spike.py --check-dependencies",
             "python3 scripts/build-ios-spike.py --check-dependencies --live-ssh",
             "cargo check --locked -p festerm-mobile --target aarch64-apple-ios",
@@ -172,6 +173,10 @@ class IosSpikeWorkflowTests(unittest.TestCase):
         self.assertIn("if: always()", bundle)
         self.assertIn("path: target/ios-spike/fesTermSpike-simulator.tar.gz", bundle)
         self.assertIn("if-no-files-found: error", bundle)
+        captures = next(step for step in self.steps if "name: festerm-mobile-headless-ui-review" in step)
+        self.assertIn("if: always()", captures)
+        self.assertIn("path: target/mobile-ui-review/", captures)
+        self.assertIn("if-no-files-found: error", captures)
 
     def test_ios_native_smoke_runs_only_on_schedule_or_manual_dispatch(self):
         self.assertIn(
