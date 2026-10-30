@@ -947,7 +947,7 @@ pub(crate) fn show_profiles(
                     let account = current.and_then(Profile::as_dev_tunnel).and_then(|profile| profile.identity());
                     ui.label(account.map(|account| format!("GitHub · {}", account.login))
                         .unwrap_or_else(|| "Not signed in".into()));
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         let enabled = saved && cfg!(feature = "experimental-dev-tunnels");
                         if action_button_enabled(ui, enabled, ActionButtonRole::Secondary, "Sign in with GitHub").clicked() {
                             command = Some(AppCommand::NativeDevTunnel {
@@ -1914,6 +1914,55 @@ mod tests {
         harness.run();
         assert!(harness.state().command.is_none());
         assert_eq!(harness.state().configuration.profiles().len(), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn native_auth_profile_editor_actions_fit_the_card_at_narrow_widths() {
+        for width in [320.0, 560.0] {
+            let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+            let draft = DevTunnelProfileDraft::from_profile(profile.as_dev_tunnel().unwrap());
+            let mut harness = profiles_harness_at_size(
+                Configuration::new(vec![profile]).unwrap(),
+                egui::vec2(width, 700.0),
+            );
+            let tab = harness.state().tab_id;
+            harness.ctx.data_mut(|data| {
+                data.insert_temp(
+                    profiles_state_id(tab),
+                    ProfilesScreenState {
+                        mode: ProfilesScreenMode::EditDevTunnel(draft),
+                        ..Default::default()
+                    },
+                )
+            });
+            harness.run();
+            for label in [
+                "Sign in with GitHub",
+                "Connect",
+                "Connect once",
+                "Save profile",
+                "Cancel",
+            ] {
+                let bounds = harness.get_by_label(label).rect();
+                assert!(
+                    bounds.left() >= 0.0 && bounds.right() <= width,
+                    "{label} at {width}: {bounds:?}"
+                );
+            }
+            assert!(harness.state().command.is_none());
+            harness.get_by_label("Connect once").click();
+            harness.run();
+            assert!(matches!(
+                harness.state().command,
+                Some(AppCommand::NativeDevTunnel {
+                    sign_in: true,
+                    remember: false,
+                    connect: true,
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]

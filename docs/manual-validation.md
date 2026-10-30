@@ -17,6 +17,11 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
 ## Experimental direct Dev Tunnels bridge (DT-01 through DT-07)
 
+The standard Dev Tunnel cards, shared code/action buttons and distinct tunnel
+mark have structural/geometry regressions. Native dark/light and 1x/2x visual
+comparison, including selected/disabled rows, keyboard focus and accessibility,
+remains manual DT-01/07 evidence, not an accepted result of those tests.
+
 Windows managed-host qualification must exercise servicing-owned system
 ancestors and refuse foreign directory-delete, child-delete and ACL/owner
 mutation permissions without repairing existing ACLs. The exact

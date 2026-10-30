@@ -532,6 +532,11 @@ The earlier macOS/Pi scoped-token GUI fixture passed independently. The former
 fesTerm-owned registration's HTTP 401 is historical failed evidence, not the
 result of the integrated service-application flow.
 
+Dev Tunnel follows SSH in the creation/type order and uses its own tunnel mark
+with unchanged terminal-body sizing. Editor/import cards and native sign-in
+use shared action styling; narrow card actions wrap without clipping. Geometry
+and widget tests do not promote native theme/scale/accessibility acceptance.
+
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
 | `TUNNEL-01` | Launcher/profile/setup → authenticated remote destination | Select Dev Tunnel Name/Tunnel and native sign-in; Advanced retains trusted metadata and scoped-token input. | Independent concurrent account/profile bindings; immutable launch pins; no global login/token slot, CLI/VS Code client dependency or plaintext persistence; SDK-published service application, remaining live acceptance gate #429. Managed-host storage validates every ancestor, admitting the exact Windows servicing SID only for ancestors; final objects remain current-user-only. | Cancel leaves existing sessions untouched. | P,H,N; partial |

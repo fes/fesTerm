@@ -6181,6 +6181,7 @@ mod tests {
         ] {
             let local = session_mark_size(Icon::LocalTerminal, height);
             let ssh = session_mark_size(Icon::SshRemote, height);
+            assert_eq!(session_mark_size(Icon::DevTunnel, height), ssh);
             let serial = session_mark_size(Icon::Serial, height);
             assert_eq!(local, egui::Vec2::splat(height));
             assert_eq!(ssh.y, height);
@@ -6236,7 +6237,12 @@ mod tests {
     }
 
     #[test]
-    fn tighter_launcher_fits_all_five_cards_on_a_thousand_pixel_window() {
+    fn launcher_creation_cards_keep_type_order_at_feature_appropriate_widths() {
+        let width = if cfg!(feature = "experimental-dev-tunnels") {
+            1200.0
+        } else {
+            1000.0
+        };
         let labels = [
             "Local Shell — Start a local terminal session",
             "SSH — Connect to a remote host over SSH",
@@ -6247,7 +6253,7 @@ mod tests {
             "Markdown — Open a Markdown workspace",
         ];
         for compact in [false, true] {
-            let mut harness = populated_launcher_harness(1200.0, compact);
+            let mut harness = populated_launcher_harness(width, compact);
             harness.run();
             let first = harness.get_by_label(labels[0]).rect();
             assert_eq!(first.height(), if compact { 96.0 } else { 112.0 });
@@ -6255,9 +6261,22 @@ mod tests {
             for label in labels {
                 let rect = harness.get_by_label(label).rect();
                 assert_eq!(rect.top(), first.top(), "{label} wrapped to another row");
-                assert!(rect.left() >= previous_right && rect.right() <= 1200.0);
+                assert!(rect.left() >= previous_right && rect.right() <= width);
                 previous_right = rect.right();
             }
+        }
+    }
+
+    #[test]
+    fn dev_tunnel_marks_are_distinct_from_ssh_at_every_profile_surface() {
+        assert_eq!(ProfileTableKind::DevTunnel.mark().0, Icon::DevTunnel);
+        assert_eq!(ProfileTableKind::Ssh.mark().0, Icon::SshRemote);
+        for kind in [
+            LauncherItemKind::NewDevTunnel,
+            LauncherItemKind::DevTunnelProfile("owned"),
+        ] {
+            let item = LauncherItem::untabulated(String::new(), String::new(), kind);
+            assert_eq!(item.mark().0, Icon::DevTunnel);
         }
     }
 

@@ -131,16 +131,15 @@ chain, padlock base, vendor logo, gradient, glow, or decorative outer tile.
 The tunnel identifies the transport family, not authentication success,
 connection health, or durable remote-session support.
 
-The icon assets and semantic renderer are available before the tunnel
-profile/launcher flow. Their registration does not enable that capability
-or change existing SSH profiles. The feature implementation should use
-`Icon::DevTunnel` consistently for its profile-type selector, saved-profile
-rows, launcher, and session-type presentation, preserving the SSH optical
+The icon assets and semantic renderer do not themselves enable the optional
+tunnel capability or change existing SSH profiles. The tunnel feature uses
+`Icon::DevTunnel` for its profile-type selector, saved-profile rows and
+launcher, preserving the SSH optical
 slot/body scale and the existing independent status indicator. Do not
 replace unrelated local, SSH, Serial, SFTP, or Markdown marks.
 
-Implementation-agent handoff: wire only the actual tunnel session type to
-these semantic icons when that type exists; do not infer it from a hostname
+Wire only the actual tunnel session type to
+these semantic icons; do not infer it from a hostname
 or route ordinary SSH to this mark. Keep color in the application, preserve
 existing row/chip geometry and hit targets, and supply action-specific
 accessible labels at interactive use sites. Do not introduce authentication,
