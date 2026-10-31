@@ -64,6 +64,18 @@ pub struct Profiles {
     durable_credentials: bool,
 }
 
+/// The Keychain can be present but unusable (for example a build signed
+/// without a keychain access group), so a write is attempted up front rather
+/// than failing on the first credential the person types.
+fn probe_secret_store(
+    store: &dyn festerm_secret_store::SecretStore,
+) -> Result<(), festerm_secret_store::SecretStoreError> {
+    let probe = festerm_secret_store::SecretBytes::copy_from_slice(b"probe");
+    let reference = store.put(&probe)?;
+    store.delete(&reference)?;
+    Ok(())
+}
+
 impl Profiles {
     pub fn open(
         directory: &Path,
@@ -99,7 +111,10 @@ impl Profiles {
     pub fn open_default() -> Result<Self, String> {
         let directory = Self::default_directory()
             .ok_or_else(|| "No application storage directory is available".to_owned())?;
-        match festerm_secret_store::native_store() {
+        match festerm_secret_store::native_store().and_then(|native| {
+            probe_secret_store(native.as_ref())?;
+            Ok(native)
+        }) {
             Ok(native) => Self::open(&directory, Arc::from(native), true),
             Err(_) => Self::open(
                 &directory,

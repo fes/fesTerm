@@ -67,6 +67,9 @@ pub struct EditorState {
     pub tunnel: Option<DevTunnelChoices>,
 }
 
+/// The remote session name used when the field is left empty.
+const DEFAULT_SESSION_NAME: &str = "work";
+
 impl EditorState {
     pub fn open_new(&mut self) {
         self.wipe_secrets();
@@ -148,7 +151,10 @@ impl EditorState {
     }
 
     pub fn remote_session(&self) -> RemoteSession {
-        let name = self.session_name.trim().to_owned();
+        let name = match self.session_name.trim() {
+            "" => DEFAULT_SESSION_NAME.to_owned(),
+            name => name.to_owned(),
+        };
         match self.session_mode {
             1 => RemoteSession::Tmux { name },
             2 => RemoteSession::Screen { name },
@@ -497,7 +503,13 @@ fn ssh_fields(
             );
         });
         if state.session_mode != 0 {
-            text_field(ui, "Session name", &mut state.session_name, "work", width);
+            text_field(
+                ui,
+                "Session name",
+                &mut state.session_name,
+                DEFAULT_SESSION_NAME,
+                width,
+            );
             footnote(
                 ui,
                 "Attach to this remote session, or create it if missing. Reconnecting reattaches it.",

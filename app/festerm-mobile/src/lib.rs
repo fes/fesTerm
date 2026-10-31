@@ -778,9 +778,7 @@ impl MobileApp {
         }
         if self.editor.open && self.editor.auth_sheet {
             let bounds = ui.max_rect();
-            let clipboard =
-                festerm_ios_window::clipboard_text().is_some() || cfg!(not(target_os = "ios"));
-            match forms::authentication_sheet(&ctx, bounds, &mut self.editor, clipboard) {
+            match forms::authentication_sheet(&ctx, bounds, &mut self.editor, true) {
                 forms::AuthAction::None => {}
                 forms::AuthAction::Done => self.finish_authentication(),
                 forms::AuthAction::PasteKey => self.import_key(None),
