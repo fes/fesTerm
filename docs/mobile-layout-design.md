@@ -196,7 +196,12 @@ fresh-shell warning appears when replacing an active connection. This transient
 form remains a deliberate deviation from Termius saved-host navigation.
 
 Disconnected history follows owner reference screen 16: the actual host remains
-visible with Disconnected · read-only. A bounded bottom recovery card offers
+visible with Disconnected · read-only. The recovery panel reserves its space
+on first layout (up to 160 points, or 96 in short layouts, and never more than
+45% of remaining measured height); inner details scroll within that resolved
+space rather than expanding an initially 20-point bottom panel offscreen.
+These provisional sizes require native text/accessibility review.
+A bounded bottom recovery card offers
 Reconnect · new shell; ordinary reason text is under Details, while an input
 refusal's earlier-execution warning stays visible. The disabled accessory row is
 replaced by this card and the terminal stops requesting native IME. Reconnect

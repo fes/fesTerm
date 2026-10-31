@@ -642,11 +642,16 @@ impl MobileApp {
         #[cfg(feature = "live-ssh")]
         if read_only && !self.connection.open {
             let recovery_height = ui.available_height();
-            egui::Panel::bottom("mobile-recovery").show(ui, |ui| {
-                if let Some(live) = self.sink.live.connection.borrow().as_ref() {
-                    self.connection.show_recovery(ui, live, recovery_height);
-                }
-            });
+            let card_limit = if recovery_height < 260.0 { 96.0 } else { 160.0 };
+            // Bottom panels start at 20 points before their first measurement.
+            // Reserve a bounded size now so the action is visible on first paint.
+            egui::Panel::bottom("mobile-recovery")
+                .exact_size(card_limit.min(recovery_height * 0.45))
+                .show(ui, |ui| {
+                    if let Some(live) = self.sink.live.connection.borrow().as_ref() {
+                        self.connection.show_recovery(ui, live, recovery_height);
+                    }
+                });
         }
         #[cfg(feature = "live-ssh")]
         let history_ready = lifecycle.active && !self.connection.open && (input_ready || read_only);

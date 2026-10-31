@@ -408,7 +408,7 @@ impl ConnectionForm {
         available_height: f32,
     ) {
         let compact = available_height < 260.0;
-        let height = available_height * 0.45;
+        let height = ui.available_height();
         egui::ScrollArea::vertical()
             .id_salt("mobile-recovery-content")
             .max_height(height)
