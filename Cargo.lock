@@ -2333,6 +2333,7 @@ dependencies = [
  "festerm-mobile-profiles",
  "festerm-secret-store",
  "festerm-session",
+ "festerm-sftp",
  "festerm-ssh",
  "festerm-ui-egui",
  "log",

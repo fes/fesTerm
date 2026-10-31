@@ -333,7 +333,7 @@ transport/authentication, persistence or persistent-keyboard policy.
 `mobile_connection_form_fits_measured_phone_tablet_space_and_releases_it` and
 `mobile_connection_form_short_layout_scrolls_to_connect_without_terminal_input`
 cover actual-widget geometry, reopening, short-view scrolling and zero terminal
-input. `mobile_header_menu_routes_previews_and_resets_demo_without_stale_input`
+input. `mobile_header_menu_resets_demo_without_stale_input_and_has_no_preview_entries`
 covers actual overflow navigation, latch retirement and reset. Before/after
 headless capture is visual evidence; native keyboard/touch,
 rotation, SSH/TUI and physical-device acceptance remain MOB-06 requirements.
@@ -387,12 +387,6 @@ Termius interaction or experimental native smoke policy changes.
   `terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples`,
   `mobile_workspaces_limit_native_keyboard_and_terminal_gestures_to_terminal`,
   `responsive_tiers_follow_measured_space_not_device_identity`,
-  `compact_files_layout_keeps_both_panes_on_screen`,
-  `compact_files_layout_keeps_collision_and_queue_actions_reachable`,
-  `wide_files_layout_keeps_horizontal_panes_on_screen`,
-  `transfer_direction_follows_the_selected_source_pane`,
-  `collision_requires_an_explicit_decision_and_queue_is_bounded`,
-  `transfer_progress_is_monotonic_and_completes`,
   `markdown_fixture_uses_shared_parser_and_has_navigable_contents`;
   `scripts/build-ios-spike.py --check-dependencies`; iOS workflow build/link;
   portable Simulator policy regressions

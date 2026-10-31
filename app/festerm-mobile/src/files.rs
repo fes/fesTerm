@@ -655,6 +655,7 @@ impl FilesSession {
         }
         if let Some((state, name, location)) = opened {
             self.opening = None;
+            self.notice = None;
             if state == RowState::Done {
                 let path = format!("{CACHE_DIR}/{}/{name}", self.cache_counter);
                 match self.read_local(&path) {

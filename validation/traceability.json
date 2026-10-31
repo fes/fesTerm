@@ -3414,7 +3414,8 @@
         "docs/adr/0054-ios-keychain-and-mobile-profile-store.md",
         "docs/adr/0057-portable-dev-tunnels-client-for-ios.md#decision",
         "docs/adr/0058-ios-app-lock-and-mobile-document-viewer.md#decision",
-        "docs/adr/0059-ios-profiles-sessions-and-persisted-trust.md#decision"
+        "docs/adr/0059-ios-profiles-sessions-and-persisted-trust.md#decision",
+        "docs/adr/0060-ios-files-screen-and-sftp-profiles.md#decision"
       ],
       "decisions": [
         "ADR-0031",
@@ -3423,7 +3424,8 @@
         "ADR-0055",
         "ADR-0057",
         "ADR-0058",
-        "ADR-0059"
+        "ADR-0059",
+        "ADR-0060"
       ],
       "automated_tests": [
         "keep_both_names_preserve_extensions",
@@ -3463,7 +3465,16 @@
         "mobile_reconnect_banner_fits_and_failed_reconnect_keeps_history_without_replay",
         "mobile_tabs_switch_without_reconnect_keep_background_output_and_close",
         "mobile_editor_saves_edits_and_deletes_profiles_with_credentials",
-        "mobile_header_menu_routes_previews_and_resets_demo_without_stale_input",
+        "mobile_header_menu_resets_demo_without_stale_input_and_has_no_preview_entries",
+        "files_pane_filters_selects_and_only_offers_regular_files",
+        "files_conflict_waits_for_a_choice_and_hands_it_to_the_engine",
+        "files_link_walks_trust_password_and_failure_without_leaking_the_password",
+        "files_link_rejecting_the_host_key_fails_the_session",
+        "files_format_sizes_and_dates_for_rows",
+        "files_transfer_eta_needs_a_rate_and_remaining_bytes",
+        "mobile_sftp_profiles_save_edit_open_and_keep_their_start_folder",
+        "mobile_files_only_tab_returns_to_profiles_and_drops_its_session",
+        "markdown_workspace_renders_opened_text_and_rejects_oversize_input",
         "mobile_editor_fits_measured_phone_tablet_space_and_releases_it",
         "mobile_key_row_and_panel_apply_modifiers_once_through_core_encoding",
         "navigation_and_function_keys_use_xterm_sequences_with_modifiers",
@@ -3499,12 +3510,6 @@
         "mobile_pinch_resizes_only_terminal_and_preserves_zoom_on_memory_warning",
         "mobile_workspaces_limit_native_keyboard_and_terminal_gestures_to_terminal",
         "responsive_tiers_follow_measured_space_not_device_identity",
-        "compact_files_layout_keeps_both_panes_on_screen",
-        "compact_files_layout_keeps_collision_and_queue_actions_reachable",
-        "wide_files_layout_keeps_horizontal_panes_on_screen",
-        "transfer_direction_follows_the_selected_source_pane",
-        "collision_requires_an_explicit_decision_and_queue_is_bounded",
-        "transfer_progress_is_monotonic_and_completes",
         "markdown_fixture_uses_shared_parser_and_has_navigable_contents",
         "terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples",
         "explicit_modifiers_encode_control_meta_and_cursor_chords_atomically",

@@ -112,6 +112,27 @@ fn send(sender: &mpsc::Sender<LinkEvent>, wake: &egui::Context, event: LinkEvent
     wake.request_repaint();
 }
 
+/// Dropping a runtime waits for its blocking tasks, and the SSH layer leaves
+/// one parked for the life of the session, so release it without waiting.
+struct BackgroundRuntime(Option<tokio::runtime::Runtime>);
+
+impl BackgroundRuntime {
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.0
+            .as_ref()
+            .expect("runtime is present")
+            .block_on(future)
+    }
+}
+
+impl Drop for BackgroundRuntime {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.0.take() {
+            runtime.shutdown_background();
+        }
+    }
+}
+
 fn run(
     request: SftpRequest,
     sender: &mpsc::Sender<LinkEvent>,
@@ -128,10 +149,12 @@ fn run(
         local_root,
     } = request;
     let identity = HostIdentity::new(&host, port).map_err(|_| "Invalid SSH host or port")?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| format!("Could not start networking: {error}"))?;
+    let runtime = BackgroundRuntime(Some(
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| format!("Could not start networking: {error}"))?,
+    ));
     let size = TerminalSize::new(80, 24).map_err(|_| "Invalid terminal dimensions")?;
     let target = format!("{username}@{host}");
     let mut authentication = Some(authentication);

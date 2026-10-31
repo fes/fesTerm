@@ -1157,7 +1157,11 @@ impl MobileApp {
                 .show_separator_line(false)
                 .show(ui, |_| {});
             match (self.workspace, self.markdown.as_mut()) {
-                (workspaces::Workspace::Markdown, Some(markdown)) => markdown.show(ui),
+                (workspaces::Workspace::Markdown, Some(markdown)) => {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::symmetric(theme::space::LG as i8, 0))
+                        .show(ui, |ui| markdown.show(ui));
+                }
                 _ => self.show_files_body(ui),
             }
             return;
