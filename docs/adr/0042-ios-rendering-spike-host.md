@@ -283,6 +283,20 @@ prompts without resolver/worker activity, separate from real loopback tests.
 Neither the host protocol tests nor headless captures accept native iOS,
 OpenSSH/TUI interoperability, signing or physical-device behavior.
 
+The MOB-06 recovery slice reuses the shared renderer's existing read-only
+contract: retained history remains locally interactive while keys/paste,
+stale mouse reporting and focus reports cannot target a retired transport.
+Terminal DEC modes, app single-writer ownership and bounded session queues
+are preserved. Live desktop mouse/focus behavior is unchanged. The mobile
+recovery card explicitly opens a new-shell form, never replays input, and
+replaces history only on explicit worker start (before authentication).
+Portable regressions `mobile_disconnected_history_scrolls_and_copies_without_transport_input`,
+`mobile_reconnect_reviews_form_without_replay_or_early_history_clear` and
+`disconnected_session_keeps_selection_copy_and_navigation_but_drops_keystrokes`
+cover the policy/interaction seam. Synthetic phone/tablet capture supports
+visual review; native Copy/IME/VoiceOver and real SSH/device recovery remain
+MOB-06 gates.
+
 
 The before capture exposed missing Unicode arrow glyphs in the proportional
 font; directional strokes now avoid that font dependency. The owner-board

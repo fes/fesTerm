@@ -659,6 +659,7 @@
         "ADR-0018"
       ],
       "automated_tests": [
+        "disconnected_session_keeps_selection_copy_and_navigation_but_drops_keystrokes",
         "restored_ssh_tab_requires_fresh_authentication_without_starting_a_session",
         "application_advances_lifecycle_generation_at_reconnect_boundary",
         "reconnect_boundary_discards_pending_input_without_replaying_it",
@@ -1583,6 +1584,7 @@
         "ADR-0017"
       ],
       "automated_tests": [
+        "disconnected_session_keeps_selection_copy_and_navigation_but_drops_keystrokes",
         "history_snapshot_projects_retained_rows_without_moving_the_live_cursor",
         "scrollback_limit_changes_apply_only_to_subsequent_sessions",
         "an_unrelated_oversized_line_does_not_evict_prior_in_budget_history",
@@ -3414,6 +3416,8 @@
       "automated_tests": [
         "mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry",
         "mobile_loopback_ssh_rejects_unknown_and_changed_hosts_before_authentication",
+        "mobile_disconnected_history_scrolls_and_copies_without_transport_input",
+        "mobile_reconnect_reviews_form_without_replay_or_early_history_clear",
         "mobile_header_menu_routes_previews_and_resets_demo_without_stale_input",
         "mobile_connection_form_fits_measured_phone_tablet_space_and_releases_it",
         "mobile_connection_form_short_layout_scrolls_to_connect_without_terminal_input",

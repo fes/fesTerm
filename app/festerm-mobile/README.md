@@ -364,3 +364,12 @@ screenshots are separate from the real-loopback protocol assertions.
 
 This does not establish Simulator/device SSH, native keyboard or accessibility,
 OpenSSH/TUI interoperability, provisioning/signing or physical-device usability.
+
+Disconnected terminals retain local scroll/selection/Copy while typing, paste,
+mouse/focus transport reports and the native terminal keyboard stay disabled.
+A bounded recovery card offers a fresh-shell form; opening/cancelling it or
+failing synchronous validation preserves history. Explicit Connect replaces
+history when its worker starts, before authentication. Details remain available
+without a verbose top strip; earlier-execution warnings stay visible. Native
+touch/clipboard, dropped-network recovery and signed-device SSH remain MOB-06
+checks, not established by synthetic disconnected gallery images.

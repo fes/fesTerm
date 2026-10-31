@@ -40,10 +40,16 @@ fn capture_mobile_ui_gallery() {
             "terminal",
             "connect",
             "arrow-helper",
+            "disconnected",
             "host-trust",
             "changed-host",
             "authentication",
         ] {
+            let state_occlusion = if state == "disconnected" {
+                0.0
+            } else {
+                occlusion
+            };
             let lifecycle = Rc::new(Cell::new(Lifecycle {
                 active: true,
                 ..Default::default()
@@ -58,7 +64,7 @@ fn capture_mobile_ui_gallery() {
             let mut harness = Harness::builder()
                 .with_size(egui::vec2(width, height))
                 .build_ui_state(
-                    move |ui, app: &mut MobileApp| app.show_with_occlusion(ui, occlusion),
+                    move |ui, app: &mut MobileApp| app.show_with_occlusion(ui, state_occlusion),
                     app,
                 );
             // Pin the presentation preference, not the native platform theme.
@@ -68,6 +74,11 @@ fn capture_mobile_ui_gallery() {
                 .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
             harness.remove_cursor();
             harness.run();
+            if state == "disconnected" {
+                *harness.state_mut().sink.live.connection.borrow_mut() =
+                    Some(live_ssh::disconnected_fixture());
+                harness.run();
+            }
             if state == "connect" {
                 harness.get_by_label("Connect").click();
                 harness.run();
@@ -126,7 +137,7 @@ fn capture_mobile_ui_gallery() {
                 "viewport_class": family,
                 "logical_size": [width, height],
                 "pixel_size": [image.width(), image.height()],
-                "simulated_keyboard_occlusion_fraction": occlusion,
+                "simulated_keyboard_occlusion_fraction": state_occlusion,
                 "native_keyboard_rendered": false,
                 "sha256": hash,
             }));
@@ -142,7 +153,7 @@ fn capture_mobile_ui_gallery() {
             "host_os": std::env::consts::OS,
             "native_ios": false,
             "native_validation": "not-run",
-            "fixture": "controlled offline terminal/connect/gesture and synthetic trust/auth prompts; no SSH worker",
+            "fixture": "repository-owned offline terminal, empty connection form, synthetic hold/drag, retired-session and trust/auth prompts; no SSH worker",
             "presentation": "Dark preference; nonblinking cursor; no system keyboard pixels",
             "images": images,
         }))

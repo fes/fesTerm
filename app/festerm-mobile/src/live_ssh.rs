@@ -143,6 +143,24 @@ pub(super) fn prompt_fixture(changed_key: bool, authentication: bool) -> LiveSsh
     live
 }
 
+#[cfg(test)]
+pub(super) fn disconnected_fixture() -> LiveSsh {
+    LiveSsh {
+        identity: HostIdentity::new("example.test", 22).expect("reserved fixture host"),
+        context: egui::Context::default(),
+        session: None,
+        host_resolver: None,
+        password_resolver: None,
+        host_prompt: None,
+        password_prompt: None,
+        password: PasswordBuffer::default(),
+        pending_resize: None,
+        running: false,
+        status: "Connection lost. Connect again for a fresh shell.",
+        accepted_pin: None,
+    }
+}
+
 impl LiveSsh {
     pub(super) fn connect(
         host: &str,
@@ -412,6 +430,55 @@ impl ConnectionForm {
         }
     }
 
+    pub(super) fn show_recovery(
+        &mut self,
+        ui: &mut egui::Ui,
+        live: &LiveSsh,
+        available_height: f32,
+    ) {
+        let compact = available_height < 260.0;
+        let height = ui.available_height();
+        egui::ScrollArea::vertical()
+            .id_salt("mobile-recovery-content")
+            .max_height(height)
+            .min_scrolled_height(0.0)
+            .show(ui, |ui| {
+                egui::Frame::new()
+                    .fill(ui.visuals().window_fill)
+                    .stroke(ui.visuals().window_stroke)
+                    .corner_radius(8)
+                    .inner_margin(if compact { 6 } else { 12 })
+                    .show(ui, |ui| {
+                        if !compact {
+                            ui.strong("Connection ended");
+                            ui.label("Reconnect starts a new shell.");
+                        }
+                        if ui
+                            .add_sized(
+                                [ui.available_width(), 44.0],
+                                egui::Button::new("Reconnect · new shell")
+                                    .fill(egui::Color32::from_rgb(25, 120, 238)),
+                            )
+                            .clicked()
+                        {
+                            // Review the existing form first; no worker starts here.
+                            self.toggle();
+                        }
+                        if live.status.starts_with("Input rejected") {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(255, 193, 112),
+                                "Earlier accepted input may have executed.",
+                            );
+                        }
+                        egui::CollapsingHeader::new("Details")
+                            .id_salt("mobile-recovery-details")
+                            .show(ui, |ui| {
+                                ui.label(live.status);
+                            });
+                    });
+            });
+    }
+
     pub(super) fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -423,7 +490,9 @@ impl ConnectionForm {
             self.controls = None;
         }
         if let Some(connection) = live.as_mut() {
-            ui.label(connection.status);
+            if !connection.can_reset() {
+                ui.label(connection.status);
+            }
             if let Some(pin) = &connection.accepted_pin {
                 self.pin = Some((
                     connection.identity.host().to_owned(),
@@ -611,6 +680,207 @@ mod tests {
 
     fn terminal() -> Terminal {
         Terminal::with_scrollback_limit(Dimensions::new(80, 24).unwrap(), 4096).unwrap()
+    }
+
+    #[test]
+    fn mobile_disconnected_history_scrolls_and_copies_without_transport_input() {
+        use crate::{Lifecycle, MobileApp};
+        use std::{cell::Cell, rc::Rc};
+
+        let session = Arc::new(FakeSession::default());
+        let mut live = connection(session.clone());
+        live.stop("Connection lost. Connect again for a fresh shell.");
+        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        app.control = true;
+        app.alt = true;
+        app.terminal.ingest(b"\x1b[?1003h\x1b[?1006h\x1b[?1004h");
+        *app.sink.live.connection.borrow_mut() = Some(live);
+        let context = egui::Context::default();
+        let render = |app: &mut MobileApp, events| {
+            context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(390.0, 844.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| app.show_with_occlusion(ui, 0.0),
+            )
+        };
+        for _ in 0..4 {
+            let output = render(&mut app, vec![]);
+            assert!(output.platform_output.ime.is_none());
+            output.drop_without_applying_deltas();
+        }
+        assert!(!app.control && !app.alt);
+        assert!(app.toolbar_rect.is_none());
+        assert!(app.gestures.helper().is_none());
+        let grid = app.view.diagnostics().grid_rect.unwrap();
+        render(
+            &mut app,
+            vec![
+                egui::Event::WindowFocused(true),
+                egui::Event::Text("must not run".into()),
+                egui::Event::Paste("must not paste\n".into()),
+                egui::Event::PointerMoved(grid.center()),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Line,
+                    delta: egui::vec2(0.0, 6.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        )
+        .drop_without_applying_deltas();
+        assert!(app.view.history_offset_rows() > 0);
+        let grid = app.view.diagnostics().grid_rect.unwrap();
+        let dimensions = app.terminal.dimensions();
+        let cell = egui::vec2(
+            grid.width() / dimensions.columns() as f32,
+            grid.height() / dimensions.rows() as f32,
+        );
+        let start = grid.min + egui::vec2(cell.x * 0.2, cell.y * 0.5);
+        let end = start + egui::vec2(cell.x * 2.0, 0.0);
+        for (point, pressed) in [(start, true), (end, false)] {
+            render(
+                &mut app,
+                vec![
+                    egui::Event::PointerMoved(point),
+                    egui::Event::PointerButton {
+                        pos: point,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            )
+            .drop_without_applying_deltas();
+        }
+        let selected = app
+            .view
+            .selected_text(&app.terminal)
+            .expect("local selection");
+        assert!(!selected.is_empty());
+        let output = render(&mut app, vec![egui::Event::Copy]);
+        assert!(output.platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(text) if text == &selected)
+        }));
+        assert!(output.platform_output.ime.is_none());
+        output.drop_without_applying_deltas();
+        assert!(session.input.lock().unwrap().is_empty());
+        assert_eq!(app.sink.diagnostics.byte_count, 0);
+        assert_eq!(*session.shutdowns.lock().unwrap(), 1);
+        assert_eq!(
+            app.terminal.modes().mouse_tracking(),
+            festerm_core::MouseTrackingMode::AnyMotion
+        );
+
+        app.connection.toggle();
+        for _ in 0..4 {
+            render(&mut app, vec![]).drop_without_applying_deltas();
+        }
+        let offset = app.view.history_offset_rows();
+        render(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(grid.center()),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Line,
+                    delta: egui::vec2(0.0, 6.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        )
+        .drop_without_applying_deltas();
+        assert_eq!(app.view.history_offset_rows(), offset);
+        assert_eq!(app.sink.diagnostics.byte_count, 0);
+    }
+
+    #[test]
+    fn mobile_reconnect_reviews_form_without_replay_or_early_history_clear() {
+        use crate::{Lifecycle, MobileApp};
+        use egui_kittest::{kittest::Queryable, Harness};
+        use std::{cell::Cell, rc::Rc};
+
+        for size in [
+            egui::vec2(834.0, 1194.0),
+            egui::vec2(844.0, 390.0),
+            egui::vec2(390.0, 260.0),
+        ] {
+            let app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            })));
+            *app.sink.live.connection.borrow_mut() = Some(disconnected_fixture());
+            let mut harness = Harness::builder()
+                .with_size(size)
+                .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+            harness.run();
+            let button = harness.get_by_label("Reconnect · new shell").rect();
+            assert!(
+                egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(button),
+                "recovery action outside {size:?}: {button:?}"
+            );
+            harness.get_by_label("Reconnect · new shell").click();
+            harness.run();
+            assert!(harness.state().connection.open, "{size:?}");
+        }
+
+        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        app.terminal.ingest(b"retained-evidence");
+        *app.sink.live.connection.borrow_mut() = Some(disconnected_fixture());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+        let retained = |app: &MobileApp| {
+            (0..app.terminal.dimensions().rows())
+                .filter_map(|row| app.terminal.row_text(row))
+                .collect::<Vec<_>>()
+                .join("\n")
+                .contains("retained-evidence")
+        };
+        harness.run();
+        let reconnect = harness.get_by_label("Reconnect · new shell").rect();
+        assert!(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(390.0, 844.0))
+                .contains_rect(reconnect),
+            "recovery action outside viewport: {reconnect:?}"
+        );
+        harness.get_by_label("Reconnect · new shell").click();
+        harness.run();
+        assert!(
+            harness.state().connection.open,
+            "visible recovery action did not open form: {reconnect:?}"
+        );
+        assert!(retained(harness.state()));
+        assert!(harness
+            .state()
+            .sink
+            .live
+            .connection
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .can_reset());
+        // An empty host fails validation synchronously; it cannot replace history.
+        harness.get_by_label("Connect").click();
+        harness.run();
+        assert!(retained(harness.state()));
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert!(!harness.state().connection.open);
+        assert!(retained(harness.state()));
+        assert_eq!(harness.state().sink.diagnostics.byte_count, 0);
+        assert!(harness.query_by_label("Reconnect · new shell").is_some());
     }
 
     #[test]

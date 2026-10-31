@@ -56,8 +56,8 @@ pub struct TerminalViewOptions {
     pub terminal_input_enabled: bool,
     /// The session backing this view can still accept typed keystrokes
     /// (i.e. it has not exited, failed, stopped, or disconnected). Unlike
-    /// `terminal_input_enabled`, this only suppresses keystrokes/paste
-    /// delivered to the shell; scrollback navigation, selection, and Copy
+    /// `terminal_input_enabled`, this suppresses transport-bound keyboard/paste,
+    /// mouse and focus reports; scrollback navigation, selection, and Copy
     /// remain available so a read-only/dead session's history stays
     /// inspectable.
     pub keyboard_input_enabled: bool,
@@ -998,7 +998,8 @@ impl TerminalView {
             dimensions: vp_layout.dimensions,
             metrics,
         };
-        let mouse_reporting = !matches!(terminal.modes().mouse_tracking(), MouseTrackingMode::None);
+        let mouse_reporting = options.keyboard_input_enabled
+            && !matches!(terminal.modes().mouse_tracking(), MouseTrackingMode::None);
 
         if ui.input(|input| {
             input
@@ -6399,6 +6400,8 @@ mod tests {
         // HIST-06/SSH-02 invariant.
         let mut state = HeadlessViewState::new();
         state.terminal.ingest(b"copy me");
+        // Retired TUI modes must not steal local gestures or emit focus reports.
+        state.terminal.ingest(b"\x1b[?1003h\x1b[?1006h\x1b[?1004h");
         let mut harness = Harness::builder()
             .with_size(Vec2::new(800.0, 600.0))
             .build_ui_state(
