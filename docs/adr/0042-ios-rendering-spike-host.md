@@ -284,6 +284,17 @@ Neither the host protocol tests nor headless captures accept native iOS,
 OpenSSH/TUI interoperability, signing or physical-device behavior.
 
 
+The owner-provided iOS product boards guide a mobile-scoped navy/blue presentation,
+two-line actual-host identity and labelled Host/Port/Username controls. The
+Esc/Tab/Ctrl/Alt order preserves one-shot semantics. This is presentation within
+MOB-05/MOB-06, with no desktop style, terminal/session ownership, trust or secret
+boundary changes. Existing measured-space/menu/input regressions and the
+exact-source phone/tablet gallery cover portable behavior; native comparison,
+Dynamic Type, VoiceOver and real-device input remain manual gates. Deferred
+product screens and deliberate transient-prototype differences are recorded in
+`docs/mobile-layout-design.md#owner-provided-product-mock-ups`.
+
+
 The #425 connection-form layout correction uses a direct scroll area bounded
 by 45% of measured safe space, growing only to its content. The owner-requested
 cleanup uses one compact header, secondary preview/reset actions and diagnostics

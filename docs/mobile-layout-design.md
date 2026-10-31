@@ -63,6 +63,41 @@ Terminal is active. This is secondary preview navigation, not full tab managemen
   the terminal reclaims that region while the terminal-key row stays available.
   Never reserve a guessed device-specific keyboard height.
 
+## Owner-provided product mock-ups
+
+The owner supplied four iOS reference boards on 2026-10-30: Terminals & Input
+(screens 01–04), Sessions & Files (05–08), Conflicts & Profiles (09–12), and
+Identity & Privacy (13–16). These are the visual/product interaction target,
+alongside the Termius conventions below. They are design references, not
+screenshots of implemented or validated behavior.
+
+The first implementation pass adopts the dark navy surfaces, muted secondary
+text, blue selected/primary controls, rounded touch targets, compact two-line
+session identity, Esc/Tab/Ctrl/Alt accessory order and labelled SSH fields with
+Host/Port on one row. The live header uses the actual connection's host rather
+than a synthetic profile name; truncation preserves access to Connect and More.
+The transient form remains within the measured-space cap and scrolls in short
+layouts. This presentation is scoped to the mobile UI, leaving desktop styling
+and terminal protocol colors unchanged.
+
+Deliberate prototype differences: one transient SSH session, no bottom session
+switcher/All count, no saved-profile title or multiplexer badge, no invented
+connected state, and explicit Offline demo/preview labels. Connect remains
+available in the header; the form does not claim Save, Keychain storage or a
+persistent host-trust decision. The existing native keyboard request and
+hold/directional-drag helper stay functional while the extended-key panel,
+clipboard controls and detailed helper visuals are staged separately. Do not
+paint a fake system keyboard to match the boards. Native runtime draws it.
+
+Screens 05–10, 12–15 describe later profiles, full session management, real SFTP,
+transfers/conflicts, Dev Tunnel identity and app-lock work. They must not delay
+the physical-device SSH demo. Screen 11's host trust and screen 16's fresh-shell
+reconnect are immediate interaction references; transient trust lifetime and
+the absence of durable recovery must stay explicit. Mock-up copy suggesting
+persistent trust or resumed shells is not authority to implement those promises.
+Capture actual-widget phone/tablet comparisons for each implemented slice and
+record native rendering, Dynamic Type, VoiceOver and touch checks separately.
+
 ## Touch navigation and Termius conventions
 
 Campaign UI reviews use actual-widget screenshots attributed to the tested

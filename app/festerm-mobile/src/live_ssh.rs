@@ -190,6 +190,10 @@ impl LiveSsh {
         })
     }
 
+    pub(super) fn host_label(&self) -> &str {
+        self.identity.host()
+    }
+
     pub(super) fn input_enabled(&self) -> bool {
         self.running && self.host_prompt.is_none() && self.password_prompt.is_none()
     }
@@ -442,30 +446,50 @@ impl ConnectionForm {
             let margin = control_margin(ui);
             #[cfg(test)]
             let controls_start = ui.cursor().min;
+            let width = ui.available_width();
+            let port_width = 72.0_f32.min(width * 0.3);
+            let host_width = (width - port_width - ui.spacing().item_spacing.x).max(1.0);
             let field_height = ui
-                .add(
-                    egui::TextEdit::singleline(&mut self.host)
-                        .margin(margin)
-                        .hint_text("Host")
-                        .char_limit(253),
-                )
-                .rect
-                .height();
+                .horizontal(|ui| {
+                    let host = ui.vertical(|ui| {
+                        ui.set_width(host_width);
+                        ui.weak("Host");
+                        ui.add_sized(
+                            [host_width, 44.0],
+                            egui::TextEdit::singleline(&mut self.host)
+                                .margin(margin)
+                                .hint_text("example.net")
+                                .char_limit(253),
+                        )
+                    });
+                    ui.vertical(|ui| {
+                        ui.set_width(port_width);
+                        ui.weak("Port");
+                        ui.add_sized(
+                            [port_width, 44.0],
+                            egui::TextEdit::singleline(&mut self.port)
+                                .margin(margin)
+                                .hint_text("22")
+                                .char_limit(5),
+                        );
+                    });
+                    host.inner.rect.height()
+                })
+                .inner;
             #[cfg(not(test))]
             let _ = field_height;
-            ui.add(
-                egui::TextEdit::singleline(&mut self.port)
-                    .margin(margin)
-                    .hint_text("Port")
-                    .char_limit(5),
-            );
-            ui.add(
+            ui.weak("Username");
+            ui.add_sized(
+                [width, 44.0],
                 egui::TextEdit::singleline(&mut self.username)
-                    .margin(control_margin(ui))
+                    .margin(margin)
                     .hint_text("Username")
                     .char_limit(255),
             );
-            let connect = ui.button("Connect");
+            let connect = ui.add_sized(
+                [width, 44.0],
+                egui::Button::new("Connect").fill(egui::Color32::from_rgb(25, 120, 238)),
+            );
             #[cfg(test)]
             {
                 self.controls = Some(ConnectionControlsGeometry {
