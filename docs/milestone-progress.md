@@ -144,6 +144,17 @@ through those paths, ordinary saves and buffer reuse. Replacement-parent
 identity is checked before opening a child, while legitimate regular-file
 replacement and dirty-buffer conflict handling remain supported.
 
+## v0.12.0: Dev Tunnel one-line setup, deliberate takeover, and the iOS app
+
+This release packages the per-user Dev Tunnel host one-line installers and
+six-platform bridge bundles, deliberate local/remote session takeover (default
+on, `--no-takeover` / `-NoTakeover` to disable) with backward-compatible
+`FSA3`/`FSA4` admission so existing sessions are not orphaned, and the iOS
+app: SSH, SFTP, Dev Tunnels, Markdown viewing, app lock, and profile/Keychain
+storage. Dev Tunnels remain subject to the accepted, revocable licensing risk
+recorded in ADR 0053. iOS real-device, TestFlight, live Microsoft Dev Tunnels
+service, and Face ID qualification remain open; serial is not part of iOS.
+
 ## v0.11.1: recovering existing native sessions safely
 
 This patch release packages the native-session upgrade repair and confirmed
