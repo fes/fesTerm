@@ -3,7 +3,7 @@
 //! its worker keeps running in the suspension handle's background list.
 
 use super::model::{Reattachable, SurfaceKind, SurfaceState, SurfaceSummary};
-use super::profiles::SessionSpec;
+use super::profiles::{SessionSpec, TunnelSpec};
 use super::*;
 
 pub(super) struct SessionTab {
@@ -11,6 +11,8 @@ pub(super) struct SessionTab {
     pub title: String,
     /// `None` is the offline demo terminal.
     pub spec: Option<SessionSpec>,
+    /// Set for Dev Tunnel tabs, which have no SSH spec.
+    pub tunnel: Option<TunnelSpec>,
     parked: Option<(Terminal, TerminalView)>,
 }
 
@@ -36,7 +38,7 @@ fn surface_state(live: &live_ssh::LiveSsh) -> SurfaceState {
 }
 
 impl MobileApp {
-    fn blank_terminal(&self) -> Terminal {
+    pub(super) fn blank_terminal(&self) -> Terminal {
         Terminal::with_scrollback_limit(self.terminal.dimensions(), SCROLLBACK_LIMIT)
             .expect("existing valid bounded grid")
     }
@@ -104,20 +106,25 @@ impl MobileApp {
         self.keys_panel.open = false;
     }
 
-    fn push_tab(&mut self, title: String, spec: Option<SessionSpec>) -> u64 {
+    pub(super) fn push_tab(&mut self, title: String, spec: Option<SessionSpec>) -> u64 {
         let id = self.next_tab;
         self.next_tab += 1;
         self.tabs.push(SessionTab {
             id,
             title,
             spec,
+            tunnel: None,
             parked: None,
         });
         id
     }
 
     pub(super) fn open_local_tab(&mut self) {
-        if let Some(tab) = self.tabs.iter().find(|tab| tab.spec.is_none()) {
+        if let Some(tab) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.spec.is_none() && tab.tunnel.is_none())
+        {
             let id = tab.id;
             self.activate_tab(id);
             return;
@@ -223,6 +230,14 @@ impl MobileApp {
         Ok(())
     }
 
+    pub(super) fn active_tunnel(&self) -> Option<&TunnelSpec> {
+        let id = self.active_tab?;
+        self.tabs
+            .iter()
+            .find(|tab| tab.id == id)
+            .and_then(|tab| tab.tunnel.as_ref())
+    }
+
     pub(super) fn close_tab(&mut self, id: u64) {
         if self.active_tab == Some(id) {
             self.release_focus();
@@ -268,6 +283,15 @@ impl MobileApp {
             .map(|tab| {
                 let active = self.active_tab == Some(tab.id);
                 let (kind, detail, state, status) = match &tab.spec {
+                    None if tab.tunnel.is_some() => {
+                        let (state, status) = self.tab_connection(tab.id, active);
+                        let detail = tab
+                            .tunnel
+                            .as_ref()
+                            .map(TunnelSpec::detail)
+                            .unwrap_or_default();
+                        (SurfaceKind::DevTunnel, detail, state, status)
+                    }
                     None => (
                         SurfaceKind::Local,
                         "Local fixture · no shell".to_owned(),

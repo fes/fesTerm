@@ -150,10 +150,10 @@ pub struct Capabilities {
 impl Capabilities {
     /// What the production shell supports today: SSH profiles with password
     /// or key authentication, remote sessions, paste and SFTP file profiles.
-    /// Dev Tunnel profiles stay hidden until their flow is wired.
+    /// Dev Tunnel profiles need the live transport build.
     pub const fn production() -> Self {
         Self {
-            dev_tunnel_profiles: false,
+            dev_tunnel_profiles: cfg!(feature = "live-ssh"),
             sftp_profiles: true,
             key_authentication: true,
             remote_session_choice: true,
@@ -197,14 +197,22 @@ pub struct ReconnectBanner {
     pub status: String,
     /// `tmux · work` when reconnecting reattaches a durable remote session.
     pub reattach: Option<String>,
+    /// Dev Tunnel wording; replaces the SSH copy when set.
+    pub custom: Option<BannerText>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BannerText {
+    pub title: String,
+    pub body: String,
+    pub action: &'static str,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DevTunnelChoices {
-    pub account_name: String,
-    pub account_user: String,
+    /// GitHub login of the bound account; `None` until signed in.
+    pub account_login: Option<String>,
     pub tunnels: Vec<String>,
-    pub tunnel: usize,
-    pub sessions: Vec<String>,
-    pub session: usize,
+    pub loading: bool,
+    pub error: Option<String>,
 }

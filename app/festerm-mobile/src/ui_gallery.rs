@@ -298,13 +298,12 @@ fn configure(app: &mut MobileApp, state: &str) {
             app.editor.open_new();
             app.editor.kind_index = 1;
             app.editor.name = "build-box".to_owned();
+            app.editor.tunnel_name = "build-tunnel".to_owned();
+            app.editor.take_over = true;
             app.editor.tunnel = Some(DevTunnelChoices {
-                account_name: "Dev Tunnels".to_owned(),
-                account_user: "signed in".to_owned(),
+                account_login: Some("octo".to_owned()),
                 tunnels: vec!["build-tunnel".to_owned(), "docs-tunnel".to_owned()],
-                tunnel: 0,
-                sessions: vec!["tmux / build".to_owned(), "New shell".to_owned()],
-                session: 0,
+                ..DevTunnelChoices::default()
             });
         }
         "host-trust" | "changed-host" | "authentication" => {

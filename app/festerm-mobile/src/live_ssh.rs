@@ -22,13 +22,20 @@ mod loopback_tests;
 
 const EVENT_BUDGET: usize = 32;
 
+const TAKEN_OVER_LOCAL: &str =
+    "Taken over on the host computer. Attach again to take the session back.";
+const TAKEN_OVER_REMOTE: &str =
+    "Taken over by another device. Attach again to take the session back.";
+const TAKEN_OVER_UNKNOWN: &str =
+    "Taken over by another client. Attach again to take the session back.";
+
 fn session_size(dimensions: Dimensions) -> Result<TerminalSize, &'static str> {
     let columns = u16::try_from(dimensions.columns()).map_err(|_| "Terminal too wide")?;
     let rows = u16::try_from(dimensions.rows()).map_err(|_| "Terminal too tall")?;
     TerminalSize::new(columns, rows).map_err(|_| "Invalid terminal dimensions")
 }
 
-struct Repaint(egui::Context);
+pub(super) struct Repaint(pub(super) egui::Context);
 
 impl SessionEventNotifier for Repaint {
     fn notify(&self) {
@@ -37,7 +44,7 @@ impl SessionEventNotifier for Repaint {
 }
 
 pub(super) struct LiveSsh {
-    identity: HostIdentity,
+    identity: Option<HostIdentity>,
     context: egui::Context,
     session: Option<Arc<dyn Session>>,
     host_resolver: Option<HostKeyDecisionResolver>,
@@ -51,6 +58,9 @@ pub(super) struct LiveSsh {
     pub(super) accepted_pin: Option<String>,
     /// A fingerprint the user just trusted that the app has yet to persist.
     new_trust: Option<String>,
+    /// Set for Dev Tunnel sessions: the bridge owns terminal replies and the
+    /// recovery stream, and a lost attachment is never re-established here.
+    tunnel: Option<festerm_mobile_tunnels::Attachment>,
 }
 
 #[cfg(test)]
@@ -82,7 +92,7 @@ pub(super) fn prompt_fixture(changed_key: bool, authentication: bool) -> LiveSsh
 #[cfg(test)]
 pub(super) fn disconnected_fixture() -> LiveSsh {
     LiveSsh {
-        identity: HostIdentity::new("example.test", 22).expect("reserved fixture host"),
+        identity: Some(HostIdentity::new("example.test", 22).expect("reserved fixture host")),
         context: egui::Context::default(),
         session: None,
         host_resolver: None,
@@ -95,10 +105,48 @@ pub(super) fn disconnected_fixture() -> LiveSsh {
         status: "Connection lost. Connect again for a fresh shell.",
         accepted_pin: None,
         new_trust: None,
+        tunnel: None,
     }
 }
 
 impl LiveSsh {
+    /// Wraps an attached Dev Tunnel session. The host has already approved the
+    /// adoption, so input is accepted at once.
+    pub(super) fn from_tunnel(
+        attachment: festerm_mobile_tunnels::Attachment,
+        context: &egui::Context,
+    ) -> Self {
+        let session = attachment.session();
+        Self {
+            identity: None,
+            context: context.clone(),
+            session: Some(session),
+            host_resolver: None,
+            password_resolver: None,
+            host_prompt: None,
+            password_prompt: None,
+            password: PasswordBuffer::default(),
+            pending_resize: None,
+            running: true,
+            status: "Attached",
+            accepted_pin: None,
+            new_trust: None,
+            tunnel: Some(attachment),
+        }
+    }
+
+    /// Why a Dev Tunnel attachment ended, in words that name who is responsible.
+    fn tunnel_end_status(&self) -> &'static str {
+        use festerm_mobile_tunnels::{Displacer, TunnelError};
+        match self.tunnel.as_ref().and_then(|tunnel| tunnel.end_error()) {
+            Some(TunnelError::Displaced(Displacer::Local)) => TAKEN_OVER_LOCAL,
+            Some(TunnelError::Displaced(Displacer::Remote)) => TAKEN_OVER_REMOTE,
+            Some(TunnelError::Displaced(_)) => TAKEN_OVER_UNKNOWN,
+            Some(TunnelError::SessionExited) => "The remote shell exited.",
+            _ => "Tunnel connection lost. The remote session may still be running.",
+        }
+    }
+
     pub(super) fn connect(
         request: ConnectRequest,
         dimensions: Dimensions,
@@ -136,7 +184,7 @@ impl LiveSsh {
         let host_resolver = Some(session.host_key_decision_resolver());
         let password_resolver = Some(session.password_decision_resolver());
         Ok(Self {
-            identity,
+            identity: Some(identity),
             context: context.clone(),
             session: Some(Arc::new(session)),
             host_resolver,
@@ -149,6 +197,7 @@ impl LiveSsh {
             status: "Connecting",
             accepted_pin: pin.map(str::to_owned),
             new_trust: None,
+            tunnel: None,
         })
     }
 
@@ -211,7 +260,12 @@ impl LiveSsh {
                 Ok(SessionEvent::Output(bytes)) => {
                     terminal.ingest(&bytes);
                     let replies = terminal.drain_replies();
-                    if !replies.is_empty() && session.try_send_input(&replies).is_err() {
+                    // A tunnel host answers terminal queries itself.
+                    let own_replies = !session.terminal_replies_owned_by_backend();
+                    if own_replies
+                        && !replies.is_empty()
+                        && session.try_send_input(&replies).is_err()
+                    {
                         self.stop("Terminal reply rejected; disconnected");
                         return;
                     }
@@ -234,8 +288,21 @@ impl LiveSsh {
                     self.status = "Connecting";
                 }
                 Ok(SessionEvent::Lifecycle(_)) | Ok(SessionEvent::Error(_)) => {
-                    self.stop("Session ended or connection lost. Connect again for a fresh shell.");
+                    if self.tunnel.is_some() {
+                        let status = self.tunnel_end_status();
+                        self.stop(status);
+                    } else {
+                        self.stop(
+                            "Session ended or connection lost. Connect again for a fresh shell.",
+                        );
+                    }
                     return;
+                }
+                Ok(SessionEvent::RecoverySync(bytes)) if self.tunnel.is_some() => {
+                    if festerm_mobile_tunnels::apply_recovery_sync(terminal, &bytes).is_err() {
+                        self.stop("Invalid host sync; disconnected");
+                        return;
+                    }
                 }
                 Ok(SessionEvent::RecoverySync(_)) => {
                     self.stop("Unsupported recovery event; disconnected");
@@ -344,7 +411,7 @@ impl LiveSsh {
     /// The host key the user just trusted, to be persisted once.
     pub(super) fn take_new_trust(&mut self) -> Option<(HostIdentity, String)> {
         let pin = self.new_trust.take()?;
-        Some((self.identity.clone(), pin))
+        Some((self.identity.clone()?, pin))
     }
 }
 
@@ -429,7 +496,7 @@ mod tests {
 
     pub(super) fn connection(session: Arc<FakeSession>) -> LiveSsh {
         LiveSsh {
-            identity: HostIdentity::new("example.test", 22).unwrap(),
+            identity: Some(HostIdentity::new("example.test", 22).unwrap()),
             context: egui::Context::default(),
             session: Some(session),
             host_resolver: None,
@@ -442,6 +509,7 @@ mod tests {
             status: "Connected",
             accepted_pin: None,
             new_trust: None,
+            tunnel: None,
         }
     }
 

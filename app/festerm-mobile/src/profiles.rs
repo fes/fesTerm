@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use festerm_mobile_profiles::{
-    keys, CredentialStatus, KeyImportError, KnownHosts, ProfileError, ProfileId,
+    keys, CredentialStatus, DevTunnelProfile, KeyImportError, KnownHosts, ProfileError, ProfileId,
     ProfileKind as StoredKind, ProfileStore, RemoteSession, SftpProfile, SshAuth, SshProfile,
 };
 use festerm_secret_store::SecretStore;
@@ -41,6 +41,32 @@ impl SessionSpec {
 
     pub fn strategy(&self) -> Option<SessionStrategy> {
         self.ssh.remote_session.strategy().ok()
+    }
+}
+
+/// A launchable snapshot of a saved Dev Tunnel profile.
+#[derive(Clone, Debug)]
+pub struct TunnelSpec {
+    pub profile: ProfileId,
+    pub name: String,
+    /// The bound GitHub account id; `None` until one is chosen.
+    pub account: Option<String>,
+    /// `tunnel_name` of a named source, or the imported destination.
+    pub tunnel: String,
+    pub session: Option<String>,
+    pub take_over: bool,
+}
+
+impl TunnelSpec {
+    pub fn detail(&self) -> String {
+        model::profile_detail(model::ProfileKind::DevTunnel, &self.tunnel, "")
+    }
+
+    pub fn persistent_label(&self) -> String {
+        match &self.session {
+            Some(session) => format!("session · {session}"),
+            None => "host session".to_owned(),
+        }
     }
 }
 
@@ -130,6 +156,7 @@ impl Profiles {
 
     /// The shared store handle for services that persist their own state
     /// (Dev Tunnel accounts and host trust).
+    #[cfg_attr(not(feature = "live-ssh"), allow(dead_code))]
     pub(crate) fn store_handle(&self) -> Arc<Mutex<ProfileStore>> {
         self.store.clone()
     }
@@ -172,9 +199,28 @@ impl Profiles {
 
     fn row(profile: &festerm_mobile_profiles::Profile) -> Option<model::Profile> {
         let (kind, host, username) = match &profile.kind {
-            StoredKind::Ssh(ssh) => (model::ProfileKind::Ssh, &ssh.host, &ssh.username),
-            StoredKind::Sftp(sftp) => (model::ProfileKind::Sftp, &sftp.host, &sftp.username),
-            StoredKind::DevTunnel(_) => return None,
+            StoredKind::Ssh(ssh) => (
+                model::ProfileKind::Ssh,
+                ssh.host.as_str(),
+                ssh.username.as_str(),
+            ),
+            StoredKind::Sftp(sftp) => (
+                model::ProfileKind::Sftp,
+                sftp.host.as_str(),
+                sftp.username.as_str(),
+            ),
+            StoredKind::DevTunnel(tunnel) => (
+                model::ProfileKind::DevTunnel,
+                match &tunnel.source {
+                    festerm_mobile_profiles::TunnelSource::Named { tunnel_name, .. } => {
+                        tunnel_name.as_str()
+                    }
+                    festerm_mobile_profiles::TunnelSource::Imported { destination } => {
+                        destination.tunnel_id.as_str()
+                    }
+                },
+                "",
+            ),
         };
         Some(model::Profile {
             id: profile.id.as_str().to_owned(),
@@ -230,6 +276,88 @@ impl Profiles {
             name: profile.name.clone(),
             ssh: ssh.clone(),
         })
+    }
+
+    /// A launchable snapshot of a saved Dev Tunnel profile.
+    pub fn tunnel_spec(&self, id: &str) -> Option<TunnelSpec> {
+        let id = Self::id(id)?;
+        let store = self.store();
+        let profile = store.get(&id)?;
+        let StoredKind::DevTunnel(tunnel) = &profile.kind else {
+            return None;
+        };
+        let name = match &tunnel.source {
+            festerm_mobile_profiles::TunnelSource::Named { tunnel_name, .. } => {
+                tunnel_name.as_str()
+            }
+            festerm_mobile_profiles::TunnelSource::Imported { destination } => {
+                destination.tunnel_id.as_str()
+            }
+        };
+        Some(TunnelSpec {
+            profile: id,
+            name: profile.name.clone(),
+            account: tunnel.account.clone(),
+            tunnel: name.to_owned(),
+            session: tunnel.session.clone(),
+            take_over: tunnel.take_over_if_attached,
+        })
+    }
+
+    pub fn is_tunnel(&self, id: &str) -> bool {
+        self.tunnel_spec(id).is_some()
+    }
+
+    /// Creates or updates a named-tunnel profile. An update keeps the host the
+    /// user already approved only while the tunnel and account are unchanged.
+    pub fn save_tunnel(
+        &mut self,
+        id: Option<&str>,
+        name: &str,
+        account: Option<String>,
+        tunnel_name: &str,
+        session: Option<String>,
+        take_over: bool,
+    ) -> Result<String, String> {
+        let existing = id.and_then(Self::id);
+        let mut profile = DevTunnelProfile::named(tunnel_name, account.clone());
+        profile.session = session;
+        profile.take_over_if_attached = take_over;
+        if let Some(existing) = &existing {
+            if let Some(StoredKind::DevTunnel(DevTunnelProfile {
+                account: old_account,
+                source:
+                    festerm_mobile_profiles::TunnelSource::Named {
+                        tunnel_name: old_tunnel,
+                        trusted_host,
+                        connect_credential,
+                    },
+                ..
+            })) = self.store().get(existing).map(|stored| stored.kind.clone())
+            {
+                if old_tunnel == tunnel_name && old_account == account {
+                    profile.source = festerm_mobile_profiles::TunnelSource::Named {
+                        tunnel_name: old_tunnel,
+                        trusted_host,
+                        connect_credential,
+                    };
+                }
+            }
+        }
+        let kind = StoredKind::DevTunnel(profile);
+        match existing {
+            Some(id) => {
+                self.store()
+                    .update(&id, name, kind)
+                    .map_err(|error| describe(&error))?;
+                Ok(id.as_str().to_owned())
+            }
+            None => self
+                .store()
+                .create(name, kind)
+                .map(|id| id.as_str().to_owned())
+                .map_err(|error| describe(&error)),
+        }
     }
 
     /// A launchable snapshot of a saved SFTP profile.

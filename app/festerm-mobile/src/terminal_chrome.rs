@@ -578,17 +578,25 @@ pub fn reconnect_banner(ui: &mut Ui, banner: &ReconnectBanner, compact: bool) ->
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), Sense::hover());
                     icon::paint(ui.painter(), Icon::Disconnect, rect, color::TEXT_MUTED);
                     ui.label(
-                        egui::RichText::new("Connection interrupted")
+                        egui::RichText::new(
+                            banner
+                                .custom
+                                .as_ref()
+                                .map_or("Connection interrupted", |text| text.title.as_str()),
+                        )
                             .size(type_scale::BODY)
                             .strong(),
                     );
                 });
-                let explanation = match &banner.reattach {
-                    Some(session) => format!(
+                let explanation = match (&banner.custom, &banner.reattach) {
+                    (Some(text), _) => text.body.clone(),
+                    (None, Some(session)) => format!(
                         "The connection dropped; your {session} session keeps running.\nReconnecting reattaches it."
                     ),
-                    None => "Your previous shell cannot be resumed.\nReconnecting starts a new shell."
-                        .to_owned(),
+                    (None, None) => {
+                        "Your previous shell cannot be resumed.\nReconnecting starts a new shell."
+                            .to_owned()
+                    }
                 };
                 ui.label(
                     egui::RichText::new(explanation)
@@ -603,7 +611,9 @@ pub fn reconnect_banner(ui: &mut Ui, banner: &ReconnectBanner, compact: bool) ->
                         .color(color::WARNING),
                 );
             }
-            let label = if banner.reattach.is_some() {
+            let label = if let Some(text) = &banner.custom {
+                text.action
+            } else if banner.reattach.is_some() {
                 "Reconnect · reattach"
             } else {
                 "Reconnect · new shell"

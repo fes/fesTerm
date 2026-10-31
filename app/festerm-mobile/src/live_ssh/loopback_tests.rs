@@ -376,7 +376,8 @@ fn mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry() {
             .as_ref()
             .unwrap()
             .identity
-            .clone();
+            .clone()
+            .unwrap();
         let pinned = state
             .profiles
             .as_ref()
