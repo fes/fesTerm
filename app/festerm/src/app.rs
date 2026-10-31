@@ -1,5 +1,11 @@
 mod confirmations;
 #[cfg(feature = "experimental-dev-tunnels")]
+#[path = "running_tunnels.rs"]
+mod running_tunnels;
+#[cfg(feature = "experimental-dev-tunnels")]
+#[path = "tunnel_browser.rs"]
+mod tunnel_browser;
+#[cfg(feature = "experimental-dev-tunnels")]
 #[path = "tunnel_workflow.rs"]
 mod tunnel_workflow;
 
@@ -426,6 +432,10 @@ pub struct FesTermApp {
     secure_storage_feedback: Option<&'static str>,
     #[cfg(feature = "experimental-dev-tunnels")]
     native_tunnel: Option<tunnel_workflow::Workflow>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    tunnel_browser: Option<tunnel_browser::Browser>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    running_tunnels: running_tunnels::RunningTunnels,
     /// Widget that owned focus immediately before Inspector opened, when it
     /// remains a meaningful restoration target.
     inspector_restore_focus: Option<egui::Id>,
@@ -905,6 +915,10 @@ impl FesTermApp {
             secure_storage_feedback: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             native_tunnel: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            tunnel_browser: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            running_tunnels: Default::default(),
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
@@ -2801,6 +2815,33 @@ impl FesTermApp {
                     shortcut_label: None,
                 },
                 PaletteItem {
+                    id: 27,
+                    label: "Smart Select Sentence".to_owned(),
+                    hint: Some(
+                        "Select around the cursor or selection end; Copy is separate".to_owned(),
+                    ),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
+                    id: 28,
+                    label: "Smart Select Paragraph".to_owned(),
+                    hint: Some(
+                        "Select around the cursor or selection end; Copy is separate".to_owned(),
+                    ),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
+                    id: 29,
+                    label: "Smart Select Block".to_owned(),
+                    hint: Some(
+                        "Select around the cursor or selection end; Copy is separate".to_owned(),
+                    ),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
                     id: PASTE,
                     label: "Paste".to_owned(),
                     hint: binding_label(A::Paste),
@@ -3056,6 +3097,16 @@ impl FesTermApp {
             26 => self
                 .state
                 .dispatch(AppCommand::BeginRectangleCopy(self.state.active()), context),
+            27..=29 => {
+                let scope = match id {
+                    27 => festerm_ui_egui::SmartSelectionScope::Sentence,
+                    28 => festerm_ui_egui::SmartSelectionScope::Paragraph,
+                    _ => festerm_ui_egui::SmartSelectionScope::Block,
+                };
+                self.state
+                    .dispatch(AppCommand::SmartSelect(self.state.active(), scope), context);
+                self.restore_active_terminal_focus();
+            }
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -5751,7 +5802,10 @@ impl FesTermApp {
 
     pub(crate) fn frame_logic(&mut self, context: &egui::Context) {
         #[cfg(feature = "experimental-dev-tunnels")]
-        self.poll_native_tunnel(context);
+        {
+            self.poll_native_tunnel(context);
+            self.poll_tunnel_browser();
+        }
         if context.input(|i| i.viewport().close_requested()) {
             let accepted = self.evaluate_close_request(context);
             // Nothing cancelled the close, so this window really is going
@@ -6052,6 +6106,15 @@ impl FesTermApp {
                 );
             }
         }
+        #[cfg(feature = "experimental-dev-tunnels")]
+        let running_tunnel_rows = if matches!(self.state.active_tab().content, TabContent::Launcher)
+        {
+            self.running_tunnel_rows(ui.ctx())
+        } else {
+            Vec::new()
+        };
+        #[cfg(not(feature = "experimental-dev-tunnels"))]
+        let running_tunnel_rows = Vec::new();
         {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
@@ -6075,6 +6138,7 @@ impl FesTermApp {
                         &self.state.discovery.inventory.native,
                         &self.state.discovery.inventory.tmux,
                         &self.state.discovery.inventory.screen,
+                        &running_tunnel_rows,
                     );
                 }
                 TabContent::Settings => {
@@ -6087,6 +6151,10 @@ impl FesTermApp {
                             show_session_details: self.state.show_session_details(),
                             confirm_session_close: self.state.confirm_session_close(),
                             prefer_powershell: self.state.prefer_powershell(),
+                            extend_dev_tunnel_lifetime: self.state.extend_dev_tunnel_lifetime(),
+                            show_running_dev_tunnels: self.state.show_running_dev_tunnels(),
+                            dev_tunnel_extension_days: self.state.dev_tunnel_extension_days(),
+                            dev_tunnel_accounts: self.dev_tunnel_account_rows(),
                             customize_local_shell: self.state.customize_local_shell(),
                             restore_workspace: self.state.restore_workspace(),
                             terminal_font: self.state.terminal_font(),
@@ -6418,6 +6486,46 @@ impl FesTermApp {
                         );
                     }
                 }
+                AppCommand::BrowseDevTunnels { account } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.begin_tunnel_browser(Some(account), ui.ctx());
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    let _ = account;
+                }
+                AppCommand::AddDevTunnelAccount => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.begin_tunnel_browser(None, ui.ctx());
+                }
+                AppCommand::RemoveDevTunnelAccount { account } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.remove_dev_tunnel_account(&account);
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    let _ = account;
+                }
+                AppCommand::SaveAndConnectRunningDevTunnel { locator } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.save_and_connect_running_tunnel(&locator, ui.ctx());
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    let _ = locator;
+                }
+                AppCommand::RefreshRunningSessions => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.running_tunnels.invalidate();
+                    let context = ui.ctx().clone();
+                    self.state
+                        .dispatch(AppCommand::RefreshRunningSessions, &context);
+                }
+                AppCommand::SaveAndConnectDevTunnel { profile } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    {
+                        let id = profile.identifier().to_owned();
+                        if self.save_profile(profile) {
+                            self.begin_native_tunnel(id, false, true, true, ui.ctx());
+                        }
+                    }
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    let _ = profile;
+                }
                 AppCommand::NativeDevTunnel {
                     profile_id,
                     sign_in,
@@ -6552,6 +6660,9 @@ impl FesTermApp {
                 | AppCommand::ToggleShowSessionDetails
                 | AppCommand::ToggleConfirmSessionClose
                 | AppCommand::TogglePreferPowershell
+                | AppCommand::ToggleExtendDevTunnelLifetime
+                | AppCommand::ToggleShowRunningDevTunnels
+                | AppCommand::SetDevTunnelExtensionDays(_)
                 | AppCommand::ToggleQuickSwitchOverlay
                 | AppCommand::ToggleCompactLauncherGrid
                 | AppCommand::ToggleShowResumableSessions
@@ -6756,7 +6867,10 @@ impl FesTermApp {
         self.show_about(ui.ctx(), about_escape);
 
         #[cfg(feature = "experimental-dev-tunnels")]
-        self.show_native_tunnel(ui.ctx(), escape_pressed);
+        {
+            self.show_native_tunnel(ui.ctx(), escape_pressed);
+            self.show_tunnel_browser(ui.ctx(), escape_pressed);
+        }
         self.show_transient_notice(ui.ctx());
 
         // Autosave the workspace exactly once per frame that actually
@@ -7162,6 +7276,10 @@ impl FesTermApp {
             secure_storage_feedback: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             native_tunnel: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            tunnel_browser: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            running_tunnels: Default::default(),
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
@@ -15407,7 +15525,7 @@ mod tests {
         let saved = harness.state().state.configuration().clone();
         let profile = saved.profile("server-one").unwrap();
         assert!(profile.credential_reference().is_none());
-        assert!(profile.as_dev_tunnel().unwrap().identity().is_none());
+        assert!(profile.as_dev_tunnel().unwrap().account().is_none());
         assert_eq!(
             Configuration::parse(&fs::read_to_string(&path).unwrap()).unwrap(),
             saved

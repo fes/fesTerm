@@ -2083,6 +2083,26 @@ pub enum AppCommand {
     ImportPublicDevTunnelProfile {
         import: crate::tunnel_profile_import::PublicProfileImport,
     },
+    /// Lists the shared account's bridge tunnels to create a profile from.
+    BrowseDevTunnels {
+        account: String,
+    },
+    /// Signs in with GitHub and stores the result as a shared account. Signing
+    /// in as an account that already exists re-authenticates it.
+    AddDevTunnelAccount,
+    /// Signs an account out: its credential is deleted and profiles using it
+    /// become unauthenticated.
+    RemoveDevTunnelAccount {
+        account: String,
+    },
+    /// Saves a native Dev Tunnel profile and immediately connects it, signing
+    /// in first when it has no account.
+    SaveAndConnectRunningDevTunnel {
+        locator: String,
+    },
+    SaveAndConnectDevTunnel {
+        profile: festerm_config::Profile,
+    },
     NativeDevTunnel {
         profile_id: String,
         sign_in: bool,
@@ -2297,6 +2317,7 @@ pub enum AppCommand {
     /// Repaints this terminal's local presentation without protocol effects.
     RedrawTerminal(TabId),
     BeginRectangleCopy(TabId),
+    SmartSelect(TabId, festerm_ui_egui::SmartSelectionScope),
     /// Opens a new independent terminal snapshot and immediately asks where
     /// to save it.
     SaveTerminalHistoryAs,
@@ -2434,6 +2455,10 @@ pub enum AppCommand {
     /// builds would otherwise flag it as dead code.
     #[cfg_attr(not(windows), allow(dead_code))]
     TogglePreferPowershell,
+    /// Toggles whether Dev Tunnel sign-in/connect extends the tunnel's lifetime.
+    ToggleExtendDevTunnelLifetime,
+    ToggleShowRunningDevTunnels,
+    SetDevTunnelExtensionDays(u32),
     /// Toggles whether the default Local Shell launcher card opens its
     /// executable/arguments/directory form instead of launching immediately.
     ToggleCustomizeLocalShell,
@@ -2786,6 +2811,9 @@ pub struct AppState {
     confirm_session_close: bool,
     prefer_powershell: bool,
     customize_local_shell: bool,
+    extend_dev_tunnel_lifetime: bool,
+    show_running_dev_tunnels: bool,
+    dev_tunnel_extension_days: u32,
     /// Whether the open-tab list and active tab persist across restarts
     /// (`docs/gui-design.md` "Workspace restore"). Off by default and,
     /// unlike the other interface preferences here, deliberately explicit:
@@ -2910,6 +2938,9 @@ impl AppState {
             confirm_session_close: settings.confirm_session_close(),
             prefer_powershell: settings.prefer_powershell(),
             customize_local_shell: settings.customize_local_shell(),
+            extend_dev_tunnel_lifetime: settings.extend_dev_tunnel_lifetime(),
+            show_running_dev_tunnels: settings.show_running_dev_tunnels(),
+            dev_tunnel_extension_days: settings.dev_tunnel_extension_days(),
             restore_workspace: settings.restore_workspace(),
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
@@ -3190,6 +3221,9 @@ impl AppState {
         self.show_session_details = settings.show_session_details();
         self.confirm_session_close = settings.confirm_session_close();
         self.prefer_powershell = settings.prefer_powershell();
+        self.extend_dev_tunnel_lifetime = settings.extend_dev_tunnel_lifetime();
+        self.show_running_dev_tunnels = settings.show_running_dev_tunnels();
+        self.dev_tunnel_extension_days = settings.dev_tunnel_extension_days();
         self.restore_workspace = settings.restore_workspace();
         self.terminal_font = settings.terminal_font();
         self.terminal_ligatures = settings.terminal_ligatures();
@@ -3426,6 +3460,18 @@ impl AppState {
         self.prefer_powershell
     }
 
+    pub const fn show_running_dev_tunnels(&self) -> bool {
+        self.show_running_dev_tunnels
+    }
+
+    pub const fn extend_dev_tunnel_lifetime(&self) -> bool {
+        self.extend_dev_tunnel_lifetime
+    }
+
+    pub const fn dev_tunnel_extension_days(&self) -> u32 {
+        self.dev_tunnel_extension_days
+    }
+
     pub const fn customize_local_shell(&self) -> bool {
         self.customize_local_shell
     }
@@ -3459,6 +3505,9 @@ impl AppState {
         )
         .with_terminal_typography(self.terminal_font, self.terminal_ligatures)
         .with_prefer_powershell(self.prefer_powershell)
+        .with_extend_dev_tunnel_lifetime(self.extend_dev_tunnel_lifetime)
+        .with_show_running_dev_tunnels(self.show_running_dev_tunnels)
+        .with_dev_tunnel_extension_days(self.dev_tunnel_extension_days)
         .with_customize_local_shell(self.customize_local_shell)
         .with_emoji_presentation(self.emoji_presentation)
         .with_scroll_speed(self.scroll_speed)
@@ -3764,6 +3813,11 @@ impl AppState {
             | AppCommand::StoreSftpPassword { .. }
             | AppCommand::StoreProfilePassword { .. }
             | AppCommand::StoreDevTunnelConnectToken { .. }
+            | AppCommand::BrowseDevTunnels { .. }
+            | AppCommand::AddDevTunnelAccount
+            | AppCommand::RemoveDevTunnelAccount { .. }
+            | AppCommand::SaveAndConnectDevTunnel { .. }
+            | AppCommand::SaveAndConnectRunningDevTunnel { .. }
             | AppCommand::NativeDevTunnel { .. }
             | AppCommand::StartConfiguredDevTunnelProfile { .. }
             | AppCommand::StoreProfilePrivateKey { .. }
@@ -3878,6 +3932,23 @@ impl AppState {
                     }
                 }
             }
+            AppCommand::SmartSelect(id, scope) => {
+                if id != self.active {
+                    tracing::warn!(target: "festerm::commands", "smart selection target is not active");
+                    return;
+                }
+                if let Some(session) = self.session_tab_mut(id) {
+                    if !session.view.rectangle_copy_active() {
+                        session
+                            .view
+                            .smart_select_at_target(&session.terminal, scope);
+                        egui::Popup::close_all(context);
+                        context.request_repaint();
+                    }
+                } else {
+                    tracing::warn!(target: "festerm::commands", "smart selection target is not a session");
+                }
+            }
             AppCommand::ActivateNextTab => self.activate_relative(1),
             AppCommand::ActivatePreviousTab => self.activate_relative(-1),
             AppCommand::CloseTab(id) | AppCommand::DiscardAndCloseTab(id) => self.close(id),
@@ -3908,6 +3979,17 @@ impl AppState {
             }
             AppCommand::TogglePreferPowershell => {
                 self.prefer_powershell = !self.prefer_powershell;
+            }
+            AppCommand::ToggleShowRunningDevTunnels => {
+                self.show_running_dev_tunnels = !self.show_running_dev_tunnels;
+            }
+            AppCommand::ToggleExtendDevTunnelLifetime => {
+                self.extend_dev_tunnel_lifetime = !self.extend_dev_tunnel_lifetime;
+            }
+            AppCommand::SetDevTunnelExtensionDays(days) => {
+                self.dev_tunnel_extension_days = InterfaceSettings::DEFAULT
+                    .with_dev_tunnel_extension_days(days)
+                    .dev_tunnel_extension_days();
             }
             AppCommand::ToggleCustomizeLocalShell => {
                 self.customize_local_shell = !self.customize_local_shell;
@@ -4087,6 +4169,12 @@ impl AppState {
                 self.show_session_details = InterfaceSettings::DEFAULT.show_session_details();
                 self.confirm_session_close = InterfaceSettings::DEFAULT.confirm_session_close();
                 self.prefer_powershell = InterfaceSettings::DEFAULT.prefer_powershell();
+                self.extend_dev_tunnel_lifetime =
+                    InterfaceSettings::DEFAULT.extend_dev_tunnel_lifetime();
+                self.show_running_dev_tunnels =
+                    InterfaceSettings::DEFAULT.show_running_dev_tunnels();
+                self.dev_tunnel_extension_days =
+                    InterfaceSettings::DEFAULT.dev_tunnel_extension_days();
                 self.customize_local_shell = InterfaceSettings::DEFAULT.customize_local_shell();
                 self.restore_workspace = InterfaceSettings::DEFAULT.restore_workspace();
                 self.terminal_font = InterfaceSettings::DEFAULT.terminal_font();
@@ -6454,13 +6542,24 @@ mod tests {
 
     #[test]
     fn native_auth_live_account_and_file_binding_remain_pinned_after_profile_account_change() {
-        let profile = |id| {
-            festerm_config::Profile::named_dev_tunnel("bound-profile", "owned.usw3")
+        let profile = |id: u64| {
+            let (configuration, key) = Configuration::new(Vec::new())
                 .unwrap()
-                .with_tunnel_identity(
-                    id,
-                    format!("account-{id}"),
-                    festerm_secret_store::SecretReference::generate(),
+                .with_account(
+                    festerm_config::DevTunnelAccount::new(
+                        format!("github-{id}"),
+                        festerm_config::AccountProvider::Github,
+                        id,
+                        format!("account-{id}"),
+                        festerm_secret_store::SecretReference::generate(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let profile = festerm_config::Profile::named_dev_tunnel("bound-profile", "owned.usw3")
+                .unwrap()
+                .with_tunnel_account(
+                    key,
                     festerm_secret_store::SecretReference::generate(),
                     festerm_config::DevTunnelHost {
                         tunnel_id: "owned".into(),
@@ -6470,10 +6569,11 @@ mod tests {
                         port: 47461,
                     },
                 )
-                .unwrap()
+                .unwrap();
+            configuration.with_profile(profile).unwrap()
         };
         let mut state = AppState::for_test();
-        state.replace_configuration(Configuration::new(vec![profile(42)]).unwrap());
+        state.replace_configuration(profile(42));
         let (mut tab, _) = remote_file_fixture(
             crate::remote_files::RemoteFileProvider::DevTunnelPosix,
             None,
@@ -6492,7 +6592,7 @@ mod tests {
         else {
             panic!("remote source")
         };
-        state.replace_configuration(Configuration::new(vec![profile(99)]).unwrap());
+        state.replace_configuration(profile(99));
         let live = state.session_tab(source).unwrap();
         assert!(matches!(&live.inspector_transport,
             InspectorTransport::DevTunnel {account:Some((42,login)),..} if login == "account-42"));

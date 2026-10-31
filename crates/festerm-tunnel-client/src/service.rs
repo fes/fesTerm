@@ -80,6 +80,114 @@ pub async fn resolve(
     Ok(resolved)
 }
 
+fn management_client(
+    identity: &Identity,
+) -> Result<tunnels::management::TunnelManagementClient, Error> {
+    let mut builder = new_tunnel_management("fesTerm-native-tunnel/1");
+    builder.client(http_client()?);
+    builder.authorization(Authorization::Github(identity.access_token().into()));
+    Ok(builder.into())
+}
+
+/// Request body for a lifetime extension: only the fields the service accepts
+/// on update, with the validity window set to `days` from now. Server-owned
+/// state (tokens, status, endpoints, ports, timestamps) is dropped.
+pub fn extension_update(mut tunnel: Tunnel, days: u32) -> Tunnel {
+    wipe_tokens(&mut tunnel);
+    tunnel.access_tokens = None;
+    tunnel.status = None;
+    tunnel.endpoints = Vec::new();
+    tunnel.ports = Vec::new();
+    tunnel.created = None;
+    tunnel.expiration = None;
+    tunnel.custom_expiration = Some(days.saturating_mul(86_400));
+    tunnel
+}
+
+/// Pushes the tunnel's service-side expiry `days` forward. Only the tunnel's
+/// owner can do this; callers treat failure as non-fatal.
+pub async fn extend_lifetime(
+    identity: &Identity,
+    name: &str,
+    days: u32,
+    cancel: &CancellationToken,
+) -> Result<(), Error> {
+    let locator = locator(name)?;
+    let management = management_client(identity)?;
+    let options = TunnelRequestOptions::default();
+    let tunnel = tokio::select! {
+        _ = cancel.cancelled() => return Err(Error::Cancelled),
+        value = management.get_tunnel(&locator, &options) => value.map_err(management_error)?,
+    };
+    let update = extension_update(tunnel, days);
+    tokio::select! {
+        _ = cancel.cancelled() => Err(Error::Cancelled),
+        value = management.update_tunnel(&update, &options) => {
+            value.map(|_| ()).map_err(management_error)
+        }
+    }
+}
+
+/// A tunnel owned by the signed-in account that hosts a fesTerm bridge.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TunnelSummary {
+    /// `id.cluster` locator, accepted as a profile's tunnel name.
+    pub locator: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub active: bool,
+}
+
+/// Lists the account's tunnels that carry a fesTerm bridge port, active hosts
+/// first.
+pub async fn list(
+    identity: &Identity,
+    cancel: &CancellationToken,
+) -> Result<Vec<TunnelSummary>, Error> {
+    let identity_http = Https::new()?;
+    identity.confirm_account(&identity_http, cancel).await?;
+    let management = management_client(identity)?;
+    let options = TunnelRequestOptions {
+        include_ports: true,
+        ..Default::default()
+    };
+    let tunnels = tokio::select! {
+        _ = cancel.cancelled() => return Err(Error::Cancelled),
+        value = management.list_all_tunnels(&options) => value.map_err(management_error)?,
+    };
+    identity.confirm_account(&identity_http, cancel).await?;
+    Ok(summarize(tunnels))
+}
+
+pub fn summarize(tunnels: Vec<Tunnel>) -> Vec<TunnelSummary> {
+    let mut summaries: Vec<TunnelSummary> = tunnels
+        .into_iter()
+        .filter(|tunnel| {
+            tunnel.ports.iter().any(|port| {
+                port.labels.iter().any(|label| label == BRIDGE_PORT_LABEL)
+                    || port.description.as_deref() == Some(BRIDGE_PORT_LABEL)
+            })
+        })
+        .filter_map(|tunnel| {
+            let locator = format!("{}.{}", tunnel.tunnel_id?, tunnel.cluster_id?);
+            self::locator(&locator).ok()?;
+            let hosts = tunnel
+                .status
+                .as_ref()
+                .and_then(|status| status.host_connection_count.as_ref())
+                .is_some_and(|count| count.get_count() > 0);
+            Some(TunnelSummary {
+                locator,
+                name: tunnel.name,
+                description: tunnel.description,
+                active: hosts || !tunnel.endpoints.is_empty(),
+            })
+        })
+        .collect();
+    summaries.sort_by_key(|summary| !summary.active);
+    summaries
+}
+
 pub fn select(mut tunnel: Tunnel) -> Result<ResolvedTunnel, Error> {
     let token = tunnel
         .access_tokens
@@ -213,6 +321,47 @@ fn select_with_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn listed(json: &str) -> Vec<Tunnel> {
+        serde_json::from_str(json).expect("tunnel fixture")
+    }
+
+    #[test]
+    fn listing_keeps_bridge_tunnels_and_puts_active_hosts_first() {
+        let tunnels = listed(
+            r#"[
+              {"tunnelId":"idle1","clusterId":"use","name":"idle","ports":[{"portNumber":22,"labels":["festerm-bridge-v1"]}]},
+              {"tunnelId":"other","clusterId":"use","ports":[{"portNumber":80,"labels":["web"]}]},
+              {"tunnelId":"live1","clusterId":"euw","description":"laptop","status":{"hostConnectionCount":1},"ports":[{"portNumber":22,"labels":["festerm-bridge-v1"]}]}
+            ]"#,
+        );
+        let summaries = summarize(tunnels);
+        assert_eq!(
+            summaries
+                .iter()
+                .map(|s| (s.locator.as_str(), s.active))
+                .collect::<Vec<_>>(),
+            [("live1.euw", true), ("idle1.use", false)]
+        );
+        assert_eq!(summaries[0].description.as_deref(), Some("laptop"));
+    }
+
+    #[test]
+    fn lifetime_extension_sends_only_client_owned_fields() {
+        let tunnel = listed(
+            r#"[{"tunnelId":"t1","clusterId":"use","name":"mine","accessTokens":{"connect":"secret"},
+              "status":{"hostConnectionCount":1},"expiration":"2030-01-01T00:00:00Z",
+              "ports":[{"portNumber":22}],"endpoints":[]}]"#,
+        )
+        .remove(0);
+        let update = extension_update(tunnel, 30);
+        assert_eq!(update.custom_expiration, Some(30 * 86_400));
+        assert!(update.access_tokens.is_none());
+        assert!(update.status.is_none());
+        assert!(update.ports.is_empty());
+        assert!(update.expiration.is_none());
+        assert_eq!(update.name.as_deref(), Some("mine"));
+    }
 
     #[test]
     fn native_service_lookup_distinguishes_denial_missing_tunnels_and_service_failures() {

@@ -34,13 +34,18 @@ deterministic baseline; no model, OCR, download, network or content collection.
 Renderer/core and application/session ownership are unchanged.
 
 The local terminal context menu offers **Smart Select Sentence**, **Smart
-Select Paragraph**, and **Smart Select Block**, before ordinary Copy. Right-click
-remains terminal-owned under mouse reporting; Shift+right-click is the existing
+Select Paragraph**, and **Smart Select Block**, after ordinary Copy and any
+detected-content actions (link, path, file), then Paste and Find. The same three
+commands are in the command palette and act on the keyboard target, current
+selection or cursor. Right-click remains terminal-owned under mouse reporting; Shift+right-click is the existing
 local override. Selection alone never copies or sends input. Inspect the
 highlight, then use existing Copy shortcuts/menu/native Edit. Drag replaces the
 inference with ordinary adjustable selection; Escape cancels inferred selection.
-An unavailable result leaves an existing selection intact and explains that
-ordinary drag is available. There is intentionally no immediate **Smart Copy**:
+A successful inference shows no notice; the highlight is the feedback. An
+unavailable result leaves an existing selection intact and explains that
+ordinary drag is available. Rows painted by a TUI (for example Copilot CLI's
+bulleted, hanging-indent prose) join as one paragraph, but same-indent lines
+without a marker row keep their line breaks so stack traces stay intact. There is intentionally no immediate **Smart Copy**:
 it would skip the inspection step on unqualified layout inference.
 Instruction and refusal feedback expires automatically. Escape is consumed
 only while cancelling an inferred selection or keyboard target; otherwise it
@@ -1724,9 +1729,14 @@ SSH globe. The editor and import screens use the same bordered card, section
 headings and shared action buttons as the other profile editors, and the
 sign-in dialog uses the standard confirmation layout (Secondary Cancel first,
 Accent primary second). The preferred editor reuses the destination
-form's labeled **Name** and **Tunnel** fields and concise **Sign in with GitHub**,
-**Connect**, **Connect once**, **Save profile** and **Cancel** controls.
-Save target edits before sign-in. Device authorization displays the short code
+form's labeled **Name** and **Tunnel** fields, an **Account** selector
+(shared GitHub accounts, or Not signed in), **Add GitHub account**, **Pick from
+my tunnels** (shown once an account is selected, using that account without
+another sign-in), and concise **Save & connect**, **Connect**, **Connect once**,
+**Save profile** and **Cancel** controls. **Save & connect** saves the profile,
+signs in first when it has no account, and connects, so nothing has to be saved
+before authenticating. Settings lists the shared accounts with how many
+profiles use each, **Sign out** and **Add GitHub account**. Device authorization displays the short code
 as a standard monospace button with a **Copy code and open GitHub** tooltip.
 One explicit activation copies the code and opens the fixed GitHub device URL,
 without advancing sign-in or approving a host. Merely displaying the dialog
@@ -1743,8 +1753,9 @@ Legacy/unbound native-vault identities request a new explicit sign-in, not
 silent migration or cross-application refresh. Live native acceptance remains
 tracked in [#429](https://github.com/fes/fesTerm/issues/429).
 The verified account and host fingerprint require Cancel-default approval on
-first use/account change or changed host. Independent profiles have distinct
-identity/refresh and scoped-connect references, no global current account.
+first use/account change or changed host. Profiles using the same account share its
+identity/refresh reference; each profile has its own scoped-connect reference;
+there is no global current account.
 Rotation preserves live launch bindings; duplication or changing the tunnel
 clears bindings. Connect once uses a fresh transient identity and never rotates
 a saved profile's credentials. Advanced retains legacy destination-file/token

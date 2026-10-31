@@ -76,6 +76,13 @@ port = 22
 username = "alice"
 sftp_gui_mode = false
 
+[[accounts]]
+id = "github-alice"
+provider = "github"
+account_id = 4242
+login = "alice"
+credential_id = "550e8400-e29b-41d4-a716-446655440001"
+
 [[known_hosts]]
 host = "build.example"
 port = 2200
@@ -282,8 +289,9 @@ The optional `[settings]` table includes these interface preferences:
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
 `"single-row-scroll"`), `status_bar_visible` (default `true`),
 `show_session_details` (default `false`), `confirm_session_close` (default
-`false`), `prefer_powershell` (default `true`), `customize_local_shell`
-(default `false`), `restore_workspace` (default `true`), `terminal_font`
+`false`), `prefer_powershell` (default `true`), `extend_dev_tunnel_lifetime`
+(default `false`), `show_running_dev_tunnels` (default `false`), `dev_tunnel_extension_days` (default `30`, clamped to
+1-365), `customize_local_shell` (default `false`), `restore_workspace` (default `true`), `terminal_font`
 (`"jet-brains-mono"`, `"iosevka-term"`, `"julia-mono"`, or `"maple-mono"`;
 default `"jet-brains-mono"`), `terminal_ligatures` (default `true`),
 `emoji_presentation` (`"color"` or `"monochrome"`; default `"color"`),
@@ -338,8 +346,9 @@ By default, choosing **Local Shell** starts the
 platform shell immediately in the user's home directory.
 `customize_local_shell = true` instead opens the executable, arguments, and
 working-directory form before launch. On Windows, `prefer_powershell` makes new default
-local sessions use `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe` when that
-standard per-user app-execution alias exists; it never embeds a username or
+local sessions use `pwsh.exe` when it exists: first the per-user app-execution alias
+`%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`, then `pwsh.exe` on `PATH`, then
+`%ProgramFiles%\PowerShell\7` or `7-preview`. It never embeds a username or
 versioned package path, and falls back to the absolute `%COMSPEC%` executable
 when the alias is absent or the preference is disabled. Font choice never
 changes application chrome.
@@ -514,3 +523,14 @@ native seed edits; failures do not cause frame-by-frame write retries.
 An ensuing workspace save also includes those pending seed edits, so a failed
 reset cannot appear committed while leaving its old native seed behind.
 Successful document broadcasts do not rename other current logical views.
+
+`extend_dev_tunnel_lifetime = true` makes each native Dev Tunnel sign-in or
+connect ask the service to move the tunnel's expiry `dev_tunnel_extension_days`
+days forward. Only the tunnel's owner can do so; a refused or failed extension
+is logged and never blocks the connection.
+
+`show_running_dev_tunnels = true` lists the first signed-in account's running
+bridge tunnels that have no saved profile in New Session. The list is cached
+for a minute (the Running Sessions refresh button re-lists). Choosing one saves
+an unsigned profile linked to that account and connects; nothing is saved
+unless you do.

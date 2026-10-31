@@ -211,12 +211,29 @@ pub fn default_local_profile_with_powershell_preference(
 
     #[cfg(windows)]
     {
+        let local_app_data = std::env::var_os("LOCALAPPDATA");
+        let path = std::env::var_os("PATH");
+        let program_w6432 = std::env::var_os("ProgramW6432").unwrap_or_default();
+        let program_files = std::env::var_os("ProgramFiles").unwrap_or_default();
+        let comspec = std::env::var_os("COMSPEC");
+        let system_root = std::env::var_os("SystemRoot");
         discover_windows_shell(
             prefer_powershell,
-            std::env::var_os("LOCALAPPDATA").as_deref(),
-            std::env::var_os("COMSPEC").as_deref(),
-            std::env::var_os("SystemRoot").as_deref(),
-            |path| path.is_absolute() && path.is_file(),
+            WindowsShellEnvironment {
+                local_app_data: local_app_data.as_deref(),
+                path: path.as_deref(),
+                program_files: vec![program_w6432, program_files],
+                comspec: comspec.as_deref(),
+                system_root: system_root.as_deref(),
+            },
+            // App-execution aliases are reparse points that `metadata` cannot
+            // follow, so `is_file` would wrongly report them as missing.
+            |path| {
+                path.is_absolute()
+                    && path
+                        .symlink_metadata()
+                        .is_ok_and(|metadata| !metadata.is_dir())
+            },
         )
     }
 }
@@ -239,21 +256,60 @@ fn discover_unix_shell(
 }
 
 #[cfg(windows)]
+struct WindowsShellEnvironment<'a> {
+    local_app_data: Option<&'a OsStr>,
+    path: Option<&'a OsStr>,
+    program_files: Vec<OsString>,
+    comspec: Option<&'a OsStr>,
+    system_root: Option<&'a OsStr>,
+}
+
+/// PowerShell 7 locations in preference order: the per-user Store alias, any
+/// `pwsh.exe` on `PATH` (winget/MSI/scoop installs), then the standard
+/// `Program Files\PowerShell` installation directories.
+#[cfg(windows)]
+fn windows_pwsh_candidates(environment: &WindowsShellEnvironment<'_>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(root) = environment.local_app_data {
+        candidates.push(
+            PathBuf::from(root)
+                .join("Microsoft")
+                .join("WindowsApps")
+                .join("pwsh.exe"),
+        );
+    }
+    if let Some(path) = environment.path {
+        candidates.extend(std::env::split_paths(path).map(|directory| directory.join("pwsh.exe")));
+    }
+    for root in environment
+        .program_files
+        .iter()
+        .filter(|root| !root.is_empty())
+    {
+        let powershell = PathBuf::from(root).join("PowerShell");
+        candidates.push(powershell.join("7").join("pwsh.exe"));
+        candidates.push(powershell.join("7-preview").join("pwsh.exe"));
+    }
+    candidates
+}
+
+#[cfg(windows)]
 fn discover_windows_shell(
     prefer_powershell: bool,
-    local_app_data: Option<&OsStr>,
-    comspec: Option<&OsStr>,
-    system_root: Option<&OsStr>,
+    environment: WindowsShellEnvironment<'_>,
     exists: impl Fn(&Path) -> bool,
 ) -> Result<LocalProfile, LocalProfileError> {
+    let WindowsShellEnvironment {
+        comspec,
+        system_root,
+        ..
+    } = environment;
     if prefer_powershell {
-        let powershell_alias = local_app_data
-            .map(PathBuf::from)
-            .map(|root| root.join("Microsoft").join("WindowsApps").join("pwsh.exe"));
-        if let Some(powershell_alias) =
-            powershell_alias.filter(|path| path.is_absolute() && exists(path))
+        if let Some(pwsh) = windows_pwsh_candidates(&environment)
+            .into_iter()
+            .find(|path| path.is_absolute() && exists(path))
         {
-            return Ok(LocalProfile::new(powershell_alias).with_arguments(["-NoLogo"]));
+            return Ok(LocalProfile::new(pwsh).with_arguments(["-NoLogo"]));
         }
     }
 
@@ -1652,13 +1708,39 @@ mod tests {
     }
 
     #[cfg(windows)]
+    fn test_windows_environment(path: Option<&OsStr>) -> WindowsShellEnvironment<'_> {
+        WindowsShellEnvironment {
+            local_app_data: Some(OsStr::new(r"C:\Users\example\AppData\Local")),
+            path,
+            program_files: vec![OsString::from(r"C:\Program Files")],
+            comspec: Some(OsStr::new(r"C:\Windows\System32\cmd.exe")),
+            system_root: Some(OsStr::new(r"C:\Windows")),
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_default_shell_finds_pwsh_on_path_or_in_program_files_before_cmd() {
+        for installed in [
+            r"C:\Tools\pwsh.exe",
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+        ] {
+            let shell = discover_windows_shell(
+                true,
+                test_windows_environment(Some(OsStr::new(r"C:\Other;C:\Tools"))),
+                |path| path == Path::new(installed) || path.ends_with("cmd.exe"),
+            )
+            .unwrap();
+            assert_eq!(shell.executable(), Path::new(installed));
+        }
+    }
+
+    #[cfg(windows)]
     #[test]
     fn windows_default_shell_prefers_the_user_powershell_alias_when_enabled() {
         let powershell = discover_windows_shell(
             true,
-            Some(OsStr::new(r"C:\Users\example\AppData\Local")),
-            Some(OsStr::new(r"C:\Windows\System32\cmd.exe")),
-            Some(OsStr::new(r"C:\Windows")),
+            test_windows_environment(Some(OsStr::new(r"C:\Tools"))),
             |path| {
                 path == Path::new(r"C:\Users\example\AppData\Local\Microsoft\WindowsApps\pwsh.exe")
             },
@@ -1676,9 +1758,7 @@ mod tests {
     fn windows_default_shell_falls_back_to_comspec_then_windows_powershell() {
         let command_processor = discover_windows_shell(
             true,
-            Some(OsStr::new(r"C:\Users\example\AppData\Local")),
-            Some(OsStr::new(r"C:\Windows\System32\cmd.exe")),
-            Some(OsStr::new(r"C:\Windows")),
+            test_windows_environment(Some(OsStr::new(r"C:\Tools"))),
             |path| path == Path::new(r"C:\Windows\System32\cmd.exe"),
         )
         .unwrap();
@@ -1690,9 +1770,10 @@ mod tests {
 
         let powershell = discover_windows_shell(
             false,
-            Some(OsStr::new(r"C:\Users\example\AppData\Local")),
-            Some(OsStr::new("cmd.exe")),
-            Some(OsStr::new(r"C:\Windows")),
+            WindowsShellEnvironment {
+                comspec: Some(OsStr::new("cmd.exe")),
+                ..test_windows_environment(None)
+            },
             |path| path.ends_with(r"WindowsPowerShell\v1.0\powershell.exe"),
         )
         .unwrap();

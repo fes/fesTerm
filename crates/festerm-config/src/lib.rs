@@ -31,11 +31,11 @@ pub use errors::{
 pub use file_io::ConfigurationState;
 pub use keyboard::{Chord, KeyboardAction, KeyboardBindings, KeyboardOverride, KeyboardScope};
 pub use profiles::{
-    CredentialKind, DevTunnelHost, DevTunnelIdentity, DevTunnelProfileConfiguration,
-    KnownHostEntry, LocalProfileConfiguration, PersistenceConfiguration, PersistenceProviderKind,
-    Profile, ProfileUsageEntry, RemoteProfileKind, SerialDataBits, SerialFlowControl, SerialParity,
-    SerialProfileConfiguration, SerialStopBits, SshPortForwardConfiguration,
-    SshPortForwardDirection, SshProfileConfiguration,
+    AccountProvider, CredentialKind, DevTunnelAccount, DevTunnelHost,
+    DevTunnelProfileConfiguration, KnownHostEntry, LocalProfileConfiguration,
+    PersistenceConfiguration, PersistenceProviderKind, Profile, ProfileUsageEntry,
+    RemoteProfileKind, SerialDataBits, SerialFlowControl, SerialParity, SerialProfileConfiguration,
+    SerialStopBits, SshPortForwardConfiguration, SshPortForwardDirection, SshProfileConfiguration,
 };
 pub use session_names::{
     DurableSessionAlias, DurableSessionIdentity, SessionAlias, MAX_DURABLE_SESSION_ALIASES,
@@ -74,6 +74,8 @@ pub struct Configuration {
     workspace: Option<WorkspaceConfiguration>,
     #[serde(default, skip_serializing_if = "InterfaceSettings::is_default")]
     settings: InterfaceSettings,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    accounts: Vec<DevTunnelAccount>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     known_hosts: Vec<KnownHostEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -120,11 +122,13 @@ impl Configuration {
             workspace_enabled: false,
             workspace: None,
             settings: InterfaceSettings::DEFAULT,
+            accounts: Vec::new(),
             known_hosts: Vec::new(),
             profile_usage: Vec::new(),
             update_check: None,
             durable_session_aliases: Vec::new(),
         };
+        let configuration = configuration.migrated();
         configuration.validate()?;
         Ok(configuration)
     }
@@ -140,11 +144,13 @@ impl Configuration {
             workspace_enabled: true,
             workspace: Some(workspace),
             settings: InterfaceSettings::DEFAULT,
+            accounts: Vec::new(),
             known_hosts: Vec::new(),
             profile_usage: Vec::new(),
             update_check: None,
             durable_session_aliases: Vec::new(),
         };
+        let configuration = configuration.migrated();
         configuration.validate()?;
         Ok(configuration)
     }
@@ -253,6 +259,122 @@ impl Configuration {
             .profiles
             .retain(|existing| existing.identifier() != profile.identifier());
         replacement.profiles.push(profile);
+        replacement.validate()?;
+        Ok(replacement)
+    }
+
+    /// Lifts identities embedded in pre-accounts Dev Tunnel profiles into
+    /// `[[accounts]]`, one account per distinct credential, and links the
+    /// profile to it. Nothing is re-authenticated and no credential moves.
+    fn migrated(mut self) -> Self {
+        for profile in &mut self.profiles {
+            let Profile::DevTunnel(tunnel) = profile else {
+                continue;
+            };
+            let Some(identity) = tunnel.take_legacy_identity() else {
+                continue;
+            };
+            let existing = self
+                .accounts
+                .iter()
+                .find(|account| account.credential_reference() == identity.credential_reference());
+            let key = match existing {
+                Some(account) => account.identifier().to_owned(),
+                None => {
+                    let base = format!("github-{}", identity.login.to_ascii_lowercase());
+                    let key = unique_account_key(&base, &self.accounts);
+                    match DevTunnelAccount::new(
+                        key.clone(),
+                        AccountProvider::Github,
+                        identity.account_id,
+                        identity.login.clone(),
+                        identity.credential_reference().duplicate_for_transport(),
+                    ) {
+                        Ok(account) => self.accounts.push(account),
+                        // An invalid legacy identity stays invalid and is
+                        // rejected by validation rather than silently dropped.
+                        Err(_) => continue,
+                    }
+                    key
+                }
+            };
+            tunnel.set_account(Some(key));
+        }
+        self
+    }
+
+    pub fn accounts(&self) -> &[DevTunnelAccount] {
+        &self.accounts
+    }
+
+    pub fn account(&self, identifier: &str) -> Option<&DevTunnelAccount> {
+        self.accounts
+            .iter()
+            .find(|account| account.identifier() == identifier)
+    }
+
+    /// How many Dev Tunnel profiles sign in with the account `identifier`.
+    pub fn account_profile_count(&self, identifier: &str) -> usize {
+        self.profiles
+            .iter()
+            .filter_map(Profile::as_dev_tunnel)
+            .filter(|profile| profile.account() == Some(identifier))
+            .count()
+    }
+
+    /// Adds `account`, or replaces the credential of the existing account for
+    /// the same provider identity (signing in again keeps its key and the
+    /// profiles that share it). Returns the key the account is stored under.
+    pub fn with_account(&self, account: DevTunnelAccount) -> Result<(Self, String), ConfigError> {
+        let mut replacement = self.clone();
+        let existing = replacement.accounts.iter().position(|existing| {
+            existing.provider() == account.provider()
+                && existing.account_id() == account.account_id()
+        });
+        let key = match existing {
+            Some(index) => {
+                let key = replacement.accounts[index].identifier().to_owned();
+                let updated = DevTunnelAccount::new(
+                    key.clone(),
+                    account.provider(),
+                    account.account_id(),
+                    account.login(),
+                    account.credential_reference().duplicate_for_transport(),
+                )?;
+                replacement.accounts[index] = updated;
+                key
+            }
+            None => {
+                let key = unique_account_key(account.identifier(), &replacement.accounts);
+                replacement.accounts.push(DevTunnelAccount::new(
+                    key.clone(),
+                    account.provider(),
+                    account.account_id(),
+                    account.login(),
+                    account.credential_reference().duplicate_for_transport(),
+                )?);
+                key
+            }
+        };
+        replacement.validate()?;
+        Ok((replacement, key))
+    }
+
+    /// Removes an account. Profiles that used it become unauthenticated and
+    /// drop the host pin and connect credential obtained through it.
+    pub fn without_account(&self, identifier: &str) -> Result<Self, ConfigError> {
+        let mut replacement = self.clone();
+        replacement
+            .accounts
+            .retain(|account| account.identifier() != identifier);
+        for profile in &mut replacement.profiles {
+            if profile
+                .as_dev_tunnel()
+                .is_some_and(|tunnel| tunnel.account() == Some(identifier))
+            {
+                *profile = profile.clone().with_tunnel_account_selection(None)?;
+            }
+        }
         replacement.validate()?;
         Ok(replacement)
     }
@@ -432,6 +554,7 @@ impl Configuration {
             workspace_enabled: false,
             workspace: None,
             settings: InterfaceSettings::DEFAULT,
+            accounts: Vec::new(),
             known_hosts: Vec::new(),
             profile_usage: Vec::new(),
             update_check: None,
@@ -449,11 +572,13 @@ impl Configuration {
             workspace_enabled: raw.workspace_enabled,
             workspace: raw.workspace,
             settings: raw.settings,
+            accounts: raw.accounts,
             known_hosts: raw.known_hosts,
             profile_usage: raw.profile_usage,
             update_check: raw.update_check,
             durable_session_aliases: raw.durable_session_aliases,
-        };
+        }
+        .migrated();
         configuration.validate()?;
         Ok(configuration)
     }
@@ -604,6 +729,16 @@ impl Configuration {
         let mut identifiers = HashSet::with_capacity(self.profiles.len());
         let mut credential_users = std::collections::HashMap::new();
         let mut tunnel_references = HashSet::new();
+        let mut account_keys = HashSet::with_capacity(self.accounts.len());
+        for account in &self.accounts {
+            account.validate()?;
+            if !account_keys.insert(account.identifier()) {
+                return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
+            }
+            let reference = account.credential_reference();
+            *credential_users.entry(reference).or_insert(0usize) += 1;
+            tunnel_references.insert(reference);
+        }
         for profile in &self.profiles {
             validate_identifier(profile.identifier())?;
             if !identifiers.insert(profile.identifier()) {
@@ -612,13 +747,12 @@ impl Configuration {
                 ));
             }
             profile.validate()?;
-            if let Some(identity) = profile
+            if profile
                 .as_dev_tunnel()
-                .and_then(|profile| profile.identity())
+                .and_then(|profile| profile.account())
+                .is_some_and(|key| !account_keys.contains(key))
             {
-                let reference = identity.credential_reference();
-                *credential_users.entry(reference).or_insert(0usize) += 1;
-                tunnel_references.insert(reference);
+                return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
             }
             if let Some(reference) = profile.credential_reference() {
                 *credential_users.entry(reference).or_insert(0usize) += 1;
@@ -692,6 +826,8 @@ struct RawConfiguration {
     #[serde(default)]
     settings: InterfaceSettings,
     #[serde(default)]
+    accounts: Vec<DevTunnelAccount>,
+    #[serde(default)]
     known_hosts: Vec<KnownHostEntry>,
     #[serde(default)]
     profile_usage: Vec<ProfileUsageEntry>,
@@ -713,14 +849,27 @@ impl<'de> Deserialize<'de> for Configuration {
             workspace_enabled: raw.workspace_enabled,
             workspace: raw.workspace,
             settings: raw.settings,
+            accounts: raw.accounts,
             known_hosts: raw.known_hosts,
             profile_usage: raw.profile_usage,
             update_check: raw.update_check,
             durable_session_aliases: raw.durable_session_aliases,
-        };
+        }
+        .migrated();
         configuration.validate().map_err(serde::de::Error::custom)?;
         Ok(configuration)
     }
+}
+
+fn unique_account_key(base: &str, accounts: &[DevTunnelAccount]) -> String {
+    let taken = |key: &str| accounts.iter().any(|account| account.identifier() == key);
+    if !taken(base) {
+        return base.to_owned();
+    }
+    (2..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|key| !taken(key))
+        .expect("unbounded range")
 }
 
 pub(crate) const fn is_zero(value: &u64) -> bool {
@@ -775,7 +924,19 @@ fn inspect_document_for_secret_material(value: &toml::Value) -> Result<(), Confi
         if is_secret_bearing_key(key) {
             return Err(ConfigError::new(ConfigErrorKind::ForbiddenSecretField));
         }
-        if key == "profiles" {
+        if key == "accounts" {
+            let toml::Value::Array(accounts) = value else {
+                inspect_value_for_secret_material(value, false)?;
+                continue;
+            };
+            for account in accounts {
+                let toml::Value::Table(account) = account else {
+                    inspect_value_for_secret_material(account, false)?;
+                    continue;
+                };
+                inspect_table_for_secret_material(account, true, false, true)?;
+            }
+        } else if key == "profiles" {
             let toml::Value::Array(profiles) = value else {
                 inspect_value_for_secret_material(value, false)?;
                 continue;
@@ -912,90 +1073,189 @@ mod tests {
 
     const CREDENTIAL_REFERENCE: &str = "550e8400-e29b-41d4-a716-446655440000";
 
+    fn tunnel_host() -> DevTunnelHost {
+        DevTunnelHost {
+            tunnel_id: "owned".into(),
+            cluster: "usw3".into(),
+            host_id: "host".into(),
+            public_key: "owned-pin".into(),
+            port: 47461,
+        }
+    }
+
+    fn account(key: &str, id: u64, login: &str) -> DevTunnelAccount {
+        DevTunnelAccount::new(
+            key,
+            AccountProvider::Github,
+            id,
+            login,
+            SecretReference::generate(),
+        )
+        .unwrap()
+    }
+
+    fn bound(name: &str, tunnel: &str, key: &str) -> Profile {
+        Profile::named_dev_tunnel(name, tunnel)
+            .unwrap()
+            .with_tunnel_account(key, SecretReference::generate(), tunnel_host())
+            .unwrap()
+    }
+
     #[test]
-    fn native_tunnel_profiles_keep_identity_connect_and_account_bindings_independent() {
-        let identity = SecretReference::generate();
-        let make = |name, account, identity: SecretReference| {
-            Profile::named_dev_tunnel(name, "owned.usw3")
-                .unwrap()
-                .with_tunnel_identity(
-                    account,
-                    format!("account-{account}_acme"),
-                    identity,
-                    SecretReference::generate(),
-                    DevTunnelHost {
-                        tunnel_id: "owned".into(),
-                        cluster: "usw3".into(),
-                        host_id: "host".into(),
-                        public_key: "owned-pin".into(),
-                        port: 47461,
-                    },
-                )
-                .unwrap()
-        };
-        let one = make("one", 42, identity.duplicate_for_transport());
-        let two = make("two", 99, SecretReference::generate());
-        let configuration = Configuration::new(vec![one.clone(), two.clone()]).unwrap();
+    fn profiles_share_one_account_and_keep_separate_connect_credentials() {
+        let (configuration, key) = Configuration::new(Vec::new())
+            .unwrap()
+            .with_account(account("github-owner", 42, "owner"))
+            .unwrap();
+        let one = bound("one", "owned.usw3", &key);
+        let two = bound("two", "other.usw3", &key);
+        let configuration = configuration
+            .with_profile(one.clone())
+            .unwrap()
+            .with_profile(two.clone())
+            .unwrap();
+        assert_eq!(configuration.accounts().len(), 1);
+        assert_eq!(configuration.account_profile_count(&key), 2);
         let serialized = configuration.to_toml().unwrap();
+        assert!(serialized.contains("[[accounts]]"));
+        assert!(!serialized.contains("[profiles.identity]"));
         assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
-        assert!(!serialized.contains("destination_file"));
-        assert!(serialized.contains("tunnel_name = \"owned.usw3\""));
-        let public_names = Profile::named_dev_tunnel("public-names", "token-tunnel.usw3")
-            .unwrap()
-            .with_tunnel_identity(
-                71,
-                "secret-agent".into(),
-                SecretReference::generate(),
-                SecretReference::generate(),
-                DevTunnelHost {
-                    tunnel_id: "owned".into(),
-                    cluster: "usw3".into(),
-                    host_id: "host".into(),
-                    public_key: "owned-pin".into(),
-                    port: 47461,
-                },
-            )
-            .unwrap();
-        let public_names = Configuration::new(vec![public_names]).unwrap();
-        assert_eq!(
-            Configuration::parse(&public_names.to_toml().unwrap()).unwrap(),
-            public_names
-        );
-        let forbidden = serialized.replacen(
-            "[profiles.identity]",
-            "[profiles.identity]\naccess_token = \"PRIVATE_MUST_REFUSE\"",
-            1,
-        );
-        assert!(Configuration::parse(&forbidden).is_err());
-        assert!(Configuration::new(vec![
-            one.clone(),
-            make("other", 42, identity.duplicate_for_transport())
-        ])
-        .is_err());
-        let changed = configuration
-            .with_profile(Profile::named_dev_tunnel("one", "changed.usw3").unwrap())
-            .unwrap();
-        assert_eq!(changed.profile("two"), Some(&two));
-        assert!(changed
-            .profile("one")
-            .unwrap()
+
+        // The same connect credential still cannot back two profiles.
+        let reused = one
             .as_dev_tunnel()
             .unwrap()
-            .identity()
-            .is_none());
+            .credential_reference()
+            .unwrap()
+            .duplicate_for_transport();
+        let clash = Profile::named_dev_tunnel("clash", "third.usw3")
+            .unwrap()
+            .with_tunnel_account(&key, reused, tunnel_host())
+            .unwrap();
+        assert!(configuration.with_profile(clash).is_err());
+        // A profile may not name an account that does not exist.
+        assert!(configuration
+            .with_profile(bound("ghost", "ghost.usw3", "github-missing"))
+            .is_err());
+        assert!(Configuration::parse(&serialized.replacen(
+            "[[accounts]]",
+            "[[accounts]]\naccess_token = \"PRIVATE_MUST_REFUSE\"",
+            1,
+        ))
+        .is_err());
+        assert!(Profile::named_dev_tunnel("invalid", "owned..usw3").is_err());
+    }
+
+    #[test]
+    fn signing_in_again_replaces_the_credential_and_keeps_linked_profiles() {
+        let (configuration, key) = Configuration::new(Vec::new())
+            .unwrap()
+            .with_account(account("github-owner", 42, "owner"))
+            .unwrap();
+        let configuration = configuration
+            .with_profile(bound("one", "owned.usw3", &key))
+            .unwrap();
+        let fresh = account("github-renamed", 42, "renamed");
+        let fresh_reference = fresh.credential_reference().duplicate_for_transport();
+        let (replaced, same_key) = configuration.with_account(fresh).unwrap();
+        assert_eq!(same_key, key);
+        assert_eq!(replaced.accounts().len(), 1);
+        assert_eq!(replaced.account(&key).unwrap().login(), "renamed");
+        assert!(replaced.account(&key).unwrap().credential_reference() == &fresh_reference);
+        assert_eq!(replaced.account_profile_count(&key), 1);
+        let (two_users, other_key) = replaced
+            .with_account(account("github-owner", 7, "second"))
+            .unwrap();
+        assert_ne!(other_key, key);
+        assert_eq!(two_users.accounts().len(), 2);
+    }
+
+    #[test]
+    fn signing_an_account_out_unlinks_profiles_and_drops_their_host_trust() {
+        let (configuration, key) = Configuration::new(Vec::new())
+            .unwrap()
+            .with_account(account("github-owner", 42, "owner"))
+            .unwrap();
+        let configuration = configuration
+            .with_profile(bound("one", "owned.usw3", &key))
+            .unwrap();
+        let signed_out = configuration.without_account(&key).unwrap();
+        assert!(signed_out.accounts().is_empty());
+        let profile = signed_out.profile("one").unwrap().as_dev_tunnel().unwrap();
+        assert!(profile.account().is_none());
+        assert!(profile.trusted_host().is_none());
+        assert!(profile.credential_reference().is_none());
+        assert_eq!(profile.tunnel_name(), Some("owned.usw3"));
+    }
+
+    #[test]
+    fn pre_accounts_profile_identities_migrate_and_share_by_credential() {
+        let shared = SecretReference::generate().to_persisted_string();
+        let document = |second_credential: &str| {
+            format!(
+                r#"schema_version = 1
+
+[[profiles]]
+kind = "dev_tunnel"
+id = "one"
+tunnel_name = "owned.usw3"
+credential_id = "{c1}"
+
+[profiles.identity]
+account_id = 42
+login = "owner"
+credential_id = "{shared}"
+
+[profiles.trusted_host]
+tunnel_id = "owned"
+cluster = "usw3"
+host_id = "host"
+public_key = "pin"
+port = 47461
+
+[[profiles]]
+kind = "dev_tunnel"
+id = "two"
+tunnel_name = "other.usw3"
+credential_id = "{c2}"
+
+[profiles.identity]
+account_id = 42
+login = "owner"
+credential_id = "{second_credential}"
+
+[profiles.trusted_host]
+tunnel_id = "other"
+cluster = "usw3"
+host_id = "host"
+public_key = "pin"
+port = 47461
+"#,
+                c1 = SecretReference::generate().to_persisted_string(),
+                c2 = SecretReference::generate().to_persisted_string(),
+            )
+        };
+        let migrated = Configuration::parse(&document(&shared)).unwrap();
+        assert_eq!(migrated.accounts().len(), 1);
+        let key = migrated.accounts()[0].identifier().to_owned();
+        assert_eq!(key, "github-owner");
+        assert_eq!(migrated.account_profile_count(&key), 2);
         assert_eq!(
-            one.as_dev_tunnel().unwrap().identity().unwrap().account_id,
-            42
+            migrated.accounts()[0]
+                .credential_reference()
+                .to_persisted_string(),
+            shared
         );
-        for invalid in [
-            "file:///tmp/x",
-            "https://example.test",
-            "owned..usw3",
-            "-",
-            "owned.",
-        ] {
-            assert!(Profile::named_dev_tunnel("invalid", invalid).is_err());
-        }
+        let written = migrated.to_toml().unwrap();
+        assert!(!written.contains("[profiles.identity]"));
+        assert_eq!(Configuration::parse(&written).unwrap(), migrated);
+        // Profiles that carried separate credentials for one GitHub user keep
+        // one account each rather than losing either sign-in.
+        let separate = Configuration::parse(&document(
+            &SecretReference::generate().to_persisted_string(),
+        ))
+        .unwrap();
+        assert_eq!(separate.accounts().len(), 2);
     }
 
     #[test]
@@ -3136,6 +3396,36 @@ schema_version = 99
                 .interface_settings()
                 .scroll_speed(),
             ScrollSpeedPreference::Normal
+        );
+    }
+
+    #[test]
+    fn dev_tunnel_lifetime_extension_defaults_off_for_thirty_days_and_is_bounded() {
+        let defaults = InterfaceSettings::DEFAULT;
+        assert!(!defaults.extend_dev_tunnel_lifetime());
+        assert!(!defaults.show_running_dev_tunnels());
+        assert!(InterfaceSettings::DEFAULT
+            .with_show_running_dev_tunnels(true)
+            .show_running_dev_tunnels());
+        assert_eq!(defaults.dev_tunnel_extension_days(), 30);
+        let tuned = defaults
+            .clone()
+            .with_extend_dev_tunnel_lifetime(true)
+            .with_dev_tunnel_extension_days(90);
+        assert!(tuned.extend_dev_tunnel_lifetime());
+        assert_eq!(tuned.dev_tunnel_extension_days(), 90);
+        assert_eq!(
+            defaults
+                .clone()
+                .with_dev_tunnel_extension_days(0)
+                .dev_tunnel_extension_days(),
+            1
+        );
+        assert_eq!(
+            defaults
+                .with_dev_tunnel_extension_days(u32::MAX)
+                .dev_tunnel_extension_days(),
+            InterfaceSettings::MAX_DEV_TUNNEL_EXTENSION_DAYS
         );
     }
 
