@@ -731,7 +731,10 @@ mod tests {
             )
             .drop_without_applying_deltas();
         }
-        let selected = app.view.selected_text(&app.terminal).expect("local selection");
+        let selected = app
+            .view
+            .selected_text(&app.terminal)
+            .expect("local selection");
         assert!(!selected.is_empty());
         let output = render(&mut app, vec![egui::Event::Copy]);
         assert!(output.platform_output.commands.iter().any(|command| {
@@ -786,7 +789,7 @@ mod tests {
             .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
         let retained = |app: &MobileApp| {
             (0..app.terminal.dimensions().rows())
-                .map(|row| app.terminal.row_text(row))
+                .filter_map(|row| app.terminal.row_text(row))
                 .collect::<Vec<_>>()
                 .join("\n")
                 .contains("retained-evidence")

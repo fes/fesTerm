@@ -56,8 +56,8 @@ pub struct TerminalViewOptions {
     pub terminal_input_enabled: bool,
     /// The session backing this view can still accept typed keystrokes
     /// (i.e. it has not exited, failed, stopped, or disconnected). Unlike
-    /// `terminal_input_enabled`, this only suppresses keystrokes/paste
-    /// delivered to the shell; scrollback navigation, selection, and Copy
+    /// `terminal_input_enabled`, this suppresses transport-bound keyboard/paste,
+    /// mouse and focus reports; scrollback navigation, selection, and Copy
     /// remain available so a read-only/dead session's history stays
     /// inspectable.
     pub keyboard_input_enabled: bool,

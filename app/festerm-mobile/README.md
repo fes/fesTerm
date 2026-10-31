@@ -344,3 +344,12 @@ pass, two-line host identity, labelled connection fields and Esc/Tab/Ctrl/Alt
 order. See [scope and deliberate prototype differences](../../docs/mobile-layout-design.md#owner-provided-product-mock-ups).
 Actual-widget headless captures support review; native appearance/input and
 the deferred product screens are not established by this styling pass.
+
+Disconnected terminals retain local scroll/selection/Copy while typing, paste,
+mouse/focus transport reports and the native terminal keyboard stay disabled.
+A bounded recovery card offers a fresh-shell form; opening/cancelling it or
+failing synchronous validation preserves history. Explicit Connect replaces
+history when its worker starts, before authentication. Details remain available
+without a verbose top strip; earlier-execution warnings stay visible. Native
+touch/clipboard, dropped-network recovery and signed-device SSH remain MOB-06
+checks, not established by synthetic disconnected gallery images.

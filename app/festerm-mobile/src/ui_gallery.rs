@@ -37,7 +37,11 @@ fn capture_mobile_ui_gallery() {
         ("tablet", 834.0, 1194.0, 0.30),
     ] {
         for state in ["terminal", "connect", "arrow-helper", "disconnected"] {
-            let state_occlusion = if state == "disconnected" { 0.0 } else { occlusion };
+            let state_occlusion = if state == "disconnected" {
+                0.0
+            } else {
+                occlusion
+            };
             let lifecycle = Rc::new(Cell::new(Lifecycle {
                 active: true,
                 ..Default::default()

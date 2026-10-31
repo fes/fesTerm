@@ -649,8 +649,7 @@ impl MobileApp {
             });
         }
         #[cfg(feature = "live-ssh")]
-        let history_ready =
-            lifecycle.active && !self.connection.open && (input_ready || read_only);
+        let history_ready = lifecycle.active && !self.connection.open && (input_ready || read_only);
         #[cfg(not(feature = "live-ssh"))]
         let history_ready = input_ready;
         if input_ready && !self.menu_open {
