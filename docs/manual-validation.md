@@ -592,6 +592,16 @@ Headless screenshots do not establish native text contrast, Dynamic Type,
 VoiceOver, keyboard pixels or finger usability; these remain MOB-05/MOB-06 checks.
 No saved profiles, session switcher, Keychain or app lock is implied by this pass.
 
+The #425 disconnected-history slice has portable coverage for local wheel/drag
+selection/Copy with retired mouse/focus modes, no transport input/terminal IME,
+cleared one-shot modifiers and foreground-form blackout. Review the bottom
+recovery card on phone/tablet and short layouts, reason disclosure and visible
+earlier-execution warning. Reconnect opens a form; Cancel and synchronous
+validation failure preserve history. Explicit Connect replaces history when the
+worker starts, before authentication. Native touch handles/Copy, keyboard hiding,
+VoiceOver and real dropped-network/background recovery still require MOB-06
+evidence; synthetic headless screenshots are not acceptance.
+
 The #425 cleanup has deterministic actual-widget coverage for compact header/More
 navigation, preview ownership, demo reset and content-sized
 connection controls bounded by measured safe space. Counters are available under
