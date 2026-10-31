@@ -1590,6 +1590,12 @@ impl HostKeyDecisionGate {
         self.inner.reject_pending();
     }
 
+    /// True while the user is reviewing a host key. That time is theirs, so
+    /// connection deadlines must not count it.
+    fn is_waiting(&self) -> bool {
+        self.inner.is_waiting()
+    }
+
     async fn wait_for_decision_async(&self, timeout: Duration) -> HostTrustDecision {
         self.inner
             .wait_for_decision_async(timeout)
@@ -2499,6 +2505,18 @@ enum PasswordVerificationRequestError {
 }
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Restarts the connect deadline while the user reviews a host key, so a slow
+/// review is bounded by `HOST_KEY_DECISION_TIMEOUT` instead of the connect
+/// timeout.
+fn hold_connect_deadline_while_reviewing(
+    deadline: std::pin::Pin<&mut tokio::time::Sleep>,
+    host_key_gate: &HostKeyDecisionGate,
+) {
+    if host_key_gate.is_waiting() {
+        deadline.reset(tokio::time::Instant::now() + CONNECT_TIMEOUT);
+    }
+}
 const HOST_KEY_DECISION_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long an interactive password prompt waits for the application to
 /// resolve it. Generous relative to [`HOST_KEY_DECISION_TIMEOUT`] since
@@ -4577,6 +4595,7 @@ async fn establish_connection(
                 "SSH connection timed out",
             ),
             _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
+                hold_connect_deadline_while_reviewing(connection_timeout.as_mut(), host_key_gate);
                 if process_commands_before_running(command_receiver, shared, host_key_gate) {
                     return ConnectionAttempt::Shutdown;
                 }
@@ -5034,6 +5053,7 @@ async fn establish_authenticated_handle(
                 "SSH connection timed out",
             ),
             _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
+                hold_connect_deadline_while_reviewing(connection_timeout.as_mut(), host_key_gate);
                 if process_commands_before_running(command_receiver, shared, host_key_gate) {
                     return AuthenticatedHandleAttempt::Shutdown;
                 }
@@ -8592,6 +8612,33 @@ mod tests {
             current.wait(&worker.host_key_gate, Duration::ZERO),
             HostTrustDecision::AcceptOnce
         );
+    }
+
+    #[test]
+    fn connect_deadline_is_held_only_while_a_host_key_is_under_review() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let gate = HostKeyDecisionGate::new();
+            let near = tokio::time::Instant::now() + Duration::from_millis(50);
+            let mut deadline = std::pin::pin!(tokio::time::sleep_until(near));
+
+            hold_connect_deadline_while_reviewing(deadline.as_mut(), &gate);
+            assert_eq!(deadline.deadline(), near, "idle gate leaves the deadline");
+
+            let prompt = festerm_session::HostKeyPrompt::new("example.test", 22, "SHA256:review");
+            let waiter = gate.begin(prompt.clone()).expect("begin review");
+            hold_connect_deadline_while_reviewing(deadline.as_mut(), &gate);
+            assert!(deadline.deadline() > near + Duration::from_secs(5));
+
+            gate.cancel(&prompt).expect("cancel");
+            drop(waiter);
+            let held = deadline.deadline();
+            hold_connect_deadline_while_reviewing(deadline.as_mut(), &gate);
+            assert_eq!(deadline.deadline(), held, "finished review stops holding");
+        });
     }
 
     #[test]
