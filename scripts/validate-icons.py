@@ -21,7 +21,7 @@ SVG_NS = "http://www.w3.org/2000/svg"
 ET.register_namespace("", SVG_NS)
 
 EXPECTED = {
-    "activate", "app-mark", "auth-required", "back", "clear", "close", "command-palette",
+    "account", "activate", "app-mark", "auth-required", "back", "clear", "close", "command-palette",
     "copy", "dev-tunnel", "diagnostics", "disclosure", "disconnect", "error", "file-transfer",
     "home-directory",
     "host-key-verification",

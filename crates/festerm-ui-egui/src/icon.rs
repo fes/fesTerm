@@ -10,6 +10,8 @@ use egui::{pos2, Color32, Painter, Pos2, Rect, Stroke, StrokeKind};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Icon {
     AppMark,
+    /// A signed-in person (for example a GitHub account).
+    Account,
     LocalTerminal,
     SshRemote,
     /// A terminal reached through a dev tunnel; not a connection/trust state.
@@ -199,6 +201,7 @@ mod tests {
     fn semantic_inventory_has_one_variant_per_canonical_source() {
         let icons = [
             Icon::AppMark,
+            Icon::Account,
             Icon::LocalTerminal,
             Icon::SshRemote,
             Icon::DevTunnel,
@@ -256,7 +259,7 @@ mod tests {
             Icon::SectionExpanded,
             Icon::SortOrder,
         ];
-        assert_eq!(icons.len(), 57);
+        assert_eq!(icons.len(), 58);
         let sources =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/source");
         assert_eq!(std::fs::read_dir(sources).unwrap().count(), icons.len());

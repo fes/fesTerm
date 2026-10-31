@@ -3430,6 +3430,7 @@
         "ADR-0061"
       ],
       "automated_tests": [
+        "return_and_tab_reported_as_characters_are_replayed_as_named_keys",
         "trusted_tunnel_attaches_into_a_tab_with_the_hosts_screen",
         "an_unapproved_host_waits_for_a_decision_before_attaching",
         "a_held_session_is_refused_with_a_take_over_hint_unless_enabled",

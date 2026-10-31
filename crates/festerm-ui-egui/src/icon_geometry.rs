@@ -4,6 +4,23 @@
 #[rustfmt::skip]
 fn icon_geometry(icon: Icon) -> &'static [Primitive] {
     match icon {
+        Icon::Account => &[
+            Primitive::Circle { x: 12.0, y: 8.0, radius: 4.0 },
+            Primitive::Polyline(&[
+                (4.0, 21.0),
+                (4.0, 20.0),
+                (4.3806, 18.0866),
+                (5.4645, 16.4645),
+                (7.0866, 15.3806),
+                (9.0, 15.0),
+                (15.0, 15.0),
+                (16.9134, 15.3806),
+                (18.5355, 16.4645),
+                (19.6194, 18.0866),
+                (20.0, 20.0),
+                (20.0, 21.0),
+            ]),
+        ],
         Icon::Activate => &[
             Primitive::Polyline(&[
                 (9.0, 5.0),

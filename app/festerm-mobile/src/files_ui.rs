@@ -370,182 +370,195 @@ fn pane_card(
 ) -> bool {
     let mut open = false;
     let size = egui::vec2(ui.available_width(), height);
-    ui.allocate_ui_with_layout(size, egui::Layout::top_down(egui::Align::Min), |ui| {
-        ui.set_min_height(height);
-        ui.set_max_height(height);
-        card(ui, |ui| {
-            ui.set_min_height(height - 2.0);
-            ui.horizontal(|ui| {
-                ui.set_height(44.0);
-                ui.add_space(space::MD);
-                ui.label(
-                    egui::RichText::new(title)
-                        .size(type_scale::NAV_TITLE)
-                        .strong()
-                        .color(color::TEXT),
-                );
-                if pane.loading() {
-                    ui.add(egui::Spinner::new().size(14.0));
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_space(4.0);
-                    let menu =
-                        icon_button(ui, "Sort and view options", false, |painter, c, tint| {
-                            for dx in [-6.0, 0.0, 6.0] {
-                                painter.circle_filled(egui::pos2(c.x + dx, c.y), 1.8, tint);
+    let layout = egui::Layout::top_down(egui::Align::Min);
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .id_salt(title)
+            .max_rect(
+                ui.available_rect_before_wrap()
+                    .with_max_y(ui.cursor().top() + size.y)
+                    .with_max_x(ui.cursor().left() + size.x),
+            )
+            .layout(layout),
+        |ui| {
+            ui.set_min_height(height);
+            ui.set_max_height(height);
+            card(ui, |ui| {
+                ui.set_min_height(height - 2.0);
+                ui.horizontal(|ui| {
+                    ui.set_height(44.0);
+                    ui.add_space(space::MD);
+                    ui.label(
+                        egui::RichText::new(title)
+                            .size(type_scale::NAV_TITLE)
+                            .strong()
+                            .color(color::TEXT),
+                    );
+                    if pane.loading() {
+                        ui.add(egui::Spinner::new().size(14.0));
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(4.0);
+                        let menu =
+                            icon_button(ui, "Sort and view options", false, |painter, c, tint| {
+                                for dx in [-6.0, 0.0, 6.0] {
+                                    painter.circle_filled(egui::pos2(c.x + dx, c.y), 1.8, tint);
+                                }
+                            });
+                        egui::Popup::menu(&menu).show(|ui| {
+                            for (key, label) in [
+                                (SortKey::Name, "Sort by name"),
+                                (SortKey::Size, "Sort by size"),
+                                (SortKey::Modified, "Sort by date"),
+                            ] {
+                                if ui.selectable_label(pane.sort == key, label).clicked() {
+                                    pane.set_sort(key, ctx);
+                                    ui.close();
+                                }
                             }
-                        });
-                    egui::Popup::menu(&menu).show(|ui| {
-                        for (key, label) in [
-                            (SortKey::Name, "Sort by name"),
-                            (SortKey::Size, "Sort by size"),
-                            (SortKey::Modified, "Sort by date"),
-                        ] {
-                            if ui.selectable_label(pane.sort == key, label).clicked() {
-                                pane.set_sort(key, ctx);
+                            if ui
+                                .checkbox(&mut pane.show_hidden, "Show hidden files")
+                                .changed()
+                            {
+                                pane.refresh(ctx);
                                 ui.close();
                             }
+                        });
+                        let filter =
+                            icon_button(ui, "Filter", pane.filter_open, |painter, c, tint| {
+                                filter_glyph(painter, c, tint);
+                            });
+                        if filter.clicked() {
+                            pane.filter_open = !pane.filter_open;
+                            if !pane.filter_open {
+                                pane.filter.clear();
+                            }
                         }
-                        if ui
-                            .checkbox(&mut pane.show_hidden, "Show hidden files")
-                            .changed()
-                        {
-                            pane.refresh(ctx);
-                            ui.close();
-                        }
-                    });
-                    let filter = icon_button(ui, "Filter", pane.filter_open, |painter, c, tint| {
-                        filter_glyph(painter, c, tint);
-                    });
-                    if filter.clicked() {
-                        pane.filter_open = !pane.filter_open;
-                        if !pane.filter_open {
-                            pane.filter.clear();
-                        }
-                    }
-                    let refresh = icon_button(ui, "Refresh", false, |painter, c, tint| {
-                        festerm_ui_egui::icon::paint(
-                            painter,
-                            festerm_ui_egui::icon::Icon::Refresh,
-                            Rect::from_center_size(c, egui::vec2(20.0, 20.0)),
-                            tint,
-                        );
-                    });
-                    if refresh.clicked() {
-                        pane.refresh(ctx);
-                    }
-                });
-            });
-            ui.horizontal(|ui| {
-                ui.set_height(30.0);
-                ui.add_space(space::MD);
-                if pane.can_go_up() {
-                    let up = icon_button(ui, "Parent folder", false, |painter, c, tint| {
-                        arrow_glyph(painter, c, true, tint);
-                    });
-                    if up.clicked() {
-                        pane.go_up(ctx);
-                    }
-                }
-                crumb_row(ui, pane, root_label, ctx);
-            });
-            if pane.filter_open {
-                ui.horizontal(|ui| {
-                    ui.add_space(space::MD);
-                    ui.add(
-                        egui::TextEdit::singleline(&mut pane.filter)
-                            .hint_text("Filter this folder")
-                            .desired_width(ui.available_width() - space::MD)
-                            .char_limit(80),
-                    );
-                });
-            }
-            ui.painter().hline(
-                ui.min_rect().x_range(),
-                ui.cursor().top(),
-                Stroke::new(1.0, color::DIVIDER),
-            );
-            sort_header(ui, pane, ctx);
-            let list_height =
-                (height - PANE_CHROME - if pane.filter_open { 36.0 } else { 0.0 }).max(ROW_HEIGHT);
-            let mut tapped = None;
-            egui::ScrollArea::vertical()
-                .id_salt(("rows", title))
-                .max_height(list_height)
-                .min_scrolled_height(list_height)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    if let Some(error) = &pane.error {
-                        ui.add_space(space::SM);
-                        ui.horizontal(|ui| {
-                            ui.add_space(space::MD);
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(error)
-                                        .size(type_scale::CAPTION)
-                                        .color(color::DANGER),
-                                )
-                                .wrap(),
+                        let refresh = icon_button(ui, "Refresh", false, |painter, c, tint| {
+                            festerm_ui_egui::icon::paint(
+                                painter,
+                                festerm_ui_egui::icon::Icon::Refresh,
+                                Rect::from_center_size(c, egui::vec2(20.0, 20.0)),
+                                tint,
                             );
                         });
-                    }
-                    let entries = pane.visible();
-                    if entries.is_empty() && pane.listing.is_some() && !pane.loading() {
-                        ui.add_space(space::MD);
-                        ui.horizontal(|ui| {
-                            ui.add_space(space::MD);
-                            footnote(ui, "This folder is empty");
-                        });
-                    }
-                    for entry in entries {
-                        let selected = pane.selected.contains(&entry.name);
-                        if entry_row(ui, entry, selected).clicked() && entry.name_safe {
-                            tapped = Some((entry.name.clone(), entry.is_dir()));
-                        }
-                    }
-                });
-            if let Some((name, dir)) = tapped {
-                if dir {
-                    pane.open_dir(&name, ctx);
-                } else {
-                    pane.toggle(&name);
-                }
-            }
-            ui.horizontal(|ui| {
-                ui.set_height(32.0);
-                ui.add_space(space::MD);
-                ui.label(
-                    egui::RichText::new(footer_text(pane))
-                        .size(type_scale::CAPTION)
-                        .color(color::TEXT_MUTED),
-                );
-                let single_markdown = pane.selected_files().len() == 1
-                    && pane
-                        .selected_files()
-                        .first()
-                        .is_some_and(|entry| is_markdown(&entry.name));
-                if single_markdown {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(space::MD);
-                        if ui
-                            .add(
-                                egui::Label::new(
-                                    egui::RichText::new("Open")
-                                        .size(type_scale::CAPTION + 1.0)
-                                        .color(color::ACCENT_TEXT),
-                                )
-                                .sense(Sense::CLICK),
-                            )
-                            .clicked()
-                        {
-                            open = true;
+                        if refresh.clicked() {
+                            pane.refresh(ctx);
                         }
                     });
+                });
+                ui.horizontal(|ui| {
+                    ui.set_height(30.0);
+                    ui.add_space(space::MD);
+                    if pane.can_go_up() {
+                        let up = icon_button(ui, "Parent folder", false, |painter, c, tint| {
+                            arrow_glyph(painter, c, true, tint);
+                        });
+                        if up.clicked() {
+                            pane.go_up(ctx);
+                        }
+                    }
+                    crumb_row(ui, pane, root_label, ctx);
+                });
+                if pane.filter_open {
+                    ui.horizontal(|ui| {
+                        ui.add_space(space::MD);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut pane.filter)
+                                .hint_text("Filter this folder")
+                                .desired_width(ui.available_width() - space::MD)
+                                .char_limit(80),
+                        );
+                    });
                 }
+                ui.painter().hline(
+                    ui.min_rect().x_range(),
+                    ui.cursor().top(),
+                    Stroke::new(1.0, color::DIVIDER),
+                );
+                sort_header(ui, pane, ctx);
+                let list_height =
+                    (height - PANE_CHROME - if pane.filter_open { 36.0 } else { 0.0 })
+                        .max(ROW_HEIGHT);
+                let mut tapped = None;
+                egui::ScrollArea::vertical()
+                    .id_salt(("rows", title))
+                    .max_height(list_height)
+                    .min_scrolled_height(list_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        if let Some(error) = &pane.error {
+                            ui.add_space(space::SM);
+                            ui.horizontal(|ui| {
+                                ui.add_space(space::MD);
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(error)
+                                            .size(type_scale::CAPTION)
+                                            .color(color::DANGER),
+                                    )
+                                    .wrap(),
+                                );
+                            });
+                        }
+                        let entries = pane.visible();
+                        if entries.is_empty() && pane.listing.is_some() && !pane.loading() {
+                            ui.add_space(space::MD);
+                            ui.horizontal(|ui| {
+                                ui.add_space(space::MD);
+                                footnote(ui, "This folder is empty");
+                            });
+                        }
+                        for entry in entries {
+                            let selected = pane.selected.contains(&entry.name);
+                            if entry_row(ui, entry, selected).clicked() && entry.name_safe {
+                                tapped = Some((entry.name.clone(), entry.is_dir()));
+                            }
+                        }
+                    });
+                if let Some((name, dir)) = tapped {
+                    if dir {
+                        pane.open_dir(&name, ctx);
+                    } else {
+                        pane.toggle(&name);
+                    }
+                }
+                ui.horizontal(|ui| {
+                    ui.set_height(32.0);
+                    ui.add_space(space::MD);
+                    ui.label(
+                        egui::RichText::new(footer_text(pane))
+                            .size(type_scale::CAPTION)
+                            .color(color::TEXT_MUTED),
+                    );
+                    let single_markdown = pane.selected_files().len() == 1
+                        && pane
+                            .selected_files()
+                            .first()
+                            .is_some_and(|entry| is_markdown(&entry.name));
+                    if single_markdown {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_space(space::MD);
+                            if ui
+                                .add(
+                                    egui::Label::new(
+                                        egui::RichText::new("Open")
+                                            .size(type_scale::CAPTION + 1.0)
+                                            .color(color::ACCENT_TEXT),
+                                    )
+                                    .sense(Sense::CLICK),
+                                )
+                                .clicked()
+                            {
+                                open = true;
+                            }
+                        });
+                    }
+                });
             });
-        });
-    });
+        },
+    );
     open
 }
 
@@ -564,6 +577,51 @@ fn transfer_summary(session: &FilesSession) -> (String, bool) {
     }
 }
 
+/// Upload / Download buttons for the selections on either pane.
+fn transfer_buttons(ui: &mut Ui, session: &mut FilesSession) {
+    let upload_count = session
+        .local
+        .as_ref()
+        .map_or(0, |pane| pane.selected_files().len());
+    let download_count = session
+        .remote
+        .as_ref()
+        .map_or(0, |pane| pane.selected_files().len());
+    ui.horizontal(|ui| {
+        let gap = ui.spacing().item_spacing.x;
+        let width = (ui.available_width() - gap) / 2.0;
+        let size = egui::vec2(width, 48.0);
+        let upload = if upload_count == 0 {
+            "Upload".to_owned()
+        } else {
+            format!("Upload {upload_count}")
+        };
+        let download = if download_count == 0 {
+            "Download".to_owned()
+        } else {
+            format!("Download {download_count}")
+        };
+        let up = button_sized(ui, ButtonKind::Primary, &upload, upload_count > 0, size);
+        let down = button_sized(
+            ui,
+            ButtonKind::Secondary,
+            &download,
+            download_count > 0,
+            size,
+        );
+        if up.clicked() {
+            session.start_transfer(true);
+        }
+        if down.clicked() {
+            session.start_transfer(false);
+        }
+    });
+}
+
+/// Panes switch from stacked to side by side at this width (points).
+const WIDE_FILES_WIDTH: f32 = 700.0;
+const FILES_MAX_WIDTH: f32 = 1100.0;
+
 /// The Files screen body below the header.
 pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
     let mut outcome = FilesOutcome::default();
@@ -573,7 +631,10 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
         return outcome;
     }
     ui.spacing_mut().item_spacing.y = space::SM;
-    let margin = egui::Margin::symmetric(12, 0);
+    let width = ui.available_width();
+    let wide = width >= WIDE_FILES_WIDTH;
+    let side = ((width - FILES_MAX_WIDTH) / 2.0).clamp(12.0, 200.0) as i8;
+    let margin = egui::Margin::symmetric(side, 0);
     egui::Frame::new().inner_margin(margin).show(ui, |ui| {
         if let Some(notice) = session.notice.clone() {
             ui.horizontal(|ui| {
@@ -587,51 +648,39 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
                 );
             });
         }
-        let fixed = 48.0 + 60.0 + 3.0 * space::SM + 44.0;
-        let pane_height = ((ui.available_height() - fixed) / 2.0).clamp(190.0, 520.0);
         let (mut open_remote, mut open_local) = (false, false);
-        if let Some(pane) = session.remote.as_mut() {
-            open_remote = pane_card(ui, pane, "Remote", "/", pane_height, &ctx);
-        }
-        let upload_count = session
-            .local
-            .as_ref()
-            .map_or(0, |pane| pane.selected_files().len());
-        let download_count = session
-            .remote
-            .as_ref()
-            .map_or(0, |pane| pane.selected_files().len());
-        ui.horizontal(|ui| {
-            let gap = ui.spacing().item_spacing.x;
-            let width = (ui.available_width() - gap) / 2.0;
-            let size = egui::vec2(width, 48.0);
-            let upload = if upload_count == 0 {
-                "Upload".to_owned()
-            } else {
-                format!("Upload {upload_count}")
-            };
-            let download = if download_count == 0 {
-                "Download".to_owned()
-            } else {
-                format!("Download {download_count}")
-            };
-            let up = button_sized(ui, ButtonKind::Primary, &upload, upload_count > 0, size);
-            let down = button_sized(
-                ui,
-                ButtonKind::Secondary,
-                &download,
-                download_count > 0,
-                size,
-            );
-            if up.clicked() {
-                session.start_transfer(true);
+        if wide {
+            let fixed = 48.0 + 60.0 + 4.0 * space::SM + 48.0 + 52.0;
+            let pane_height = (ui.available_height() - fixed).clamp(260.0, 720.0);
+            let gap = space::MD;
+            let half = (ui.available_width() - gap) / 2.0;
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                ui.vertical(|ui| {
+                    ui.set_width(half);
+                    if let Some(pane) = session.remote.as_mut() {
+                        open_remote = pane_card(ui, pane, "Remote", "/", pane_height, &ctx);
+                    }
+                });
+                ui.vertical(|ui| {
+                    ui.set_width(half);
+                    if let Some(pane) = session.local.as_mut() {
+                        open_local =
+                            pane_card(ui, pane, "This device", "Documents", pane_height, &ctx);
+                    }
+                });
+            });
+            transfer_buttons(ui, session);
+        } else {
+            let fixed = 48.0 + 60.0 + 3.0 * space::SM + 44.0;
+            let pane_height = ((ui.available_height() - fixed) / 2.0).clamp(190.0, 520.0);
+            if let Some(pane) = session.remote.as_mut() {
+                open_remote = pane_card(ui, pane, "Remote", "/", pane_height, &ctx);
             }
-            if down.clicked() {
-                session.start_transfer(false);
+            transfer_buttons(ui, session);
+            if let Some(pane) = session.local.as_mut() {
+                open_local = pane_card(ui, pane, "This iPhone", "Documents", pane_height, &ctx);
             }
-        });
-        if let Some(pane) = session.local.as_mut() {
-            open_local = pane_card(ui, pane, "This iPhone", "Documents", pane_height, &ctx);
         }
         if open_remote {
             outcome.events.extend(session.open_markdown(true));

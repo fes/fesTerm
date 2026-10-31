@@ -266,8 +266,12 @@ The Files screen (ADR 0060) stacks Remote above This iPhone, each with
 breadcrumb, sort, filter and multi-select, joined by Upload / Download buttons
 and a Transfers row that opens a progress sheet. Overwrites open a decision
 sheet (Keep both / Skip / Replace, optionally remembered). The This iPhone side
-is the app's `Documents` folder, shown in the Files app. Tablet widths keep the
-stacked order.
+is the app's `Documents` folder, shown in the Files app. Below 700 pt the panes
+stack; at tablet widths they sit side by side (Remote left, This device right)
+with the Upload / Download row and Transfers row beneath, in a column capped at
+1100 pt. The terminal's session-chip row, key row and extended-keys panel
+center in a 720 / 640 pt column on wide screens while their bar fills still
+span the full width.
 
 ## Phone: Markdown layout
 

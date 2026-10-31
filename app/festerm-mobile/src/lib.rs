@@ -44,9 +44,10 @@ use festerm_ui_egui::{
     route_input, EncodedInputSink, InputRoute, InputSinkDiagnostics, TerminalView,
     TerminalViewOptions,
 };
-#[cfg(feature = "live-ssh")]
-use std::cell::RefCell;
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 /// The egui mesh renderer does not need the full WebGPU limits. In particular,
 /// iOS Simulator Metal exposes 15 inter-stage variables, below the default 16.
@@ -79,6 +80,29 @@ fn mobile_style(style: &egui::Style) -> egui::Style {
 pub use profiles::Profiles;
 
 pub const SCROLLBACK_LIMIT: usize = 256 * 1024;
+
+/// winit on iOS reports Return and Tab (software or hardware keyboard) as
+/// `Key::Character("\n" / "\t")`, which egui-winit drops as non-printable. The
+/// event loop queues them here and the app replays them as named keys.
+#[derive(Clone, Default)]
+pub struct HardwareKeys(Rc<RefCell<Vec<egui::Key>>>);
+
+impl HardwareKeys {
+    /// Returns whether `text` was a key that egui would otherwise lose.
+    pub fn push_text(&self, text: &str) -> bool {
+        let key = match text {
+            "\n" | "\r" => egui::Key::Enter,
+            "\t" => egui::Key::Tab,
+            _ => return false,
+        };
+        self.0.borrow_mut().push(key);
+        true
+    }
+
+    fn drain(&self) -> Vec<egui::Key> {
+        std::mem::take(&mut *self.0.borrow_mut())
+    }
+}
 
 /// Only content-free lifecycle observations cross the event-loop/UI seam.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -219,6 +243,7 @@ pub struct MobileApp {
     observed_memory_warnings: u64,
     observed_suspensions: u64,
     keyboard: Option<festerm_ios_window::KeyboardBridge>,
+    keys: HardwareKeys,
     control: bool,
     alt: bool,
     toolbar_rect: Option<egui::Rect>,
@@ -275,6 +300,7 @@ impl MobileApp {
             observed_memory_warnings: 0,
             observed_suspensions: 0,
             keyboard: None,
+            keys: HardwareKeys::default(),
             control: false,
             alt: false,
             toolbar_rect: None,
@@ -346,6 +372,12 @@ impl MobileApp {
                 .map_or(0.0, |keyboard| keyboard.occluded_height_fraction())
         };
         self.show_with_occlusion(ui, occlusion);
+    }
+
+    /// Queue shared with the native event loop (see [`HardwareKeys`]).
+    pub fn with_hardware_keys(mut self, keys: HardwareKeys) -> Self {
+        self.keys = keys;
+        self
     }
 
     pub fn with_keyboard(mut self, keyboard: Option<festerm_ios_window::KeyboardBridge>) -> Self {
@@ -1513,6 +1545,20 @@ impl MobileApp {
 }
 
 impl eframe::App for MobileApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        for key in self.keys.drain() {
+            for pressed in [true, false] {
+                raw_input.events.push(egui::Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
+    }
+
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         // Safe-area strips (status bar, home indicator) match the app surface.
         theme::color::BG.to_normalized_gamma_f32()
@@ -1529,6 +1575,16 @@ impl eframe::App for MobileApp {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn return_and_tab_reported_as_characters_are_replayed_as_named_keys() {
+        let keys = HardwareKeys::default();
+        assert!(keys.push_text("\n"));
+        assert!(keys.push_text("\t"));
+        assert!(!keys.push_text("a"));
+        assert_eq!(keys.drain(), vec![egui::Key::Enter, egui::Key::Tab]);
+        assert!(keys.drain().is_empty());
+    }
+
     use super::*;
 
     #[test]
