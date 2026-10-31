@@ -602,7 +602,17 @@ impl PersistentSession {
         maximum_recovery_bytes: u32,
         notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, PersistentSessionError> {
-        let registry = load_registry()?;
+        Self::resume_exclusive_in(selected, &runtime_root()?, maximum_recovery_bytes, notifier)
+    }
+
+    /// [`Self::resume_exclusive`] against an explicit runtime root.
+    pub fn resume_exclusive_in(
+        selected: &NativeSessionIdentity,
+        root: &std::path::Path,
+        maximum_recovery_bytes: u32,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        let registry = load_registry_in(root)?;
         let record = registry
             .sessions
             .get(&selected.name)
