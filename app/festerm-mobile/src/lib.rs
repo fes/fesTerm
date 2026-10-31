@@ -218,6 +218,8 @@ pub struct MobileApp {
     control: bool,
     alt: bool,
     toolbar_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    control_rect: Option<egui::Rect>,
     menu_open: bool,
     gestures: terminal_gesture::TerminalGesture,
     workspace: workspaces::Workspace,
@@ -243,6 +245,8 @@ impl MobileApp {
             control: false,
             alt: false,
             toolbar_rect: None,
+            #[cfg(test)]
+            control_rect: None,
             menu_open: false,
             gestures: terminal_gesture::TerminalGesture::default(),
             workspace: workspaces::Workspace::Terminal,
@@ -580,13 +584,15 @@ impl MobileApp {
                                     self.send_key(key);
                                 }
                             }
-                            if ui
-                                .add(
-                                    egui::Button::selectable(self.control, "Ctrl")
-                                        .sense(egui::Sense::CLICK),
-                                )
-                                .clicked()
+                            let control = ui.add(
+                                egui::Button::selectable(self.control, "Ctrl")
+                                    .sense(egui::Sense::CLICK),
+                            );
+                            #[cfg(test)]
                             {
+                                self.control_rect = Some(control.rect);
+                            }
+                            if control.clicked() {
                                 self.control = !self.control;
                             }
                             if ui
@@ -1198,7 +1204,7 @@ mod tests {
             assert!(toolbar.bottom() <= height - keyboard_height + 0.5);
             assert!(grid.height() > 0.0);
             // Tap Ctrl through the real UI: it must not dismiss the keyboard.
-            let point = toolbar.min + egui::vec2(22.0, 22.0);
+            let point = app.control_rect.expect("rendered Ctrl key").center();
             for pressed in [true, false] {
                 let output = render(
                     &mut app,
