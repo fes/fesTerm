@@ -42,8 +42,14 @@ authoritative regression for protocol behavior.
 | 6 | Native-window smoke | OS window, real PTY, resize, input, and screenshot/video artifact. | Scheduled and release-candidate gate |
 | 7 | Exploratory compatibility | Reference applications and `vttest` exercise integrated behavior. | Manual milestone/release sign-off |
 
-Tiers 1 through 4 must not need a network, a user desktop, credentials, a
-real SSH host, or a GPU. Tiers 5 and 6 should upload images, diffs, logs, and
+Tiers 1 through 4 must not need an external network, a user desktop, credentials, a
+real SSH host, or a GPU.
+The #424 protocol-integration tests may own a bounded ephemeral IPv4 loopback
+SSH listener with generated in-memory keys and public fixture credentials;
+no external service, OS account or shell is required. Unit/geometry/headless
+capture fixtures remain socket-free. The loopback peer is test-only and its
+protocol evidence does not promote native/device acceptance.
+ Tiers 5 and 6 should upload images, diffs, logs, and
 video only on failure, and must never upload terminal content from developer
 or production sessions.
 

@@ -345,6 +345,26 @@ order. See [scope and deliberate prototype differences](../../docs/mobile-layout
 Actual-widget headless captures support review; native appearance/input and
 the deferred product screens are not established by this styling pass.
 
+### Owned-loopback SSH composition validation
+
+Run `cargo test --locked -p festerm-mobile --features live-ssh --lib live_ssh::loopback_tests`
+to exercise actual connection-form submission, unknown/changed host-key decisions,
+password failure/retry, core input and terminal replies, resize and disconnect
+against an owned 127.0.0.1 SSH peer. The listener owns an ephemeral port, generates
+its host key in memory, accepts only public test-only credentials, bounds its
+observations/deadlines and joins the fixture runtime at teardown. It never
+executes an OS shell and is absent from production app builds. russh/tokio are
+dev dependencies using existing lockfile packages.
+
+The UI test advances bounded frames under a wall-clock deadline because an
+active session can keep repainting while resize is debounced. The normal live
+feature tests include this protocol coverage. Synthetic socket-free gallery
+states show host trust, changed-key rejection and empty password entry; their
+screenshots are separate from the real-loopback protocol assertions.
+
+This does not establish Simulator/device SSH, native keyboard or accessibility,
+OpenSSH/TUI interoperability, provisioning/signing or physical-device usability.
+
 Disconnected terminals retain local scroll/selection/Copy while typing, paste,
 mouse/focus transport reports and the native terminal keyboard stay disabled.
 A bounded recovery card offers a fresh-shell form; opening/cancelling it or

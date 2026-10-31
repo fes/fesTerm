@@ -1,5 +1,5 @@
 //! Review images of the actual mobile UI, never native iOS acceptance.
-//! Only offline fixtures and a synthetic navigation gesture are used: no sockets,
+//! Only offline fixtures, navigation and synthetic trust/auth prompts are used: no sockets,
 //! credentials, clipboard reads or personal filesystem resources.
 
 use super::*;
@@ -36,7 +36,15 @@ fn capture_mobile_ui_gallery() {
         ("phone", 390.0, 844.0, 0.35),
         ("tablet", 834.0, 1194.0, 0.30),
     ] {
-        for state in ["terminal", "connect", "arrow-helper", "disconnected"] {
+        for state in [
+            "terminal",
+            "connect",
+            "arrow-helper",
+            "disconnected",
+            "host-trust",
+            "changed-host",
+            "authentication",
+        ] {
             let state_occlusion = if state == "disconnected" {
                 0.0
             } else {
@@ -47,6 +55,12 @@ fn capture_mobile_ui_gallery() {
                 ..Default::default()
             }));
             let app = MobileApp::new(lifecycle);
+            if matches!(state, "host-trust" | "changed-host" | "authentication") {
+                *app.sink.live.connection.borrow_mut() = Some(live_ssh::prompt_fixture(
+                    state == "changed-host",
+                    state == "authentication",
+                ));
+            }
             let mut harness = Harness::builder()
                 .with_size(egui::vec2(width, height))
                 .build_ui_state(
@@ -139,7 +153,7 @@ fn capture_mobile_ui_gallery() {
             "host_os": std::env::consts::OS,
             "native_ios": false,
             "native_validation": "not-run",
-            "fixture": "repository-owned offline terminal, empty connection form, synthetic hold/drag and retired-session fixture; no SSH worker",
+            "fixture": "repository-owned offline terminal, empty connection form, synthetic hold/drag, retired-session and trust/auth prompts; no SSH worker",
             "presentation": "Dark preference; nonblinking cursor; no system keyboard pixels",
             "images": images,
         }))

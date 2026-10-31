@@ -592,6 +592,15 @@ Headless screenshots do not establish native text contrast, Dynamic Type,
 VoiceOver, keyboard pixels or finger usability; these remain MOB-05/MOB-06 checks.
 No saved profiles, session switcher, Keychain or app lock is implied by this pass.
 
+The #424 owned-loopback tests automate the host-side connection form, real SSH
+host trust and unknown/changed-key refusal before credentials, password retry,
+terminal text/IME/control/application-cursor input, DSR replies, remote resize and
+disconnect cleanup. The bounded peer does not execute an OS shell. This is
+application/protocol integration on the test host, not Simulator/device execution
+or OpenSSH/TUI qualification. Socket-free synthetic host-review/authentication
+captures support visual review only. Native password entry, safe-area/fingerprint
+readability, UIKit IME, real-shell/TUI and signing/device checks remain MOB-06.
+
 The #425 disconnected-history slice has portable coverage for local wheel/drag
 selection/Copy with retired mouse/focus modes, no transport input/terminal IME,
 cleared one-shot modifiers and foreground-form blackout. Review the bottom
