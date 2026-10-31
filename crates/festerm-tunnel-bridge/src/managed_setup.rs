@@ -42,6 +42,13 @@ struct Installation {
     phase: String,
     target: Option<Target>,
     fingerprint: String,
+    /// Remote takeover is on unless this is set; absent from older records.
+    #[serde(default, skip_serializing_if = "is_false")]
+    no_takeover: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Deserialize)]
@@ -282,16 +289,20 @@ fn exact_target_alive(root: &Path, target: &Target) -> io::Result<()> {
 
 pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     super::service_install::ensure_unprivileged_user()?;
-    let (cli_path, state) = {
+    let (cli_path, state, no_takeover) = {
+        let (args, no_takeover) = match args {
+            [rest @ .., last] if last == "--no-takeover" => (rest, true),
+            _ => (args, false),
+        };
         let [flag, cli_path, state_flag, state] = args else {
             return Err(refused(
-                "usage: --managed --devtunnel PATH --state-dir PRIVATE_DIRECTORY",
+                "usage: --managed --devtunnel PATH --state-dir PRIVATE_DIRECTORY [--no-takeover]",
             ));
         };
         if flag != "--devtunnel" || state_flag != "--state-dir" {
             return Err(refused("setup.managed_arguments"));
         }
-        (PathBuf::from(cli_path), PathBuf::from(state))
+        (PathBuf::from(cli_path), PathBuf::from(state), no_takeover)
     };
     if !cli_path.is_absolute() || !state.is_absolute() {
         return Err(refused("setup.absolute_paths_required"));
@@ -327,6 +338,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                 phase: "creating-tunnel".into(),
                 target: None,
                 fingerprint: identity.fingerprint()?,
+                no_takeover,
             };
             validate_record(&record)?;
             setup_storage::write_new_private(
@@ -555,6 +567,11 @@ pub(super) async fn serve(args: &[OsString]) -> io::Result<()> {
         .arg(state.join("host-identity.key"))
         .arg("--existing-host-identity")
         .arg("--token-stdin")
+        .args(if record.no_takeover {
+            None
+        } else {
+            Some("--takeover")
+        })
         .stdin(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
@@ -656,6 +673,7 @@ mod tests {
                 endpoint: "fixture-123-456".into(),
             }),
             fingerprint: "fixture".into(),
+            no_takeover: false,
         };
         validate_record(&record).unwrap();
         record.tunnel = Some("foreign.usw2".into());
@@ -765,6 +783,7 @@ mod tests {
                 endpoint: format!("fixture-{pid}-{generation}.sock"),
             }),
             fingerprint: host_fingerprint(public_key).unwrap(),
+            no_takeover: false,
         };
         validate_record(&record).unwrap();
         checkpoint(&directory, &record).unwrap();
