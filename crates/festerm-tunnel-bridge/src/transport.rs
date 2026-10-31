@@ -395,6 +395,21 @@ fn attached_by(selected: &NativeSessionIdentity) -> Option<Displacer> {
         })
 }
 
+/// The daemon publishes the new holder to the registry shortly after it
+/// notifies the displaced client. This bridge always attaches as `Remote`, so a
+/// registry still naming `Remote` is either not yet updated or a second remote
+/// client; wait briefly for a `Local` holder before settling on that.
+async fn displacer(selected: &NativeSessionIdentity) -> Displacer {
+    for _ in 0..10 {
+        match attached_by(selected) {
+            Some(Displacer::Local) => return Displacer::Local,
+            Some(other) if other != Displacer::Remote => return other,
+            _ => tokio::time::sleep(Duration::from_millis(50)).await,
+        }
+    }
+    attached_by(selected).unwrap_or(Displacer::Unknown)
+}
+
 pub async fn serve(
     stream: impl AsyncRead + AsyncWrite + Unpin,
     selected: NativeSessionIdentity,
@@ -563,7 +578,7 @@ pub async fn serve_with_takeover(
                     SessionEvent::Lifecycle(SessionLifecycle::Disconnected(error))
                         if error.message() == festerm_sessiond::DISPLACED_REASON =>
                     {
-                        let by = attached_by(&displacement_probe).unwrap_or(Displacer::Unknown);
+                        let by = displacer(&displacement_probe).await;
                         write_frame(&mut write, DISPLACED, &[by.code()]).await?;
                         return Ok(());
                     }
