@@ -586,6 +586,7 @@ impl MobileApp {
                             }
                             let control = ui.add(
                                 egui::Button::selectable(self.control, "Ctrl")
+                                    .frame(true)
                                     .sense(egui::Sense::CLICK),
                             );
                             #[cfg(test)]
@@ -598,6 +599,7 @@ impl MobileApp {
                             if ui
                                 .add(
                                     egui::Button::selectable(self.alt, "Alt")
+                                        .frame(true)
                                         .sense(egui::Sense::CLICK),
                                 )
                                 .clicked()
