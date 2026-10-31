@@ -22,9 +22,9 @@ class IosSshDependencyTests(unittest.TestCase):
                 patch.object(build, "check_dependencies") as check:
             self.assertEqual(build.main(), 0)
         self.assertEqual([call.args for call in check.call_args_list], [
-            ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"), ("aarch64-apple-ios", "festerm-mobile-profiles"),
+            ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"), ("aarch64-apple-ios", "festerm-mobile-profiles"), ("aarch64-apple-ios", "festerm-sftp"),
             ("aarch64-apple-ios", "festerm-mobile", True),
-            ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"), ("aarch64-apple-ios-sim", "festerm-mobile-profiles"),
+            ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"), ("aarch64-apple-ios-sim", "festerm-mobile-profiles"), ("aarch64-apple-ios-sim", "festerm-sftp"),
             ("aarch64-apple-ios-sim", "festerm-mobile", True),
         ])
 
@@ -75,8 +75,8 @@ class IosSshDependencyTests(unittest.TestCase):
                 patch.object(build, "run") as run:
             self.assertEqual(build.main(), 0)
         self.assertEqual([call.args for call in check.call_args_list], [
-            ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"), ("aarch64-apple-ios", "festerm-mobile-profiles"),
-            ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"), ("aarch64-apple-ios-sim", "festerm-mobile-profiles"),
+            ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"), ("aarch64-apple-ios", "festerm-mobile-profiles"), ("aarch64-apple-ios", "festerm-sftp"),
+            ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"), ("aarch64-apple-ios-sim", "festerm-mobile-profiles"), ("aarch64-apple-ios-sim", "festerm-sftp"),
         ])
         run.assert_not_called()
 

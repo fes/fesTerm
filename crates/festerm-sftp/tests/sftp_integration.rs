@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Integration tests against a real OpenSSH `sshd` + `sftp-server`.
 //!
 //! Run them with `scripts/run-sftp-integration.sh`, which starts a throwaway

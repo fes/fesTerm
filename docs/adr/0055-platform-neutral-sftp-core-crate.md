@@ -1,4 +1,4 @@
-# ADR 0054: Platform-Neutral SFTP Core Crate for Mobile
+# ADR 0055: Platform-Neutral SFTP Core Crate for Mobile
 
 - **Status:** Accepted
 - **Date:** 2026-10-01
