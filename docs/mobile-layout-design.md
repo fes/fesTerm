@@ -86,7 +86,8 @@ connected state, and explicit Offline demo/preview labels. Connect remains
 available in the header; the form does not claim Save, Keychain storage or a
 persistent host-trust decision. The existing native keyboard request and
 hold/directional-drag helper stay functional while the extended-key panel,
-clipboard controls and detailed helper visuals are staged separately. Do not
+clipboard controls are staged separately; the temporary helper's feedback is
+implemented as described below. Do not
 paint a fake system keyboard to match the boards. Native runtime draws it.
 
 Screens 05–10, 12–15 describe later profiles, full session management, real SFTP,
@@ -102,7 +103,7 @@ record native rendering, Dynamic Type, VoiceOver and touch checks separately.
 
 Campaign UI reviews use actual-widget screenshots attributed to the tested
 commit and capture environment. `scripts/capture-mobile-ui.py` provides
-phone/tablet headless terminal/connect-form views using controlled offline
+phone/tablet headless terminal/connect-form/held-navigation views using controlled offline
 fixtures. Its simulated keyboard reservation has no native keyboard pixels;
 these images support visual discussion, not native/Termius usability acceptance.
 Use actual Simulator/device captures for that evidence and label older references.
@@ -119,6 +120,24 @@ backgrounding, focus loss, Escape and a second touch cancel navigation.
 An early drag passes through to the existing renderer; touch-generated mouse
 events are consumed during arrow navigation. No terminal bytes are encoded
 in this adapter. Keyboard layout and one-shot Ctrl/Alt remain unchanged.
+
+The reference board's screen 04 guides the helper composition: a dark floating
+cross-pad, blue active direction, a compact speed pill and a separate
+"Release to stop" caption. It is passive gesture feedback, not a second set of
+tap targets. The helper shows Paused in the neutral zone, then Slow/Medium/Fast
+using the same speed classifier as the existing 180/100/55 ms scheduler; visual
+feedback cannot silently diverge from key-repeat behavior. A neutral hold says
+"Drag to navigate" and never implies selection is implemented.
+
+Anchor the helper at the trailing edge near the hold origin and clamp the whole
+composition inside measured terminal bounds, above the accessory row/native
+keyboard. In short/narrow spaces that cannot fit the caption and speed pill,
+keep only the direction pad rather than clipping feedback across the keyboard.
+If even the pad cannot fit, suppress it while preserving cancellation/input
+semantics. This is a deliberate responsive adaptation of the phone mock-up;
+the pad remains temporary and disappears immediately on release, pinch takeover
+or cancellation. Native finger occlusion, contrast, VoiceOver and helper
+placement remain MOB-02/MOB-06 usability checks, not headless acceptance.
 
 The continuing feasibility work adds two-finger pinch through the renderer's
 existing session-local zoom bounds (8–32 logical points). It scales terminal
