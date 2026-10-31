@@ -435,10 +435,18 @@ impl TerminalGesture {
         painter.rect_filled(layout.pad, 16.0, background);
         painter.rect_stroke(layout.pad, 16.0, border, egui::StrokeKind::Inside);
         for (value, offset, axis) in [
-            (Direction::Left, egui::vec2(-0.28, 0.0), egui::vec2(-1.0, 0.0)),
+            (
+                Direction::Left,
+                egui::vec2(-0.28, 0.0),
+                egui::vec2(-1.0, 0.0),
+            ),
             (Direction::Down, egui::vec2(0.0, 0.28), egui::vec2(0.0, 1.0)),
             (Direction::Up, egui::vec2(0.0, -0.28), egui::vec2(0.0, -1.0)),
-            (Direction::Right, egui::vec2(0.28, 0.0), egui::vec2(1.0, 0.0)),
+            (
+                Direction::Right,
+                egui::vec2(0.28, 0.0),
+                egui::vec2(1.0, 0.0),
+            ),
         ] {
             let active = direction == Some(value);
             let center = layout.pad.center() + offset * layout.pad.width();
@@ -456,10 +464,7 @@ impl TerminalGesture {
             let perpendicular = egui::vec2(-axis.y, axis.x);
             painter.line_segment([center - axis * 7.0, tip], stroke);
             for sign in [-1.0, 1.0] {
-                painter.line_segment(
-                    [tip - axis * 4.0 + perpendicular * 4.0 * sign, tip],
-                    stroke,
-                );
+                painter.line_segment([tip - axis * 4.0 + perpendicular * 4.0 * sign, tip], stroke);
             }
         }
         painter.circle_stroke(layout.pad.center(), 4.0, egui::Stroke::new(1.0, muted));

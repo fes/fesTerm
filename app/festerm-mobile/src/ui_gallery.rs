@@ -60,12 +60,22 @@ fn capture_mobile_ui_gallery() {
                 harness.run();
             }
             if state == "arrow-helper" {
-                let origin = harness.state().view.diagnostics().grid_rect.unwrap().center();
+                let origin = harness
+                    .state()
+                    .view
+                    .diagnostics()
+                    .grid_rect
+                    .unwrap()
+                    .center();
                 let time = harness.ctx.input(|input| input.time);
                 for (elapsed, phase, position) in [
                     (0.01, egui::TouchPhase::Start, origin),
                     (0.51, egui::TouchPhase::Move, origin),
-                    (0.52, egui::TouchPhase::Move, origin + egui::vec2(0.0, -90.0)),
+                    (
+                        0.52,
+                        egui::TouchPhase::Move,
+                        origin + egui::vec2(0.0, -90.0),
+                    ),
                 ] {
                     harness.input_mut().time = Some(time + elapsed);
                     harness.event(egui::Event::Touch {
