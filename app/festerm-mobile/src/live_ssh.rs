@@ -114,6 +114,24 @@ pub(super) struct LiveSsh {
     pub(super) accepted_pin: Option<String>,
 }
 
+#[cfg(test)]
+pub(super) fn disconnected_fixture() -> LiveSsh {
+    LiveSsh {
+        identity: HostIdentity::new("example.test", 22).expect("reserved fixture host"),
+        context: egui::Context::default(),
+        session: None,
+        host_resolver: None,
+        password_resolver: None,
+        host_prompt: None,
+        password_prompt: None,
+        password: PasswordBuffer::default(),
+        pending_resize: None,
+        running: false,
+        status: "Connection lost. Connect again for a fresh shell.",
+        accepted_pin: None,
+    }
+}
+
 impl LiveSsh {
     pub(super) fn connect(
         host: &str,
