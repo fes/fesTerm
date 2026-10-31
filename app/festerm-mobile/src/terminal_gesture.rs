@@ -424,14 +424,12 @@ impl TerminalGesture {
                 egui::Id::new("arrow-gesture-helper"),
             ))
             .with_clip_rect(bounds);
-        let background = egui::Color32::from_rgba_unmultiplied(27, 40, 53, 245);
-        let border = egui::Stroke::new(
-            1.0,
-            egui::Color32::from_rgba_unmultiplied(88, 118, 146, 180),
-        );
-        let foreground = egui::Color32::from_rgb(225, 235, 245);
-        let muted = egui::Color32::from_rgb(151, 174, 195);
-        let accent = egui::Color32::from_rgb(27, 126, 246);
+        use crate::theme::color;
+        let background = color::SHEET.gamma_multiply(0.96);
+        let border = egui::Stroke::new(1.0, color::BORDER);
+        let foreground = color::TEXT;
+        let muted = color::TEXT_MUTED;
+        let accent = color::PRIMARY;
         painter.rect_filled(layout.pad, 16.0, background);
         painter.rect_stroke(layout.pad, 16.0, border, egui::StrokeKind::Inside);
         for (value, offset, axis) in [

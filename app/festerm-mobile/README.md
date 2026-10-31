@@ -158,6 +158,20 @@ or uploads a build. Local signing can require keychain approval. Native build,
 install and rendering remain pending until exercised on a provisioned Mac
 and device; portable packaging tests do not certify them.
 
+## Shell, design system and gallery fixtures
+
+The host starts on a Profiles / Sessions / Settings tab bar (`shell.rs`) and
+enters the terminal surface (`terminal_chrome.rs`: header, status line, session
+chips, key supplement row, extended-keys panel). Colors, radii, spacing and type
+come from `theme.rs`; reusable controls are in `widgets.rs`; editor/sheet forms
+are in `forms.rs`, driven by the view-model structs and the `ProfileStore` seam
+in `model.rs`. Only capabilities with a working production path are shown
+(`Capabilities`): the in-memory profile store is not persistent, and Dev Tunnel,
+SFTP, key authentication, remote session choice, paste and Reattach stay hidden
+until their backends exist. The headless gallery enables them with fixtures
+(`Capabilities::all()`) for design review only. SFTP/transfer screens (07-09) and
+identity/privacy screens (13-15) are not implemented.
+
 ## Headless UI review images
 
 For campaign #422's screenshot review, render the actual mobile widgets with
@@ -168,7 +182,10 @@ python3 scripts/capture-mobile-ui.py
 ```
 
 This opt-in generator needs Rust and a working headless wgpu adapter. It writes
-four PNGs (phone/tablet terminal and empty connection form) into a fresh
+one phone and one tablet PNG per shell state (profiles, empty profiles,
+terminal, Dev Tunnel terminal, sessions sheet, extended-keys panels, arrow
+helper, new-profile editors, host trust, changed host, authentication,
+disconnected, reconnect review and settings) into a fresh
 `target/mobile-ui-captures/<attempt>/` directory. `--output <new-directory>`
 selects another fresh destination; existing attempts, including failures, are
 never overwritten. The manifest records exact Git commit/dirty state, host OS,

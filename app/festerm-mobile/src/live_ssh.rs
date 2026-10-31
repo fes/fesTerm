@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use super::model::{HostDecision, HostVerification};
 use eframe::egui;
 use festerm_core::{Dimensions, Terminal};
 use festerm_session::{
@@ -19,14 +20,6 @@ use zeroize::{Zeroize, Zeroizing};
 mod loopback_tests;
 
 const EVENT_BUDGET: usize = 32;
-
-fn control_margin(ui: &egui::Ui) -> egui::Margin {
-    let font = egui::FontSelection::Default.resolve(ui.style());
-    let row_height = ui.fonts_mut(|fonts| fonts.row_height(&font));
-    let line_height = row_height + ui.spacing().extra_text_line_spacing;
-    let inset = ((44.0 - line_height) * 0.5).ceil().clamp(0.0, 127.0) as i8;
-    egui::Margin::symmetric(4, inset)
-}
 
 #[derive(Default)]
 struct PasswordBuffer(Zeroizing<String>);
@@ -331,67 +324,87 @@ impl LiveSsh {
         }
     }
 
-    pub(super) fn prompts(&mut self, ui: &mut egui::Ui) {
-        if let Some(prompt) = self.host_prompt.clone() {
-            ui.label(format!("{}:{}", prompt.host(), prompt.port()));
-            ui.monospace(prompt.sha256_fingerprint());
-            if prompt.is_key_change() {
-                ui.colored_label(
-                    egui::Color32::RED,
-                    "Host key changed. Verify independently; this attempt must be rejected.",
-                );
-            }
-            ui.horizontal(|ui| {
-                if !prompt.is_key_change() && ui.button("Trust for this app session").clicked() {
-                    let resolved = self.host_resolver.as_ref().is_some_and(|resolver| {
-                        resolver
-                            .resolve(&prompt, HostTrustDecision::AcceptOnce)
-                            .is_ok()
-                    });
-                    if resolved {
-                        self.accepted_pin = Some(prompt.sha256_fingerprint().to_owned());
-                        self.host_prompt = None;
-                        self.status = "Authenticating";
-                    } else {
-                        self.stop("Host-key request expired; connect again");
-                    }
-                }
-                if ui.button("Reject").clicked() {
-                    self.stop("Host key rejected");
-                }
-            });
-        }
-        if let Some(prompt) = self.password_prompt.clone() {
-            ui.label(format!(
-                "Password for {}@{}",
-                prompt.username(),
-                prompt.host()
-            ));
-            if prompt.previous_attempt_failed() {
-                ui.label("Authentication failed. Try again or disconnect.");
-            }
-            ui.add(
-                egui::TextEdit::singleline(&mut self.password)
-                    .password(true)
-                    .sensitive(true)
-                    .margin(control_margin(ui))
-                    .char_limit(4096),
-            );
-            if ui.button("Authenticate").clicked() {
-                let mut password = Zeroizing::new(self.password.take());
-                let resolved = self.password_resolver.as_ref().is_some_and(|resolver| {
+    pub(super) fn host_verification(&self) -> Option<HostVerification> {
+        let prompt = self.host_prompt.as_ref()?;
+        Some(HostVerification {
+            name: prompt.host().to_owned(),
+            target: format!("{}:{}", prompt.host(), prompt.port()),
+            algorithm: "SHA-256".to_owned(),
+            fingerprint: prompt.sha256_fingerprint().to_owned(),
+            changed_from: prompt.previously_trusted_fingerprint().map(str::to_owned),
+        })
+    }
+
+    pub(super) fn resolve_host(&mut self, decision: HostDecision) {
+        let Some(prompt) = self.host_prompt.clone() else {
+            return;
+        };
+        match decision {
+            HostDecision::Trust if !prompt.is_key_change() => {
+                let resolved = self.host_resolver.as_ref().is_some_and(|resolver| {
                     resolver
-                        .resolve(&prompt, std::mem::take(&mut *password))
+                        .resolve(&prompt, HostTrustDecision::AcceptOnce)
                         .is_ok()
                 });
                 if resolved {
-                    self.password_prompt = None;
+                    self.accepted_pin = Some(prompt.sha256_fingerprint().to_owned());
+                    self.host_prompt = None;
                     self.status = "Authenticating";
                 } else {
-                    self.stop("Password request expired; connect again");
+                    self.stop("Host-key request expired; connect again");
                 }
             }
+            _ => self.stop("Host key rejected"),
         }
+    }
+
+    /// `(username@host, previous attempt failed)` while a password is requested.
+    pub(super) fn password_request(&self) -> Option<(String, bool)> {
+        let prompt = self.password_prompt.as_ref()?;
+        Some((
+            format!("{}@{}", prompt.username(), prompt.host()),
+            prompt.previous_attempt_failed(),
+        ))
+    }
+
+    pub(super) fn submit_password(&mut self) {
+        let Some(prompt) = self.password_prompt.clone() else {
+            return;
+        };
+        let mut password = Zeroizing::new(self.password.take());
+        let resolved = self.password_resolver.as_ref().is_some_and(|resolver| {
+            resolver
+                .resolve(&prompt, std::mem::take(&mut *password))
+                .is_ok()
+        });
+        if resolved {
+            self.password_prompt = None;
+            self.status = "Authenticating";
+        } else {
+            self.stop("Password request expired; connect again");
+        }
+    }
+
+    pub(super) fn status(&self) -> &'static str {
+        self.status
+    }
+
+    pub(super) fn port(&self) -> u16 {
+        self.identity.port()
+    }
+
+    pub(super) fn password_buffer(&mut self) -> &mut dyn egui::TextBuffer {
+        &mut self.password
+    }
+
+    pub(super) fn remember_pin(&self) -> Option<(String, u16, String)> {
+        self.accepted_pin.as_ref().map(|pin| {
+            (
+                self.identity.host().to_owned(),
+                self.identity.port(),
+                pin.clone(),
+            )
+        })
     }
 }
 
@@ -401,201 +414,48 @@ impl Drop for LiveSsh {
     }
 }
 
+/// Remembers the host-key pin trusted earlier in this app run and starts workers.
 #[derive(Default)]
 pub(super) struct ConnectionForm {
-    pub(super) open: bool,
-    host: String,
-    username: String,
-    port: String,
-    error: Option<&'static str>,
     pin: Option<(String, u16, String)>,
-    #[cfg(test)]
-    pub(super) controls: Option<ConnectionControlsGeometry>,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy)]
-pub(super) struct ConnectionControlsGeometry {
-    pub(super) bounds: egui::Rect,
-    pub(super) connect: egui::Rect,
-    pub(super) clip: egui::Rect,
-    pub(super) field_height: f32,
 }
 
 impl ConnectionForm {
-    pub(super) fn toggle(&mut self) {
-        self.open = !self.open;
-        if self.port.is_empty() {
-            self.port = "22".to_owned();
-        }
-    }
-
-    pub(super) fn show_recovery(
+    pub(super) fn connect(
         &mut self,
-        ui: &mut egui::Ui,
-        live: &LiveSsh,
-        available_height: f32,
-    ) {
-        let compact = available_height < 260.0;
-        let height = ui.available_height();
-        egui::ScrollArea::vertical()
-            .id_salt("mobile-recovery-content")
-            .max_height(height)
-            .min_scrolled_height(0.0)
-            .show(ui, |ui| {
-                egui::Frame::new()
-                    .fill(ui.visuals().window_fill)
-                    .stroke(ui.visuals().window_stroke)
-                    .corner_radius(8)
-                    .inner_margin(if compact { 6 } else { 12 })
-                    .show(ui, |ui| {
-                        if !compact {
-                            ui.strong("Connection ended");
-                            ui.label("Reconnect starts a new shell.");
-                        }
-                        if ui
-                            .add_sized(
-                                [ui.available_width(), 44.0],
-                                egui::Button::new("Reconnect · new shell")
-                                    .fill(egui::Color32::from_rgb(25, 120, 238)),
-                            )
-                            .clicked()
-                        {
-                            // Review the existing form first; no worker starts here.
-                            self.toggle();
-                        }
-                        if live.status.starts_with("Input rejected") {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(255, 193, 112),
-                                "Earlier accepted input may have executed.",
-                            );
-                        }
-                        egui::CollapsingHeader::new("Details")
-                            .id_salt("mobile-recovery-details")
-                            .show(ui, |ui| {
-                                ui.label(live.status);
-                            });
-                    });
-            });
-    }
-
-    pub(super) fn show(
-        &mut self,
-        ui: &mut egui::Ui,
-        live: &mut Option<LiveSsh>,
+        host: &str,
+        port: &str,
+        username: &str,
         dimensions: Dimensions,
-    ) -> bool {
-        #[cfg(test)]
-        {
-            self.controls = None;
-        }
-        if let Some(connection) = live.as_mut() {
-            if !connection.can_reset() {
-                ui.label(connection.status);
-            }
-            if let Some(pin) = &connection.accepted_pin {
-                self.pin = Some((
-                    connection.identity.host().to_owned(),
-                    connection.identity.port(),
-                    pin.clone(),
-                ));
-            }
-            connection.prompts(ui);
-            if !connection.can_reset() && ui.button("Disconnect").clicked() {
-                connection.stop("Disconnected. Connect again for a fresh shell.");
-            }
-        }
-        if self.open {
-            if live
-                .as_ref()
-                .is_some_and(|connection| !connection.can_reset())
-            {
-                ui.small("Connect starts a new shell.");
-            }
-            let margin = control_margin(ui);
-            #[cfg(test)]
-            let controls_start = ui.cursor().min;
-            let width = ui.available_width();
-            let port_width = 72.0_f32.min(width * 0.3);
-            let host_width = (width - port_width - ui.spacing().item_spacing.x).max(1.0);
-            let field_height = ui
-                .horizontal(|ui| {
-                    let host = ui.vertical(|ui| {
-                        ui.set_width(host_width);
-                        ui.weak("Host");
-                        ui.add_sized(
-                            [host_width, 44.0],
-                            egui::TextEdit::singleline(&mut self.host)
-                                .margin(margin)
-                                .hint_text("example.net")
-                                .char_limit(253),
-                        )
-                    });
-                    ui.vertical(|ui| {
-                        ui.set_width(port_width);
-                        ui.weak("Port");
-                        ui.add_sized(
-                            [port_width, 44.0],
-                            egui::TextEdit::singleline(&mut self.port)
-                                .margin(margin)
-                                .hint_text("22")
-                                .char_limit(5),
-                        );
-                    });
-                    host.inner.rect.height()
+        context: &egui::Context,
+        live: &mut Option<LiveSsh>,
+    ) -> Result<(), &'static str> {
+        let port = port.parse::<u16>().unwrap_or(0);
+        let identity = HostIdentity::new(host, port).ok();
+        let pin = self
+            .pin
+            .as_ref()
+            .filter(|(known_host, known_port, _)| {
+                identity.as_ref().is_some_and(|identity| {
+                    identity.host() == known_host && *known_port == identity.port()
                 })
-                .inner;
-            #[cfg(not(test))]
-            let _ = field_height;
-            ui.weak("Username");
-            ui.add_sized(
-                [width, 44.0],
-                egui::TextEdit::singleline(&mut self.username)
-                    .margin(margin)
-                    .hint_text("Username")
-                    .char_limit(255),
-            );
-            let connect = ui.add_sized(
-                [width, 44.0],
-                egui::Button::new("Connect").fill(egui::Color32::from_rgb(25, 120, 238)),
-            );
-            #[cfg(test)]
-            {
-                self.controls = Some(ConnectionControlsGeometry {
-                    bounds: egui::Rect::from_min_max(controls_start, connect.rect.max),
-                    connect: connect.rect,
-                    clip: ui.clip_rect(),
-                    field_height,
-                });
-            }
-            if connect.clicked() {
-                let port = self.port.parse::<u16>().unwrap_or(0);
-                let identity = HostIdentity::new(&self.host, port).ok();
-                let pin = self
-                    .pin
-                    .as_ref()
-                    .filter(|(host, known_port, _)| {
-                        identity.as_ref().is_some_and(|identity| {
-                            identity.host() == host && *known_port == identity.port()
-                        })
-                    })
-                    .map(|(_, _, pin)| pin.as_str());
-                match LiveSsh::connect(&self.host, port, &self.username, dimensions, pin, ui.ctx())
-                {
-                    Ok(connection) => {
-                        *live = Some(connection);
-                        self.error = None;
-                        self.open = false;
-                        return true;
-                    }
-                    Err(error) => self.error = Some(error),
-                }
-            }
+            })
+            .map(|(_, _, pin)| pin.as_str());
+        *live = Some(LiveSsh::connect(
+            host, port, username, dimensions, pin, context,
+        )?);
+        Ok(())
+    }
+
+    pub(super) fn observe(&mut self, live: &LiveSsh) {
+        if let Some(pin) = live.remember_pin() {
+            self.pin = Some(pin);
         }
-        if let Some(error) = self.error {
-            ui.label(error);
-        }
-        false
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_pin(&mut self, host: &str, port: u16, pin: &str) {
+        self.pin = Some((host.to_owned(), port, pin.to_owned()));
     }
 }
 
@@ -690,7 +550,7 @@ mod tests {
         let session = Arc::new(FakeSession::default());
         let mut live = connection(session.clone());
         live.stop("Connection lost. Connect again for a fresh shell.");
-        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
             active: true,
             ..Default::default()
         })));
@@ -780,7 +640,7 @@ mod tests {
             festerm_core::MouseTrackingMode::AnyMotion
         );
 
-        app.connection.toggle();
+        app.editor.toggle();
         for _ in 0..4 {
             render(&mut app, vec![]).drop_without_applying_deltas();
         }
@@ -813,7 +673,7 @@ mod tests {
             egui::vec2(844.0, 390.0),
             egui::vec2(390.0, 260.0),
         ] {
-            let app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+            let app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
                 active: true,
                 ..Default::default()
             })));
@@ -829,10 +689,10 @@ mod tests {
             );
             harness.get_by_label("Reconnect · new shell").click();
             harness.run();
-            assert!(harness.state().connection.open, "{size:?}");
+            assert!(harness.state().editor.open, "{size:?}");
         }
 
-        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
             active: true,
             ..Default::default()
         })));
@@ -858,7 +718,7 @@ mod tests {
         harness.get_by_label("Reconnect · new shell").click();
         harness.run();
         assert!(
-            harness.state().connection.open,
+            harness.state().editor.open,
             "visible recovery action did not open form: {reconnect:?}"
         );
         assert!(retained(harness.state()));
@@ -872,12 +732,13 @@ mod tests {
             .unwrap()
             .can_reset());
         // An empty host fails validation synchronously; it cannot replace history.
+        harness.state_mut().editor.host.clear();
         harness.get_by_label("Connect").click();
         harness.run();
         assert!(retained(harness.state()));
         harness.get_by_label("Cancel").click();
         harness.run();
-        assert!(!harness.state().connection.open);
+        assert!(!harness.state().editor.open);
         assert!(retained(harness.state()));
         assert_eq!(harness.state().sink.diagnostics.byte_count, 0);
         assert!(harness.query_by_label("Reconnect · new shell").is_some());
@@ -924,7 +785,7 @@ mod tests {
                     .unwrap()
                     .push_back(SessionEvent::Lifecycle(SessionLifecycle::Running));
             }
-            let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+            let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
                 active: true,
                 ..Default::default()
             })));
@@ -960,7 +821,7 @@ mod tests {
         use std::{cell::Cell, rc::Rc};
 
         let suspension = SuspensionHandle::default();
-        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle::default())))
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle::default())))
             .with_suspension(suspension.clone());
         let session = Arc::new(FakeSession::default());
         for shutdowns in 1..=2 {

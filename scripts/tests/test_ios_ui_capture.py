@@ -27,7 +27,7 @@ class MobileCaptureTests(unittest.TestCase):
 
     def test_failure_retains_attempt_and_runs_only_identified_ignored_capture_with_deadline(self):
         with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "new"
+            output = Path(directory).resolve() / "new"
 
             def fail(arguments, **kwargs):
                 output.mkdir()

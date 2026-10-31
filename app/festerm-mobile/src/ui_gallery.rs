@@ -3,7 +3,11 @@
 //! credentials, clipboard reads or personal filesystem resources.
 
 use super::*;
-use egui_kittest::{kittest::Queryable, Harness};
+use crate::model::{
+    Capabilities, ChromeModel, ConnectionLine, DevTunnelChoices, MemoryProfileStore, NewProfile,
+    ProfileKind, Reattachable, StaticSessions, SurfaceKind, SurfaceState, SurfaceSummary,
+};
+use egui_kittest::Harness;
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf, process::Command};
 
@@ -18,6 +22,217 @@ fn git_fact(arguments: &[&str]) -> String {
         .expect("UTF-8 git attribution")
         .trim()
         .to_owned()
+}
+
+const STATES: [&str; 17] = [
+    "profiles",
+    "profiles-empty",
+    "terminal",
+    "terminal-devtunnel",
+    "sessions-sheet",
+    "keys-panel",
+    "keys-fkeys",
+    "keys-symbols",
+    "arrow-helper",
+    "editor-new",
+    "editor-devtunnel",
+    "host-trust",
+    "changed-host",
+    "authentication",
+    "disconnected",
+    "reconnect-review",
+    "settings",
+];
+
+fn fixture_profiles() -> Box<MemoryProfileStore> {
+    let mut store = MemoryProfileStore::default();
+    for (name, kind, host, user) in [
+        ("prod-web", ProfileKind::Ssh, "web.example.net", "deploy"),
+        ("build-box", ProfileKind::DevTunnel, "build-tunnel", "dev"),
+        ("staging-db", ProfileKind::Ssh, "db.example.net", "ops"),
+        (
+            "release-files",
+            ProfileKind::Sftp,
+            "files.example.net",
+            "ops",
+        ),
+    ] {
+        model::ProfileStore::save(
+            &mut store,
+            NewProfile {
+                name: name.to_owned(),
+                kind,
+                host: host.to_owned(),
+                port: 22,
+                username: user.to_owned(),
+            },
+        );
+    }
+    Box::new(store)
+}
+
+fn fixture_sessions(current: u64) -> StaticSessions {
+    let surface = |id, title: &str, kind, detail: &str, status: &str, state| SurfaceSummary {
+        id,
+        title: title.to_owned(),
+        kind,
+        detail: detail.to_owned(),
+        state,
+        status: status.to_owned(),
+        current: id == current,
+    };
+    StaticSessions {
+        surfaces: vec![
+            surface(
+                1,
+                "prod-web",
+                SurfaceKind::Ssh,
+                "SSH · deploy@web.example.net",
+                "Connected · tmux / work",
+                SurfaceState::Connected,
+            ),
+            surface(
+                2,
+                "build-box",
+                SurfaceKind::DevTunnel,
+                "Dev Tunnel · build-tunnel",
+                "Connected · tmux / build",
+                SurfaceState::Connected,
+            ),
+            surface(
+                3,
+                "release-files",
+                SurfaceKind::Files,
+                "SFTP · ops@files.example.net",
+                "Disconnected · history available",
+                SurfaceState::Disconnected,
+            ),
+        ],
+        reattachable: vec![Reattachable {
+            title: "tmux / deploy".to_owned(),
+            detail: "3 windows · last active 2h ago".to_owned(),
+            host: "prod-web".to_owned(),
+        }],
+    }
+}
+
+fn fixture_terminal_text(lines: &[&str]) -> Terminal {
+    let mut terminal = Terminal::with_scrollback_limit(
+        Dimensions::new(48, 24).expect("fixed valid dimensions"),
+        SCROLLBACK_LIMIT,
+    )
+    .expect("bounded fixture grid");
+    for line in lines {
+        terminal.ingest(line.as_bytes());
+        terminal.ingest(b"\r\n");
+    }
+    terminal
+}
+
+fn configure(app: &mut MobileApp, state: &str) {
+    app.caps = Capabilities::all();
+    app.profiles = fixture_profiles();
+    let devtunnel = matches!(state, "terminal-devtunnel");
+    app.sessions_override = Some(fixture_sessions(if devtunnel { 2 } else { 1 }));
+    app.surface = Surface::Terminal;
+    app.chrome_override = Some(if devtunnel {
+        ChromeModel {
+            title: "build-box".to_owned(),
+            subtitle: "Dev Tunnel · build-tunnel".to_owned(),
+            line: ConnectionLine {
+                state: SurfaceState::Connected,
+                label: "Connected".to_owned(),
+                context: Some("tmux · build".to_owned()),
+            },
+        }
+    } else {
+        ChromeModel {
+            title: "prod-web".to_owned(),
+            subtitle: "SSH · deploy@web.example.net".to_owned(),
+            line: ConnectionLine {
+                state: SurfaceState::Connected,
+                label: "Connected".to_owned(),
+                context: Some("tmux · work".to_owned()),
+            },
+        }
+    });
+    app.terminal = fixture_terminal_text(&[
+        "\x1b[32mdeploy@prod-web\x1b[0m:\x1b[34m~/app\x1b[0m$ git status",
+        "On branch main",
+        "Your branch is up to date with 'origin/main'.",
+        "",
+        "nothing to commit, working tree clean",
+        "\x1b[32mdeploy@prod-web\x1b[0m:\x1b[34m~/app\x1b[0m$ systemctl status web",
+        "\x1b[32m●\x1b[0m web.service - Web frontend",
+        "     Active: \x1b[32mactive (running)\x1b[0m since Mon 09:14",
+        "   Main PID: 2210 (node)",
+        "\x1b[32mdeploy@prod-web\x1b[0m:\x1b[34m~/app\x1b[0m$ ",
+    ]);
+    match state {
+        "profiles" => {
+            app.surface = Surface::Tabs;
+        }
+        "profiles-empty" => {
+            app.surface = Surface::Tabs;
+            app.caps = Capabilities::default();
+            app.profiles = Box::new(MemoryProfileStore::default());
+            app.sessions_override = Some(StaticSessions::default());
+        }
+        "settings" => {
+            app.surface = Surface::Tabs;
+            app.shell.tab = shell::Tab::Settings;
+        }
+        "sessions-sheet" => app.shell.sessions_sheet = true,
+        "keys-panel" => app.keys_panel.open = true,
+        "keys-fkeys" => {
+            app.keys_panel.open = true;
+            app.keys_panel.tab = 1;
+        }
+        "keys-symbols" => {
+            app.keys_panel.open = true;
+            app.keys_panel.tab = 2;
+        }
+        "editor-new" => app.editor.open_new(),
+        "editor-devtunnel" => {
+            app.editor.open_new();
+            app.editor.kind_index = 1;
+            app.editor.name = "build-box".to_owned();
+            app.editor.tunnel = Some(DevTunnelChoices {
+                account_name: "Dev Tunnels".to_owned(),
+                account_user: "signed in".to_owned(),
+                tunnels: vec!["build-tunnel".to_owned(), "docs-tunnel".to_owned()],
+                tunnel: 0,
+                sessions: vec!["tmux / build".to_owned(), "New shell".to_owned()],
+                session: 0,
+            });
+        }
+        "host-trust" | "changed-host" | "authentication" => {
+            *app.sink.live.connection.borrow_mut() = Some(live_ssh::prompt_fixture(
+                state == "changed-host",
+                state == "authentication",
+            ));
+            app.chrome_override = None;
+            app.terminal = fixture_terminal_text(&["Connecting…"]);
+        }
+        "disconnected" | "reconnect-review" => {
+            *app.sink.live.connection.borrow_mut() = Some(live_ssh::disconnected_fixture());
+            app.chrome_override = Some(ChromeModel {
+                title: "prod-web".to_owned(),
+                subtitle: "SSH · deploy@web.example.net".to_owned(),
+                line: ConnectionLine {
+                    state: SurfaceState::Disconnected,
+                    label: "Connection lost".to_owned(),
+                    context: None,
+                },
+            });
+            if state == "reconnect-review" {
+                app.editor.host = "web.example.net".to_owned();
+                app.editor.username = "deploy".to_owned();
+                app.editor.open_reconnect();
+            }
+        }
+        _ => {}
+    }
 }
 
 #[test]
@@ -36,16 +251,20 @@ fn capture_mobile_ui_gallery() {
         ("phone", 390.0, 844.0, 0.35),
         ("tablet", 834.0, 1194.0, 0.30),
     ] {
-        for state in [
-            "terminal",
-            "connect",
-            "arrow-helper",
-            "disconnected",
-            "host-trust",
-            "changed-host",
-            "authentication",
-        ] {
-            let state_occlusion = if state == "disconnected" {
+        for state in STATES {
+            let state_occlusion = if matches!(
+                state,
+                "disconnected"
+                    | "profiles"
+                    | "profiles-empty"
+                    | "settings"
+                    | "sessions-sheet"
+                    | "editor-new"
+                    | "editor-devtunnel"
+                    | "host-trust"
+                    | "changed-host"
+                    | "reconnect-review"
+            ) {
                 0.0
             } else {
                 occlusion
@@ -54,13 +273,8 @@ fn capture_mobile_ui_gallery() {
                 active: true,
                 ..Default::default()
             }));
-            let app = MobileApp::new(lifecycle);
-            if matches!(state, "host-trust" | "changed-host" | "authentication") {
-                *app.sink.live.connection.borrow_mut() = Some(live_ssh::prompt_fixture(
-                    state == "changed-host",
-                    state == "authentication",
-                ));
-            }
+            let mut app = MobileApp::new(lifecycle);
+            configure(&mut app, state);
             let mut harness = Harness::builder()
                 .with_size(egui::vec2(width, height))
                 .build_ui_state(
@@ -74,15 +288,6 @@ fn capture_mobile_ui_gallery() {
                 .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
             harness.remove_cursor();
             harness.run();
-            if state == "disconnected" {
-                *harness.state_mut().sink.live.connection.borrow_mut() =
-                    Some(live_ssh::disconnected_fixture());
-                harness.run();
-            }
-            if state == "connect" {
-                harness.get_by_label("Connect").click();
-                harness.run();
-            }
             if state == "arrow-helper" {
                 let origin = harness
                     .state()
@@ -153,7 +358,7 @@ fn capture_mobile_ui_gallery() {
             "host_os": std::env::consts::OS,
             "native_ios": false,
             "native_validation": "not-run",
-            "fixture": "repository-owned offline terminal, empty connection form, synthetic hold/drag, retired-session and trust/auth prompts; no SSH worker",
+            "fixture": "repository-owned offline shell screens, terminal chrome, editors, synthetic hold/drag, retired-session and trust/auth prompts; no SSH worker",
             "presentation": "Dark preference; nonblinking cursor; no system keyboard pixels",
             "images": images,
         }))

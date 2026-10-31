@@ -69,6 +69,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0030: Native Markdown Viewer as a First-Class Bounded Application Surface](0030-native-markdown-viewer.md) — amended by ADRs 0034 and 0048
 - [ADR 0031: Mobile (iOS/Android) Port Strategy](0031-mobile-ios-android-port-strategy.md) — exploratory design only; see `docs/mobile-port-plan.md`, `docs/mobile-layout-design.md`, and `docs/mobile-signing-and-release.md`
 - [ADR 0034: Shared Mutable Documents for Native Text Editing](0034-shared-mutable-text-documents.md) — amends ADR 0030's read-only snapshot boundary; see issue #166
+- [ADR 0056: iOS Shell, Design Tokens and Extended Key Encoding](0056-ios-shell-and-design-system.md) - tab shell, theme/widgets, capability-gated screens, new core navigation/function keys
 
 ## Status Values
 

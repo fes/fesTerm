@@ -1,8 +1,19 @@
 //! iOS feasibility host: offline by default, with opt-in transient live SSH.
 
+#[allow(dead_code)] // design-system surface used by the gallery before production wiring
+mod forms;
 #[cfg(feature = "live-ssh")]
 mod live_ssh;
+#[allow(dead_code)] // design-system surface used by the gallery before production wiring
+mod model;
+mod shell;
+#[allow(dead_code)] // design-system surface used by the gallery before production wiring
+mod terminal_chrome;
 mod terminal_gesture;
+#[allow(dead_code)] // design-system surface used by the gallery before production wiring
+mod theme;
+#[allow(dead_code)] // design-system surface used by the gallery before production wiring
+mod widgets;
 mod workspaces;
 
 #[cfg(all(test, feature = "live-ssh"))]
@@ -42,50 +53,8 @@ pub fn mobile_wgpu_configuration() -> eframe::egui_wgpu::WgpuConfiguration {
     }
 }
 
-/// Mobile-only presentation tokens from the owner-approved iOS mock-ups.
-/// Scope these to this UI; desktop visuals and terminal protocol colors stay shared.
 fn mobile_style(style: &egui::Style) -> egui::Style {
-    let mut style = style.clone();
-    let mut visuals = egui::Visuals::dark();
-    let foreground = egui::Color32::from_rgb(230, 237, 243);
-    let muted = egui::Color32::from_rgb(153, 173, 191);
-    let border = egui::Stroke::new(1.0, egui::Color32::from_rgb(48, 65, 81));
-    visuals.override_text_color = Some(foreground);
-    visuals.panel_fill = egui::Color32::from_rgb(16, 22, 30);
-    visuals.window_fill = egui::Color32::from_rgb(27, 40, 53);
-    visuals.extreme_bg_color = egui::Color32::from_rgb(24, 36, 47);
-    visuals.faint_bg_color = egui::Color32::from_rgb(27, 40, 53);
-    visuals.window_stroke = border;
-    visuals.widgets.noninteractive.bg_stroke = border;
-    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, muted);
-    for widget in [
-        &mut visuals.widgets.inactive,
-        &mut visuals.widgets.hovered,
-        &mut visuals.widgets.active,
-        &mut visuals.widgets.open,
-    ] {
-        widget.corner_radius = egui::CornerRadius::same(8);
-        widget.bg_stroke = border;
-        widget.fg_stroke = egui::Stroke::new(1.0, foreground);
-    }
-    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(35, 49, 63);
-    visuals.widgets.inactive.weak_bg_fill = visuals.widgets.inactive.bg_fill;
-    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(47, 68, 88);
-    visuals.widgets.hovered.weak_bg_fill = visuals.widgets.hovered.bg_fill;
-    visuals.widgets.active.bg_fill = egui::Color32::from_rgb(42, 83, 117);
-    visuals.widgets.active.weak_bg_fill = visuals.widgets.active.bg_fill;
-    visuals.widgets.open.bg_fill = visuals.widgets.active.bg_fill;
-    visuals.widgets.open.weak_bg_fill = visuals.widgets.open.bg_fill;
-    visuals.selection.bg_fill = egui::Color32::from_rgb(42, 83, 117);
-    visuals.selection.stroke = egui::Stroke::new(1.0, foreground);
-    visuals.hyperlink_color = egui::Color32::from_rgb(145, 194, 255);
-    // Keep the capture harness's nonblinking cursor preference.
-    visuals.text_cursor.blink = style.visuals.text_cursor.blink;
-    style.visuals = visuals;
-    style.spacing.item_spacing = egui::vec2(6.0, 6.0);
-    style.spacing.button_padding = egui::vec2(12.0, 8.0);
-    style.spacing.interact_size.y = 44.0;
-    style
+    theme::apply(style)
 }
 
 pub const SCROLLBACK_LIMIT: usize = 256 * 1024;
@@ -206,6 +175,22 @@ pub fn fixture_terminal() -> Terminal {
     terminal
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Surface {
+    #[default]
+    Tabs,
+    Terminal,
+}
+
+/// Content-free view of the live SSH worker for chrome decisions.
+#[cfg(feature = "live-ssh")]
+struct LiveView {
+    host: String,
+    can_reset: bool,
+    input_enabled: bool,
+    status: &'static str,
+}
+
 pub struct MobileApp {
     reported_first_ui: bool,
     terminal: Terminal,
@@ -225,10 +210,31 @@ pub struct MobileApp {
     workspace: workspaces::Workspace,
     files: workspaces::FilesWorkspace,
     markdown: workspaces::MarkdownWorkspace,
+    surface: Surface,
+    shell: shell::ShellState,
+    profiles: Box<dyn model::ProfileStore>,
+    caps: model::Capabilities,
+    editor: forms::EditorState,
+    keys_panel: terminal_chrome::KeysPanel,
+    keyboard_visible: bool,
+    demo_open: bool,
+    /// Gallery/test fixtures; production derives these from live state.
+    sessions_override: Option<model::StaticSessions>,
+    chrome_override: Option<model::ChromeModel>,
     #[cfg(feature = "live-ssh")]
     connection: live_ssh::ConnectionForm,
     #[cfg(feature = "live-ssh")]
     polled_frame: Option<u64>,
+}
+
+/// Phone-density default (about 46 columns on a 390pt screen); pinch-zoom
+/// still moves it within the view's bounds.
+const MOBILE_TERMINAL_FONT_SIZE: f32 = 11.5;
+
+fn mobile_terminal_view() -> TerminalView {
+    let mut view = TerminalView::default();
+    view.zoom_by_factor(MOBILE_TERMINAL_FONT_SIZE / view.font_size_points());
+    view
 }
 
 impl MobileApp {
@@ -236,7 +242,7 @@ impl MobileApp {
         Self {
             reported_first_ui: false,
             terminal: fixture_terminal(),
-            view: TerminalView::default(),
+            view: mobile_terminal_view(),
             sink: ProbeSink::default(),
             lifecycle,
             observed_memory_warnings: 0,
@@ -252,6 +258,16 @@ impl MobileApp {
             workspace: workspaces::Workspace::Terminal,
             files: workspaces::FilesWorkspace::default(),
             markdown: workspaces::MarkdownWorkspace::default(),
+            surface: Surface::Tabs,
+            shell: shell::ShellState::default(),
+            profiles: Box::new(model::MemoryProfileStore::default()),
+            caps: model::Capabilities::default(),
+            editor: forms::EditorState::default(),
+            keys_panel: terminal_chrome::KeysPanel::default(),
+            keyboard_visible: true,
+            demo_open: false,
+            sessions_override: None,
+            chrome_override: None,
             #[cfg(feature = "live-ssh")]
             connection: live_ssh::ConnectionForm::default(),
             #[cfg(feature = "live-ssh")]
@@ -259,13 +275,31 @@ impl MobileApp {
         }
     }
 
+    /// Starts on the terminal surface, as the pre-shell spike did.
+    #[cfg(test)]
+    fn new_terminal(lifecycle: Rc<Cell<Lifecycle>>) -> Self {
+        let mut app = Self::new(lifecycle);
+        app.surface = Surface::Terminal;
+        app.demo_open = true;
+        app
+    }
+
+    /// Plugs in a profile store (for example the Keychain-backed one).
+    pub fn with_profile_store(mut self, store: Box<dyn model::ProfileStore>) -> Self {
+        self.profiles = store;
+        self
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        let occlusion = if self.workspace == workspaces::Workspace::Terminal {
+        let occlusion = if self.surface == Surface::Terminal
+            && self.workspace != workspaces::Workspace::Terminal
+            && !self.editor.open
+        {
+            0.0
+        } else {
             self.keyboard
                 .as_ref()
                 .map_or(0.0, |keyboard| keyboard.occluded_height_fraction())
-        } else {
-            0.0
         };
         self.show_with_occlusion(ui, occlusion);
     }
@@ -281,15 +315,21 @@ impl MobileApp {
         self
     }
 
+    fn terminal_surface(&self) -> bool {
+        self.surface == Surface::Terminal
+            && self.workspace == workspaces::Workspace::Terminal
+            && !self.editor.open
+    }
+
     fn show_with_occlusion(&mut self, ui: &mut egui::Ui, occlusion: f32) {
         // Accessory taps must not blur the terminal and restart UIKit's keyboard.
+        let terminal_surface = self.terminal_surface();
         ui.ctx().options_mut(|options| {
-            options.input_options.surrender_focus_on =
-                if self.workspace == workspaces::Workspace::Terminal {
-                    egui::SurrenderFocusOn::Never
-                } else {
-                    egui::SurrenderFocusOn::Clicks
-                };
+            options.input_options.surrender_focus_on = if terminal_surface {
+                egui::SurrenderFocusOn::Never
+            } else {
+                egui::SurrenderFocusOn::Clicks
+            };
         });
         let mut safe_rect = ui.ctx().content_rect().intersect(ui.max_rect());
         let viewport = ui.ctx().viewport_rect();
@@ -308,7 +348,12 @@ impl MobileApp {
     }
 
     fn send_key(&mut self, key: Key) {
-        let mut modifiers = Modifiers::NONE;
+        self.send_key_with(key, Modifiers::NONE);
+    }
+
+    /// Sticky Ctrl/Alt apply to the next key whichever surface produced it.
+    fn send_key_with(&mut self, key: Key, extra: Modifiers) {
+        let mut modifiers = extra;
         if self.control {
             modifiers = modifiers.with(Modifiers::CONTROL);
         }
@@ -348,6 +393,116 @@ impl MobileApp {
         });
     }
 
+    #[cfg(feature = "live-ssh")]
+    fn live_view(&self) -> Option<LiveView> {
+        self.sink
+            .live
+            .connection
+            .borrow()
+            .as_ref()
+            .map(|live| LiveView {
+                host: live.host_label().to_owned(),
+                can_reset: live.can_reset(),
+                input_enabled: live.input_enabled(),
+                status: live.status(),
+            })
+    }
+
+    fn chrome(&self) -> model::ChromeModel {
+        use model::{ChromeModel, ConnectionLine, SurfaceState};
+        if let Some(chrome) = &self.chrome_override {
+            return chrome.clone();
+        }
+        #[cfg(feature = "live-ssh")]
+        if let Some(live) = self.live_view() {
+            let state = if live.can_reset {
+                SurfaceState::Disconnected
+            } else if live.input_enabled {
+                SurfaceState::Connected
+            } else {
+                SurfaceState::Connecting
+            };
+            let detail = model::profile_detail(
+                model::ProfileKind::Ssh,
+                &live.host,
+                self.editor.username.trim(),
+            );
+            return ChromeModel {
+                title: live.host,
+                subtitle: detail,
+                line: ConnectionLine {
+                    state,
+                    label: live.status.to_owned(),
+                    context: None,
+                },
+            };
+        }
+        ChromeModel {
+            title: "Offline demo".to_owned(),
+            subtitle: "Local fixture · no shell".to_owned(),
+            line: ConnectionLine {
+                state: SurfaceState::Disconnected,
+                label: "Offline demo · input is discarded".to_owned(),
+                context: None,
+            },
+        }
+    }
+
+    fn surfaces(&self) -> Vec<model::SurfaceSummary> {
+        use model::{SurfaceKind, SurfaceState, SurfaceSummary};
+        if let Some(sessions) = &self.sessions_override {
+            return model::SessionSource::surfaces(sessions);
+        }
+        #[cfg(feature = "live-ssh")]
+        if self.sink.live.connection.borrow().is_some() {
+            let chrome = self.chrome();
+            return vec![SurfaceSummary {
+                id: 0,
+                title: chrome.title,
+                kind: SurfaceKind::Ssh,
+                detail: chrome.subtitle,
+                state: chrome.line.state,
+                status: chrome.line.label,
+                current: self.surface == Surface::Terminal,
+            }];
+        }
+        if self.demo_open {
+            return vec![SurfaceSummary {
+                id: 0,
+                title: "Offline demo".to_owned(),
+                kind: SurfaceKind::Local,
+                detail: "Local fixture · no shell".to_owned(),
+                state: SurfaceState::Disconnected,
+                status: "Input is discarded".to_owned(),
+                current: self.surface == Surface::Terminal,
+            }];
+        }
+        Vec::new()
+    }
+
+    fn reattachable(&self) -> Vec<model::Reattachable> {
+        self.sessions_override
+            .as_ref()
+            .map(model::SessionSource::reattachable)
+            .unwrap_or_default()
+    }
+
+    fn diagnostics(&self) -> Vec<(String, String)> {
+        let lifecycle = self.lifecycle.get();
+        vec![
+            ("Resumes".to_owned(), lifecycle.resumes.to_string()),
+            ("Suspensions".to_owned(), lifecycle.suspensions.to_string()),
+            (
+                "Memory warnings".to_owned(),
+                lifecycle.memory_warnings.to_string(),
+            ),
+            (
+                "Input bytes".to_owned(),
+                self.sink.diagnostics.byte_count.to_string(),
+            ),
+        ]
+    }
+
     fn show_content(&mut self, ui: &mut egui::Ui) {
         let lifecycle = self.lifecycle.get();
         if lifecycle.suspensions != self.observed_suspensions {
@@ -362,7 +517,7 @@ impl MobileApp {
             self.gestures.cancel();
             // Preserve grid/history and discard only reconstructible view caches.
             let font_size = self.view.font_size_points();
-            self.view = TerminalView::default();
+            self.view = mobile_terminal_view();
             self.view
                 .zoom_by_factor(font_size / self.view.font_size_points());
             self.observed_memory_warnings = lifecycle.memory_warnings;
@@ -372,122 +527,214 @@ impl MobileApp {
             self.polled_frame = Some(ui.ctx().cumulative_frame_nr());
             if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
                 live.poll(&mut self.terminal, ui.ctx());
+                self.connection.observe(live);
             }
         }
-        #[cfg(feature = "live-ssh")]
-        let live_selected = self.sink.live.connection.borrow().is_some();
-        #[cfg(not(feature = "live-ssh"))]
-        let live_selected = false;
-        #[cfg(feature = "live-ssh")]
-        let can_reset = self
-            .sink
-            .live
-            .connection
-            .borrow()
-            .as_ref()
-            .is_none_or(|live| live.can_reset());
-        #[cfg(not(feature = "live-ssh"))]
-        let can_reset = true;
-        egui::Panel::top("mobile-header").show(ui, |ui| {
-            ui.spacing_mut().interact_size.y = 44.0;
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.set_max_width((ui.available_width() - 164.0).max(40.0));
-                    #[cfg(feature = "live-ssh")]
-                    let title = if self.workspace == workspaces::Workspace::Terminal {
-                        self.sink
-                            .live
-                            .connection
-                            .borrow()
-                            .as_ref()
-                            .map(|live| live.host_label().to_owned())
-                    } else {
-                        None
-                    };
-                    #[cfg(not(feature = "live-ssh"))]
-                    let title: Option<String> = None;
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(title.as_deref().unwrap_or(self.workspace.label()))
-                                .strong(),
-                        )
-                        .truncate(),
-                    );
-                    ui.weak(if self.workspace != workspaces::Workspace::Terminal {
-                        "Offline preview"
-                    } else if live_selected && can_reset {
-                        "Disconnected · read-only"
-                    } else if live_selected {
-                        "SSH"
-                    } else {
-                        "Offline demo"
-                    });
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let menu = ui.menu_button("More", |ui| {
-                        for (workspace, label) in [
-                            (workspaces::Workspace::Terminal, "Terminal"),
-                            (workspaces::Workspace::Files, "Files (preview)"),
-                            (workspaces::Workspace::Markdown, "README (preview)"),
-                        ] {
-                            if ui
-                                .selectable_label(self.workspace == workspace, label)
-                                .clicked()
-                            {
-                                self.switch_workspace(workspace);
-                                ui.close();
-                            }
-                        }
-                        ui.separator();
-                        let reset_label = if live_selected {
-                            "Use offline demo"
-                        } else {
-                            "Reset demo"
-                        };
-                        if ui
-                            .add_enabled(
-                                lifecycle.active && can_reset,
-                                egui::Button::new(reset_label),
-                            )
-                            .clicked()
-                        {
-                            self.reset_fixture();
-                            ui.close();
-                        }
-                        ui.menu_button("Diagnostics", |ui| {
-                            ui.label(format!("Resumes: {}", lifecycle.resumes));
-                            ui.label(format!("Suspensions: {}", lifecycle.suspensions));
-                            ui.label(format!("Memory warnings: {}", lifecycle.memory_warnings));
-                            ui.label(format!("Input: {} bytes", self.sink.diagnostics.byte_count));
-                        });
-                    });
-                    self.menu_open = menu.inner.is_some();
-                    #[cfg(feature = "live-ssh")]
-                    if self.workspace == workspaces::Workspace::Terminal {
-                        let label = if self.connection.open {
-                            "Cancel"
-                        } else {
-                            "Connect"
-                        };
-                        if ui
-                            .add_enabled(
-                                lifecycle.active,
-                                egui::Button::new(label).sense(egui::Sense::CLICK),
-                            )
-                            .clicked()
-                        {
-                            self.connection.toggle();
-                        }
-                    }
-                });
-            });
-        });
-        match self.workspace {
-            workspaces::Workspace::Terminal => self.show_terminal(ui, lifecycle),
-            workspaces::Workspace::Files => self.files.show(ui),
-            workspaces::Workspace::Markdown => self.markdown.show(ui),
+        let bounds = ui.max_rect();
+        if self.editor.open {
+            self.show_editor(ui);
+            return;
         }
+        match self.surface {
+            Surface::Tabs => self.show_tabs(ui),
+            Surface::Terminal => self.show_surface(ui, lifecycle),
+        }
+        self.show_sheets(ui.ctx(), bounds);
+    }
+
+    fn shell_data<'a>(
+        &self,
+        profiles: &'a [model::Profile],
+        surfaces: &'a [model::SurfaceSummary],
+        reattachable: &'a [model::Reattachable],
+        diagnostics: &'a [(String, String)],
+    ) -> shell::ShellData<'a> {
+        shell::ShellData {
+            profiles,
+            surfaces,
+            reattachable,
+            profiles_persistent: self.profiles.is_persistent(),
+            diagnostics,
+            offline_demo_available: true,
+        }
+    }
+
+    fn show_tabs(&mut self, ui: &mut egui::Ui) {
+        let profiles = self.profiles.profiles();
+        let surfaces = self.surfaces();
+        let reattachable = self.reattachable();
+        let diagnostics = self.diagnostics();
+        let data = self.shell_data(&profiles, &surfaces, &reattachable, &diagnostics);
+        let actions = shell::show_tabs(ui, &mut self.shell, &data);
+        self.apply_shell_actions(ui.ctx(), actions);
+    }
+
+    fn apply_shell_actions(&mut self, ctx: &egui::Context, actions: Vec<shell::ShellAction>) {
+        use shell::ShellAction;
+        for action in actions {
+            match action {
+                ShellAction::NewProfile => self.editor.open_new(),
+                ShellAction::OpenProfile(id) => {
+                    if let Some(profile) = self.profiles.profiles().into_iter().find(|p| p.id == id)
+                    {
+                        self.editor.host = profile.host;
+                        self.editor.port = profile.port.to_string();
+                        self.editor.username = profile.username;
+                        self.editor.name = profile.name;
+                        self.connect_from_editor(ctx);
+                    }
+                }
+                ShellAction::OpenSurface(_) => {
+                    self.shell.sessions_sheet = false;
+                    self.surface = Surface::Terminal;
+                }
+                ShellAction::Reattach(_) => self.shell.sessions_sheet = false,
+                ShellAction::OpenDemo => {
+                    self.demo_open = true;
+                    self.shell.sessions_sheet = false;
+                    self.surface = Surface::Terminal;
+                }
+                ShellAction::ShowSessions => self.shell.sessions_sheet = true,
+                ShellAction::HideSessions => self.shell.sessions_sheet = false,
+                ShellAction::OpenProfilesTab => {
+                    self.shell.sessions_sheet = false;
+                    self.shell.tab = shell::Tab::Profiles;
+                    self.leave_terminal();
+                }
+            }
+        }
+    }
+
+    fn leave_terminal(&mut self) {
+        if self.surface == Surface::Terminal {
+            self.gestures.cancel();
+            self.control = false;
+            self.alt = false;
+            self.keys_panel.open = false;
+            if self.workspace == workspaces::Workspace::Terminal {
+                if let Some(focus) = self.view.relinquish_transient_input() {
+                    route_input(&mut self.terminal, InputEvent::Focus(focus), &mut self.sink);
+                }
+            }
+        }
+        self.surface = Surface::Tabs;
+    }
+
+    fn show_sheets(&mut self, ctx: &egui::Context, bounds: egui::Rect) {
+        if self.shell.sessions_sheet {
+            let surfaces = self.surfaces();
+            let reattachable = self.reattachable();
+            let profiles = Vec::new();
+            let diagnostics = Vec::new();
+            let data = self.shell_data(&profiles, &surfaces, &reattachable, &diagnostics);
+            let actions = shell::sessions_sheet(ctx, bounds, &data);
+            self.apply_shell_actions(ctx, actions);
+        }
+        #[cfg(feature = "live-ssh")]
+        if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
+            if let Some(model) = live.host_verification() {
+                if let Some(decision) = forms::host_verification_sheet(ctx, bounds, &model) {
+                    live.resolve_host(decision);
+                }
+            } else if let Some((target, retry)) = live.password_request() {
+                match forms::password_sheet(ctx, bounds, &target, retry, live.password_buffer()) {
+                    forms::PasswordDecision::Submit => live.submit_password(),
+                    forms::PasswordDecision::Cancel => {
+                        live.stop("Disconnected. Connect again for a fresh shell.")
+                    }
+                    forms::PasswordDecision::None => {}
+                }
+            }
+        }
+    }
+
+    fn show_editor(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let can_connect = cfg!(feature = "live-ssh") && self.lifecycle.get().active;
+        match forms::show_editor(ui, &mut self.editor, self.caps, can_connect) {
+            forms::EditorAction::None => {}
+            forms::EditorAction::Cancel => self.editor.close(),
+            forms::EditorAction::SaveOnly => {
+                if self.save_editor_profile() {
+                    self.editor.close();
+                }
+            }
+            forms::EditorAction::SaveAndConnect => {
+                if self.editor.reconnect || self.save_editor_profile() {
+                    self.connect_from_editor(&ctx);
+                }
+            }
+        }
+    }
+
+    fn save_editor_profile(&mut self) -> bool {
+        let host = self.editor.host.trim().to_owned();
+        if host.is_empty() {
+            self.editor.error = Some("Enter a host to save this profile");
+            return false;
+        }
+        let port = self.editor.port.trim().parse::<u16>().unwrap_or(22);
+        let name = if self.editor.name.trim().is_empty() {
+            host.clone()
+        } else {
+            self.editor.name.trim().to_owned()
+        };
+        self.profiles.save(model::NewProfile {
+            name,
+            kind: self.editor.kind(self.caps),
+            host,
+            port,
+            username: self.editor.username.trim().to_owned(),
+        });
+        true
+    }
+
+    fn connect_from_editor(&mut self, ctx: &egui::Context) {
+        #[cfg(feature = "live-ssh")]
+        {
+            let dimensions = self.terminal.dimensions();
+            let result = self.connection.connect(
+                self.editor.host.trim(),
+                self.editor.port.trim(),
+                self.editor.username.trim(),
+                dimensions,
+                ctx,
+                &mut self.sink.live.connection.borrow_mut(),
+            );
+            match result {
+                Ok(()) => {
+                    self.editor.close();
+                    self.demo_open = false;
+                    self.begin_live_terminal();
+                    self.surface = Surface::Terminal;
+                }
+                Err(error) => {
+                    self.editor.open = true;
+                    self.editor.error = Some(error);
+                }
+            }
+        }
+        #[cfg(not(feature = "live-ssh"))]
+        {
+            let _ = ctx;
+            self.editor.open = true;
+            self.editor.error = Some("SSH is not available in this build");
+        }
+    }
+
+    #[cfg(feature = "live-ssh")]
+    fn begin_live_terminal(&mut self) {
+        self.gestures.cancel();
+        let dimensions = self.terminal.dimensions();
+        self.terminal = Terminal::with_scrollback_limit(dimensions, SCROLLBACK_LIMIT)
+            .expect("existing valid bounded grid");
+        let font_size = self.view.font_size_points();
+        self.view = mobile_terminal_view();
+        self.view
+            .zoom_by_factor(font_size / self.view.font_size_points());
+        self.control = false;
+        self.alt = false;
+        self.workspace = workspaces::Workspace::Terminal;
     }
 
     fn switch_workspace(&mut self, workspace: workspaces::Workspace) {
@@ -509,66 +756,130 @@ impl MobileApp {
         self.switch_workspace(workspaces::Workspace::Terminal);
         self.gestures.cancel();
         self.terminal = fixture_terminal();
-        self.view = TerminalView::default();
+        self.view = mobile_terminal_view();
         self.sink.reset();
         self.control = false;
         self.alt = false;
-        #[cfg(feature = "live-ssh")]
-        {
-            self.connection.open = false;
-        }
+        self.demo_open = true;
+        self.editor.close();
     }
 
-    fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
+    fn show_surface(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
         #[cfg(feature = "live-ssh")]
-        {
-            #[cfg(test)]
-            {
-                self.connection.controls = None;
-            }
-            // Use the parent safe space, never the previous form height.
-            let controls_height = ui.available_height() * 0.45;
-            let show_controls = self.connection.open
-                || self
-                    .sink
-                    .live
-                    .connection
-                    .borrow()
-                    .as_ref()
-                    .is_some_and(|live| !live.can_reset());
-            if show_controls {
-                let mut connected = false;
-                ui.add_enabled_ui(lifecycle.active, |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("mobile-ssh-controls")
-                        .max_height(controls_height)
-                        .show(ui, |ui| {
-                            ui.spacing_mut().interact_size.y = 44.0;
-                            connected = self.connection.show(
-                                ui,
-                                &mut self.sink.live.connection.borrow_mut(),
-                                self.terminal.dimensions(),
-                            );
-                        });
+        let live = self.live_view();
+        #[cfg(feature = "live-ssh")]
+        let live_selected = live.is_some();
+        #[cfg(not(feature = "live-ssh"))]
+        let live_selected = false;
+        #[cfg(feature = "live-ssh")]
+        let can_reset = live.as_ref().is_none_or(|live| live.can_reset);
+        #[cfg(not(feature = "live-ssh"))]
+        let can_reset = true;
+        #[cfg(feature = "live-ssh")]
+        let session_active = live.as_ref().is_some_and(|live| !live.can_reset);
+        #[cfg(not(feature = "live-ssh"))]
+        let session_active = false;
+        let in_terminal = self.workspace == workspaces::Workspace::Terminal;
+        let chrome = self.chrome();
+        let (title, subtitle) = if in_terminal {
+            (chrome.title.clone(), chrome.subtitle.clone())
+        } else {
+            (
+                self.workspace.label().to_owned(),
+                "Offline preview".to_owned(),
+            )
+        };
+        let mut back = false;
+        let mut files = false;
+        egui::Panel::top("mobile-header")
+            .frame(egui::Frame::new().fill(theme::color::BG))
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                let header = terminal_chrome::header(ui, &title, &subtitle, in_terminal);
+                back = header.back;
+                files = header.files;
+                let menu = egui::Popup::menu(&header.more).show(|ui| {
+                    for (workspace, label) in [
+                        (workspaces::Workspace::Terminal, "Terminal"),
+                        (workspaces::Workspace::Files, "Files (preview)"),
+                        (workspaces::Workspace::Markdown, "README (preview)"),
+                    ] {
+                        if ui
+                            .selectable_label(self.workspace == workspace, label)
+                            .clicked()
+                        {
+                            self.switch_workspace(workspace);
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if session_active && ui.button("Disconnect").clicked() {
+                        #[cfg(feature = "live-ssh")]
+                        if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
+                            live.stop("Disconnected. Connect again for a fresh shell.");
+                        }
+                        ui.close();
+                    }
+                    let reset_label = if live_selected {
+                        "Use offline demo"
+                    } else {
+                        "Reset demo"
+                    };
+                    if ui
+                        .add_enabled(
+                            lifecycle.active && can_reset,
+                            egui::Button::new(reset_label),
+                        )
+                        .clicked()
+                    {
+                        self.reset_fixture();
+                        ui.close();
+                    }
+                    ui.separator();
+                    for (name, value) in self.diagnostics() {
+                        ui.weak(format!("{name}: {value}"));
+                    }
                 });
-                if connected {
-                    self.gestures.cancel();
-                    let dimensions = self.terminal.dimensions();
-                    self.terminal = Terminal::with_scrollback_limit(dimensions, SCROLLBACK_LIMIT)
-                        .expect("existing valid bounded grid");
-                    let font_size = self.view.font_size_points();
-                    self.view = TerminalView::default();
-                    self.view
-                        .zoom_by_factor(font_size / self.view.font_size_points());
-                    self.control = false;
-                    self.alt = false;
-                }
-                ui.separator();
+                self.menu_open = menu.is_some();
+            });
+        if back {
+            if in_terminal {
+                self.leave_terminal();
+            } else {
+                self.switch_workspace(workspaces::Workspace::Terminal);
             }
+            return;
         }
+        if files {
+            self.switch_workspace(workspaces::Workspace::Files);
+        }
+        if !in_terminal {
+            egui::Panel::top("mobile-status")
+                .frame(egui::Frame::new().fill(theme::color::BG))
+                .show_separator_line(false)
+                .show(ui, |_| {});
+            match self.workspace {
+                workspaces::Workspace::Files => self.files.show(ui),
+                _ => self.markdown.show(ui),
+            }
+            return;
+        }
+        // Short landscape space keeps only what typing needs.
+        let compact = ui.available_height() < 340.0;
+        if !compact {
+            egui::Panel::top("mobile-status")
+                .frame(egui::Frame::new().fill(theme::color::BG))
+                .show_separator_line(false)
+                .show(ui, |ui| terminal_chrome::status_line(ui, &chrome.line));
+        }
+        self.show_terminal(ui, lifecycle, compact);
+    }
+
+    fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle, compact: bool) {
         #[cfg(feature = "live-ssh")]
         let input_ready = lifecycle.active
-            && !self.connection.open
+            && !self.shell.sessions_sheet
+            && !self.editor.open
             && self
                 .sink
                 .live
@@ -577,7 +888,7 @@ impl MobileApp {
                 .as_ref()
                 .is_none_or(|live| live.input_enabled());
         #[cfg(not(feature = "live-ssh"))]
-        let input_ready = lifecycle.active;
+        let input_ready = lifecycle.active && !self.editor.open && !self.shell.sessions_sheet;
         #[cfg(feature = "live-ssh")]
         let read_only = self
             .sink
@@ -592,71 +903,99 @@ impl MobileApp {
             self.control = false;
             self.alt = false;
         }
+        let surfaces = self.surfaces();
+        let panel_open = self.keys_panel.open && input_ready && !read_only;
+        if panel_open {
+            let output = egui::Panel::bottom("terminal-keys-panel")
+                .frame(egui::Frame::new().fill(theme::color::BAR))
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    terminal_chrome::keys_panel(ui, &mut self.keys_panel)
+                })
+                .inner;
+            if let Some((key, modifiers)) = output.key {
+                self.send_key_with(key, modifiers);
+            }
+            if output.close {
+                self.keys_panel.open = false;
+            }
+        }
         if !read_only {
-            let toolbar = egui::Panel::bottom("terminal-keys").show(ui, |ui| {
-                ui.add_enabled_ui(input_ready && !self.menu_open, |ui| {
-                    egui::ScrollArea::horizontal()
-                        .id_salt("extra-keys")
-                        .show(ui, |ui| {
-                            ui.spacing_mut().interact_size.y = 44.0;
-                            ui.horizontal(|ui| {
-                                // Terminal keys act like a keyboard, not focus targets.
-                                for (label, key) in [("Esc", Key::Escape), ("Tab", Key::Tab)] {
-                                    if ui
-                                        .add(egui::Button::new(label).sense(egui::Sense::CLICK))
-                                        .clicked()
-                                    {
-                                        self.send_key(key);
-                                    }
-                                }
-                                let control = ui.add(
-                                    egui::Button::selectable(self.control, "Ctrl")
-                                        .frame_when_inactive(true)
-                                        .sense(egui::Sense::CLICK),
-                                );
-                                #[cfg(test)]
-                                {
-                                    self.control_rect = Some(control.rect);
-                                }
-                                if control.clicked() {
-                                    self.control = !self.control;
-                                }
-                                if ui
-                                    .add(
-                                        egui::Button::selectable(self.alt, "Alt")
-                                            .frame_when_inactive(true)
-                                            .sense(egui::Sense::CLICK),
-                                    )
-                                    .clicked()
-                                {
-                                    self.alt = !self.alt;
-                                }
-                            });
-                        });
+            let mut row_action = terminal_chrome::KeyRowAction::None;
+            let toolbar = egui::Panel::bottom("terminal-keys")
+                .frame(egui::Frame::new().fill(theme::color::BAR))
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    ui.add_enabled_ui(input_ready && !self.menu_open, |ui| {
+                        let output = terminal_chrome::key_row(
+                            ui,
+                            &terminal_chrome::KeyRowState {
+                                control: self.control,
+                                alt: self.alt,
+                                panel_open,
+                                keyboard_visible: self.keyboard_visible,
+                                paste: self.caps.paste,
+                            },
+                        );
+                        #[cfg(test)]
+                        {
+                            self.control_rect = Some(output.control_rect);
+                        }
+                        row_action = output.action;
+                    });
                 });
-            });
             self.toolbar_rect = Some(toolbar.response.rect);
+            self.apply_key_row(row_action);
         } else {
             self.toolbar_rect = None;
+            egui::Panel::bottom("terminal-keys")
+                .frame(egui::Frame::new().fill(theme::color::BAR))
+                .show_separator_line(false)
+                .show(ui, terminal_chrome::read_only_note);
         }
-        #[cfg(feature = "live-ssh")]
-        if read_only && !self.connection.open {
-            let recovery_height = ui.available_height();
-            let card_limit: f32 = if recovery_height < 260.0 { 96.0 } else { 160.0 };
-            // Bottom panels start at 20 points before their first measurement.
-            // Reserve a bounded size now so the action is visible on first paint.
-            egui::Panel::bottom("mobile-recovery")
-                .exact_size(card_limit.min(recovery_height * 0.45))
+        let mut chip_action = terminal_chrome::ChipAction::None;
+        if !compact {
+            egui::Panel::bottom("terminal-chips")
+                .frame(egui::Frame::new().fill(theme::color::BAR))
+                .show_separator_line(false)
                 .show(ui, |ui| {
-                    if let Some(live) = self.sink.live.connection.borrow().as_ref() {
-                        self.connection.show_recovery(ui, live, recovery_height);
-                    }
+                    chip_action = terminal_chrome::chip_strip(ui, &surfaces);
                 });
         }
+        match chip_action {
+            terminal_chrome::ChipAction::None | terminal_chrome::ChipAction::Select(_) => {}
+            terminal_chrome::ChipAction::All => self.shell.sessions_sheet = true,
+            terminal_chrome::ChipAction::New => {
+                self.shell.tab = shell::Tab::Profiles;
+                self.leave_terminal();
+                return;
+            }
+        }
         #[cfg(feature = "live-ssh")]
-        let history_ready = lifecycle.active && !self.connection.open && (input_ready || read_only);
-        #[cfg(not(feature = "live-ssh"))]
-        let history_ready = input_ready;
+        if read_only {
+            let banner = self.reconnect_banner();
+            let compact = ui.available_height() < 260.0;
+            let mut reconnect = false;
+            egui::Panel::bottom("mobile-recovery")
+                .frame(egui::Frame::new().fill(theme::color::BAR))
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    reconnect = terminal_chrome::reconnect_banner(ui, &banner, compact);
+                });
+            if reconnect {
+                // Review the existing details first; no worker starts here.
+                if let Some(live) = self.live_view() {
+                    self.editor.host = live.host;
+                }
+                #[cfg(feature = "live-ssh")]
+                if let Some(live) = self.sink.live.connection.borrow().as_ref() {
+                    self.editor.port = live.port().to_string();
+                }
+                self.editor.open_reconnect();
+                return;
+            }
+        }
+        let history_ready = lifecycle.active && !self.editor.open && (input_ready || read_only);
         if input_ready && !self.menu_open {
             ui.input_mut(|input| self.consume_sticky_text(&mut input.events));
         }
@@ -696,7 +1035,7 @@ impl MobileApp {
             },
         );
         self.gestures.paint_helper(ui, terminal_rect);
-        if input_ready {
+        if input_ready && self.keyboard_visible && !panel_open {
             // Persistent request for the system keyboard, independent of egui
             // focus on the accessory buttons. UIKit owns keyboard presentation.
             let rect = self.view.diagnostics().grid_rect.unwrap_or(terminal_rect);
@@ -717,6 +1056,37 @@ impl MobileApp {
         self.view.take_clipboard_read_request();
         self.view.take_link_requests();
         self.view.take_find_request();
+    }
+
+    fn apply_key_row(&mut self, action: terminal_chrome::KeyRowAction) {
+        use terminal_chrome::KeyRowAction;
+        match action {
+            KeyRowAction::None | KeyRowAction::Paste => {}
+            KeyRowAction::Escape => self.send_key(Key::Escape),
+            KeyRowAction::Tab => self.send_key(Key::Tab),
+            KeyRowAction::ToggleControl => self.control = !self.control,
+            KeyRowAction::ToggleAlt => self.alt = !self.alt,
+            KeyRowAction::TogglePanel => self.keys_panel.open = !self.keys_panel.open,
+            KeyRowAction::ToggleKeyboard => {
+                self.keyboard_visible = !self.keyboard_visible;
+                if self.keyboard_visible {
+                    self.keys_panel.open = false;
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "live-ssh")]
+    fn reconnect_banner(&self) -> model::ReconnectBanner {
+        let status = self
+            .live_view()
+            .map_or("Connection ended", |live| live.status);
+        model::ReconnectBanner {
+            detail: status
+                .starts_with("Input rejected")
+                .then(|| "Earlier accepted input may have executed.".to_owned()),
+            status: status.to_owned(),
+        }
     }
 }
 
@@ -739,7 +1109,7 @@ mod tests {
     fn mobile_header_menu_routes_previews_and_resets_demo_without_stale_input() {
         use egui_kittest::{kittest::Queryable, Harness};
 
-        let app = Rc::new(RefCell::new(MobileApp::new(Rc::new(Cell::new(
+        let app = Rc::new(RefCell::new(MobileApp::new_terminal(Rc::new(Cell::new(
             Lifecycle {
                 active: true,
                 ..Default::default()
@@ -770,137 +1140,66 @@ mod tests {
         assert_eq!(app.borrow().sink.diagnostics.byte_count, 0);
         app.borrow_mut().send_key(Key::Tab);
         assert!(app.borrow().sink.diagnostics.byte_count > 0);
-        harness.get_by_label("Connect").click();
+        app.borrow_mut().editor.open_new();
         harness.run();
-        assert!(app.borrow().connection.open);
-        harness.get_by_label("More").click();
+        assert!(app.borrow().editor.open);
+        app.borrow_mut().reset_fixture();
         harness.run();
-        harness.get_by_label("Reset demo").click();
-        harness.run();
-        assert!(!app.borrow().connection.open);
+        assert!(!app.borrow().editor.open);
         assert_eq!(app.borrow().sink.diagnostics.byte_count, 0);
     }
 
     #[cfg(feature = "live-ssh")]
-    fn connection_frame(
-        app: &mut MobileApp,
-        context: &egui::Context,
-        size: egui::Vec2,
-        occlusion: f32,
-        events: Vec<egui::Event>,
-    ) {
-        context
-            .run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
-                    time: Some(context.cumulative_frame_nr() as f64 / 60.0),
-                    events,
-                    ..Default::default()
-                },
-                |ui| app.show_with_occlusion(ui, occlusion),
-            )
-            .drop_without_applying_deltas();
-    }
-
-    #[cfg(feature = "live-ssh")]
     #[test]
-    fn mobile_connection_form_fits_measured_phone_tablet_space_and_releases_it() {
+    fn mobile_editor_fits_measured_phone_tablet_space_and_releases_it() {
+        use egui_kittest::{kittest::Queryable, Harness};
         for (width, height, occlusion) in [
             (390.0, 844.0, 0.35),
             (834.0, 1194.0, 0.30),
             (1194.0, 834.0, 0.35),
             (375.0, 1024.0, 0.35),
+            (844.0, 390.0, 0.35),
             (390.0, 844.0, 0.0),
         ] {
-            let lifecycle = Rc::new(Cell::new(Lifecycle {
-                active: true,
-                ..Default::default()
-            }));
-            let mut app = MobileApp::new(lifecycle);
-            let context = egui::Context::default();
-            let size = egui::vec2(width, height);
+            let app = Rc::new(RefCell::new(MobileApp::new_terminal(Rc::new(Cell::new(
+                Lifecycle {
+                    active: true,
+                    ..Default::default()
+                },
+            )))));
+            let displayed = app.clone();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, height))
+                .build_ui_state(
+                    move |ui, _: &mut ()| displayed.borrow_mut().show_with_occlusion(ui, occlusion),
+                    (),
+                );
+            harness.run();
+            let grid_height = app.borrow().view.diagnostics().grid_rect.unwrap().height();
             // Open/close/reopen after cached panel geometry has settled.
             for _ in 0..2 {
-                app.connection.open = true;
-                for _ in 0..8 {
-                    connection_frame(&mut app, &context, size, occlusion, vec![]);
+                app.borrow_mut().editor.open_new();
+                harness.run();
+                let limit = height * (1.0 - occlusion) + 1.0;
+                for label in ["Save & Connect", "Save only", "Cancel"] {
+                    let rect = harness.get_by_label(label).rect();
+                    assert!(
+                        rect.bottom() <= limit,
+                        "{label} {rect:?} in {width}x{height}"
+                    );
+                    assert!(rect.height() >= 40.0, "{label} {rect:?}");
                 }
-                let geometry = app.connection.controls.expect("visible connection form");
-                assert!(geometry.field_height >= 44.0);
-                assert!(geometry.clip.contains_rect(geometry.bounds), "{size:?}");
-                assert!(geometry.clip.contains_rect(geometry.connect), "{size:?}");
-                let expanded_grid = app.view.diagnostics().grid_rect.unwrap();
-                assert!(expanded_grid.height() >= 64.0);
-                assert!(app.toolbar_rect.unwrap().bottom() <= height * (1.0 - occlusion) + 1.0);
-                assert_eq!(app.sink.diagnostics.byte_count, 0);
-
-                app.connection.open = false;
-                for _ in 0..8 {
-                    connection_frame(&mut app, &context, size, occlusion, vec![]);
-                }
-                assert!(app.connection.controls.is_none());
+                assert_eq!(app.borrow().sink.diagnostics.byte_count, 0);
+                app.borrow_mut().editor.close();
+                harness.run();
+                harness.run();
+                let released = app.borrow().view.diagnostics().grid_rect.unwrap().height();
                 assert!(
-                    app.view.diagnostics().grid_rect.unwrap().height()
-                        > expanded_grid.height() + 64.0
+                    (released - grid_height).abs() < 2.0,
+                    "{released} vs {grid_height}"
                 );
             }
         }
-    }
-
-    #[cfg(feature = "live-ssh")]
-    #[test]
-    fn mobile_connection_form_short_layout_scrolls_to_connect_without_terminal_input() {
-        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
-            active: true,
-            ..Default::default()
-        })));
-        app.connection.open = true;
-        let context = egui::Context::default();
-        let size = egui::vec2(844.0, 390.0);
-        for _ in 0..8 {
-            connection_frame(&mut app, &context, size, 0.35, vec![]);
-        }
-        let geometry = app.connection.controls.unwrap();
-        assert!(!geometry.clip.contains_rect(geometry.connect));
-        let before = geometry;
-        connection_frame(
-            &mut app,
-            &context,
-            size,
-            0.35,
-            // The ScrollArea shrinks horizontally to its controls; its clip
-            // spans the full panel, so that clip's center can miss the hit area.
-            vec![egui::Event::PointerMoved(egui::pos2(
-                geometry.connect.center().x,
-                geometry.clip.center().y,
-            ))],
-        );
-        connection_frame(
-            &mut app,
-            &context,
-            size,
-            0.35,
-            vec![egui::Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Point,
-                delta: egui::vec2(0.0, -600.0),
-                phase: egui::TouchPhase::Move,
-                modifiers: egui::Modifiers::NONE,
-            }],
-        );
-        for _ in 0..30 {
-            connection_frame(&mut app, &context, size, 0.35, vec![]);
-        }
-        let geometry = app.connection.controls.unwrap();
-        assert!(
-            geometry.clip.contains_rect(geometry.connect),
-            "before clip {:?}, connect {:?}; after clip {:?}, connect {:?}",
-            before.clip,
-            before.connect,
-            geometry.clip,
-            geometry.connect
-        );
-        assert!(app.toolbar_rect.unwrap().bottom() <= size.y * 0.65 + 1.0);
-        assert_eq!(app.sink.diagnostics.byte_count, 0);
     }
 
     #[test]
@@ -930,7 +1229,7 @@ mod tests {
                 active: true,
                 ..Default::default()
             }));
-            let mut app = MobileApp::new(lifecycle.clone());
+            let mut app = MobileApp::new_terminal(lifecycle.clone());
             app.terminal.ingest(b"\x1b[?1003h\x1b[?1006h");
             let ctx = egui::Context::default();
             let render = |app: &mut MobileApp, time, events| {
@@ -986,7 +1285,7 @@ mod tests {
                 ],
             );
             render(&mut app, 0.3, vec![]);
-            assert_eq!(app.view.font_size_points(), 21.0);
+            assert_eq!(app.view.font_size_points(), 17.25);
             assert!(app.terminal.dimensions().columns() < columns);
             assert_eq!(app.toolbar_rect, Some(toolbar));
             assert!(app.view.diagnostics().grid_rect.unwrap().bottom() <= toolbar.top());
@@ -1012,7 +1311,7 @@ mod tests {
                 ],
             );
             render(&mut app, 1.0, vec![]);
-            assert_eq!(app.view.font_size_points(), 21.0);
+            assert_eq!(app.view.font_size_points(), 17.25);
             assert_eq!(app.sink.diagnostics.byte_count, 0);
             assert!(app.terminal.queued_input().is_empty());
         }
@@ -1025,7 +1324,7 @@ mod tests {
                 active: true,
                 ..Default::default()
             }));
-            let mut app = MobileApp::new(lifecycle);
+            let mut app = MobileApp::new_terminal(lifecycle);
             app.terminal.ingest(b"\x1b[?1000h\x1b[?1006h");
             let ctx = egui::Context::default();
             let render = |app: &mut MobileApp, time, events| {
@@ -1109,7 +1408,7 @@ mod tests {
             active: true,
             ..Default::default()
         }));
-        let mut app = MobileApp::new(lifecycle.clone());
+        let mut app = MobileApp::new_terminal(lifecycle.clone());
         let ctx = egui::Context::default();
         let render = |app: &mut MobileApp, occlusion, events| {
             ctx.run_ui(
@@ -1226,7 +1525,7 @@ mod tests {
                 active: true,
                 ..Default::default()
             }));
-            let mut app = MobileApp::new(lifecycle.clone());
+            let mut app = MobileApp::new_terminal(lifecycle.clone());
             let ctx = egui::Context::default();
             let render = |app: &mut MobileApp, occlusion, events| {
                 ctx.run_ui(
@@ -1248,7 +1547,10 @@ mod tests {
             }
             let grid = app.view.diagnostics().grid_rect.unwrap();
             let toolbar = app.toolbar_rect.unwrap();
-            assert!(grid.bottom() <= toolbar.top());
+            assert!(
+                grid.bottom() <= toolbar.top(),
+                "{width}x{height} {grid:?} {toolbar:?}"
+            );
             assert!(toolbar.bottom() <= height - keyboard_height + 0.5);
             assert!(grid.height() > 0.0);
             // Tap Ctrl through the real UI: it must not dismiss the keyboard.
@@ -1299,7 +1601,7 @@ mod tests {
             active: true,
             ..Default::default()
         }));
-        let mut app = MobileApp::new(lifecycle);
+        let mut app = MobileApp::new_terminal(lifecycle);
         app.control = true;
         app.alt = true;
         let mut events = vec![egui::Event::Ime(egui::ImeEvent::Commit("cx".into()))];
@@ -1313,12 +1615,27 @@ mod tests {
     }
 
     #[test]
+    fn mobile_key_row_and_panel_apply_modifiers_once_through_core_encoding() {
+        let lifecycle = Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        }));
+        let mut app = MobileApp::new_terminal(lifecycle);
+        app.apply_key_row(terminal_chrome::KeyRowAction::ToggleControl);
+        assert!(app.control);
+        app.send_key_with(Key::Function(5), Modifiers::NONE);
+        assert!(!app.control, "Ctrl is consumed by the next key");
+        app.send_key_with(Key::Tab, Modifiers::SHIFT);
+        assert_eq!(app.sink.diagnostics.byte_count, 10); // CSI 15;5 ~ then CSI Z.
+    }
+
+    #[test]
     fn mobile_workspaces_limit_native_keyboard_and_terminal_gestures_to_terminal() {
         let lifecycle = Rc::new(Cell::new(Lifecycle {
             active: true,
             ..Default::default()
         }));
-        let mut app = MobileApp::new(lifecycle);
+        let mut app = MobileApp::new_terminal(lifecycle);
         let ctx = egui::Context::default();
         let render = |app: &mut MobileApp, events| {
             ctx.run_ui(
@@ -1422,7 +1739,7 @@ mod tests {
             active: true,
             ..Default::default()
         }));
-        let mut app = MobileApp::new(lifecycle.clone());
+        let mut app = MobileApp::new_terminal(lifecycle.clone());
         let ctx = egui::Context::default();
         let render = |app: &mut MobileApp| {
             ctx.run_ui(
