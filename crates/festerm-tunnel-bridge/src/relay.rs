@@ -4,22 +4,16 @@
 //! with no TCP listeners, port-management API, or unbounded forwarding queues.
 use std::{io, sync::Arc, time::Duration};
 
-use russh::{client, server, Channel, ChannelId, ChannelStream};
+use russh::{client, Channel, ChannelStream};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
-use tokio_util::sync::CancellationToken;
 use tunnels::{
     connections::{
         build_websocket_request, connect_directly, AsyncRWWebSocket, AsyncRWWebSocketOptions,
     },
-    contracts::{TunnelConnectionMode, TunnelEndpoint},
-    management::{new_tunnel_management, Authorization, TunnelLocator, TunnelRequestOptions},
+    contracts::TunnelEndpoint,
 };
 
-use crate::{
-    host_identity::HostIdentity,
-    protocol::{invalid, Target},
-};
+use crate::protocol::{invalid, Target};
 
 // Neither relay role grants shell, agent, filesystem, or arbitrary forwarding
 // channels. Dropping each admission handle rejects it before registration.
@@ -84,6 +78,9 @@ macro_rules! reject_unrelated_server_channels {
     };
 }
 
+#[cfg(feature = "relay")]
+pub(crate) use reject_unrelated_server_channels;
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Destination {
@@ -114,7 +111,7 @@ pub fn validate_relay_url(value: &str) -> io::Result<()> {
     Ok(())
 }
 
-async fn websocket(
+pub(crate) async fn websocket(
     url: &str,
     token: &str,
     role: &str,
@@ -143,11 +140,12 @@ async fn websocket(
     }))
 }
 
-fn stage_error(stage: &'static str) -> io::Error {
+pub(crate) fn stage_error(stage: &'static str) -> io::Error {
     io::Error::other(stage)
 }
 
-fn management_error(error: tunnels::management::HttpError) -> io::Error {
+#[cfg(feature = "relay")]
+pub(crate) fn management_error(error: tunnels::management::HttpError) -> io::Error {
     use tunnels::management::HttpError;
     match error {
         HttpError::ResponseError(response) => io::Error::other(format!(
@@ -165,7 +163,7 @@ fn management_error(error: tunnels::management::HttpError) -> io::Error {
     }
 }
 
-fn client_config() -> client::Config {
+pub(crate) fn client_config() -> client::Config {
     client::Config {
         maximum_pending_replies: Some(16),
         window_size: 256 * 1024,
@@ -177,7 +175,8 @@ fn client_config() -> client::Config {
     }
 }
 
-fn outer_client_config() -> client::Config {
+#[cfg(feature = "relay")]
+pub(crate) fn outer_client_config() -> client::Config {
     client::Config {
         anonymous: true,
         preferred: russh::Preferred::anonymous_none(),
@@ -187,7 +186,39 @@ fn outer_client_config() -> client::Config {
 
 pub struct ClientConnection {
     pub stream: ChannelStream<client::Msg>,
-    _session: client::Handle<VerifiedHost>,
+    pub(crate) _session: client::Handle<VerifiedHost>,
+}
+
+impl tokio::io::AsyncRead for ClientConnection {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.stream).poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for ClientConnection {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        std::pin::Pin::new(&mut self.stream).poll_write(cx, buf)
+    }
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.stream).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
 }
 pub fn host_fingerprint(key: &str) -> io::Result<String> {
     if key.len() > 4096 {
@@ -261,7 +292,7 @@ pub async fn connect_endpoint(
     })
 }
 
-struct VerifiedHost(String);
+pub(crate) struct VerifiedHost(pub(crate) String);
 impl client::Handler for VerifiedHost {
     type Error = russh::Error;
     reject_unrelated_server_channels!();
@@ -289,701 +320,5 @@ impl client::Handler for VerifiedHost {
     }
 }
 
-pub struct HostConnection {
-    pub endpoint: TunnelEndpoint,
-    pub connections: mpsc::Receiver<ChannelStream<server::Msg>>,
-    cancel: CancellationToken,
-    exit: tokio::sync::watch::Receiver<Option<&'static str>>,
-}
-impl HostConnection {
-    pub fn failure_category(&self) -> Option<&'static str> {
-        *self.exit.borrow()
-    }
-}
-impl Drop for HostConnection {
-    fn drop(&mut self) {
-        self.cancel.cancel();
-    }
-}
-
-pub async fn host(
-    tunnel_id: &str,
-    cluster: &str,
-    port: u16,
-    token: &str,
-) -> io::Result<HostConnection> {
-    host_with_identity(tunnel_id, cluster, port, token, HostIdentity::ephemeral()?).await
-}
-
-/// Reuses a locally trusted signing identity and relay host identifier.
-/// Relay-issued connection URIs remain service-owned and may change.
-pub async fn host_with_identity(
-    tunnel_id: &str,
-    cluster: &str,
-    port: u16,
-    token: &str,
-    identity: HostIdentity,
-) -> io::Result<HostConnection> {
-    if port == 0
-        || ![tunnel_id, cluster].iter().all(|s| {
-            !s.is_empty()
-                && s.len() <= 100
-                && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
-        })
-    {
-        return Err(stage_error("host.arguments"));
-    }
-    let host_id = identity.host_id();
-    let key = identity.into_key();
-    let public = key
-        .public_key()
-        .to_openssh()
-        .map_err(|_| stage_error("host.key_encoding"))?;
-    let request = TunnelEndpoint {
-        id: Some(format!("{host_id}-relay")),
-        host_id,
-        connection_mode: TunnelConnectionMode::TunnelRelay,
-        host_public_keys: vec![public
-            .split_whitespace()
-            .nth(1)
-            .ok_or_else(|| stage_error("host.key_encoding"))?
-            .to_owned()],
-        port_uri_format: None,
-        tunnel_uri: None,
-        port_ssh_command_format: None,
-        tunnel_ssh_command: None,
-        ssh_gateway_public_key: None,
-        local_network_tunnel_endpoint: Default::default(),
-        tunnel_relay_tunnel_endpoint: Default::default(),
-    };
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| stage_error("host.http_client"))?;
-    let mut builder = new_tunnel_management("fesTerm-experimental-bridge/1");
-    builder.client(http);
-    let management: tunnels::management::TunnelManagementClient = builder.into();
-    let endpoint = management
-        .update_tunnel_relay_endpoints(
-            &TunnelLocator::ID {
-                cluster: cluster.into(),
-                id: tunnel_id.into(),
-            },
-            &request,
-            &TunnelRequestOptions {
-                authorization: Some(Authorization::Tunnel(token.into())),
-                ..Default::default()
-            },
-        )
-        .await
-        .map_err(management_error)?;
-    if endpoint.host_public_keys != request.host_public_keys
-        || endpoint.host_id != request.host_id
-        || endpoint.id != request.id
-        || !matches!(endpoint.connection_mode, TunnelConnectionMode::TunnelRelay)
-    {
-        return Err(stage_error("host.endpoint_key_mismatch"));
-    }
-    let url = endpoint
-        .tunnel_relay_tunnel_endpoint
-        .host_relay_uri
-        .as_deref()
-        .ok_or_else(|| stage_error("host.endpoint_uri_missing"))?;
-    let rw = websocket(url, token, "tunnel-relay-host").await?;
-    let (outer_tx, mut outer_rx) = mpsc::channel(1);
-    let slots = Arc::new(Semaphore::new(1));
-    let session = client::connect_stream(
-        Arc::new(outer_client_config()),
-        rw,
-        Outer {
-            tx: outer_tx,
-            slots,
-            permit: None,
-        },
-    )
-    .await
-    .map_err(|_| stage_error("host.outer_ssh"))?;
-    let cancel = CancellationToken::new();
-    let stopped = cancel.clone();
-    let (tx, connections) = mpsc::channel(1);
-    let (exit_sender, exit) = tokio::sync::watch::channel(None);
-    tokio::spawn(async move {
-        let server_config = Arc::new(server::Config {
-            keys: vec![key],
-            window_size: 256 * 1024,
-            maximum_packet_size: 32 * 1024,
-            channel_buffer_size: 8,
-            event_buffer_size: 8,
-            inactivity_timeout: Some(Duration::from_secs(120)),
-            ..Default::default()
-        });
-        let service = async {
-            loop {
-                let incoming = tokio::select! {
-                    _ = stopped.cancelled() => break,
-                    value = outer_rx.recv() => match value { Some(value) => value, None => break },
-                };
-                let (channel, permit) = incoming;
-                let (authed, adopted) = oneshot::channel();
-                let handler = Port {
-                    port,
-                    tx: tx.clone(),
-                    opened: false,
-                    authed: Some(authed),
-                };
-                // Only one encrypted client is serviced; keeping its permit until
-                // completion also prevents an upstream per-client task backlog.
-                let result = async {
-                    let mut running = server::run_stream(server_config.clone(), channel, handler)
-                        .await
-                        .map_err(|_| invalid())?;
-                    tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_secs(30)) => return Err(invalid()),
-                        _ = &mut running => return Ok(()),
-                        result = adopted => { result.map_err(|_| invalid())?; }
-                    }
-                    running
-                        .handle()
-                        .forward_tcpip("127.0.0.1".into(), port as u32)
-                        .await
-                        .map_err(|_| invalid())?;
-                    tokio::select! {
-                        _ = stopped.cancelled() => {}
-                        _ = &mut running => {}
-                    }
-                    Ok::<_, io::Error>(())
-                };
-                tokio::select! { _ = stopped.cancelled() => break, _ = result => {} }
-                drop(permit);
-            }
-        };
-        supervise_outer(session, service, stopped.clone(), exit_sender).await;
-    });
-    Ok(HostConnection {
-        endpoint,
-        connections,
-        cancel,
-        exit,
-    })
-}
-
-fn outer_exit_category(result: Result<(), russh::Error>) -> &'static str {
-    use russh::Error;
-    match result {
-        Ok(()) => "host.outer_closed",
-        Err(Error::Disconnect | Error::HUP) => "host.outer_peer_disconnected",
-        Err(Error::Inconsistent) => "host.outer_protocol_inconsistent",
-        Err(Error::PacketAuth) => "host.outer_packet_auth",
-        Err(Error::NotAuthenticated | Error::UnsupportedAuthMethod) => "host.outer_auth_state",
-        Err(Error::NoCommonAlgo { .. }) => "host.outer_algorithm_negotiation",
-        Err(Error::UnknownAlgo) => "host.outer_unknown_algorithm",
-        Err(Error::UnknownKey | Error::WrongServerSig) => "host.outer_key_verification",
-        Err(Error::Kex | Error::KexInit) => "host.outer_key_exchange",
-        Err(Error::PacketSize(_)) => "host.outer_packet_size",
-        Err(Error::WrongChannel | Error::ChannelOpenFailure(_)) => "host.outer_channel_state",
-        Err(Error::SendError | Error::RecvError) => "host.outer_channel",
-        Err(Error::Pending) => "host.outer_pending_limit",
-        Err(Error::DecryptionError) => "host.outer_decryption",
-        Err(Error::Keys(_)) => "host.outer_key_decode",
-        Err(Error::SshKey(_)) => "host.outer_ssh_key_decode",
-        Err(Error::SshEncoding(_)) => "host.outer_encoding",
-        Err(Error::Utf8(_)) => "host.outer_utf8",
-        Err(Error::Join(_)) => "host.outer_task",
-        Err(Error::Elapsed(_)) => "host.outer_deadline",
-        Err(Error::InvalidConfig(_)) => "host.outer_configuration",
-        Err(Error::StrictKeyExchangeViolation { .. }) => "host.outer_strict_exchange",
-        Err(Error::NoAuthMethod | Error::Version) => "host.outer_protocol",
-        Err(Error::RequestDenied) => "host.outer_request_denied",
-        Err(Error::IO(_)) => "host.outer_transport",
-        Err(Error::ConnectionTimeout | Error::KeepaliveTimeout | Error::InactivityTimeout) => {
-            "host.outer_timeout"
-        }
-        Err(_) => "host.outer_other",
-    }
-}
-
-async fn supervise_outer(
-    mut session: client::Handle<Outer>,
-    service: impl std::future::Future<Output = ()>,
-    stopped: CancellationToken,
-    exit: tokio::sync::watch::Sender<Option<&'static str>>,
-) {
-    tokio::pin!(service);
-    let finished = tokio::select! {
-        _ = stopped.cancelled() => false,
-        result = &mut session => {
-            exit.send_replace(Some(outer_exit_category(result)));
-            true
-        },
-        _ = &mut service => {
-            match tokio::time::timeout(Duration::from_secs(2), &mut session).await {
-                Ok(result) => {
-                    exit.send_replace(Some(outer_exit_category(result)));
-                    true
-                }
-                Err(_) => {
-                    if !stopped.is_cancelled() {
-                        exit.send_replace(Some("host.outer_channel_closed"));
-                    }
-                    false
-                }
-            }
-        }
-    };
-    if !finished {
-        let _ = tokio::time::timeout(
-            Duration::from_secs(2),
-            session.disconnect(russh::Disconnect::ByApplication, "bridge closed", "en"),
-        )
-        .await;
-    }
-}
-
-type OuterStream = (ChannelStream<client::Msg>, OwnedSemaphorePermit);
-struct Outer {
-    tx: mpsc::Sender<OuterStream>,
-    slots: Arc<Semaphore>,
-    permit: Option<OwnedSemaphorePermit>,
-}
-impl client::Handler for Outer {
-    type Error = russh::Error;
-    reject_unrelated_server_channels!();
-    async fn should_accept_unknown_server_channel(&mut self, _: ChannelId, kind: &str) -> bool {
-        if kind != "client-ssh-session-stream" {
-            return false;
-        }
-        self.permit = self.slots.clone().try_acquire_owned().ok();
-        self.permit.is_some()
-    }
-    async fn server_channel_open_unknown(
-        &mut self,
-        channel: Channel<client::Msg>,
-        reply: client::ChannelOpenHandle,
-        _: &mut client::Session,
-    ) -> Result<(), Self::Error> {
-        if let Some(permit) = self.permit.take() {
-            reply.accept().await;
-            let _ = self.tx.try_send((channel.into_stream(), permit));
-        }
-        Ok(())
-    }
-    async fn server_channel_open_forwarded_tcpip(
-        &mut self,
-        _: Channel<client::Msg>,
-        _: &str,
-        _: u32,
-        _: &str,
-        _: u32,
-        _: client::ChannelOpenHandle,
-        _: &mut client::Session,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
-struct Port {
-    port: u16,
-    tx: mpsc::Sender<ChannelStream<server::Msg>>,
-    opened: bool,
-    authed: Option<oneshot::Sender<()>>,
-}
-impl server::Handler for Port {
-    type Error = russh::Error;
-    async fn auth_none(&mut self, _: &str) -> Result<server::Auth, Self::Error> {
-        Ok(server::Auth::Accept)
-    }
-
-    async fn auth_succeeded(&mut self, _: &mut server::Session) -> Result<(), Self::Error> {
-        if let Some(sender) = self.authed.take() {
-            let _ = sender.send(());
-        }
-        Ok(())
-    }
-    async fn channel_open_direct_tcpip(
-        &mut self,
-        channel: Channel<server::Msg>,
-        host: &str,
-        port: u32,
-        _: &str,
-        _: u32,
-        reply: server::ChannelOpenHandle,
-        _: &mut server::Session,
-    ) -> Result<(), Self::Error> {
-        if self.opened || port != self.port as u32 || host != "127.0.0.1" {
-            return Ok(());
-        }
-        self.opened = true;
-        reply.accept().await;
-        let _ = self.tx.try_send(channel.into_stream());
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    #[tokio::test]
-    async fn anonymous_wire_peer_requires_none_mac_no_newkeys_and_reports_lifetime() {
-        async fn read_packet(io: &mut tokio::io::DuplexStream) -> Vec<u8> {
-            let length = io.read_u32().await.unwrap() as usize;
-            assert!((5..=4096).contains(&length));
-            let mut packet = vec![0; length];
-            io.read_exact(&mut packet).await.unwrap();
-            let padding = packet[0] as usize;
-            assert!(padding >= 4 && padding < length - 1);
-            packet[1..length - padding].to_vec()
-        }
-        async fn write_packet(io: &mut tokio::io::DuplexStream, payload: &[u8]) {
-            let padding = 4 + (8 - (5 + payload.len() + 4) % 8) % 8;
-            let length = u32::try_from(1 + payload.len() + padding).unwrap();
-            io.write_u32(length).await.unwrap();
-            io.write_u8(u8::try_from(padding).unwrap()).await.unwrap();
-            io.write_all(payload).await.unwrap();
-            io.write_all(&vec![0; padding]).await.unwrap();
-        }
-        fn string(out: &mut Vec<u8>, value: &[u8]) {
-            out.extend_from_slice(&u32::try_from(value.len()).unwrap().to_be_bytes());
-            out.extend_from_slice(value);
-        }
-        fn take_string<'a>(input: &mut &'a [u8]) -> &'a [u8] {
-            let length = u32::from_be_bytes(input[..4].try_into().unwrap()) as usize;
-            let result = &input[4..4 + length];
-            *input = &input[4 + length..];
-            result
-        }
-
-        let (client_io, mut peer_io) = tokio::io::duplex(16 * 1024);
-        let (ready, alive) = oneshot::channel();
-        let (stop, stopped) = oneshot::channel();
-        let peer = tokio::spawn(async move {
-            peer_io
-                .write_all(b"SSH-2.0-festerm-test-relay\r\n")
-                .await
-                .unwrap();
-            let mut identified = false;
-            for _ in 0..255 {
-                if peer_io.read_u8().await.unwrap() == b'\n' {
-                    identified = true;
-                    break;
-                }
-            }
-            assert!(identified);
-            let offered = read_packet(&mut peer_io).await;
-            assert_eq!(offered[0], 20);
-            let mut names = &offered[17..];
-            for index in 0..10 {
-                let value = take_string(&mut names);
-                if index == 4 || index == 5 {
-                    assert!(value
-                        .split(|byte| *byte == b',')
-                        .any(|name| name == b"none"));
-                }
-            }
-            let mut kex = vec![20];
-            kex.extend_from_slice(&[0; 16]);
-            for name in [
-                b"none".as_slice(),
-                b"none",
-                b"none",
-                b"none",
-                b"none",
-                b"none",
-                b"none",
-                b"none",
-                b"",
-                b"",
-            ] {
-                string(&mut kex, name);
-            }
-            kex.extend_from_slice(&[0; 5]);
-            write_packet(&mut peer_io, &kex).await;
-            let mut keepalive = vec![80];
-            string(&mut keepalive, b"keepalive@openssh.com");
-            keepalive.push(1);
-            write_packet(&mut peer_io, &keepalive).await;
-            // A real service rejects NEWKEYS here: no keys were exchanged.
-            assert_eq!(read_packet(&mut peer_io).await, [81]);
-            ready.send(()).unwrap();
-            stopped.await.unwrap();
-            let mut disconnect = vec![1];
-            disconnect.extend_from_slice(&11_u32.to_be_bytes());
-            string(&mut disconnect, b"PRIVATE_PEER_DESCRIPTION_NOT_FOR_LOGS");
-            string(&mut disconnect, b"en");
-            write_packet(&mut peer_io, &disconnect).await;
-        });
-        let (tx, _rx) = mpsc::channel(1);
-        let session = tokio::time::timeout(
-            Duration::from_secs(3),
-            client::connect_stream(
-                Arc::new(outer_client_config()),
-                client_io,
-                Outer {
-                    tx,
-                    slots: Arc::new(Semaphore::new(1)),
-                    permit: None,
-                },
-            ),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        let (exit, mut status) = tokio::sync::watch::channel(None);
-        let supervisor = tokio::spawn(supervise_outer(
-            session,
-            std::future::pending(),
-            CancellationToken::new(),
-            exit,
-        ));
-        tokio::time::timeout(Duration::from_secs(3), alive)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(status.borrow().is_none());
-        assert!(
-            tokio::time::timeout(Duration::from_millis(30), status.changed())
-                .await
-                .is_err()
-        );
-        stop.send(()).unwrap();
-        tokio::time::timeout(Duration::from_secs(3), status.changed())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(*status.borrow(), Some("host.outer_closed"));
-        assert!(!format!("{:?}", *status.borrow()).contains("PRIVATE_PEER"));
-        supervisor.await.unwrap();
-        peer.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn anonymous_outer_transport_negotiates_none_without_weakening_inner_defaults() {
-        struct Relay;
-        impl server::Handler for Relay {
-            type Error = russh::Error;
-        }
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let config = Arc::new(server::Config {
-            preferred: russh::Preferred::anonymous_none(),
-            ..Default::default()
-        });
-        let task = tokio::spawn(async move {
-            server::run_stream(config, server_io, Relay)
-                .await
-                .unwrap()
-                .await
-        });
-        let (tx, _rx) = mpsc::channel(1);
-        let handle = tokio::time::timeout(
-            Duration::from_secs(3),
-            client::connect_stream(
-                Arc::new(outer_client_config()),
-                client_io,
-                Outer {
-                    tx,
-                    slots: Arc::new(Semaphore::new(1)),
-                    permit: None,
-                },
-            ),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        drop(handle);
-        task.abort();
-        let _ = task.await;
-        let inner = client_config();
-        assert!(!inner.anonymous);
-        assert!(!inner.preferred.kex.contains(&russh::kex::NONE));
-        assert!(!inner.preferred.cipher.contains(&russh::cipher::NONE));
-        assert!(!inner.preferred.key.is_empty());
-    }
-
-    #[tokio::test]
-    async fn anonymous_none_is_not_an_encrypted_client_fallback() {
-        struct Relay;
-        impl server::Handler for Relay {
-            type Error = russh::Error;
-        }
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let task = tokio::spawn(async move {
-            server::run_stream(
-                Arc::new(server::Config {
-                    preferred: russh::Preferred::anonymous_none(),
-                    ..Default::default()
-                }),
-                server_io,
-                Relay,
-            )
-            .await
-        });
-        let result = tokio::time::timeout(
-            Duration::from_secs(3),
-            client::connect_stream(
-                Arc::new(client_config()),
-                client_io,
-                VerifiedHost("no-accept-any-key-fallback".into()),
-            ),
-        )
-        .await
-        .unwrap();
-        assert!(result.is_err());
-        task.abort();
-        let _ = task.await;
-    }
-
-    #[test]
-    fn endpoint_stage_diagnostics_never_format_request_or_response_material() {
-        use tunnels::management::{HttpError, ResponseError};
-        let marker = "DO_NOT_LOG_PRIVATE_TOKEN";
-        let error = management_error(HttpError::ResponseError(ResponseError {
-            url: reqwest::Url::parse(&format!("https://example.invalid/{marker}")).unwrap(),
-            status_code: reqwest::StatusCode::FORBIDDEN,
-            data: Some(marker.into()),
-            request_id: Some(marker.into()),
-        }));
-        assert_eq!(error.to_string(), "host.endpoint_update.http_403");
-        assert!(!format!("{error:?}").contains(marker));
-        let error = management_error(HttpError::AuthorizationError(marker.into()));
-        assert_eq!(error.to_string(), "host.endpoint_update.authorization");
-        assert!(!format!("{error:?}").contains(marker));
-        let request_error = reqwest::Client::new().get(marker).build().unwrap_err();
-        let error = management_error(HttpError::ConnectionError(request_error));
-        assert_eq!(error.to_string(), "host.endpoint_update.transport");
-        assert!(!format!("{error:?}").contains(marker));
-        assert_eq!(
-            outer_exit_category(Err(russh::Error::InvalidConfig(marker.into()))),
-            "host.outer_configuration"
-        );
-        assert_eq!(
-            outer_exit_category(Err(russh::Error::IO(io::Error::other(marker)))),
-            "host.outer_transport"
-        );
-    }
-
-    fn key() -> russh::keys::PrivateKey {
-        russh::keys::PrivateKey::random(
-            &mut russh::keys::key::safe_rng(),
-            russh::keys::Algorithm::Ed25519,
-        )
-        .unwrap()
-    }
-    fn pin(key: &russh::keys::PrivateKey) -> String {
-        key.public_key()
-            .to_openssh()
-            .unwrap()
-            .split_whitespace()
-            .nth(1)
-            .unwrap()
-            .to_owned()
-    }
-
-    #[test]
-    fn relay_urls_refuse_arbitrary_authorities_and_plaintext() {
-        for uri in [
-            "ws://foo.rel.tunnels.api.visualstudio.com/connect",
-            "wss://evil.test/connect",
-            "wss://foo.rel.tunnels.api.visualstudio.com.evil.test/connect",
-            "wss://user:secret@foo.rel.tunnels.api.visualstudio.com/connect",
-            "wss://foo.rel.tunnels.api.visualstudio.com:444/connect",
-        ] {
-            assert!(validate_relay_url(uri).is_err());
-        }
-        assert!(validate_relay_url("wss://usw3.rel.tunnels.api.visualstudio.com/connect").is_ok());
-    }
-
-    #[tokio::test]
-    async fn encrypted_transport_pins_host_and_exports_only_one_preconfigured_port() {
-        let key = key();
-        let expected = pin(&key);
-        let config = Arc::new(server::Config {
-            keys: vec![key],
-            channel_buffer_size: 8,
-            ..Default::default()
-        });
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let (tx, mut rx) = mpsc::channel(1);
-        let server = tokio::spawn(async move {
-            server::run_stream(
-                config,
-                server_io,
-                Port {
-                    port: 47461,
-                    tx,
-                    opened: false,
-                    authed: None,
-                },
-            )
-            .await
-            .unwrap()
-            .await
-        });
-        let mut client =
-            client::connect_stream(Arc::new(client_config()), client_io, VerifiedHost(expected))
-                .await
-                .unwrap();
-        assert!(client.authenticate_none("tunnel").await.unwrap().success());
-        assert!(client
-            .channel_open_direct_tcpip("127.0.0.1", 22, "127.0.0.1", 0)
-            .await
-            .is_err());
-        let mut channel = client
-            .channel_open_direct_tcpip("127.0.0.1", 47461, "127.0.0.1", 0)
-            .await
-            .unwrap()
-            .into_stream();
-        let mut accepted = rx.recv().await.unwrap();
-        channel.write_all(b"controlled").await.unwrap();
-        let mut bytes = [0; 10];
-        accepted.read_exact(&mut bytes).await.unwrap();
-        assert_eq!(&bytes, b"controlled");
-        assert!(client
-            .channel_open_direct_tcpip("127.0.0.1", 47461, "127.0.0.1", 0)
-            .await
-            .is_err());
-        drop(accepted);
-        ClientConnection {
-            stream: channel,
-            _session: client,
-        }
-        .close()
-        .await
-        .unwrap();
-        assert!(tokio::time::timeout(Duration::from_secs(3), server)
-            .await
-            .is_ok());
-    }
-
-    #[tokio::test]
-    async fn encrypted_transport_refuses_changed_host_key_before_authentication() {
-        let config = Arc::new(server::Config {
-            keys: vec![key()],
-            ..Default::default()
-        });
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let (tx, _rx) = mpsc::channel(1);
-        let server = tokio::spawn(async move {
-            let _ = server::run_stream(
-                config,
-                server_io,
-                Port {
-                    port: 47461,
-                    tx,
-                    opened: false,
-                    authed: None,
-                },
-            )
-            .await;
-        });
-        assert!(client::connect_stream(
-            Arc::new(client_config()),
-            client_io,
-            VerifiedHost(pin(&key()))
-        )
-        .await
-        .is_err());
-        server.abort();
-    }
-}
+#[cfg(feature = "relay")]
+pub use crate::relay_host::*;

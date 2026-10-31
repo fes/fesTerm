@@ -10,6 +10,7 @@ members = [
     "crates/festerm-macos-window",
     "crates/festerm-mobile-docs",
     "crates/festerm-mobile-profiles",
+    "crates/festerm-mobile-tunnels",
     "crates/festerm-pty",
     "crates/festerm-pty-test-child",
     "crates/festerm-serial",

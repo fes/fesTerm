@@ -2365,6 +2365,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "festerm-mobile-tunnels"
+version = "0.11.1"
+dependencies = [
+ "festerm-core",
+ "festerm-mobile-profiles",
+ "festerm-mobile-tunnels",
+ "festerm-secret-store",
+ "festerm-session",
+ "festerm-tunnel-bridge",
+ "festerm-tunnel-client",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tunnels",
+ "zeroize",
+]
+
+[[package]]
 name = "festerm-pty"
 version = "0.11.1"
 dependencies = [
@@ -2419,9 +2437,13 @@ version = "0.11.1"
 dependencies = [
  "bincode",
  "festerm-core",
+ "festerm-mobile-profiles",
+ "festerm-mobile-tunnels",
  "festerm-pty",
+ "festerm-secret-store",
  "festerm-session",
  "festerm-ssh",
+ "festerm-tunnel-bridge",
  "festerm-windows-job",
  "festerm-windows-runtime",
  "festerm-windows-security",
@@ -2431,6 +2453,7 @@ dependencies = [
  "serde",
  "serde_json",
  "socket2",
+ "tokio",
  "tracing",
  "windows-sys 0.61.2",
 ]

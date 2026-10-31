@@ -28,9 +28,11 @@ class IosSshDependencyTests(unittest.TestCase):
         self.assertEqual([call.args for call in check.call_args_list], [
             ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"), ("aarch64-apple-ios", "festerm-mobile-profiles"), ("aarch64-apple-ios", "festerm-sftp"),
             ("aarch64-apple-ios", "festerm-ios-lock"), ("aarch64-apple-ios", "festerm-mobile-docs"),
+            ("aarch64-apple-ios", "festerm-tunnel-client"), ("aarch64-apple-ios", "festerm-tunnel-bridge", False, True), ("aarch64-apple-ios", "festerm-mobile-tunnels"),
             ("aarch64-apple-ios", "festerm-mobile", True),
             ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"), ("aarch64-apple-ios-sim", "festerm-mobile-profiles"), ("aarch64-apple-ios-sim", "festerm-sftp"),
             ("aarch64-apple-ios-sim", "festerm-ios-lock"), ("aarch64-apple-ios-sim", "festerm-mobile-docs"),
+            ("aarch64-apple-ios-sim", "festerm-tunnel-client"), ("aarch64-apple-ios-sim", "festerm-tunnel-bridge", False, True), ("aarch64-apple-ios-sim", "festerm-mobile-tunnels"),
             ("aarch64-apple-ios-sim", "festerm-mobile", True),
         ])
 
@@ -39,6 +41,16 @@ class IosSshDependencyTests(unittest.TestCase):
             build.check_dependencies("aarch64-apple-ios", live_ssh=True)
         self.assertIn("--features", run.call_args.args)
         self.assertIn("live-ssh", run.call_args.args)
+
+    def test_bridge_graph_is_inspected_with_only_the_portable_client_feature(self):
+        with patch.object(build, "run", return_value=subprocess.CompletedProcess([], 0, "festerm-tunnel-bridge v0.11.1")) as run:
+            build.check_dependencies("aarch64-apple-ios", "festerm-tunnel-bridge", False, True)
+        args = run.call_args.args
+        self.assertEqual(args[args.index("--no-default-features") + 1:][:2], ("--features", "client"))
+        output = "festerm-tunnel-bridge v0.11.1\nfesterm-sessiond v0.11.1\n"
+        with patch.object(build, "run", return_value=subprocess.CompletedProcess([], 0, output)):
+            with self.assertRaisesRegex(RuntimeError, "dependency boundary violated"):
+                build.check_dependencies("aarch64-apple-ios", "festerm-tunnel-bridge", False, True)
 
     def test_real_ssh_graph_uses_target_qualified_normal_and_build_dependencies(self):
         output = "festerm-ssh v0.11.1\nfesterm-secret-store v0.11.1\nring v0.17.14\n"
@@ -50,7 +62,7 @@ class IosSshDependencyTests(unittest.TestCase):
         self.assertIn("normal,build", args)
 
     def test_ios_refuses_desktop_secret_services_and_session_backends(self):
-        for package in ("festerm-mobile", "festerm-ssh"):
+        for package in ("festerm-mobile", "festerm-ssh", "festerm-mobile-tunnels"):
             for dependency in (
                 "windows-native-keyring-store",
                 "zbus-secret-service-keyring-store", "festerm-pty", "festerm-sessiond",
@@ -83,8 +95,10 @@ class IosSshDependencyTests(unittest.TestCase):
         self.assertEqual([call.args for call in check.call_args_list], [
             ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"), ("aarch64-apple-ios", "festerm-mobile-profiles"), ("aarch64-apple-ios", "festerm-sftp"),
             ("aarch64-apple-ios", "festerm-ios-lock"), ("aarch64-apple-ios", "festerm-mobile-docs"),
+            ("aarch64-apple-ios", "festerm-tunnel-client"), ("aarch64-apple-ios", "festerm-tunnel-bridge", False, True), ("aarch64-apple-ios", "festerm-mobile-tunnels"),
             ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"), ("aarch64-apple-ios-sim", "festerm-mobile-profiles"), ("aarch64-apple-ios-sim", "festerm-sftp"),
             ("aarch64-apple-ios-sim", "festerm-ios-lock"), ("aarch64-apple-ios-sim", "festerm-mobile-docs"),
+            ("aarch64-apple-ios-sim", "festerm-tunnel-client"), ("aarch64-apple-ios-sim", "festerm-tunnel-bridge", False, True), ("aarch64-apple-ios-sim", "festerm-mobile-tunnels"),
         ])
         run.assert_not_called()
 

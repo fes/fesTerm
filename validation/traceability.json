@@ -3412,6 +3412,7 @@
       "requirements": [
         "docs/adr/0042-ios-rendering-spike-host.md",
         "docs/adr/0054-ios-keychain-and-mobile-profile-store.md",
+        "docs/adr/0057-portable-dev-tunnels-client-for-ios.md#decision",
         "docs/adr/0058-ios-app-lock-and-mobile-document-viewer.md#decision"
       ],
       "decisions": [
@@ -3419,6 +3420,7 @@
         "ADR-0042",
         "ADR-0054",
         "ADR-0055",
+        "ADR-0057",
         "ADR-0058"
       ],
       "automated_tests": [
@@ -3499,7 +3501,20 @@
         "transfer_progress_is_monotonic_and_completes",
         "markdown_fixture_uses_shared_parser_and_has_navigable_contents",
         "terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples",
-        "explicit_modifiers_encode_control_meta_and_cursor_chords_atomically"
+        "explicit_modifiers_encode_control_meta_and_cursor_chords_atomically",
+        "adopts_before_input_and_streams_output_input_and_resize",
+        "displacement_ends_the_session_without_reattaching",
+        "exit_detach_and_loss_are_distinct_and_detach_is_graceful",
+        "refusal_and_malformed_hosts_fail_the_handshake_with_typed_errors",
+        "recovery_sync_applies_in_order_and_refuses_malformed_payloads",
+        "device_sign_in_stores_the_bound_account_and_refuses_a_different_user",
+        "sign_in_can_be_cancelled_while_waiting_for_the_user",
+        "expired_credentials_are_refreshed_once_and_stored_in_place",
+        "describing_a_tunnel_reports_host_identity_trust_and_session_state",
+        "attach_requires_an_approved_unchanged_host",
+        "takeover_follows_the_profile_and_displacement_is_never_silently_reattached",
+        "a_pinned_session_name_that_the_host_does_not_serve_is_reported",
+        "mobile_api_attaches_takes_over_and_is_displaced_on_a_real_daemon"
       ],
       "manual_scenarios": [
         "MOB-01",
@@ -3515,7 +3530,8 @@
         "Owner-provided iOS mock-ups guide mobile-only navy/blue visuals, actual-host identity, labelled Host/Port fields and Esc/Tab/Ctrl/Alt order; profiles, full tabs, Dev Tunnel identity and app lock are deferred, with deliberate differences in docs/mobile-layout-design.md; native Dynamic Type/VoiceOver and touch comparison remain required. Owned test-only loopback SSH peer proves host-side actual-form trust/auth retry, core input/replies, resize and disconnect without external credentials or OS shell execution; bounded runtime cleanup and socket-free synthetic trust/auth gallery remain distinct from native iOS/OpenSSH/TUI/device acceptance. scripts/capture-mobile-ui.py and ignored capture_mobile_ui_gallery produce actual-widget phone/tablet terminal/connect-form/held-navigation PNGs with source/hash attribution for owner review; CI publishes the non-native headless artifact separately; simulated keyboard reservation has no native keyboard pixels; native rendering/input/live-SSH/device and Termius usability acceptance remain required under MOB-01–06",
         "scripts/tests/test_ios_device_build.py covers explicit --live-ssh preflight/build graph selection, local-network metadata, minimal entitlements and mode-labeled private receipts including signing failures; default packaging remains offline; actual Apple signing, manual installation and MOB-06 controlled-host/physical-device acceptance still require a provisioned Mac and iPhone/iPad",
         "MOB-06 opt-in live-ssh composition received independent architectural approval on 2026-10-30, not native/product acceptance; controlled real SSH/physical-device evidence remains required; fake-session/headless tests cover hidden-workspace output/replies, per-frame budgets and native suspension without a UI frame, including reset binding; compilation/Simulator linking do not establish native usability; credentials and pins remain transient, changed pins reject, suspension requires explicit reconnection; Termius-inspired usability and #425 paste/native handles remain pending",
-        "affected PRs retain mobile unit/dependency checks, device compilation and Simulator app builds, including vendor-only epaint edits; isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py runs nightly/manual only under a distinct experimental-simulator-smoke check, not the simulator-build PR context or a desktop merge gate while iOS is experimental; failed runs/receipts remain failed (#303), without retry and with unchanged CoreSimulator application/process deadlines and ownership/capture/pass-fail guards; during the existing three-second startup grace, the harness observes the first-UI marker once per second and records the actual grace plus poll 1, 2 or 3 when first observed, then retains the prior exact-process check, screenshot/PNG validation, second liveness check and final marker evaluation, including acceptance when first UI is observed post-capture; pre-capture liveness failure retains readiness with capture marked not-attempted and blocks the screenshot as before; capture records retain readiness in memory before capture and are persisted when controlled screenshot timeouts and invalid PNGs unwind, while external hard termination can still prevent the final manifest write; first-UI failure or process death remains failed evidence; separate read-only prepared receipts are not app-pass evidence; scripts/tests/test_scheduled_workflows.py and test_ios_simulator_smoke.py cover the ADR-0042 workflow policy, readiness observation and preparation separation; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go and runtime merge-gate review before mobile product support"
+        "affected PRs retain mobile unit/dependency checks, device compilation and Simulator app builds, including vendor-only epaint edits; isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py runs nightly/manual only under a distinct experimental-simulator-smoke check, not the simulator-build PR context or a desktop merge gate while iOS is experimental; failed runs/receipts remain failed (#303), without retry and with unchanged CoreSimulator application/process deadlines and ownership/capture/pass-fail guards; during the existing three-second startup grace, the harness observes the first-UI marker once per second and records the actual grace plus poll 1, 2 or 3 when first observed, then retains the prior exact-process check, screenshot/PNG validation, second liveness check and final marker evaluation, including acceptance when first UI is observed post-capture; pre-capture liveness failure retains readiness with capture marked not-attempted and blocks the screenshot as before; capture records retain readiness in memory before capture and are persisted when controlled screenshot timeouts and invalid PNGs unwind, while external hard termination can still prevent the final manifest write; first-UI failure or process death remains failed evidence; separate read-only prepared receipts are not app-pass evidence; scripts/tests/test_scheduled_workflows.py and test_ios_simulator_smoke.py cover the ADR-0042 workflow policy, readiness observation and preparation separation; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go and runtime merge-gate review before mobile product support",
+        "ADR 0057 Dev Tunnels client backend only (no UI): offline fakes and a real-daemon loopback pass on macOS; shell integration, live Microsoft Dev Tunnels service, Keychain and physical-device validation, file reads over the tunnel and shell handling of RecoverySync remain open under MOB-06"
       ]
     }
   ]

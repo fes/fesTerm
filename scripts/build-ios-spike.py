@@ -35,10 +35,14 @@ def run(*args: str, **kwargs):
     return subprocess.run(args, cwd=ROOT, check=True, **kwargs)
 
 
-def check_dependencies(target: str, package: str = "festerm-mobile", live_ssh: bool = False) -> None:
+def check_dependencies(
+    target: str, package: str = "festerm-mobile", live_ssh: bool = False, client_only: bool = False
+) -> None:
     result = run(
         "cargo", "tree", "--locked", "-p", package, "--target", target,
         *(["--features", "live-ssh"] if live_ssh else []),
+        # The bridge's default `relay` feature is the desktop host; mobile uses only `client`.
+        *(["--no-default-features", "--features", "client"] if client_only else []),
         "--edges", "normal,build", "--prefix", "none", "--format", "{p} {f}",
         capture_output=True, text=True, timeout=120,
     )
@@ -94,7 +98,7 @@ def main() -> int:
     parser.add_argument("--run", action="store_true", help="install and launch on a booted Simulator")
     parser.add_argument("--simulator", default="booted", help="Simulator UDID (default: booted)")
     parser.add_argument("--live-ssh", action="store_true", help="include the opt-in live SSH connection UI")
-    parser.add_argument("--check-dependencies", action="store_true", help="check mobile/SSH graphs for both iOS targets only; works on Linux")
+    parser.add_argument("--check-dependencies", action="store_true", help="check mobile/SSH/Dev Tunnels graphs for both iOS targets only; works on Linux")
     args = parser.parse_args()
     if args.check_dependencies:
         for target in ("aarch64-apple-ios", "aarch64-apple-ios-sim"):
@@ -104,6 +108,9 @@ def main() -> int:
             check_dependencies(target, "festerm-sftp")
             check_dependencies(target, "festerm-ios-lock")
             check_dependencies(target, "festerm-mobile-docs")
+            check_dependencies(target, "festerm-tunnel-client")
+            check_dependencies(target, "festerm-tunnel-bridge", False, True)
+            check_dependencies(target, "festerm-mobile-tunnels")
             if args.live_ssh:
                 check_dependencies(target, "festerm-mobile", True)
         print("iOS mobile/SSH/SFTP normal/build dependency boundaries passed")

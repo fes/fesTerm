@@ -1,6 +1,7 @@
 use std::io;
 
 use festerm_core::{ColorScheme, Terminal};
+#[cfg(feature = "relay")]
 use festerm_sessiond::RecoverySyncCommand;
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +22,8 @@ pub const EXITED: u8 = 11;
 pub const CAPABILITIES: u8 = 12;
 pub const DISCOVER: u8 = 13;
 pub const DESCRIPTION: u8 = 14;
+/// Host to client: this attachment was displaced; payload is one [`Displacer`] code.
+pub const DISPLACED: u8 = 15;
 pub const FILE_READ: u8 = 20;
 pub const FILE_RESULT: u8 = 21;
 pub const FILE_LIMIT: usize = 4 * 1024 * 1024;
@@ -34,11 +37,49 @@ pub struct Target {
     pub generation: String,
 }
 
+fn is_true(value: &bool) -> bool {
+    *value
+}
+fn default_true() -> bool {
+    true
+}
+
+/// Which kind of client holds (or took) the session.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Displacer {
+    Local,
+    Remote,
+    Unknown,
+}
+impl Displacer {
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Local => 0,
+            Self::Remote => 1,
+            Self::Unknown => 2,
+        }
+    }
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Local),
+            1 => Some(Self::Remote),
+            2 => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Hello {
     #[serde(default)]
     pub files: FileAccess,
+    /// Whether this client asks to displace a current holder. Absent means yes,
+    /// the behavior of clients that predate the field; the host's own takeover
+    /// setting still has to allow it.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub takeover: bool,
     pub version: u16,
     pub snapshot_schema: u16,
     pub target: Target,
@@ -50,6 +91,12 @@ pub struct Description {
     pub version: u16,
     pub target: Target,
     pub files: FileAccess,
+    /// Who holds the session now; absent when unattached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached_by: Option<Displacer>,
+    /// Whether this host lets a remote client displace the current holder.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub takeover_allowed: bool,
 }
 
 #[derive(Clone, Copy, Default, Deserialize, Serialize)]
@@ -67,6 +114,7 @@ pub enum Sync {
     Reset,
 }
 
+#[cfg(feature = "relay")]
 impl TryFrom<Sync> for RecoverySyncCommand {
     type Error = io::Error;
     fn try_from(value: Sync) -> io::Result<Self> {
@@ -82,6 +130,7 @@ impl TryFrom<Sync> for RecoverySyncCommand {
     }
 }
 
+#[cfg(feature = "relay")]
 impl From<RecoverySyncCommand> for Sync {
     fn from(value: RecoverySyncCommand) -> Self {
         match value {
@@ -112,6 +161,7 @@ pub fn validate_length(kind: u8, length: usize) -> io::Result<()> {
         INPUT | OUTPUT | SYNC => CHUNK_LIMIT,
         RESIZE | RESIZED => 8,
         CAPABILITIES => 2,
+        DISPLACED => 1,
         ADOPTED | DETACH | REFUSED | EXITED => 0,
         _ => return Err(invalid()),
     };
