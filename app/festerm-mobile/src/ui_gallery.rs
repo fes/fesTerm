@@ -1,5 +1,5 @@
 //! Review images of the actual mobile UI, never native iOS acceptance.
-//! Only the offline fixture and empty connect form are used: no sockets,
+//! Only offline fixtures and a synthetic navigation gesture are used: no sockets,
 //! credentials, clipboard reads or personal filesystem resources.
 
 use super::*;
@@ -36,7 +36,7 @@ fn capture_mobile_ui_gallery() {
         ("phone", 390.0, 844.0, 0.35),
         ("tablet", 834.0, 1194.0, 0.30),
     ] {
-        for connect in [false, true] {
+        for state in ["terminal", "connect", "arrow-helper"] {
             let lifecycle = Rc::new(Cell::new(Lifecycle {
                 active: true,
                 ..Default::default()
@@ -55,14 +55,51 @@ fn capture_mobile_ui_gallery() {
                 .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
             harness.remove_cursor();
             harness.run();
-            if connect {
+            if state == "connect" {
                 harness.get_by_label("Connect").click();
                 harness.run();
             }
-            harness.remove_cursor();
-            harness.run();
+            if state == "arrow-helper" {
+                let origin = harness
+                    .state()
+                    .view
+                    .diagnostics()
+                    .grid_rect
+                    .unwrap()
+                    .center();
+                let time = harness.ctx.input(|input| input.time);
+                for (elapsed, phase, position) in [
+                    (0.01, egui::TouchPhase::Start, origin),
+                    (0.51, egui::TouchPhase::Move, origin),
+                    (
+                        0.52,
+                        egui::TouchPhase::Move,
+                        origin + egui::vec2(0.0, -90.0),
+                    ),
+                ] {
+                    harness.input_mut().time = Some(time + elapsed);
+                    harness.event(egui::Event::Touch {
+                        device_id: egui::TouchDeviceId(1),
+                        id: egui::TouchId(1),
+                        phase,
+                        pos: position,
+                        force: None,
+                    });
+                    harness.step();
+                }
+                assert_eq!(
+                    harness.state().gestures.helper(),
+                    Some(Some(terminal_gesture::Direction::Up))
+                );
+                // Keep the contact held for the image. Running to idle would
+                // continue the real repeat scheduler rather than settle.
+                harness.remove_cursor();
+                harness.step();
+            } else {
+                harness.remove_cursor();
+                harness.run();
+            }
             let image = harness.render().expect("headless mobile rendering");
-            let state = if connect { "connect" } else { "terminal" };
             let filename = format!("{family}-{state}.png");
             let path = output.join(&filename);
             image.save(&path).expect("save mobile review PNG");
@@ -92,7 +129,7 @@ fn capture_mobile_ui_gallery() {
             "host_os": std::env::consts::OS,
             "native_ios": false,
             "native_validation": "not-run",
-            "fixture": "repository-owned offline terminal and empty connection form; no SSH worker",
+            "fixture": "repository-owned offline terminal, empty connection form and synthetic hold/drag; no SSH worker",
             "presentation": "Dark preference; nonblinking cursor; no system keyboard pixels",
             "images": images,
         }))
