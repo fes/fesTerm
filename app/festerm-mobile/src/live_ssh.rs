@@ -117,6 +117,32 @@ pub(super) struct LiveSsh {
     pub(super) accepted_pin: Option<String>,
 }
 
+#[cfg(test)]
+pub(super) fn prompt_fixture(changed_key: bool, authentication: bool) -> LiveSsh {
+    let mut live = tests::connection(Arc::new(tests::FakeSession::default()));
+    live.running = false;
+    if authentication {
+        live.status = "SSH password required";
+        let prompt = PasswordPrompt::new("fixture-user", "example.test", 1, false);
+        live.password_prompt = Some(prompt);
+    } else {
+        live.status = "Review SSH host key";
+        let prompt = HostKeyPrompt::new(
+            "example.test",
+            22,
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        );
+        live.host_prompt = Some(if changed_key {
+            prompt.with_previously_trusted_fingerprint(
+                "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            )
+        } else {
+            prompt
+        });
+    }
+    live
+}
+
 impl LiveSsh {
     pub(super) fn connect(
         host: &str,
@@ -491,7 +517,7 @@ mod tests {
     use std::sync::Mutex;
 
     #[derive(Default)]
-    struct FakeSession {
+    pub(super) struct FakeSession {
         events: Mutex<VecDeque<SessionEvent>>,
         input: Mutex<Vec<Vec<u8>>>,
         resizes: Mutex<Vec<TerminalSize>>,
@@ -542,7 +568,7 @@ mod tests {
         }
     }
 
-    fn connection(session: Arc<FakeSession>) -> LiveSsh {
+    pub(super) fn connection(session: Arc<FakeSession>) -> LiveSsh {
         LiveSsh {
             identity: HostIdentity::new("example.test", 22).unwrap(),
             context: egui::Context::default(),

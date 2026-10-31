@@ -125,6 +125,20 @@ SFTP; stored command history needs its own persistence/privacy design.
 
 ## Transient live SSH prototype
 
+Host-side integration now uses an owned loopback SSH peer to exercise the actual
+connection form, explicit unknown/changed-key policy, password failure/retry,
+core input/replies, resize and disconnect. Test credentials are public fixture
+values and never used outside that peer; there is no OS shell. This evidence
+does not establish native rendering/input or an actual remote TUI.
+
+The screenshot gallery includes socket-free synthetic unknown-host,
+changed-host and empty authentication prompts on phone/tablet. These render
+existing MobileApp widgets rather than mock-ups. Changed keys retain Reject
+only; approval remains memory-only for the app session. These are the same
+deliberate Termius adaptations as the transient prototype, with no new
+persistence or credential-store promise.
+
+
 Campaign #422/#424 uses Termius for iOS as the interaction reference for the
 connection → host review → authentication → terminal flow. The opt-in
 `live-ssh` feature starts with a compact, scroll-bounded host/port/user form

@@ -1,5 +1,5 @@
 //! Review images of the actual mobile UI, never native iOS acceptance.
-//! Only the offline fixture and empty connect form are used: no sockets,
+//! Only offline fixtures and synthetic trust/auth prompts are used: no sockets,
 //! credentials, clipboard reads or personal filesystem resources.
 
 use super::*;
@@ -36,12 +36,24 @@ fn capture_mobile_ui_gallery() {
         ("phone", 390.0, 844.0, 0.35),
         ("tablet", 834.0, 1194.0, 0.30),
     ] {
-        for connect in [false, true] {
+        for state in [
+            "terminal",
+            "connect",
+            "host-trust",
+            "changed-host",
+            "authentication",
+        ] {
             let lifecycle = Rc::new(Cell::new(Lifecycle {
                 active: true,
                 ..Default::default()
             }));
             let app = MobileApp::new(lifecycle);
+            if matches!(state, "host-trust" | "changed-host" | "authentication") {
+                *app.sink.live.connection.borrow_mut() = Some(live_ssh::prompt_fixture(
+                    state == "changed-host",
+                    state == "authentication",
+                ));
+            }
             let mut harness = Harness::builder()
                 .with_size(egui::vec2(width, height))
                 .build_ui_state(
@@ -55,14 +67,13 @@ fn capture_mobile_ui_gallery() {
                 .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
             harness.remove_cursor();
             harness.run();
-            if connect {
+            if state == "connect" {
                 harness.get_by_label("Connect").click();
                 harness.run();
             }
             harness.remove_cursor();
             harness.run();
             let image = harness.render().expect("headless mobile rendering");
-            let state = if connect { "connect" } else { "terminal" };
             let filename = format!("{family}-{state}.png");
             let path = output.join(&filename);
             image.save(&path).expect("save mobile review PNG");
@@ -92,7 +103,7 @@ fn capture_mobile_ui_gallery() {
             "host_os": std::env::consts::OS,
             "native_ios": false,
             "native_validation": "not-run",
-            "fixture": "repository-owned offline terminal and empty connection form; no SSH worker",
+            "fixture": "repository-owned offline terminal, empty connection form and synthetic trust/auth prompts; no SSH worker",
             "presentation": "Dark preference; nonblinking cursor; no system keyboard pixels",
             "images": images,
         }))

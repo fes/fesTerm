@@ -338,3 +338,23 @@ on that iPhone and the Wide terminal surface on an isolated iPad Pro 13-inch
 (M5) Simulator. Those local captures are bounded visual evidence, not
 qualification of iPad workflow interaction, rotation, multitasking,
 accessibility or a physical device.
+
+### Owned-loopback SSH composition validation
+
+Run `cargo test --locked -p festerm-mobile --features live-ssh --lib live_ssh::loopback_tests`
+to exercise actual connection-form submission, unknown/changed host-key decisions,
+password failure/retry, core input and terminal replies, resize and disconnect
+against an owned 127.0.0.1 SSH peer. The listener owns an ephemeral port, generates
+its host key in memory, accepts only public test-only credentials, bounds its
+observations/deadlines and joins the fixture runtime at teardown. It never
+executes an OS shell and is absent from production app builds. russh/tokio are
+dev dependencies using existing lockfile packages.
+
+The UI test advances bounded frames under a wall-clock deadline because an
+active session can keep repainting while resize is debounced. The normal live
+feature tests include this protocol coverage. Synthetic socket-free gallery
+states show host trust, changed-key rejection and empty password entry; their
+screenshots are separate from the real-loopback protocol assertions.
+
+This does not establish Simulator/device SSH, native keyboard or accessibility,
+OpenSSH/TUI interoperability, provisioning/signing or physical-device usability.

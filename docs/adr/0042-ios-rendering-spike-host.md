@@ -265,6 +265,25 @@ accessibility and physical-device acceptance remain open on iPad.
 
 ## Validation impact
 
+Campaign #424 adds test-only mobile composition coverage over an owned SSH
+loopback peer. The real form, host-key resolver, interactive password retry,
+single-writer terminal pump, core text/IME/control/application-cursor encoding,
+DSR reply, window resize and disconnect cleanup are exercised together.
+`mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry` and
+`mobile_loopback_ssh_rejects_unknown_and_changed_hosts_before_authentication`
+run with the live feature. The server binds only an owned ephemeral 127.0.0.1
+port, uses a generated in-memory host key and public fixture credential, bounds
+input/observations/deadlines and joins its owned runtime on cleanup. It does not
+execute an OS shell. russh/tokio additions are dev-only and already locked;
+normal mobile/desktop dependencies and runtime ownership are unchanged.
+
+Socket-free actual-widget gallery states expose unknown/changed host review
+and empty password entry for phone/tablet visual review. They are synthetic
+prompts without resolver/worker activity, separate from real loopback tests.
+Neither the host protocol tests nor headless captures accept native iOS,
+OpenSSH/TUI interoperability, signing or physical-device behavior.
+
+
 The #425 connection-form layout correction uses a direct scroll area bounded
 by 45% of measured safe space, growing only to its content. The owner-requested
 cleanup uses one compact header, secondary preview/reset actions and diagnostics
