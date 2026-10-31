@@ -99,6 +99,13 @@ persistent trust or resumed shells is not authority to implement those promises.
 Capture actual-widget phone/tablet comparisons for each implemented slice and
 record native rendering, Dynamic Type, VoiceOver and touch checks separately.
 
+### Shell implementation status
+
+Mock-ups 01-06, 10-12 and 16 are implemented as a bottom-tab shell with a
+design-token theme (see ADR 0056 and the mobile README); 07-09 and 13-15 remain
+future work. The extended-keys panel sends Home/End/Insert/Delete/F1-F12 through
+the core key encoder, and Ctrl/Alt apply to the next key.
+
 ## Touch navigation and Termius conventions
 
 Campaign UI reviews use actual-widget screenshots attributed to the tested

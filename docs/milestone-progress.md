@@ -6641,3 +6641,12 @@ authorization refusal, rate limits and connection/service/response failures,
 without logging raw SDK errors, URLs or response bodies. The exact live
 lookup status and remote host type remain unknown. Successful tunnel-service
 authorization and host discovery remain DT-07 follow-up, not passed gates.
+
+## iOS shell stage 1 (ios/shell)
+
+Added the mobile design system, Profiles/Sessions/Settings shell, terminal
+chrome, extended-keys panel, host-verification/authentication sheets, profile
+editor and reconnect banner, with a 17-state headless gallery. Core gained
+Home/End/Insert/Delete/F1-F12 encodings. The profile store is in-memory only;
+SFTP screens, Dev Tunnel/key-auth backends and device validation remain open.
+

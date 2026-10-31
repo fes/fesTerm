@@ -21,6 +21,12 @@ pub enum Key {
     ArrowLeft,
     PageUp,
     PageDown,
+    Home,
+    End,
+    Insert,
+    Delete,
+    /// A function key, `1..=12`; other numbers encode nothing.
+    Function(u8),
     Keypad(KeypadKey),
 }
 
@@ -166,6 +172,14 @@ pub(crate) fn encode_key(key: Key, modes: TerminalModes) -> Option<Vec<u8>> {
         Key::ArrowLeft => cursor_key_bytes(b'D', modes.application_cursor()),
         Key::PageUp => b"\x1b[5~".to_vec(),
         Key::PageDown => b"\x1b[6~".to_vec(),
+        Key::Home => cursor_key_bytes(b'H', modes.application_cursor()),
+        Key::End => cursor_key_bytes(b'F', modes.application_cursor()),
+        Key::Insert => b"\x1b[2~".to_vec(),
+        Key::Delete => b"\x1b[3~".to_vec(),
+        Key::Function(number) => match function_key_code(number)? {
+            FunctionCode::Ss3(final_byte) => vec![0x1b, b'O', final_byte],
+            FunctionCode::Tilde(code) => format!("\x1b[{code}~").into_bytes(),
+        },
         Key::Keypad(key) => keypad_key_bytes(key, modes.application_keypad())?,
     };
     Some(bytes)
@@ -186,6 +200,12 @@ pub(crate) fn encode_modified_key(
         return Some(b"\x1b[Z".to_vec());
     }
     let cursor_final = match key {
+        Key::Home => Some('H'),
+        Key::End => Some('F'),
+        Key::Function(number) => match function_key_code(number)? {
+            FunctionCode::Ss3(final_byte) => Some(char::from(final_byte)),
+            FunctionCode::Tilde(_) => None,
+        },
         Key::ArrowUp => Some('A'),
         Key::ArrowDown => Some('B'),
         Key::ArrowRight => Some('C'),
@@ -198,6 +218,24 @@ pub(crate) fn encode_modified_key(
             + 2 * u8::from(modifiers.contains(Modifiers::ALT))
             + 4 * u8::from(modifiers.contains(Modifiers::CONTROL));
         return Some(format!("\x1b[1;{parameter}{final_byte}").into_bytes());
+    }
+    let tilde_code = match key {
+        Key::Insert => Some(2),
+        Key::Delete => Some(3),
+        Key::PageUp => Some(5),
+        Key::PageDown => Some(6),
+        Key::Function(number) => match function_key_code(number)? {
+            FunctionCode::Tilde(code) => Some(code),
+            FunctionCode::Ss3(_) => None,
+        },
+        _ => None,
+    };
+    if let Some(code) = tilde_code {
+        let parameter = 1
+            + u8::from(modifiers.contains(Modifiers::SHIFT))
+            + 2 * u8::from(modifiers.contains(Modifiers::ALT))
+            + 4 * u8::from(modifiers.contains(Modifiers::CONTROL));
+        return Some(format!("\x1b[{code};{parameter}~").into_bytes());
     }
     if modifiers.contains(Modifiers::SHIFT) && !matches!(key, Key::Character(_) | Key::Control(_)) {
         // Other non-character Shift chords are not part of this additive API.
@@ -236,6 +274,21 @@ pub(crate) fn control_byte(character: char) -> Option<u8> {
         ']' => Some(0x1d),
         _ => None,
     }
+}
+
+enum FunctionCode {
+    Ss3(u8),
+    Tilde(u8),
+}
+
+fn function_key_code(number: u8) -> Option<FunctionCode> {
+    Some(match number {
+        1..=4 => FunctionCode::Ss3(b'P' + number - 1),
+        5 => FunctionCode::Tilde(15),
+        6..=10 => FunctionCode::Tilde(11 + number),
+        11 | 12 => FunctionCode::Tilde(12 + number),
+        _ => return None,
+    })
 }
 
 fn cursor_key_bytes(final_byte: u8, application: bool) -> Vec<u8> {
@@ -513,6 +566,29 @@ mod modified_key_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn navigation_and_function_keys_use_xterm_sequences_with_modifiers() {
+        let mut terminal = Terminal::new(Dimensions::new(20, 4).unwrap()).unwrap();
+        let mut encode = |key, modifiers| {
+            terminal.handle_input(InputEvent::ModifiedKey { key, modifiers });
+            terminal.drain_input()
+        };
+        assert_eq!(encode(Key::Home, Modifiers::NONE), b"\x1b[H");
+        assert_eq!(encode(Key::End, Modifiers::NONE), b"\x1b[F");
+        assert_eq!(encode(Key::Insert, Modifiers::NONE), b"\x1b[2~");
+        assert_eq!(encode(Key::Delete, Modifiers::NONE), b"\x1b[3~");
+        assert_eq!(encode(Key::Function(1), Modifiers::NONE), b"\x1bOP");
+        assert_eq!(encode(Key::Function(5), Modifiers::NONE), b"\x1b[15~");
+        assert_eq!(encode(Key::Function(10), Modifiers::NONE), b"\x1b[21~");
+        assert_eq!(encode(Key::Function(12), Modifiers::NONE), b"\x1b[24~");
+        assert!(encode(Key::Function(13), Modifiers::NONE).is_empty());
+        assert_eq!(encode(Key::Home, Modifiers::CONTROL), b"\x1b[1;5H");
+        assert_eq!(encode(Key::Delete, Modifiers::ALT), b"\x1b[3;3~");
+        assert_eq!(encode(Key::PageUp, Modifiers::CONTROL), b"\x1b[5;5~");
+        assert_eq!(encode(Key::Function(2), Modifiers::ALT), b"\x1b[1;3Q");
+        assert_eq!(encode(Key::Function(6), Modifiers::CONTROL), b"\x1b[17;5~");
     }
 
     #[test]

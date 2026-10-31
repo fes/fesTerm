@@ -213,20 +213,20 @@ impl Loopback {
     }
 
     fn app(&self, changed_key: bool) -> MobileApp {
-        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
             active: true,
             ..Default::default()
         })));
-        app.connection.open = true;
-        app.connection.host = self.address.ip().to_string();
-        app.connection.port = self.address.port().to_string();
-        app.connection.username = USER.to_owned();
+        app.editor.open_reconnect();
+        app.editor.host = self.address.ip().to_string();
+        app.editor.port = self.address.port().to_string();
+        app.editor.username = USER.to_owned();
         if changed_key {
-            app.connection.pin = Some((
-                self.address.ip().to_string(),
+            app.connection.set_pin(
+                &self.address.ip().to_string(),
                 self.address.port(),
-                "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
-            ));
+                "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            );
         }
         app
     }
@@ -283,7 +283,8 @@ fn mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry() {
     });
     assert_eq!(fixture.observed.lock().unwrap().password_attempts, 0);
     assert_eq!(fixture.observed.lock().unwrap().shells, 0);
-    harness.get_by_label("Trust for this app session").click();
+    harness.run_steps(4);
+    harness.get_by_label("Trust & Connect").click();
     harness.run_steps(4);
     until(|| {
         harness.step();
@@ -305,6 +306,7 @@ fn mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry() {
             .0
             .push_str("wrong-fixture-password");
     }
+    harness.run_steps(4);
     harness.get_by_label("Authenticate").click();
     harness.run_steps(4);
     until(|| {
@@ -328,6 +330,7 @@ fn mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry() {
         assert!(!live.input_enabled());
         live.password.0.push_str(PASSWORD);
     }
+    harness.run_steps(4);
     harness.get_by_label("Authenticate").click();
     harness.run_steps(4);
     until(|| {
@@ -376,6 +379,8 @@ fn mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry() {
                 .sizes
                 .contains(&(size.columns() as u32, size.rows() as u32))
     });
+    harness.get_by_label("More").click();
+    harness.run_steps(4);
     harness.get_by_label("Disconnect").click();
     harness.run_steps(4);
     until(|| {
@@ -429,12 +434,11 @@ fn mobile_loopback_ssh_rejects_unknown_and_changed_hosts_before_authentication()
             assert!(live.password_prompt.is_none());
         }
         assert_eq!(
-            harness
-                .query_by_label("Trust for this app session")
-                .is_none(),
+            harness.query_by_label("Trust & Connect").is_none(),
             changed_key
         );
-        harness.get_by_label("Reject").click();
+        harness.run_steps(4);
+        harness.get_by_label("Cancel").click();
         harness.run_steps(4);
         until(|| {
             harness.step();
@@ -444,14 +448,16 @@ fn mobile_loopback_ssh_rejects_unknown_and_changed_hosts_before_authentication()
         assert_eq!(observed.password_attempts, 0);
         assert_eq!(observed.shells, 0);
         assert!(observed.input.is_empty());
-        assert!(harness
-            .state()
-            .sink
-            .live
-            .connection
-            .borrow()
-            .as_ref()
-            .unwrap()
-            .can_reset());
+        until(|| {
+            harness.step();
+            harness
+                .state()
+                .sink
+                .live
+                .connection
+                .borrow()
+                .as_ref()
+                .is_some_and(|live| live.can_reset())
+        });
     }
 }
