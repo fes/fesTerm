@@ -42,6 +42,52 @@ pub fn mobile_wgpu_configuration() -> eframe::egui_wgpu::WgpuConfiguration {
     }
 }
 
+/// Mobile-only presentation tokens from the owner-approved iOS mock-ups.
+/// Scope these to this UI; desktop visuals and terminal protocol colors stay shared.
+fn mobile_style(style: &egui::Style) -> egui::Style {
+    let mut style = style.clone();
+    let mut visuals = egui::Visuals::dark();
+    let foreground = egui::Color32::from_rgb(230, 237, 243);
+    let muted = egui::Color32::from_rgb(153, 173, 191);
+    let border = egui::Stroke::new(1.0, egui::Color32::from_rgb(48, 65, 81));
+    visuals.override_text_color = Some(foreground);
+    visuals.panel_fill = egui::Color32::from_rgb(16, 22, 30);
+    visuals.window_fill = egui::Color32::from_rgb(27, 40, 53);
+    visuals.extreme_bg_color = egui::Color32::from_rgb(24, 36, 47);
+    visuals.faint_bg_color = egui::Color32::from_rgb(27, 40, 53);
+    visuals.window_stroke = border;
+    visuals.widgets.noninteractive.bg_stroke = border;
+    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, muted);
+    for widget in [
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+        &mut visuals.widgets.open,
+    ] {
+        widget.corner_radius = egui::CornerRadius::same(8);
+        widget.bg_stroke = border;
+        widget.fg_stroke = egui::Stroke::new(1.0, foreground);
+    }
+    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(35, 49, 63);
+    visuals.widgets.inactive.weak_bg_fill = visuals.widgets.inactive.bg_fill;
+    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(47, 68, 88);
+    visuals.widgets.hovered.weak_bg_fill = visuals.widgets.hovered.bg_fill;
+    visuals.widgets.active.bg_fill = egui::Color32::from_rgb(42, 83, 117);
+    visuals.widgets.active.weak_bg_fill = visuals.widgets.active.bg_fill;
+    visuals.widgets.open.bg_fill = visuals.widgets.active.bg_fill;
+    visuals.widgets.open.weak_bg_fill = visuals.widgets.open.bg_fill;
+    visuals.selection.bg_fill = egui::Color32::from_rgb(42, 83, 117);
+    visuals.selection.stroke = egui::Stroke::new(1.0, foreground);
+    visuals.hyperlink_color = egui::Color32::from_rgb(145, 194, 255);
+    // Keep the capture harness's nonblinking cursor preference.
+    visuals.text_cursor.blink = style.visuals.text_cursor.blink;
+    style.visuals = visuals;
+    style.spacing.item_spacing = egui::vec2(6.0, 6.0);
+    style.spacing.button_padding = egui::vec2(12.0, 8.0);
+    style.spacing.interact_size.y = 44.0;
+    style
+}
+
 pub const SCROLLBACK_LIMIT: usize = 256 * 1024;
 
 /// Only content-free lifecycle observations cross the event-loop/UI seam.
@@ -172,6 +218,8 @@ pub struct MobileApp {
     control: bool,
     alt: bool,
     toolbar_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    control_rect: Option<egui::Rect>,
     menu_open: bool,
     gestures: terminal_gesture::TerminalGesture,
     workspace: workspaces::Workspace,
@@ -197,6 +245,8 @@ impl MobileApp {
             control: false,
             alt: false,
             toolbar_rect: None,
+            #[cfg(test)]
+            control_rect: None,
             menu_open: false,
             gestures: terminal_gesture::TerminalGesture::default(),
             workspace: workspaces::Workspace::Terminal,
@@ -250,6 +300,9 @@ impl MobileApp {
             .max(safe_rect.min.y);
         ui.scope_builder(egui::UiBuilder::new().max_rect(safe_rect), |ui| {
             ui.set_clip_rect(safe_rect);
+            ui.set_style(mobile_style(ui.style()));
+            ui.painter()
+                .rect_filled(safe_rect, 0.0, ui.visuals().panel_fill);
             self.show_content(ui);
         });
     }
@@ -338,13 +391,36 @@ impl MobileApp {
         egui::Panel::top("mobile-header").show(ui, |ui| {
             ui.spacing_mut().interact_size.y = 44.0;
             ui.horizontal(|ui| {
-                ui.strong(self.workspace.label());
-                ui.small(if self.workspace != workspaces::Workspace::Terminal {
-                    "Offline preview"
-                } else if live_selected {
-                    "SSH"
-                } else {
-                    "Offline demo"
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.set_max_width((ui.available_width() - 164.0).max(40.0));
+                    #[cfg(feature = "live-ssh")]
+                    let title = if self.workspace == workspaces::Workspace::Terminal {
+                        self.sink
+                            .live
+                            .connection
+                            .borrow()
+                            .as_ref()
+                            .map(|live| live.host_label().to_owned())
+                    } else {
+                        None
+                    };
+                    #[cfg(not(feature = "live-ssh"))]
+                    let title: Option<String> = None;
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(title.as_deref().unwrap_or(self.workspace.label()))
+                                .strong(),
+                        )
+                        .truncate(),
+                    );
+                    ui.weak(if self.workspace != workspaces::Workspace::Terminal {
+                        "Offline preview"
+                    } else if live_selected {
+                        "SSH"
+                    } else {
+                        "Offline demo"
+                    });
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let menu = ui.menu_button("More", |ui| {
@@ -500,24 +576,6 @@ impl MobileApp {
                         ui.spacing_mut().interact_size.y = 44.0;
                         ui.horizontal(|ui| {
                             // Terminal keys act like a keyboard, not focus targets.
-                            if ui
-                                .add(
-                                    egui::Button::selectable(self.control, "Ctrl")
-                                        .sense(egui::Sense::CLICK),
-                                )
-                                .clicked()
-                            {
-                                self.control = !self.control;
-                            }
-                            if ui
-                                .add(
-                                    egui::Button::selectable(self.alt, "Alt")
-                                        .sense(egui::Sense::CLICK),
-                                )
-                                .clicked()
-                            {
-                                self.alt = !self.alt;
-                            }
                             for (label, key) in [("Esc", Key::Escape), ("Tab", Key::Tab)] {
                                 if ui
                                     .add(egui::Button::new(label).sense(egui::Sense::CLICK))
@@ -525,6 +583,28 @@ impl MobileApp {
                                 {
                                     self.send_key(key);
                                 }
+                            }
+                            let control = ui.add(
+                                egui::Button::selectable(self.control, "Ctrl")
+                                    .frame_when_inactive(true)
+                                    .sense(egui::Sense::CLICK),
+                            );
+                            #[cfg(test)]
+                            {
+                                self.control_rect = Some(control.rect);
+                            }
+                            if control.clicked() {
+                                self.control = !self.control;
+                            }
+                            if ui
+                                .add(
+                                    egui::Button::selectable(self.alt, "Alt")
+                                        .frame_when_inactive(true)
+                                        .sense(egui::Sense::CLICK),
+                                )
+                                .clicked()
+                            {
+                                self.alt = !self.alt;
                             }
                         });
                     });
@@ -1126,7 +1206,7 @@ mod tests {
             assert!(toolbar.bottom() <= height - keyboard_height + 0.5);
             assert!(grid.height() > 0.0);
             // Tap Ctrl through the real UI: it must not dismiss the keyboard.
-            let point = toolbar.min + egui::vec2(22.0, 22.0);
+            let point = app.control_rect.expect("rendered Ctrl key").center();
             for pressed in [true, false] {
                 let output = render(
                     &mut app,

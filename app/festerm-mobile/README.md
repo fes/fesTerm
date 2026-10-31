@@ -338,3 +338,9 @@ on that iPhone and the Wide terminal surface on an isolated iPad Pro 13-inch
 (M5) Simulator. Those local captures are bounded visual evidence, not
 qualification of iPad workflow interaction, rotation, multitasking,
 accessibility or a physical device.
+
+The owner-provided iOS product boards guide the mobile-only navy/blue visual
+pass, two-line host identity, labelled connection fields and Esc/Tab/Ctrl/Alt
+order. See [scope and deliberate prototype differences](../../docs/mobile-layout-design.md#owner-provided-product-mock-ups).
+Actual-widget headless captures support review; native appearance/input and
+the deferred product screens are not established by this styling pass.
