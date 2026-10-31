@@ -15,6 +15,9 @@ use festerm_ssh::{
 };
 use zeroize::{Zeroize, Zeroizing};
 
+#[cfg(test)]
+mod loopback_tests;
+
 const EVENT_BUDGET: usize = 32;
 
 fn control_margin(ui: &egui::Ui) -> egui::Margin {
