@@ -1,20 +1,26 @@
 //! Experimental attach-only bridge. Network dependencies are explicitly opt-in.
-#[cfg(feature = "relay")]
+#[cfg(feature = "client")]
 pub mod files;
 #[cfg(feature = "relay")]
 pub mod host_identity;
+#[cfg(feature = "client")]
+pub mod mobile;
 pub mod protocol;
-#[cfg(feature = "relay")]
+#[cfg(feature = "client")]
 pub mod relay;
+#[cfg(feature = "relay")]
+mod relay_host;
 #[cfg(feature = "relay")]
 pub mod setup_storage;
 #[cfg(feature = "relay")]
 pub mod transport;
+#[cfg(feature = "client")]
+pub mod wire;
 
 #[cfg(all(test, feature = "relay"))]
 mod test_support;
 
-#[cfg(feature = "relay")]
+#[cfg(feature = "client")]
 fn reserve_sequence(counter: &std::sync::atomic::AtomicU64) -> std::io::Result<u64> {
     use std::sync::atomic::Ordering;
     let mut current = counter.load(Ordering::Acquire);
@@ -27,7 +33,7 @@ fn reserve_sequence(counter: &std::sync::atomic::AtomicU64) -> std::io::Result<u
     }
 }
 
-#[cfg(all(test, feature = "relay"))]
+#[cfg(all(test, feature = "client"))]
 mod tests {
     use super::*;
     use std::sync::{atomic::AtomicU64, Arc, Barrier};

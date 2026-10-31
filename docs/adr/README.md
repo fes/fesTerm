@@ -55,6 +55,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0054: iOS Keychain Secret Backend and Mobile Profile Store](0054-ios-keychain-and-mobile-profile-store.md) - Keychain-backed secret store for iOS and a UI-agnostic secret-free profile, host-trust and SSH-key crate
 - [ADR 0055: Platform-Neutral SFTP Core Crate for Mobile](0055-platform-neutral-sftp-core-crate.md) - UI-free bounded SFTP/sandbox crate over russh-sftp; atomic temp-rename transfers, conflict policies, real-sshd harness
 - [ADR 0058: iOS App Lock and Mobile Document Viewer Model](0058-ios-app-lock-and-mobile-document-viewer.md) - Face ID/passcode lock policy with fail-closed settings and native privacy shield; bounded read-only document viewer decisions
+- [ADR 0057: Portable Dev Tunnels Client for iOS](0057-portable-dev-tunnels-client-for-ios.md) - bridge client/relay feature split, mobile session client, takeover/displaced protocol additions and a UI-agnostic blocking tunnels API with no silent reattach
 
 - [ADR 0052: Session-Bound Local File OSC 8 Links](0052-local-file-osc8-links.md) - local-only internal document opening; OS URL handlers remain web-only, native TI-10 qualification pending
 

@@ -6650,3 +6650,15 @@ editor and reconnect banner, with a 17-state headless gallery. Core gained
 Home/End/Insert/Delete/F1-F12 encodings. The profile store is in-memory only;
 SFTP screens, Dev Tunnel/key-auth backends and device validation remain open.
 
+
+### Portable Dev Tunnels client for iOS
+
+`festerm-tunnel-bridge` now separates a portable `client` feature from the
+desktop `relay` host, so the tunnel client path compiles for both iOS targets
+under the dependency policy (ADR 0057). A new `festerm-mobile-tunnels` crate
+exposes a blocking, cancellable API for GitHub device-flow sign-in, tunnel and
+remote-session discovery, takeover-aware attach/detach and a `Session`
+implementation the shell can host like SSH. Displacement by another client ends
+the session with a typed reason and is never reattached silently. Offline tests
+and a real-daemon loopback pass on macOS; live Microsoft service, Keychain and
+device validation, and file reads over the tunnel remain open.

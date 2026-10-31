@@ -164,6 +164,8 @@ const LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 0;
 /// A release that increments [`PROTOCOL_VERSION`] must retain adapters down to
 /// this version for every daemon expected to survive a supported upgrade.
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 1;
+/// Lifecycle reason reported to a client whose attachment another client took.
+pub const DISPLACED_REASON: &str = "persistent session was attached by another client";
 const STOLEN_NOTICE_BYTES: &[u8] =
     b"\n[festerm-sessiond] SESSION_STOLEN: reattached from another client\n";
 const EXITED_NOTICE_BYTES: &[u8] = b"\n[festerm-sessiond] SESSION_EXITED\n";
@@ -1955,10 +1957,7 @@ fn client_worker(
                                     shared.send_event(event);
                                 }
                                 shared.set_lifecycle(SessionLifecycle::Disconnected(
-                                    SessionError::new(
-                                        SessionErrorKind::Output,
-                                        "persistent session was attached by another client",
-                                    ),
+                                    SessionError::new(SessionErrorKind::Output, DISPLACED_REASON),
                                 ));
                                 let _ = completion.send(ShutdownResult::AlreadyStopped);
                                 return;
@@ -1992,10 +1991,7 @@ fn client_worker(
                                 send_output(&shared, output);
                             }
                             shared.set_lifecycle(SessionLifecycle::Disconnected(
-                                SessionError::new(
-                                    SessionErrorKind::Output,
-                                    "persistent session was attached by another client",
-                                ),
+                                SessionError::new(SessionErrorKind::Output, DISPLACED_REASON),
                             ));
                             let _ = completion.send(ShutdownResult::AlreadyStopped);
                             return;

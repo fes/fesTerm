@@ -31,5 +31,13 @@ festerm-windows-job = { path = "../festerm-windows-job" }
 festerm-windows-security = { path = "../festerm-windows-security" }
 windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }
 
+[dev-dependencies]
+# The loopback test drives a real daemon through the bridge host and the mobile API.
+festerm-mobile-profiles = { path = "../festerm-mobile-profiles" }
+festerm-mobile-tunnels = { path = "../festerm-mobile-tunnels", features = ["testing"] }
+festerm-secret-store = { path = "../festerm-secret-store" }
+festerm-tunnel-bridge = { path = "../festerm-tunnel-bridge" }
+tokio = { version = "1", features = ["rt-multi-thread", "io-util"] }
+
 [lints]
 workspace = true

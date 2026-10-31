@@ -3,14 +3,19 @@
 use crate::protocol::invalid;
 use serde::{Deserialize, Serialize};
 use std::{
-    io::{self, Read},
-    path::{Component, Path},
+    io,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
 };
+#[cfg(feature = "relay")]
+use std::{
+    io::Read,
+    path::{Component, Path},
+};
+#[cfg(feature = "relay")]
 use tokio::sync::Semaphore;
 
 pub use crate::protocol::{FILE_LIMIT, FILE_READ, FILE_RESULT};
@@ -39,10 +44,12 @@ pub(crate) struct ReadRequest {
     pub path: String,
 }
 
+#[cfg_attr(not(feature = "relay"), allow(dead_code))]
 pub(crate) struct FileCall {
     pub request: ReadRequest,
     pub reply: flume::Sender<io::Result<Vec<u8>>>,
 }
+#[cfg_attr(not(feature = "relay"), allow(dead_code))]
 pub(crate) type PendingFile = Arc<std::sync::Mutex<Option<FileCall>>>;
 
 #[derive(Clone)]
@@ -146,11 +153,13 @@ pub fn valid_path(path: &str, style: PathStyle) -> bool {
     })
 }
 
+#[cfg(feature = "relay")]
 #[derive(Clone)]
 pub struct FileService {
     allowed: bool,
     slot: Arc<Semaphore>,
 }
+#[cfg(feature = "relay")]
 impl FileService {
     pub fn allows_read(&self) -> bool {
         self.allowed
@@ -181,6 +190,7 @@ impl FileService {
     }
 }
 
+#[cfg(feature = "relay")]
 fn read_file(path: &str) -> io::Result<Vec<u8>> {
     if !valid_path(path, PathStyle::native()) {
         return Err(invalid());
@@ -242,7 +252,7 @@ fn read_file(path: &str) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "relay"))]
 mod tests {
     use super::*;
     #[tokio::test]
