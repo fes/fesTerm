@@ -449,6 +449,33 @@ impl Drop for GuiSftpConnectionKeepAlive {
     }
 }
 
+/// Keeps the dedicated SSH transport thread behind a GUI-connected SFTP
+/// client alive. Dropping it closes the connection's runtime, so hold it for
+/// as long as the raw client is in use.
+pub struct SftpTransportKeepAlive {
+    _guard: Option<GuiSftpConnectionKeepAlive>,
+}
+
+impl std::fmt::Debug for SftpTransportKeepAlive {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SftpTransportKeepAlive")
+    }
+}
+
+impl SftpSession {
+    /// Hands the authenticated raw `russh-sftp` client and its transport
+    /// keep-alive to a platform-neutral SFTP consumer such as `festerm-sftp`.
+    /// The text-mode command surface of this session is no longer usable.
+    pub fn into_transport(self) -> (RusshSftpSession, SftpTransportKeepAlive) {
+        (
+            self.client,
+            SftpTransportKeepAlive {
+                _guard: self.runtime_keepalive,
+            },
+        )
+    }
+}
+
 impl SftpSession {
     /// Attaches a [`GuiSftpConnectionKeepAlive`] guard to this session,
     /// tying the guard's (and therefore its owning thread's runtime's)

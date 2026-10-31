@@ -3416,9 +3416,27 @@
       "decisions": [
         "ADR-0031",
         "ADR-0042",
-        "ADR-0054"
+        "ADR-0055"
       ],
       "automated_tests": [
+        "keep_both_names_preserve_extensions",
+        "identical_needs_size_and_time_within_tolerance",
+        "listing_hides_filters_sorts_and_bounds",
+        "names_reject_traversal_nul_separators_controls_and_bidi",
+        "local_paths_never_ascend",
+        "remote_paths_collapse_without_rising_above_root",
+        "listing_sorts_filters_bounds_and_reports_symlinks",
+        "large_directory_listing_is_bounded_and_cancellable",
+        "mkdir_rename_delete_and_their_errors",
+        "download_and_upload_round_trip_with_progress_and_mtime",
+        "sixty_four_megabyte_files_stream_in_both_directions",
+        "download_conflicts_keep_both_skip_replace_and_remember",
+        "upload_conflicts_keep_both_skip_replace",
+        "cancelling_mid_transfer_leaves_no_final_or_partial_file",
+        "server_disconnect_mid_transfer_fails_cleanly",
+        "permission_errors_are_classified_and_leave_nothing_behind",
+        "symlinks_and_odd_names_are_handled_by_policy",
+        "queue_bounds_history_and_closed_client",
         "mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry",
         "mobile_loopback_ssh_rejects_unknown_and_changed_hosts_before_authentication",
         "mobile_disconnected_history_scrolls_and_copies_without_transport_input",

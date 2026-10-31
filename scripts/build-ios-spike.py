@@ -99,9 +99,10 @@ def main() -> int:
             check_dependencies(target)
             check_dependencies(target, "festerm-ssh")
             check_dependencies(target, "festerm-mobile-profiles")
+            check_dependencies(target, "festerm-sftp")
             if args.live_ssh:
                 check_dependencies(target, "festerm-mobile", True)
-        print("iOS mobile/SSH normal/build dependency boundaries passed")
+        print("iOS mobile/SSH/SFTP normal/build dependency boundaries passed")
         return 0
     if platform.system() != "Darwin":
         parser.error("Simulator packaging requires macOS and full Xcode; use --check-dependencies here")
