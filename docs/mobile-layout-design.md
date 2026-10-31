@@ -122,7 +122,7 @@ events are consumed during arrow navigation. No terminal bytes are encoded
 in this adapter. Keyboard layout and one-shot Ctrl/Alt remain unchanged.
 
 The reference board's screen 04 guides the helper composition: a dark floating
-cross-pad, blue active direction, a compact speed pill and a separate
+cross-pad with font-independent directional strokes, blue active direction, a compact speed pill and a separate
 "Release to stop" caption. It is passive gesture feedback, not a second set of
 tap targets. The helper shows Paused in the neutral zone, then Slow/Medium/Fast
 using the same speed classifier as the existing 180/100/55 ms scheduler; visual

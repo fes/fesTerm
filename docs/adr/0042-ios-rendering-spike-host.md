@@ -265,7 +265,9 @@ accessibility and physical-device acceptance remain open on iPad.
 
 ## Validation impact
 
-The owner-board screen 04 refinement adds a dark temporary arrow pad with active
+The before capture exposed missing Unicode arrow glyphs in the proportional
+font; directional strokes now avoid that font dependency. The owner-board
+screen 04 refinement adds a dark temporary arrow pad with active
 direction, neutral/three-speed feedback and release guidance. One speed
 classifier serves both the existing repeat scheduler and presentation; hold,
 dead-zone, repeat intervals, cancellation and input ownership remain unchanged.

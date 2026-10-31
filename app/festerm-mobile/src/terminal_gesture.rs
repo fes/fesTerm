@@ -434,11 +434,11 @@ impl TerminalGesture {
         let accent = egui::Color32::from_rgb(27, 126, 246);
         painter.rect_filled(layout.pad, 16.0, background);
         painter.rect_stroke(layout.pad, 16.0, border, egui::StrokeKind::Inside);
-        for (value, label, offset) in [
-            (Direction::Left, "←", egui::vec2(-0.28, 0.0)),
-            (Direction::Down, "↓", egui::vec2(0.0, 0.28)),
-            (Direction::Up, "↑", egui::vec2(0.0, -0.28)),
-            (Direction::Right, "→", egui::vec2(0.28, 0.0)),
+        for (value, offset, axis) in [
+            (Direction::Left, egui::vec2(-0.28, 0.0), egui::vec2(-1.0, 0.0)),
+            (Direction::Down, egui::vec2(0.0, 0.28), egui::vec2(0.0, 1.0)),
+            (Direction::Up, egui::vec2(0.0, -0.28), egui::vec2(0.0, -1.0)),
+            (Direction::Right, egui::vec2(0.28, 0.0), egui::vec2(1.0, 0.0)),
         ] {
             let active = direction == Some(value);
             let center = layout.pad.center() + offset * layout.pad.width();
@@ -449,13 +449,18 @@ impl TerminalGesture {
                     accent,
                 );
             }
-            painter.text(
-                center,
-                egui::Align2::CENTER_CENTER,
-                label,
-                egui::FontId::proportional(24.0),
-                if active { foreground } else { muted },
-            );
+            // This is a directional diagram, not font-dependent arrow text.
+            // The default proportional font can render these glyphs as boxes.
+            let stroke = egui::Stroke::new(1.5, if active { foreground } else { muted });
+            let tip = center + axis * 7.0;
+            let perpendicular = egui::vec2(-axis.y, axis.x);
+            painter.line_segment([center - axis * 7.0, tip], stroke);
+            for sign in [-1.0, 1.0] {
+                painter.line_segment(
+                    [tip - axis * 4.0 + perpendicular * 4.0 * sign, tip],
+                    stroke,
+                );
+            }
         }
         painter.circle_stroke(layout.pad.center(), 4.0, egui::Stroke::new(1.0, muted));
         let speed = self.helper_speed();
