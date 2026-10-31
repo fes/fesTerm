@@ -212,6 +212,12 @@ curl -fsSL https://github.com/fes/fesTerm/releases/latest/download/install-dev-t
 & ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.ps1).Content))
 ```
 
+By default a remote connection may take over a session that a local window (or
+another remote) currently holds; the displaced side ends and does not reattach
+by itself, and Running Sessions shows who holds it. To refuse instead, add
+`--no-takeover` (bash) or `-NoTakeover` (PowerShell) when first installing; an
+existing installation keeps its recorded choice.
+
 When setup finishes, the installer prints the public connection JSON, saves it
 as `festerm-profile.json` in the private state directory (`~/.local/share/festerm-tunnels/state`
 or `fesTerm-tunnels\state` under the per-user local app data folder) and copies it to the clipboard when one is

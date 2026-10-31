@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('\A[0-9]+\.[0-9]+\.[0-9]+\z')]
-    [string]$Version = ''
+    [string]$Version = '',
+    [switch]$NoTakeover
 )
 
 Set-StrictMode -Version Latest
@@ -162,7 +163,7 @@ try {
     }
     $cli = Join-Path $cached 'devtunnel.exe'
     Write-Host "Installed private helpers: $cached"
-    & (Join-Path $cached 'festerm-tunnel-setup.exe') --managed --devtunnel $cli --state-dir (Join-Path $root 'state')
+    & (Join-Path $cached 'festerm-tunnel-setup.exe') --managed --devtunnel $cli --state-dir (Join-Path $root 'state') @(if ($NoTakeover) { '--no-takeover' })
     if ($LASTEXITCODE -ne 0) { throw 'Experimental tunnel setup refused/stopped.' }
     $profile = Join-Path $root 'state\festerm-profile.json'
     if (-not (Test-Path -LiteralPath $profile -PathType Leaf)) {

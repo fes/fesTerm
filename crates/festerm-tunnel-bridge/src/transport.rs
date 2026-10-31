@@ -415,9 +415,19 @@ pub async fn serve(
 }
 
 pub async fn serve_with_files(
+    stream: impl AsyncRead + AsyncWrite + Unpin,
+    selected: NativeSessionIdentity,
+    file_service: FileService,
+) -> io::Result<()> {
+    serve_with_takeover(stream, selected, file_service, false).await
+}
+
+/// `takeover` lets a remote connection displace whichever client holds the session.
+pub async fn serve_with_takeover(
     mut stream: impl AsyncRead + AsyncWrite + Unpin,
     selected: NativeSessionIdentity,
     file_service: FileService,
+    takeover: bool,
 ) -> io::Result<()> {
     let target = Target {
         name: selected.name.clone(),
@@ -471,18 +481,26 @@ pub async fn serve_with_files(
         }
     }
     let notifier = Arc::new(Wake(notify.clone()));
-    let session = match tokio::task::spawn_blocking(move || {
-        PersistentSession::resume_exclusive(&selected, SNAPSHOT_LIMIT as u32, notifier)
-    })
-    .await
-    .map_err(|_| invalid())?
-    {
-        Ok(session) => session,
-        Err(_) => {
-            write_frame(&mut stream, REFUSED, &[]).await?;
-            return Err(invalid());
-        }
-    };
+    let session =
+        match tokio::task::spawn_blocking(move || match festerm_sessiond::runtime_root() {
+            Ok(root) => PersistentSession::resume_remote_in(
+                &selected,
+                &root,
+                takeover,
+                SNAPSHOT_LIMIT as u32,
+                notifier,
+            ),
+            Err(error) => Err(error),
+        })
+        .await
+        .map_err(|_| invalid())?
+        {
+            Ok(session) => session,
+            Err(_) => {
+                write_frame(&mut stream, REFUSED, &[]).await?;
+                return Err(invalid());
+            }
+        };
     let terminal = tokio::time::timeout(DEADLINE, async {
         loop {
             let notified = notify.notified();

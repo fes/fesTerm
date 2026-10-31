@@ -3,12 +3,15 @@ set -euo pipefail
 umask 077
 
 fail() { printf 'fesTerm tunnel setup: %s\n' "$*" >&2; exit 1; }
-usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies]'
+usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover]'
 version=
 install_dependencies=false
+setup_extra=()
 for arg in "$@"; do
     if [[ $arg == --install-dependencies ]]; then
         install_dependencies=true
+    elif [[ $arg == --no-takeover ]]; then
+        setup_extra=(--no-takeover)
     elif [[ $arg =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -z $version ]]; then
         version=$arg
     else
@@ -165,7 +168,7 @@ printf 'Installed private helpers: %s\n' "$install"
 printf 'Setup reuses this user installation and its exact tunnel/session; a dedicated per-user service hosts it.\n'
 cleanup
 trap - EXIT
-"$install/festerm-tunnel-setup" --managed --devtunnel "$install/devtunnel" --state-dir "$root/state"
+"$install/festerm-tunnel-setup" --managed --devtunnel "$install/devtunnel" --state-dir "$root/state" ${setup_extra[@]+"${setup_extra[@]}"}
 profile="$root/state/festerm-profile.json"
 [[ -f $profile && ! -L $profile ]] || fail 'Setup finished but did not write the connection JSON.'
 copied=false

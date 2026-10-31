@@ -30,7 +30,7 @@ fn run() -> io::Result<()> {
         return Ok(());
     }
     if args.iter().any(|arg| arg == "--help") {
-        println!("festerm-tunnel-bridge --experimental --tunnel-id ID --cluster CLUSTER --port PORT --session NAME --destination PATH [--token-stdin] [--allow-file-read] [--host-identity ABSOLUTE_PRIVATE_PATH [--existing-host-identity]] [--session-pid PID --session-generation U128]\nPrivate GitHub-authenticated Dev Tunnels provisioning first; runtime takes only a scoped host token. The configured session must already exist and be unattached. Optional exact pid/generation pins refuse name reuse. A host identity file contains a dedicated unencrypted signing key protected for this OS user, never a bearer token. --existing-host-identity requires --host-identity and refuses a missing key instead of creating one. Without a host identity path identity remains ephemeral. Ctrl+C detaches, never terminates. File reads are opt-in and grant remote-user-readable regular files, not a directory sandbox. No create/inventory/takeover/terminate or automatic reconnect.");
+        println!("festerm-tunnel-bridge --experimental --tunnel-id ID --cluster CLUSTER --port PORT --session NAME --destination PATH [--token-stdin] [--allow-file-read] [--takeover] [--host-identity ABSOLUTE_PRIVATE_PATH [--existing-host-identity]] [--session-pid PID --session-generation U128]\nPrivate GitHub-authenticated Dev Tunnels provisioning first; runtime takes only a scoped host token. The configured session must already exist and be unattached. Optional exact pid/generation pins refuse name reuse. A host identity file contains a dedicated unencrypted signing key protected for this OS user, never a bearer token. --existing-host-identity requires --host-identity and refuses a missing key instead of creating one. Without a host identity path identity remains ephemeral. Ctrl+C detaches, never terminates. File reads are opt-in and grant remote-user-readable regular files, not a directory sandbox. Takeover is off unless --takeover lets a remote connection displace a local or other client (it never reattaches on its own). No create/inventory/terminate or automatic reconnect.");
         return Ok(());
     }
     let mut tunnel = None;
@@ -45,12 +45,14 @@ fn run() -> io::Result<()> {
     let mut experimental = false;
     let mut stdin = false;
     let mut allow_file_read = false;
+    let mut takeover = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--experimental" => experimental = true,
             "--token-stdin" => stdin = true,
             "--allow-file-read" => allow_file_read = true,
+            "--takeover" => takeover = true,
             "--existing-host-identity" => existing_host_identity = true,
             "--tunnel-id" => tunnel = iter.next().cloned(),
             "--cluster" => cluster = iter.next().cloned(),
@@ -170,7 +172,7 @@ fn run() -> io::Result<()> {
                     };
                     tokio::select! {
                         _ = tokio::signal::ctrl_c() => break,
-                        _ = transport::serve_with_files(stream, identity.clone(), files.clone()) => {}
+                        _ = transport::serve_with_takeover(stream, identity.clone(), files.clone(), takeover) => {}
                     }
                 }
             }
