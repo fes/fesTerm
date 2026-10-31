@@ -172,6 +172,7 @@ pub struct MobileApp {
     control: bool,
     alt: bool,
     toolbar_rect: Option<egui::Rect>,
+    menu_open: bool,
     gestures: terminal_gesture::TerminalGesture,
     workspace: workspaces::Workspace,
     files: workspaces::FilesWorkspace,
@@ -196,6 +197,7 @@ impl MobileApp {
             control: false,
             alt: false,
             toolbar_rect: None,
+            menu_open: false,
             gestures: terminal_gesture::TerminalGesture::default(),
             workspace: workspaces::Workspace::Terminal,
             files: workspaces::FilesWorkspace::default(),
@@ -319,38 +321,88 @@ impl MobileApp {
                 live.poll(&mut self.terminal, ui.ctx());
             }
         }
-        egui::Panel::top("mobile-workspace-tabs").show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.strong("fesTerm");
-                #[cfg(feature = "live-ssh")]
-                let live_selected = self.sink.live.connection.borrow().is_some();
-                #[cfg(not(feature = "live-ssh"))]
-                let live_selected = false;
-                ui.small(if live_selected {
-                    "SSH prototype · Files/README remain offline previews"
+        #[cfg(feature = "live-ssh")]
+        let live_selected = self.sink.live.connection.borrow().is_some();
+        #[cfg(not(feature = "live-ssh"))]
+        let live_selected = false;
+        #[cfg(feature = "live-ssh")]
+        let can_reset = self
+            .sink
+            .live
+            .connection
+            .borrow()
+            .as_ref()
+            .is_none_or(|live| live.can_reset());
+        #[cfg(not(feature = "live-ssh"))]
+        let can_reset = true;
+        egui::Panel::top("mobile-header").show(ui, |ui| {
+            ui.spacing_mut().interact_size.y = 44.0;
+            ui.horizontal(|ui| {
+                ui.strong(self.workspace.label());
+                ui.small(if self.workspace != workspaces::Workspace::Terminal {
+                    "Offline preview"
+                } else if live_selected {
+                    "SSH"
                 } else {
-                    "iOS workflow preview · synthetic data"
+                    "Offline demo"
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.small(format!(
-                        "resume {} · memory {}",
-                        lifecycle.resumes, lifecycle.memory_warnings
-                    ));
-                });
-            });
-            ui.horizontal(|ui| {
-                for workspace in [
-                    workspaces::Workspace::Terminal,
-                    workspaces::Workspace::Files,
-                    workspaces::Workspace::Markdown,
-                ] {
-                    if ui
-                        .selectable_label(self.workspace == workspace, workspace.label())
-                        .clicked()
-                    {
-                        self.switch_workspace(workspace);
+                    let menu = ui.menu_button("More", |ui| {
+                        for (workspace, label) in [
+                            (workspaces::Workspace::Terminal, "Terminal"),
+                            (workspaces::Workspace::Files, "Files (preview)"),
+                            (workspaces::Workspace::Markdown, "README (preview)"),
+                        ] {
+                            if ui
+                                .selectable_label(self.workspace == workspace, label)
+                                .clicked()
+                            {
+                                self.switch_workspace(workspace);
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        let reset_label = if live_selected {
+                            "Use offline demo"
+                        } else {
+                            "Reset demo"
+                        };
+                        if ui
+                            .add_enabled(
+                                lifecycle.active && can_reset,
+                                egui::Button::new(reset_label),
+                            )
+                            .clicked()
+                        {
+                            self.reset_fixture();
+                            ui.close();
+                        }
+                        ui.menu_button("Diagnostics", |ui| {
+                            ui.label(format!("Resumes: {}", lifecycle.resumes));
+                            ui.label(format!("Suspensions: {}", lifecycle.suspensions));
+                            ui.label(format!("Memory warnings: {}", lifecycle.memory_warnings));
+                            ui.label(format!("Input: {} bytes", self.sink.diagnostics.byte_count));
+                        });
+                    });
+                    self.menu_open = menu.inner.is_some();
+                    #[cfg(feature = "live-ssh")]
+                    if self.workspace == workspaces::Workspace::Terminal {
+                        let label = if self.connection.open {
+                            "Cancel"
+                        } else {
+                            "Connect"
+                        };
+                        if ui
+                            .add_enabled(
+                                lifecycle.active,
+                                egui::Button::new(label).sense(egui::Sense::CLICK),
+                            )
+                            .clicked()
+                        {
+                            self.connection.toggle();
+                        }
                     }
-                }
+                });
             });
         });
         match self.workspace {
@@ -375,26 +427,33 @@ impl MobileApp {
         self.workspace = workspace;
     }
 
+    fn reset_fixture(&mut self) {
+        self.switch_workspace(workspaces::Workspace::Terminal);
+        self.gestures.cancel();
+        self.terminal = fixture_terminal();
+        self.view = TerminalView::default();
+        self.sink.reset();
+        self.control = false;
+        self.alt = false;
+        #[cfg(feature = "live-ssh")]
+        {
+            self.connection.open = false;
+        }
+    }
+
     fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
         #[cfg(feature = "live-ssh")]
         {
-            // Measure before entering the auto-sized panel. Using its previous
-            // height here creates a shrinking feedback loop on every frame.
+            // Use the parent safe space, never the previous form height.
             let controls_height = ui.available_height() * 0.45;
-            let mut panel = egui::Panel::top("mobile-ssh-connection");
-            if self
-                .connection
-                .controls_expanded(&self.sink.live.connection.borrow())
-            {
-                panel = panel.exact_size(controls_height);
-            }
-            panel.show(ui, |ui| {
+            if self.connection.open || self.sink.live.connection.borrow().is_some() {
                 let mut connected = false;
                 ui.add_enabled_ui(lifecycle.active, |ui| {
                     egui::ScrollArea::vertical()
                         .id_salt("mobile-ssh-controls")
                         .max_height(controls_height)
                         .show(ui, |ui| {
+                            ui.spacing_mut().interact_size.y = 44.0;
                             connected = self.connection.show(
                                 ui,
                                 &mut self.sink.live.connection.borrow_mut(),
@@ -414,7 +473,8 @@ impl MobileApp {
                     self.control = false;
                     self.alt = false;
                 }
-            });
+                ui.separator();
+            }
         }
         #[cfg(feature = "live-ssh")]
         let input_ready = lifecycle.active
@@ -428,53 +488,8 @@ impl MobileApp {
                 .is_none_or(|live| live.input_enabled());
         #[cfg(not(feature = "live-ssh"))]
         let input_ready = lifecycle.active;
-        egui::Panel::top("terminal-fixture-status").show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                #[cfg(feature = "live-ssh")]
-                let live_selected = self.sink.live.connection.borrow().is_some();
-                #[cfg(feature = "live-ssh")]
-                let can_reset = self
-                    .sink
-                    .live
-                    .connection
-                    .borrow()
-                    .as_ref()
-                    .is_none_or(|live| live.can_reset());
-                #[cfg(not(feature = "live-ssh"))]
-                let live_selected = false;
-                #[cfg(not(feature = "live-ssh"))]
-                let can_reset = true;
-                if live_selected {
-                    ui.small("Live SSH prototype · no credential persistence");
-                } else {
-                    ui.small(format!(
-                        "Offline terminal · input {} bytes · never executed",
-                        self.sink.diagnostics.byte_count,
-                    ));
-                }
-                if ui
-                    .add_enabled(
-                        can_reset,
-                        egui::Button::new(if live_selected {
-                            "Offline fixture"
-                        } else {
-                            "Reset"
-                        })
-                        .sense(egui::Sense::CLICK),
-                    )
-                    .clicked()
-                {
-                    self.gestures.cancel();
-                    self.terminal = fixture_terminal();
-                    self.view = TerminalView::default();
-                    self.sink.reset();
-                    self.control = false;
-                    self.alt = false;
-                }
-            });
-        });
         let toolbar = egui::Panel::bottom("terminal-keys").show(ui, |ui| {
-            ui.add_enabled_ui(input_ready, |ui| {
+            ui.add_enabled_ui(input_ready && !self.menu_open, |ui| {
                 egui::ScrollArea::horizontal()
                     .id_salt("extra-keys")
                     .show(ui, |ui| {
@@ -512,7 +527,7 @@ impl MobileApp {
             });
         });
         self.toolbar_rect = Some(toolbar.response.rect);
-        if input_ready {
+        if input_ready && !self.menu_open {
             ui.input_mut(|input| self.consume_sticky_text(&mut input.events));
         }
         let terminal_rect = ui.available_rect_before_wrap();
@@ -523,7 +538,7 @@ impl MobileApp {
                 input.time,
                 terminal_rect,
                 any_touches,
-                input_ready && input.focused,
+                input_ready && !self.menu_open && input.focused,
             )
         });
         if let Some(key) = gesture.key {
@@ -542,9 +557,9 @@ impl MobileApp {
             &mut self.sink,
             TerminalViewOptions {
                 paste_available: false,
-                terminal_input_enabled: input_ready && !gesture.block_pointer,
-                keyboard_input_enabled: input_ready,
-                persistent_keyboard_focus: input_ready,
+                terminal_input_enabled: input_ready && !self.menu_open && !gesture.block_pointer,
+                keyboard_input_enabled: input_ready && !self.menu_open,
+                persistent_keyboard_focus: input_ready && !self.menu_open,
                 // No clipboard/paste policy is implemented by this probe.
                 defer_paste_to_application: true,
                 ..Default::default()
@@ -588,6 +603,51 @@ impl eframe::App for MobileApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "live-ssh")]
+    #[test]
+    fn mobile_header_menu_routes_previews_and_resets_demo_without_stale_input() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let app = Rc::new(RefCell::new(MobileApp::new(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })))));
+        let displayed = app.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(
+                move |ui, _: &mut ()| displayed.borrow_mut().show_with_occlusion(ui, 0.35),
+                (),
+            );
+        harness.run();
+        app.borrow_mut().control = true;
+        for (label, workspace) in [
+            ("Files (preview)", workspaces::Workspace::Files),
+            ("README (preview)", workspaces::Workspace::Markdown),
+            ("Terminal", workspaces::Workspace::Terminal),
+        ] {
+            harness.get_by_label("More").click();
+            harness.run();
+            assert!(app.borrow().menu_open);
+            harness.get_by_label(label).click();
+            harness.run();
+            assert_eq!(app.borrow().workspace, workspace);
+            assert!(!app.borrow().control);
+        }
+        assert_eq!(app.borrow().sink.diagnostics.byte_count, 0);
+        app.borrow_mut().send_key(Key::Tab);
+        assert!(app.borrow().sink.diagnostics.byte_count > 0);
+        harness.get_by_label("Connect").click();
+        harness.run();
+        assert!(app.borrow().connection.open);
+        harness.get_by_label("More").click();
+        harness.run();
+        harness.get_by_label("Reset demo").click();
+        harness.run();
+        assert!(!app.borrow().connection.open);
+        assert_eq!(app.borrow().sink.diagnostics.byte_count, 0);
+    }
 
     #[cfg(feature = "live-ssh")]
     fn connection_frame(

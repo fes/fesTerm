@@ -265,15 +265,20 @@ accessibility and physical-device acceptance remain open on iPad.
 
 ## Validation impact
 
-The #425 connection-form layout correction measures the remaining safe UI
-space before creating its top panel, reserving 45% while the form or trust/auth
-prompt is open and releasing it afterward. Short layouts retain bounded
-scrolling. This fixes the demonstrated self-shrinking panel without changing
-terminal ownership, transport/authentication, persistence or keyboard policy.
+The #425 connection-form layout correction uses a direct scroll area bounded
+by 45% of measured safe space, growing only to its content. The owner-requested
+cleanup uses one compact header, secondary preview/reset actions and diagnostics
+under More, and 44-point control targets. Repeated experiment/counter/explanatory
+strips are removed; trust/authentication, active replacement and recovery remain
+explicit. Menu interaction cannot route terminal keys or gestures. This fixes
+the shrinking panel and excessive chrome without changing terminal ownership,
+transport/authentication, persistence or persistent-keyboard policy.
 `mobile_connection_form_fits_measured_phone_tablet_space_and_releases_it` and
 `mobile_connection_form_short_layout_scrolls_to_connect_without_terminal_input`
 cover actual-widget geometry, reopening, short-view scrolling and zero terminal
-input. Before/after headless capture is visual evidence; native keyboard/touch,
+input. `mobile_header_menu_routes_previews_and_resets_demo_without_stale_input`
+covers actual overflow navigation, latch retirement and reset. Before/after
+headless capture is visual evidence; native keyboard/touch,
 rotation, SSH/TUI and physical-device acceptance remain MOB-06 requirements.
 
 The owner-requested iteration screenshot review adds an opt-in, test-only

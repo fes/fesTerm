@@ -56,7 +56,7 @@ fn capture_mobile_ui_gallery() {
             harness.remove_cursor();
             harness.run();
             if connect {
-                harness.get_by_label("Connect SSH (prototype)").click();
+                harness.get_by_label("Connect").click();
                 harness.run();
             }
             harness.remove_cursor();

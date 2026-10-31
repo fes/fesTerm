@@ -315,6 +315,7 @@ impl LiveSsh {
                 egui::TextEdit::singleline(&mut self.password)
                     .password(true)
                     .sensitive(true)
+                    .min_size(egui::vec2(0.0, 44.0))
                     .char_limit(4096),
             );
             if ui.button("Authenticate").clicked() {
@@ -362,11 +363,11 @@ pub(super) struct ConnectionControlsGeometry {
 }
 
 impl ConnectionForm {
-    pub(super) fn controls_expanded(&self, live: &Option<LiveSsh>) -> bool {
-        self.open
-            || live.as_ref().is_some_and(|connection| {
-                connection.host_prompt.is_some() || connection.password_prompt.is_some()
-            })
+    pub(super) fn toggle(&mut self) {
+        self.open = !self.open;
+        if self.port.is_empty() {
+            self.port = "22".to_owned();
+        }
     }
 
     pub(super) fn show(
@@ -389,44 +390,35 @@ impl ConnectionForm {
                 ));
             }
             connection.prompts(ui);
-            if ui.button("Disconnect").clicked() {
+            if !connection.can_reset() && ui.button("Disconnect").clicked() {
                 connection.stop("Disconnected. Connect again for a fresh shell.");
             }
         }
-        if ui
-            .button(if self.open {
-                "Close connection form"
-            } else {
-                "Connect SSH (prototype)"
-            })
-            .clicked()
-        {
-            self.open = !self.open;
-            if self.port.is_empty() {
-                self.port = "22".to_owned();
-            }
-        }
         if self.open {
-            ui.label("Transient connection · credentials are not saved");
-            ui.small("Connect replaces the current session and starts a fresh shell.");
+            if live.as_ref().is_some_and(|connection| !connection.can_reset()) {
+                ui.small("Connect starts a new shell.");
+            }
             #[cfg(test)]
             let controls_start = ui.cursor().min;
             ui.add(
                 egui::TextEdit::singleline(&mut self.host)
+                    .min_size(egui::vec2(0.0, 44.0))
                     .hint_text("Host")
                     .char_limit(253),
             );
             ui.add(
                 egui::TextEdit::singleline(&mut self.port)
+                    .min_size(egui::vec2(0.0, 44.0))
                     .hint_text("Port")
                     .char_limit(5),
             );
             ui.add(
                 egui::TextEdit::singleline(&mut self.username)
+                    .min_size(egui::vec2(0.0, 44.0))
                     .hint_text("Username")
                     .char_limit(255),
             );
-            let connect = ui.button("Connect to host");
+            let connect = ui.button("Connect");
             #[cfg(test)]
             {
                 self.controls = Some(ConnectionControlsGeometry {
