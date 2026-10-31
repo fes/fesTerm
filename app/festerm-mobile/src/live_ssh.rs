@@ -395,7 +395,10 @@ impl ConnectionForm {
             }
         }
         if self.open {
-            if live.as_ref().is_some_and(|connection| !connection.can_reset()) {
+            if live
+                .as_ref()
+                .is_some_and(|connection| !connection.can_reset())
+            {
                 ui.small("Connect starts a new shell.");
             }
             #[cfg(test)]

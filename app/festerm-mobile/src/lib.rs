@@ -444,6 +444,10 @@ impl MobileApp {
     fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
         #[cfg(feature = "live-ssh")]
         {
+            #[cfg(test)]
+            {
+                self.connection.controls = None;
+            }
             // Use the parent safe space, never the previous form height.
             let controls_height = ui.available_height() * 0.45;
             if self.connection.open || self.sink.live.connection.borrow().is_some() {
@@ -609,10 +613,12 @@ mod tests {
     fn mobile_header_menu_routes_previews_and_resets_demo_without_stale_input() {
         use egui_kittest::{kittest::Queryable, Harness};
 
-        let app = Rc::new(RefCell::new(MobileApp::new(Rc::new(Cell::new(Lifecycle {
-            active: true,
-            ..Default::default()
-        })))));
+        let app = Rc::new(RefCell::new(MobileApp::new(Rc::new(Cell::new(
+            Lifecycle {
+                active: true,
+                ..Default::default()
+            },
+        )))));
         let displayed = app.clone();
         let mut harness = Harness::builder()
             .with_size(egui::vec2(390.0, 844.0))
