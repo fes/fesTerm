@@ -276,6 +276,18 @@ changes. A preliminary status check alone is not atomic authorization.
 If the existing daemon API cannot provide that guarantee, add a narrowly
 reviewed admission operation rather than promising safety from a racy check.
 
+Deliberate takeover (amends the no-takeover default above): admission carries a
+takeover flag and, from daemons that advertise `attach_kinds`, the attach kind
+(`local` or `remote`) in an `FSA4` request. The wire protocol stays at 3, so an
+existing client keeps attaching with `FSA3` and is treated as `local`, and an
+existing daemon keeps serving every client. Daemons record `attached_by` in the
+registry so Running Sessions can show who holds a session; legacy daemons that
+report `attached` alone are shown as attached locally. The displaced client sees
+the existing `SESSION_STOLEN` notice and never reattaches automatically, so
+local and remote cannot fight over a session. Remote takeover is on by default
+per Dev Tunnel profile and can be turned off; with it off, an occupied session
+is refused exactly as before.
+
 Recovery retains ADR 0038's snapshot-before-live-output and adoption barrier.
 Preserve ordered resize/control events and exactly-once query-reply ownership.
 Discard unsent input on disconnect; never replay keystrokes or destructive
@@ -626,7 +638,8 @@ credential lifecycle still require deliberate implementation.
 
 Configuration adds a secret-free `dev_tunnel` profile kind; existing documents
 and local takeover semantics remain supported. Protocol 3 adds atomic admission;
-the remote subset never authorizes takeover. Initial desktop scope is
+the remote subset authorizes takeover only when the profile's "take over if
+attached" setting (default on) is enabled. Initial desktop scope is
 Windows, Linux and macOS with platform-specific evidence required. Mobile,
 multi-user delegation, system-wide/unapproved unattended services, arbitrary port forwarding,
 automatic helper deployment and daemon hot handoff remain out of scope.

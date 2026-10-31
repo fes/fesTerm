@@ -35,6 +35,7 @@ use windows_sys::Win32::System::Threading::{
 use std::cell::RefCell;
 
 use festerm_pty::default_local_profile;
+use festerm_sessiond::AttachKind;
 use festerm_ssh::PersistentSessionName;
 use fs2::FileExt;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -209,6 +210,10 @@ struct SessionRecord {
     created_at_unix_ms: u128,
     #[serde(default)]
     attached: bool,
+    #[serde(default)]
+    attached_by: Option<AttachKind>,
+    #[serde(default)]
+    attach_kinds: bool,
     #[serde(default = "legacy_protocol_version")]
     protocol_version: u16,
     #[serde(default = "legacy_recovery_snapshot_schema_version")]
@@ -1025,6 +1030,8 @@ fn generation_record(
         scrollback_limit_bytes,
         created_at_unix_ms: generation,
         attached: false,
+        attached_by: None,
+        attach_kinds: true,
         protocol_version: festerm_sessiond::PROTOCOL_VERSION,
         snapshot_schema_version: festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
         helper_identity: env::current_exe().ok().and_then(|path| {
@@ -1123,7 +1130,7 @@ fn session_client_loop<R: Read + Send + 'static>(
     observer: Option<mpsc::Sender<ClientLoopEvent>>,
     mut handle_client_command: impl FnMut(ClientCommand) -> io::Result<()>,
     mut shutdown: impl FnMut(),
-    mut on_attach_changed: impl FnMut(bool) -> bool,
+    mut on_attach_changed: impl FnMut(Option<AttachKind>) -> bool,
     terminal: &mut Terminal,
 ) -> io::Result<()> {
     listener.set_nonblocking(true)?;
@@ -1132,7 +1139,7 @@ fn session_client_loop<R: Read + Send + 'static>(
     let mut active: Option<ActiveClient> = None;
     let mut retired_clients = Vec::new();
     let mut next_generation = 1u64;
-    let mut attached_reported = false;
+    let mut attached_reported = None;
     let mut pending = PendingOutput::default();
     let result = loop {
         if let Err(error) = reap_client_threads(&mut retired_clients) {
@@ -1191,7 +1198,7 @@ fn session_client_loop<R: Read + Send + 'static>(
             continue;
         }
         report_attach_state_change(
-            active.is_some(),
+            active.as_ref().map(|client| client.kind),
             &mut attached_reported,
             &mut on_attach_changed,
         );
@@ -1206,7 +1213,7 @@ fn session_client_loop<R: Read + Send + 'static>(
                 }
                 send_to_active(&mut active, &mut retired_clients, &mut pending, data);
                 report_attach_state_change(
-                    active.is_some(),
+                    active.as_ref().map(|client| client.kind),
                     &mut attached_reported,
                     &mut on_attach_changed,
                 );
@@ -1229,7 +1236,7 @@ fn session_client_loop<R: Read + Send + 'static>(
     let result = result
         .and_then(|()| finish_pending_output(&mut active, &mut retired_clients, &mut pending));
     retire_active(&mut active, &mut retired_clients, false);
-    report_attach_state_change(false, &mut attached_reported, &mut on_attach_changed);
+    report_attach_state_change(None, &mut attached_reported, &mut on_attach_changed);
     for client in retired_clients {
         join_client_thread_within(client, WORKER_JOIN_TIMEOUT)?;
     }
@@ -1238,9 +1245,9 @@ fn session_client_loop<R: Read + Send + 'static>(
 }
 
 fn report_attach_state_change(
-    currently_attached: bool,
-    previously_reported: &mut bool,
-    on_change: &mut impl FnMut(bool) -> bool,
+    currently_attached: Option<AttachKind>,
+    previously_reported: &mut Option<AttachKind>,
+    on_change: &mut impl FnMut(Option<AttachKind>) -> bool,
 ) {
     if currently_attached != *previously_reported && on_change(currently_attached) {
         *previously_reported = currently_attached;
@@ -1262,7 +1269,7 @@ fn accept_unix_clients(
             Ok((mut stream, _)) => {
                 stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL))?;
                 stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))?;
-                let Some(recovery_limit) = admit_client(&mut stream, active)? else {
+                let Some((recovery_limit, kind)) = admit_client(&mut stream, active)? else {
                     continue;
                 };
                 if let Err(error) = replace_active_limited(
@@ -1273,6 +1280,7 @@ fn accept_unix_clients(
                     client_input_tx.clone(),
                     next_generation,
                     recovery_limit,
+                    kind,
                 ) {
                     eprintln!("fesTerm rejected a replacement session client: {error}");
                     return Ok(());
@@ -1295,7 +1303,7 @@ enum ClientLoopEvent {
     OutputBuffered,
 }
 
-fn attachment_reporter(name: String, pid: u32) -> impl FnMut(bool) -> bool {
+fn attachment_reporter(name: String, pid: u32) -> impl FnMut(Option<AttachKind>) -> bool {
     let mut retry_after = Instant::now();
     move |attached| {
         if Instant::now() < retry_after {
@@ -1315,12 +1323,13 @@ fn attachment_reporter(name: String, pid: u32) -> impl FnMut(bool) -> bool {
 fn set_registry_attached(
     name: &str,
     pid: u32,
-    attached: bool,
+    attached: Option<AttachKind>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     with_registry_lock(|registry: &mut SessionRegistry| {
         if let Some(record) = registry.sessions.get_mut(name) {
             if record.pid == pid {
-                record.attached = attached;
+                record.attached = attached.is_some();
+                record.attached_by = attached;
             }
         }
         Ok(())
@@ -1349,7 +1358,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     let mut active: Option<ActiveClient> = None;
     let mut retired_clients = Vec::new();
     let mut next_generation = 1u64;
-    let mut attached_reported = false;
+    let mut attached_reported = None;
     let pid = process::id();
     let name_owned = name.to_owned();
     let mut on_attach_changed = attachment_reporter(name_owned, pid);
@@ -1442,7 +1451,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
             continue;
         }
         report_attach_state_change(
-            active.is_some(),
+            active.as_ref().map(|client| client.kind),
             &mut attached_reported,
             &mut on_attach_changed,
         );
@@ -1454,7 +1463,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
                 }
                 send_to_active(&mut active, &mut retired_clients, &mut pending, data);
                 report_attach_state_change(
-                    active.is_some(),
+                    active.as_ref().map(|client| client.kind),
                     &mut attached_reported,
                     &mut on_attach_changed,
                 );
@@ -1480,7 +1489,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     let result = result
         .and_then(|()| finish_pending_output(&mut active, &mut retired_clients, &mut pending));
     retire_active(&mut active, &mut retired_clients, false);
-    report_attach_state_change(false, &mut attached_reported, &mut on_attach_changed);
+    report_attach_state_change(None, &mut attached_reported, &mut on_attach_changed);
     // The shell must not outlive the daemon that owns its pseudoterminal, and
     // closing the pseudoconsole is what finally lets the reader see end of
     // file. Both have to happen before any worker thread is joined.
@@ -1599,8 +1608,8 @@ fn accept_windows_clients(
         sessiond_trace("accept_windows_clients: new client");
         stream.set_read_timeout(WINDOWS_CLIENT_READ_TIMEOUT);
         stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
-        let recovery_limit = match admit_client(&mut stream, active) {
-            Ok(Some(limit)) => limit,
+        let (recovery_limit, kind) = match admit_client(&mut stream, active) {
+            Ok(Some(admitted)) => admitted,
             _ => return,
         };
         if let Err(error) = replace_active_limited(
@@ -1611,6 +1620,7 @@ fn accept_windows_clients(
             client_input_tx.clone(),
             next_generation,
             recovery_limit,
+            kind,
         ) {
             eprintln!("fesTerm rejected a replacement session client: {error}");
         }
@@ -1677,6 +1687,7 @@ enum ClientOutput {
 
 struct ActiveClient {
     generation: u64,
+    kind: AttachKind,
     output: mpsc::SyncSender<ClientOutput>,
     stolen: Arc<AtomicBool>,
     thread: thread::JoinHandle<io::Result<()>>,
@@ -1699,6 +1710,7 @@ fn replace_active<S: Read + Write + Send + 'static>(
         input,
         next_generation,
         usize::MAX,
+        AttachKind::Local,
     )
 }
 
@@ -1707,7 +1719,7 @@ fn replace_active<S: Read + Write + Send + 'static>(
 fn admit_client(
     stream: &mut (impl Read + Write),
     active: &Option<ActiveClient>,
-) -> io::Result<Option<usize>> {
+) -> io::Result<Option<(usize, AttachKind)>> {
     let mut request = [0; festerm_sessiond::ADMISSION_BYTES];
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut offset = 0;
@@ -1728,30 +1740,33 @@ fn admit_client(
             Err(error) => return Err(error),
         }
     }
-    let expected = festerm_sessiond::encode_admission(
-        process::id(),
-        *DAEMON_GENERATION.get().unwrap_or(&0),
-        request[4] == 1,
-        u32::from_be_bytes(request[25..29].try_into().expect("fixed admission")),
-    );
+    let limit = u32::from_be_bytes(request[25..29].try_into().expect("fixed admission"));
+    let header = (offset == request.len())
+        .then(|| festerm_sessiond::decode_admission_header(&request))
+        .flatten();
+    let admitted = header.filter(|&(takeover, kind)| {
+        let generation = *DAEMON_GENERATION.get().unwrap_or(&0);
+        let expected = if request[3] == b'4' {
+            festerm_sessiond::encode_admission_for(process::id(), generation, takeover, kind, limit)
+        } else {
+            festerm_sessiond::encode_admission(process::id(), generation, takeover, limit)
+        };
+        request == expected
+    });
     let occupied = active
         .as_ref()
         .is_some_and(|client| !client.thread.is_finished());
-    if offset != request.len()
-        || request != expected
-        || request[4] > 1
-        || (request[4] == 0 && occupied)
-    {
+    let Some((_, kind)) = admitted.filter(|&(takeover, _)| takeover || !occupied) else {
         stream.write_all(&[0])?;
         return Ok(None);
-    }
-    let limit = u32::from_be_bytes(request[25..29].try_into().expect("fixed admission")) as usize;
+    };
+    let limit = limit as usize;
     if limit == 0 {
         stream.write_all(&[0])?;
         return Ok(None);
     }
     stream.write_all(&[1])?;
-    Ok(Some(limit.min(768 * 1024 * 1024)))
+    Ok(Some((limit.min(768 * 1024 * 1024), kind)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1763,6 +1778,7 @@ fn replace_active_limited<S: Read + Write + Send + 'static>(
     input: mpsc::SyncSender<ClientInput>,
     next_generation: &mut u64,
     recovery_limit: usize,
+    kind: AttachKind,
 ) -> io::Result<()> {
     let recovery = festerm_sessiond::encode_recovery_snapshot_with_limit(terminal, recovery_limit)
         .map_err(|error| io::Error::other(error.to_string()))?;
@@ -1804,6 +1820,7 @@ fn replace_active_limited<S: Read + Write + Send + 'static>(
     *next_generation = next_generation.wrapping_add(1);
     let client = ActiveClient {
         generation,
+        kind,
         output,
         stolen,
         thread,
@@ -3533,6 +3550,7 @@ mod tests {
         let (finish, wait) = mpsc::sync_channel(1);
         let stolen = Arc::new(AtomicBool::new(false));
         let active = Some(ActiveClient {
+            kind: AttachKind::Local,
             generation: 7,
             output,
             stolen: stolen.clone(),
@@ -3558,7 +3576,10 @@ mod tests {
         client.thread.join().unwrap().unwrap();
 
         let mut free = io::Cursor::new(request.to_vec());
-        assert_eq!(admit_client(&mut free, &None).unwrap(), Some(1024));
+        assert_eq!(
+            admit_client(&mut free, &None).unwrap(),
+            Some((1024, AttachKind::Local))
+        );
         assert_eq!(free.into_inner()[festerm_sessiond::ADMISSION_BYTES], 1);
     }
 
@@ -4248,6 +4269,7 @@ mod tests {
         }
         let (output, _received_output) = mpsc::sync_channel(1);
         let active = ActiveClient {
+            kind: AttachKind::Local,
             generation: 7,
             output,
             stolen: Arc::new(AtomicBool::new(false)),
@@ -4523,6 +4545,7 @@ mod tests {
         let (output, received) = mpsc::sync_channel(1);
         output.send(ClientOutput::Data(b"first".to_vec())).unwrap();
         let mut active = Some(ActiveClient {
+            kind: AttachKind::Local,
             generation: 1,
             output,
             stolen: Arc::new(AtomicBool::new(false)),
@@ -4927,7 +4950,7 @@ mod tests {
                 |_command| Ok(()),
                 || {},
                 move |attached| {
-                    attach_events_clone.lock().unwrap().push(attached);
+                    attach_events_clone.lock().unwrap().push(attached.is_some());
                     true
                 },
                 &mut terminal,
@@ -5118,6 +5141,8 @@ mod tests {
                     scrollback_limit_bytes: 1024,
                     created_at_unix_ms: 2,
                     attached: false,
+                    attached_by: None,
+                    attach_kinds: false,
                     protocol_version: festerm_sessiond::PROTOCOL_VERSION,
                     snapshot_schema_version: festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
                     helper_identity: None,
@@ -5142,6 +5167,7 @@ mod tests {
         // The worker has ended, so nothing will ever receive again.
         drop(receiver);
         let mut active = Some(ActiveClient {
+            kind: AttachKind::Local,
             generation: 1,
             output,
             stolen: Arc::new(AtomicBool::new(false)),
@@ -5169,6 +5195,7 @@ mod tests {
     fn output_for_a_full_client_waits_instead_of_dropping_the_session() {
         let (output, receiver) = mpsc::sync_channel(1);
         let mut active = Some(ActiveClient {
+            kind: AttachKind::Local,
             generation: 1,
             output,
             stolen: Arc::new(AtomicBool::new(false)),
@@ -5205,6 +5232,7 @@ mod tests {
     fn output_parked_for_a_replaced_client_is_not_delivered_twice() {
         let (output, receiver) = mpsc::sync_channel(1);
         let mut active = Some(ActiveClient {
+            kind: AttachKind::Local,
             generation: 1,
             output,
             stolen: Arc::new(AtomicBool::new(false)),
@@ -5219,6 +5247,7 @@ mod tests {
 
         let (replacement, replacement_receiver) = mpsc::sync_channel(4);
         active = Some(ActiveClient {
+            kind: AttachKind::Local,
             generation: 2,
             output: replacement,
             stolen: Arc::new(AtomicBool::new(false)),
@@ -5797,6 +5826,8 @@ mod tests {
             scrollback_limit_bytes: 1024,
             created_at_unix_ms: 1_700_000_000_000,
             attached: true,
+            attached_by: None,
+            attach_kinds: false,
             protocol_version: festerm_sessiond::PROTOCOL_VERSION,
             snapshot_schema_version: festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             helper_identity: Some("festerm-sessiond-0.2.2.exe".to_owned()),
@@ -5839,6 +5870,8 @@ mod tests {
                 scrollback_limit_bytes: 1024,
                 created_at_unix_ms: 1,
                 attached: false,
+                attached_by: None,
+                attach_kinds: false,
                 protocol_version: festerm_sessiond::PROTOCOL_VERSION,
                 snapshot_schema_version: festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
                 helper_identity: None,
@@ -5964,34 +5997,43 @@ mod tests {
     #[test]
     fn attach_state_change_reports_only_on_transition() {
         let events = Rc::new(RefCell::new(Vec::new()));
-        let mut reported = false;
+        let mut reported = None;
         let events_clone = Rc::clone(&events);
-        let mut on_change = move |attached: bool| {
+        let mut on_change = move |attached: Option<AttachKind>| {
             events_clone.borrow_mut().push(attached);
             true
         };
 
-        report_attach_state_change(false, &mut reported, &mut on_change);
+        let local = Some(AttachKind::Local);
+        let remote = Some(AttachKind::Remote);
+        report_attach_state_change(None, &mut reported, &mut on_change);
         assert!(events.borrow().is_empty());
 
-        report_attach_state_change(true, &mut reported, &mut on_change);
-        assert_eq!(*events.borrow(), vec![true]);
+        report_attach_state_change(local, &mut reported, &mut on_change);
+        assert_eq!(*events.borrow(), vec![local]);
 
-        report_attach_state_change(true, &mut reported, &mut on_change);
-        assert_eq!(*events.borrow(), vec![true]);
+        report_attach_state_change(local, &mut reported, &mut on_change);
+        assert_eq!(*events.borrow(), vec![local]);
 
-        report_attach_state_change(false, &mut reported, &mut on_change);
-        assert_eq!(*events.borrow(), vec![true, false]);
+        // A takeover keeps the session attached but changes who holds it.
+        report_attach_state_change(remote, &mut reported, &mut on_change);
+        assert_eq!(*events.borrow(), vec![local, remote]);
+
+        report_attach_state_change(None, &mut reported, &mut on_change);
+        assert_eq!(*events.borrow(), vec![local, remote, None]);
     }
 
     #[test]
     fn failed_attachment_state_publication_is_retried_not_marked_complete() {
-        let mut reported = true;
-        report_attach_state_change(false, &mut reported, &mut |_| false);
-        assert!(reported, "failed detach publication must remain pending");
-        report_attach_state_change(false, &mut reported, &mut |_| true);
-        assert!(!reported);
-        report_attach_state_change(false, &mut reported, &mut |_| {
+        let mut reported = Some(AttachKind::Local);
+        report_attach_state_change(None, &mut reported, &mut |_| false);
+        assert!(
+            reported.is_some(),
+            "failed detach publication must remain pending"
+        );
+        report_attach_state_change(None, &mut reported, &mut |_| true);
+        assert!(reported.is_none());
+        report_attach_state_change(None, &mut reported, &mut |_| {
             panic!("successful publication is not repeated")
         });
     }

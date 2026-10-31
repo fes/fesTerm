@@ -203,6 +203,14 @@ struct SessionRecord {
     created_at_unix_ms: u128,
     #[serde(default)]
     attached: bool,
+    /// Which kind of client holds the session; absent for legacy daemons and
+    /// whenever the session is unattached.
+    #[serde(default)]
+    attached_by: Option<AttachKind>,
+    /// Set by daemons that understand `FSA4` admission. Older clients ignore
+    /// it and keep attaching with `FSA3`, so the wire protocol stays at 3.
+    #[serde(default)]
+    attach_kinds: bool,
     #[serde(default = "legacy_protocol_version")]
     protocol_version: u16,
     #[serde(default = "legacy_recovery_snapshot_schema_version")]
@@ -271,6 +279,41 @@ impl<'de> Deserialize<'de> for SessionRegistry {
         }
         Ok(registry)
     }
+}
+
+/// The kind of client attached to a daemon session. A `Remote` client is the
+/// Dev Tunnel bridge relaying for another machine; `Local` is a fesTerm that
+/// runs on this machine.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AttachKind {
+    Local,
+    Remote,
+}
+
+impl AttachKind {
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Local => 0,
+            Self::Remote => 1,
+        }
+    }
+
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Local),
+            1 => Some(Self::Remote),
+            _ => None,
+        }
+    }
+}
+
+/// A live daemon session and, when a client holds it, which kind of client.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunningSession {
+    pub session: UnattachedSession,
+    /// `None` when unattached. An attached legacy daemon reports `Local`.
+    pub attached_by: Option<AttachKind>,
 }
 
 /// A locally running `festerm-sessiond` session with no attached client.
@@ -346,6 +389,17 @@ pub fn terminate_unattached_session_command(
 pub fn list_unattached_sessions_in(
     root: &std::path::Path,
 ) -> Result<Vec<UnattachedSession>, PersistentSessionError> {
+    Ok(list_running_sessions_in(root)?
+        .into_iter()
+        .filter(|running| running.attached_by.is_none())
+        .map(|running| running.session)
+        .collect())
+}
+
+/// Every live daemon session, attached or not, for takeover-aware listings.
+pub fn list_running_sessions_in(
+    root: &std::path::Path,
+) -> Result<Vec<RunningSession>, PersistentSessionError> {
     let mut sessions = Vec::new();
     for (name, record) in load_registry_in(root)?.sessions {
         if record.name != name || PersistentSessionName::new(&name).is_err() {
@@ -353,20 +407,31 @@ pub fn list_unattached_sessions_in(
                 "session registry contains an invalid or inconsistent session identity",
             ));
         }
-        if record.attached || !record_is_live(root, &record)? {
+        if !record_is_live(root, &record)? {
             continue;
         }
-        sessions.push(UnattachedSession {
-            name: record.name,
-            shell: record.shell,
-            arguments: record.arguments,
-            working_directory: record.working_directory,
-            created_at_unix_ms: record.created_at_unix_ms,
-            pid: record.pid,
-            endpoint: record.socket,
+        let attached_by = record
+            .attached
+            .then(|| record.attached_by.unwrap_or(AttachKind::Local));
+        sessions.push(RunningSession {
+            session: UnattachedSession {
+                name: record.name,
+                shell: record.shell,
+                arguments: record.arguments,
+                working_directory: record.working_directory,
+                created_at_unix_ms: record.created_at_unix_ms,
+                pid: record.pid,
+                endpoint: record.socket,
+            },
+            attached_by,
         });
     }
-    sessions.sort_by(|a, b| a.name.cmp(&b.name).then(a.endpoint.cmp(&b.endpoint)));
+    sessions.sort_by(|a, b| {
+        a.session
+            .name
+            .cmp(&b.session.name)
+            .then(a.session.endpoint.cmp(&b.session.endpoint))
+    });
     Ok(sessions)
 }
 
@@ -612,12 +677,25 @@ impl PersistentSession {
         maximum_recovery_bytes: u32,
         notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, PersistentSessionError> {
+        Self::resume_remote_in(selected, root, false, maximum_recovery_bytes, notifier)
+    }
+
+    /// The Dev Tunnel bridge's attach, recorded as `Remote`. With `takeover`
+    /// it deliberately displaces whichever client holds the session; without
+    /// it an occupied session is refused. Never reconnects automatically.
+    pub fn resume_remote_in(
+        selected: &NativeSessionIdentity,
+        root: &std::path::Path,
+        takeover: bool,
+        maximum_recovery_bytes: u32,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
         let registry = load_registry_in(root)?;
         let record = registry
             .sessions
             .get(&selected.name)
             .ok_or_else(|| PersistentSessionError::new("exported session is unavailable"))?;
-        if NativeSessionIdentity::from_record(record) != *selected || record.protocol_version != 3 {
+        if NativeSessionIdentity::from_record(record) != *selected || record.protocol_version < 3 {
             return Err(PersistentSessionError::new(
                 "exported generation requires a compatible protocol-3 daemon",
             ));
@@ -625,7 +703,8 @@ impl PersistentSession {
         let connection = connect_record_admitted(
             record,
             &AtomicBool::new(false),
-            false,
+            takeover,
+            AttachKind::Remote,
             maximum_recovery_bytes,
         )?;
         Self::from_stream_with_reconnector(connection, notifier, None)
@@ -698,8 +777,32 @@ impl PersistentSession {
         root: &std::path::Path,
         notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, PersistentSessionError> {
-        let connection =
-            connect_discovered_with_cancel(selected, root, true, &AtomicBool::new(false))?;
+        Self::resume_local_in(selected, root, true, notifier)
+    }
+
+    /// Deliberately takes a session that another client already holds. The
+    /// caller must have confirmed the takeover; the displaced client is told
+    /// the session was stolen.
+    pub fn take_over_discovered_in(
+        selected: &UnattachedSession,
+        root: &std::path::Path,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        Self::resume_local_in(selected, root, false, notifier)
+    }
+
+    fn resume_local_in(
+        selected: &UnattachedSession,
+        root: &std::path::Path,
+        require_unattached: bool,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        let connection = connect_discovered_with_cancel(
+            selected,
+            root,
+            require_unattached,
+            &AtomicBool::new(false),
+        )?;
         let selected = selected.clone();
         let root = root.to_owned();
         Self::from_stream_with_reconnector(
@@ -2084,13 +2187,20 @@ fn connect_record_with_cancel(
     record: &SessionRecord,
     cancelled: &AtomicBool,
 ) -> Result<ConnectedSession, PersistentSessionError> {
-    connect_record_admitted(record, cancelled, true, MAX_RECOVERY_SNAPSHOT_BYTES as u32)
+    connect_record_admitted(
+        record,
+        cancelled,
+        true,
+        AttachKind::Local,
+        MAX_RECOVERY_SNAPSHOT_BYTES as u32,
+    )
 }
 
 fn connect_record_admitted(
     record: &SessionRecord,
     cancelled: &AtomicBool,
     takeover: bool,
+    kind: AttachKind,
     maximum_recovery_bytes: u32,
 ) -> Result<ConnectedSession, PersistentSessionError> {
     if cancelled.load(Ordering::Acquire) {
@@ -2117,7 +2227,7 @@ fn connect_record_admitted(
         stream
             .set_write_timeout(Some(WRITE_TIMEOUT))
             .map_err(|error| PersistentSessionError::new(error.to_string()))?;
-        admit_record(&mut stream, record, takeover, maximum_recovery_bytes)?;
+        admit_record(&mut stream, record, takeover, kind, maximum_recovery_bytes)?;
         Ok(ConnectedSession {
             stream: Box::new(stream),
             protocol_version: record.protocol_version,
@@ -2138,7 +2248,7 @@ fn connect_record_admitted(
         })?;
         stream.set_read_timeout(POLL_INTERVAL);
         stream.set_write_timeout(WRITE_TIMEOUT);
-        admit_record(&mut stream, record, takeover, maximum_recovery_bytes)?;
+        admit_record(&mut stream, record, takeover, kind, maximum_recovery_bytes)?;
         Ok(ConnectedSession {
             stream: Box::new(stream),
             protocol_version: record.protocol_version,
@@ -2167,21 +2277,57 @@ pub fn encode_admission(
     bytes
 }
 
+/// Kind-aware admission, advertised by `attach_kinds`: same layout, but the magic is `FSA4` and byte 4 holds
+/// the takeover flag in bit 0 and the [`AttachKind`] code in bit 1.
+pub fn encode_admission_for(
+    pid: u32,
+    generation: u128,
+    takeover: bool,
+    kind: AttachKind,
+    maximum_recovery_bytes: u32,
+) -> [u8; ADMISSION_BYTES] {
+    let mut bytes = encode_admission(pid, generation, takeover, maximum_recovery_bytes);
+    bytes[..4].copy_from_slice(b"FSA4");
+    bytes[4] = u8::from(takeover) | (kind.code() << 1);
+    bytes
+}
+
+/// Splits a request into its takeover flag and attach kind, or `None` for any
+/// byte combination neither protocol defines. Protocol 3 clients are `Local`.
+pub fn decode_admission_header(request: &[u8; ADMISSION_BYTES]) -> Option<(bool, AttachKind)> {
+    match (&request[..4], request[4]) {
+        (b"FSA3", flag @ 0..=1) => Some((flag == 1, AttachKind::Local)),
+        (b"FSA4", flags @ 0..=3) => Some((flags & 1 == 1, AttachKind::from_code(flags >> 1)?)),
+        _ => None,
+    }
+}
+
 fn admit_record(
     stream: &mut (impl Read + Write),
     record: &SessionRecord,
     takeover: bool,
+    kind: AttachKind,
     maximum_recovery_bytes: u32,
 ) -> Result<(), PersistentSessionError> {
     if record.protocol_version < 3 {
         return Ok(());
     }
-    let request = encode_admission(
-        record.pid,
-        record.created_at_unix_ms,
-        takeover,
-        maximum_recovery_bytes,
-    );
+    let request = if record.attach_kinds {
+        encode_admission_for(
+            record.pid,
+            record.created_at_unix_ms,
+            takeover,
+            kind,
+            maximum_recovery_bytes,
+        )
+    } else {
+        encode_admission(
+            record.pid,
+            record.created_at_unix_ms,
+            takeover,
+            maximum_recovery_bytes,
+        )
+    };
     stream
         .write_all(&request)
         .map_err(|_| PersistentSessionError::new("daemon admission write failed"))?;
@@ -3299,6 +3445,47 @@ mod recovery_wire_tests {
     }
 
     #[test]
+    fn admission_headers_stay_compatible_with_protocol_three_clients_and_daemons() {
+        // An existing client's request (FSA3) is still admitted, as Local.
+        let legacy = encode_admission(7, 9, true, 1024);
+        assert_eq!(
+            decode_admission_header(&legacy),
+            Some((true, AttachKind::Local))
+        );
+        assert_eq!(
+            decode_admission_header(&encode_admission(7, 9, false, 1024)),
+            Some((false, AttachKind::Local))
+        );
+        for (takeover, kind) in [
+            (false, AttachKind::Local),
+            (true, AttachKind::Local),
+            (false, AttachKind::Remote),
+            (true, AttachKind::Remote),
+        ] {
+            let request = encode_admission_for(7, 9, takeover, kind, 1024);
+            assert_eq!(&request[..4], b"FSA4");
+            assert_eq!(decode_admission_header(&request), Some((takeover, kind)));
+        }
+        // FSA3 cannot claim a kind, and unknown codes are refused.
+        let mut forged = encode_admission(7, 9, false, 1024);
+        forged[4] = 2;
+        assert_eq!(decode_admission_header(&forged), None);
+        let mut unknown = encode_admission_for(7, 9, false, AttachKind::Local, 1024);
+        unknown[4] = 4;
+        assert_eq!(decode_admission_header(&unknown), None);
+    }
+
+    #[test]
+    fn registry_records_from_before_attach_kinds_still_load_and_report_local() {
+        let record: SessionRecord = serde_json::from_str(
+            r#"{"name":"old","pid":1,"socket":"s","attached":true,"protocol_version":3}"#,
+        )
+        .unwrap();
+        assert!(!record.attach_kinds);
+        assert_eq!(record.attached_by, None);
+    }
+
+    #[test]
     fn recovery_encoding_uses_one_wire_buffer_and_preserves_legacy_bytes() {
         let terminal = large_recovery_terminal();
         let snapshot = terminal.recovery_clone();
@@ -3582,6 +3769,8 @@ mod client_worker_tests {
             working_directory: None,
             created_at_unix_ms: 100,
             attached: false,
+            attached_by: None,
+            attach_kinds: false,
             protocol_version: PROTOCOL_VERSION,
             snapshot_schema_version: RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             scrollback_limit_bytes: festerm_core::DEFAULT_SCROLLBACK_LIMIT_BYTES,
@@ -5065,6 +5254,8 @@ mod registry_filtering_tests {
             scrollback_limit_bytes: 1024,
             created_at_unix_ms: 123,
             attached: false,
+            attached_by: None,
+            attach_kinds: false,
             protocol_version: PROTOCOL_VERSION,
             snapshot_schema_version: RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             helper_identity: Some("festerm-sessiond-0.2.2.exe".to_owned()),
@@ -5108,6 +5299,8 @@ mod registry_filtering_tests {
                 scrollback_limit_bytes: 1024,
                 created_at_unix_ms: 0,
                 attached: true,
+                attached_by: None,
+                attach_kinds: false,
                 protocol_version: PROTOCOL_VERSION,
                 snapshot_schema_version: RECOVERY_SNAPSHOT_SCHEMA_VERSION,
                 helper_identity: None,
@@ -5134,6 +5327,8 @@ mod registry_filtering_tests {
             scrollback_limit_bytes: 1024,
             created_at_unix_ms: 0,
             attached: false,
+            attached_by: None,
+            attach_kinds: false,
             protocol_version: PROTOCOL_VERSION + 1,
             snapshot_schema_version: RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             helper_identity: None,
@@ -5163,6 +5358,8 @@ mod registry_filtering_tests {
             scrollback_limit_bytes: 1024,
             created_at_unix_ms: 0,
             attached: false,
+            attached_by: None,
+            attach_kinds: false,
             protocol_version: PROTOCOL_VERSION,
             snapshot_schema_version: RECOVERY_SNAPSHOT_SCHEMA_VERSION + 1,
             helper_identity: None,

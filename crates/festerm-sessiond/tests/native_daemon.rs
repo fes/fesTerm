@@ -440,6 +440,134 @@ fn local_and_remote_attachments_alternate_on_one_session_in_either_order() {
     send(&last, "four", "R2");
 }
 
+/// Deliberate takeover in both directions, repeatedly: the holder is displaced,
+/// the registry names who holds the session, and one shell serves every turn.
+#[cfg(unix)]
+#[test]
+fn deliberate_takeover_alternates_between_remote_and_local_repeatedly() {
+    use festerm_session::{noop_session_event_notifier, Session, SessionLifecycle};
+    use festerm_sessiond::{
+        list_running_sessions_in, list_unattached_sessions_in, AttachKind, PersistentSession,
+    };
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("takeover");
+    let name = format!("takeover-{}", std::process::id());
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime.clone(),
+        name: name.clone(),
+    };
+    let registry = runtime.join("festerm").join("sessiond");
+    let shell = pty_test_child(&executable);
+    let mut args = vec!["report-pid"];
+    let tags = ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8"];
+    let echoes: Vec<String> = tags.iter().map(|tag| format!("echo:{tag}")).collect();
+    for echo in &echoes {
+        args.push("read-line");
+        args.push(echo);
+    }
+    args.push("spin");
+    launch_session_with(&executable, &runtime, &name, &shell, &args);
+    let unattached = || list_unattached_sessions_in(&registry).unwrap();
+    bounded_poll(|| unattached().len() == 1, "takeover discovery");
+    let selected = unattached().remove(0);
+    let holder = || {
+        list_running_sessions_in(&registry)
+            .unwrap()
+            .into_iter()
+            .find(|running| running.session.name == name)
+            .map(|running| running.attached_by)
+    };
+    let ready = |session: &PersistentSession| {
+        bounded_poll(
+            || matches!(session.lifecycle(), SessionLifecycle::Running),
+            "attachment running",
+        );
+        session.acknowledge_recovery_adoption();
+    };
+    let send = |session: &PersistentSession, line: &str, tag: &str| {
+        ready(session);
+        session.try_send_input(&test_input(line)).unwrap();
+        read_session_until(session, &format!("{tag}:{line}"));
+    };
+    let ended = |session: &PersistentSession| {
+        !matches!(
+            session.lifecycle(),
+            SessionLifecycle::Running | SessionLifecycle::Starting
+        )
+    };
+
+    // Identity for the remote path comes from a first local attach.
+    let first = PersistentSession::resume_discovered_in(
+        &selected,
+        &registry,
+        noop_session_event_notifier(),
+    )
+    .unwrap();
+    let identity = first
+        .native_identity()
+        .expect("a native session has an identity");
+    ready(&first);
+    bounded_poll(|| holder() == Some(Some(AttachKind::Local)), "local holder");
+    let mut current = first;
+    let mut turn = 0;
+    for round in 0..3 {
+        // Remote takes over from local; the old client ends and cannot return on its own.
+        let remote = PersistentSession::resume_remote_in(
+            &identity,
+            &registry,
+            true,
+            1024 * 1024,
+            noop_session_event_notifier(),
+        )
+        .unwrap_or_else(|error| panic!("round {round}: remote takeover: {error}"));
+        ready(&remote);
+        bounded_poll(|| ended(&current), "local displaced by remote");
+        bounded_poll(
+            || holder() == Some(Some(AttachKind::Remote)),
+            "remote holder",
+        );
+        assert!(
+            PersistentSession::resume_remote_in(
+                &identity,
+                &registry,
+                false,
+                1024 * 1024,
+                noop_session_event_notifier(),
+            )
+            .is_err(),
+            "without takeover the remote path still refuses an occupied session"
+        );
+        turn += 1;
+        send(&remote, &format!("r{round}"), tags[turn - 1]);
+
+        // Local takes over from remote.
+        let running = list_running_sessions_in(&registry).unwrap();
+        assert_eq!(running[0].attached_by, Some(AttachKind::Remote));
+        assert!(
+            unattached().is_empty(),
+            "an attached session is not unattached"
+        );
+        let local = PersistentSession::take_over_discovered_in(
+            &running[0].session,
+            &registry,
+            noop_session_event_notifier(),
+        )
+        .unwrap_or_else(|error| panic!("round {round}: local takeover: {error}"));
+        ready(&local);
+        bounded_poll(|| ended(&remote), "remote displaced by local");
+        bounded_poll(
+            || holder() == Some(Some(AttachKind::Local)),
+            "local holder again",
+        );
+        turn += 1;
+        send(&local, &format!("l{round}"), tags[turn - 1]);
+        current = local;
+    }
+    drop(current);
+    bounded_poll(|| holder() == Some(None), "released after the last detach");
+}
+
 fn churn_setting(name: &str, default: usize, max: usize) -> usize {
     let value = std::env::var(name)
         .map(|value| {
