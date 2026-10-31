@@ -18,6 +18,7 @@ use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
 
 const CONFIG: &str = "installation.json";
 const READY: &str = "ready.json";
+const PROFILE_JSON: &str = "festerm-profile.json";
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -191,7 +192,7 @@ fn healthy_record(directory: &File, record: &Installation) -> io::Result<Option<
     }
 }
 
-fn print_profile(record: &Installation, ready: &Ready) -> io::Result<()> {
+fn print_profile(state: &Path, record: &Installation, ready: &Ready) -> io::Result<()> {
     println!("READY - existing exact private tunnel/session; dedicated per-user service.");
     println!(
         "Tunnel: {}",
@@ -202,15 +203,27 @@ fn print_profile(record: &Installation, ready: &Ready) -> io::Result<()> {
     );
     println!("Verify host fingerprint: {}", record.fingerprint);
     println!("Paste the following PUBLIC JSON in fesTerm's Dev Tunnel profile import; authenticate separately:");
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&serde_json::json!({
-            "festerm_profile_version": 1,
-            "name": format!("Dev Tunnel {}", &record.id[..8]),
-            "destination": ready.destination
-        }))
-        .map_err(|_| refused("setup.profile_encode"))?
-    );
+    let profile = serde_json::to_string_pretty(&serde_json::json!({
+        "festerm_profile_version": 1,
+        "name": format!("Dev Tunnel {}", &record.id[..8]),
+        "destination": ready.destination
+    }))
+    .map_err(|_| refused("setup.profile_encode"))?;
+    println!("{profile}");
+    // Public data only; the installers read it back to copy it for the user.
+    let path = state.join(PROFILE_JSON);
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    std::io::Write::write_all(
+        &mut fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?,
+        format!("{profile}\n").as_bytes(),
+    )?;
     println!(
         "No credentials are included. Host key stays in the protected target state directory."
     );
@@ -430,7 +443,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         ));
     }
     if let Some(ready) = healthy_record(&directory, &record)? {
-        print_profile(&record, &ready)?;
+        print_profile(&state, &record, &ready)?;
         return Ok(());
     }
     exact_target_alive(
@@ -450,7 +463,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     timeout(Duration::from_secs(50), async {
         loop {
             if let Some(ready) = healthy_record(&directory, &record)? {
-                return print_profile(&record, &ready);
+                return print_profile(&state, &record, &ready);
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }

@@ -195,20 +195,27 @@ The source now defines standalone helper bundles for Linux x86_64/ARM64
 (glibc 2.39+), macOS Intel/Apple Silicon, and Windows x64/ARM64. **No release
 containing these assets has been published.** Existing releases cannot run
 these commands; do not substitute a current version and expect missing assets
-to exist. After a release owner publishes a qualified version, replace
-`VERSION` below with its exact numeric version:
+to exist. Once a qualified release is published, the one-liners need no version
+(they use the newest published release; pass the exact numeric `VERSION` as the
+first argument or `-Version` to pin one):
 
 ```sh
 # Linux: explicitly authorizes apt/dnf runtime prerequisites, not compilers.
-curl -fsSL https://github.com/fes/fesTerm/releases/download/vVERSION/install-dev-tunnel.sh | bash -s -- VERSION --install-dependencies
+curl -fsSL https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.sh | bash -s -- --install-dependencies
 # macOS: uses the system curl, tar, unzip and codesign.
-curl -fsSL https://github.com/fes/fesTerm/releases/download/vVERSION/install-dev-tunnel.sh | bash -s -- VERSION
+curl -fsSL https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.sh | bash
 ```
 
 ```powershell
 # Windows 11 / Windows Server 2025, unelevated PowerShell; inbox curl required.
-& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/fes/fesTerm/releases/download/vVERSION/install-dev-tunnel.ps1).Content)) -Version VERSION
+& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.ps1).Content))
 ```
+
+When setup finishes, the installer prints the public connection JSON, saves it
+as `festerm-profile.json` in the private state directory (`~/.local/share/festerm-tunnels/state`
+or `fesTerm-tunnels\state` under the per-user local app data folder) and copies it to the clipboard when one is
+available. Paste it into fesTerm's Dev Tunnel profile import, then sign in with
+the same GitHub account.
 
 Linux needs a TLS-capable `curl` for the first download and sudo access only
 when explicitly requesting runtime packages. Supported apt/dnf systems install

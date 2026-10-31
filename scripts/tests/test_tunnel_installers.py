@@ -70,7 +70,7 @@ class UnixInstallerTests(unittest.TestCase):
             "THIRD_PARTY_NOTICES.txt": "fixture",
             "festerm-sessiond": "#!/bin/sh\nexit 0\n",
             "festerm-tunnel-bridge": "#!/bin/sh\nexit 0\n",
-            "festerm-tunnel-setup": "#!/bin/sh\nprintf 'FIXTURE-SETUP-EXECUTED\\n'; printf '%s\\n' \"$@\"\n",
+            "festerm-tunnel-setup": "#!/bin/sh\nprintf 'FIXTURE-SETUP-EXECUTED\\n'; printf '%s\\n' \"$@\"\nwhile [ $# -gt 0 ]; do [ \"$1\" = --state-dir ] && mkdir -p \"$2\" && printf '{\"fixture\":true}\\n' > \"$2/festerm-profile.json\"; shift; done\n",
         }
         with tarfile.open(self.archive, "w:gz") as archive:
             for name, value in files.items():
@@ -133,7 +133,7 @@ class UnixInstallerTests(unittest.TestCase):
         self.assertIn("--state-dir\n", result.stdout)
         root = self.home / ".local/share/festerm-tunnels"
         self.assertEqual(root.stat().st_mode & 0o777, 0o700)
-        installation, = root.iterdir()
+        installation = root / "releases"
         self.assertEqual(installation.stat().st_mode & 0o777, 0o700)
 
     def test_bad_hash_executes_nothing(self):

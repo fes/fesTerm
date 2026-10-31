@@ -1,8 +1,7 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [ValidatePattern('\A[0-9]+\.[0-9]+\.[0-9]+\z')]
-    [string]$Version
+    [string]$Version = ''
 )
 
 Set-StrictMode -Version Latest
@@ -25,6 +24,17 @@ switch ($architecture) {
 }
 $curl = (Get-Command curl.exe -CommandType Application -ErrorAction Stop).Source
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+if (-not $Version) {
+    # The newest published release; its redirect names the tag without the API.
+    $latest = & $curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' `
+        --connect-timeout 20 --max-time 60 --output NUL --write-out '%{url_effective}' `
+        'https://github.com/fes/fesTerm/releases/latest'
+    if ($LASTEXITCODE -ne 0 -or $latest -notmatch '/tag/v([0-9]+\.[0-9]+\.[0-9]+)\z') {
+        throw 'No published fesTerm release was found; pass -Version explicitly.'
+    }
+    $Version = $Matches[1]
+}
 
 function Get-Download([string]$Url, [string]$Path, [long]$Limit) {
     & $curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' `
@@ -154,6 +164,16 @@ try {
     Write-Host "Installed private helpers: $cached"
     & (Join-Path $cached 'festerm-tunnel-setup.exe') --managed --devtunnel $cli --state-dir (Join-Path $root 'state')
     if ($LASTEXITCODE -ne 0) { throw 'Experimental tunnel setup refused/stopped.' }
+    $profile = Join-Path $root 'state\festerm-profile.json'
+    if (-not (Test-Path -LiteralPath $profile -PathType Leaf)) {
+        throw 'Setup finished but did not write the connection JSON.'
+    }
+    $json = [IO.File]::ReadAllText($profile)
+    Write-Host "`n=== fesTerm connection JSON (public; no credentials) ==="
+    Write-Host $json
+    Write-Host "`n=== Saved to $profile ==="
+    try { Set-Clipboard -Value $json; Write-Host -NoNewline 'Copied to the clipboard. ' } catch { }
+    Write-Host 'In fesTerm: Dev Tunnel profile > Import setup JSON, paste, then sign in with the same GitHub account.'
 } finally {
     foreach ($temporaryFile in @($archivePath, $checksumPath)) {
         if (Test-Path -LiteralPath $temporaryFile) {
