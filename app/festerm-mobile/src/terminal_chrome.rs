@@ -127,6 +127,23 @@ pub fn status_line(ui: &mut Ui, line: &ConnectionLine) {
     }
 }
 
+/// Content width of the chip strip and key row on wide screens; the bars still
+/// span the window, but controls stop growing into thumb-unfriendly slabs.
+const CHROME_MAX_WIDTH: f32 = 720.0;
+const KEYS_PANEL_MAX_WIDTH: f32 = 640.0;
+
+/// Frame margin that centers content no wider than `max` inside `available`.
+fn capped_margin(available: f32, max: f32, horizontal: i8, vertical: i8) -> Margin {
+    let extra = ((available - max) / 2.0 - f32::from(horizontal)).max(0.0);
+    let side = (f32::from(horizontal) + extra).min(120.0) as i8;
+    Margin {
+        left: side,
+        right: side,
+        top: vertical,
+        bottom: vertical,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChipAction {
     None,
@@ -139,11 +156,13 @@ pub enum ChipAction {
 pub fn chip_strip(ui: &mut Ui, surfaces: &[SurfaceSummary]) -> ChipAction {
     let mut action = ChipAction::None;
     let full_width = ui.available_width();
+    let margin = capped_margin(full_width, CHROME_MAX_WIDTH, 8, 8);
+    let inset = f32::from(margin.left) + f32::from(margin.right);
     egui::Frame::new()
         .fill(color::BAR)
-        .inner_margin(Margin::symmetric(8, 8))
+        .inner_margin(margin)
         .show(ui, |ui| {
-            ui.set_min_width(full_width - 16.0);
+            ui.set_min_width(full_width - inset);
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.horizontal(|ui| {
                 let trailing = 58.0 + 36.0 + 40.0;
@@ -264,9 +283,10 @@ fn text_key(ui: &mut Ui, width: f32, label: &str, active: bool) -> Response {
 pub fn key_row(ui: &mut Ui, state: &KeyRowState) -> KeyRowOutput {
     let mut action = KeyRowAction::None;
     let mut control_rect = Rect::NOTHING;
+    let margin = capped_margin(ui.available_width(), CHROME_MAX_WIDTH, 8, 6);
     egui::Frame::new()
         .fill(color::BAR)
-        .inner_margin(Margin::symmetric(8, 6))
+        .inner_margin(margin)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.horizontal(|ui| {
@@ -468,12 +488,12 @@ pub fn keys_panel(ui: &mut Ui, panel: &mut KeysPanel) -> KeysPanelOutput {
     egui::Frame::new()
         .fill(color::SURFACE)
         .stroke(Stroke::new(1.0, color::DIVIDER))
-        .inner_margin(Margin {
-            left: 12,
-            right: 12,
-            top: 8,
-            bottom: 8,
-        })
+        .inner_margin(capped_margin(
+            ui.available_width(),
+            KEYS_PANEL_MAX_WIDTH,
+            12,
+            8,
+        ))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
             let (title, _) =

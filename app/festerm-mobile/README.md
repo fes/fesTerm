@@ -312,6 +312,13 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
 
 ## Current behavior and remaining gate
 
+- winit on iOS reports Return and Tab as `Key::Character("\n"/"\t")`, which
+  egui-winit drops; the host queues them (`HardwareKeys`) and replays them as
+  named egui key events. In the Simulator, "Simulate Hardware Keyboard" never
+  delivers Return/Tab to winit; turn it off and use the software keyboard.
+- Tablet widths use a side-by-side Files layout and a capped chip/key/keys-panel
+  column; headless iPad captures exist, an iPad Simulator run is still pending.
+
 - Shared terminal fixture with ANSI colors, combining/wide glyph coverage and
   emoji; scrollback limited to 256 KiB, resize handled by the existing view.
 - A docked Esc/Tab/Ctrl/Alt row and persistent native keyboard request

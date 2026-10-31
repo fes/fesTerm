@@ -2,7 +2,7 @@
 
 #[cfg(feature = "live-ssh")]
 use festerm_mobile::SuspensionHandle;
-use festerm_mobile::{Lifecycle, MobileApp};
+use festerm_mobile::{HardwareKeys, Lifecycle, MobileApp};
 use raw_window_handle::HasWindowHandle;
 use std::{
     cell::Cell,
@@ -11,8 +11,9 @@ use std::{
 };
 use winit::{
     application::ApplicationHandler,
-    event::{DeviceEvent, DeviceId, StartCause, WindowEvent},
+    event::{DeviceEvent, DeviceId, ElementState, StartCause, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::Key,
     window::WindowId,
 };
 
@@ -39,6 +40,8 @@ static STARTUP_LOGGER: StartupLogger = StartupLogger;
 struct MobileHost<'a> {
     app: eframe::EframeWinitApplication<'a>,
     lifecycle: Rc<Cell<Lifecycle>>,
+    keys: HardwareKeys,
+    repaint: Arc<OnceLock<eframe::egui::Context>>,
     #[cfg(feature = "live-ssh")]
     suspension: SuspensionHandle,
 }
@@ -75,6 +78,17 @@ impl ApplicationHandler<eframe::UserEvent> for MobileHost<'_> {
         // Forward other events so resize/focus state remains current.
         if !self.lifecycle.get().active && matches!(event, WindowEvent::RedrawRequested) {
             return;
+        }
+        if let WindowEvent::KeyboardInput { event: key, .. } = &event {
+            if key.state == ElementState::Pressed {
+                if let Key::Character(text) = &key.logical_key {
+                    if self.keys.push_text(text) {
+                        if let Some(context) = self.repaint.get() {
+                            context.request_repaint();
+                        }
+                    }
+                }
+            }
         }
         self.app.window_event(event_loop, id, event);
     }
@@ -146,6 +160,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The lock exists before the window so a cold launch never draws content.
     let repaint: Arc<OnceLock<eframe::egui::Context>> = Arc::new(OnceLock::new());
     let lock = build_lock(repaint.clone());
+    let keys = HardwareKeys::default();
+    let app_keys = keys.clone();
+    let host_repaint = repaint.clone();
     let viewport = eframe::egui::ViewportBuilder::default();
     #[cfg(not(target_os = "ios"))]
     let viewport = viewport.with_inner_size([390.0, 844.0]);
@@ -171,6 +188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
             let app = MobileApp::new(app_lifecycle)
                 .with_keyboard(keyboard)
+                .with_hardware_keys(app_keys)
                 .with_lock(lock, bridge);
             let app = match festerm_mobile::Profiles::open_default() {
                 Ok(profiles) => app.with_profiles(profiles),
@@ -188,6 +206,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     event_loop.run_app(&mut MobileHost {
         app,
         lifecycle,
+        keys,
+        repaint: host_repaint,
         #[cfg(feature = "live-ssh")]
         suspension,
     })?;

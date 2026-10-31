@@ -740,7 +740,7 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
                     login,
                     "Signed in with GitHub",
                     false,
-                    Some(Icon::Profile),
+                    Some(Icon::Account),
                 );
                 if button(ui, ButtonKind::Secondary, "Sign out", true).clicked() {
                     *action = EditorAction::SignOut;
@@ -889,6 +889,16 @@ pub fn host_verification_sheet(
                         )
                         .wrap(),
                     );
+                    if ui
+                        .link(
+                            egui::RichText::new("Copy fingerprint")
+                                .size(type_scale::CAPTION + 0.5)
+                                .color(color::ACCENT_TEXT),
+                        )
+                        .clicked()
+                    {
+                        festerm_ios_window::set_clipboard_text(&model.fingerprint);
+                    }
                     if let Some(previous) = &model.changed_from {
                         caption_label(ui, "Previously trusted");
                         ui.add(

@@ -72,6 +72,7 @@ The intended first enum surface is:
 | `KeyboardShortcuts` | `keyboard-shortcuts.svg` | Shortcut settings/reference |
 | `ThemeAppearance` | `theme-appearance.svg` | Theme and appearance settings |
 | `TypographyFont` | `typography-font.svg` | Terminal font settings |
+| `Account` | `account.svg` | A signed-in person or service account (for example GitHub) |
 | `SecretStorage` | `secret-storage.svg` | Locked credential/secret storage boundary |
 | `Back` | `back.svg` | Return to the prior step of a multi-step flow |
 | `Edit` | `edit.svg` | Open a saved definition's editor |

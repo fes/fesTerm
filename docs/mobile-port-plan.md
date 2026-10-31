@@ -1,7 +1,12 @@
 # fesTerm Mobile Port Plan (iOS/Android)
 
-**Status:** iOS Phase 1 started at the owner's request on 2026-09-26;
-implementation for review under ADR 0042, native feasibility pending.
+**Status:** iOS Phase 1 is implemented for review under ADR 0042 and its
+follow-ups (0054, 0057-0061): the Simulator host, design system and shell,
+persisted profiles with Keychain secrets, SSH/tmux sessions with persisted host
+trust, SFTP Files, Markdown viewing, app lock and Dev Tunnel attach. A
+fidelity pass on iPhone 17 Pro found and fixed Return/Tab being dropped by
+winit; the iPad layout is verified through headless captures only. Physical-device
+signing and App Store distribution remain unverified.
 The owner also requested the persistent-keyboard/input slice for both iPhone
 and iPad as part of this initial host. Owner-authorized campaign
 [#422](https://github.com/fes/fesTerm/issues/422) now prioritizes the smallest
