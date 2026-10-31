@@ -480,10 +480,30 @@ other applications for others to use. Microsoft's
 [maintainer clarification](https://github.com/microsoft/dev-tunnels/issues/489#issuecomment-2455939910)
 identifies the Visual Studio product family. Standalone fesTerm eligibility
 therefore needs explicit clarification; development/testing-only labeling and
-the SDK's MIT license do not establish that permission. Do not publish the
-installer or broaden qualification without resolving applicable usage
-rights and the supported third-party integration path. The owner's subsequent
-bounded diagnostic/integration tests below do not waive this publication gate.
+the SDK's MIT license do not establish that permission. The owner's subsequent
+bounded diagnostic/integration tests below do not waive the question, but see
+the decision that follows.
+
+**Decision (2026-10-31, owner): publish under an accepted, revocable risk.**
+Microsoft's maintainer stated in the #489 thread that the license cannot be
+widened beyond the Visual Studio family, and no reply covers a standalone
+third-party product, so fesTerm's eligibility is unresolved, not cleared. The
+owner notes other independent projects use the SDK and service and accepts
+that interpretation for now: fesTerm may publish the Dev Tunnel feature, its
+helper bundles and the one-line installers. This is an owner risk decision,
+not legal clearance, and this ADR does not verify the other projects' terms.
+
+Revocation condition: if Microsoft clarifies or changes the terms so that
+linking the SDK or using the service from a standalone product is not
+permitted, or the service rejects the integration, the Dev Tunnel feature is
+removed or disabled in the next release. Removal covers the vendored SDK
+(`vendor/dev-tunnels`), `festerm-tunnel-bridge` relay, `festerm-tunnel-client`,
+the helper bundles and the installers. The feature stays experimental, existing
+local and SSH behaviour must not depend on it, and a CLI-driven design (no
+linked SDK) is the recorded fallback, with its known costs: no mobile support,
+loopback exposure needing our own authentication, weaker host pinning and token
+handling, and child-process supervision. Release notes and the experiment guide
+must state the risk.
 
 The pinned SDK's
 [`GitHubAppClientId` contract](https://github.com/microsoft/dev-tunnels/blob/b73b0eb774b86a5b519c300f2f41c9072a66f663/cs/src/Contracts/TunnelServiceProperties.cs#L223-L230)
@@ -677,7 +697,8 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   `docs/manual-validation.md`; service policy/authentication, real PTY/TUI
   input/resize, disconnect/bridge restart and platform lifetimes remain
   pending. Usage rights and supported third-party OAuth application/token
-  eligibility must be clarified before further live qualification or release.
+  eligibility remain unclarified upstream; publication proceeds under the
+  revocable owner decision above.
   Controlled automation should replace manual checks where possible.
 - **Coverage superseded:** No existing local/SSH evidence is retired. Trace
   entries distinguish the partial experimental subset from deferred management

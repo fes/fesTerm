@@ -13,9 +13,10 @@ tests do not establish service interoperability or usability.
 require confirmation that standalone fesTerm is a permitted integration.
 The SDK's MIT license is not service permission. Its documented
 `GitHubAppClientId` also refers to the service's application, not proof that
-fesTerm's former independently registered OAuth app is accepted. Installer
-publication remains gated on applicable usage rights;
-do not silently change application identity or create broader credentials as a
+fesTerm's former independently registered OAuth app is accepted. Eligibility
+is unresolved upstream; the owner accepted publishing at a revocable risk
+(ADR 0053), so this feature may be removed if Microsoft's terms or service
+stop permitting standalone use. Do not silently change application identity or create broader credentials as a
 workaround. The SDK-published Dev Tunnels service application is distinct from
 another product's OAuth registration; see the precedents below, ADR 0053 and
 #429 for evidence. The owner-authorized authentication and integrated product
