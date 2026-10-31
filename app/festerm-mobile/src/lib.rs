@@ -642,7 +642,7 @@ impl MobileApp {
         #[cfg(feature = "live-ssh")]
         if read_only && !self.connection.open {
             let recovery_height = ui.available_height();
-            let card_limit = if recovery_height < 260.0 { 96.0 } else { 160.0 };
+            let card_limit: f32 = if recovery_height < 260.0 { 96.0 } else { 160.0 };
             // Bottom panels start at 20 points before their first measurement.
             // Reserve a bounded size now so the action is visible on first paint.
             egui::Panel::bottom("mobile-recovery")

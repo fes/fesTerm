@@ -412,6 +412,7 @@ impl ConnectionForm {
         egui::ScrollArea::vertical()
             .id_salt("mobile-recovery-content")
             .max_height(height)
+            .min_scrolled_height(0.0)
             .show(ui, |ui| {
                 egui::Frame::new()
                     .fill(ui.visuals().window_fill)
@@ -777,6 +778,30 @@ mod tests {
         use crate::{Lifecycle, MobileApp};
         use egui_kittest::{kittest::Queryable, Harness};
         use std::{cell::Cell, rc::Rc};
+
+        for size in [
+            egui::vec2(834.0, 1194.0),
+            egui::vec2(844.0, 390.0),
+            egui::vec2(390.0, 260.0),
+        ] {
+            let app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            })));
+            *app.sink.live.connection.borrow_mut() = Some(disconnected_fixture());
+            let mut harness = Harness::builder()
+                .with_size(size)
+                .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+            harness.run();
+            let button = harness.get_by_label("Reconnect · new shell").rect();
+            assert!(
+                egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(button),
+                "recovery action outside {size:?}: {button:?}"
+            );
+            harness.get_by_label("Reconnect · new shell").click();
+            harness.run();
+            assert!(harness.state().connection.open, "{size:?}");
+        }
 
         let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
             active: true,
