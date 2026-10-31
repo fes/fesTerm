@@ -39,11 +39,11 @@ and keep both stacked Files panes visible. They remain provisional until iPad,
 rotation, Split View, Dynamic Type and physical-device evidence is recorded.
 
 The compact header shows the current surface and a short offline/SSH indicator,
-with Connect/Cancel and More. More contains Terminal, Files/README previews,
-demo reset and on-demand diagnostics. Experiment notices, counters and redundant
+with Connect/Cancel and More. More contains demo reset and on-demand
+diagnostics. Experiment notices, counters and redundant
 explanatory strips do not occupy the terminal screen. Switching preserves each
 surface's in-memory state and terminal keyboard focus is requested only while
-Terminal is active. This is secondary preview navigation, not full tab management.
+Terminal is active. Files and Markdown open from the terminal's Files button and from file rows.
 
 ## Phone portrait: terminal layout
 
@@ -206,7 +206,7 @@ connection → host review → authentication → terminal flow. The opt-in
 and explicit fingerprint approval before password input. This deliberately
 defers Termius-style saved-host navigation and credential persistence.
 Changed memory-only pins have Reject only. Disconnect/reconnect clearly
-starts a fresh shell, and Files/README remain offline previews.
+starts a fresh shell.
 
 Connection controls grow to their content, capped at 45% of the measured safe
 space below the header. A direct scroll area avoids sizing from the previous
@@ -262,9 +262,12 @@ usability remain MOB-06 qualification; paste/native selection handles are
   model and same underlying preference, oriented to match the stacked
   layout instead of a left/right one.
 
-The current offline preview implements all three axes over synthetic listings,
-including direction-aware controls, bounded fake progress and an explicit
-collision decision. It performs no local or remote I/O.
+The Files screen (ADR 0060) stacks Remote above This iPhone, each with
+breadcrumb, sort, filter and multi-select, joined by Upload / Download buttons
+and a Transfers row that opens a progress sheet. Overwrites open a decision
+sheet (Keep both / Skip / Replace, optionally remembered). The This iPhone side
+is the app's `Documents` folder, shown in the Files app. Tablet widths keep the
+stacked order.
 
 ## Phone: Markdown layout
 
@@ -275,7 +278,8 @@ collision decision. It performs no local or remote I/O.
   closes after heading activation. Wide keeps a 210-point contents rail beside
   the reading column.
 - The preview uses the shared bounded Markdown projection. Resources stay
-  inert; this slice does not claim editing, filesystem access or remote reload.
+  inert. Files opens `.md` documents from either pane; there is no editing or
+  remote reload.
 
 ## Reframing `SftpPaneOrderPreference`
 

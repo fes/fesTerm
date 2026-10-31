@@ -3,9 +3,7 @@
 Experimental host for the existing fesTerm Rust core and egui renderer. The default
 build is an offline fixture; the opt-in `live-ssh` prototype connects one
 transient SSH session, pending native/live-service qualification. It combines the original bounded terminal probe
-with synthetic Files/SFTP and Markdown workspaces so the responsive mobile
-interaction design can be tested before credentials, transport, persistence or
-real file access exist. See
+with the profile, Files/SFTP and Markdown workspaces of the mobile shell. See
 [ADR 0042](../../docs/adr/0042-ios-rendering-spike-host.md).
 
 ## Run on an iOS Simulator
@@ -77,14 +75,13 @@ process survival or uninterrupted background networking.
 Termius for iOS is the interaction reference. This first form deliberately
 uses one transient connection rather than saved-host navigation. Persistent
 keyboard and the existing arrow helper are retained; paste, native selection
-handles and broader mobile affordances remain #425 follow-up work. Files and
-README stay offline previews. Before acceptance, exercise MOB-06 against an
+handles and broader mobile affordances remain #425 follow-up work. Before acceptance, exercise MOB-06 against an
 owned SSH server on Simulator and provisioned iPhone/iPad, including a remote
 TUI such as Copilot CLI. Feature compilation/linking and fake-session tests
 do not prove native UI, authentication or network operation.
 
 The header keeps only the current surface, a short mode indicator, Connect/Cancel
-and More. Preview navigation, demo reset and content-free lifecycle/input counters
+and More. Demo reset and content-free lifecycle/input counters
 live under More; the counters are in Diagnostics. The form grows to its content
 within 45% of measured safe space and uses 44-point field/button targets. Short
 views scroll vertically. Menu interaction is kept out of terminal input/gestures;
@@ -166,10 +163,19 @@ chips, key supplement row, extended-keys panel). Colors, radii, spacing and type
 come from `theme.rs`; reusable controls are in `widgets.rs`; editor/sheet forms
 are in `forms.rs`, driven by the view-model structs and the `ProfileStore` seam
 in `model.rs`. Only capabilities with a working production path are shown
-(`Capabilities`): Dev Tunnel and SFTP profile kinds stay hidden until their
-backends are wired. The headless gallery enables them with fixtures
-(`Capabilities::all()`) for design review only. SFTP/transfer screens (07-09) and
-identity/privacy screens (13-15) are not implemented here.
+(`Capabilities`): the Dev Tunnel profile kind stays hidden until its backend is
+wired. The headless gallery enables it with fixtures (`Capabilities::all()`) for
+design review only. Identity/privacy screens (13-15) are not implemented here.
+
+### Files and SFTP (ADR 0060)
+
+`files.rs` / `files_ui.rs` / `files_shell.rs` implement the Files screen
+(mockups 07-09) over `festerm-sftp`; `sftp_link.rs` (feature `live-ssh`) opens
+the connection. SFTP profiles open Files directly; the terminal's Files button
+opens it for the same host. This iPhone is the app `Documents` folder, visible
+in the Files app (`UIFileSharingEnabled`); a native document picker is not
+implemented. Markdown files open from either pane. Simulator runs use
+`scripts/run-ios-shell-harness.sh`.
 
 ### Profiles, sessions and trust (ADR 0059)
 
@@ -295,10 +301,6 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
 
 ## Current behavior and remaining gate
 
-- More switches among Terminal, Files and README workflow
-  previews. Each workspace keeps its in-memory state while another workspace
-  is active. These are fixed preview categories, not full create/rename/reorder/
-  close session tabs.
 - Shared terminal fixture with ANSI colors, combining/wide glyph coverage and
   emoji; scrollback limited to 256 KiB, resize handled by the existing view.
 - A docked Esc/Tab/Ctrl/Alt row and persistent native keyboard request
@@ -330,16 +332,10 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
 - Standard renderer selection/scrolling is exposed for native testing. No
   double-tap Tab, native selection handles,
   paste/link handling, SSH, profiles, secrets or background sockets yet.
-- Files uses repository-owned synthetic Local and Remote listings. Wide space
-  renders a horizontal split, Compact space stacks Remote above Local, and
-  Minimal space shows one focused pane. Selection controls upload/download
-  direction; fake transfers have bounded progress history and filename
-  collisions require Replace, Keep both or Skip. Nothing is read, written,
-  uploaded or downloaded.
-- README uses the shared bounded `festerm-markdown` parser over a synthetic
-  runbook. Preview and Source modes are available; Wide space keeps a contents
-  rail beside the document and narrower space opens Contents above it. Heading
-  activation selects and scrolls to the section. Links/resources stay inert.
+- Files browses real remote (SFTP) and app-`Documents` listings; see
+  "Files and SFTP (ADR 0060)". Fixture listings exist only in the gallery/tests.
+- Markdown documents open from the Files screen with the shared bounded
+  `festerm-markdown` parser (Preview/Source/Contents). Links/resources stay inert.
 - No product-level performance or accessibility claim. Safe areas, rotation,
   touch behavior, software keyboard feasibility, foreground Metal recovery,
   memory pressure and process death need native evidence under `MOB-01`–`04`.

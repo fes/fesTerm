@@ -3,6 +3,7 @@
 //! credentials, clipboard reads or personal filesystem resources.
 
 use super::*;
+use crate::files_fixture::{fixture_entry, transfer_rows, FixtureFs, FixtureTransfers};
 use crate::model::{
     Capabilities, ChromeModel, ConnectionLine, DevTunnelChoices, ProfileKind, Reattachable,
     StaticSessions, SurfaceKind, SurfaceState, SurfaceSummary,
@@ -10,7 +11,7 @@ use crate::model::{
 use egui_kittest::Harness;
 use festerm_mobile_profiles::{RemoteSession, SshAuth, SshProfile};
 use sha2::{Digest, Sha256};
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf, process::Command, sync::Arc};
 
 fn git_fact(arguments: &[&str]) -> String {
     let output = Command::new("git")
@@ -25,7 +26,7 @@ fn git_fact(arguments: &[&str]) -> String {
         .to_owned()
 }
 
-const STATES: [&str; 18] = [
+const STATES: [&str; 21] = [
     "profiles",
     "profiles-empty",
     "terminal",
@@ -44,6 +45,9 @@ const STATES: [&str; 18] = [
     "editor-edit",
     "auth-key",
     "settings",
+    "files",
+    "files-transfers",
+    "files-conflict",
 ];
 
 fn fixture_rows() -> Vec<model::Profile> {
@@ -137,6 +141,58 @@ fn fixture_sessions(current: u64) -> StaticSessions {
             host: "prod-web".to_owned(),
         }],
     }
+}
+
+fn fixture_files(rows: Vec<files::TransferRow>, ctx: &egui::Context) -> files::FilesSession {
+    const DAY: i64 = 86_400;
+    let base = 1_782_000_000;
+    let remote = FixtureFs {
+        kind: festerm_sftp::PaneKind::Remote,
+        home: "/srv/app/releases",
+        entries: vec![
+            fixture_entry("current", true, 0, base),
+            fixture_entry("previous", true, 0, base - DAY),
+            fixture_entry("app-2.4.1.tar.gz", false, 38_400_000, base - 2 * DAY),
+            fixture_entry("README.md", false, 4_200, base - 3 * DAY),
+            fixture_entry("deploy.log", false, 182_000, base - 4 * DAY),
+            fixture_entry("config.yaml", false, 2_100, base - 5 * DAY),
+        ],
+    };
+    let local = FixtureFs {
+        kind: festerm_sftp::PaneKind::Local,
+        home: "",
+        entries: vec![
+            fixture_entry("Archive", true, 0, base),
+            fixture_entry("release-notes.md", false, 6_100, base - DAY),
+            fixture_entry("app-2.4.2.tar.gz", false, 38_900_000, base - 2 * DAY),
+            fixture_entry("screenshot.png", false, 912_000, base - 6 * DAY),
+        ],
+    };
+    let mut session = files::FilesSession::ready(
+        "release-files".to_owned(),
+        "SFTP · ops@files.example.net".to_owned(),
+        files::Ready {
+            remote: Arc::new(remote),
+            local: Arc::new(local),
+            local_root: PathBuf::from("/nonexistent-festerm-gallery"),
+            transfers: Arc::new(FixtureTransfers::new(rows)),
+            start_dir: None,
+        },
+        ctx,
+    );
+    // Listings load on a worker; wait so the capture is deterministic.
+    for _ in 0..200 {
+        session.poll(ctx);
+        let loading = [session.remote.as_ref(), session.local.as_ref()]
+            .into_iter()
+            .flatten()
+            .any(|pane| pane.loading());
+        if !loading {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    session
 }
 
 fn fixture_terminal_text(lines: &[&str]) -> Terminal {
@@ -269,6 +325,19 @@ fn configure(app: &mut MobileApp, state: &str) {
                 .expect("save fixture profile");
             app.edit_profile(&id);
         }
+        "files" | "files-transfers" | "files-conflict" => {
+            app.fixture_ssh_tab(fixture_spec());
+            let rows = if state == "files" {
+                Vec::new()
+            } else {
+                transfer_rows(state == "files-conflict")
+            };
+            let ctx = egui::Context::default();
+            let mut session = fixture_files(rows, &ctx);
+            session.transfers_sheet = state == "files-transfers";
+            app.files = Some(Box::new(session));
+            app.workspace = workspaces::Workspace::Files;
+        }
         "auth-key" => {
             app.editor.open_new();
             app.editor.host = "web.example.net".to_owned();
@@ -311,6 +380,9 @@ fn capture_mobile_ui_gallery() {
                     | "changed-host"
                     | "editor-edit"
                     | "auth-key"
+                    | "files"
+                    | "files-transfers"
+                    | "files-conflict"
             ) {
                 0.0
             } else {
@@ -334,7 +406,12 @@ fn capture_mobile_ui_gallery() {
                 .ctx
                 .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
             harness.remove_cursor();
-            harness.run();
+            // Live transfer rows request repaints for their progress clock.
+            if state.starts_with("files-") {
+                harness.run_steps(3);
+            } else {
+                harness.run();
+            }
             if state == "arrow-helper" {
                 let origin = harness
                     .state()
@@ -373,7 +450,11 @@ fn capture_mobile_ui_gallery() {
                 harness.step();
             } else {
                 harness.remove_cursor();
-                harness.run();
+                if state.starts_with("files-") {
+                    harness.run_steps(3);
+                } else {
+                    harness.run();
+                }
             }
             let image = harness.render().expect("headless mobile rendering");
             let filename = format!("{family}-{state}.png");

@@ -1,12 +1,22 @@
 //! iOS feasibility host: offline by default, with opt-in transient live SSH.
 
-#[allow(dead_code)] // design-system surface used by the gallery before production wiring
+#[cfg_attr(not(feature = "live-ssh"), allow(dead_code))] // SFTP needs the SSH transport
+mod files;
+#[cfg(test)]
+mod files_fixture;
+#[cfg_attr(not(feature = "live-ssh"), allow(dead_code))] // SFTP needs the SSH transport
+mod files_shell;
+#[cfg_attr(not(feature = "live-ssh"), allow(dead_code))] // SFTP needs the SSH transport
+mod files_ui;
 mod forms;
 #[cfg(feature = "live-ssh")]
 mod live_ssh;
 #[allow(dead_code)] // design-system surface used by the gallery before production wiring
 mod model;
+mod password_buffer;
 mod profiles;
+#[cfg(feature = "live-ssh")]
+mod sftp_link;
 mod shell;
 mod tabs;
 #[allow(dead_code)] // design-system surface used by the gallery before production wiring
@@ -210,8 +220,9 @@ pub struct MobileApp {
     menu_open: bool,
     gestures: terminal_gesture::TerminalGesture,
     workspace: workspaces::Workspace,
-    files: workspaces::FilesWorkspace,
-    markdown: workspaces::MarkdownWorkspace,
+    files: Option<Box<files::FilesSession>>,
+    files_ctx: files_shell::FilesContext,
+    markdown: Option<workspaces::MarkdownWorkspace>,
     surface: Surface,
     shell: shell::ShellState,
     profiles: Option<profiles::Profiles>,
@@ -262,8 +273,9 @@ impl MobileApp {
             menu_open: false,
             gestures: terminal_gesture::TerminalGesture::default(),
             workspace: workspaces::Workspace::Terminal,
-            files: workspaces::FilesWorkspace::default(),
-            markdown: workspaces::MarkdownWorkspace::default(),
+            files: None,
+            files_ctx: files_shell::FilesContext::default(),
+            markdown: None,
             surface: Surface::Tabs,
             shell: shell::ShellState::default(),
             profiles: None,
@@ -519,6 +531,10 @@ impl MobileApp {
             self.persist_new_trust();
             self.poll_background(ui.ctx());
         }
+        #[cfg(feature = "live-ssh")]
+        if lifecycle.active {
+            self.poll_files(ui.ctx());
+        }
         let bounds = ui.max_rect();
         if self.editor.open {
             self.show_editor(ui);
@@ -529,6 +545,7 @@ impl MobileApp {
             Surface::Terminal => self.show_surface(ui, lifecycle),
         }
         self.show_sheets(ui.ctx(), bounds);
+        self.show_files_sheets(ui.ctx(), bounds);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -645,6 +662,16 @@ impl MobileApp {
     }
 
     fn edit_profile(&mut self, id: &str) {
+        if let Some(spec) = self
+            .profiles
+            .as_ref()
+            .and_then(|profiles| profiles.sftp_spec(id))
+        {
+            self.notice = None;
+            self.editor.open_edit_sftp(id, &spec, self.caps);
+            self.editor.durable_credentials = self.credentials_durable();
+            return;
+        }
         let Some((name, ssh)) = self
             .profiles
             .as_ref()
@@ -658,6 +685,15 @@ impl MobileApp {
     }
 
     fn connect_profile(&mut self, ctx: &egui::Context, id: &str) {
+        if let Some(spec) = self
+            .profiles
+            .as_ref()
+            .and_then(|profiles| profiles.sftp_spec(id))
+        {
+            self.notice = None;
+            self.open_files(spec, true, ctx);
+            return;
+        }
         #[cfg(feature = "live-ssh")]
         {
             self.notice = None;
@@ -945,6 +981,18 @@ impl MobileApp {
         } else {
             name
         };
+        if self.editor.kind(self.caps) == model::ProfileKind::Sftp {
+            let start_dir = self.editor.start_dir.trim();
+            let sftp = festerm_mobile_profiles::SftpProfile {
+                host,
+                port,
+                username,
+                auth: auth.clone(),
+                start_dir: (!start_dir.is_empty()).then(|| start_dir.to_owned()),
+            };
+            let result = profiles.save_sftp(self.editor.editing.as_deref(), &name, sftp);
+            return self.finish_profile_save(result, &auth);
+        }
         let ssh = SshProfile {
             host,
             port,
@@ -953,10 +1001,21 @@ impl MobileApp {
             remote_session: self.editor.remote_session(),
             recovery: Recovery::default(),
         };
-        match profiles.save_ssh(self.editor.editing.as_deref(), &name, ssh) {
+        let result = profiles.save_ssh(self.editor.editing.as_deref(), &name, ssh);
+        self.finish_profile_save(result, &auth)
+    }
+
+    fn finish_profile_save(
+        &mut self,
+        result: Result<String, String>,
+        auth: &festerm_mobile_profiles::SshAuth,
+    ) -> Option<String> {
+        match result {
             Ok(id) => {
-                if let Some(original) = &self.editor.original_auth {
-                    if *original != auth {
+                if let (Some(original), Some(profiles)) =
+                    (&self.editor.original_auth, self.profiles.as_ref())
+                {
+                    if original != auth {
                         profiles.discard_credential(original);
                     }
                 }
@@ -1023,11 +1082,9 @@ impl MobileApp {
         let (title, subtitle) = if in_terminal {
             (chrome.title.clone(), chrome.subtitle.clone())
         } else {
-            (
-                self.workspace.label().to_owned(),
-                "Offline preview".to_owned(),
-            )
+            self.files_heading()
         };
+        let can_open_files = in_terminal && self.active_spec().is_some();
         let mut back = false;
         let mut files = false;
         let mut close_tab = None;
@@ -1035,24 +1092,10 @@ impl MobileApp {
             .frame(egui::Frame::new().fill(theme::color::BG))
             .show_separator_line(false)
             .show(ui, |ui| {
-                let header = terminal_chrome::header(ui, &title, &subtitle, in_terminal);
+                let header = terminal_chrome::header(ui, &title, &subtitle, can_open_files);
                 back = header.back;
                 files = header.files;
                 let menu = egui::Popup::menu(&header.more).show(|ui| {
-                    for (workspace, label) in [
-                        (workspaces::Workspace::Terminal, "Terminal"),
-                        (workspaces::Workspace::Files, "Files (preview)"),
-                        (workspaces::Workspace::Markdown, "README (preview)"),
-                    ] {
-                        if ui
-                            .selectable_label(self.workspace == workspace, label)
-                            .clicked()
-                        {
-                            self.switch_workspace(workspace);
-                            ui.close();
-                        }
-                    }
-                    ui.separator();
                     if session_active && ui.button("Disconnect").clicked() {
                         #[cfg(feature = "live-ssh")]
                         if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
@@ -1086,24 +1129,40 @@ impl MobileApp {
             return;
         }
         if back {
-            if in_terminal {
-                self.leave_terminal();
-            } else {
-                self.switch_workspace(workspaces::Workspace::Terminal);
+            match self.workspace {
+                workspaces::Workspace::Terminal => self.leave_terminal(),
+                workspaces::Workspace::Markdown => {
+                    self.markdown = None;
+                    self.switch_workspace(workspaces::Workspace::Files);
+                }
+                workspaces::Workspace::Files if self.files_ctx.only => {
+                    self.close_files();
+                    self.switch_workspace(workspaces::Workspace::Terminal);
+                    self.surface = Surface::Tabs;
+                }
+                workspaces::Workspace::Files => {
+                    self.switch_workspace(workspaces::Workspace::Terminal)
+                }
             }
             return;
         }
-        if files {
-            self.switch_workspace(workspaces::Workspace::Files);
+        if files && can_open_files {
+            let ctx = ui.ctx().clone();
+            self.open_files_for_active(&ctx);
+            return;
         }
         if !in_terminal {
             egui::Panel::top("mobile-status")
                 .frame(egui::Frame::new().fill(theme::color::BG))
                 .show_separator_line(false)
                 .show(ui, |_| {});
-            match self.workspace {
-                workspaces::Workspace::Files => self.files.show(ui),
-                _ => self.markdown.show(ui),
+            match (self.workspace, self.markdown.as_mut()) {
+                (workspaces::Workspace::Markdown, Some(markdown)) => {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::symmetric(theme::space::LG as i8, 0))
+                        .show(ui, |ui| markdown.show(ui));
+                }
+                _ => self.show_files_body(ui),
             }
             return;
         }
@@ -1400,9 +1459,98 @@ mod tests {
         assert!(app.profiles.as_ref().unwrap().rows(app.caps).is_empty());
     }
 
+    #[test]
+    fn mobile_sftp_profiles_save_edit_open_and_keep_their_start_folder() {
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle::default())))
+            .with_profiles(profiles::testing::profiles());
+        app.editor.open_new();
+        app.editor.kind_index = forms::EditorState::kinds(app.caps)
+            .iter()
+            .position(|kind| *kind == model::ProfileKind::Sftp)
+            .expect("SFTP is offered in production");
+        app.editor.host = "files.example.net".to_owned();
+        app.editor.username = "ops".to_owned();
+        app.editor.start_dir = " /srv/app ".to_owned();
+        let id = app.save_editor_profile().expect("saved");
+        let store = app.profiles.as_ref().unwrap();
+        assert!(store.is_sftp(&id) && store.spec(&id).is_none());
+        let spec = store.sftp_spec(&id).unwrap();
+        assert_eq!(spec.start_dir.as_deref(), Some("/srv/app"));
+        assert_eq!(spec.detail(), "SFTP · ops@files.example.net");
+
+        app.editor.close();
+        app.edit_profile(&id);
+        assert_eq!(app.editor.kind(app.caps), model::ProfileKind::Sftp);
+        assert_eq!(app.editor.start_dir, "/srv/app");
+        app.editor.start_dir.clear();
+        app.save_editor_profile().expect("updated");
+        let spec = app.profiles.as_ref().unwrap().sftp_spec(&id).unwrap();
+        assert_eq!(spec.start_dir, None);
+    }
+
     #[cfg(feature = "live-ssh")]
     #[test]
-    fn mobile_header_menu_routes_previews_and_resets_demo_without_stale_input() {
+    fn mobile_files_only_tab_returns_to_profiles_and_drops_its_session() {
+        use egui_kittest::{kittest::Queryable, Harness};
+        use files_fixture::{fixture_entry, FixtureFs, FixtureTransfers};
+        use std::sync::Arc;
+
+        let app = Rc::new(RefCell::new(MobileApp::new(Rc::new(Cell::new(
+            Lifecycle {
+                active: true,
+                ..Default::default()
+            },
+        )))));
+        let ctx = egui::Context::default();
+        let fs = |kind, home| {
+            Arc::new(FixtureFs {
+                kind,
+                home,
+                entries: vec![fixture_entry("a.txt", false, 5, 1)],
+            })
+        };
+        let session = files::FilesSession::ready(
+            "release-files".to_owned(),
+            "SFTP · ops@files.example.net".to_owned(),
+            files::Ready {
+                remote: fs(festerm_sftp::PaneKind::Remote, "/srv"),
+                local: fs(festerm_sftp::PaneKind::Local, ""),
+                local_root: std::path::PathBuf::from("/nonexistent-festerm-test"),
+                transfers: Arc::new(FixtureTransfers::new(Vec::new())),
+                start_dir: None,
+            },
+            &ctx,
+        );
+        {
+            let mut app = app.borrow_mut();
+            app.files = Some(Box::new(session));
+            app.files_ctx.only = true;
+            app.surface = Surface::Terminal;
+            app.workspace = workspaces::Workspace::Files;
+        }
+        let displayed = app.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(
+                move |ui, _: &mut ()| displayed.borrow_mut().show_with_occlusion(ui, 0.0),
+                (),
+            );
+        harness.run_steps(3);
+        assert!(
+            harness.query_by_label("Files").is_none(),
+            "no terminal Files button"
+        );
+        harness.get_by_label("Back").click();
+        harness.run_steps(3);
+        let app = app.borrow();
+        assert!(app.files.is_none());
+        assert_eq!(app.surface, Surface::Tabs);
+        assert_eq!(app.workspace, workspaces::Workspace::Terminal);
+    }
+
+    #[cfg(feature = "live-ssh")]
+    #[test]
+    fn mobile_header_menu_resets_demo_without_stale_input_and_has_no_preview_entries() {
         use egui_kittest::{kittest::Queryable, Harness};
 
         let app = Rc::new(RefCell::new(MobileApp::new_terminal(Rc::new(Cell::new(
@@ -1420,19 +1568,20 @@ mod tests {
             );
         harness.run();
         app.borrow_mut().control = true;
-        for (label, workspace) in [
-            ("Files (preview)", workspaces::Workspace::Files),
-            ("README (preview)", workspaces::Workspace::Markdown),
-            ("Terminal", workspaces::Workspace::Terminal),
-        ] {
-            harness.get_by_label("More").click();
-            harness.run();
-            assert!(app.borrow().menu_open);
-            harness.get_by_label(label).click();
-            harness.run();
-            assert_eq!(app.borrow().workspace, workspace);
-            assert!(!app.borrow().control);
-        }
+        harness.get_by_label("More").click();
+        harness.run();
+        assert!(app.borrow().menu_open);
+        assert!(harness.query_by_label("Files (preview)").is_none());
+        assert!(harness.query_by_label("README (preview)").is_none());
+        harness.get_by_label("Reset demo").click();
+        harness.run();
+        assert!(!app.borrow().control, "resetting releases sticky modifiers");
+        app.borrow_mut().control = true;
+        app.borrow_mut()
+            .switch_workspace(workspaces::Workspace::Files);
+        assert!(!app.borrow().control);
+        app.borrow_mut()
+            .switch_workspace(workspaces::Workspace::Terminal);
         assert_eq!(app.borrow().sink.diagnostics.byte_count, 0);
         app.borrow_mut().send_key(Key::Tab);
         assert!(app.borrow().sink.diagnostics.byte_count > 0);

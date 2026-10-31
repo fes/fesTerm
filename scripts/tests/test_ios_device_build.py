@@ -145,6 +145,8 @@ class DeviceBuildTests(unittest.TestCase):
             info = plistlib.loads((bundle / "Info.plist").read_bytes())
             self.assertEqual(info["CFBundleSupportedPlatforms"], ["iPhoneOS"])
             self.assertEqual(info["UIDeviceFamily"], [1, 2])
+            self.assertTrue(info["UIFileSharingEnabled"])
+            self.assertTrue(info["LSSupportsOpeningDocumentsInPlace"])
             self.assertEqual(info["CFBundleIdentifier"], BUNDLE)
             self.assertEqual((bundle / "embedded.mobileprovision").read_bytes(), b"synthetic signed profile")
             self.assertTrue((bundle / "festerm-mobile").stat().st_mode & 0o111)

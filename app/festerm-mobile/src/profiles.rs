@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use festerm_mobile_profiles::{
     keys, CredentialStatus, KeyImportError, KnownHosts, ProfileError, ProfileId,
-    ProfileKind as StoredKind, ProfileStore, RemoteSession, SshAuth, SshProfile,
+    ProfileKind as StoredKind, ProfileStore, RemoteSession, SftpProfile, SshAuth, SshProfile,
 };
 use festerm_secret_store::SecretStore;
 use festerm_ssh::{HostIdentity, SessionStrategy, SshAuthentication};
@@ -41,6 +41,37 @@ impl SessionSpec {
 
     pub fn strategy(&self) -> Option<SessionStrategy> {
         self.ssh.remote_session.strategy().ok()
+    }
+}
+
+/// Everything needed to open the Files screen for one host.
+#[derive(Clone, Debug)]
+pub struct SftpSpec {
+    pub profile: Option<ProfileId>,
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth: SshAuth,
+    pub start_dir: Option<String>,
+}
+
+impl SftpSpec {
+    pub fn detail(&self) -> String {
+        model::profile_detail(model::ProfileKind::Sftp, &self.host, &self.username)
+    }
+
+    /// Files for the same host as an open terminal session.
+    pub fn from_session(spec: &SessionSpec) -> Self {
+        Self {
+            profile: spec.profile.clone(),
+            name: spec.name.clone(),
+            host: spec.ssh.host.clone(),
+            port: spec.ssh.port,
+            username: spec.ssh.username.clone(),
+            auth: spec.ssh.auth.clone(),
+            start_dir: None,
+        }
     }
 }
 
@@ -188,6 +219,49 @@ impl Profiles {
             name: profile.name.clone(),
             ssh: ssh.clone(),
         })
+    }
+
+    /// A launchable snapshot of a saved SFTP profile.
+    pub fn sftp_spec(&self, id: &str) -> Option<SftpSpec> {
+        let id = Self::id(id)?;
+        let profile = self.store.get(&id)?;
+        let StoredKind::Sftp(sftp) = &profile.kind else {
+            return None;
+        };
+        Some(SftpSpec {
+            profile: Some(id),
+            name: profile.name.clone(),
+            host: sftp.host.clone(),
+            port: sftp.port,
+            username: sftp.username.clone(),
+            auth: sftp.auth.clone(),
+            start_dir: sftp.start_dir.clone(),
+        })
+    }
+
+    pub fn is_sftp(&self, id: &str) -> bool {
+        self.sftp_spec(id).is_some()
+    }
+
+    pub fn save_sftp(
+        &mut self,
+        id: Option<&str>,
+        name: &str,
+        sftp: SftpProfile,
+    ) -> Result<String, String> {
+        match id.and_then(Self::id) {
+            Some(id) => {
+                self.store
+                    .update(&id, name, StoredKind::Sftp(sftp))
+                    .map_err(|error| describe(&error))?;
+                Ok(id.as_str().to_owned())
+            }
+            None => self
+                .store
+                .create(name, StoredKind::Sftp(sftp))
+                .map(|id| id.as_str().to_owned())
+                .map_err(|error| describe(&error)),
+        }
     }
 
     pub fn suggest_name(&self, base: &str) -> String {
