@@ -10,7 +10,7 @@ publish = false
 
 [features]
 default = []
-live-ssh = ["dep:festerm-session"]
+live-ssh = ["dep:festerm-session", "dep:tokio"]
 
 [dependencies]
 eframe = { version = "=0.36.1", default-features = false, features = ["default_fonts", "wgpu"] }
@@ -20,10 +20,12 @@ festerm-markdown = { path = "../../crates/festerm-markdown" }
 festerm-mobile-profiles = { path = "../../crates/festerm-mobile-profiles" }
 festerm-secret-store = { path = "../../crates/festerm-secret-store" }
 festerm-session = { path = "../../crates/festerm-session", optional = true }
+festerm-sftp = { path = "../../crates/festerm-sftp" }
 festerm-ssh = { path = "../../crates/festerm-ssh" }
 festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
 log = "0.4"
 raw-window-handle = "0.6"
+tokio = { version = "1.17.0", optional = true, default-features = false, features = ["rt", "sync", "time"] }
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
 zeroize = "1"
 

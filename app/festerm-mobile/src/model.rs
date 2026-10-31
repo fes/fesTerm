@@ -149,12 +149,12 @@ pub struct Capabilities {
 
 impl Capabilities {
     /// What the production shell supports today: SSH profiles with password
-    /// or key authentication, remote sessions and paste. Dev Tunnel and SFTP
-    /// profile kinds stay hidden until their flows are wired.
+    /// or key authentication, remote sessions, paste and SFTP file profiles.
+    /// Dev Tunnel profiles stay hidden until their flow is wired.
     pub const fn production() -> Self {
         Self {
             dev_tunnel_profiles: false,
-            sftp_profiles: false,
+            sftp_profiles: true,
             key_authentication: true,
             remote_session_choice: true,
             paste: true,

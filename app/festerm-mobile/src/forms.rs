@@ -4,6 +4,7 @@
 //! structs and returned actions so callers own all connection side effects.
 
 use super::model::{Capabilities, DevTunnelChoices, HostDecision, HostVerification, ProfileKind};
+use super::profiles::SftpSpec;
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
     bottom_sheet, button, button_sized, caption_label, card, footnote, labelled, paint_fit,
@@ -62,6 +63,8 @@ pub struct EditorState {
     pub durable_credentials: bool,
     pub session_mode: usize,
     pub session_name: String,
+    /// SFTP profiles: the folder the browser opens first.
+    pub start_dir: String,
     pub error: Option<String>,
     pub confirm_delete: bool,
     pub tunnel: Option<DevTunnelChoices>,
@@ -105,6 +108,33 @@ impl EditorState {
             durable_credentials: self.durable_credentials,
             session_mode,
             session_name,
+            ..Self::default()
+        };
+    }
+
+    pub fn open_edit_sftp(&mut self, id: &str, spec: &SftpSpec, caps: Capabilities) {
+        self.wipe_secrets();
+        let kind_index = Self::kinds(caps)
+            .iter()
+            .position(|kind| *kind == ProfileKind::Sftp)
+            .unwrap_or(0);
+        *self = Self {
+            open: true,
+            editing: Some(id.to_owned()),
+            kind_index,
+            name: spec.name.clone(),
+            host: spec.host.clone(),
+            port: spec.port.to_string(),
+            username: spec.username.clone(),
+            auth_mode: match &spec.auth {
+                SshAuth::Ask => AuthMode::Ask,
+                SshAuth::Password { .. } => AuthMode::Password,
+                SshAuth::Key { .. } => AuthMode::Key,
+            },
+            auth: Some(spec.auth.clone()),
+            original_auth: Some(spec.auth.clone()),
+            durable_credentials: self.durable_credentials,
+            start_dir: spec.start_dir.clone().unwrap_or_default(),
             ..Self::default()
         };
     }
@@ -393,7 +423,7 @@ pub fn show_editor(
                     ui,
                     ButtonKind::Primary,
                     connect_label,
-                    can_connect || kind != ProfileKind::Ssh,
+                    can_connect || kind == ProfileKind::DevTunnel,
                     egui::vec2(width - secondary - gap, space::BUTTON_HEIGHT),
                 )
                 .clicked()
@@ -491,6 +521,19 @@ fn ssh_fields(
             },
         );
     });
+    if kind == ProfileKind::Sftp {
+        text_field(
+            ui,
+            "Start folder (optional)",
+            &mut state.start_dir,
+            "/srv/app or ~/projects",
+            width,
+        );
+        footnote(
+            ui,
+            "Opens a file browser on this host over SFTP. Leave empty to start in your home folder.",
+        );
+    }
     if caps.remote_session_choice && kind == ProfileKind::Ssh {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 6.0;

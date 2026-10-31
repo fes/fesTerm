@@ -39,6 +39,7 @@ PubkeyAuthentication yes
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 UsePAM no
+Subsystem sftp internal-sftp
 StrictModes no
 AllowUsers $(id -un)
 SetEnv PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin

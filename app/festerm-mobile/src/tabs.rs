@@ -58,7 +58,7 @@ impl MobileApp {
     }
 
     /// Moves the active terminal (and its worker) into its tab.
-    fn park_active(&mut self) {
+    pub(super) fn park_active(&mut self) {
         let Some(id) = self.active_tab.take() else {
             return;
         };
