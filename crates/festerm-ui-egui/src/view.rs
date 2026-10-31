@@ -998,7 +998,8 @@ impl TerminalView {
             dimensions: vp_layout.dimensions,
             metrics,
         };
-        let mouse_reporting = !matches!(terminal.modes().mouse_tracking(), MouseTrackingMode::None);
+        let mouse_reporting = options.keyboard_input_enabled
+            && !matches!(terminal.modes().mouse_tracking(), MouseTrackingMode::None);
 
         if ui.input(|input| {
             input
@@ -6399,6 +6400,8 @@ mod tests {
         // HIST-06/SSH-02 invariant.
         let mut state = HeadlessViewState::new();
         state.terminal.ingest(b"copy me");
+        // Retired TUI modes must not steal local gestures or emit focus reports.
+        state.terminal.ingest(b"\x1b[?1003h\x1b[?1006h\x1b[?1004h");
         let mut harness = Harness::builder()
             .with_size(Vec2::new(800.0, 600.0))
             .build_ui_state(

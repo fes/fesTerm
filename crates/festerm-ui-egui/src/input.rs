@@ -319,6 +319,8 @@ pub(crate) struct TerminalPointerState {
     pub(crate) pressed: [bool; 3],
     pub(crate) captured: [bool; 3],
     local_selection: [bool; 3],
+    /// Retired sessions keep pointer gestures local without altering DEC modes.
+    local_only: bool,
     pub(crate) last_position: Option<Pos2>,
     pub(crate) modifiers: Modifiers,
     /// The fraction of a row a forwarded wheel event did not earn, carried
@@ -439,8 +441,8 @@ pub(crate) struct InputSuppression {
     pub(crate) blackout: bool,
     /// The session backing this view can no longer accept keystrokes (it
     /// has exited, failed, stopped, or disconnected). Unlike `blackout`,
-    /// this only drops keystrokes/paste bound for the shell; selection,
-    /// Copy, and scrollback navigation remain active.
+    /// this drops transport-bound keys/paste/mouse/focus reports; local
+    /// selection, Copy, and scrollback navigation remain active.
     pub(crate) keystrokes: bool,
 }
 
@@ -495,7 +497,22 @@ pub(crate) fn route_egui_events(
         *pointer = TerminalPointerState::default();
     }
 
+    if pointer.local_only != suppress.keystrokes {
+        *pointer = TerminalPointerState::default();
+        if selection.is_active() {
+            selection.finish();
+        }
+    }
+    pointer.local_only = suppress.keystrokes;
+    if suppress.keystrokes {
+        // Retire preedit/focus ownership without reporting to a dead session.
+        let _ = keyboard.focus_out_if_owned();
+    }
+
     for event in events {
+        if suppress.keystrokes && matches!(event, egui::Event::WindowFocused(_)) {
+            continue;
+        }
         if suppress.blackout && !matches!(event, egui::Event::WindowFocused(_)) {
             continue;
         }
@@ -710,14 +727,14 @@ pub(crate) fn route_egui_events(
         response.request_focus();
     }
 
-    if response.lost_focus() && !focus_out_routed && !terminal_key_routed {
+    if !suppress.keystrokes && response.lost_focus() && !focus_out_routed && !terminal_key_routed {
         if let Some(focus) = keyboard.focus_out_if_owned() {
             reports.record(
                 Instant::now(),
                 route_input(terminal, InputEvent::Focus(focus), sink),
             );
         }
-    } else if keyboard_focused {
+    } else if keyboard_focused && !suppress.keystrokes {
         if let Some(focus) = keyboard.focus_in_if_needed(true) {
             reports.record(
                 Instant::now(),
@@ -795,7 +812,7 @@ pub(crate) fn route_pointer_event(
             let cell = layout.cell_geometry().hit_test(position);
             let local_selection = button == MouseButton::Left
                 && cell.is_some()
-                && modifiers.contains(Modifiers::SHIFT);
+                && (pointer.local_only || modifiers.contains(Modifiers::SHIFT));
             pointer.press(button, position, cell.is_some(), local_selection, modifiers);
             cell.map(|position| {
                 route_mouse_input_with_policy(
@@ -809,7 +826,7 @@ pub(crate) fn route_pointer_event(
                     selection,
                     sink,
                     viewport_offset_rows,
-                    local_selection,
+                    pointer.local_only || local_selection,
                 )
             })
         }
@@ -844,7 +861,7 @@ pub(crate) fn route_pointer_event(
                     selection,
                     sink,
                     viewport_offset_rows,
-                    local_selection,
+                    pointer.local_only || local_selection,
                 )
             });
             pointer.release(button, position, modifiers);
@@ -879,7 +896,7 @@ pub(crate) fn route_pointer_event(
                         selection,
                         sink,
                         viewport_offset_rows,
-                        pointer.local_selection_owned(MouseButton::Left),
+                        pointer.local_only || pointer.local_selection_owned(MouseButton::Left),
                     )
                 })
         }
@@ -901,7 +918,7 @@ pub(crate) fn route_pointer_event(
                         selection,
                         sink,
                         viewport_offset_rows,
-                        false,
+                        pointer.local_only,
                     )
                 })
             })

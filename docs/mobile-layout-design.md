@@ -195,6 +195,26 @@ Trust/authentication and failure/recovery information remains explicit; the
 fresh-shell warning appears when replacing an active connection. This transient
 form remains a deliberate deviation from Termius saved-host navigation.
 
+Disconnected history follows owner reference screen 16: the actual host remains
+visible with Disconnected · read-only. A bounded bottom recovery card offers
+Reconnect · new shell; ordinary reason text is under Details, while an input
+refusal's earlier-execution warning stays visible. The disabled accessory row is
+replaced by this card and the terminal stops requesting native IME. Reconnect
+opens the existing form only; Cancel or synchronous validation failure retains
+history. Explicit Connect submission replaces it when the SSH worker starts,
+before authentication completes; this is not durable session recovery.
+
+The active read-only terminal keeps local scroll/selection/Copy while rejecting
+typing, paste, arrow-helper input and stale transport mouse/focus reports. The
+shared renderer uses its existing read-only policy to force local pointer
+handling even when a retired TUI left DEC mouse tracking on; recorded terminal
+modes are not rewritten. Foreground form/menu/authentication ownership still
+blacks out terminal interaction. Pending gestures, one-shot modifiers and preedit
+ownership retire; no input is replayed into a replacement. Headless policy tests
+and synthetic disconnected captures are portable evidence only. Native touch
+selection/Copy, keyboard disappearance and physical-device recovery remain
+MOB-06 checks.
+
 Connection/authentication controls own keyboard input while active; terminal
 sticky modifiers and gestures must not consume their text. On the connected
 terminal, retain the approved persistent keyboard, accessory row and

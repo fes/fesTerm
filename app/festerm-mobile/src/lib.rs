@@ -416,6 +416,8 @@ impl MobileApp {
                     );
                     ui.weak(if self.workspace != workspaces::Workspace::Terminal {
                         "Offline preview"
+                    } else if live_selected && can_reset {
+                        "Disconnected · read-only"
                     } else if live_selected {
                         "SSH"
                     } else {
@@ -526,7 +528,15 @@ impl MobileApp {
             }
             // Use the parent safe space, never the previous form height.
             let controls_height = ui.available_height() * 0.45;
-            if self.connection.open || self.sink.live.connection.borrow().is_some() {
+            let show_controls = self.connection.open
+                || self
+                    .sink
+                    .live
+                    .connection
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|live| !live.can_reset());
+            if show_controls {
                 let mut connected = false;
                 ui.add_enabled_ui(lifecycle.active, |ui| {
                     egui::ScrollArea::vertical()
@@ -568,49 +578,81 @@ impl MobileApp {
                 .is_none_or(|live| live.input_enabled());
         #[cfg(not(feature = "live-ssh"))]
         let input_ready = lifecycle.active;
-        let toolbar = egui::Panel::bottom("terminal-keys").show(ui, |ui| {
-            ui.add_enabled_ui(input_ready && !self.menu_open, |ui| {
-                egui::ScrollArea::horizontal()
-                    .id_salt("extra-keys")
-                    .show(ui, |ui| {
-                        ui.spacing_mut().interact_size.y = 44.0;
-                        ui.horizontal(|ui| {
-                            // Terminal keys act like a keyboard, not focus targets.
-                            for (label, key) in [("Esc", Key::Escape), ("Tab", Key::Tab)] {
-                                if ui
-                                    .add(egui::Button::new(label).sense(egui::Sense::CLICK))
-                                    .clicked()
-                                {
-                                    self.send_key(key);
+        #[cfg(feature = "live-ssh")]
+        let read_only = self
+            .sink
+            .live
+            .connection
+            .borrow()
+            .as_ref()
+            .is_some_and(|live| live.can_reset());
+        #[cfg(not(feature = "live-ssh"))]
+        let read_only = false;
+        if !input_ready {
+            self.control = false;
+            self.alt = false;
+        }
+        if !read_only {
+            let toolbar = egui::Panel::bottom("terminal-keys").show(ui, |ui| {
+                ui.add_enabled_ui(input_ready && !self.menu_open, |ui| {
+                    egui::ScrollArea::horizontal()
+                        .id_salt("extra-keys")
+                        .show(ui, |ui| {
+                            ui.spacing_mut().interact_size.y = 44.0;
+                            ui.horizontal(|ui| {
+                                // Terminal keys act like a keyboard, not focus targets.
+                                for (label, key) in [("Esc", Key::Escape), ("Tab", Key::Tab)] {
+                                    if ui
+                                        .add(egui::Button::new(label).sense(egui::Sense::CLICK))
+                                        .clicked()
+                                    {
+                                        self.send_key(key);
+                                    }
                                 }
-                            }
-                            let control = ui.add(
-                                egui::Button::selectable(self.control, "Ctrl")
-                                    .frame_when_inactive(true)
-                                    .sense(egui::Sense::CLICK),
-                            );
-                            #[cfg(test)]
-                            {
-                                self.control_rect = Some(control.rect);
-                            }
-                            if control.clicked() {
-                                self.control = !self.control;
-                            }
-                            if ui
-                                .add(
-                                    egui::Button::selectable(self.alt, "Alt")
+                                let control = ui.add(
+                                    egui::Button::selectable(self.control, "Ctrl")
                                         .frame_when_inactive(true)
                                         .sense(egui::Sense::CLICK),
-                                )
-                                .clicked()
-                            {
-                                self.alt = !self.alt;
-                            }
+                                );
+                                #[cfg(test)]
+                                {
+                                    self.control_rect = Some(control.rect);
+                                }
+                                if control.clicked() {
+                                    self.control = !self.control;
+                                }
+                                if ui
+                                    .add(
+                                        egui::Button::selectable(self.alt, "Alt")
+                                            .frame_when_inactive(true)
+                                            .sense(egui::Sense::CLICK),
+                                    )
+                                    .clicked()
+                                {
+                                    self.alt = !self.alt;
+                                }
+                            });
                         });
-                    });
+                });
             });
-        });
-        self.toolbar_rect = Some(toolbar.response.rect);
+            self.toolbar_rect = Some(toolbar.response.rect);
+        } else {
+            self.toolbar_rect = None;
+        }
+        #[cfg(feature = "live-ssh")]
+        if read_only && !self.connection.open {
+            let recovery_height = ui.available_height();
+            egui::Panel::bottom("mobile-recovery").show(ui, |ui| {
+                if let Some(live) = self.sink.live.connection.borrow().as_ref() {
+                    self.connection.show_recovery(ui, live, recovery_height);
+                }
+            });
+        }
+        #[cfg(feature = "live-ssh")]
+        let history_ready =
+            lifecycle.active && !self.connection.open && (input_ready || read_only);
+        #[cfg(not(feature = "live-ssh"))]
+        let history_ready = input_ready;
         if input_ready && !self.menu_open {
             ui.input_mut(|input| self.consume_sticky_text(&mut input.events));
         }
@@ -641,7 +683,7 @@ impl MobileApp {
             &mut self.sink,
             TerminalViewOptions {
                 paste_available: false,
-                terminal_input_enabled: input_ready && !self.menu_open && !gesture.block_pointer,
+                terminal_input_enabled: history_ready && !self.menu_open && !gesture.block_pointer,
                 keyboard_input_enabled: input_ready && !self.menu_open,
                 persistent_keyboard_focus: input_ready && !self.menu_open,
                 // No clipboard/paste policy is implemented by this probe.
