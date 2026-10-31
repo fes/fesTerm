@@ -45,6 +45,8 @@ pub struct ShellData<'a> {
     pub trusted_hosts: &'a [TrustedHostRow],
     pub diagnostics: &'a [(String, String)],
     pub notice: Option<&'a str>,
+    /// App-lock settings, when the host has a lock.
+    pub lock: Option<super::app_lock::LockView>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,6 +61,7 @@ pub enum ShellAction {
     ShowSessions,
     HideSessions,
     OpenProfilesTab,
+    Lock(super::app_lock::LockAction),
 }
 
 fn state_dot(state: SurfaceState) -> Dot {
@@ -376,6 +379,13 @@ fn settings_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAct
         footnote(
             ui,
             "Forgetting a key makes fesTerm ask again on the next connection.",
+        );
+    }
+    if let Some(lock) = &data.lock {
+        actions.extend(
+            super::app_lock::settings_section(ui, lock)
+                .into_iter()
+                .map(ShellAction::Lock),
         );
     }
     section_header(ui, "Diagnostics", None, false);

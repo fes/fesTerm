@@ -1,5 +1,6 @@
 //! iOS feasibility host: offline by default, with opt-in transient live SSH.
 
+mod app_lock;
 #[cfg_attr(not(feature = "live-ssh"), allow(dead_code))] // SFTP needs the SSH transport
 mod files;
 #[cfg(test)]
@@ -226,6 +227,7 @@ pub struct MobileApp {
     surface: Surface,
     shell: shell::ShellState,
     profiles: Option<profiles::Profiles>,
+    lock: Option<app_lock::LockHost>,
     caps: model::Capabilities,
     tabs: Vec<tabs::SessionTab>,
     active_tab: Option<u64>,
@@ -279,6 +281,7 @@ impl MobileApp {
             surface: Surface::Tabs,
             shell: shell::ShellState::default(),
             profiles: None,
+            lock: None,
             caps: model::Capabilities::production(),
             tabs: Vec::new(),
             active_tab: None,
@@ -308,6 +311,16 @@ impl MobileApp {
     /// Plugs in the saved-profile store (Keychain-backed in production).
     pub fn with_profiles(mut self, profiles: profiles::Profiles) -> Self {
         self.profiles = Some(profiles);
+        self
+    }
+
+    /// Plugs in the app lock; content is drawn only while it is unlocked.
+    pub fn with_lock(
+        mut self,
+        lock: festerm_ios_lock::AppLock,
+        bridge: Option<festerm_ios_lock::LockBridge>,
+    ) -> Self {
+        self.lock = Some(app_lock::LockHost::new(lock, bridge));
         self
     }
 
@@ -536,6 +549,16 @@ impl MobileApp {
             self.poll_files(ui.ctx());
         }
         let bounds = ui.max_rect();
+        if let Some(lock) = self.lock.as_mut() {
+            let hidden = lock.gate(ui, lifecycle.active);
+            lock.frame_presented();
+            if hidden {
+                self.gestures.cancel();
+                self.control = false;
+                self.alt = false;
+                return;
+            }
+        }
         if self.editor.open {
             self.show_editor(ui);
             return;
@@ -571,6 +594,7 @@ impl MobileApp {
             trusted_hosts,
             diagnostics,
             notice,
+            lock: self.lock.as_ref().map(app_lock::LockHost::view),
         }
     }
 
@@ -615,6 +639,11 @@ impl MobileApp {
                     self.editor.durable_credentials = self.credentials_durable();
                 }
                 ShellAction::EditProfile(id) => self.edit_profile(&id),
+                ShellAction::Lock(action) => {
+                    if let Some(lock) = self.lock.as_mut() {
+                        lock.apply(action);
+                    }
+                }
                 ShellAction::OpenProfile(id) => self.connect_profile(ctx, &id),
                 ShellAction::ForgetHost(index) => {
                     if let Some(profiles) = self.profiles.as_mut() {

@@ -15,6 +15,7 @@ live-ssh = ["dep:festerm-session", "dep:tokio"]
 [dependencies]
 eframe = { version = "=0.36.1", default-features = false, features = ["default_fonts", "wgpu"] }
 festerm-core = { path = "../../crates/festerm-core" }
+festerm-ios-lock = { path = "../../crates/festerm-ios-lock" }
 festerm-ios-window = { path = "../../crates/festerm-ios-window" }
 festerm-markdown = { path = "../../crates/festerm-markdown" }
 festerm-mobile-profiles = { path = "../../crates/festerm-mobile-profiles" }

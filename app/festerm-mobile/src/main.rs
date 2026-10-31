@@ -4,7 +4,11 @@
 use festerm_mobile::SuspensionHandle;
 use festerm_mobile::{Lifecycle, MobileApp};
 use raw_window_handle::HasWindowHandle;
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::Cell,
+    rc::Rc,
+    sync::{Arc, OnceLock},
+};
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, StartCause, WindowEvent},
@@ -106,6 +110,27 @@ impl ApplicationHandler<eframe::UserEvent> for MobileHost<'_> {
     }
 }
 
+fn build_lock(repaint: Arc<OnceLock<eframe::egui::Context>>) -> festerm_ios_lock::AppLock {
+    let store = festerm_mobile::Profiles::default_directory()
+        .map(|directory| festerm_ios_lock::SettingsStore::new(directory.join("app-lock.json")));
+    #[cfg(target_os = "ios")]
+    let locker: Arc<dyn festerm_ios_lock::Locker> = Arc::new(festerm_ios_lock::LaContextLocker);
+    // Desktop harness builds have no owner-authentication API.
+    #[cfg(not(target_os = "ios"))]
+    let locker: Arc<dyn festerm_ios_lock::Locker> =
+        festerm_ios_lock::FakeLocker::new(festerm_ios_lock::Availability::Unavailable);
+    festerm_ios_lock::AppLock::new(
+        store,
+        locker,
+        Arc::new(festerm_ios_lock::SystemClock),
+        move || {
+            if let Some(context) = repaint.get() {
+                context.request_repaint();
+            }
+        },
+    )
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::set_logger(&STARTUP_LOGGER).expect("single mobile logger");
     log::set_max_level(log::LevelFilter::Warn);
@@ -118,6 +143,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let suspension = SuspensionHandle::default();
     #[cfg(feature = "live-ssh")]
     let app_suspension = suspension.clone();
+    // The lock exists before the window so a cold launch never draws content.
+    let repaint: Arc<OnceLock<eframe::egui::Context>> = Arc::new(OnceLock::new());
+    let lock = build_lock(repaint.clone());
     let viewport = eframe::egui::ViewportBuilder::default();
     #[cfg(not(target_os = "ios"))]
     let viewport = viewport.with_inner_size([390.0, 844.0]);
@@ -133,10 +161,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Box::new(move |cc| {
             eprintln!("festerm-mobile: renderer initialized");
             let context = cc.egui_ctx.clone();
+            let _ = repaint.set(context.clone());
+            let bridge = cc
+                .window_handle()
+                .ok()
+                .and_then(|handle| festerm_ios_lock::LockBridge::new(handle, lock.clone()));
             let keyboard = cc.window_handle().ok().and_then(|handle| {
                 festerm_ios_window::KeyboardBridge::new(handle, move || context.request_repaint())
             });
-            let app = MobileApp::new(app_lifecycle).with_keyboard(keyboard);
+            let app = MobileApp::new(app_lifecycle)
+                .with_keyboard(keyboard)
+                .with_lock(lock, bridge);
             let app = match festerm_mobile::Profiles::open_default() {
                 Ok(profiles) => app.with_profiles(profiles),
                 Err(error) => {

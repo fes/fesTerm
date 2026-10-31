@@ -5,7 +5,7 @@
 //! Keychain in production, an in-memory store in tests and the gallery).
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use festerm_mobile_profiles::{
     keys, CredentialStatus, KeyImportError, KnownHosts, ProfileError, ProfileId,
@@ -90,7 +90,7 @@ pub enum KeyImportFailure {
 }
 
 pub struct Profiles {
-    store: ProfileStore,
+    store: Arc<Mutex<ProfileStore>>,
     hosts: KnownHosts,
     durable_credentials: bool,
 }
@@ -118,10 +118,20 @@ impl Profiles {
         let store = ProfileStore::open(directory, secrets).map_err(|error| describe(&error))?;
         let hosts = KnownHosts::open(directory).map_err(|error| error.to_string())?;
         Ok(Self {
-            store,
+            store: Arc::new(Mutex::new(store)),
             hosts,
             durable_credentials,
         })
+    }
+
+    fn store(&self) -> MutexGuard<'_, ProfileStore> {
+        self.store.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The shared store handle for services that persist their own state
+    /// (Dev Tunnel accounts and host trust).
+    pub(crate) fn store_handle(&self) -> Arc<Mutex<ProfileStore>> {
+        self.store.clone()
     }
 
     /// The sandbox directory profiles live in: `$HOME/Library/Application
@@ -185,7 +195,7 @@ impl Profiles {
 
     /// Profiles in the user's order, limited to kinds the shell can open.
     pub fn rows(&self, caps: Capabilities) -> Vec<model::Profile> {
-        self.store
+        self.store()
             .profiles()
             .iter()
             .filter_map(Self::row)
@@ -195,7 +205,7 @@ impl Profiles {
 
     /// Most recently launched first, for "Continue working".
     pub fn recents(&self, caps: Capabilities, limit: usize) -> Vec<model::Profile> {
-        self.store
+        self.store()
             .recents(limit)
             .into_iter()
             .filter_map(Self::row)
@@ -210,7 +220,8 @@ impl Profiles {
     /// A launchable snapshot of a saved SSH profile.
     pub fn spec(&self, id: &str) -> Option<SessionSpec> {
         let id = Self::id(id)?;
-        let profile = self.store.get(&id)?;
+        let store = self.store();
+        let profile = store.get(&id)?;
         let StoredKind::Ssh(ssh) = &profile.kind else {
             return None;
         };
@@ -224,7 +235,8 @@ impl Profiles {
     /// A launchable snapshot of a saved SFTP profile.
     pub fn sftp_spec(&self, id: &str) -> Option<SftpSpec> {
         let id = Self::id(id)?;
-        let profile = self.store.get(&id)?;
+        let store = self.store();
+        let profile = store.get(&id)?;
         let StoredKind::Sftp(sftp) = &profile.kind else {
             return None;
         };
@@ -251,13 +263,13 @@ impl Profiles {
     ) -> Result<String, String> {
         match id.and_then(Self::id) {
             Some(id) => {
-                self.store
+                self.store()
                     .update(&id, name, StoredKind::Sftp(sftp))
                     .map_err(|error| describe(&error))?;
                 Ok(id.as_str().to_owned())
             }
             None => self
-                .store
+                .store()
                 .create(name, StoredKind::Sftp(sftp))
                 .map(|id| id.as_str().to_owned())
                 .map_err(|error| describe(&error)),
@@ -265,7 +277,7 @@ impl Profiles {
     }
 
     pub fn suggest_name(&self, base: &str) -> String {
-        self.store.suggest_name(base)
+        self.store().suggest_name(base)
     }
 
     pub fn save_ssh(
@@ -276,13 +288,13 @@ impl Profiles {
     ) -> Result<String, String> {
         match id.and_then(Self::id) {
             Some(id) => {
-                self.store
+                self.store()
                     .update(&id, name, StoredKind::Ssh(ssh))
                     .map_err(|error| describe(&error))?;
                 Ok(id.as_str().to_owned())
             }
             None => self
-                .store
+                .store()
                 .create(name, StoredKind::Ssh(ssh))
                 .map(|id| id.as_str().to_owned())
                 .map_err(|error| describe(&error)),
@@ -291,13 +303,13 @@ impl Profiles {
 
     pub fn delete(&mut self, id: &str) -> Result<(), String> {
         let id = Self::id(id).ok_or_else(|| "Profile not found".to_owned())?;
-        self.store.delete(&id).map_err(|error| describe(&error))
+        self.store().delete(&id).map_err(|error| describe(&error))
     }
 
     pub fn mark_used(&mut self, id: &str) {
         if let Some(id) = Self::id(id) {
             // Recency is a convenience; a failed write must not block connecting.
-            let _ = self.store.mark_used(&id);
+            let _ = self.store().mark_used(&id);
         }
     }
 
@@ -308,15 +320,15 @@ impl Profiles {
     }
 
     pub fn authentication(&self, auth: &SshAuth) -> SshAuthentication {
-        self.store.ssh_authentication(auth)
+        self.store().ssh_authentication(auth)
     }
 
     pub fn credential_status(&self, auth: &SshAuth) -> CredentialStatus {
-        self.store.credential_status(auth)
+        self.store().credential_status(auth)
     }
 
     pub fn store_password(&self, password: String) -> Result<SshAuth, String> {
-        self.store
+        self.store()
             .store_password(password)
             .map_err(|error| describe(&error))
     }
@@ -330,7 +342,7 @@ impl Profiles {
             KeyImportError::PassphraseRequired => KeyImportFailure::PassphraseRequired,
             other => KeyImportFailure::Message(capitalized(&other.to_string())),
         })?;
-        self.store
+        self.store()
             .store_key(parsed)
             .map_err(|error| KeyImportFailure::Message(describe(&error)))
     }
@@ -338,7 +350,7 @@ impl Profiles {
     pub fn generate_key(&self, comment: &str) -> Result<SshAuth, String> {
         let parsed =
             keys::generate_ed25519(comment).map_err(|error| capitalized(&error.to_string()))?;
-        self.store
+        self.store()
             .store_key(parsed)
             .map_err(|error| describe(&error))
     }
@@ -349,7 +361,7 @@ impl Profiles {
             SshAuth::Ask => return,
             SshAuth::Password { secret } | SshAuth::Key { secret, .. } => secret,
         };
-        let _ = self.store.discard_unused_secret(secret);
+        let _ = self.store().discard_unused_secret(secret);
     }
 
     pub fn pinned_fingerprint(&self, identity: &HostIdentity) -> Option<String> {

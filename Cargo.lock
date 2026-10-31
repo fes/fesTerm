@@ -2328,6 +2328,7 @@ dependencies = [
  "eframe",
  "egui_kittest",
  "festerm-core",
+ "festerm-ios-lock",
  "festerm-ios-window",
  "festerm-markdown",
  "festerm-mobile-profiles",

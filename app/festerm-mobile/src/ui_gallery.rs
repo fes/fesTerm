@@ -26,7 +26,7 @@ fn git_fact(arguments: &[&str]) -> String {
         .to_owned()
 }
 
-const STATES: [&str; 21] = [
+const STATES: [&str; 23] = [
     "profiles",
     "profiles-empty",
     "terminal",
@@ -48,6 +48,8 @@ const STATES: [&str; 21] = [
     "files",
     "files-transfers",
     "files-conflict",
+    "unlock",
+    "settings-lock",
 ];
 
 fn fixture_rows() -> Vec<model::Profile> {
@@ -262,6 +264,25 @@ fn configure(app: &mut MobileApp, state: &str) {
             app.surface = Surface::Tabs;
             app.shell.tab = shell::Tab::Settings;
         }
+        "unlock" | "settings-lock" => {
+            use festerm_ios_lock::{
+                AppLock, Availability, BiometryKind, FakeLocker, LockSettings, ManualClock,
+            };
+            let locker = FakeLocker::new(Availability::Available(BiometryKind::FaceId));
+            let lock = AppLock::new(None, locker, Arc::new(ManualClock::new()), || {});
+            lock.apply_settings(LockSettings {
+                enabled: true,
+                ..LockSettings::default()
+            })
+            .expect("fake locker can authenticate");
+            if state == "unlock" {
+                lock.lock_now();
+            } else {
+                app.surface = Surface::Tabs;
+                app.shell.tab = shell::Tab::Settings;
+            }
+            app.lock = Some(app_lock::LockHost::new(lock, None));
+        }
         "sessions-sheet" => app.shell.sessions_sheet = true,
         "keys-panel" => app.keys_panel.open = true,
         "keys-fkeys" => {
@@ -383,6 +404,8 @@ fn capture_mobile_ui_gallery() {
                     | "files"
                     | "files-transfers"
                     | "files-conflict"
+                    | "unlock"
+                    | "settings-lock"
             ) {
                 0.0
             } else {
