@@ -1,5 +1,6 @@
 //! iOS feasibility host: offline by default, with opt-in transient live SSH.
 
+mod app_lock;
 #[cfg_attr(not(feature = "live-ssh"), allow(dead_code))] // SFTP needs the SSH transport
 mod files;
 #[cfg(test)]
@@ -24,6 +25,12 @@ mod terminal_chrome;
 mod terminal_gesture;
 #[allow(dead_code)] // design-system surface used by the gallery before production wiring
 mod theme;
+#[cfg(feature = "live-ssh")]
+mod tunnel_link;
+#[cfg(feature = "live-ssh")]
+mod tunnel_shell;
+#[cfg(all(test, feature = "live-ssh"))]
+mod tunnel_tests;
 #[allow(dead_code)] // design-system surface used by the gallery before production wiring
 mod widgets;
 mod workspaces;
@@ -226,6 +233,9 @@ pub struct MobileApp {
     surface: Surface,
     shell: shell::ShellState,
     profiles: Option<profiles::Profiles>,
+    lock: Option<app_lock::LockHost>,
+    #[cfg(feature = "live-ssh")]
+    tunnel: tunnel_link::TunnelUi,
     caps: model::Capabilities,
     tabs: Vec<tabs::SessionTab>,
     active_tab: Option<u64>,
@@ -276,9 +286,12 @@ impl MobileApp {
             files: None,
             files_ctx: files_shell::FilesContext::default(),
             markdown: None,
+            #[cfg(feature = "live-ssh")]
+            tunnel: tunnel_link::TunnelUi::default(),
             surface: Surface::Tabs,
             shell: shell::ShellState::default(),
             profiles: None,
+            lock: None,
             caps: model::Capabilities::production(),
             tabs: Vec::new(),
             active_tab: None,
@@ -308,6 +321,16 @@ impl MobileApp {
     /// Plugs in the saved-profile store (Keychain-backed in production).
     pub fn with_profiles(mut self, profiles: profiles::Profiles) -> Self {
         self.profiles = Some(profiles);
+        self
+    }
+
+    /// Plugs in the app lock; content is drawn only while it is unlocked.
+    pub fn with_lock(
+        mut self,
+        lock: festerm_ios_lock::AppLock,
+        bridge: Option<festerm_ios_lock::LockBridge>,
+    ) -> Self {
+        self.lock = Some(app_lock::LockHost::new(lock, bridge));
         self
     }
 
@@ -459,6 +482,32 @@ impl MobileApp {
                 },
             };
         }
+        if let Some(spec) = self.active_tunnel() {
+            #[cfg_attr(not(feature = "live-ssh"), allow(unused_mut))]
+            let mut state = SurfaceState::Disconnected;
+            #[cfg_attr(not(feature = "live-ssh"), allow(unused_mut))]
+            let mut label = "Not connected".to_owned();
+            #[cfg(feature = "live-ssh")]
+            if let Some(live) = self.live_view() {
+                state = if live.can_reset {
+                    SurfaceState::Disconnected
+                } else if live.input_enabled {
+                    SurfaceState::Connected
+                } else {
+                    SurfaceState::Connecting
+                };
+                label = live.status.to_owned();
+            }
+            return ChromeModel {
+                title: spec.name.clone(),
+                subtitle: spec.detail(),
+                line: ConnectionLine {
+                    state,
+                    label,
+                    context: Some(spec.persistent_label()),
+                },
+            };
+        }
         ChromeModel {
             title: "Offline demo".to_owned(),
             subtitle: "Local fixture · no shell".to_owned(),
@@ -530,14 +579,27 @@ impl MobileApp {
             }
             self.persist_new_trust();
             self.poll_background(ui.ctx());
+            self.poll_tunnels(ui.ctx());
         }
         #[cfg(feature = "live-ssh")]
         if lifecycle.active {
             self.poll_files(ui.ctx());
         }
         let bounds = ui.max_rect();
+        if let Some(lock) = self.lock.as_mut() {
+            let hidden = lock.gate(ui, lifecycle.active);
+            lock.frame_presented();
+            if hidden {
+                self.gestures.cancel();
+                self.control = false;
+                self.alt = false;
+                return;
+            }
+        }
         if self.editor.open {
             self.show_editor(ui);
+            #[cfg(feature = "live-ssh")]
+            self.show_tunnel_sheets(ui.ctx(), bounds);
             return;
         }
         match self.surface {
@@ -571,6 +633,7 @@ impl MobileApp {
             trusted_hosts,
             diagnostics,
             notice,
+            lock: self.lock.as_ref().map(app_lock::LockHost::view),
         }
     }
 
@@ -615,6 +678,11 @@ impl MobileApp {
                     self.editor.durable_credentials = self.credentials_durable();
                 }
                 ShellAction::EditProfile(id) => self.edit_profile(&id),
+                ShellAction::Lock(action) => {
+                    if let Some(lock) = self.lock.as_mut() {
+                        lock.apply(action);
+                    }
+                }
                 ShellAction::OpenProfile(id) => self.connect_profile(ctx, &id),
                 ShellAction::ForgetHost(index) => {
                     if let Some(profiles) = self.profiles.as_mut() {
@@ -672,6 +740,15 @@ impl MobileApp {
             self.editor.durable_credentials = self.credentials_durable();
             return;
         }
+        if let Some(spec) = self
+            .profiles
+            .as_ref()
+            .and_then(|profiles| profiles.tunnel_spec(id))
+        {
+            self.notice = None;
+            self.editor.open_edit_tunnel(id, &spec, self.caps);
+            return;
+        }
         let Some((name, ssh)) = self
             .profiles
             .as_ref()
@@ -692,6 +769,15 @@ impl MobileApp {
         {
             self.notice = None;
             self.open_files(spec, true, ctx);
+            return;
+        }
+        #[cfg(feature = "live-ssh")]
+        if self
+            .profiles
+            .as_ref()
+            .is_some_and(|profiles| profiles.is_tunnel(id))
+        {
+            self.connect_tunnel_profile(ctx, id);
             return;
         }
         #[cfg(feature = "live-ssh")]
@@ -775,6 +861,8 @@ impl MobileApp {
             self.apply_shell_actions(ctx, actions);
         }
         #[cfg(feature = "live-ssh")]
+        self.show_tunnel_sheets(ctx, bounds);
+        #[cfg(feature = "live-ssh")]
         if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
             if let Some(model) = live.host_verification() {
                 if let Some(decision) = forms::host_verification_sheet(ctx, bounds, &model) {
@@ -795,7 +883,10 @@ impl MobileApp {
     fn show_editor(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let can_connect = cfg!(feature = "live-ssh") && self.lifecycle.get().active;
-        match forms::show_editor(ui, &mut self.editor, self.caps, can_connect) {
+        #[cfg(feature = "live-ssh")]
+        self.sync_editor_tunnel(&ctx);
+        let action = forms::show_editor(ui, &mut self.editor, self.caps, can_connect);
+        match action {
             forms::EditorAction::None => {}
             forms::EditorAction::Cancel => self.close_editor(),
             forms::EditorAction::OpenAuthentication => self.editor.auth_sheet = true,
@@ -811,6 +902,13 @@ impl MobileApp {
                 }
             }
             forms::EditorAction::Delete => self.delete_editor_profile(),
+            forms::EditorAction::SignIn
+            | forms::EditorAction::RefreshTunnels
+            | forms::EditorAction::SignOut
+            | forms::EditorAction::PickTunnel(_) => {
+                #[cfg(feature = "live-ssh")]
+                self.apply_tunnel_editor_action(&ctx, action);
+            }
         }
         if self.editor.open && self.editor.auth_sheet {
             let bounds = ui.max_rect();
@@ -938,6 +1036,10 @@ impl MobileApp {
     /// Validates the editor and saves it; returns the profile id.
     fn save_editor_profile(&mut self) -> Option<String> {
         use festerm_mobile_profiles::{Recovery, SshAuth, SshProfile};
+        #[cfg(feature = "live-ssh")]
+        if self.editor.kind(self.caps) == model::ProfileKind::DevTunnel {
+            return self.save_tunnel_editor();
+        }
         if self.editor.auth_mode == forms::AuthMode::Password && !self.editor.password.is_empty() {
             self.finish_authentication();
             if self.editor.auth_sheet {
@@ -1290,7 +1392,12 @@ impl MobileApp {
                     reconnect = terminal_chrome::reconnect_banner(ui, &banner, compact);
                 });
             if reconnect {
-                if let Err(error) = self.reconnect_active(ui.ctx()) {
+                if let Some(id) = self
+                    .active_tunnel()
+                    .map(|spec| spec.profile.as_str().to_owned())
+                {
+                    self.start_tunnel_connect(ui.ctx(), &id, self.active_tab);
+                } else if let Err(error) = self.reconnect_active(ui.ctx()) {
                     self.notice = Some(error);
                 }
                 return;
@@ -1389,7 +1496,11 @@ impl MobileApp {
         let status = self
             .live_view()
             .map_or("Connection ended", |live| live.status);
+        let custom = self
+            .active_tunnel()
+            .map(|_| self.tunnel_banner_text(status));
         model::ReconnectBanner {
+            custom,
             detail: status
                 .starts_with("Input rejected")
                 .then(|| "Earlier accepted input may have executed.".to_owned()),

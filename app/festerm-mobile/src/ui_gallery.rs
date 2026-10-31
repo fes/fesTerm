@@ -11,7 +11,7 @@ use crate::model::{
 use egui_kittest::Harness;
 use festerm_mobile_profiles::{RemoteSession, SshAuth, SshProfile};
 use sha2::{Digest, Sha256};
-use std::{fs, path::PathBuf, process::Command, sync::Arc};
+use std::{fs, path::PathBuf, process::Command, sync::Arc, time::Duration};
 
 fn git_fact(arguments: &[&str]) -> String {
     let output = Command::new("git")
@@ -26,7 +26,7 @@ fn git_fact(arguments: &[&str]) -> String {
         .to_owned()
 }
 
-const STATES: [&str; 21] = [
+const STATES: [&str; 25] = [
     "profiles",
     "profiles-empty",
     "terminal",
@@ -48,6 +48,10 @@ const STATES: [&str; 21] = [
     "files",
     "files-transfers",
     "files-conflict",
+    "unlock",
+    "settings-lock",
+    "signin",
+    "taken-over",
 ];
 
 fn fixture_rows() -> Vec<model::Profile> {
@@ -262,6 +266,25 @@ fn configure(app: &mut MobileApp, state: &str) {
             app.surface = Surface::Tabs;
             app.shell.tab = shell::Tab::Settings;
         }
+        "unlock" | "settings-lock" => {
+            use festerm_ios_lock::{
+                AppLock, Availability, BiometryKind, FakeLocker, LockSettings, ManualClock,
+            };
+            let locker = FakeLocker::new(Availability::Available(BiometryKind::FaceId));
+            let lock = AppLock::new(None, locker, Arc::new(ManualClock::new()), || {});
+            lock.apply_settings(LockSettings {
+                enabled: true,
+                ..LockSettings::default()
+            })
+            .expect("fake locker can authenticate");
+            if state == "unlock" {
+                lock.lock_now();
+            } else {
+                app.surface = Surface::Tabs;
+                app.shell.tab = shell::Tab::Settings;
+            }
+            app.lock = Some(app_lock::LockHost::new(lock, None));
+        }
         "sessions-sheet" => app.shell.sessions_sheet = true,
         "keys-panel" => app.keys_panel.open = true,
         "keys-fkeys" => {
@@ -277,13 +300,13 @@ fn configure(app: &mut MobileApp, state: &str) {
             app.editor.open_new();
             app.editor.kind_index = 1;
             app.editor.name = "build-box".to_owned();
+            app.tunnel.preview_editor = true;
+            app.editor.tunnel_name = "build-tunnel".to_owned();
+            app.editor.take_over = true;
             app.editor.tunnel = Some(DevTunnelChoices {
-                account_name: "Dev Tunnels".to_owned(),
-                account_user: "signed in".to_owned(),
+                account_login: Some("octo".to_owned()),
                 tunnels: vec!["build-tunnel".to_owned(), "docs-tunnel".to_owned()],
-                tunnel: 0,
-                sessions: vec!["tmux / build".to_owned(), "New shell".to_owned()],
-                session: 0,
+                ..DevTunnelChoices::default()
             });
         }
         "host-trust" | "changed-host" | "authentication" => {
@@ -304,6 +327,41 @@ fn configure(app: &mut MobileApp, state: &str) {
                     state: SurfaceState::Disconnected,
                     label: "Connection lost".to_owned(),
                     context: Some("tmux · work".to_owned()),
+                },
+            });
+        }
+        "signin" => {
+            app.editor.open_new();
+            app.editor.kind_index = 1;
+            app.editor.name = "build-box".to_owned();
+            app.editor.take_over = true;
+            app.tunnel.preview_prompt = Some(festerm_mobile_tunnels::SignInPrompt {
+                user_code: "ABCD-1234".to_owned(),
+                verification_url: "https://github.com/login/device".to_owned(),
+                expires_in: Duration::from_secs(900),
+            });
+        }
+        "taken-over" => {
+            app.fixture_ssh_tab(fixture_spec());
+            if let Some(tab) = app.tabs.last_mut() {
+                tab.tunnel = Some(profiles::TunnelSpec {
+                    profile: festerm_mobile_profiles::ProfileId::generate(),
+                    name: "build-box".to_owned(),
+                    account: None,
+                    tunnel: "build-tunnel".to_owned(),
+                    session: None,
+                    take_over: true,
+                });
+                tab.spec = None;
+            }
+            *app.sink.live.connection.borrow_mut() = Some(live_ssh::taken_over_fixture());
+            app.chrome_override = Some(ChromeModel {
+                title: "build-box".to_owned(),
+                subtitle: "Dev Tunnel · build-tunnel".to_owned(),
+                line: ConnectionLine {
+                    state: SurfaceState::Disconnected,
+                    label: "Taken over by another device".to_owned(),
+                    context: Some("host session".to_owned()),
                 },
             });
         }
@@ -383,6 +441,8 @@ fn capture_mobile_ui_gallery() {
                     | "files"
                     | "files-transfers"
                     | "files-conflict"
+                    | "unlock"
+                    | "settings-lock"
             ) {
                 0.0
             } else {

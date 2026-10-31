@@ -163,9 +163,20 @@ chips, key supplement row, extended-keys panel). Colors, radii, spacing and type
 come from `theme.rs`; reusable controls are in `widgets.rs`; editor/sheet forms
 are in `forms.rs`, driven by the view-model structs and the `ProfileStore` seam
 in `model.rs`. Only capabilities with a working production path are shown
-(`Capabilities`): the Dev Tunnel profile kind stays hidden until its backend is
-wired. The headless gallery enables it with fixtures (`Capabilities::all()`) for
-design review only. Identity/privacy screens (13-15) are not implemented here.
+(`Capabilities`); with `live-ssh` that now includes the Dev Tunnel kind. The
+headless gallery uses fixtures (`Capabilities::all()`) for design review only.
+
+### Dev Tunnels and app lock (ADR 0061)
+
+`tunnel_link.rs` / `tunnel_shell.rs` drive `festerm-mobile-tunnels` on worker
+threads: GitHub device-code sign-in (mockup 13, opened with `open_url`), tunnel
+listing in the editor (mockup 12), host verification and attach. Attach adopts
+the recovered screen (`RecoverySync`) into a session tab. A displaced session
+shows "Taken over" and is never reattached automatically; "Attach again" is an
+explicit action. `app_lock.rs` wires `festerm-ios-lock` (mockups 14-15): the
+content is hidden until unlock, and Settings has the App lock section.
+Not verified on the simulator: a full GitHub approval and a real bridge host
+(covered by the scripted in-memory relay tests in `tunnel_tests.rs`).
 
 ### Files and SFTP (ADR 0060)
 

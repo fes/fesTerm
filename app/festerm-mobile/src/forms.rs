@@ -4,11 +4,11 @@
 //! structs and returned actions so callers own all connection side effects.
 
 use super::model::{Capabilities, DevTunnelChoices, HostDecision, HostVerification, ProfileKind};
-use super::profiles::SftpSpec;
+use super::profiles::{SftpSpec, TunnelSpec};
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
-    bottom_sheet, button, button_sized, caption_label, card, footnote, labelled, paint_fit,
-    segmented, sheet_title, text_field, ButtonKind,
+    bottom_sheet, button, button_sized, caption_label, card, footnote, labelled, list_row,
+    paint_fit, segmented, sheet_title, switch_row, text_field, ButtonKind, RowSpec,
 };
 use eframe::egui::{self, Align2, CornerRadius, Rect, Sense, Stroke, StrokeKind, Ui};
 use festerm_mobile_profiles::{RemoteSession, SshAuth, SshProfile};
@@ -68,6 +68,12 @@ pub struct EditorState {
     pub error: Option<String>,
     pub confirm_delete: bool,
     pub tunnel: Option<DevTunnelChoices>,
+    /// Dev Tunnel profiles: the chosen (or typed) tunnel name.
+    pub tunnel_name: String,
+    /// Dev Tunnel profiles: the signed-in account the profile is bound to.
+    #[cfg_attr(not(feature = "live-ssh"), allow(dead_code))]
+    pub tunnel_account: Option<String>,
+    pub take_over: bool,
 }
 
 /// The remote session name used when the field is left empty.
@@ -79,6 +85,7 @@ impl EditorState {
         *self = Self {
             open: true,
             port: "22".to_owned(),
+            take_over: true,
             durable_credentials: self.durable_credentials,
             ..Self::default()
         };
@@ -108,6 +115,26 @@ impl EditorState {
             durable_credentials: self.durable_credentials,
             session_mode,
             session_name,
+            ..Self::default()
+        };
+    }
+
+    pub fn open_edit_tunnel(&mut self, id: &str, spec: &TunnelSpec, caps: Capabilities) {
+        self.wipe_secrets();
+        let kind_index = Self::kinds(caps)
+            .iter()
+            .position(|kind| *kind == ProfileKind::DevTunnel)
+            .unwrap_or(0);
+        *self = Self {
+            open: true,
+            editing: Some(id.to_owned()),
+            kind_index,
+            name: spec.name.clone(),
+            tunnel_name: spec.tunnel.clone(),
+            tunnel_account: spec.account.clone(),
+            session_name: spec.session.clone().unwrap_or_default(),
+            take_over: spec.take_over,
+            durable_credentials: self.durable_credentials,
             ..Self::default()
         };
     }
@@ -229,41 +256,10 @@ pub enum EditorAction {
     SaveAndConnect,
     OpenAuthentication,
     Delete,
-}
-
-fn select_field(ui: &mut Ui, caption: &str, value: &str) {
-    caption_label(ui, caption);
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), space::FIELD_HEIGHT),
-        Sense::CLICK,
-    );
-    let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(radius::FIELD), color::FIELD);
-    painter.rect_stroke(
-        rect,
-        CornerRadius::same(radius::FIELD),
-        Stroke::new(1.0, color::BORDER),
-        StrokeKind::Inside,
-    );
-    paint_fit(
-        painter,
-        egui::pos2(rect.left() + 14.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        value,
-        type_scale::font(type_scale::BODY),
-        color::TEXT,
-        rect.width() - 56.0,
-    );
-    icon::paint(
-        painter,
-        Icon::Disclosure,
-        Rect::from_center_size(
-            egui::pos2(rect.right() - 22.0, rect.center().y),
-            egui::vec2(16.0, 16.0),
-        ),
-        color::TEXT_MUTED,
-    );
-    labelled(response, caption, true);
+    SignIn,
+    RefreshTunnels,
+    PickTunnel(usize),
+    SignOut,
 }
 
 fn info_row(
@@ -423,7 +419,7 @@ pub fn show_editor(
                     ui,
                     ButtonKind::Primary,
                     connect_label,
-                    can_connect || kind == ProfileKind::DevTunnel,
+                    can_connect,
                     egui::vec2(width - secondary - gap, space::BUTTON_HEIGHT),
                 )
                 .clicked()
@@ -453,7 +449,7 @@ pub fn show_editor(
                     }
                     text_field(ui, "Profile name", &mut state.name, "prod-web", inner_width);
                     match kind {
-                        ProfileKind::DevTunnel => dev_tunnel_fields(ui, state),
+                        ProfileKind::DevTunnel => dev_tunnel_fields(ui, state, &mut action),
                         _ => {
                             if ssh_fields(ui, state, caps, inner_width, kind) {
                                 action = EditorAction::OpenAuthentication;
@@ -732,92 +728,87 @@ fn key_section(
     }
 }
 
-fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState) {
-    let Some(choices) = state.tunnel.as_ref() else {
-        footnote(ui, "Dev Tunnel sign-in is not available yet.");
-        return;
-    };
+fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAction) {
+    let choices = state.tunnel.clone().unwrap_or_default();
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 6.0;
-        caption_label(ui, "Account");
-        info_row(
-            ui,
-            &choices.account_name,
-            &choices.account_user,
-            true,
-            Some(Icon::Profile),
-        );
-        footnote(ui, "Your account can be reused by other tunnel profiles.");
-    });
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 6.0;
-        select_field(
-            ui,
-            "Tunnel",
-            choices
-                .tunnels
-                .get(choices.tunnel)
-                .map_or("", String::as_str),
-        );
-        ui.horizontal(|ui| {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), Sense::hover());
-            icon::paint(
-                ui.painter(),
-                Icon::HostKeyVerification,
-                rect,
-                color::SUCCESS,
-            );
-            ui.label(
-                egui::RichText::new("Verified host · fesTerm bridge")
-                    .size(type_scale::CAPTION)
-                    .color(color::SUCCESS),
-            );
-        });
-    });
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 6.0;
-        select_field(
-            ui,
-            "Existing remote session",
-            choices
-                .sessions
-                .get(choices.session)
-                .map_or("", String::as_str),
-        );
-    });
-    if let Some(session) = choices.sessions.get(choices.session) {
-        card(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_space(space::MD);
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 56.0), Sense::hover());
-                icon::paint(
-                    ui.painter(),
-                    Icon::DevTunnel,
-                    Rect::from_center_size(rect.center(), egui::vec2(24.0, 24.0)),
-                    color::TEXT_MUTED,
+        caption_label(ui, "GitHub account");
+        match &choices.account_login {
+            Some(login) => {
+                info_row(
+                    ui,
+                    login,
+                    "Signed in with GitHub",
+                    false,
+                    Some(Icon::Profile),
                 );
-                ui.vertical(|ui| {
-                    ui.add_space(space::SM);
-                    ui.label(
-                        egui::RichText::new("Resume the work already running")
-                            .size(type_scale::CAPTION + 0.5)
-                            .strong(),
-                    );
-                    ui.label(
-                        egui::RichText::new("Remote session · unattached")
-                            .size(type_scale::CAPTION)
-                            .color(color::TEXT_MUTED),
-                    );
-                    ui.label(
-                        egui::RichText::new(format!("This connection attaches to {session}."))
-                            .size(type_scale::CAPTION)
-                            .color(color::TEXT_MUTED),
-                    );
-                    ui.add_space(space::SM);
-                });
+                if button(ui, ButtonKind::Secondary, "Sign out", true).clicked() {
+                    *action = EditorAction::SignOut;
+                }
+                footnote(ui, "Your account can be reused by other tunnel profiles.");
+            }
+            None => {
+                if button(ui, ButtonKind::Primary, "Sign in with GitHub", true).clicked() {
+                    *action = EditorAction::SignIn;
+                }
+                footnote(
+                    ui,
+                    "Sign in to list your Dev Tunnels, or type a tunnel name below.",
+                );
+            }
+        }
+    });
+    text_field(
+        ui,
+        "Tunnel",
+        &mut state.tunnel_name,
+        "my-tunnel",
+        ui.available_width(),
+    );
+    if choices.account_login.is_some() {
+        if choices.loading {
+            footnote(ui, "Loading your tunnels\u{2026}");
+        } else if let Some(error) = &choices.error {
+            ui.label(egui::RichText::new(error).color(color::DANGER));
+        }
+        if !choices.tunnels.is_empty() {
+            card(ui, |ui| {
+                for (index, name) in choices.tunnels.iter().enumerate() {
+                    let mut row = RowSpec::new(name);
+                    row.icon = Some(Icon::DevTunnel);
+                    row.selected = *name == state.tunnel_name;
+                    row.divider = index > 0;
+                    if list_row(ui, &row).clicked() {
+                        *action = EditorAction::PickTunnel(index);
+                    }
+                }
             });
-        });
+        }
+        if !choices.loading && button(ui, ButtonKind::Secondary, "Refresh tunnels", true).clicked()
+        {
+            *action = EditorAction::RefreshTunnels;
+        }
     }
+    text_field(
+        ui,
+        "Remote session (optional)",
+        &mut state.session_name,
+        "Host session",
+        ui.available_width(),
+    );
+    card(ui, |ui| {
+        switch_row(
+            ui,
+            "Take over if attached elsewhere",
+            Some("Otherwise attaching is refused while it is in use."),
+            &mut state.take_over,
+            false,
+        );
+    });
+    footnote(
+        ui,
+        "The host is verified the first time you connect; fesTerm refuses a changed host key.",
+    );
 }
 
 /// Bottom sheet for first-time or changed host keys (mock-up 11).

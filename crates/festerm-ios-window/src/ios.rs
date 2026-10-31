@@ -1,11 +1,12 @@
 use block2::RcBlock;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{
-    MainThreadMarker, NSNotification, NSNotificationCenter, NSObjectProtocol, NSString,
+    MainThreadMarker, NSDictionary, NSNotification, NSNotificationCenter, NSObjectProtocol,
+    NSString, NSURL,
 };
 use objc2_ui_kit::{
-    UIKeyboardDidChangeFrameNotification, UIKeyboardWillChangeFrameNotification, UIPasteboard,
-    UIView,
+    UIApplication, UIKeyboardDidChangeFrameNotification, UIKeyboardWillChangeFrameNotification,
+    UIPasteboard, UIView,
 };
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 use std::{ptr::NonNull, sync::Arc};
@@ -100,5 +101,25 @@ pub fn set_clipboard_text(text: &str) -> bool {
     let text = NSString::from_str(text);
     // SAFETY: plain property write with a valid NSString.
     unsafe { pasteboard.setString(Some(&text)) };
+    true
+}
+
+/// Opens an `https://` URL in the system browser. Main thread only; other
+/// schemes are refused so a hostile string cannot launch another app.
+pub fn open_url(url: &str) -> bool {
+    let Some(main_thread) = MainThreadMarker::new() else {
+        return false;
+    };
+    if !url.starts_with("https://") {
+        return false;
+    }
+    let Some(url) = NSURL::URLWithString(&NSString::from_str(url)) else {
+        return false;
+    };
+    let application = UIApplication::sharedApplication(main_thread);
+    // SAFETY: valid URL and an empty options dictionary; no completion block.
+    unsafe {
+        application.openURL_options_completionHandler(&url, &NSDictionary::new(), None);
+    }
     true
 }
