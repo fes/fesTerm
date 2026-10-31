@@ -53,6 +53,7 @@ Architecture decision records preserve decisions that affect the project across 
 
 - [ADR 0053: Separate Dev Tunnels Bridge for Remote Persistent Sessions](0053-separate-dev-tunnels-session-bridge.md) - direct transport with a separate same-user bridge; scoped-token bootstrap, daemon ownership preserved, implementation and hosted/native qualification pending
 - [ADR 0054: iOS Keychain Secret Backend and Mobile Profile Store](0054-ios-keychain-and-mobile-profile-store.md) - Keychain-backed secret store for iOS and a UI-agnostic secret-free profile, host-trust and SSH-key crate
+- [ADR 0054: Platform-Neutral SFTP Core Crate for Mobile](0054-platform-neutral-sftp-core-crate.md) - UI-free bounded SFTP/sandbox crate over russh-sftp; atomic temp-rename transfers, conflict policies, real-sshd harness
 
 - [ADR 0052: Session-Bound Local File OSC 8 Links](0052-local-file-osc8-links.md) - local-only internal document opening; OS URL handlers remain web-only, native TI-10 qualification pending
 

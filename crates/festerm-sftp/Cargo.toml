@@ -1,0 +1,20 @@
+[package]
+name = "festerm-sftp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Bounded, cancellable, UI-free SFTP and sandbox file model for fesTerm mobile."
+
+[dependencies]
+getrandom = "0.3"
+russh-sftp = "=2.3.0"
+tokio = { version = "1.17.0", default-features = false, features = ["fs", "io-util", "macros", "rt", "rt-multi-thread", "sync", "time"] }
+
+[dev-dependencies]
+festerm-session = { path = "../festerm-session" }
+festerm-ssh = { path = "../festerm-ssh" }
+
+[lints]
+workspace = true
