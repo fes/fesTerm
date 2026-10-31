@@ -795,9 +795,18 @@ mod tests {
                 .contains("retained-evidence")
         };
         harness.run();
+        let reconnect = harness.get_by_label("Reconnect · new shell").rect();
+        assert!(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(390.0, 844.0))
+                .contains_rect(reconnect),
+            "recovery action outside viewport: {reconnect:?}"
+        );
         harness.get_by_label("Reconnect · new shell").click();
         harness.run();
-        assert!(harness.state().connection.open);
+        assert!(
+            harness.state().connection.open,
+            "visible recovery action did not open form: {reconnect:?}"
+        );
         assert!(retained(harness.state()));
         assert!(harness
             .state()
