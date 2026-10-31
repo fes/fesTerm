@@ -17,6 +17,14 @@ use zeroize::{Zeroize, Zeroizing};
 
 const EVENT_BUDGET: usize = 32;
 
+fn control_margin(ui: &egui::Ui) -> egui::Margin {
+    let font = egui::FontSelection::Default.resolve(ui.style());
+    let row_height = ui.fonts_mut(|fonts| fonts.row_height(&font));
+    let line_height = row_height + ui.spacing().extra_text_line_spacing;
+    let inset = ((44.0 - line_height) * 0.5).ceil().clamp(0.0, 127.0) as i8;
+    egui::Margin::symmetric(4, inset)
+}
+
 #[derive(Default)]
 struct PasswordBuffer(Zeroizing<String>);
 
@@ -315,6 +323,7 @@ impl LiveSsh {
                 egui::TextEdit::singleline(&mut self.password)
                     .password(true)
                     .sensitive(true)
+                    .margin(control_margin(ui))
                     .char_limit(4096),
             );
             if ui.button("Authenticate").clicked() {
@@ -349,15 +358,37 @@ pub(super) struct ConnectionForm {
     port: String,
     error: Option<&'static str>,
     pin: Option<(String, u16, String)>,
+    #[cfg(test)]
+    pub(super) controls: Option<ConnectionControlsGeometry>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(super) struct ConnectionControlsGeometry {
+    pub(super) bounds: egui::Rect,
+    pub(super) connect: egui::Rect,
+    pub(super) clip: egui::Rect,
+    pub(super) field_height: f32,
 }
 
 impl ConnectionForm {
+    pub(super) fn toggle(&mut self) {
+        self.open = !self.open;
+        if self.port.is_empty() {
+            self.port = "22".to_owned();
+        }
+    }
+
     pub(super) fn show(
         &mut self,
         ui: &mut egui::Ui,
         live: &mut Option<LiveSsh>,
         dimensions: Dimensions,
     ) -> bool {
+        #[cfg(test)]
+        {
+            self.controls = None;
+        }
         if let Some(connection) = live.as_mut() {
             ui.label(connection.status);
             if let Some(pin) = &connection.accepted_pin {
@@ -368,42 +399,54 @@ impl ConnectionForm {
                 ));
             }
             connection.prompts(ui);
-            if ui.button("Disconnect").clicked() {
+            if !connection.can_reset() && ui.button("Disconnect").clicked() {
                 connection.stop("Disconnected. Connect again for a fresh shell.");
             }
         }
-        if ui
-            .button(if self.open {
-                "Close connection form"
-            } else {
-                "Connect SSH (prototype)"
-            })
-            .clicked()
-        {
-            self.open = !self.open;
-            if self.port.is_empty() {
-                self.port = "22".to_owned();
-            }
-        }
         if self.open {
-            ui.label("Transient connection · credentials are not saved");
-            ui.small("Connect replaces the current session and starts a fresh shell.");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.host)
-                    .hint_text("Host")
-                    .char_limit(253),
-            );
+            if live
+                .as_ref()
+                .is_some_and(|connection| !connection.can_reset())
+            {
+                ui.small("Connect starts a new shell.");
+            }
+            let margin = control_margin(ui);
+            #[cfg(test)]
+            let controls_start = ui.cursor().min;
+            let field_height = ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.host)
+                        .margin(margin)
+                        .hint_text("Host")
+                        .char_limit(253),
+                )
+                .rect
+                .height();
+            #[cfg(not(test))]
+            let _ = field_height;
             ui.add(
                 egui::TextEdit::singleline(&mut self.port)
+                    .margin(margin)
                     .hint_text("Port")
                     .char_limit(5),
             );
             ui.add(
                 egui::TextEdit::singleline(&mut self.username)
+                    .margin(control_margin(ui))
                     .hint_text("Username")
                     .char_limit(255),
             );
-            if ui.button("Connect to host").clicked() {
+            let connect = ui.button("Connect");
+            #[cfg(test)]
+            {
+                self.controls = Some(ConnectionControlsGeometry {
+                    bounds: egui::Rect::from_min_max(controls_start, connect.rect.max),
+                    connect: connect.rect,
+                    clip: ui.clip_rect(),
+                    field_height,
+                });
+            }
+            if connect.clicked() {
                 let port = self.port.parse::<u16>().unwrap_or(0);
                 let identity = HostIdentity::new(&self.host, port).ok();
                 let pin = self

@@ -38,11 +38,12 @@ These values correctly select Compact on the tested iPhone 17 portrait surface
 and keep both stacked Files panes visible. They remain provisional until iPad,
 rotation, Split View, Dynamic Type and physical-device evidence is recorded.
 
-The preview's top strip exposes three fixed categories: Terminal, Files and
-README. Switching preserves each category's in-memory state and terminal
-keyboard focus is requested only while Terminal is active. This validates the
-space allocation and focus handoff, not the future create/rename/reorder/close
-session-tab lifecycle.
+The compact header shows the current surface and a short offline/SSH indicator,
+with Connect/Cancel and More. More contains Terminal, Files/README previews,
+demo reset and on-demand diagnostics. Experiment notices, counters and redundant
+explanatory strips do not occupy the terminal screen. Switching preserves each
+surface's in-memory state and terminal keyboard focus is requested only while
+Terminal is active. This is secondary preview navigation, not full tab management.
 
 ## Phone portrait: terminal layout
 
@@ -131,6 +132,14 @@ and explicit fingerprint approval before password input. This deliberately
 defers Termius-style saved-host navigation and credential persistence.
 Changed memory-only pins have Reject only. Disconnect/reconnect clearly
 starts a fresh shell, and Files/README remain offline previews.
+
+Connection controls grow to their content, capped at 45% of the measured safe
+space below the header. A direct scroll area avoids sizing from the previous
+panel height and avoids a large empty form region. Header, field and button
+targets are at least 44 points high. Short layouts retain vertical scrolling.
+Trust/authentication and failure/recovery information remains explicit; the
+fresh-shell warning appears when replacing an active connection. This transient
+form remains a deliberate deviation from Termius saved-host navigation.
 
 Connection/authentication controls own keyboard input while active; terminal
 sticky modifiers and gestures must not consume their text. On the connected

@@ -3412,6 +3412,9 @@
         "ADR-0042"
       ],
       "automated_tests": [
+        "mobile_header_menu_routes_previews_and_resets_demo_without_stale_input",
+        "mobile_connection_form_fits_measured_phone_tablet_space_and_releases_it",
+        "mobile_connection_form_short_layout_scrolls_to_connect_without_terminal_input",
         "mobile_live_ssh_pump_uses_core_replies_and_bounded_event_work",
         "mobile_live_ssh_hidden_workspaces_keep_pumping_output_and_replies",
         "mobile_live_ssh_native_suspension_retires_without_a_ui_frame",

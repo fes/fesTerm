@@ -57,8 +57,8 @@ the offline smoke bundle. CI links and publishes it as
 `festerm-ios-live-ssh-simulator`. Offline nightly launch evidence continues
 to exercise the default fixture, and does not establish live SSH acceptance.
 
-Open **Connect SSH (prototype)**, enter host/port/username, and choose
-**Connect to host**. This replaces the previous connection with a fresh shell.
+Choose **Connect** in the compact header, enter host/port/username, and choose
+**Connect** in the form. This replaces the previous connection with a fresh shell.
 Review the host fingerprint before entering a password. Approved fingerprints
 are pinned only for that canonical host/port during this app run; changed
 keys are rejected. Passwords are transient with bounded sensitive/no-undo
@@ -70,7 +70,7 @@ their text must never reach the terminal. The shared core encodes input and
 protocol replies. Refused backend input disconnects with a notice rather than
 silently dropping a command suffix or replaying it. Resize is coalesced; output
 work per frame and backend queues are bounded. Disconnect retains the visible
-terminal until a new connection or **Offline fixture** is selected.
+terminal until a new connection or **More → Use offline demo** is selected.
 Suspension requires an explicit new connection; it does not promise remote
 process survival or uninterrupted background networking.
 
@@ -82,6 +82,14 @@ README stay offline previews. Before acceptance, exercise MOB-06 against an
 owned SSH server on Simulator and provisioned iPhone/iPad, including a remote
 TUI such as Copilot CLI. Feature compilation/linking and fake-session tests
 do not prove native UI, authentication or network operation.
+
+The header keeps only the current surface, a short mode indicator, Connect/Cancel
+and More. Preview navigation, demo reset and content-free lifecycle/input counters
+live under More; the counters are in Diagnostics. The form grows to its content
+within 45% of measured safe space and uses 44-point field/button targets. Short
+views scroll vertically. Menu interaction is kept out of terminal input/gestures;
+the existing persistent keyboard and accessory/helper policy remain. Native
+keyboard/touch usability remains MOB-06.
 
 ## Development-signed physical-device build
 
@@ -249,7 +257,7 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
 
 ## Current behavior and remaining gate
 
-- A compact top strip switches among Terminal, Files and README workflow
+- More switches among Terminal, Files and README workflow
   previews. Each workspace keeps its in-memory state while another workspace
   is active. These are fixed preview categories, not full create/rename/reorder/
   close session tabs.
@@ -266,8 +274,8 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
   The regression checks the final platform output after egui completes the
   frame, including accessory taps, keyboard events, geometry changes and resume.
   One-shot Ctrl/Alt chords and ordinary hardware input use the core encoder. Counters
-  retain no typed text; nothing executes. Reset returns to a known fixture.
-- Native resume/suspend/memory-warning counters. No rendering while suspended;
+  retain no typed text; nothing executes. More → Reset demo returns to a known fixture.
+- Native resume/suspend/memory-warning counters under More → Diagnostics. No rendering while suspended;
   the next frame after a memory warning rebuilds view caches while preserving
   text size. OS termination
   starts a new fixture, with no restoration claim.
