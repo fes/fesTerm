@@ -599,7 +599,7 @@ fn secret_store_message(error: SecretStoreError) -> &'static str {
         SecretStoreError::LockedOrUnavailable | SecretStoreError::Unsupported => {
             "Native secure storage is unavailable or locked. Unlock or enable it to use saved SSH passwords."
         }
-        SecretStoreError::BackendFailure => {
+        SecretStoreError::BackendFailure | SecretStoreError::TooLarge => {
             "Native secure storage failed. Saved SSH passwords are unavailable; try again after checking the platform service."
         }
         SecretStoreError::Missing | SecretStoreError::InvalidReference => {

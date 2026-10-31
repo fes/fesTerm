@@ -2328,6 +2328,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "festerm-mobile-profiles"
+version = "0.11.1"
+dependencies = [
+ "festerm-secret-store",
+ "festerm-ssh",
+ "russh",
+ "serde",
+ "serde_json",
+ "url",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "festerm-pty"
 version = "0.11.1"
 dependencies = [
@@ -2355,6 +2369,7 @@ version = "0.11.1"
 dependencies = [
  "apple-native-keyring-store",
  "keyring-core",
+ "security-framework",
  "serde",
  "static_assertions",
  "uuid",

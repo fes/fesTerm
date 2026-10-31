@@ -65,6 +65,9 @@ fn panic_native_error(operation: &str, error: SecretStoreError) -> ! {
         SecretStoreError::InvalidReference => {
             panic!("{operation}: generated native secret-store reference was invalid")
         }
+        SecretStoreError::TooLarge => {
+            panic!("{operation}: disposable native secret-store value was too large")
+        }
     }
 }
 
