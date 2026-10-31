@@ -138,11 +138,12 @@ pub enum ChipAction {
 /// Session chip strip: open surfaces, "All N" and "+".
 pub fn chip_strip(ui: &mut Ui, surfaces: &[SurfaceSummary]) -> ChipAction {
     let mut action = ChipAction::None;
+    let full_width = ui.available_width();
     egui::Frame::new()
         .fill(color::BAR)
-        .stroke(Stroke::new(1.0, color::DIVIDER))
         .inner_margin(Margin::symmetric(8, 8))
         .show(ui, |ui| {
+            ui.set_min_width(full_width - 16.0);
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.horizontal(|ui| {
                 let trailing = 58.0 + 36.0 + 40.0;

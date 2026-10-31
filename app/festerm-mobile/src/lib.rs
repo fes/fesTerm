@@ -918,6 +918,7 @@ impl MobileApp {
             }
             if output.close {
                 self.keys_panel.open = false;
+                self.keyboard_visible = true;
             }
         }
         if !read_only {
@@ -1091,6 +1092,11 @@ impl MobileApp {
 }
 
 impl eframe::App for MobileApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // Safe-area strips (status bar, home indicator) match the app surface.
+        theme::color::BG.to_normalized_gamma_f32()
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
         if !self.reported_first_ui {
