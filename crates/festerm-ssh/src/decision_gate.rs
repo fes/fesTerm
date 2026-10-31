@@ -144,6 +144,16 @@ impl<P: Clone + PartialEq, D: DecisionValue> DecisionGate<P, D> {
         decision
     }
 
+    pub(crate) fn is_waiting(&self) -> bool {
+        matches!(
+            *self
+                .state
+                .lock()
+                .expect("decision gate lock is not poisoned"),
+            GateState::Waiting(_)
+        )
+    }
+
     pub(crate) fn reject_pending(&self) {
         let mut state = self
             .state
