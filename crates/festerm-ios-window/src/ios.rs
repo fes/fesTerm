@@ -1,8 +1,11 @@
 use block2::RcBlock;
 use objc2::{rc::Retained, runtime::ProtocolObject};
-use objc2_foundation::{MainThreadMarker, NSNotification, NSNotificationCenter, NSObjectProtocol};
+use objc2_foundation::{
+    MainThreadMarker, NSNotification, NSNotificationCenter, NSObjectProtocol, NSString,
+};
 use objc2_ui_kit::{
-    UIKeyboardDidChangeFrameNotification, UIKeyboardWillChangeFrameNotification, UIView,
+    UIKeyboardDidChangeFrameNotification, UIKeyboardWillChangeFrameNotification, UIPasteboard,
+    UIView,
 };
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 use std::{ptr::NonNull, sync::Arc};
@@ -77,4 +80,25 @@ impl Drop for KeyboardBridge {
             unsafe { self.center.removeObserver((**observer).as_ref()) };
         }
     }
+}
+
+/// The general pasteboard's text. Main thread only; `None` elsewhere or when
+/// the pasteboard holds no string.
+pub fn clipboard_text() -> Option<String> {
+    let _main_thread = MainThreadMarker::new()?;
+    let pasteboard = UIPasteboard::generalPasteboard();
+    // SAFETY: plain property read on a valid pasteboard.
+    unsafe { pasteboard.string() }.map(|text| text.to_string())
+}
+
+/// Replaces the general pasteboard's text. Main thread only.
+pub fn set_clipboard_text(text: &str) -> bool {
+    let Some(_main_thread) = MainThreadMarker::new() else {
+        return false;
+    };
+    let pasteboard = UIPasteboard::generalPasteboard();
+    let text = NSString::from_str(text);
+    // SAFETY: plain property write with a valid NSString.
+    unsafe { pasteboard.setString(Some(&text)) };
+    true
 }

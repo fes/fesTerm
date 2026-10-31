@@ -12,7 +12,7 @@ use festerm_session::{
 };
 use festerm_ssh::{
     HostIdentity, HostKeyDecisionResolver, HostTrustDecision, PasswordDecisionResolver,
-    SshAuthentication, SshConnectionProfile, SshSession, SshSessionOptions,
+    SessionStrategy, SshAuthentication, SshConnectionProfile, SshSession, SshSessionOptions,
 };
 use zeroize::{Zeroize, Zeroizing};
 
@@ -108,6 +108,8 @@ pub(super) struct LiveSsh {
     running: bool,
     pub(super) status: &'static str,
     pub(super) accepted_pin: Option<String>,
+    /// A fingerprint the user just trusted that the app has yet to persist.
+    new_trust: Option<String>,
 }
 
 #[cfg(test)]
@@ -151,18 +153,25 @@ pub(super) fn disconnected_fixture() -> LiveSsh {
         running: false,
         status: "Connection lost. Connect again for a fresh shell.",
         accepted_pin: None,
+        new_trust: None,
     }
 }
 
 impl LiveSsh {
     pub(super) fn connect(
-        host: &str,
-        port: u16,
-        username: &str,
+        request: ConnectRequest,
         dimensions: Dimensions,
-        pin: Option<&str>,
         context: &egui::Context,
     ) -> Result<Self, &'static str> {
+        let ConnectRequest {
+            host,
+            port,
+            username,
+            authentication,
+            strategy,
+            pin,
+        } = request;
+        let (host, username, pin) = (host.as_str(), username.as_str(), pin.as_deref());
         let identity = HostIdentity::new(host, port).map_err(|_| "Invalid SSH host or port")?;
         let size = session_size(dimensions)?;
         let profile = SshConnectionProfile::new(
@@ -172,13 +181,13 @@ impl LiveSsh {
             size,
         )
         .map_err(|_| "Invalid SSH username")?;
-        let mut options = SshSessionOptions::new();
+        let mut options = SshSessionOptions::manual_recovery(strategy);
         if let Some(pin) = pin {
             options = options.with_known_host_fingerprint(pin);
         }
         let session = SshSession::start_with_notifier_and_options(
             profile,
-            SshAuthentication::Interactive,
+            authentication,
             options,
             Arc::new(Repaint(context.clone())),
         )
@@ -198,11 +207,8 @@ impl LiveSsh {
             running: false,
             status: "Connecting",
             accepted_pin: pin.map(str::to_owned),
+            new_trust: None,
         })
-    }
-
-    pub(super) fn host_label(&self) -> &str {
-        self.identity.host()
     }
 
     pub(super) fn input_enabled(&self) -> bool {
@@ -348,6 +354,7 @@ impl LiveSsh {
                 });
                 if resolved {
                     self.accepted_pin = Some(prompt.sha256_fingerprint().to_owned());
+                    self.new_trust = self.accepted_pin.clone();
                     self.host_prompt = None;
                     self.status = "Authenticating";
                 } else {
@@ -389,22 +396,14 @@ impl LiveSsh {
         self.status
     }
 
-    pub(super) fn port(&self) -> u16 {
-        self.identity.port()
-    }
-
     pub(super) fn password_buffer(&mut self) -> &mut dyn egui::TextBuffer {
         &mut self.password
     }
 
-    pub(super) fn remember_pin(&self) -> Option<(String, u16, String)> {
-        self.accepted_pin.as_ref().map(|pin| {
-            (
-                self.identity.host().to_owned(),
-                self.identity.port(),
-                pin.clone(),
-            )
-        })
+    /// The host key the user just trusted, to be persisted once.
+    pub(super) fn take_new_trust(&mut self) -> Option<(HostIdentity, String)> {
+        let pin = self.new_trust.take()?;
+        Some((self.identity.clone(), pin))
     }
 }
 
@@ -414,49 +413,15 @@ impl Drop for LiveSsh {
     }
 }
 
-/// Remembers the host-key pin trusted earlier in this app run and starts workers.
-#[derive(Default)]
-pub(super) struct ConnectionForm {
-    pin: Option<(String, u16, String)>,
-}
-
-impl ConnectionForm {
-    pub(super) fn connect(
-        &mut self,
-        host: &str,
-        port: &str,
-        username: &str,
-        dimensions: Dimensions,
-        context: &egui::Context,
-        live: &mut Option<LiveSsh>,
-    ) -> Result<(), &'static str> {
-        let port = port.parse::<u16>().unwrap_or(0);
-        let identity = HostIdentity::new(host, port).ok();
-        let pin = self
-            .pin
-            .as_ref()
-            .filter(|(known_host, known_port, _)| {
-                identity.as_ref().is_some_and(|identity| {
-                    identity.host() == known_host && *known_port == identity.port()
-                })
-            })
-            .map(|(_, _, pin)| pin.as_str());
-        *live = Some(LiveSsh::connect(
-            host, port, username, dimensions, pin, context,
-        )?);
-        Ok(())
-    }
-
-    pub(super) fn observe(&mut self, live: &LiveSsh) {
-        if let Some(pin) = live.remember_pin() {
-            self.pin = Some(pin);
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn set_pin(&mut self, host: &str, port: u16, pin: &str) {
-        self.pin = Some((host.to_owned(), port, pin.to_owned()));
-    }
+/// Everything the worker needs to open one SSH session.
+pub(super) struct ConnectRequest {
+    pub(super) host: String,
+    pub(super) port: u16,
+    pub(super) username: String,
+    pub(super) authentication: SshAuthentication,
+    pub(super) strategy: SessionStrategy,
+    /// Fingerprint the user already trusted for this host, if any.
+    pub(super) pin: Option<String>,
 }
 
 #[cfg(test)]
@@ -535,6 +500,7 @@ mod tests {
             running: true,
             status: "Connected",
             accepted_pin: None,
+            new_trust: None,
         }
     }
 
@@ -640,7 +606,7 @@ mod tests {
             festerm_core::MouseTrackingMode::AnyMotion
         );
 
-        app.editor.toggle();
+        app.editor.open_new();
         for _ in 0..4 {
             render(&mut app, vec![]).drop_without_applying_deltas();
         }
@@ -662,8 +628,23 @@ mod tests {
         assert_eq!(app.sink.diagnostics.byte_count, 0);
     }
 
+    fn plain_spec() -> crate::profiles::SessionSpec {
+        crate::profiles::SessionSpec {
+            profile: None,
+            name: "fixture".to_owned(),
+            ssh: festerm_mobile_profiles::SshProfile {
+                host: "example.test".to_owned(),
+                port: 22,
+                username: "fixture-user".to_owned(),
+                auth: festerm_mobile_profiles::SshAuth::Ask,
+                remote_session: festerm_mobile_profiles::RemoteSession::Plain,
+                recovery: Default::default(),
+            },
+        }
+    }
+
     #[test]
-    fn mobile_reconnect_reviews_form_without_replay_or_early_history_clear() {
+    fn mobile_reconnect_banner_fits_and_failed_reconnect_keeps_history_without_replay() {
         use crate::{Lifecycle, MobileApp};
         use egui_kittest::{kittest::Queryable, Harness};
         use std::{cell::Cell, rc::Rc};
@@ -673,10 +654,11 @@ mod tests {
             egui::vec2(844.0, 390.0),
             egui::vec2(390.0, 260.0),
         ] {
-            let app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+            let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
                 active: true,
                 ..Default::default()
             })));
+            app.fixture_ssh_tab(plain_spec());
             *app.sink.live.connection.borrow_mut() = Some(disconnected_fixture());
             let mut harness = Harness::builder()
                 .with_size(size)
@@ -687,43 +669,31 @@ mod tests {
                 egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(button),
                 "recovery action outside {size:?}: {button:?}"
             );
-            harness.get_by_label("Reconnect · new shell").click();
-            harness.run();
-            assert!(harness.state().editor.open, "{size:?}");
         }
 
         let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
             active: true,
             ..Default::default()
         })));
+        app.fixture_ssh_tab(plain_spec());
         app.terminal.ingest(b"retained-evidence");
         *app.sink.live.connection.borrow_mut() = Some(disconnected_fixture());
         let mut harness = Harness::builder()
             .with_size(egui::vec2(390.0, 844.0))
             .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
-        let retained = |app: &MobileApp| {
-            (0..app.terminal.dimensions().rows())
-                .filter_map(|row| app.terminal.row_text(row))
-                .collect::<Vec<_>>()
-                .join("\n")
-                .contains("retained-evidence")
-        };
         harness.run();
-        let reconnect = harness.get_by_label("Reconnect · new shell").rect();
-        assert!(
-            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(390.0, 844.0))
-                .contains_rect(reconnect),
-            "recovery action outside viewport: {reconnect:?}"
-        );
+        // No profile store: the reconnect is refused before touching history.
         harness.get_by_label("Reconnect · new shell").click();
         harness.run();
-        assert!(
-            harness.state().editor.open,
-            "visible recovery action did not open form: {reconnect:?}"
-        );
-        assert!(retained(harness.state()));
-        assert!(harness
-            .state()
+        let state = harness.state();
+        let text = (0..state.terminal.dimensions().rows())
+            .filter_map(|row| state.terminal.row_text(row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("retained-evidence") && !text.contains("new shell"));
+        assert!(state.notice.is_some());
+        assert_eq!(state.sink.diagnostics.byte_count, 0);
+        assert!(state
             .sink
             .live
             .connection
@@ -731,17 +701,60 @@ mod tests {
             .as_ref()
             .unwrap()
             .can_reset());
-        // An empty host fails validation synchronously; it cannot replace history.
-        harness.state_mut().editor.host.clear();
-        harness.get_by_label("Connect").click();
-        harness.run();
-        assert!(retained(harness.state()));
-        harness.get_by_label("Cancel").click();
-        harness.run();
-        assert!(!harness.state().editor.open);
-        assert!(retained(harness.state()));
-        assert_eq!(harness.state().sink.diagnostics.byte_count, 0);
-        assert!(harness.query_by_label("Reconnect · new shell").is_some());
+    }
+
+    #[test]
+    fn mobile_tabs_switch_without_reconnect_keep_background_output_and_close() {
+        use crate::{Lifecycle, MobileApp};
+        use std::{cell::Cell, rc::Rc};
+
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        let demo = app.active_tab.expect("demo tab");
+        let session = Arc::new(FakeSession::default());
+        app.fixture_ssh_tab(plain_spec());
+        let remote = app.active_tab.unwrap();
+        *app.sink.live.connection.borrow_mut() = Some(connection(session.clone()));
+        app.terminal.ingest(b"remote-prompt$ ");
+
+        app.activate_tab(demo);
+        assert_eq!(app.active_tab, Some(demo));
+        assert!(app.sink.live.connection.borrow().is_none());
+        assert_eq!(app.sink.live.background.borrow().len(), 1);
+        assert_eq!(
+            *session.shutdowns.lock().unwrap(),
+            0,
+            "switching must not disconnect"
+        );
+
+        // Output for the parked tab keeps flowing into its own terminal.
+        session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::Output(b"while-away".to_vec()));
+        app.poll_background(&egui::Context::default());
+        assert!(!app
+            .terminal
+            .row_text(0)
+            .unwrap_or_default()
+            .contains("while-away"));
+
+        app.activate_tab(remote);
+        let rows = (0..app.terminal.dimensions().rows())
+            .filter_map(|row| app.terminal.row_text(row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rows.contains("remote-prompt$") && rows.contains("while-away"));
+        assert!(app.sink.live.connection.borrow().is_some());
+        assert_eq!(app.tab_surfaces().len(), 2);
+
+        app.close_tab(remote);
+        assert!(app.sink.live.connection.borrow().is_none());
+        assert_eq!(app.tab_surfaces().len(), 1);
+        assert_eq!(*session.shutdowns.lock().unwrap(), 1);
     }
 
     #[test]
@@ -821,11 +834,11 @@ mod tests {
         use std::{cell::Cell, rc::Rc};
 
         let suspension = SuspensionHandle::default();
-        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle::default())))
+        let app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle::default())))
             .with_suspension(suspension.clone());
         let session = Arc::new(FakeSession::default());
         for shutdowns in 1..=2 {
-            app.sink.reset();
+            *app.sink.live.connection.borrow_mut() = None;
             let mut live = connection(session.clone());
             live.password.0.push_str("synthetic-secret");
             live.host_prompt = Some(HostKeyPrompt::new("example.test", 22, "SHA256:fixture"));
@@ -846,6 +859,14 @@ mod tests {
             assert!(live.status.starts_with("Suspended"));
             assert_eq!(*session.shutdowns.lock().unwrap(), shutdowns);
         }
+        // Parked tabs keep a worker too; suspension must retire those as well.
+        let parked = Arc::new(FakeSession::default());
+        suspension
+            .background
+            .borrow_mut()
+            .push((9, connection(parked.clone())));
+        suspension.suspend();
+        assert_eq!(*parked.shutdowns.lock().unwrap(), 1);
     }
 
     #[test]

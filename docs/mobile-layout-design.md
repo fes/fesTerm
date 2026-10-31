@@ -327,3 +327,12 @@ preference's rendering logic, not add a second preference.
 - Whether the extra-keys row itself needs a Compact-tier-specific compact
   variant (e.g., fewer visible keys with a scroll affordance) versus reusing
   the same row at all tiers is deferred to Phase 2 implementation.
+
+## Profiles, sessions and persisted trust (ADR 0059)
+
+Saved profiles, the New/Edit profile editor, session chips, the All-sessions
+sheet, the reconnect banner and the host-verification sheet are now backed by
+`festerm-mobile-profiles`. Trust persists across launches and a changed key is a
+hard refusal with no approve action. Reconnect is honest: a plain shell starts
+new, tmux/screen profiles reattach by name. Bottom sheets grow in place up to
+88% of the screen and scroll beyond that.

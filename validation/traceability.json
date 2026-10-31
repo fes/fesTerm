@@ -3413,7 +3413,8 @@
         "docs/adr/0042-ios-rendering-spike-host.md",
         "docs/adr/0054-ios-keychain-and-mobile-profile-store.md",
         "docs/adr/0057-portable-dev-tunnels-client-for-ios.md#decision",
-        "docs/adr/0058-ios-app-lock-and-mobile-document-viewer.md#decision"
+        "docs/adr/0058-ios-app-lock-and-mobile-document-viewer.md#decision",
+        "docs/adr/0059-ios-profiles-sessions-and-persisted-trust.md#decision"
       ],
       "decisions": [
         "ADR-0031",
@@ -3421,7 +3422,8 @@
         "ADR-0054",
         "ADR-0055",
         "ADR-0057",
-        "ADR-0058"
+        "ADR-0058",
+        "ADR-0059"
       ],
       "automated_tests": [
         "keep_both_names_preserve_extensions",
@@ -3455,11 +3457,15 @@
         "mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry",
         "mobile_loopback_ssh_rejects_unknown_and_changed_hosts_before_authentication",
         "mobile_disconnected_history_scrolls_and_copies_without_transport_input",
-        "mobile_reconnect_reviews_form_without_replay_or_early_history_clear",
+        "mobile_profiles_crud_recents_and_remote_session_strategy",
+        "mobile_profiles_keys_are_generated_stored_and_rejected_when_invalid",
+        "mobile_profiles_trusted_hosts_persist_and_can_be_forgotten",
+        "mobile_reconnect_banner_fits_and_failed_reconnect_keeps_history_without_replay",
+        "mobile_tabs_switch_without_reconnect_keep_background_output_and_close",
+        "mobile_editor_saves_edits_and_deletes_profiles_with_credentials",
         "mobile_header_menu_routes_previews_and_resets_demo_without_stale_input",
         "mobile_editor_fits_measured_phone_tablet_space_and_releases_it",
         "mobile_key_row_and_panel_apply_modifiers_once_through_core_encoding",
-        "mobile_memory_profile_store_assigns_unique_ids_and_reports_not_persistent",
         "navigation_and_function_keys_use_xterm_sequences_with_modifiers",
         "mobile_live_ssh_pump_uses_core_replies_and_bounded_event_work",
         "mobile_live_ssh_hidden_workspaces_keep_pumping_output_and_replies",

@@ -181,6 +181,18 @@ pub enum Trailing<'a> {
     Check,
     Text(&'a str),
     Action(&'a str),
+    /// Chevron plus an `Edit` zone; see [`edit_zone_clicked`].
+    Edit,
+}
+
+const EDIT_ZONE: f32 = 72.0;
+
+/// Whether a click on an `Trailing::Edit` row landed on its Edit zone.
+pub fn edit_zone_clicked(response: &Response) -> bool {
+    response.clicked()
+        && response
+            .interact_pointer_pos()
+            .is_some_and(|pos| pos.x > response.rect.right() - EDIT_ZONE)
 }
 
 pub struct RowSpec<'a> {
@@ -262,6 +274,24 @@ pub fn list_row(ui: &mut Ui, spec: &RowSpec<'_>) -> Response {
                 type_scale::font(type_scale::CAPTION),
                 color::TEXT_MUTED,
                 120.0,
+            );
+            right = used.left() - space::SM;
+        }
+        Trailing::Edit => {
+            paint_chevron(
+                &painter,
+                egui::pos2(right - 6.0, rect.center().y),
+                5.0,
+                color::TEXT_MUTED,
+            );
+            let used = paint_fit(
+                &painter,
+                egui::pos2(right - 22.0, rect.center().y),
+                Align2::RIGHT_CENTER,
+                "Edit",
+                type_scale::font(type_scale::CAPTION),
+                color::ACCENT_TEXT,
+                48.0,
             );
             right = used.left() - space::SM;
         }
@@ -825,24 +855,22 @@ pub fn bottom_sheet(
         se: 0,
     };
     let height_id = Id::new(("sheet-height", id));
+    // The area may extend below the bounds so a growing sheet is not squeezed by
+    // the room left under its previous top edge.
+    let max_height = bounds.height() * 0.88;
     let measured = ctx
         .data_mut(|data| data.get_temp::<f32>(height_id))
         .unwrap_or(0.0)
-        .min(bounds.height());
+        .min(max_height);
     let sheet = egui::Area::new(Id::new(("sheet", id)))
         .order(egui::Order::Foreground)
-        .pivot(if measured > 0.0 {
-            Align2::LEFT_TOP
-        } else {
-            Align2::LEFT_BOTTOM
-        })
-        .fixed_pos(if measured > 0.0 {
-            egui::pos2(bounds.left(), bounds.bottom() - measured)
-        } else {
-            bounds.left_bottom()
-        })
+        .constrain_to(Rect::from_min_max(
+            bounds.left_top(),
+            egui::pos2(bounds.right(), bounds.bottom() + max_height),
+        ))
+        .fixed_pos(egui::pos2(bounds.left(), bounds.bottom() - measured))
         .show(ctx, |ui| {
-            egui::Frame::new()
+            let frame = egui::Frame::new()
                 .fill(color::SHEET)
                 .stroke(Stroke::new(1.0, color::BORDER))
                 .corner_radius(corner)
@@ -867,17 +895,30 @@ pub fn bottom_sheet(
                         CornerRadius::same(3),
                         color::TEXT_FAINT,
                     );
-                    egui::ScrollArea::vertical()
-                        .max_height(bounds.height() * 0.88 - 40.0)
-                        .auto_shrink([false, true])
+                    // A ScrollArea sizes itself from last frame's content, so the
+                    // content height is tracked here to follow in-place changes.
+                    let cap = max_height - 40.0;
+                    ui.set_max_height(cap);
+                    let content_id = Id::new(("sheet-content", id));
+                    let known = ctx.data_mut(|data| data.get_temp::<f32>(content_id));
+                    let scroll = egui::ScrollArea::vertical()
+                        .max_height(known.map_or(cap, |known| known.min(cap)))
+                        .auto_shrink([false, known.is_none()])
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing.y = space::SM;
-                            content(ui)
+                            content(ui);
+                            ui.min_rect().height()
                         });
+                    let content_height = scroll.inner;
+                    if known.is_none_or(|known| (known - content_height).abs() > 0.5) {
+                        ctx.data_mut(|data| data.insert_temp(content_id, content_height));
+                        ctx.request_repaint();
+                    }
                 });
+            frame.response.rect.height()
         });
-    // A bottom-pivoted area learns its height one frame late; settle it.
-    let height = sheet.response.rect.height();
+    // The frame height is only known after layout; settle it next frame.
+    let height = sheet.inner;
     let previous = ctx.data_mut(|data| data.get_temp::<f32>(height_id));
     if previous.is_none_or(|previous| (previous - height).abs() > 0.5) {
         ctx.data_mut(|data| data.insert_temp(height_id, height));

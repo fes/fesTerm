@@ -4,10 +4,11 @@
 
 use super::*;
 use crate::model::{
-    Capabilities, ChromeModel, ConnectionLine, DevTunnelChoices, MemoryProfileStore, NewProfile,
-    ProfileKind, Reattachable, StaticSessions, SurfaceKind, SurfaceState, SurfaceSummary,
+    Capabilities, ChromeModel, ConnectionLine, DevTunnelChoices, ProfileKind, Reattachable,
+    StaticSessions, SurfaceKind, SurfaceState, SurfaceSummary,
 };
 use egui_kittest::Harness;
+use festerm_mobile_profiles::{RemoteSession, SshAuth, SshProfile};
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf, process::Command};
 
@@ -24,7 +25,7 @@ fn git_fact(arguments: &[&str]) -> String {
         .to_owned()
 }
 
-const STATES: [&str; 17] = [
+const STATES: [&str; 18] = [
     "profiles",
     "profiles-empty",
     "terminal",
@@ -40,13 +41,13 @@ const STATES: [&str; 17] = [
     "changed-host",
     "authentication",
     "disconnected",
-    "reconnect-review",
+    "editor-edit",
+    "auth-key",
     "settings",
 ];
 
-fn fixture_profiles() -> Box<MemoryProfileStore> {
-    let mut store = MemoryProfileStore::default();
-    for (name, kind, host, user) in [
+fn fixture_rows() -> Vec<model::Profile> {
+    [
         ("prod-web", ProfileKind::Ssh, "web.example.net", "deploy"),
         ("build-box", ProfileKind::DevTunnel, "build-tunnel", "dev"),
         ("staging-db", ProfileKind::Ssh, "db.example.net", "ops"),
@@ -56,19 +57,41 @@ fn fixture_profiles() -> Box<MemoryProfileStore> {
             "files.example.net",
             "ops",
         ),
-    ] {
-        model::ProfileStore::save(
-            &mut store,
-            NewProfile {
-                name: name.to_owned(),
-                kind,
-                host: host.to_owned(),
-                port: 22,
-                username: user.to_owned(),
-            },
-        );
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (name, kind, host, user))| model::Profile {
+        id: format!("fixture-{index}"),
+        name: name.to_owned(),
+        kind,
+        detail: model::profile_detail(kind, host, user),
+        last_used: None,
+    })
+    .collect()
+}
+
+fn fixture_ssh(auth: SshAuth, remote_session: RemoteSession) -> SshProfile {
+    SshProfile {
+        host: "web.example.net".to_owned(),
+        port: 22,
+        username: "deploy".to_owned(),
+        auth,
+        remote_session,
+        recovery: Default::default(),
     }
-    Box::new(store)
+}
+
+fn fixture_spec() -> profiles::SessionSpec {
+    profiles::SessionSpec {
+        profile: None,
+        name: "prod-web".to_owned(),
+        ssh: fixture_ssh(
+            SshAuth::Ask,
+            RemoteSession::Tmux {
+                name: "work".to_owned(),
+            },
+        ),
+    }
 }
 
 fn fixture_sessions(current: u64) -> StaticSessions {
@@ -131,7 +154,8 @@ fn fixture_terminal_text(lines: &[&str]) -> Terminal {
 
 fn configure(app: &mut MobileApp, state: &str) {
     app.caps = Capabilities::all();
-    app.profiles = fixture_profiles();
+    app.profiles = Some(profiles::testing::profiles());
+    app.rows_override = Some(fixture_rows());
     let devtunnel = matches!(state, "terminal-devtunnel");
     app.sessions_override = Some(fixture_sessions(if devtunnel { 2 } else { 1 }));
     app.surface = Surface::Terminal;
@@ -175,7 +199,7 @@ fn configure(app: &mut MobileApp, state: &str) {
         "profiles-empty" => {
             app.surface = Surface::Tabs;
             app.caps = Capabilities::default();
-            app.profiles = Box::new(MemoryProfileStore::default());
+            app.rows_override = None;
             app.sessions_override = Some(StaticSessions::default());
         }
         "settings" => {
@@ -214,7 +238,8 @@ fn configure(app: &mut MobileApp, state: &str) {
             app.chrome_override = None;
             app.terminal = fixture_terminal_text(&["Connecting…"]);
         }
-        "disconnected" | "reconnect-review" => {
+        "disconnected" => {
+            app.fixture_ssh_tab(fixture_spec());
             *app.sink.live.connection.borrow_mut() = Some(live_ssh::disconnected_fixture());
             app.chrome_override = Some(ChromeModel {
                 title: "prod-web".to_owned(),
@@ -222,14 +247,35 @@ fn configure(app: &mut MobileApp, state: &str) {
                 line: ConnectionLine {
                     state: SurfaceState::Disconnected,
                     label: "Connection lost".to_owned(),
-                    context: None,
+                    context: Some("tmux · work".to_owned()),
                 },
             });
-            if state == "reconnect-review" {
-                app.editor.host = "web.example.net".to_owned();
-                app.editor.username = "deploy".to_owned();
-                app.editor.open_reconnect();
-            }
+        }
+        "editor-edit" => {
+            let id = app
+                .profiles
+                .as_mut()
+                .expect("fixture profiles")
+                .save_ssh(
+                    None,
+                    "prod-web",
+                    fixture_ssh(
+                        SshAuth::Ask,
+                        RemoteSession::Tmux {
+                            name: "work".to_owned(),
+                        },
+                    ),
+                )
+                .expect("save fixture profile");
+            app.edit_profile(&id);
+        }
+        "auth-key" => {
+            app.editor.open_new();
+            app.editor.host = "web.example.net".to_owned();
+            app.editor.username = "deploy".to_owned();
+            app.editor.auth_mode = forms::AuthMode::Key;
+            app.editor.auth_sheet = true;
+            app.editor.durable_credentials = true;
         }
         _ => {}
     }
@@ -263,7 +309,8 @@ fn capture_mobile_ui_gallery() {
                     | "editor-devtunnel"
                     | "host-trust"
                     | "changed-host"
-                    | "reconnect-review"
+                    | "editor-edit"
+                    | "auth-key"
             ) {
                 0.0
             } else {

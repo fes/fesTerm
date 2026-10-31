@@ -1,9 +1,8 @@
 //! View-models and seams for the mobile shell.
 //!
-//! The profile store and open-surface source are traits so persistent
-//! storage (Keychain-backed profiles, SFTP/tunnel surfaces) can plug in
-//! without touching the screens. Production builds use the in-memory store
-//! and the live-session source; fixtures live only in the gallery/tests.
+//! Saved profiles come from `festerm-mobile-profiles` through
+//! [`crate::profiles::Profiles`]; the open-surface source is a trait so the
+//! gallery can inject fixtures. Fixtures live only in the gallery and tests.
 
 use festerm_ui_egui::icon::Icon;
 
@@ -32,25 +31,16 @@ impl ProfileKind {
     }
 }
 
+/// One saved-profile row for lists and cards; secrets never appear here.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Profile {
-    pub id: u64,
+    pub id: String,
     pub name: String,
     pub kind: ProfileKind,
-    pub host: String,
-    pub port: u16,
-    pub username: String,
     /// Protocol and target, e.g. `SSH · dev@example.net`.
     pub detail: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NewProfile {
-    pub name: String,
-    pub kind: ProfileKind,
-    pub host: String,
-    pub port: u16,
-    pub username: String,
+    /// Seconds since the Unix epoch of the last launch, if any.
+    pub last_used: Option<u64>,
 }
 
 pub fn profile_detail(kind: ProfileKind, host: &str, username: &str) -> String {
@@ -58,59 +48,6 @@ pub fn profile_detail(kind: ProfileKind, host: &str, username: &str) -> String {
         format!("{} · {host}", kind.label())
     } else {
         format!("{} · {username}@{host}", kind.label())
-    }
-}
-
-/// Saved-profile storage seam. The default implementation lives in memory.
-pub trait ProfileStore {
-    fn profiles(&self) -> Vec<Profile>;
-    fn save(&mut self, profile: NewProfile) -> Profile;
-    /// Whether saved profiles survive an app restart.
-    fn is_persistent(&self) -> bool;
-}
-
-#[derive(Default)]
-pub struct MemoryProfileStore {
-    next_id: u64,
-    items: Vec<Profile>,
-}
-
-impl MemoryProfileStore {
-    pub fn with_profiles(profiles: Vec<Profile>) -> Self {
-        Self {
-            next_id: profiles
-                .iter()
-                .map(|profile| profile.id + 1)
-                .max()
-                .unwrap_or(0),
-            items: profiles,
-        }
-    }
-}
-
-impl ProfileStore for MemoryProfileStore {
-    fn profiles(&self) -> Vec<Profile> {
-        self.items.clone()
-    }
-
-    fn save(&mut self, profile: NewProfile) -> Profile {
-        let detail = profile_detail(profile.kind, &profile.host, &profile.username);
-        let saved = Profile {
-            id: self.next_id,
-            name: profile.name,
-            kind: profile.kind,
-            host: profile.host,
-            port: profile.port,
-            username: profile.username,
-            detail,
-        };
-        self.next_id += 1;
-        self.items.push(saved.clone());
-        saved
-    }
-
-    fn is_persistent(&self) -> bool {
-        false
     }
 }
 
@@ -211,6 +148,19 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
+    /// What the production shell supports today: SSH profiles with password
+    /// or key authentication, remote sessions and paste. Dev Tunnel and SFTP
+    /// profile kinds stay hidden until their flows are wired.
+    pub const fn production() -> Self {
+        Self {
+            dev_tunnel_profiles: false,
+            sftp_profiles: false,
+            key_authentication: true,
+            remote_session_choice: true,
+            paste: true,
+        }
+    }
+
     /// Every mock-up affordance, for the gallery's deterministic fixtures.
     pub const fn all() -> Self {
         Self {
@@ -245,6 +195,8 @@ pub enum HostDecision {
 pub struct ReconnectBanner {
     pub detail: Option<String>,
     pub status: String,
+    /// `tmux · work` when reconnecting reattaches a durable remote session.
+    pub reattach: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -255,26 +207,4 @@ pub struct DevTunnelChoices {
     pub tunnel: usize,
     pub sessions: Vec<String>,
     pub session: usize,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mobile_memory_profile_store_assigns_unique_ids_and_reports_not_persistent() {
-        let mut store = MemoryProfileStore::default();
-        assert!(store.profiles().is_empty() && !store.is_persistent());
-        let new = |name: &str| NewProfile {
-            name: name.into(),
-            kind: ProfileKind::Ssh,
-            host: "h".into(),
-            port: 22,
-            username: "u".into(),
-        };
-        let first = store.save(new("a"));
-        let second = store.save(new("b"));
-        assert_ne!(first.id, second.id);
-        assert_eq!(store.profiles().len(), 2);
-    }
 }

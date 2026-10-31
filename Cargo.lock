@@ -2330,6 +2330,8 @@ dependencies = [
  "festerm-core",
  "festerm-ios-window",
  "festerm-markdown",
+ "festerm-mobile-profiles",
+ "festerm-secret-store",
  "festerm-session",
  "festerm-ssh",
  "festerm-ui-egui",

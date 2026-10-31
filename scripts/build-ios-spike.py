@@ -19,6 +19,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_ID = "org.festerm.mobile-spike"
+# Placeholder team prefix for the ad-hoc Simulator build; a device build uses its real team ID.
+KEYCHAIN_TEAM_PREFIX = "FESTERM000"
 MINIMUM_IOS = "15.0"
 FORBIDDEN = {"festerm", "festerm-pty", "festerm-sessiond", "festerm-serial", "cargo-packager-updater"}
 DESKTOP_SECRET_BACKENDS = {
@@ -56,6 +58,11 @@ def check_dependencies(
                 forbidden.add(f"{IOS_KEYCHAIN_BACKEND}[{','.join(sorted(features))}]")
     if forbidden:
         raise RuntimeError(f"Mobile dependency boundary violated: {sorted(forbidden)}")
+
+
+def bundle_entitlements() -> dict:
+    group = f"{KEYCHAIN_TEAM_PREFIX}.{BUNDLE_ID}"
+    return {"keychain-access-groups": [group]}
 
 
 def bundle_info(live_ssh: bool = False) -> dict:
@@ -121,7 +128,17 @@ def main() -> int:
     sdk = run("xcrun", "--sdk", "iphonesimulator", "--show-sdk-path", capture_output=True, text=True).stdout.strip()
     run("rustup", "target", "add", target)
     check_dependencies(target, live_ssh=args.live_ssh)
-    env = dict(os.environ, SDKROOT=sdk, IPHONEOS_DEPLOYMENT_TARGET=MINIMUM_IOS)
+    # The Simulator reads Keychain access groups from an entitlements section
+    # linked into the executable (an entitlement in an ad-hoc signature stops the
+    # app launching); without it every Keychain call fails with -34018.
+    entitlements = ROOT / "target" / "festerm-simulator.entitlements"
+    entitlements.parent.mkdir(parents=True, exist_ok=True)
+    with entitlements.open("wb") as stream:
+        plistlib.dump(bundle_entitlements(), stream)
+    rustflags = [flag for flag in os.environ.get("CARGO_ENCODED_RUSTFLAGS", "").split("\x1f") if flag]
+    rustflags += ["-C", f"link-arg=-Wl,-sectcreate,__TEXT,__entitlements,{entitlements}"]
+    env = dict(os.environ, SDKROOT=sdk, IPHONEOS_DEPLOYMENT_TARGET=MINIMUM_IOS,
+               CARGO_ENCODED_RUSTFLAGS="\x1f".join(rustflags))
     run("cargo", "build", "--locked", "-p", "festerm-mobile", "--target", target,
         *(["--features", "live-ssh"] if args.live_ssh else []),
         "--target-dir", str(ROOT / "target"), env=env)

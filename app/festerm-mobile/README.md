@@ -166,11 +166,32 @@ chips, key supplement row, extended-keys panel). Colors, radii, spacing and type
 come from `theme.rs`; reusable controls are in `widgets.rs`; editor/sheet forms
 are in `forms.rs`, driven by the view-model structs and the `ProfileStore` seam
 in `model.rs`. Only capabilities with a working production path are shown
-(`Capabilities`): the in-memory profile store is not persistent, and Dev Tunnel,
-SFTP, key authentication, remote session choice, paste and Reattach stay hidden
-until their backends exist. The headless gallery enables them with fixtures
+(`Capabilities`): Dev Tunnel and SFTP profile kinds stay hidden until their
+backends are wired. The headless gallery enables them with fixtures
 (`Capabilities::all()`) for design review only. SFTP/transfer screens (07-09) and
-identity/privacy screens (13-15) are not implemented.
+identity/privacy screens (13-15) are not implemented here.
+
+### Profiles, sessions and trust (ADR 0059)
+
+`profiles.rs` adapts `festerm-mobile-profiles`: saved SSH profiles (name, host,
+port, user, Password / SSH key / Ask each time, Plain / tmux / Screen with a
+session name) persist in the app sandbox and secrets live in the iOS Keychain.
+If the Keychain probe fails, the store falls back to memory and the UI says
+credentials last only until fesTerm closes; secrets are never written to disk.
+Host trust persists (`KnownHosts`), a changed key is refused, and Settings lists
+trusted hosts with Forget. `tabs.rs` keeps several sessions alive; chips and the
+All-sessions sheet switch without reconnecting. Reconnect always starts a new
+shell and says so; for tmux/screen profiles the remote command attaches or
+creates the named session, so Reconnect reattaches it.
+
+The simulator is ad-hoc signed, which makes Keychain return -34018.
+`scripts/build-ios-spike.py` links a `keychain-access-groups` entitlement into
+the Mach-O `__TEXT,__entitlements` section for simulator builds.
+`scripts/run-ios-shell-harness.sh start|stop` runs a loopback sshd (127.0.0.1:2222,
+key auth, tmux) to test the flow in the Simulator; the key is under
+`target/ios-shell-harness/`. Known limitation: `festerm-ssh` applies its 10 s
+connect timeout while the host-key sheet is open, so the fingerprint must be
+reviewed within 10 s.
 
 ## Headless UI review images
 
