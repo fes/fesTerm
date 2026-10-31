@@ -573,6 +573,10 @@ jobs:
           security create-keychain -p "$password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
           security unlock-keychain -p "$password" "$keychain"
+          # Fresh runners need the keychain in the user search list before
+          # set-key-partition-list can find the imported private key.
+          existing=$(security list-keychains -d user | tr -d '"' | xargs)
+          security list-keychains -d user -s "$keychain" $existing
           security import helper-signing/certificate.p12 -k "$keychain" \
             -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
