@@ -1451,7 +1451,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
             continue;
         }
         report_attach_state_change(
-            active.is_some(),
+            active.as_ref().map(|client| client.kind),
             &mut attached_reported,
             &mut on_attach_changed,
         );
@@ -1463,7 +1463,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
                 }
                 send_to_active(&mut active, &mut retired_clients, &mut pending, data);
                 report_attach_state_change(
-                    active.is_some(),
+                    active.as_ref().map(|client| client.kind),
                     &mut attached_reported,
                     &mut on_attach_changed,
                 );
