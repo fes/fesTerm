@@ -27,6 +27,87 @@ impl Direction {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArrowSpeed {
+    Slow,
+    Medium,
+    Fast,
+}
+
+impl ArrowSpeed {
+    fn for_distance(distance: f32) -> Self {
+        if distance >= 80.0 {
+            Self::Fast
+        } else if distance >= 40.0 {
+            Self::Medium
+        } else {
+            Self::Slow
+        }
+    }
+
+    fn interval(self) -> f64 {
+        match self {
+            Self::Slow => 0.18,
+            Self::Medium => 0.10,
+            Self::Fast => 0.055,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Slow => "Slow",
+            Self::Medium => "Medium",
+            Self::Fast => "Fast",
+        }
+    }
+
+    fn level(self) -> usize {
+        match self {
+            Self::Slow => 1,
+            Self::Medium => 2,
+            Self::Fast => 3,
+        }
+    }
+}
+
+struct HelperLayout {
+    pad: Rect,
+    speed: Option<Rect>,
+    caption: Option<Rect>,
+}
+
+fn helper_layout(bounds: Rect, origin: Pos2) -> Option<HelperLayout> {
+    let available = bounds.shrink(8.0);
+    let pad_size = 80.0_f32.min(available.width()).min(available.height());
+    if pad_size < 48.0 {
+        return None;
+    }
+    let detailed = available.width() >= 136.0 && available.height() >= 144.0;
+    let height = if detailed { 144.0 } else { pad_size };
+    let top = (origin.y - height * 0.5)
+        .max(available.top())
+        .min(available.bottom() - height);
+    let pad = Rect::from_min_size(
+        egui::pos2(available.right() - pad_size, top),
+        egui::vec2(pad_size, pad_size),
+    );
+    Some(HelperLayout {
+        pad,
+        speed: detailed.then(|| {
+            Rect::from_min_size(
+                egui::pos2(pad.left(), pad.bottom() + 6.0),
+                egui::vec2(pad_size, 18.0),
+            )
+        }),
+        caption: detailed.then(|| {
+            Rect::from_min_size(
+                egui::pos2(available.right() - 136.0, pad.bottom() + 30.0),
+                egui::vec2(136.0, 34.0),
+            )
+        }),
+    })
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
     Pending,
@@ -89,6 +170,15 @@ impl TerminalGesture {
             .as_ref()
             .filter(|c| c.mode == Mode::Arrows)
             .map(|c| c.direction)
+    }
+
+    fn helper_speed(&self) -> Option<ArrowSpeed> {
+        let contact = self
+            .contact
+            .as_ref()
+            .filter(|contact| contact.mode == Mode::Arrows && contact.direction.is_some())?;
+        let delta = contact.position - contact.origin;
+        Some(ArrowSpeed::for_distance(delta.x.abs().max(delta.y.abs())))
     }
 
     pub fn update(
@@ -270,13 +360,7 @@ impl TerminalGesture {
                 }
                 contact.direction = direction;
                 if let Some(direction) = direction {
-                    let interval = if distance >= 80.0 {
-                        0.055
-                    } else if distance >= 40.0 {
-                        0.10
-                    } else {
-                        0.18
-                    };
+                    let interval = ArrowSpeed::for_distance(distance).interval();
                     if now >= contact.next_repeat {
                         frame.key = Some(direction.key());
                         // At most one key per frame, never catch up after a stall.
@@ -327,17 +411,12 @@ impl TerminalGesture {
         let Some(direction) = self.helper() else {
             return;
         };
-        let size = 78.0_f32.min(bounds.width()).min(bounds.height());
-        if size < 32.0 {
+        let Some(contact) = self.contact.as_ref() else {
             return;
-        }
-        let rect = Rect::from_min_size(
-            egui::pos2(
-                (bounds.right() - size - 12.0).max(bounds.left()),
-                (bounds.top() + 12.0).min(bounds.bottom() - size),
-            ),
-            egui::vec2(size, size),
-        );
+        };
+        let Some(layout) = helper_layout(bounds, contact.origin) else {
+            return;
+        };
         let painter = ui
             .ctx()
             .layer_painter(egui::LayerId::new(
@@ -345,28 +424,93 @@ impl TerminalGesture {
                 egui::Id::new("arrow-gesture-helper"),
             ))
             .with_clip_rect(bounds);
-        painter.rect_filled(
-            rect,
-            12.0,
-            egui::Color32::from_rgba_unmultiplied(205, 210, 220, 230),
+        let background = egui::Color32::from_rgba_unmultiplied(27, 40, 53, 245);
+        let border = egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgba_unmultiplied(88, 118, 146, 180),
         );
-        for (value, label, offset) in [
-            (Direction::Left, "←", egui::vec2(-0.29, 0.0)),
-            (Direction::Down, "↓", egui::vec2(0.0, 0.29)),
-            (Direction::Up, "↑", egui::vec2(0.0, -0.29)),
-            (Direction::Right, "→", egui::vec2(0.29, 0.0)),
+        let foreground = egui::Color32::from_rgb(225, 235, 245);
+        let muted = egui::Color32::from_rgb(151, 174, 195);
+        let accent = egui::Color32::from_rgb(27, 126, 246);
+        painter.rect_filled(layout.pad, 16.0, background);
+        painter.rect_stroke(layout.pad, 16.0, border, egui::StrokeKind::Inside);
+        for (value, offset, axis) in [
+            (
+                Direction::Left,
+                egui::vec2(-0.28, 0.0),
+                egui::vec2(-1.0, 0.0),
+            ),
+            (Direction::Down, egui::vec2(0.0, 0.28), egui::vec2(0.0, 1.0)),
+            (Direction::Up, egui::vec2(0.0, -0.28), egui::vec2(0.0, -1.0)),
+            (
+                Direction::Right,
+                egui::vec2(0.28, 0.0),
+                egui::vec2(1.0, 0.0),
+            ),
         ] {
             let active = direction == Some(value);
+            let center = layout.pad.center() + offset * layout.pad.width();
+            if active {
+                painter.rect_filled(
+                    Rect::from_center_size(center, egui::vec2(22.0, 22.0)),
+                    5.0,
+                    accent,
+                );
+            }
+            // This is a directional diagram, not font-dependent arrow text.
+            // The default proportional font can render these glyphs as boxes.
+            let stroke = egui::Stroke::new(1.5, if active { foreground } else { muted });
+            let tip = center + axis * 7.0;
+            let perpendicular = egui::vec2(-axis.y, axis.x);
+            painter.line_segment([center - axis * 7.0, tip], stroke);
+            for sign in [-1.0, 1.0] {
+                painter.line_segment([tip - axis * 4.0 + perpendicular * 4.0 * sign, tip], stroke);
+            }
+        }
+        painter.circle_stroke(layout.pad.center(), 4.0, egui::Stroke::new(1.0, muted));
+        let speed = self.helper_speed();
+        if let Some(rect) = layout.speed {
+            painter.rect_filled(rect, 6.0, background);
+            let level = speed.map_or(0, ArrowSpeed::level);
+            for index in 0..3 {
+                painter.circle_filled(
+                    egui::pos2(rect.left() + 8.0 + index as f32 * 7.0, rect.center().y),
+                    1.5,
+                    if index < level {
+                        accent
+                    } else {
+                        muted.gamma_multiply(0.4)
+                    },
+                );
+            }
             painter.text(
-                rect.center() + offset * size,
+                egui::pos2(rect.left() + 31.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                speed.map_or("Paused", ArrowSpeed::label),
+                egui::FontId::proportional(10.0),
+                foreground,
+            );
+        }
+        if let Some(rect) = layout.caption {
+            painter.rect_filled(rect, 8.0, background);
+            painter.rect_stroke(rect, 8.0, border, egui::StrokeKind::Inside);
+            painter.text(
+                egui::pos2(rect.center().x, rect.top() + 11.0),
                 egui::Align2::CENTER_CENTER,
-                label,
-                egui::FontId::proportional(size * 0.31),
-                if active {
-                    egui::Color32::from_rgb(30, 110, 235)
+                if direction.is_some() {
+                    "Arrow navigation"
                 } else {
-                    egui::Color32::from_rgb(80, 85, 95)
+                    "Drag to navigate"
                 },
+                egui::FontId::proportional(11.0),
+                foreground,
+            );
+            painter.text(
+                egui::pos2(rect.center().x, rect.top() + 25.0),
+                egui::Align2::CENTER_CENTER,
+                "Release to stop",
+                egui::FontId::proportional(10.0),
+                muted,
             );
         }
     }
@@ -386,6 +530,63 @@ mod tests {
             pos: egui::pos2(x, y),
             force: None,
         }
+    }
+
+    #[test]
+    fn mobile_arrow_feedback_matches_repeat_speed_and_stays_inside_terminal() {
+        let mut gesture = TerminalGesture::default();
+        gesture.update(
+            &mut vec![touch(1, TouchPhase::Start, 100.0, 100.0)],
+            0.0,
+            bounds(),
+            true,
+            true,
+        );
+        gesture.update(&mut vec![], 0.5, bounds(), true, true);
+        assert_eq!(gesture.helper(), Some(None));
+        assert_eq!(gesture.helper_speed(), None);
+        for (time, distance, speed) in [
+            (0.6, 25.0, ArrowSpeed::Slow),
+            (1.0, 50.0, ArrowSpeed::Medium),
+            (2.0, 90.0, ArrowSpeed::Fast),
+        ] {
+            let frame = gesture.update(
+                &mut vec![touch(1, TouchPhase::Move, 100.0 + distance, 100.0)],
+                time,
+                bounds(),
+                true,
+                true,
+            );
+            assert_eq!(gesture.helper_speed(), Some(speed));
+            // Speed feedback and the actual next-repeat deadline must agree.
+            assert!((frame.repaint_after.unwrap() - speed.interval()).abs() < 0.0001);
+        }
+        gesture.cancel();
+        assert!(gesture.helper().is_none() && gesture.helper_speed().is_none());
+        for size in [
+            egui::vec2(390.0, 440.0),
+            egui::vec2(834.0, 740.0),
+            egui::vec2(844.0, 120.0),
+            egui::vec2(100.0, 70.0),
+        ] {
+            let bounds = Rect::from_min_size(egui::pos2(12.0, 59.0), size);
+            for origin in [bounds.left_top(), bounds.center(), bounds.right_bottom()] {
+                let layout = helper_layout(bounds, origin).expect("visible helper");
+                assert!(bounds.contains_rect(layout.pad));
+                assert!(layout.speed.is_some() == layout.caption.is_some());
+                if let Some(rect) = layout.speed {
+                    assert!(bounds.contains_rect(rect));
+                }
+                if let Some(rect) = layout.caption {
+                    assert!(bounds.contains_rect(rect));
+                }
+            }
+        }
+        assert!(helper_layout(
+            Rect::from_min_size(Pos2::ZERO, egui::vec2(45.0, 24.0)),
+            Pos2::ZERO,
+        )
+        .is_none());
     }
 
     #[test]

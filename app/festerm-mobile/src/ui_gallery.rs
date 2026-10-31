@@ -1,5 +1,5 @@
 //! Review images of the actual mobile UI, never native iOS acceptance.
-//! Only offline fixtures and synthetic trust/auth prompts are used: no sockets,
+//! Only offline fixtures, navigation and synthetic trust/auth prompts are used: no sockets,
 //! credentials, clipboard reads or personal filesystem resources.
 
 use super::*;
@@ -39,6 +39,7 @@ fn capture_mobile_ui_gallery() {
         for state in [
             "terminal",
             "connect",
+            "arrow-helper",
             "host-trust",
             "changed-host",
             "authentication",
@@ -71,8 +72,46 @@ fn capture_mobile_ui_gallery() {
                 harness.get_by_label("Connect").click();
                 harness.run();
             }
-            harness.remove_cursor();
-            harness.run();
+            if state == "arrow-helper" {
+                let origin = harness
+                    .state()
+                    .view
+                    .diagnostics()
+                    .grid_rect
+                    .unwrap()
+                    .center();
+                let time = harness.ctx.input(|input| input.time);
+                for (elapsed, phase, position) in [
+                    (0.01, egui::TouchPhase::Start, origin),
+                    (0.51, egui::TouchPhase::Move, origin),
+                    (
+                        0.52,
+                        egui::TouchPhase::Move,
+                        origin + egui::vec2(0.0, -90.0),
+                    ),
+                ] {
+                    harness.input_mut().time = Some(time + elapsed);
+                    harness.event(egui::Event::Touch {
+                        device_id: egui::TouchDeviceId(1),
+                        id: egui::TouchId(1),
+                        phase,
+                        pos: position,
+                        force: None,
+                    });
+                    harness.step();
+                }
+                assert_eq!(
+                    harness.state().gestures.helper(),
+                    Some(Some(terminal_gesture::Direction::Up))
+                );
+                // Keep the contact held for the image. Running to idle would
+                // continue the real repeat scheduler rather than settle.
+                harness.remove_cursor();
+                harness.step();
+            } else {
+                harness.remove_cursor();
+                harness.run();
+            }
             let image = harness.render().expect("headless mobile rendering");
             let filename = format!("{family}-{state}.png");
             let path = output.join(&filename);
@@ -103,7 +142,7 @@ fn capture_mobile_ui_gallery() {
             "host_os": std::env::consts::OS,
             "native_ios": false,
             "native_validation": "not-run",
-            "fixture": "repository-owned offline terminal, empty connection form and synthetic trust/auth prompts; no SSH worker",
+            "fixture": "controlled offline terminal/connect/gesture and synthetic trust/auth prompts; no SSH worker",
             "presentation": "Dark preference; nonblinking cursor; no system keyboard pixels",
             "images": images,
         }))

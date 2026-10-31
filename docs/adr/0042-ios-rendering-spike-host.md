@@ -284,6 +284,19 @@ Neither the host protocol tests nor headless captures accept native iOS,
 OpenSSH/TUI interoperability, signing or physical-device behavior.
 
 
+The before capture exposed missing Unicode arrow glyphs in the proportional
+font; directional strokes now avoid that font dependency. The owner-board
+screen 04 refinement adds a dark temporary arrow pad with active
+direction, neutral/three-speed feedback and release guidance. One speed
+classifier serves both the existing repeat scheduler and presentation; hold,
+dead-zone, repeat intervals, cancellation and input ownership remain unchanged.
+`mobile_arrow_feedback_matches_repeat_speed_and_stays_inside_terminal` covers
+feedback/deadline agreement, cancellation and safe-space layout. The gallery
+drives synthetic hold/drag events through MobileApp and captures phone/tablet
+helper states before/after, without sockets or private content. Headless pixels
+do not accept native gesture feel, finger occlusion, accessibility or device use.
+
+
 The owner-provided iOS product boards guide a mobile-scoped navy/blue presentation,
 two-line actual-host identity and labelled Host/Port/Username controls. The
 Esc/Tab/Ctrl/Alt order preserves one-shot semantics. This is presentation within
