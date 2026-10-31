@@ -17,14 +17,20 @@ class IosSshDependencyTests(unittest.TestCase):
         self.assertNotIn("NSLocalNetworkUsageDescription", build.bundle_info())
         self.assertIn("SSH hosts you choose", build.bundle_info(True)["NSLocalNetworkUsageDescription"])
 
+    def test_bundle_declares_face_id_usage_for_app_lock(self):
+        self.assertIn("Face ID", build.bundle_info()["NSFaceIDUsageDescription"])
+        self.assertIn("NSFaceIDUsageDescription", build.bundle_info(True))
+
     def test_live_feature_graph_is_checked_for_both_mobile_targets(self):
         with patch.object(build.sys, "argv", ["build", "--check-dependencies", "--live-ssh"]), \
                 patch.object(build, "check_dependencies") as check:
             self.assertEqual(build.main(), 0)
         self.assertEqual([call.args for call in check.call_args_list], [
             ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"), ("aarch64-apple-ios", "festerm-mobile-profiles"), ("aarch64-apple-ios", "festerm-sftp"),
+            ("aarch64-apple-ios", "festerm-ios-lock"), ("aarch64-apple-ios", "festerm-mobile-docs"),
             ("aarch64-apple-ios", "festerm-mobile", True),
             ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"), ("aarch64-apple-ios-sim", "festerm-mobile-profiles"), ("aarch64-apple-ios-sim", "festerm-sftp"),
+            ("aarch64-apple-ios-sim", "festerm-ios-lock"), ("aarch64-apple-ios-sim", "festerm-mobile-docs"),
             ("aarch64-apple-ios-sim", "festerm-mobile", True),
         ])
 
@@ -76,7 +82,9 @@ class IosSshDependencyTests(unittest.TestCase):
             self.assertEqual(build.main(), 0)
         self.assertEqual([call.args for call in check.call_args_list], [
             ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"), ("aarch64-apple-ios", "festerm-mobile-profiles"), ("aarch64-apple-ios", "festerm-sftp"),
+            ("aarch64-apple-ios", "festerm-ios-lock"), ("aarch64-apple-ios", "festerm-mobile-docs"),
             ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"), ("aarch64-apple-ios-sim", "festerm-mobile-profiles"), ("aarch64-apple-ios-sim", "festerm-sftp"),
+            ("aarch64-apple-ios-sim", "festerm-ios-lock"), ("aarch64-apple-ios-sim", "festerm-mobile-docs"),
         ])
         run.assert_not_called()
 

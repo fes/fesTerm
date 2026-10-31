@@ -2268,6 +2268,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "festerm-ios-lock"
+version = "0.11.1"
+dependencies = [
+ "block2 0.6.2",
+ "libc",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
+ "objc2-local-authentication",
+ "objc2-ui-kit 0.3.2",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "festerm-ios-window"
 version = "0.11.1"
 dependencies = [
@@ -2325,6 +2341,13 @@ dependencies = [
  "tokio",
  "winit",
  "zeroize",
+]
+
+[[package]]
+name = "festerm-mobile-docs"
+version = "0.11.1"
+dependencies = [
+ "festerm-markdown",
 ]
 
 [[package]]
@@ -4540,6 +4563,17 @@ dependencies = [
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
+]
+
+[[package]]
+name = "objc2-local-authentication"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48e0b8b339e0d9d2ed4416b7f93f9d4daadff7d4dd797f89867cde11aeac607"
+dependencies = [
+ "block2 0.6.2",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
 ]
 
 [[package]]
