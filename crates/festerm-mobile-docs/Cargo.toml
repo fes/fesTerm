@@ -1,0 +1,15 @@
+[package]
+name = "festerm-mobile-docs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Bounded read-only document viewer model for the iOS host (Markdown from the sandbox or SFTP)."
+publish = false
+
+[dependencies]
+festerm-markdown = { path = "../festerm-markdown" }
+
+[lints]
+workspace = true

@@ -3411,12 +3411,15 @@
       ],
       "requirements": [
         "docs/adr/0042-ios-rendering-spike-host.md",
-        "docs/adr/0054-ios-keychain-and-mobile-profile-store.md"
+        "docs/adr/0054-ios-keychain-and-mobile-profile-store.md",
+        "docs/adr/0058-ios-app-lock-and-mobile-document-viewer.md#decision"
       ],
       "decisions": [
         "ADR-0031",
         "ADR-0042",
-        "ADR-0055"
+        "ADR-0054",
+        "ADR-0055",
+        "ADR-0058"
       ],
       "automated_tests": [
         "keep_both_names_preserve_extensions",
@@ -3437,6 +3440,16 @@
         "permission_errors_are_classified_and_leave_nothing_behind",
         "symlinks_and_odd_names_are_handled_by_policy",
         "queue_bounds_history_and_closed_client",
+        "cold_launch_is_locked_only_when_enabled_and_requested",
+        "grace_periods_lock_at_the_boundary",
+        "authentication_dialog_does_not_restart_or_start_the_timer",
+        "resume_locks_synchronously_and_shield_waits_for_frames",
+        "store_round_trips_and_fails_closed_on_untrusted_files",
+        "enabling_requires_a_passcode_and_disabling_requires_authentication",
+        "headless_render_of_sample_readme",
+        "link_policy_is_same_source_and_never_fetches",
+        "image_policy_is_same_source_allowlisted_and_budgeted",
+        "size_cap_is_enforced_for_declared_and_streamed_sizes",
         "mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry",
         "mobile_loopback_ssh_rejects_unknown_and_changed_hosts_before_authentication",
         "mobile_disconnected_history_scrolls_and_copies_without_transport_input",
@@ -3498,6 +3511,7 @@
       ],
       "status": "partial",
       "prerequisites": [
+        "ADR-0058 app lock (festerm-ios-lock) and document viewer (festerm-mobile-docs) are unwired platform crates: enrolled Face ID match, resume-after-grace lock, app-switcher snapshot and the UI integration remain unproven on Simulator/device",
         "Owner-provided iOS mock-ups guide mobile-only navy/blue visuals, actual-host identity, labelled Host/Port fields and Esc/Tab/Ctrl/Alt order; profiles, full tabs, Dev Tunnel identity and app lock are deferred, with deliberate differences in docs/mobile-layout-design.md; native Dynamic Type/VoiceOver and touch comparison remain required. Owned test-only loopback SSH peer proves host-side actual-form trust/auth retry, core input/replies, resize and disconnect without external credentials or OS shell execution; bounded runtime cleanup and socket-free synthetic trust/auth gallery remain distinct from native iOS/OpenSSH/TUI/device acceptance. scripts/capture-mobile-ui.py and ignored capture_mobile_ui_gallery produce actual-widget phone/tablet terminal/connect-form/held-navigation PNGs with source/hash attribution for owner review; CI publishes the non-native headless artifact separately; simulated keyboard reservation has no native keyboard pixels; native rendering/input/live-SSH/device and Termius usability acceptance remain required under MOB-01–06",
         "scripts/tests/test_ios_device_build.py covers explicit --live-ssh preflight/build graph selection, local-network metadata, minimal entitlements and mode-labeled private receipts including signing failures; default packaging remains offline; actual Apple signing, manual installation and MOB-06 controlled-host/physical-device acceptance still require a provisioned Mac and iPhone/iPad",
         "MOB-06 opt-in live-ssh composition received independent architectural approval on 2026-10-30, not native/product acceptance; controlled real SSH/physical-device evidence remains required; fake-session/headless tests cover hidden-workspace output/replies, per-frame budgets and native suspension without a UI frame, including reset binding; compilation/Simulator linking do not establish native usability; credentials and pins remain transient, changed pins reject, suspension requires explicit reconnection; Termius-inspired usability and #425 paste/native handles remain pending",

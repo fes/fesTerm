@@ -68,6 +68,8 @@ def bundle_info(live_ssh: bool = False) -> dict:
         "CFBundleSupportedPlatforms": ["iPhoneSimulator"],
         "MinimumOSVersion": MINIMUM_IOS,
         "LSRequiresIPhoneOS": True,
+        # Required by LocalAuthentication (festerm-ios-lock); without it Face ID is denied.
+        "NSFaceIDUsageDescription": "fesTerm uses Face ID to unlock the app when app lock is on.",
         "UIDeviceFamily": [1, 2],
         "UILaunchScreen": {},
         "UISupportedInterfaceOrientations": [
@@ -100,6 +102,8 @@ def main() -> int:
             check_dependencies(target, "festerm-ssh")
             check_dependencies(target, "festerm-mobile-profiles")
             check_dependencies(target, "festerm-sftp")
+            check_dependencies(target, "festerm-ios-lock")
+            check_dependencies(target, "festerm-mobile-docs")
             if args.live_ssh:
                 check_dependencies(target, "festerm-mobile", True)
         print("iOS mobile/SSH/SFTP normal/build dependency boundaries passed")
