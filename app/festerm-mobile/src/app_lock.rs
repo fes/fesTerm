@@ -308,3 +308,55 @@ pub fn settings_section(ui: &mut Ui, view: &LockView) -> Vec<LockAction> {
     }
     actions
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use festerm_ios_lock::{Availability, BiometryKind, FakeLocker, ManualClock};
+    use std::sync::Arc;
+
+    fn gate_hides(host: &mut LockHost) -> bool {
+        let ctx = egui::Context::default();
+        let mut hidden = false;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            hidden = host.gate(ui, true);
+        });
+        output.textures_delta.clear();
+        hidden
+    }
+
+    #[test]
+    fn content_stays_hidden_until_authentication_succeeds_and_lock_now_hides_it_again() {
+        let locker = FakeLocker::new(Availability::Available(BiometryKind::FaceId));
+        let lock = AppLock::new(None, locker.clone(), Arc::new(ManualClock::new()), || {});
+        let mut host = LockHost::new(lock, None);
+        host.apply(LockAction::Apply(LockSettings {
+            enabled: true,
+            ..LockSettings::default()
+        }));
+        assert!(host.error.is_none());
+        host.apply(LockAction::LockNow);
+        locker.set_deferred(true);
+        assert!(gate_hides(&mut host), "locked content is never drawn");
+        assert_eq!(locker.pending_count(), 1, "the unlock prompt starts once");
+        assert!(gate_hides(&mut host));
+        assert_eq!(locker.pending_count(), 1);
+        locker.complete_pending(Ok(()));
+        assert!(!gate_hides(&mut host));
+        host.apply(LockAction::LockNow);
+        assert!(gate_hides(&mut host));
+    }
+
+    #[test]
+    fn enabling_without_a_device_passcode_is_reported_and_not_enabled() {
+        let locker = FakeLocker::new(Availability::Unavailable);
+        let lock = AppLock::new(None, locker, Arc::new(ManualClock::new()), || {});
+        let mut host = LockHost::new(lock, None);
+        host.apply(LockAction::Apply(LockSettings {
+            enabled: true,
+            ..LockSettings::default()
+        }));
+        assert!(host.error.is_some());
+        assert!(!host.view().settings.enabled);
+    }
+}

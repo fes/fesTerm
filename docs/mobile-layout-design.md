@@ -90,8 +90,8 @@ clipboard controls are staged separately; the temporary helper's feedback is
 implemented as described below. Do not
 paint a fake system keyboard to match the boards. Native runtime draws it.
 
-Screens 05–10, 12–15 describe later profiles, full session management, real SFTP,
-transfers/conflicts, Dev Tunnel identity and app-lock work. They must not delay
+Screens 05–10 and 12–15 are implemented (ADRs 0059–0061): profiles, sessions,
+SFTP, Dev Tunnel sign-in/profile/attach and app lock. They must not delay
 the physical-device SSH demo. Screen 11's host trust and screen 16's fresh-shell
 reconnect are immediate interaction references; transient trust lifetime and
 the absence of durable recovery must stay explicit. Mock-up copy suggesting

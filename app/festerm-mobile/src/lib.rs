@@ -598,6 +598,8 @@ impl MobileApp {
         }
         if self.editor.open {
             self.show_editor(ui);
+            #[cfg(feature = "live-ssh")]
+            self.show_tunnel_sheets(ui.ctx(), bounds);
             return;
         }
         match self.surface {

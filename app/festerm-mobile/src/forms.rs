@@ -800,7 +800,7 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
         switch_row(
             ui,
             "Take over if attached elsewhere",
-            Some("Otherwise attaching is refused while another device holds the session."),
+            Some("Otherwise attaching is refused while it is in use."),
             &mut state.take_over,
             false,
         );

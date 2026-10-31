@@ -3415,7 +3415,8 @@
         "docs/adr/0057-portable-dev-tunnels-client-for-ios.md#decision",
         "docs/adr/0058-ios-app-lock-and-mobile-document-viewer.md#decision",
         "docs/adr/0059-ios-profiles-sessions-and-persisted-trust.md#decision",
-        "docs/adr/0060-ios-files-screen-and-sftp-profiles.md#decision"
+        "docs/adr/0060-ios-files-screen-and-sftp-profiles.md#decision",
+        "docs/adr/0061-ios-dev-tunnel-profiles-and-app-lock-wiring.md#decision"
       ],
       "decisions": [
         "ADR-0031",
@@ -3425,9 +3426,17 @@
         "ADR-0057",
         "ADR-0058",
         "ADR-0059",
-        "ADR-0060"
+        "ADR-0060",
+        "ADR-0061"
       ],
       "automated_tests": [
+        "trusted_tunnel_attaches_into_a_tab_with_the_hosts_screen",
+        "an_unapproved_host_waits_for_a_decision_before_attaching",
+        "a_held_session_is_refused_with_a_take_over_hint_unless_enabled",
+        "being_taken_over_ends_the_session_without_reattaching",
+        "recovery_sync_is_applied_and_the_host_alone_answers_terminal_queries",
+        "content_stays_hidden_until_authentication_succeeds_and_lock_now_hides_it_again",
+        "enabling_without_a_device_passcode_is_reported_and_not_enabled",
         "keep_both_names_preserve_extensions",
         "identical_needs_size_and_time_within_tolerance",
         "listing_hides_filters_sorts_and_bounds",

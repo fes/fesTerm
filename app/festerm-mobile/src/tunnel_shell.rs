@@ -76,6 +76,7 @@ impl MobileApp {
         });
         self.tunnel.sign_in = Some(SignInFlow {
             start: Some(start),
+            started: None,
             active: None,
             error: None,
             resume,
@@ -275,7 +276,7 @@ impl MobileApp {
                 Poll::Pending => {}
                 Poll::Done(Ok(sign_in)) => {
                     flow.active = Some(sign_in);
-                    flow.start = None;
+                    flow.started = flow.start.take();
                 }
                 Poll::Done(Err(error)) => {
                     flow.error = Some(describe_error(&error));
@@ -310,6 +311,15 @@ impl MobileApp {
     }
 
     pub(super) fn show_tunnel_sheets(&mut self, ctx: &egui::Context, bounds: egui::Rect) {
+        #[cfg(test)]
+        if let Some(prompt) = &self.tunnel.preview_prompt {
+            let view = SignInView {
+                prompt: Some(prompt),
+                error: None,
+            };
+            tunnel_link::sign_in_sheet(ctx, bounds, &view);
+            return;
+        }
         if let Some(flow) = &self.tunnel.sign_in {
             let view = SignInView {
                 prompt: flow.active.as_ref().map(|sign_in| sign_in.prompt()),
@@ -398,7 +408,8 @@ impl MobileApp {
                 "Connection interrupted".to_owned()
             },
             body: if taken_over {
-                format!("{status}\nfesTerm does not reattach on its own.")
+                "Another client now holds this session.\nfesTerm does not reattach on its own."
+                    .to_owned()
             } else {
                 "The host session may still be running.\nAttaching again shows its current screen."
                     .to_owned()
@@ -417,6 +428,13 @@ impl MobileApp {
     /// Fills the editor's account and tunnel choices from the live backend.
     pub(super) fn sync_editor_tunnel(&mut self, ctx: &egui::Context) {
         if !self.editor.open || self.editor.kind(self.caps) != model::ProfileKind::DevTunnel {
+            return;
+        }
+        #[cfg(test)]
+        if self.tunnel.preview_editor {
+            return;
+        }
+        if self.tunnel_client().is_none() {
             return;
         }
         let accounts = self.tunnel_accounts();

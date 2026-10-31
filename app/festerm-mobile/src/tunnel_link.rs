@@ -74,6 +74,9 @@ pub(super) enum Resume {
 
 pub(super) struct SignInFlow {
     pub(super) start: Option<Job<Result<SignIn, TunnelError>>>,
+    /// The finished start job; its token governs the whole sign-in, so it
+    /// must outlive the call that returned the code.
+    pub(super) started: Option<Job<Result<SignIn, TunnelError>>>,
     pub(super) active: Option<SignIn>,
     pub(super) error: Option<String>,
     pub(super) resume: Resume,
@@ -108,6 +111,12 @@ pub(super) struct TunnelUi {
     pub(super) list: Option<TunnelList>,
     /// Why the last re-attach of a tab failed, shown on its banner.
     pub(super) attach_error: Option<String>,
+    /// A fixed prompt for deterministic previews.
+    #[cfg(test)]
+    pub(super) preview_prompt: Option<SignInPrompt>,
+    /// Keeps a fixture's editor choices instead of the live backend's.
+    #[cfg(test)]
+    pub(super) preview_editor: bool,
 }
 
 /// Who held a session, in words for a notice.

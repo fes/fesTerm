@@ -109,6 +109,13 @@ pub(super) fn disconnected_fixture() -> LiveSsh {
     }
 }
 
+#[cfg(test)]
+pub(super) fn taken_over_fixture() -> LiveSsh {
+    let mut live = disconnected_fixture();
+    live.status = TAKEN_OVER_REMOTE;
+    live
+}
+
 impl LiveSsh {
     /// Wraps an attached Dev Tunnel session. The host has already approved the
     /// adoption, so input is accepted at once.
