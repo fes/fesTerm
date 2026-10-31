@@ -3,7 +3,7 @@
 #[cfg(target_os = "ios")]
 mod ios;
 #[cfg(target_os = "ios")]
-pub use ios::KeyboardBridge;
+pub use ios::{clipboard_text, set_clipboard_text, KeyboardBridge};
 
 #[cfg(not(target_os = "ios"))]
 pub struct KeyboardBridge;
@@ -20,4 +20,18 @@ impl KeyboardBridge {
     pub fn occluded_height_fraction(&self) -> f32 {
         0.0
     }
+}
+
+/// The system pasteboard text; always `None` off iOS. Reading may prompt the
+/// user ("Allow Paste") on recent iOS versions, so call it only from an
+/// explicit paste action.
+#[cfg(not(target_os = "ios"))]
+pub fn clipboard_text() -> Option<String> {
+    None
+}
+
+/// Replaces the system pasteboard text; returns whether it was written.
+#[cfg(not(target_os = "ios"))]
+pub fn set_clipboard_text(_text: &str) -> bool {
+    false
 }

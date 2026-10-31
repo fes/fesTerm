@@ -181,6 +181,18 @@ pub enum Trailing<'a> {
     Check,
     Text(&'a str),
     Action(&'a str),
+    /// Chevron plus an `Edit` zone; see [`edit_zone_clicked`].
+    Edit,
+}
+
+const EDIT_ZONE: f32 = 72.0;
+
+/// Whether a click on an `Trailing::Edit` row landed on its Edit zone.
+pub fn edit_zone_clicked(response: &Response) -> bool {
+    response.clicked()
+        && response
+            .interact_pointer_pos()
+            .is_some_and(|pos| pos.x > response.rect.right() - EDIT_ZONE)
 }
 
 pub struct RowSpec<'a> {
@@ -262,6 +274,24 @@ pub fn list_row(ui: &mut Ui, spec: &RowSpec<'_>) -> Response {
                 type_scale::font(type_scale::CAPTION),
                 color::TEXT_MUTED,
                 120.0,
+            );
+            right = used.left() - space::SM;
+        }
+        Trailing::Edit => {
+            paint_chevron(
+                &painter,
+                egui::pos2(right - 6.0, rect.center().y),
+                5.0,
+                color::TEXT_MUTED,
+            );
+            let used = paint_fit(
+                &painter,
+                egui::pos2(right - 22.0, rect.center().y),
+                Align2::RIGHT_CENTER,
+                "Edit",
+                type_scale::font(type_scale::CAPTION),
+                color::ACCENT_TEXT,
+                48.0,
             );
             right = used.left() - space::SM;
         }

@@ -6,7 +6,9 @@ mod forms;
 mod live_ssh;
 #[allow(dead_code)] // design-system surface used by the gallery before production wiring
 mod model;
+mod profiles;
 mod shell;
+mod tabs;
 #[allow(dead_code)] // design-system surface used by the gallery before production wiring
 mod terminal_chrome;
 mod terminal_gesture;
@@ -57,6 +59,8 @@ fn mobile_style(style: &egui::Style) -> egui::Style {
     theme::apply(style)
 }
 
+pub use profiles::Profiles;
+
 pub const SCROLLBACK_LIMIT: usize = 256 * 1024;
 
 /// Only content-free lifecycle observations cross the event-loop/UI seam.
@@ -93,13 +97,22 @@ impl Lifecycle {
 #[derive(Clone, Default)]
 pub struct SuspensionHandle {
     connection: Rc<RefCell<Option<live_ssh::LiveSsh>>>,
+    /// Sessions of parked tabs, keyed by tab id.
+    background: Rc<RefCell<Vec<(u64, live_ssh::LiveSsh)>>>,
 }
+
+#[cfg(feature = "live-ssh")]
+const SUSPENDED: &str =
+    "Suspended. Reconnect to continue; a plain shell does not survive, tmux/Screen sessions do.";
 
 #[cfg(feature = "live-ssh")]
 impl SuspensionHandle {
     pub fn suspend(&self) {
         if let Some(live) = self.connection.borrow_mut().as_mut() {
-            live.stop("Suspended. Connect again for a fresh shell; remote process survival is not guaranteed.");
+            live.stop(SUSPENDED);
+        }
+        for (_, live) in self.background.borrow_mut().iter_mut() {
+            live.stop(SUSPENDED);
         }
     }
 }
@@ -145,16 +158,6 @@ impl EncodedInputSink for ProbeSink {
     }
 }
 
-impl ProbeSink {
-    fn reset(&mut self) {
-        self.diagnostics = InputSinkDiagnostics::default();
-        #[cfg(feature = "live-ssh")]
-        {
-            *self.live.connection.borrow_mut() = None;
-        }
-    }
-}
-
 pub fn fixture_terminal() -> Terminal {
     let mut terminal = Terminal::with_scrollback_limit(
         Dimensions::new(80, 24).expect("fixed valid dimensions"),
@@ -185,7 +188,6 @@ enum Surface {
 /// Content-free view of the live SSH worker for chrome decisions.
 #[cfg(feature = "live-ssh")]
 struct LiveView {
-    host: String,
     can_reset: bool,
     input_enabled: bool,
     status: &'static str,
@@ -212,17 +214,21 @@ pub struct MobileApp {
     markdown: workspaces::MarkdownWorkspace,
     surface: Surface,
     shell: shell::ShellState,
-    profiles: Box<dyn model::ProfileStore>,
+    profiles: Option<profiles::Profiles>,
     caps: model::Capabilities,
+    tabs: Vec<tabs::SessionTab>,
+    active_tab: Option<u64>,
+    next_tab: u64,
+    /// One-line outcome of the last action, shown on the Profiles screen.
+    notice: Option<String>,
     editor: forms::EditorState,
     keys_panel: terminal_chrome::KeysPanel,
     keyboard_visible: bool,
-    demo_open: bool,
     /// Gallery/test fixtures; production derives these from live state.
     sessions_override: Option<model::StaticSessions>,
     chrome_override: Option<model::ChromeModel>,
-    #[cfg(feature = "live-ssh")]
-    connection: live_ssh::ConnectionForm,
+    #[cfg(test)]
+    rows_override: Option<Vec<model::Profile>>,
     #[cfg(feature = "live-ssh")]
     polled_frame: Option<u64>,
 }
@@ -260,16 +266,19 @@ impl MobileApp {
             markdown: workspaces::MarkdownWorkspace::default(),
             surface: Surface::Tabs,
             shell: shell::ShellState::default(),
-            profiles: Box::new(model::MemoryProfileStore::default()),
-            caps: model::Capabilities::default(),
+            profiles: None,
+            caps: model::Capabilities::production(),
+            tabs: Vec::new(),
+            active_tab: None,
+            next_tab: 1,
+            notice: None,
             editor: forms::EditorState::default(),
             keys_panel: terminal_chrome::KeysPanel::default(),
             keyboard_visible: true,
-            demo_open: false,
             sessions_override: None,
             chrome_override: None,
-            #[cfg(feature = "live-ssh")]
-            connection: live_ssh::ConnectionForm::default(),
+            #[cfg(test)]
+            rows_override: None,
             #[cfg(feature = "live-ssh")]
             polled_frame: None,
         }
@@ -280,13 +289,13 @@ impl MobileApp {
     fn new_terminal(lifecycle: Rc<Cell<Lifecycle>>) -> Self {
         let mut app = Self::new(lifecycle);
         app.surface = Surface::Terminal;
-        app.demo_open = true;
+        app.open_local_tab();
         app
     }
 
-    /// Plugs in a profile store (for example the Keychain-backed one).
-    pub fn with_profile_store(mut self, store: Box<dyn model::ProfileStore>) -> Self {
-        self.profiles = store;
+    /// Plugs in the saved-profile store (Keychain-backed in production).
+    pub fn with_profiles(mut self, profiles: profiles::Profiles) -> Self {
+        self.profiles = Some(profiles);
         self
     }
 
@@ -401,7 +410,6 @@ impl MobileApp {
             .borrow()
             .as_ref()
             .map(|live| LiveView {
-                host: live.host_label().to_owned(),
                 can_reset: live.can_reset(),
                 input_enabled: live.input_enabled(),
                 status: live.status(),
@@ -413,27 +421,29 @@ impl MobileApp {
         if let Some(chrome) = &self.chrome_override {
             return chrome.clone();
         }
-        #[cfg(feature = "live-ssh")]
-        if let Some(live) = self.live_view() {
-            let state = if live.can_reset {
-                SurfaceState::Disconnected
-            } else if live.input_enabled {
-                SurfaceState::Connected
-            } else {
-                SurfaceState::Connecting
-            };
-            let detail = model::profile_detail(
-                model::ProfileKind::Ssh,
-                &live.host,
-                self.editor.username.trim(),
-            );
+        if let Some(spec) = self.active_spec() {
+            #[cfg_attr(not(feature = "live-ssh"), allow(unused_mut))]
+            let mut state = SurfaceState::Disconnected;
+            #[cfg_attr(not(feature = "live-ssh"), allow(unused_mut))]
+            let mut label = "Not connected".to_owned();
+            #[cfg(feature = "live-ssh")]
+            if let Some(live) = self.live_view() {
+                state = if live.can_reset {
+                    SurfaceState::Disconnected
+                } else if live.input_enabled {
+                    SurfaceState::Connected
+                } else {
+                    SurfaceState::Connecting
+                };
+                label = live.status.to_owned();
+            }
             return ChromeModel {
-                title: live.host,
-                subtitle: detail,
+                title: spec.name.clone(),
+                subtitle: spec.detail(),
                 line: ConnectionLine {
                     state,
-                    label: live.status.to_owned(),
-                    context: None,
+                    label,
+                    context: spec.persistent_label(),
                 },
             };
         }
@@ -449,42 +459,20 @@ impl MobileApp {
     }
 
     fn surfaces(&self) -> Vec<model::SurfaceSummary> {
-        use model::{SurfaceKind, SurfaceState, SurfaceSummary};
         if let Some(sessions) = &self.sessions_override {
             return model::SessionSource::surfaces(sessions);
         }
-        #[cfg(feature = "live-ssh")]
-        if self.sink.live.connection.borrow().is_some() {
-            let chrome = self.chrome();
-            return vec![SurfaceSummary {
-                id: 0,
-                title: chrome.title,
-                kind: SurfaceKind::Ssh,
-                detail: chrome.subtitle,
-                state: chrome.line.state,
-                status: chrome.line.label,
-                current: self.surface == Surface::Terminal,
-            }];
-        }
-        if self.demo_open {
-            return vec![SurfaceSummary {
-                id: 0,
-                title: "Offline demo".to_owned(),
-                kind: SurfaceKind::Local,
-                detail: "Local fixture · no shell".to_owned(),
-                state: SurfaceState::Disconnected,
-                status: "Input is discarded".to_owned(),
-                current: self.surface == Surface::Terminal,
-            }];
-        }
-        Vec::new()
+        self.tab_surfaces()
     }
 
     fn reattachable(&self) -> Vec<model::Reattachable> {
-        self.sessions_override
-            .as_ref()
-            .map(model::SessionSource::reattachable)
-            .unwrap_or_default()
+        if let Some(sessions) = &self.sessions_override {
+            return model::SessionSource::reattachable(sessions);
+        }
+        self.reattach_targets()
+            .into_iter()
+            .map(|target| target.row)
+            .collect()
     }
 
     fn diagnostics(&self) -> Vec<(String, String)> {
@@ -527,8 +515,9 @@ impl MobileApp {
             self.polled_frame = Some(ui.ctx().cumulative_frame_nr());
             if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
                 live.poll(&mut self.terminal, ui.ctx());
-                self.connection.observe(live);
             }
+            self.persist_new_trust();
+            self.poll_background(ui.ctx());
         }
         let bounds = ui.max_rect();
         if self.editor.open {
@@ -542,29 +531,59 @@ impl MobileApp {
         self.show_sheets(ui.ctx(), bounds);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn shell_data<'a>(
         &self,
         profiles: &'a [model::Profile],
+        recents: &'a [model::Profile],
         surfaces: &'a [model::SurfaceSummary],
         reattachable: &'a [model::Reattachable],
         diagnostics: &'a [(String, String)],
+        trusted_hosts: &'a [profiles::TrustedHostRow],
+        notice: Option<&'a str>,
     ) -> shell::ShellData<'a> {
         shell::ShellData {
             profiles,
+            recents,
             surfaces,
             reattachable,
-            profiles_persistent: self.profiles.is_persistent(),
+            profiles_persistent: self
+                .profiles
+                .as_ref()
+                .is_some_and(profiles::Profiles::durable_credentials),
+            trusted_hosts,
             diagnostics,
-            offline_demo_available: true,
+            notice,
         }
     }
 
     fn show_tabs(&mut self, ui: &mut egui::Ui) {
-        let profiles = self.profiles.profiles();
+        let (rows, recents, trusted) = match &self.profiles {
+            Some(profiles) => (
+                profiles.rows(self.caps),
+                profiles.recents(self.caps, 2),
+                profiles.trusted_hosts(),
+            ),
+            None => Default::default(),
+        };
+        #[cfg(test)]
+        let (rows, recents) = match &self.rows_override {
+            Some(rows) => (rows.clone(), rows.iter().take(2).cloned().collect()),
+            None => (rows, recents),
+        };
         let surfaces = self.surfaces();
         let reattachable = self.reattachable();
         let diagnostics = self.diagnostics();
-        let data = self.shell_data(&profiles, &surfaces, &reattachable, &diagnostics);
+        let notice = self.notice.clone();
+        let data = self.shell_data(
+            &rows,
+            &recents,
+            &surfaces,
+            &reattachable,
+            &diagnostics,
+            &trusted,
+            notice.as_deref(),
+        );
         let actions = shell::show_tabs(ui, &mut self.shell, &data);
         self.apply_shell_actions(ui.ctx(), actions);
     }
@@ -573,24 +592,38 @@ impl MobileApp {
         use shell::ShellAction;
         for action in actions {
             match action {
-                ShellAction::NewProfile => self.editor.open_new(),
-                ShellAction::OpenProfile(id) => {
-                    if let Some(profile) = self.profiles.profiles().into_iter().find(|p| p.id == id)
-                    {
-                        self.editor.host = profile.host;
-                        self.editor.port = profile.port.to_string();
-                        self.editor.username = profile.username;
-                        self.editor.name = profile.name;
-                        self.connect_from_editor(ctx);
+                ShellAction::NewProfile => {
+                    self.notice = None;
+                    self.editor.open_new();
+                    self.editor.durable_credentials = self.credentials_durable();
+                }
+                ShellAction::EditProfile(id) => self.edit_profile(&id),
+                ShellAction::OpenProfile(id) => self.connect_profile(ctx, &id),
+                ShellAction::ForgetHost(index) => {
+                    if let Some(profiles) = self.profiles.as_mut() {
+                        let hosts = profiles.trusted_hosts();
+                        if let Some(host) = hosts.get(index) {
+                            if let Err(error) = profiles.forget_host(&host.host, host.port) {
+                                self.notice = Some(error);
+                            }
+                        }
                     }
                 }
-                ShellAction::OpenSurface(_) => {
+                ShellAction::OpenSurface(id) => {
                     self.shell.sessions_sheet = false;
-                    self.surface = Surface::Terminal;
+                    self.activate_tab(id);
+                    if self.active_tab == Some(id) {
+                        self.surface = Surface::Terminal;
+                    }
                 }
-                ShellAction::Reattach(_) => self.shell.sessions_sheet = false,
+                ShellAction::Reattach(index) => {
+                    self.shell.sessions_sheet = false;
+                    if let Some(target) = self.reattach_targets().into_iter().nth(index) {
+                        self.connect_profile(ctx, &target.profile);
+                    }
+                }
                 ShellAction::OpenDemo => {
-                    self.demo_open = true;
+                    self.open_local_tab();
                     self.shell.sessions_sheet = false;
                     self.surface = Surface::Terminal;
                 }
@@ -601,6 +634,74 @@ impl MobileApp {
                     self.shell.tab = shell::Tab::Profiles;
                     self.leave_terminal();
                 }
+            }
+        }
+    }
+
+    fn credentials_durable(&self) -> bool {
+        self.profiles
+            .as_ref()
+            .is_some_and(profiles::Profiles::durable_credentials)
+    }
+
+    fn edit_profile(&mut self, id: &str) {
+        let Some((name, ssh)) = self
+            .profiles
+            .as_ref()
+            .and_then(|profiles| profiles.ssh_profile(id))
+        else {
+            return;
+        };
+        self.notice = None;
+        self.editor.open_edit(id, &name, &ssh);
+        self.editor.durable_credentials = self.credentials_durable();
+    }
+
+    fn connect_profile(&mut self, ctx: &egui::Context, id: &str) {
+        #[cfg(feature = "live-ssh")]
+        {
+            self.notice = None;
+            let open = self.tabs.iter().find(|tab| {
+                tab.spec
+                    .as_ref()
+                    .and_then(|spec| spec.profile.as_ref())
+                    .is_some_and(|profile| profile.as_str() == id)
+            });
+            let open = open.map(|tab| tab.id).filter(|open| {
+                self.tab_surfaces().iter().any(|surface| {
+                    surface.id == *open && surface.state != model::SurfaceState::Disconnected
+                })
+            });
+            if let Some(open) = open {
+                self.activate_tab(open);
+                self.surface = Surface::Terminal;
+                return;
+            }
+            match self.open_profile(id, ctx) {
+                Ok(()) => self.surface = Surface::Terminal,
+                Err(error) => self.notice = Some(error),
+            }
+        }
+        #[cfg(not(feature = "live-ssh"))]
+        {
+            let _ = (ctx, id);
+            self.notice = Some("SSH is not available in this build".to_owned());
+        }
+    }
+
+    /// Persists a host key the user just trusted so later connections pin it.
+    #[cfg(feature = "live-ssh")]
+    fn persist_new_trust(&mut self) {
+        let trusted = self
+            .sink
+            .live
+            .connection
+            .borrow_mut()
+            .as_mut()
+            .and_then(live_ssh::LiveSsh::take_new_trust);
+        if let (Some((identity, fingerprint)), Some(profiles)) = (trusted, self.profiles.as_mut()) {
+            if let Err(error) = profiles.trust_host(&identity, &fingerprint) {
+                self.notice = Some(format!("Could not save the host key: {error}"));
             }
         }
     }
@@ -624,9 +725,16 @@ impl MobileApp {
         if self.shell.sessions_sheet {
             let surfaces = self.surfaces();
             let reattachable = self.reattachable();
-            let profiles = Vec::new();
-            let diagnostics = Vec::new();
-            let data = self.shell_data(&profiles, &surfaces, &reattachable, &diagnostics);
+            let (profiles, diagnostics, trusted) = (Vec::new(), Vec::new(), Vec::new());
+            let data = self.shell_data(
+                &profiles,
+                &profiles,
+                &surfaces,
+                &reattachable,
+                &diagnostics,
+                &trusted,
+                None,
+            );
             let actions = shell::sessions_sheet(ctx, bounds, &data);
             self.apply_shell_actions(ctx, actions);
         }
@@ -653,88 +761,226 @@ impl MobileApp {
         let can_connect = cfg!(feature = "live-ssh") && self.lifecycle.get().active;
         match forms::show_editor(ui, &mut self.editor, self.caps, can_connect) {
             forms::EditorAction::None => {}
-            forms::EditorAction::Cancel => self.editor.close(),
+            forms::EditorAction::Cancel => self.close_editor(),
+            forms::EditorAction::OpenAuthentication => self.editor.auth_sheet = true,
             forms::EditorAction::SaveOnly => {
-                if self.save_editor_profile() {
+                if self.save_editor_profile().is_some() {
                     self.editor.close();
                 }
             }
             forms::EditorAction::SaveAndConnect => {
-                if self.editor.reconnect || self.save_editor_profile() {
-                    self.connect_from_editor(&ctx);
+                if let Some(id) = self.save_editor_profile() {
+                    self.editor.close();
+                    self.connect_profile(&ctx, &id);
+                }
+            }
+            forms::EditorAction::Delete => self.delete_editor_profile(),
+        }
+        if self.editor.open && self.editor.auth_sheet {
+            let bounds = ui.max_rect();
+            let clipboard =
+                festerm_ios_window::clipboard_text().is_some() || cfg!(not(target_os = "ios"));
+            match forms::authentication_sheet(&ctx, bounds, &mut self.editor, clipboard) {
+                forms::AuthAction::None => {}
+                forms::AuthAction::Done => self.finish_authentication(),
+                forms::AuthAction::PasteKey => self.import_key(None),
+                forms::AuthAction::ImportPending => {
+                    let passphrase = std::mem::take(&mut self.editor.key_passphrase);
+                    self.import_key(Some(passphrase));
+                }
+                forms::AuthAction::GenerateKey => self.generate_key(),
+                forms::AuthAction::CopyPublicKey => {
+                    if let Some(festerm_mobile_profiles::SshAuth::Key { key, .. }) =
+                        &self.editor.auth
+                    {
+                        festerm_ios_window::set_clipboard_text(&key.public_key);
+                        self.editor.auth_notice = Some("Public key copied".to_owned());
+                    }
                 }
             }
         }
     }
 
-    fn save_editor_profile(&mut self) -> bool {
+    fn close_editor(&mut self) {
+        self.discard_unsaved_credential();
+        self.editor.close();
+    }
+
+    fn discard_unsaved_credential(&mut self) {
+        if let (Some(profiles), Some(auth)) = (&self.profiles, self.editor.unsaved_auth()) {
+            profiles.discard_credential(auth);
+        }
+    }
+
+    /// Replaces the credential chosen in the editor, dropping a stored but
+    /// never-saved predecessor.
+    fn replace_editor_credential(&mut self, auth: festerm_mobile_profiles::SshAuth) {
+        self.discard_unsaved_credential();
+        self.editor.auth = Some(auth);
+    }
+
+    fn import_key(&mut self, passphrase: Option<String>) {
+        use profiles::KeyImportFailure;
+        let Some(store) = self.profiles.as_ref() else {
+            self.editor.auth_notice = Some("Saved profiles are unavailable".to_owned());
+            return;
+        };
+        let text = match passphrase {
+            Some(_) => self.editor.pending_key.clone(),
+            None => festerm_ios_window::clipboard_text().unwrap_or_default(),
+        };
+        if text.trim().is_empty() {
+            self.editor.auth_notice = Some("The clipboard has no private key to import".to_owned());
+            return;
+        }
+        match store.import_key(&text, passphrase.as_deref().filter(|p| !p.is_empty())) {
+            Ok(auth) => {
+                self.editor.pending_key.clear();
+                self.editor.needs_passphrase = false;
+                self.editor.auth_notice = Some("Key imported".to_owned());
+                self.replace_editor_credential(auth);
+            }
+            Err(KeyImportFailure::PassphraseRequired) => {
+                self.editor.pending_key = text;
+                self.editor.needs_passphrase = true;
+                self.editor.auth_notice = Some(
+                    if passphrase.is_some() {
+                        "That passphrase did not unlock the key"
+                    } else {
+                        "This key is encrypted; enter its passphrase"
+                    }
+                    .to_owned(),
+                );
+            }
+            Err(KeyImportFailure::Message(message)) => {
+                self.editor.needs_passphrase = false;
+                self.editor.auth_notice = Some(message);
+            }
+        }
+    }
+
+    fn generate_key(&mut self) {
+        let Some(store) = self.profiles.as_ref() else {
+            self.editor.auth_notice = Some("Saved profiles are unavailable".to_owned());
+            return;
+        };
+        match store.generate_key("fesTerm iPhone") {
+            Ok(auth) => {
+                self.editor.auth_notice = Some(
+                    "Key generated. Copy the public key into the server's authorized_keys."
+                        .to_owned(),
+                );
+                self.replace_editor_credential(auth);
+            }
+            Err(error) => self.editor.auth_notice = Some(error),
+        }
+    }
+
+    /// Closes the Authentication sheet, storing a typed password first.
+    fn finish_authentication(&mut self) {
+        if self.editor.auth_mode == forms::AuthMode::Password && !self.editor.password.is_empty() {
+            let password = std::mem::take(&mut self.editor.password);
+            match self
+                .profiles
+                .as_ref()
+                .map(|store| store.store_password(password))
+            {
+                Some(Ok(auth)) => self.replace_editor_credential(auth),
+                Some(Err(error)) => {
+                    self.editor.auth_notice = Some(error);
+                    return;
+                }
+                None => {
+                    self.editor.auth_notice = Some("Saved profiles are unavailable".to_owned());
+                    return;
+                }
+            }
+        }
+        self.editor.wipe_secrets();
+        self.editor.auth_notice = None;
+        self.editor.auth_sheet = false;
+    }
+
+    /// Validates the editor and saves it; returns the profile id.
+    fn save_editor_profile(&mut self) -> Option<String> {
+        use festerm_mobile_profiles::{Recovery, SshAuth, SshProfile};
+        if self.editor.auth_mode == forms::AuthMode::Password && !self.editor.password.is_empty() {
+            self.finish_authentication();
+            if self.editor.auth_sheet {
+                return None;
+            }
+        }
         let host = self.editor.host.trim().to_owned();
         if host.is_empty() {
-            self.editor.error = Some("Enter a host to save this profile");
-            return false;
+            self.editor.error = Some("Enter a host to save this profile".to_owned());
+            return None;
         }
-        let port = self.editor.port.trim().parse::<u16>().unwrap_or(22);
-        let name = if self.editor.name.trim().is_empty() {
-            host.clone()
-        } else {
-            self.editor.name.trim().to_owned()
+        let Ok(port) = self.editor.port.trim().parse::<u16>() else {
+            self.editor.error = Some("Enter a valid port (1-65535)".to_owned());
+            return None;
         };
-        self.profiles.save(model::NewProfile {
-            name,
-            kind: self.editor.kind(self.caps),
+        let username = self.editor.username.trim().to_owned();
+        if username.is_empty() {
+            self.editor.error = Some("Enter a username".to_owned());
+            return None;
+        }
+        let auth = match (self.editor.auth_mode, self.editor.auth.clone()) {
+            (forms::AuthMode::Ask, _) => SshAuth::Ask,
+            (forms::AuthMode::Password, Some(auth @ SshAuth::Password { .. })) => auth,
+            (forms::AuthMode::Password, _) => {
+                self.editor.error = Some("Set a password, or choose Ask each time".to_owned());
+                return None;
+            }
+            (forms::AuthMode::Key, Some(auth @ SshAuth::Key { .. })) => auth,
+            (forms::AuthMode::Key, _) => {
+                self.editor.error = Some("Import or generate an SSH key first".to_owned());
+                return None;
+            }
+        };
+        let name = self.editor.name.trim().to_owned();
+        let Some(profiles) = self.profiles.as_mut() else {
+            self.editor.error = Some("Saved profiles are unavailable".to_owned());
+            return None;
+        };
+        let name = if name.is_empty() {
+            profiles.suggest_name(&host)
+        } else {
+            name
+        };
+        let ssh = SshProfile {
             host,
             port,
-            username: self.editor.username.trim().to_owned(),
-        });
-        true
-    }
-
-    fn connect_from_editor(&mut self, ctx: &egui::Context) {
-        #[cfg(feature = "live-ssh")]
-        {
-            let dimensions = self.terminal.dimensions();
-            let result = self.connection.connect(
-                self.editor.host.trim(),
-                self.editor.port.trim(),
-                self.editor.username.trim(),
-                dimensions,
-                ctx,
-                &mut self.sink.live.connection.borrow_mut(),
-            );
-            match result {
-                Ok(()) => {
-                    self.editor.close();
-                    self.demo_open = false;
-                    self.begin_live_terminal();
-                    self.surface = Surface::Terminal;
+            username,
+            auth: auth.clone(),
+            remote_session: self.editor.remote_session(),
+            recovery: Recovery::default(),
+        };
+        match profiles.save_ssh(self.editor.editing.as_deref(), &name, ssh) {
+            Ok(id) => {
+                if let Some(original) = &self.editor.original_auth {
+                    if *original != auth {
+                        profiles.discard_credential(original);
+                    }
                 }
-                Err(error) => {
-                    self.editor.open = true;
-                    self.editor.error = Some(error);
-                }
+                self.editor.error = None;
+                Some(id)
+            }
+            Err(error) => {
+                self.editor.error = Some(error);
+                None
             }
         }
-        #[cfg(not(feature = "live-ssh"))]
-        {
-            let _ = ctx;
-            self.editor.open = true;
-            self.editor.error = Some("SSH is not available in this build");
-        }
     }
 
-    #[cfg(feature = "live-ssh")]
-    fn begin_live_terminal(&mut self) {
-        self.gestures.cancel();
-        let dimensions = self.terminal.dimensions();
-        self.terminal = Terminal::with_scrollback_limit(dimensions, SCROLLBACK_LIMIT)
-            .expect("existing valid bounded grid");
-        let font_size = self.view.font_size_points();
-        self.view = mobile_terminal_view();
-        self.view
-            .zoom_by_factor(font_size / self.view.font_size_points());
-        self.control = false;
-        self.alt = false;
-        self.workspace = workspaces::Workspace::Terminal;
+    fn delete_editor_profile(&mut self) {
+        let (Some(id), Some(profiles)) = (self.editor.editing.clone(), self.profiles.as_mut())
+        else {
+            return;
+        };
+        match profiles.delete(&id) {
+            Ok(()) => self.editor.close(),
+            Err(error) => self.editor.error = Some(error),
+        }
     }
 
     fn switch_workspace(&mut self, workspace: workspaces::Workspace) {
@@ -755,26 +1001,21 @@ impl MobileApp {
     fn reset_fixture(&mut self) {
         self.switch_workspace(workspaces::Workspace::Terminal);
         self.gestures.cancel();
-        self.terminal = fixture_terminal();
-        self.view = mobile_terminal_view();
-        self.sink.reset();
+        if self.active_is_local() {
+            self.terminal = fixture_terminal();
+            self.view = self.fresh_view();
+        } else {
+            self.open_local_tab();
+        }
+        self.sink.diagnostics = InputSinkDiagnostics::default();
         self.control = false;
         self.alt = false;
-        self.demo_open = true;
         self.editor.close();
     }
 
     fn show_surface(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
         #[cfg(feature = "live-ssh")]
         let live = self.live_view();
-        #[cfg(feature = "live-ssh")]
-        let live_selected = live.is_some();
-        #[cfg(not(feature = "live-ssh"))]
-        let live_selected = false;
-        #[cfg(feature = "live-ssh")]
-        let can_reset = live.as_ref().is_none_or(|live| live.can_reset);
-        #[cfg(not(feature = "live-ssh"))]
-        let can_reset = true;
         #[cfg(feature = "live-ssh")]
         let session_active = live.as_ref().is_some_and(|live| !live.can_reset);
         #[cfg(not(feature = "live-ssh"))]
@@ -791,6 +1032,7 @@ impl MobileApp {
         };
         let mut back = false;
         let mut files = false;
+        let mut close_tab = None;
         egui::Panel::top("mobile-header")
             .frame(egui::Frame::new().fill(theme::color::BG))
             .show_separator_line(false)
@@ -816,24 +1058,23 @@ impl MobileApp {
                     if session_active && ui.button("Disconnect").clicked() {
                         #[cfg(feature = "live-ssh")]
                         if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
-                            live.stop("Disconnected. Connect again for a fresh shell.");
+                            live.stop("Disconnected. Reconnect to continue.");
                         }
                         ui.close();
                     }
-                    let reset_label = if live_selected {
-                        "Use offline demo"
-                    } else {
-                        "Reset demo"
-                    };
-                    if ui
-                        .add_enabled(
-                            lifecycle.active && can_reset,
-                            egui::Button::new(reset_label),
-                        )
-                        .clicked()
+                    if self.active_is_local()
+                        && ui
+                            .add_enabled(lifecycle.active, egui::Button::new("Reset demo"))
+                            .clicked()
                     {
                         self.reset_fixture();
                         ui.close();
+                    }
+                    if let Some(id) = self.active_tab {
+                        if ui.button("Close session").clicked() {
+                            close_tab = Some(id);
+                            ui.close();
+                        }
                     }
                     ui.separator();
                     for (name, value) in self.diagnostics() {
@@ -842,6 +1083,10 @@ impl MobileApp {
                 });
                 self.menu_open = menu.is_some();
             });
+        if let Some(id) = close_tab {
+            self.close_tab(id);
+            return;
+        }
         if back {
             if in_terminal {
                 self.leave_terminal();
@@ -964,7 +1209,11 @@ impl MobileApp {
                 });
         }
         match chip_action {
-            terminal_chrome::ChipAction::None | terminal_chrome::ChipAction::Select(_) => {}
+            terminal_chrome::ChipAction::None => {}
+            terminal_chrome::ChipAction::Select(id) => {
+                self.activate_tab(id);
+                return;
+            }
             terminal_chrome::ChipAction::All => self.shell.sessions_sheet = true,
             terminal_chrome::ChipAction::New => {
                 self.shell.tab = shell::Tab::Profiles;
@@ -984,15 +1233,9 @@ impl MobileApp {
                     reconnect = terminal_chrome::reconnect_banner(ui, &banner, compact);
                 });
             if reconnect {
-                // Review the existing details first; no worker starts here.
-                if let Some(live) = self.live_view() {
-                    self.editor.host = live.host;
+                if let Err(error) = self.reconnect_active(ui.ctx()) {
+                    self.notice = Some(error);
                 }
-                #[cfg(feature = "live-ssh")]
-                if let Some(live) = self.sink.live.connection.borrow().as_ref() {
-                    self.editor.port = live.port().to_string();
-                }
-                self.editor.open_reconnect();
                 return;
             }
         }
@@ -1062,7 +1305,14 @@ impl MobileApp {
     fn apply_key_row(&mut self, action: terminal_chrome::KeyRowAction) {
         use terminal_chrome::KeyRowAction;
         match action {
-            KeyRowAction::None | KeyRowAction::Paste => {}
+            KeyRowAction::None => {}
+            KeyRowAction::Paste => {
+                if let Some(text) =
+                    festerm_ios_window::clipboard_text().filter(|text| !text.is_empty())
+                {
+                    route_input(&mut self.terminal, InputEvent::Paste(text), &mut self.sink);
+                }
+            }
             KeyRowAction::Escape => self.send_key(Key::Escape),
             KeyRowAction::Tab => self.send_key(Key::Tab),
             KeyRowAction::ToggleControl => self.control = !self.control,
@@ -1087,6 +1337,9 @@ impl MobileApp {
                 .starts_with("Input rejected")
                 .then(|| "Earlier accepted input may have executed.".to_owned()),
             status: status.to_owned(),
+            reattach: self
+                .active_spec()
+                .and_then(profiles::SessionSpec::persistent_label),
         }
     }
 }
@@ -1109,6 +1362,45 @@ impl eframe::App for MobileApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mobile_editor_saves_edits_and_deletes_profiles_with_credentials() {
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle::default())))
+            .with_profiles(profiles::testing::profiles());
+        app.editor.open_new();
+        app.editor.host = "web.example.net".to_owned();
+        app.editor.username = "deploy".to_owned();
+        app.editor.session_mode = 1;
+        app.editor.session_name = "work".to_owned();
+        app.editor.auth_mode = forms::AuthMode::Key;
+        assert!(
+            app.save_editor_profile().is_none(),
+            "a key must be chosen first"
+        );
+        app.generate_key();
+        assert!(app.editor.auth_notice.is_some());
+        let id = app.save_editor_profile().expect("saved");
+        let spec = app.profiles.as_ref().unwrap().spec(&id).unwrap();
+        assert_eq!(spec.name, "web.example.net");
+        assert_eq!(spec.persistent_label().as_deref(), Some("tmux · work"));
+        let first_key = spec.ssh.auth.clone();
+
+        // Replacing the key discards the old secret once the edit is saved.
+        app.edit_profile(&id);
+        assert_eq!(app.editor.auth_mode, forms::AuthMode::Key);
+        app.generate_key();
+        assert!(app.editor.unsaved_auth().is_some());
+        app.save_editor_profile().expect("updated");
+        let store = app.profiles.as_ref().unwrap();
+        assert_ne!(
+            store.credential_status(&first_key),
+            festerm_mobile_profiles::CredentialStatus::Present
+        );
+
+        app.edit_profile(&id);
+        app.delete_editor_profile();
+        assert!(app.profiles.as_ref().unwrap().rows(app.caps).is_empty());
+    }
 
     #[cfg(feature = "live-ssh")]
     #[test]

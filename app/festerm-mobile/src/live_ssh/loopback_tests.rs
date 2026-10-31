@@ -212,22 +212,42 @@ impl Loopback {
         }
     }
 
+    /// An app with a saved password-prompting profile for this server,
+    /// already connecting. `changed_key` pre-trusts a different host key.
     fn app(&self, changed_key: bool) -> MobileApp {
+        use festerm_mobile_profiles::{RemoteSession, SshAuth, SshProfile};
         let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
             active: true,
             ..Default::default()
-        })));
-        app.editor.open_reconnect();
-        app.editor.host = self.address.ip().to_string();
-        app.editor.port = self.address.port().to_string();
-        app.editor.username = USER.to_owned();
+        })))
+        .with_profiles(crate::profiles::testing::profiles());
+        let host = self.address.ip().to_string();
+        let profiles = app.profiles.as_mut().expect("fixture profiles");
+        let id = profiles
+            .save_ssh(
+                None,
+                "loopback",
+                SshProfile {
+                    host: host.clone(),
+                    port: self.address.port(),
+                    username: USER.to_owned(),
+                    auth: SshAuth::Ask,
+                    remote_session: RemoteSession::Plain,
+                    recovery: Default::default(),
+                },
+            )
+            .expect("save loopback profile");
         if changed_key {
-            app.connection.set_pin(
-                &self.address.ip().to_string(),
-                self.address.port(),
-                "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-            );
+            let identity = HostIdentity::new(&host, self.address.port()).unwrap();
+            profiles
+                .trust_host(
+                    &identity,
+                    "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                )
+                .expect("pin earlier key");
         }
+        app.open_profile(&id, &egui::Context::default())
+            .expect("start loopback session");
         app
     }
 }
@@ -267,8 +287,6 @@ fn mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry() {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(390.0, 844.0))
         .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), fixture.app(false));
-    harness.run_steps(4);
-    harness.get_by_label("Connect").click();
     harness.run_steps(4);
     until(|| {
         harness.step();
@@ -347,6 +365,36 @@ fn mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry() {
         assert!(live.accepted_pin.is_some());
         assert!(live.password.0.is_empty());
     }
+    {
+        // The trusted key is persisted for the next connection.
+        let state = harness.state();
+        let identity = state
+            .sink
+            .live
+            .connection
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .identity
+            .clone();
+        let pinned = state
+            .profiles
+            .as_ref()
+            .unwrap()
+            .pinned_fingerprint(&identity);
+        assert_eq!(
+            pinned,
+            state
+                .sink
+                .live
+                .connection
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .accepted_pin
+        );
+        assert!(pinned.is_some());
+    }
     harness.event(egui::Event::Text("probe".into()));
     harness.run_steps(4);
     harness.event(egui::Event::Ime(egui::ImeEvent::Commit("λ".into())));
@@ -410,8 +458,6 @@ fn mobile_loopback_ssh_rejects_unknown_and_changed_hosts_before_authentication()
                 |ui, app: &mut MobileApp| app.show(ui),
                 fixture.app(changed_key),
             );
-        harness.run_steps(4);
-        harness.get_by_label("Connect").click();
         harness.run_steps(4);
         until(|| {
             harness.step();

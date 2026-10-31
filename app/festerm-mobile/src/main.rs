@@ -137,6 +137,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 festerm_ios_window::KeyboardBridge::new(handle, move || context.request_repaint())
             });
             let app = MobileApp::new(app_lifecycle).with_keyboard(keyboard);
+            let app = match festerm_mobile::Profiles::open_default() {
+                Ok(profiles) => app.with_profiles(profiles),
+                Err(error) => {
+                    eprintln!("festerm-mobile: saved profiles unavailable: {error}");
+                    app
+                }
+            };
             #[cfg(feature = "live-ssh")]
             let app = app.with_suspension(app_suspension);
             Ok(Box::new(app))

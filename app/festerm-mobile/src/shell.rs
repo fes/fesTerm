@@ -2,10 +2,12 @@
 //! (mock-ups 05 and 06). Screens return actions; the app owns side effects.
 
 use super::model::{Profile, Reattachable, SurfaceState, SurfaceSummary};
+use super::profiles::TrustedHostRow;
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
-    self, bottom_sheet, button, card, footnote, labelled, list_row, paint_fit, screen_title,
-    search_field, section_header, sheet_title, ButtonKind, Dot, RowSpec, TabItem, Trailing,
+    self, bottom_sheet, button, card, edit_zone_clicked, footnote, labelled, list_row, paint_fit,
+    screen_title, search_field, section_header, sheet_title, ButtonKind, Dot, RowSpec, TabItem,
+    Trailing,
 };
 use eframe::egui::{self, Align2, CornerRadius, Margin, Rect, Sense, Stroke, StrokeKind, Ui};
 use festerm_ui_egui::icon::Icon;
@@ -35,17 +37,22 @@ pub struct ShellState {
 
 pub struct ShellData<'a> {
     pub profiles: &'a [Profile],
+    /// Most recently launched profiles, for "Continue working".
+    pub recents: &'a [Profile],
     pub surfaces: &'a [SurfaceSummary],
     pub reattachable: &'a [Reattachable],
     pub profiles_persistent: bool,
+    pub trusted_hosts: &'a [TrustedHostRow],
     pub diagnostics: &'a [(String, String)],
-    pub offline_demo_available: bool,
+    pub notice: Option<&'a str>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShellAction {
     NewProfile,
-    OpenProfile(u64),
+    OpenProfile(String),
+    EditProfile(String),
+    ForgetHost(usize),
     OpenSurface(u64),
     Reattach(usize),
     OpenDemo,
@@ -99,11 +106,16 @@ fn reattach_rows(ui: &mut Ui, reattachable: &[Reattachable], actions: &mut Vec<S
     });
 }
 
-fn continue_cards(ui: &mut Ui, surfaces: &[SurfaceSummary], actions: &mut Vec<ShellAction>) {
+fn continue_cards(
+    ui: &mut Ui,
+    recents: &[Profile],
+    surfaces: &[SurfaceSummary],
+    actions: &mut Vec<ShellAction>,
+) {
     let gap = ui.spacing().item_spacing.x;
     let width = (ui.available_width() - gap) / 2.0;
     ui.horizontal(|ui| {
-        for surface in surfaces.iter().take(2) {
+        for profile in recents.iter().take(2) {
             let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 112.0), Sense::CLICK);
             let painter = ui.painter();
             let corner = CornerRadius::same(radius::CARD);
@@ -125,26 +137,29 @@ fn continue_cards(ui: &mut Ui, surfaces: &[SurfaceSummary], actions: &mut Vec<Sh
             widgets::icon_tile(
                 painter,
                 Rect::from_min_size(rect.min + egui::vec2(12.0, 12.0), egui::vec2(36.0, 36.0)),
-                surface.kind.glyph(),
+                profile.kind.glyph(),
                 color::ACCENT_TEXT,
             );
             paint_fit(
                 painter,
                 egui::pos2(rect.left() + 12.0, rect.top() + 62.0),
                 Align2::LEFT_CENTER,
-                &surface.title,
+                &profile.name,
                 type_scale::font(type_scale::BODY),
                 color::TEXT,
                 width - 24.0,
             );
-            let (protocol, _) = surface
+            let (protocol, _) = profile
                 .detail
                 .split_once(" · ")
-                .unwrap_or((&surface.detail, ""));
-            let summary = match surface.state {
-                SurfaceState::Connected => format!("{protocol} · connected"),
-                SurfaceState::Connecting => format!("{protocol} · connecting"),
-                SurfaceState::Disconnected => format!("{protocol} · disconnected"),
+                .unwrap_or((&profile.detail, ""));
+            let open = surfaces.iter().any(|surface| {
+                surface.title == profile.name && surface.state != SurfaceState::Disconnected
+            });
+            let summary = if open {
+                format!("{protocol} · open")
+            } else {
+                format!("{protocol} · saved")
             };
             paint_fit(
                 painter,
@@ -163,7 +178,11 @@ fn continue_cards(ui: &mut Ui, surfaces: &[SurfaceSummary], actions: &mut Vec<Sh
             let open = painter.text(
                 egui::pos2(rect.left() + 12.0, rect.bottom() - 11.0),
                 Align2::LEFT_CENTER,
-                "Open terminal",
+                if open {
+                    "Switch to session"
+                } else {
+                    "Open terminal"
+                },
                 type_scale::font(type_scale::MICRO + 0.5),
                 color::ACCENT_TEXT,
             );
@@ -173,8 +192,8 @@ fn continue_cards(ui: &mut Ui, surfaces: &[SurfaceSummary], actions: &mut Vec<Sh
                 3.0,
                 color::ACCENT_TEXT,
             );
-            if labelled(response, &format!("Open {}", surface.title), true).clicked() {
-                actions.push(ShellAction::OpenSurface(surface.id));
+            if labelled(response, &format!("Open {}", profile.name), true).clicked() {
+                actions.push(ShellAction::OpenProfile(profile.id.clone()));
             }
         }
     });
@@ -197,15 +216,30 @@ fn profiles_screen(
         });
     });
     search_field(ui, &mut state.search, "Find a profile");
-    if !data.surfaces.is_empty() {
-        let count = data.surfaces.len().to_string();
-        let trailing = format!("All sessions {count}");
-        if section_header(ui, "Continue working", Some(&trailing), true)
-            .is_some_and(|response| response.clicked())
+    if let Some(notice) = data.notice {
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(notice)
+                    .color(color::DANGER)
+                    .size(type_scale::CAPTION + 0.5),
+            )
+            .wrap(),
+        );
+    }
+    if !data.recents.is_empty() && state.search.trim().is_empty() {
+        let trailing =
+            (!data.surfaces.is_empty()).then(|| format!("All sessions {}", data.surfaces.len()));
+        if section_header(
+            ui,
+            "Continue working",
+            trailing.as_deref(),
+            trailing.is_some(),
+        )
+        .is_some_and(|response| response.clicked())
         {
             actions.push(ShellAction::ShowSessions);
         }
-        continue_cards(ui, data.surfaces, actions);
+        continue_cards(ui, data.recents, data.surfaces, actions);
     }
     let needle = state.search.trim().to_lowercase();
     let visible: Vec<&Profile> = data
@@ -240,7 +274,7 @@ fn profiles_screen(
                     if button(ui, ButtonKind::Primary, "New profile", true).clicked() {
                         actions.push(ShellAction::NewProfile);
                     }
-                    if data.offline_demo_available
+                    if true
                         && button(ui, ButtonKind::Secondary, "Open offline demo", true).clicked()
                     {
                         actions.push(ShellAction::OpenDemo);
@@ -257,10 +291,13 @@ fn profiles_screen(
                 let mut row = RowSpec::new(&profile.name);
                 row.icon = Some(profile.kind.glyph());
                 row.subtitle = Some(&profile.detail);
-                row.trailing = Trailing::Chevron;
+                row.trailing = Trailing::Edit;
                 row.divider = index > 0;
-                if list_row(ui, &row).clicked() {
-                    actions.push(ShellAction::OpenProfile(profile.id));
+                let response = list_row(ui, &row);
+                if edit_zone_clicked(&response) {
+                    actions.push(ShellAction::EditProfile(profile.id.clone()));
+                } else if response.clicked() {
+                    actions.push(ShellAction::OpenProfile(profile.id.clone()));
                 }
             }
         });
@@ -269,9 +306,9 @@ fn profiles_screen(
         footnote(
             ui,
             if data.profiles_persistent {
-                "Profiles are saved on this iPhone."
+                "Profiles are saved on this iPhone. Tap Edit to change or delete one."
             } else {
-                "Profiles are kept until fesTerm closes."
+                "Credentials last only until fesTerm closes; profiles are saved on this iPhone."
             },
         );
     }
@@ -302,7 +339,7 @@ fn sessions_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAct
 
 fn settings_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAction>) {
     screen_title(ui, "Settings", "fesTerm on this iPhone");
-    if data.offline_demo_available {
+    if true {
         section_header(ui, "Demo", None, false);
         card(ui, |ui| {
             let mut row = RowSpec::new("Offline demo terminal");
@@ -313,6 +350,33 @@ fn settings_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAct
                 actions.push(ShellAction::OpenDemo);
             }
         });
+    }
+    section_header(
+        ui,
+        "Trusted hosts",
+        Some(&data.trusted_hosts.len().to_string()),
+        false,
+    );
+    if data.trusted_hosts.is_empty() {
+        footnote(ui, "Host keys you trust appear here.");
+    } else {
+        card(ui, |ui| {
+            for (index, host) in data.trusted_hosts.iter().enumerate() {
+                let title = format!("{}:{}", host.host, host.port);
+                let mut row = RowSpec::new(&title);
+                row.icon = Some(Icon::Settings);
+                row.subtitle = Some(&host.fingerprint);
+                row.trailing = Trailing::Action("Forget");
+                row.divider = index > 0;
+                if list_row(ui, &row).clicked() {
+                    actions.push(ShellAction::ForgetHost(index));
+                }
+            }
+        });
+        footnote(
+            ui,
+            "Forgetting a key makes fesTerm ask again on the next connection.",
+        );
     }
     section_header(ui, "Diagnostics", None, false);
     card(ui, |ui| {

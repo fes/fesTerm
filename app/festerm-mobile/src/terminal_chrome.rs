@@ -583,12 +583,17 @@ pub fn reconnect_banner(ui: &mut Ui, banner: &ReconnectBanner, compact: bool) ->
                             .strong(),
                     );
                 });
+                let explanation = match &banner.reattach {
+                    Some(session) => format!(
+                        "The connection dropped; your {session} session keeps running.\nReconnecting reattaches it."
+                    ),
+                    None => "Your previous shell cannot be resumed.\nReconnecting starts a new shell."
+                        .to_owned(),
+                };
                 ui.label(
-                    egui::RichText::new(
-                        "Your previous shell cannot be resumed.\nReconnecting starts a new shell.",
-                    )
-                    .size(type_scale::CAPTION + 0.5)
-                    .color(color::TEXT_MUTED),
+                    egui::RichText::new(explanation)
+                        .size(type_scale::CAPTION + 0.5)
+                        .color(color::TEXT_MUTED),
                 );
             }
             if let Some(detail) = &banner.detail {
@@ -598,7 +603,12 @@ pub fn reconnect_banner(ui: &mut Ui, banner: &ReconnectBanner, compact: bool) ->
                         .color(color::WARNING),
                 );
             }
-            chosen = button(ui, ButtonKind::Primary, "Reconnect · new shell", true).clicked();
+            let label = if banner.reattach.is_some() {
+                "Reconnect · reattach"
+            } else {
+                "Reconnect · new shell"
+            };
+            chosen = button(ui, ButtonKind::Primary, label, true).clicked();
             if !compact {
                 ui.label(
                     egui::RichText::new(&banner.status)
