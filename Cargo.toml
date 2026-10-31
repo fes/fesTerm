@@ -45,7 +45,7 @@ russh = { path = "vendor/russh" }
 russh-sftp = { path = "vendor/russh-sftp" }
 
 [workspace.package]
-version = "0.11.1"
+version = "0.12.0"
 edition = "2021"
 license = "MIT"
 authors = ["fes"]
