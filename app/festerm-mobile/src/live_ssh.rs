@@ -17,6 +17,14 @@ use zeroize::{Zeroize, Zeroizing};
 
 const EVENT_BUDGET: usize = 32;
 
+fn control_margin(ui: &egui::Ui) -> egui::Margin {
+    let font = egui::FontSelection::Default.resolve(ui.style());
+    let row_height = ui.fonts_mut(|fonts| fonts.row_height(&font));
+    let line_height = row_height + ui.spacing().extra_text_line_spacing;
+    let inset = ((44.0 - line_height) * 0.5).ceil().clamp(0.0, 127.0) as i8;
+    egui::Margin::symmetric(4, inset)
+}
+
 #[derive(Default)]
 struct PasswordBuffer(Zeroizing<String>);
 
@@ -315,7 +323,7 @@ impl LiveSsh {
                 egui::TextEdit::singleline(&mut self.password)
                     .password(true)
                     .sensitive(true)
-                    .min_size(egui::vec2(0.0, 44.0))
+                    .margin(control_margin(ui))
                     .char_limit(4096),
             );
             if ui.button("Authenticate").clicked() {
@@ -360,6 +368,7 @@ pub(super) struct ConnectionControlsGeometry {
     pub(super) bounds: egui::Rect,
     pub(super) connect: egui::Rect,
     pub(super) clip: egui::Rect,
+    pub(super) field_height: f32,
 }
 
 impl ConnectionForm {
@@ -401,23 +410,29 @@ impl ConnectionForm {
             {
                 ui.small("Connect starts a new shell.");
             }
+            let margin = control_margin(ui);
             #[cfg(test)]
             let controls_start = ui.cursor().min;
-            ui.add(
-                egui::TextEdit::singleline(&mut self.host)
-                    .min_size(egui::vec2(0.0, 44.0))
-                    .hint_text("Host")
-                    .char_limit(253),
-            );
+            let field_height = ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.host)
+                        .margin(margin)
+                        .hint_text("Host")
+                        .char_limit(253),
+                )
+                .rect
+                .height();
+            #[cfg(not(test))]
+            let _ = field_height;
             ui.add(
                 egui::TextEdit::singleline(&mut self.port)
-                    .min_size(egui::vec2(0.0, 44.0))
+                    .margin(margin)
                     .hint_text("Port")
                     .char_limit(5),
             );
             ui.add(
                 egui::TextEdit::singleline(&mut self.username)
-                    .min_size(egui::vec2(0.0, 44.0))
+                    .margin(control_margin(ui))
                     .hint_text("Username")
                     .char_limit(255),
             );
@@ -428,6 +443,7 @@ impl ConnectionForm {
                     bounds: egui::Rect::from_min_max(controls_start, connect.rect.max),
                     connect: connect.rect,
                     clip: ui.clip_rect(),
+                    field_height,
                 });
             }
             if connect.clicked() {

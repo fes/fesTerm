@@ -700,6 +700,7 @@ mod tests {
                     connection_frame(&mut app, &context, size, occlusion, vec![]);
                 }
                 let geometry = app.connection.controls.expect("visible connection form");
+                assert!(geometry.field_height >= 44.0);
                 assert!(geometry.clip.contains_rect(geometry.bounds), "{size:?}");
                 assert!(geometry.clip.contains_rect(geometry.connect), "{size:?}");
                 let expanded_grid = app.view.diagnostics().grid_rect.unwrap();
