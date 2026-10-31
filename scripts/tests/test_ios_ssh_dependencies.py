@@ -22,9 +22,9 @@ class IosSshDependencyTests(unittest.TestCase):
                 patch.object(build, "check_dependencies") as check:
             self.assertEqual(build.main(), 0)
         self.assertEqual([call.args for call in check.call_args_list], [
-            ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"),
+            ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"), ("aarch64-apple-ios", "festerm-mobile-profiles"),
             ("aarch64-apple-ios", "festerm-mobile", True),
-            ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"),
+            ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"), ("aarch64-apple-ios-sim", "festerm-mobile-profiles"),
             ("aarch64-apple-ios-sim", "festerm-mobile", True),
         ])
 
@@ -46,7 +46,7 @@ class IosSshDependencyTests(unittest.TestCase):
     def test_ios_refuses_desktop_secret_services_and_session_backends(self):
         for package in ("festerm-mobile", "festerm-ssh"):
             for dependency in (
-                "apple-native-keyring-store", "windows-native-keyring-store",
+                "windows-native-keyring-store",
                 "zbus-secret-service-keyring-store", "festerm-pty", "festerm-sessiond",
                 "festerm-serial", "cargo-packager-updater", "festerm",
             ):
@@ -56,14 +56,27 @@ class IosSshDependencyTests(unittest.TestCase):
                         with self.assertRaisesRegex(RuntimeError, "dependency boundary violated"):
                             build.check_dependencies("aarch64-apple-ios", package)
 
+    def test_ios_allows_only_the_protected_keychain_store_feature(self):
+        for package in ("festerm-mobile", "festerm-ssh"):
+            with self.subTest(package=package):
+                allowed = f"{package} v0.11.1\napple-native-keyring-store v1.0.2 protected,security-framework\n"
+                with patch.object(build, "run", return_value=subprocess.CompletedProcess([], 0, allowed)):
+                    build.check_dependencies("aarch64-apple-ios", package)
+        for features in ("keychain", "keychain,protected", ""):
+            with self.subTest(features=features):
+                output = f"festerm-ssh v0.11.1\napple-native-keyring-store v1.0.2 {features}\n"
+                with patch.object(build, "run", return_value=subprocess.CompletedProcess([], 0, output)):
+                    with self.assertRaisesRegex(RuntimeError, "dependency boundary violated"):
+                        build.check_dependencies("aarch64-apple-ios", "festerm-ssh")
+
     def test_dependency_cli_checks_both_real_roots_on_device_and_simulator(self):
         with patch.object(build.sys, "argv", ["build", "--check-dependencies"]), \
                 patch.object(build, "check_dependencies") as check, \
                 patch.object(build, "run") as run:
             self.assertEqual(build.main(), 0)
         self.assertEqual([call.args for call in check.call_args_list], [
-            ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"),
-            ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"),
+            ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"), ("aarch64-apple-ios", "festerm-mobile-profiles"),
+            ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"), ("aarch64-apple-ios-sim", "festerm-mobile-profiles"),
         ])
         run.assert_not_called()
 

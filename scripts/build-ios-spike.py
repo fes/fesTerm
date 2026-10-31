@@ -22,9 +22,13 @@ BUNDLE_ID = "org.festerm.mobile-spike"
 MINIMUM_IOS = "15.0"
 FORBIDDEN = {"festerm", "festerm-pty", "festerm-sessiond", "festerm-serial", "cargo-packager-updater"}
 DESKTOP_SECRET_BACKENDS = {
-    "apple-native-keyring-store", "windows-native-keyring-store",
-    "zbus-secret-service-keyring-store",
+    "windows-native-keyring-store", "zbus-secret-service-keyring-store",
 }
+# ADR 0054: iOS may use only the app-sandboxed "protected" Keychain store. The
+# macOS "keychain" feature is the desktop legacy login keychain and stays out.
+IOS_KEYCHAIN_BACKEND = "apple-native-keyring-store"
+IOS_KEYCHAIN_REQUIRED_FEATURE = "protected"
+IOS_KEYCHAIN_FORBIDDEN_FEATURE = "keychain"
 
 
 def run(*args: str, **kwargs):
@@ -35,11 +39,17 @@ def check_dependencies(target: str, package: str = "festerm-mobile", live_ssh: b
     result = run(
         "cargo", "tree", "--locked", "-p", package, "--target", target,
         *(["--features", "live-ssh"] if live_ssh else []),
-        "--edges", "normal,build", "--prefix", "none", "--format", "{p}",
+        "--edges", "normal,build", "--prefix", "none", "--format", "{p} {f}",
         capture_output=True, text=True, timeout=120,
     )
-    names = {line.split()[0] for line in result.stdout.splitlines() if line.strip()}
+    rows = [line.split() for line in result.stdout.splitlines() if line.strip()]
+    names = {row[0] for row in rows}
     forbidden = names & (FORBIDDEN | DESKTOP_SECRET_BACKENDS)
+    for row in rows:
+        if row[0] == IOS_KEYCHAIN_BACKEND:
+            features = set(row[2].split(",")) if len(row) > 2 else set()
+            if IOS_KEYCHAIN_REQUIRED_FEATURE not in features or IOS_KEYCHAIN_FORBIDDEN_FEATURE in features:
+                forbidden.add(f"{IOS_KEYCHAIN_BACKEND}[{','.join(sorted(features))}]")
     if forbidden:
         raise RuntimeError(f"Mobile dependency boundary violated: {sorted(forbidden)}")
 
@@ -88,6 +98,7 @@ def main() -> int:
         for target in ("aarch64-apple-ios", "aarch64-apple-ios-sim"):
             check_dependencies(target)
             check_dependencies(target, "festerm-ssh")
+            check_dependencies(target, "festerm-mobile-profiles")
             if args.live_ssh:
                 check_dependencies(target, "festerm-mobile", True)
         print("iOS mobile/SSH normal/build dependency boundaries passed")

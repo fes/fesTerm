@@ -7,6 +7,7 @@ members = [
     "crates/festerm-config",
     "crates/festerm-linux-power",
     "crates/festerm-macos-window",
+    "crates/festerm-mobile-profiles",
     "crates/festerm-pty",
     "crates/festerm-pty-test-child",
     "crates/festerm-serial",

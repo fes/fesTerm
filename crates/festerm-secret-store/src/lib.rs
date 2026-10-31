@@ -7,17 +7,19 @@
 //! opaque references, rather than secret values, in ordinary configuration.
 
 use std::collections::HashMap;
-#[cfg(not(target_os = "ios"))]
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-#[cfg(not(target_os = "ios"))]
 use keyring_core::{CredentialStore, Entry};
 use uuid::Uuid;
 use zeroize::Zeroize;
 
 /// The fixed native-service namespace used by all fesTerm secrets.
 pub const SERVICE_NAMESPACE: &str = "io.github.fes.festerm";
+
+/// The largest secret accepted by any store. Private keys, passwords, and
+/// OAuth refresh credentials are far smaller; the bound keeps a corrupted or
+/// hostile caller from filling the platform store.
+pub const MAX_SECRET_BYTES: usize = 64 * 1024;
 
 /// A validated opaque identifier for a secret stored outside configuration.
 #[derive(PartialEq, Eq, Hash)]
@@ -55,7 +57,6 @@ impl SecretReference {
         Self(self.0)
     }
 
-    #[cfg(not(target_os = "ios"))]
     fn account_name(&self) -> String {
         self.0.hyphenated().to_string()
     }
@@ -101,7 +102,6 @@ impl SecretBytes {
         &self.0
     }
 
-    #[cfg(not(target_os = "ios"))]
     fn from_vec(bytes: Vec<u8>) -> Self {
         Self(bytes.into_boxed_slice())
     }
@@ -130,6 +130,8 @@ pub enum SecretStoreError {
     InvalidReference,
     /// The current target does not provide a supported native backend.
     Unsupported,
+    /// The secret exceeds [`MAX_SECRET_BYTES`] and was not stored.
+    TooLarge,
 }
 
 /// Stores secret values behind opaque references.
@@ -149,6 +151,13 @@ pub trait SecretStore: Send + Sync {
 
     /// Deletes a secret, returning whether it was present.
     fn delete(&self, reference: &SecretReference) -> Result<bool, SecretStoreError>;
+}
+
+fn check_size(secret: &SecretBytes) -> Result<(), SecretStoreError> {
+    if secret.len() > MAX_SECRET_BYTES {
+        return Err(SecretStoreError::TooLarge);
+    }
+    Ok(())
 }
 
 /// A deterministic in-memory store for tests and explicit application injection.
@@ -178,6 +187,7 @@ impl MemorySecretStore {
 
 impl SecretStore for MemorySecretStore {
     fn put(&self, secret: &SecretBytes) -> Result<SecretReference, SecretStoreError> {
+        check_size(secret)?;
         let mut next_reference = self
             .next_reference
             .lock()
@@ -213,6 +223,7 @@ impl SecretStore for MemorySecretStore {
         reference: &SecretReference,
         secret: &SecretBytes,
     ) -> Result<(), SecretStoreError> {
+        check_size(secret)?;
         let mut secrets = self
             .secrets
             .lock()
@@ -250,14 +261,12 @@ impl SecretReference {
     }
 }
 
-#[cfg(not(target_os = "ios"))]
 struct NativeSecretStore {
     store: Arc<CredentialStore>,
     modifiers: HashMap<&'static str, &'static str>,
     operation_lock: Mutex<()>,
 }
 
-#[cfg(not(target_os = "ios"))]
 impl NativeSecretStore {
     fn new(store: Arc<CredentialStore>, modifiers: HashMap<&'static str, &'static str>) -> Self {
         Self {
@@ -279,9 +288,9 @@ impl NativeSecretStore {
     }
 }
 
-#[cfg(not(target_os = "ios"))]
 impl SecretStore for NativeSecretStore {
     fn put(&self, secret: &SecretBytes) -> Result<SecretReference, SecretStoreError> {
+        check_size(secret)?;
         let _operation = self
             .operation_lock
             .lock()
@@ -309,6 +318,7 @@ impl SecretStore for NativeSecretStore {
         reference: &SecretReference,
         secret: &SecretBytes,
     ) -> Result<(), SecretStoreError> {
+        check_size(secret)?;
         let _operation = self
             .operation_lock
             .lock()
@@ -333,11 +343,11 @@ impl SecretStore for NativeSecretStore {
     }
 }
 
-#[cfg(not(target_os = "ios"))]
 fn map_keyring_error(error: keyring_core::Error) -> SecretStoreError {
     match error {
         keyring_core::Error::NoEntry => SecretStoreError::Missing,
         keyring_core::Error::NoStorageAccess(_) => SecretStoreError::LockedOrUnavailable,
+        keyring_core::Error::PlatformFailure(ref platform) => map_platform_failure(platform),
         keyring_core::Error::NotSupportedByStore(_) | keyring_core::Error::NoDefaultStore => {
             SecretStoreError::Unsupported
         }
@@ -353,12 +363,41 @@ fn map_keyring_error(error: keyring_core::Error) -> SecretStoreError {
     }
 }
 
+#[cfg(target_vendor = "apple")]
+fn map_platform_failure(error: &keyring_core::error::PlatformError) -> SecretStoreError {
+    // Security.framework result codes the keyring adapter does not classify.
+    const ERR_SEC_USER_CANCELED: i32 = -128;
+    const ERR_SEC_NOT_AVAILABLE: i32 = -25291;
+    const ERR_SEC_AUTH_FAILED: i32 = -25293;
+    const ERR_SEC_INTERACTION_NOT_ALLOWED: i32 = -25308;
+    const ERR_SEC_MISSING_ENTITLEMENT: i32 = -34018;
+
+    match error
+        .downcast_ref::<security_framework::base::Error>()
+        .map(|error| error.code())
+    {
+        Some(
+            ERR_SEC_USER_CANCELED
+            | ERR_SEC_NOT_AVAILABLE
+            | ERR_SEC_AUTH_FAILED
+            | ERR_SEC_INTERACTION_NOT_ALLOWED,
+        ) => SecretStoreError::LockedOrUnavailable,
+        Some(ERR_SEC_MISSING_ENTITLEMENT) => SecretStoreError::Unsupported,
+        _ => SecretStoreError::BackendFailure,
+    }
+}
+
+#[cfg(not(target_vendor = "apple"))]
+fn map_platform_failure(_: &keyring_core::error::PlatformError) -> SecretStoreError {
+    SecretStoreError::BackendFailure
+}
+
 /// Creates the target's native secret store.
 ///
 /// This never falls back to a file, keyutils, plaintext, or
 /// [`MemorySecretStore`].
-/// iOS returns [`SecretStoreError::Unsupported`] until an explicitly reviewed
-/// Keychain backend exists; being Unix does not imply a desktop D-Bus service.
+/// iOS uses the app's own Keychain access group (ADR 0054); being Unix does
+/// not imply a desktop D-Bus service.
 pub fn native_store() -> Result<Box<dyn SecretStore>, SecretStoreError> {
     native::create()
 }
@@ -371,6 +410,23 @@ mod native {
         let store =
             apple_native_keyring_store::keychain::Store::new().map_err(map_keyring_error)?;
         Ok(Box::new(NativeSecretStore::new(store, HashMap::new())))
+    }
+}
+
+#[cfg(target_os = "ios")]
+mod native {
+    use super::*;
+
+    pub(super) fn create() -> Result<Box<dyn SecretStore>, SecretStoreError> {
+        let store =
+            apple_native_keyring_store::protected::Store::new_with_configuration(&HashMap::from([
+                ("cloud-sync", "false"),
+            ]))
+            .map_err(map_keyring_error)?;
+        Ok(Box::new(NativeSecretStore::new(
+            store,
+            HashMap::from([("access-policy", "when-unlocked-this-device-only")]),
+        )))
     }
 }
 
@@ -413,10 +469,153 @@ mod tests {
     assert_not_impl_any!(SecretBytes: Clone, std::fmt::Debug, serde::Serialize);
     assert_not_impl_any!(SecretReference: Clone, std::fmt::Debug);
 
-    #[cfg(target_os = "ios")]
+    type BuiltEntry = (String, String, Vec<(String, String)>);
+
+    struct RecordingStore {
+        inner: Arc<CredentialStore>,
+        built: Mutex<Vec<BuiltEntry>>,
+    }
+
+    impl keyring_core::api::CredentialStoreApi for RecordingStore {
+        fn vendor(&self) -> String {
+            "recording test store".to_owned()
+        }
+
+        fn id(&self) -> String {
+            "recording".to_owned()
+        }
+
+        fn build(
+            &self,
+            service: &str,
+            user: &str,
+            modifiers: Option<&HashMap<&str, &str>>,
+        ) -> keyring_core::Result<Entry> {
+            let mut recorded: Vec<_> = modifiers
+                .into_iter()
+                .flatten()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect();
+            recorded.sort();
+            self.built
+                .lock()
+                .unwrap()
+                .push((service.to_owned(), user.to_owned(), recorded));
+            self.inner.build(service, user, None)
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    fn mock_backed_store() -> NativeSecretStore {
+        NativeSecretStore::new(
+            keyring_core::mock::Store::new().expect("mock store"),
+            HashMap::new(),
+        )
+    }
+
     #[test]
-    fn ios_native_store_is_unsupported_without_a_persistent_fallback() {
-        assert!(matches!(native_store(), Err(SecretStoreError::Unsupported)));
+    fn native_wrapper_round_trips_updates_and_deletes_through_a_keyring_store() {
+        let store = mock_backed_store();
+        let reference = store
+            .put(&SecretBytes::copy_from_slice(b"first"))
+            .expect("put");
+        assert_eq!(
+            store
+                .get(&reference)
+                .expect("get")
+                .with_bytes(<[u8]>::to_vec),
+            b"first"
+        );
+        store
+            .update(&reference, &SecretBytes::copy_from_slice(b"second"))
+            .expect("update");
+        assert_eq!(
+            store
+                .get(&reference)
+                .expect("get")
+                .with_bytes(<[u8]>::to_vec),
+            b"second"
+        );
+        assert_eq!(store.delete(&reference), Ok(true));
+        assert_eq!(store.delete(&reference), Ok(false));
+        assert!(matches!(
+            store.get(&reference),
+            Err(SecretStoreError::Missing)
+        ));
+        assert_eq!(
+            store.update(&reference, &SecretBytes::copy_from_slice(b"x")),
+            Err(SecretStoreError::Missing)
+        );
+    }
+
+    #[test]
+    fn native_wrapper_namespaces_items_and_forwards_backend_modifiers() {
+        let recording = Arc::new(RecordingStore {
+            inner: keyring_core::mock::Store::new().expect("mock store"),
+            built: Mutex::new(Vec::new()),
+        });
+        let store = NativeSecretStore::new(
+            Arc::<RecordingStore>::clone(&recording) as Arc<CredentialStore>,
+            HashMap::from([("access-policy", "when-unlocked-this-device-only")]),
+        );
+        let reference = store
+            .put(&SecretBytes::copy_from_slice(b"secret"))
+            .expect("put");
+
+        let built = recording.built.lock().unwrap();
+        assert_eq!(built.len(), 1);
+        assert_eq!(built[0].0, SERVICE_NAMESPACE);
+        assert_eq!(built[0].1, reference.to_persisted_string());
+        assert_eq!(
+            built[0].2,
+            [(
+                "access-policy".to_owned(),
+                "when-unlocked-this-device-only".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn oversized_secrets_are_refused_by_every_store_without_storing_anything() {
+        let oversized = SecretBytes::copy_from_slice(&vec![7; MAX_SECRET_BYTES + 1]);
+        let exact = SecretBytes::copy_from_slice(&vec![7; MAX_SECRET_BYTES]);
+        let stores: [Box<dyn SecretStore>; 2] = [
+            Box::new(mock_backed_store()),
+            Box::new(MemorySecretStore::new()),
+        ];
+        for store in &stores {
+            assert_eq!(
+                store.put(&oversized).err(),
+                Some(SecretStoreError::TooLarge)
+            );
+            let reference = store.put(&exact).expect("limit is inclusive");
+            assert_eq!(
+                store.update(&reference, &oversized),
+                Err(SecretStoreError::TooLarge)
+            );
+            assert_eq!(store.get(&reference).expect("unchanged").len(), exact.len());
+        }
+    }
+
+    #[cfg(target_vendor = "apple")]
+    #[test]
+    fn apple_security_codes_map_to_actionable_content_free_errors() {
+        let failure = |code: i32| {
+            map_keyring_error(keyring_core::Error::PlatformFailure(Box::new(
+                security_framework::base::Error::from_code(code),
+            )))
+        };
+        assert_eq!(failure(-25308), SecretStoreError::LockedOrUnavailable);
+        assert_eq!(failure(-25293), SecretStoreError::LockedOrUnavailable);
+        assert_eq!(failure(-34018), SecretStoreError::Unsupported);
+        assert_eq!(failure(-50), SecretStoreError::BackendFailure);
+        assert_eq!(
+            map_keyring_error(keyring_core::Error::NoEntry),
+            SecretStoreError::Missing
+        );
     }
 
     #[test]
@@ -530,7 +729,7 @@ mod tests {
     }
 }
 
-#[cfg(any(target_os = "ios", not(any(target_os = "macos", windows, unix))))]
+#[cfg(not(any(target_os = "macos", target_os = "ios", windows, unix)))]
 mod native {
     use super::*;
 

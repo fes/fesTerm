@@ -3410,11 +3410,13 @@
         "MOB-*"
       ],
       "requirements": [
-        "docs/adr/0042-ios-rendering-spike-host.md"
+        "docs/adr/0042-ios-rendering-spike-host.md",
+        "docs/adr/0054-ios-keychain-and-mobile-profile-store.md"
       ],
       "decisions": [
         "ADR-0031",
-        "ADR-0042"
+        "ADR-0042",
+        "ADR-0054"
       ],
       "automated_tests": [
         "mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry",
@@ -3435,6 +3437,14 @@
         "mobile_probe_uses_core_encoding_without_echoing_or_retaining_input",
         "mobile_fixture_renders_at_phone_width_and_preserves_grid_on_memory_warning",
         "mobile_gpu_limits_accept_simulator_downlevel_capabilities",
+        "crud_order_recents_and_reopen",
+        "secrets_are_never_written_and_deleted_with_profile",
+        "failed_create_releases_the_secret",
+        "corrupt_file_is_quarantined_and_newer_version_refused",
+        "one_bad_entry_does_not_lose_the_rest",
+        "known_hosts_changed_key_is_a_hard_refusal",
+        "key_import_generate_and_store",
+        "dev_tunnel_import_defaults_take_over_and_never_replaces",
         "mobile_phone_ipad_and_split_view_keep_terminal_above_persistent_keyboard",
         "mobile_persistent_keyboard_does_not_restart_ime_between_frames",
         "mobile_sticky_modifiers_are_one_shot_and_preserve_ime_commit_boundaries",

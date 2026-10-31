@@ -346,7 +346,7 @@ impl fmt::Debug for SshCertificateAuthentication {
 /// is used so the key text's own bytes never need to be constrained.
 pub fn encode_stored_private_key(key_text: &str, passphrase: Option<&str>) -> SecretBytes {
     let passphrase = passphrase.unwrap_or("");
-    let mut bytes = Vec::with_capacity(4 + passphrase.len() + key_text.len());
+    let mut bytes = Zeroizing::new(Vec::with_capacity(4 + passphrase.len() + key_text.len()));
     bytes.extend_from_slice(&(passphrase.len() as u32).to_le_bytes());
     bytes.extend_from_slice(passphrase.as_bytes());
     bytes.extend_from_slice(key_text.as_bytes());
@@ -423,9 +423,9 @@ fn resolve_stored_private_key(
             SecretStoreError::LockedOrUnavailable | SecretStoreError::Unsupported => {
                 StoredPrivateKeyResolutionError::LockedOrUnavailable
             }
-            SecretStoreError::BackendFailure | SecretStoreError::InvalidReference => {
-                StoredPrivateKeyResolutionError::BackendFailure
-            }
+            SecretStoreError::BackendFailure
+            | SecretStoreError::InvalidReference
+            | SecretStoreError::TooLarge => StoredPrivateKeyResolutionError::BackendFailure,
         })?;
     let (key_text, passphrase) = secret.with_bytes(decode_stored_private_key)?;
     let parsed = if passphrase.is_empty() {
@@ -688,9 +688,9 @@ fn resolve_stored_password(
             SecretStoreError::LockedOrUnavailable | SecretStoreError::Unsupported => {
                 StoredPasswordResolutionError::LockedOrUnavailable
             }
-            SecretStoreError::BackendFailure | SecretStoreError::InvalidReference => {
-                StoredPasswordResolutionError::BackendFailure
-            }
+            SecretStoreError::BackendFailure
+            | SecretStoreError::InvalidReference
+            | SecretStoreError::TooLarge => StoredPasswordResolutionError::BackendFailure,
         })?;
     secret.with_bytes(|bytes| {
         std::str::from_utf8(bytes)
