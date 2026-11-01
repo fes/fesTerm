@@ -36,6 +36,48 @@ purpose string, with no additional entitlements. Mode-labeled private output
 and receipts distinguish the builds; neither is uploaded or installed by the
 script. See MOB-06 for the separate controlled-host/device demo acceptance.
 
+### TestFlight (current process)
+
+Manual, local and macOS-only; **CI does not build, sign or upload iOS builds.**
+`scripts/build-ios-testflight.py` builds the release `festerm-mobile` binary
+(`--release --locked --features live-ssh`, iOS 15.0 floor), assembles the app
+(`com.feslabs.fesTerm`, workspace version, integer build number, `AppIcon`
+catalog compiled from `assets/app-icon/app-icon-1024.png` flattened to remove
+alpha, `ITSAppUsesNonExemptEncryption=false`), wraps it in an `.xcarchive` and
+exports a distribution-signed `.ipa` with `xcodebuild -exportArchive`. No
+keychain-access-group entitlement is added: the provisioning profile supplies
+`application-identifier`, which iOS uses as the default Keychain group, and the
+script verifies the exported entitlements (no `get-task-allow`).
+
+Prerequisites (one-time, manual): accepted Program License Agreement; the
+`fesTerm` app record (bundle ID `com.feslabs.fesTerm`, team `F884J4784J`) in
+App Store Connect; an App Store Connect API key with the App Manager or Admin
+role stored as `~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8`; full Xcode,
+Rust with the `aarch64-apple-ios` target, and Python packages `Pillow`,
+`PyJWT[crypto]` and `certifi`. This is the iOS key, not the desktop release key.
+The key ID/path/issuer are read from the environment and never stored in the
+repository:
+
+```sh
+export APP_STORE_CONNECT_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8
+export APP_STORE_CONNECT_KEY_ID=<KEYID>
+export APPLE_API_ISSUER=$(gh variable get APPLE_API_ISSUER --env release -R fes/fesTerm)
+python3 scripts/build-ios-testflight.py --check          # offline preflight
+python3 scripts/build-ios-testflight.py --setup-signing  # once: Apple Distribution cert + App Store profile
+python3 scripts/build-ios-testflight.py --archive --build-number 2611011945   # output: target/ios-testflight/
+python3 scripts/build-ios-testflight.py --upload --build-number 2611011945
+python3 scripts/build-ios-testflight.py --status         # poll processingState until VALID
+```
+
+`--build-number` defaults to a UTC `yymmddHHMM` timestamp and must increase for
+every upload of a version. Xcode's cloud-managed signing needs an Admin-level
+key, so `--setup-signing` instead creates the distribution certificate and
+profile through the API (private key imported into the login keychain, then
+deleted from disk) and `--archive` signs manually with them. Manual steps that
+remain: adding testers to an internal TestFlight group in App Store Connect and
+answering any export-compliance or beta-information prompts. External testing
+and App Review are out of scope.
+
 ### Store-mediated release
 
 ADR 0021 exists because fesTerm ships its own binary and update channel with
