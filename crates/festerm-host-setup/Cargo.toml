@@ -1,0 +1,12 @@
+[package]
+name = "festerm-host-setup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Embedded Dev Tunnel host installer scripts and the exact commands that run them, for in-app review."
+publish = false
+
+[lints]
+workspace = true
