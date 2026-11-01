@@ -10,6 +10,7 @@ mod files_shell;
 #[cfg_attr(not(feature = "live-ssh"), allow(dead_code))] // SFTP needs the SSH transport
 mod files_ui;
 mod forms;
+mod host_setup;
 #[cfg(feature = "live-ssh")]
 mod live_ssh;
 #[allow(dead_code)] // design-system surface used by the gallery before production wiring
@@ -48,6 +49,16 @@ use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
+
+/// Writes `text` to the pasteboard and returns the confirmation to show; the
+/// non-iOS desktop harness has no pasteboard, so it reports honestly.
+fn clipboard_notice(text: &str, done: &'static str) -> Option<&'static str> {
+    Some(if festerm_ios_window::set_clipboard_text(text) {
+        done
+    } else {
+        "Copy is unavailable here"
+    })
+}
 
 /// The egui mesh renderer does not need the full WebGPU limits. In particular,
 /// iOS Simulator Metal exposes 15 inter-stage variables, below the default 16.
@@ -268,6 +279,7 @@ pub struct MobileApp {
     /// One-line outcome of the last action, shown on the Profiles screen.
     notice: Option<String>,
     editor: forms::EditorState,
+    host_setup: host_setup::HostSetupState,
     keys_panel: terminal_chrome::KeysPanel,
     keyboard_visible: bool,
     /// Gallery/test fixtures; production derives these from live state.
@@ -324,6 +336,7 @@ impl MobileApp {
             next_tab: 1,
             notice: None,
             editor: forms::EditorState::default(),
+            host_setup: host_setup::HostSetupState::default(),
             keys_panel: terminal_chrome::KeysPanel::default(),
             keyboard_visible: true,
             sessions_override: None,
@@ -632,6 +645,7 @@ impl MobileApp {
             self.show_editor(ui);
             #[cfg(feature = "live-ssh")]
             self.show_tunnel_sheets(ui.ctx(), bounds);
+            self.show_host_setup(ui.ctx(), bounds);
             return;
         }
         match self.surface {
@@ -640,6 +654,31 @@ impl MobileApp {
         }
         self.show_sheets(ui.ctx(), bounds);
         self.show_files_sheets(ui.ctx(), bounds);
+        self.show_host_setup(ui.ctx(), bounds);
+    }
+
+    fn show_host_setup(&mut self, ctx: &egui::Context, bounds: egui::Rect) {
+        use host_setup::HostSetupAction;
+        match host_setup::show(ctx, bounds, &mut self.host_setup) {
+            HostSetupAction::None => {}
+            HostSetupAction::Close => self.host_setup.close(),
+            HostSetupAction::ViewScript => {
+                self.host_setup.viewing = true;
+                self.host_setup.notice = None;
+            }
+            HostSetupAction::BackToCommand => {
+                self.host_setup.viewing = false;
+                self.host_setup.notice = None;
+            }
+            HostSetupAction::CopyCommand => {
+                self.host_setup.notice =
+                    clipboard_notice(&self.host_setup.command(), "Command copied");
+            }
+            HostSetupAction::CopyScript => {
+                self.host_setup.notice =
+                    clipboard_notice(self.host_setup.script(), "Script copied");
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -710,6 +749,7 @@ impl MobileApp {
                     self.editor.durable_credentials = self.credentials_durable();
                 }
                 ShellAction::EditProfile(id) => self.edit_profile(&id),
+                ShellAction::OpenHostSetup => self.host_setup.open(),
                 ShellAction::Lock(action) => {
                     if let Some(lock) = self.lock.as_mut() {
                         lock.apply(action);
@@ -922,6 +962,7 @@ impl MobileApp {
             forms::EditorAction::None => {}
             forms::EditorAction::Cancel => self.close_editor(),
             forms::EditorAction::OpenAuthentication => self.editor.auth_sheet = true,
+            forms::EditorAction::OpenHostSetup => self.host_setup.open(),
             forms::EditorAction::SaveOnly => {
                 if self.save_editor_profile().is_some() {
                     self.editor.close();

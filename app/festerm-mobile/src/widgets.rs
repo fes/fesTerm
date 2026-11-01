@@ -752,9 +752,9 @@ pub fn switch_row(ui: &mut Ui, label: &str, caption: Option<&str>, on: &mut bool
         egui::pos2(rect.right() - space::MD - 24.0, rect.center().y),
         egui::vec2(48.0, 28.0),
     );
-    ui.scope_builder(egui::UiBuilder::new().max_rect(switch), |ui| {
-        toggle_switch(ui, on, label)
-    });
+    // A child Ui does not advance the row layout, which would pull the next row up.
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(switch));
+    toggle_switch(&mut child, on, label);
 }
 
 #[derive(Clone, Copy)]

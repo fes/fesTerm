@@ -59,6 +59,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0059: iOS Profiles, Multi-Session Tabs and Persisted Host Trust](0059-ios-profiles-sessions-and-persisted-trust.md) - real saved profiles, Keychain-backed credentials, tmux/screen attach, persisted host trust, simulator Keychain entitlement
 - [ADR 0060: iOS Files Screen, SFTP Profiles and Markdown Opening](0060-ios-files-screen-and-sftp-profiles.md) - stacked Remote/This iPhone panes, transfers and conflict sheets, SFTP profile kind, sandbox Documents in the Files app
 - [ADR 0061: iOS Dev Tunnel Profiles, Sign-in and App Lock Wiring](0061-ios-dev-tunnel-profiles-and-app-lock-wiring.md) - GitHub device-code sign-in, tunnel attach with RecoverySync, taken-over messaging, app-lock gate
+- [ADR 0063: iOS Dev Tunnel Host Setup Sheet](0063-ios-dev-tunnel-host-setup-sheet.md) - reviewable one-line host installer command and exact embedded script viewer
 
 - [ADR 0052: Session-Bound Local File OSC 8 Links](0052-local-file-osc8-links.md) - local-only internal document opening; OS URL handlers remain web-only, native TI-10 qualification pending
 

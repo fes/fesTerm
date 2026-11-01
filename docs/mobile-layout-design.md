@@ -96,6 +96,10 @@ the physical-device SSH demo. Screen 11's host trust and screen 16's fresh-shell
 reconnect are immediate interaction references; transient trust lifetime and
 the absence of durable recovery must stay explicit. Mock-up copy suggesting
 persistent trust or resumed shells is not authority to implement those promises.
+Dev Tunnel host setup (ADR 0063) is a bottom sheet opened from the Dev Tunnel
+editor and Settings: platform segmented control, takeover and Linux-only
+dependency switches, the generated monospace command with Copy command, and
+View script, a read-only line-numbered viewer of the exact embedded installer.
 Capture actual-widget phone/tablet comparisons for each implemented slice and
 record native rendering, Dynamic Type, VoiceOver and touch checks separately.
 

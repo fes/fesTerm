@@ -8,7 +8,7 @@ use super::profiles::{SftpSpec, TunnelSpec};
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
     bottom_sheet, button, button_sized, caption_label, card, footnote, labelled, list_row,
-    paint_fit, segmented, sheet_title, switch_row, text_field, ButtonKind, RowSpec,
+    paint_fit, segmented, sheet_title, switch_row, text_field, ButtonKind, RowSpec, Trailing,
 };
 use eframe::egui::{self, Align2, CornerRadius, Rect, Sense, Stroke, StrokeKind, Ui};
 use festerm_mobile_profiles::{RemoteSession, SshAuth, SshProfile};
@@ -260,6 +260,7 @@ pub enum EditorAction {
     RefreshTunnels,
     PickTunnel(usize),
     SignOut,
+    OpenHostSetup,
 }
 
 fn info_row(
@@ -804,6 +805,15 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
             &mut state.take_over,
             false,
         );
+    });
+    let mut setup = RowSpec::new("Set up a host");
+    setup.icon = Some(Icon::DevTunnel);
+    setup.subtitle = Some("Review and copy the one-line installer");
+    setup.trailing = Trailing::Chevron;
+    card(ui, |ui| {
+        if list_row(ui, &setup).clicked() {
+            *action = EditorAction::OpenHostSetup;
+        }
     });
     footnote(
         ui,
