@@ -192,6 +192,12 @@ or bridge starts until the user explicitly requests one.
 
 ### Clean-machine host installer (release prerequisite)
 
+In the app, choose **Dev Tunnel: Set up a host…** from the command palette (or
+**Set up a host…** in the Dev Tunnel profile editor) to pick the host platform,
+decide whether a remote device may take over a session, copy the version-pinned
+command and **View script** to read the exact installer shipped with your
+version in a read-only editor tab before running anything.
+
 The source now defines standalone helper bundles for Linux x86_64/ARM64
 (glibc 2.39+), macOS Intel/Apple Silicon, and Windows x64/ARM64. **No release
 containing these assets has been published.** Existing releases cannot run

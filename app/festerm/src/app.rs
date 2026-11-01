@@ -2739,6 +2739,7 @@ impl FesTermApp {
         const OPEN_SFTP_FILE_MANAGER: u64 = 22;
         const SAVE_TERMINAL_HISTORY_AS: u64 = 24;
         const REDRAW_TERMINAL: u64 = 25;
+        const SET_UP_HOST: u64 = 30;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -2755,6 +2756,13 @@ impl FesTermApp {
                 id: START_LOCAL_SESSION,
                 label: "Start Local Shell".to_owned(),
                 hint: binding_label(A::StartLocalShell),
+                is_tab: false,
+                shortcut_label: None,
+            },
+            PaletteItem {
+                id: SET_UP_HOST,
+                label: "Dev Tunnel: Set up a host…".to_owned(),
+                hint: None,
                 is_tab: false,
                 shortcut_label: None,
             },
@@ -3054,6 +3062,9 @@ impl FesTermApp {
             1 => self.state.dispatch(AppCommand::OpenLauncher, context),
             3 => self.state.dispatch(AppCommand::StartLocalSession, context),
             23 => self.state.dispatch(AppCommand::OpenWindow, context),
+            30 => self
+                .state
+                .dispatch(AppCommand::OpenDevTunnelHostSetup, context),
             18 => self.state.dispatch(AppCommand::ReloadMarkdown, context),
             19 => self
                 .state
@@ -13632,6 +13643,61 @@ mod tests {
 
         assert_eq!(app.state.tabs().len(), tabs_before);
         assert!(app.take_window_open_request());
+    }
+
+    #[test]
+    fn host_setup_palette_entry_opens_profiles_on_the_host_setup_panel() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        assert!(app
+            .palette_items()
+            .iter()
+            .any(|item| item.label == "Dev Tunnel: Set up a host…"));
+
+        app.dispatch_palette_selection(30, &context);
+
+        assert!(matches!(
+            app.state.active_tab().content,
+            TabContent::Profiles
+        ));
+        assert_eq!(
+            app.state.take_pending_profile_create(),
+            Some(crate::tabs::NewProfileKind::HostSetup)
+        );
+    }
+
+    #[test]
+    fn viewing_the_host_setup_script_opens_the_embedded_text_read_only() {
+        use festerm_host_setup::HostPlatform;
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        for platform in HostPlatform::ALL {
+            app.state
+                .dispatch(AppCommand::OpenHostSetupScript { platform }, &context);
+            // The editor normalises line endings; the scripts are pinned to LF.
+            assert_eq!(
+                active_document_text(&app),
+                platform.script().replace("\r\n", "\n")
+            );
+            let document = app.state.active_document().unwrap();
+            let documents = app.state.documents().clone();
+            let registry = documents.borrow();
+            let open = registry.get(document).unwrap();
+            assert!(open.read_only());
+            assert!(matches!(
+                open.origin(),
+                festerm_document::DocumentOrigin::Untitled(_)
+            ));
+        }
+
+        let tabs = app.state.tabs().len();
+        app.state.dispatch(
+            AppCommand::OpenHostSetupScript {
+                platform: HostPlatform::Linux,
+            },
+            &context,
+        );
+        assert_eq!(app.state.tabs().len(), tabs, "a second view reuses the tab");
     }
 
     #[test]

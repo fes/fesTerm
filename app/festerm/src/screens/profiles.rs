@@ -21,6 +21,7 @@ enum ProfilesScreenMode {
     EditDevTunnel(DevTunnelProfileDraft),
     #[cfg(feature = "experimental-dev-tunnels")]
     ImportPublicDevTunnel(PublicTunnelImportDraft),
+    HostSetup(HostSetupDraft),
     ConfirmDelete {
         identifier: String,
         references: usize,
@@ -31,6 +32,36 @@ enum ProfilesScreenMode {
 struct ProfilesScreenState {
     mode: ProfilesScreenMode,
     profile_search: String,
+}
+
+/// Choices for the one-line Dev Tunnel host installer. Nothing here is a
+/// secret and nothing is persisted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HostSetupDraft {
+    platform: festerm_host_setup::HostPlatform,
+    options: festerm_host_setup::InstallOptions,
+}
+
+impl Default for HostSetupDraft {
+    fn default() -> Self {
+        use festerm_host_setup::HostPlatform;
+        Self {
+            platform: if cfg!(target_os = "macos") {
+                HostPlatform::MacOs
+            } else if cfg!(windows) {
+                HostPlatform::Windows
+            } else {
+                HostPlatform::Linux
+            },
+            options: festerm_host_setup::InstallOptions::default(),
+        }
+    }
+}
+
+impl HostSetupDraft {
+    fn command(&self) -> String {
+        festerm_host_setup::install_command(self.platform, self.options)
+    }
 }
 
 #[cfg(feature = "experimental-dev-tunnels")]
@@ -842,6 +873,7 @@ pub(crate) fn show_profiles(
             NewProfileKind::DevTunnel => {
                 ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::default())
             }
+            NewProfileKind::HostSetup => ProfilesScreenMode::HostSetup(HostSetupDraft::default()),
             NewProfileKind::Local => {
                 ProfilesScreenMode::EditLocal(LocalProfileDraft::new(local_default_provider))
             }
@@ -930,6 +962,60 @@ pub(crate) fn show_profiles(
                 });
             });
         }
+        ProfilesScreenMode::HostSetup(draft) => {
+            show_bounded_content_scroll(ui, (tab_id, "dev_tunnel_host_setup"), |ui| {
+                dev_tunnel_card(ui, "Set up a Dev Tunnel host", |ui| {
+                    ssh_section_heading(ui, "Host platform");
+                    ui.horizontal_wrapped(|ui| {
+                        for platform in festerm_host_setup::HostPlatform::ALL {
+                            ui.selectable_value(&mut draft.platform, platform, platform.label());
+                        }
+                    });
+                    ui.checkbox(
+                        &mut draft.options.takeover,
+                        "Allow a remote device to take over an attached session",
+                    );
+                    if draft.platform == festerm_host_setup::HostPlatform::Linux {
+                        ui.checkbox(
+                            &mut draft.options.install_dependencies,
+                            "Install missing dependencies (apt/dnf, uses sudo)",
+                        );
+                    }
+                    ssh_section_heading(ui, "Run this on the host");
+                    let mut command_text = draft.command();
+                    let command_box = ui.add(
+                        TextEdit::multiline(&mut command_text)
+                            .id(egui::Id::new((tab_id, "host_setup_command")))
+                            .font(egui::TextStyle::Monospace)
+                            .desired_rows(4)
+                            .desired_width(f32::INFINITY),
+                    );
+                    command_box.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Install command")
+                    });
+                    ssh_paragraph(
+                        ui,
+                        "The script you can view is the exact installer shipped with this version of fesTerm, and the command pins the host bundle to this version. Review it before you run it.",
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        if action_button(ui, ActionButtonRole::Accent, "Copy command").clicked() {
+                            ui.ctx().copy_text(draft.command());
+                        }
+                        if action_button(ui, ActionButtonRole::Secondary, "View script").clicked() {
+                            command = Some(AppCommand::OpenHostSetupScript {
+                                platform: draft.platform,
+                            });
+                        }
+                        if action_button(ui, ActionButtonRole::Secondary, "Copy script").clicked() {
+                            ui.ctx().copy_text(draft.platform.script().to_owned());
+                        }
+                    });
+                    if action_button(ui, ActionButtonRole::Secondary, "Back").clicked() {
+                        next_mode = Some(ProfilesScreenMode::List);
+                    }
+                });
+            });
+        }
         ProfilesScreenMode::EditDevTunnel(draft) => {
             if let Some(profile) = draft.original_id.as_deref().and_then(|id| configuration.profile(id))
                 .and_then(Profile::as_dev_tunnel) {
@@ -943,6 +1029,9 @@ pub(crate) fn show_profiles(
                 #[cfg(feature = "experimental-dev-tunnels")]
                 if draft.original_id.is_none() && action_button(ui, ActionButtonRole::Secondary, "Paste setup JSON").clicked() {
                     next_mode = Some(ProfilesScreenMode::ImportPublicDevTunnel(PublicTunnelImportDraft::default()));
+                }
+                if action_button(ui, ActionButtonRole::Secondary, "Set up a host…").clicked() {
+                    next_mode = Some(ProfilesScreenMode::HostSetup(HostSetupDraft::default()));
                 }
                 ui.add_enabled_ui(draft.original_id.is_none(), |ui| {
                     profile_text_edit(ui, tab_id, "tunnel_name", "Name", &mut draft.name);
@@ -1811,6 +1900,124 @@ mod tests {
                 command: None,
             },
         )
+    }
+
+    fn host_setup_harness(
+        platform: festerm_host_setup::HostPlatform,
+    ) -> Harness<'static, ProfilesHarnessState> {
+        let mut harness = profiles_harness(Configuration::empty());
+        let tab = harness.state().tab_id;
+        harness.ctx.data_mut(|data| {
+            data.insert_temp(
+                profiles_state_id(tab),
+                ProfilesScreenState {
+                    mode: ProfilesScreenMode::HostSetup(HostSetupDraft {
+                        platform,
+                        ..HostSetupDraft::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+        });
+        harness.run();
+        harness
+    }
+
+    fn host_setup_draft(harness: &Harness<'static, ProfilesHarnessState>) -> HostSetupDraft {
+        let tab = harness.state().tab_id;
+        let state = harness
+            .ctx
+            .data(|data| data.get_temp::<ProfilesScreenState>(profiles_state_id(tab)))
+            .unwrap();
+        let ProfilesScreenMode::HostSetup(draft) = state.mode else {
+            panic!("host setup mode");
+        };
+        draft
+    }
+
+    #[test]
+    fn host_setup_toggles_change_the_generated_command() {
+        use festerm_host_setup::HostPlatform;
+        let mut harness = host_setup_harness(HostPlatform::Linux);
+        assert!(host_setup_draft(&harness).options.takeover);
+        assert!(!host_setup_draft(&harness)
+            .command()
+            .contains("--no-takeover"));
+
+        harness
+            .get_by_label("Allow a remote device to take over an attached session")
+            .click();
+        harness.run();
+        harness
+            .get_by_label("Install missing dependencies (apt/dnf, uses sudo)")
+            .click();
+        harness.run();
+        let command = host_setup_draft(&harness).command();
+        assert!(command.contains("--no-takeover"), "{command}");
+        assert!(command.contains("--install-dependencies"), "{command}");
+        assert!(command.contains(festerm_host_setup::VERSION));
+    }
+
+    #[test]
+    fn host_setup_dependency_toggle_is_linux_only_and_windows_uses_its_flag() {
+        use festerm_host_setup::HostPlatform;
+        for platform in [HostPlatform::MacOs, HostPlatform::Windows] {
+            let harness = host_setup_harness(platform);
+            assert!(harness
+                .query_by_label("Install missing dependencies (apt/dnf, uses sudo)")
+                .is_none());
+        }
+        let mut harness = host_setup_harness(HostPlatform::Windows);
+        harness
+            .get_by_label("Allow a remote device to take over an attached session")
+            .click();
+        harness.run();
+        assert!(host_setup_draft(&harness)
+            .command()
+            .ends_with(" -NoTakeover"));
+    }
+
+    #[test]
+    fn host_setup_view_script_requests_the_selected_platforms_script_only() {
+        use festerm_host_setup::HostPlatform;
+        let mut harness = host_setup_harness(HostPlatform::Linux);
+        harness.get_by_label("Windows").click();
+        harness.run();
+        assert!(harness.state().command.is_none());
+        harness.get_by_label("View script").click();
+        harness.run();
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::OpenHostSetupScript {
+                platform: HostPlatform::Windows
+            })
+        ));
+    }
+
+    #[test]
+    fn host_setup_copy_command_and_copy_script_put_exact_text_on_the_clipboard() {
+        use festerm_host_setup::HostPlatform;
+        for (label, expected) in [
+            (
+                "Copy command",
+                festerm_host_setup::install_command(
+                    HostPlatform::Linux,
+                    festerm_host_setup::InstallOptions::default(),
+                ),
+            ),
+            ("Copy script", HostPlatform::Linux.script().to_owned()),
+        ] {
+            let mut harness = host_setup_harness(HostPlatform::Linux);
+            harness.get_by_label(label).click();
+            let mut copied = false;
+            for _ in 0..4 {
+                harness.step();
+                copied |= harness.output().platform_output.commands.iter().any(
+                    |command| matches!(command, egui::OutputCommand::CopyText(text) if *text == expected),
+                );
+            }
+            assert!(copied, "{label}");
+        }
     }
 
     #[test]
