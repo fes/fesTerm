@@ -998,10 +998,10 @@ pub(crate) fn show_profiles(
                         "The script you can view is the exact installer shipped with this version of fesTerm, and the command pins the host bundle to this version. Review it before you run it.",
                     );
                     ui.horizontal_wrapped(|ui| {
-                        if action_button(ui, ActionButtonRole::Accent, "Copy command").clicked() {
+                        if action_button(ui, ActionButtonRole::Secondary, "Copy command").clicked() {
                             ui.ctx().copy_text(draft.command());
                         }
-                        if action_button(ui, ActionButtonRole::Secondary, "View script").clicked() {
+                        if action_button(ui, ActionButtonRole::Accent, "View script").clicked() {
                             command = Some(AppCommand::OpenHostSetupScript {
                                 platform: draft.platform,
                             });
