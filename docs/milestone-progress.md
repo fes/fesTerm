@@ -144,6 +144,16 @@ through those paths, ordinary saves and buffer reuse. Replacement-parent
 identity is checked before opening a child, while legitimate regular-file
 replacement and dirty-buffer conflict handling remain supported.
 
+## v0.13.0: in-app host setup and ephemeral Dev Tunnel connect
+
+This release adds the reviewable "Set up a Dev Tunnel host" panel (embedded
+installer scripts pinned to the app version, copy command, copy or view
+script), a compact ephemeral Dev Tunnel connect form in New Session
+(takeover default on, optional save as profile), a profile editor aligned
+with it, and clearer device-code and View script buttons. The iOS app gains
+the matching host-setup sheet, SSH/SFTP/Dev Tunnel flows and app lock;
+iOS is not distributed through this release.
+
 ## v0.12.0: Dev Tunnel one-line setup, deliberate takeover, and the iOS app
 
 This release packages the per-user Dev Tunnel host one-line installers and
