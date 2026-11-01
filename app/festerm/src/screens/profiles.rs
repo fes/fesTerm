@@ -780,7 +780,8 @@ fn dev_tunnel_card(ui: &mut Ui, title: &str, add_contents: impl FnOnce(&mut Ui))
                 .corner_radius(8.0)
                 .inner_margin(egui::Margin::same(16)),
             |ui| {
-                ui.set_width(340.0_f32.min((ui.available_width() - 2.0).max(0.0)));
+                let width = (ui.available_width() - 2.0).clamp(0.0, 720.0);
+                ui.set_width(width);
                 add_contents(ui);
             },
         );
@@ -1026,22 +1027,30 @@ pub(crate) fn show_profiles(
             show_bounded_content_scroll(ui, (tab_id, "edit_dev_tunnel_profile"), |ui| {
                 dev_tunnel_card(ui, if draft.original_id.is_some() { "Edit Dev Tunnel Profile" } else { "New Dev Tunnel Profile" }, |ui| {
                 ssh_section_heading(ui, "Profile · Experimental");
-                #[cfg(feature = "experimental-dev-tunnels")]
-                if draft.original_id.is_none() && action_button(ui, ActionButtonRole::Secondary, "Paste setup JSON").clicked() {
-                    next_mode = Some(ProfilesScreenMode::ImportPublicDevTunnel(PublicTunnelImportDraft::default()));
-                }
-                if action_button(ui, ActionButtonRole::Secondary, "Set up a host…").clicked() {
-                    next_mode = Some(ProfilesScreenMode::HostSetup(HostSetupDraft::default()));
-                }
+                ui.horizontal_wrapped(|ui| {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    if draft.original_id.is_none() && action_button(ui, ActionButtonRole::Secondary, "Paste setup JSON").clicked() {
+                        next_mode = Some(ProfilesScreenMode::ImportPublicDevTunnel(PublicTunnelImportDraft::default()));
+                    }
+                    if action_button(ui, ActionButtonRole::Secondary, "Set up a host…").clicked() {
+                        next_mode = Some(ProfilesScreenMode::HostSetup(HostSetupDraft::default()));
+                    }
+                });
+                ui.add_space(10.0);
                 ui.add_enabled_ui(draft.original_id.is_none(), |ui| {
-                    profile_text_edit(ui, tab_id, "tunnel_name", "Name", &mut draft.name);
+                    labeled_text_edit(ui, ("profiles_form", tab_id, "tunnel_name"), "Profile name", &mut draft.name, FieldOptions::stacked().hint("Build box"));
                 });
                 if !draft.legacy {
-                    profile_text_edit(ui, tab_id, "native_tunnel", "Tunnel", &mut draft.tunnel);
+                    ui.add_space(8.0);
+                    labeled_text_edit(ui, ("profiles_form", tab_id, "native_tunnel"), "Tunnel name or id", &mut draft.tunnel, FieldOptions::stacked().hint("abc123.use"));
+                    ui.add_space(14.0);
+                    ui.separator();
+                    ui.add_space(14.0);
+                    ssh_section_heading(ui, "GitHub account");
                     let current = draft.original_id.as_deref().and_then(|id| configuration.profile(id));
                     let saved = draft.build().ok().as_ref() == current && current.is_some();
                     let selected = draft.account.as_deref().and_then(|key| configuration.account(key));
-                    egui::ComboBox::from_label("Account")
+                    egui::ComboBox::from_id_salt(("profile_tunnel_account", tab_id))
                         .selected_text(selected.map(|account| format!("GitHub · {}", account.login()))
                             .unwrap_or_else(|| "Not signed in".into()))
                         .show_ui(ui, |ui| {
@@ -1064,6 +1073,9 @@ pub(crate) fn show_profiles(
                             }
                         }
                     });
+                    ui.add_space(14.0);
+                    ui.separator();
+                    ui.add_space(12.0);
                     ui.horizontal_wrapped(|ui| {
                         let enabled = saved && cfg!(feature = "experimental-dev-tunnels");
                         if action_button_enabled(ui, cfg!(feature = "experimental-dev-tunnels") && !draft.tunnel.trim().is_empty(), ActionButtonRole::Accent, "Save & connect").clicked() {
@@ -2211,7 +2223,7 @@ mod tests {
         let mut harness = profiles_harness(Configuration::new(vec![profile]).unwrap());
         harness.run();
         click_profile_action(&mut harness, "owned", "Edit");
-        harness.get_by_label("Tunnel");
+        harness.get_by_label("Tunnel name or id");
         harness.get_by_label("Add GitHub account").click();
         harness.run();
         assert!(matches!(
@@ -2219,8 +2231,10 @@ mod tests {
             Some(AppCommand::AddDevTunnelAccount)
         ));
         harness.state_mut().command = None;
-        harness.get_by_label("Tunnel").click();
-        harness.get_by_label("Tunnel").type_text("-changed");
+        harness.get_by_label("Tunnel name or id").click();
+        harness
+            .get_by_label("Tunnel name or id")
+            .type_text("-changed");
         harness.run();
         harness.get_by_label("Save & connect signs in, saves, and connects in one step.");
         harness.get_by_label("Save & connect").click();
