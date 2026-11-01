@@ -2177,7 +2177,7 @@ checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "festerm"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "accesskit",
  "bytemuck",
@@ -2235,7 +2235,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-config"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "festerm-pty",
  "festerm-secret-store",
@@ -2248,7 +2248,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-core"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "compact_str",
  "criterion",
@@ -2263,18 +2263,18 @@ dependencies = [
 
 [[package]]
 name = "festerm-document"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "regex",
 ]
 
 [[package]]
 name = "festerm-host-setup"
-version = "0.12.0"
+version = "0.13.0"
 
 [[package]]
 name = "festerm-ios-lock"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "block2 0.6.2",
  "libc",
@@ -2290,7 +2290,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-ios-window"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "block2 0.6.2",
  "objc2 0.6.4",
@@ -2301,7 +2301,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-linux-power"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "futures-util",
  "tokio",
@@ -2310,7 +2310,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-macos-window"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
@@ -2319,7 +2319,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-markdown"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "festerm-syntax",
  "pulldown-cmark",
@@ -2328,7 +2328,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-mobile"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "eframe",
  "egui_kittest",
@@ -2357,14 +2357,14 @@ dependencies = [
 
 [[package]]
 name = "festerm-mobile-docs"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "festerm-markdown",
 ]
 
 [[package]]
 name = "festerm-mobile-profiles"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "festerm-secret-store",
  "festerm-ssh",
@@ -2378,7 +2378,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-mobile-tunnels"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "festerm-core",
  "festerm-mobile-profiles",
@@ -2396,7 +2396,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-pty"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "festerm-session",
  "festerm-windows-job",
@@ -2408,7 +2408,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-pty-test-child"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "festerm-test-support",
  "serde_json",
@@ -2418,7 +2418,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-secret-store"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "apple-native-keyring-store",
  "keyring-core",
@@ -2433,7 +2433,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-serial"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "festerm-session",
  "serialport",
@@ -2441,11 +2441,11 @@ dependencies = [
 
 [[package]]
 name = "festerm-session"
-version = "0.12.0"
+version = "0.13.0"
 
 [[package]]
 name = "festerm-sessiond"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "bincode",
  "festerm-core",
@@ -2472,7 +2472,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-sftp"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "festerm-session",
  "festerm-ssh",
@@ -2483,7 +2483,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-ssh"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "festerm-secret-store",
  "festerm-session",
@@ -2497,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-syntax"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "tree-sitter",
  "tree-sitter-bash",
@@ -2516,14 +2516,14 @@ dependencies = [
 
 [[package]]
 name = "festerm-test-support"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "festerm-core",
 ]
 
 [[package]]
 name = "festerm-tunnel-bridge"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "festerm-core",
  "festerm-session",
@@ -2547,7 +2547,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-tunnel-client"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "http",
  "reqwest 0.13.5",
@@ -2564,7 +2564,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-ui-egui"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "compact_str",
  "criterion",
@@ -2584,7 +2584,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-unix-security"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "nix 0.31.3",
  "xattr",
@@ -2592,7 +2592,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-windows-direct2d"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "cc",
  "egui",
@@ -2604,28 +2604,28 @@ dependencies = [
 
 [[package]]
 name = "festerm-windows-job"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "festerm-windows-power"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "festerm-windows-runtime"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "festerm-windows-security"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "tracing",
  "windows-sys 0.61.2",
