@@ -26,7 +26,7 @@ fn git_fact(arguments: &[&str]) -> String {
         .to_owned()
 }
 
-const STATES: [&str; 25] = [
+const STATES: [&str; 28] = [
     "profiles",
     "profiles-empty",
     "terminal",
@@ -52,6 +52,9 @@ const STATES: [&str; 25] = [
     "settings-lock",
     "signin",
     "taken-over",
+    "host-setup",
+    "host-setup-linux",
+    "host-script",
 ];
 
 fn fixture_rows() -> Vec<model::Profile> {
@@ -365,6 +368,16 @@ fn configure(app: &mut MobileApp, state: &str) {
                 },
             });
         }
+        "host-setup" | "host-setup-linux" | "host-script" => {
+            app.editor.open_new();
+            app.editor.kind_index = 1;
+            app.editor.name = "build-box".to_owned();
+            app.host_setup.open();
+            app.host_setup.platform_index = if state == "host-setup" { 0 } else { 1 };
+            app.host_setup.install_dependencies = state == "host-setup-linux";
+            app.host_setup.takeover = state != "host-setup-linux";
+            app.host_setup.viewing = state == "host-script";
+        }
         "editor-edit" => {
             let id = app
                 .profiles
@@ -443,6 +456,9 @@ fn capture_mobile_ui_gallery() {
                     | "files-conflict"
                     | "unlock"
                     | "settings-lock"
+                    | "host-setup"
+                    | "host-setup-linux"
+                    | "host-script"
             ) {
                 0.0
             } else {
@@ -467,7 +483,7 @@ fn capture_mobile_ui_gallery() {
                 .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
             harness.remove_cursor();
             // Live transfer rows request repaints for their progress clock.
-            if state.starts_with("files-") {
+            if state.starts_with("files-") || state.starts_with("host-setup") {
                 harness.run_steps(3);
             } else {
                 harness.run();

@@ -58,6 +58,7 @@ pub enum ShellAction {
     OpenSurface(u64),
     Reattach(usize),
     OpenDemo,
+    OpenHostSetup,
     ShowSessions,
     HideSessions,
     OpenProfilesTab,
@@ -354,6 +355,16 @@ fn settings_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAct
             }
         });
     }
+    section_header(ui, "Dev Tunnel hosts", None, false);
+    card(ui, |ui| {
+        let mut row = RowSpec::new("Set up a host");
+        row.icon = Some(Icon::DevTunnel);
+        row.subtitle = Some("Review and copy the one-line installer");
+        row.trailing = Trailing::Chevron;
+        if list_row(ui, &row).clicked() {
+            actions.push(ShellAction::OpenHostSetup);
+        }
+    });
     section_header(
         ui,
         "Trusted hosts",

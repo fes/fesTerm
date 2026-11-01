@@ -178,6 +178,15 @@ content is hidden until unlock, and Settings has the App lock section.
 Not verified on the simulator: a full GitHub approval and a real bridge host
 (covered by the scripted in-memory relay tests in `tunnel_tests.rs`).
 
+### Dev Tunnel host setup (ADR 0063)
+
+`host_setup.rs` renders "Set up a host" from the Dev Tunnel editor and from
+Settings. It builds the one-line installer command with `festerm-host-setup`
+(platform, takeover default on, Linux-only dependencies), copies it through the
+iOS pasteboard, and opens the exact embedded installer in a read-only
+monospace viewer with Copy script. The app never runs or fetches the script.
+Gallery states: `host-setup`, `host-setup-linux`, `host-script`.
+
 ### Files and SFTP (ADR 0060)
 
 `files.rs` / `files_ui.rs` / `files_shell.rs` implement the Files screen

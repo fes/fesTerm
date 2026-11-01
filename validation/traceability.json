@@ -3416,7 +3416,8 @@
         "docs/adr/0058-ios-app-lock-and-mobile-document-viewer.md#decision",
         "docs/adr/0059-ios-profiles-sessions-and-persisted-trust.md#decision",
         "docs/adr/0060-ios-files-screen-and-sftp-profiles.md#decision",
-        "docs/adr/0061-ios-dev-tunnel-profiles-and-app-lock-wiring.md#decision"
+        "docs/adr/0061-ios-dev-tunnel-profiles-and-app-lock-wiring.md#decision",
+        "docs/adr/0063-ios-dev-tunnel-host-setup-sheet.md#decision"
       ],
       "decisions": [
         "ADR-0031",
@@ -3427,9 +3428,13 @@
         "ADR-0058",
         "ADR-0059",
         "ADR-0060",
-        "ADR-0061"
+        "ADR-0061",
+        "ADR-0063"
       ],
       "automated_tests": [
+        "takeover_defaults_on_and_off_adds_the_flag",
+        "dependencies_apply_to_linux_only",
+        "viewer_shows_the_exact_embedded_script",
         "return_and_tab_reported_as_characters_are_replayed_as_named_keys",
         "trusted_tunnel_attaches_into_a_tab_with_the_hosts_screen",
         "an_unapproved_host_waits_for_a_decision_before_attaching",
