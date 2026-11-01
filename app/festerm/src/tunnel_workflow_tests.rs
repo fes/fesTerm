@@ -128,7 +128,7 @@ fn native_auth_device_code_button_copies_and_opens_github_only_on_explicit_activ
                 egui::Shape::Text(text) if text.galley.job.text == "ABCD-1234" => {
                     assert!(text.galley.job.sections.iter().all(|section| {
                         section.format.font_id.family == egui::FontFamily::Monospace
-                            && section.format.color == festerm_ui_egui::theme::TEXT_PRIMARY
+                            && section.format.color == festerm_ui_egui::theme::TEXT_ON_ACCENT
                     }));
                     Some(text.galley.rect.translate(text.pos.to_vec2()).center())
                 }
