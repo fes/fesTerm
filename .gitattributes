@@ -1,5 +1,5 @@
 *.sh text eol=lf
-*.ps1 text eol=lf
+scripts/install-dev-tunnel.ps1 text eol=lf
 
 # Bundled font assets are pinned by sha256 in per-family manifests. Prevent
 # Windows autocrlf conversion from changing checksummed licenses/build plans,
