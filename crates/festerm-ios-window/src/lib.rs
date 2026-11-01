@@ -3,7 +3,10 @@
 #[cfg(target_os = "ios")]
 mod ios;
 #[cfg(target_os = "ios")]
-pub use ios::{clipboard_text, open_url, set_clipboard_text, KeyboardBridge};
+pub use ios::{
+    attach_scene_windows, clipboard_text, open_url, register_scene_delegate, set_clipboard_text,
+    KeyboardBridge, SCENE_DELEGATE_CLASS,
+};
 
 #[cfg(not(target_os = "ios"))]
 pub struct KeyboardBridge;
@@ -20,6 +23,16 @@ impl KeyboardBridge {
     pub fn occluded_height_fraction(&self) -> f32 {
         0.0
     }
+}
+
+/// No UIScene exists off iOS.
+#[cfg(not(target_os = "ios"))]
+pub fn attach_scene_windows() {}
+
+/// No UIScene delegate exists off iOS.
+#[cfg(not(target_os = "ios"))]
+pub fn register_scene_delegate() -> bool {
+    false
 }
 
 /// The system pasteboard text; always `None` off iOS. Reading may prompt the
