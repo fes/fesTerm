@@ -271,15 +271,15 @@ impl LauncherItem<'_> {
 
     fn command(&self) -> AppCommand {
         match self.kind {
-            LauncherItemKind::NewDevTunnel => AppCommand::CreateProfile {
-                kind: NewProfileKind::DevTunnel,
-            },
+            LauncherItemKind::NewDevTunnel => {
+                unreachable!("the Dev Tunnel item opens the Dev Tunnel form, not an AppCommand")
+            }
             LauncherItemKind::DevTunnelProfile(profile_id) => {
                 AppCommand::StartConfiguredDevTunnelProfile {
                     profile_id: profile_id.to_owned(),
                 }
             }
-            LauncherItemKind::RunningTunnel(row) => AppCommand::SaveAndConnectRunningDevTunnel {
+            LauncherItemKind::RunningTunnel(row) => AppCommand::ConnectRunningDevTunnel {
                 locator: row.locator.clone(),
             },
             LauncherItemKind::LocalDefault => {
@@ -1291,6 +1291,8 @@ struct LauncherState {
     sftp_profile_prefilled: bool,
     serial_open: bool,
     serial: SerialLauncherForm,
+    tunnel_open: bool,
+    tunnel: DevTunnelLauncherForm,
     /// Filters the Saved Profiles table by name, type, or host/path.
     profile_search: String,
     profile_sort: ProfileSortOrder,
@@ -1321,6 +1323,8 @@ impl Default for LauncherState {
             sftp_profile_prefilled: false,
             serial_open: false,
             serial: SerialLauncherForm::default(),
+            tunnel_open: false,
+            tunnel: DevTunnelLauncherForm::default(),
             profile_search: String::new(),
             profile_sort: ProfileSortOrder::default(),
             pending_form: None,
@@ -2146,6 +2150,210 @@ fn show_ssh_form(
                     }
                 });
             }
+        },
+    );
+    result
+}
+
+/// The inline form behind the New Session "Dev Tunnel" card. Connecting is
+/// ephemeral; a profile is saved only when `save_profile` is checked.
+#[derive(Clone)]
+struct DevTunnelLauncherForm {
+    tunnel: String,
+    account: Option<String>,
+    account_initialized: bool,
+    takeover: bool,
+    save_profile: bool,
+    name: String,
+    feedback: Option<String>,
+    focus_tunnel: bool,
+}
+
+impl Default for DevTunnelLauncherForm {
+    fn default() -> Self {
+        Self {
+            tunnel: String::new(),
+            account: None,
+            account_initialized: false,
+            takeover: true,
+            save_profile: false,
+            name: String::new(),
+            feedback: None,
+            focus_tunnel: false,
+        }
+    }
+}
+
+impl DevTunnelLauncherForm {
+    fn submit(&self) -> Result<AppCommand, String> {
+        let tunnel = self.tunnel.trim();
+        if tunnel.is_empty() {
+            return Err("Enter a tunnel name or id, or pick one from the list.".to_owned());
+        }
+        let save_as = if self.save_profile {
+            let name = self.name.trim();
+            if name.is_empty() {
+                return Err("Enter a name for the profile.".to_owned());
+            }
+            Some(name.to_owned())
+        } else {
+            None
+        };
+        Ok(AppCommand::ConnectDevTunnelForm {
+            tunnel: tunnel.to_owned(),
+            account: self.account.clone(),
+            takeover: self.takeover,
+            save_as,
+        })
+    }
+}
+
+fn show_dev_tunnel_form(
+    ui: &mut Ui,
+    tab_id: TabId,
+    form: &mut DevTunnelLauncherForm,
+    configuration: &Configuration,
+    running_tunnels: &[RunningTunnelRow],
+) -> Option<AppCommand> {
+    ui.add_space(16.0);
+    if !form.account_initialized {
+        form.account_initialized = true;
+        form.account = configuration
+            .accounts()
+            .first()
+            .map(|account| account.identifier().to_owned());
+    }
+    let focus_tunnel = std::mem::take(&mut form.focus_tunnel);
+    let mut result = None;
+    crate::software_background::show_frame(
+        ui,
+        egui::Frame::new()
+            .fill(theme::SURFACE_TAB_INACTIVE)
+            .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+            .corner_radius(8.0)
+            .inner_margin(egui::Margin::same(16)),
+        |ui| {
+            let card_width = ui.available_width().clamp(340.0, 720.0);
+            ui.set_min_width(card_width);
+            ui.set_max_width(card_width);
+            let mut submit_with_enter = false;
+
+            ssh_section_heading(ui, "GitHub account");
+            let selected = form
+                .account
+                .as_deref()
+                .and_then(|key| configuration.account(key));
+            egui::ComboBox::from_id_salt(("launcher_tunnel_account", tab_id))
+                .selected_text(
+                    selected
+                        .map(|account| format!("GitHub · {}", account.login()))
+                        .unwrap_or_else(|| "Not signed in".to_owned()),
+                )
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut form.account, None, "Not signed in");
+                    for account in configuration.accounts() {
+                        ui.selectable_value(
+                            &mut form.account,
+                            Some(account.identifier().to_owned()),
+                            format!("GitHub · {}", account.login()),
+                        );
+                    }
+                });
+            ui.add_space(6.0);
+            if launcher_text_button(ui, "Add GitHub account", None, false).clicked() {
+                result = Some(AppCommand::AddDevTunnelAccount);
+            }
+            if form.account.is_none() {
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new("Not signed in: Connect asks you to sign in with GitHub.")
+                        .size(11.0)
+                        .color(theme::TEXT_SECONDARY),
+                );
+            }
+
+            ui.add_space(14.0);
+            ui.separator();
+            ui.add_space(14.0);
+            if !running_tunnels.is_empty() {
+                ssh_section_heading(ui, "My running Dev Tunnels");
+                for row in running_tunnels {
+                    if ui
+                        .selectable_label(form.tunnel == row.locator, &row.label)
+                        .clicked()
+                    {
+                        form.tunnel = row.locator.clone();
+                        form.feedback = None;
+                    }
+                }
+                ui.add_space(10.0);
+            }
+            let heading = ui.label(
+                egui::RichText::new("Tunnel name or id")
+                    .size(11.0)
+                    .color(theme::TEXT_MUTED),
+            );
+            ui.add_space(4.0);
+            let response = ui.add(
+                TextEdit::singleline(&mut form.tunnel)
+                    .id(ui.make_persistent_id(("launcher_tunnel", tab_id, "tunnel")))
+                    .desired_width(f32::INFINITY)
+                    .hint_text("abc123.use"),
+            );
+            let response = response.labelled_by(heading.id);
+            if focus_tunnel {
+                response.request_focus();
+            }
+            submit_with_enter |=
+                response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+
+            ui.add_space(14.0);
+            ui.separator();
+            ui.add_space(14.0);
+            ui.checkbox(&mut form.takeover, "Allow takeover of an attached session");
+            ui.label(
+                egui::RichText::new("The host's own takeover setting still applies.")
+                    .size(11.0)
+                    .color(theme::TEXT_SECONDARY),
+            );
+            ui.add_space(8.0);
+            ui.checkbox(&mut form.save_profile, "Save as profile");
+            if form.save_profile {
+                ui.add_space(4.0);
+                let heading = ui.label(
+                    egui::RichText::new("Profile name")
+                        .size(11.0)
+                        .color(theme::TEXT_MUTED),
+                );
+                let response = ui.add(
+                    TextEdit::singleline(&mut form.name)
+                        .id(ui.make_persistent_id(("launcher_tunnel", tab_id, "name")))
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Build box"),
+                );
+                let response = response.labelled_by(heading.id);
+                submit_with_enter |=
+                    response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            }
+
+            ui.add_space(14.0);
+            ui.separator();
+            ui.add_space(12.0);
+            if let Some(feedback) = &form.feedback {
+                ui.colored_label(theme::STATUS_ERROR, feedback);
+                ui.add_space(8.0);
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if launcher_text_button(ui, "Connect", None, true).clicked() || submit_with_enter {
+                    match form.submit() {
+                        Ok(command) => {
+                            form.feedback = None;
+                            result = Some(command);
+                        }
+                        Err(feedback) => form.feedback = Some(feedback),
+                    }
+                }
+            });
         },
     );
     result
@@ -3675,6 +3883,51 @@ pub fn show_launcher(
         return command;
     }
 
+    if state.tunnel_open {
+        let mut command = None;
+        let mut back_clicked = false;
+        show_bounded_content_scroll(ui, (tab_id, "dev_tunnel_connection_surface"), |ui| {
+            ui.vertical(|ui| {
+                ui.add_space(24.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(34.0);
+                    ui.vertical(|ui| {
+                        if ssh_back_button(ui).clicked() {
+                            back_clicked = true;
+                        }
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new("Connect to a Dev Tunnel")
+                                .size(24.0)
+                                .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.label(
+                            egui::RichText::new(
+                                "Connecting does not save a profile unless you choose to.",
+                            )
+                            .size(11.0)
+                            .color(theme::TEXT_SECONDARY),
+                        );
+                        if !back_clicked {
+                            command = show_dev_tunnel_form(
+                                ui,
+                                tab_id,
+                                &mut state.tunnel,
+                                configuration,
+                                running_tunnels,
+                            );
+                        }
+                    });
+                });
+            });
+        });
+        if back_clicked || ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+            state.tunnel_open = false;
+        }
+        ui.data_mut(|data| data.insert_temp(state_id, state));
+        return command;
+    }
+
     if state.serial_open {
         let mut command = None;
         let mut back_clicked = false;
@@ -3997,6 +4250,9 @@ pub fn show_launcher(
             state.sftp.focus_username = true;
         } else if matches!(items[state.selected].kind, LauncherItemKind::NewSerial) {
             state.serial_open = true;
+        } else if matches!(items[state.selected].kind, LauncherItemKind::NewDevTunnel) {
+            state.tunnel_open = true;
+            state.tunnel.focus_tunnel = true;
         } else {
             command = Some(items[state.selected].command());
         }
@@ -4023,6 +4279,10 @@ pub fn show_launcher(
                 state.sftp.focus_username = true;
             }
             LauncherForm::Serial => state.serial_open = true,
+            LauncherForm::DevTunnel => {
+                state.tunnel_open = true;
+                state.tunnel.focus_tunnel = true;
+            }
         }
     }
 
@@ -4037,6 +4297,7 @@ enum LauncherForm {
     Ssh,
     Sftp,
     Serial,
+    DevTunnel,
 }
 
 /// Lays the launch cards out in equal columns, wrapping to as many rows as
@@ -4092,6 +4353,9 @@ fn show_launch_card_row(
                         LauncherItemKind::NewSftp => state.pending_form = Some(LauncherForm::Sftp),
                         LauncherItemKind::NewSerial => {
                             state.pending_form = Some(LauncherForm::Serial);
+                        }
+                        LauncherItemKind::NewDevTunnel => {
+                            state.pending_form = Some(LauncherForm::DevTunnel);
                         }
                         _ => *command = Some(item.command()),
                     }
@@ -6679,7 +6943,7 @@ mod tests {
     }
 
     #[test]
-    fn a_running_dev_tunnel_row_saves_and_connects_by_locator() {
+    fn a_running_dev_tunnel_row_connects_once_by_locator() {
         let rows = vec![RunningTunnelRow {
             locator: "abc123.use".to_owned(),
             label: "build-box".to_owned(),
@@ -6716,7 +6980,139 @@ mod tests {
         harness.run();
         assert!(matches!(
             &harness.state().command,
-            Some(AppCommand::SaveAndConnectRunningDevTunnel { locator }) if locator == "abc123.use"
+            Some(AppCommand::ConnectRunningDevTunnel { locator }) if locator == "abc123.use"
+        ));
+    }
+
+    fn dev_tunnel_form_harness(
+        rows: Vec<RunningTunnelRow>,
+    ) -> Harness<'static, LauncherHarnessState> {
+        let configuration = Configuration::new(Vec::new()).expect("test configuration is valid");
+        Harness::builder()
+            .with_size(egui::vec2(1240.0, 880.0))
+            .build_ui_state(
+                move |ui, state: &mut LauncherHarnessState| {
+                    if let Some(command) = show_launcher(
+                        ui,
+                        state.tab_id,
+                        &state.configuration,
+                        true,
+                        None,
+                        false,
+                        &[],
+                        &[],
+                        &[],
+                        &rows,
+                    ) {
+                        state.command = Some(command);
+                    }
+                },
+                LauncherHarnessState {
+                    tab_id: AppState::for_test().active(),
+                    configuration,
+                    command: None,
+                },
+            )
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn the_dev_tunnel_card_opens_the_inline_form_not_the_profile_editor() {
+        let mut harness = dev_tunnel_form_harness(Vec::new());
+        harness.run();
+        harness
+            .get_by_label_contains("Dev Tunnel · Experimental")
+            .click();
+        harness.run();
+        assert!(harness.state().command.is_none());
+        assert!(harness.query_by_label("Connect to a Dev Tunnel").is_some());
+        assert!(harness.query_by_label("Connect").is_some());
+
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(harness.query_by_label("Connect to a Dev Tunnel").is_none());
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn dev_tunnel_form_connect_is_ephemeral_with_takeover_on_by_default() {
+        let mut harness = dev_tunnel_form_harness(Vec::new());
+        harness.run();
+        harness
+            .get_by_label_contains("Dev Tunnel · Experimental")
+            .click();
+        harness.run();
+        assert!(
+            harness.query_by_label("Profile name").is_none(),
+            "the profile name appears only when saving"
+        );
+        harness
+            .get_by_label("Tunnel name or id")
+            .type_text("abc123.use");
+        harness.run();
+        harness.get_by_label("Connect").click();
+        harness.run();
+        assert!(matches!(
+            &harness.state().command,
+            Some(AppCommand::ConnectDevTunnelForm { tunnel, takeover: true, save_as: None, .. })
+                if tunnel == "abc123.use"
+        ));
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn dev_tunnel_form_can_decline_takeover_and_save_a_named_profile() {
+        let mut harness = dev_tunnel_form_harness(Vec::new());
+        harness.run();
+        harness
+            .get_by_label_contains("Dev Tunnel · Experimental")
+            .click();
+        harness.run();
+        harness
+            .get_by_label("Tunnel name or id")
+            .type_text("abc123.use");
+        harness
+            .get_by_label("Allow takeover of an attached session")
+            .click();
+        harness.get_by_label("Save as profile").click();
+        harness.run();
+        harness.get_by_label("Connect").click();
+        harness.run();
+        assert!(
+            harness.state().command.is_none(),
+            "a named profile is required when saving"
+        );
+        enter_text(&mut harness, "Profile name", "build box");
+        harness.get_by_label("Connect").click();
+        harness.run();
+        assert!(matches!(
+            &harness.state().command,
+            Some(AppCommand::ConnectDevTunnelForm { takeover: false, save_as: Some(name), .. })
+                if name == "build box"
+        ));
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn dev_tunnel_form_offers_running_tunnels_and_submits_with_enter() {
+        let mut harness = dev_tunnel_form_harness(vec![RunningTunnelRow {
+            locator: "abc123.use".to_owned(),
+            label: "build-box".to_owned(),
+        }]);
+        harness.run();
+        harness
+            .get_by_label_contains("Dev Tunnel · Experimental")
+            .click();
+        harness.run();
+        harness.get_by_label("build-box").click();
+        harness.run();
+        harness.get_by_label("Tunnel name or id").focus();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert!(matches!(
+            &harness.state().command,
+            Some(AppCommand::ConnectDevTunnelForm { tunnel, save_as: None, .. })
+                if tunnel == "abc123.use"
         ));
     }
 

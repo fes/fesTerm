@@ -2097,11 +2097,22 @@ pub enum AppCommand {
     RemoveDevTunnelAccount {
         account: String,
     },
-    /// Saves a native Dev Tunnel profile and immediately connects it, signing
-    /// in first when it has no account.
-    SaveAndConnectRunningDevTunnel {
+    /// Connects a listed running tunnel once, with its account's sign-in and
+    /// without saving a profile.
+    ConnectRunningDevTunnel {
         locator: String,
     },
+    /// The New Session Dev Tunnel form's Connect. With `save_as` it saves a
+    /// profile of that name first; otherwise nothing is saved. `takeover`
+    /// asks the host to displace an attached client.
+    ConnectDevTunnelForm {
+        tunnel: String,
+        account: Option<String>,
+        takeover: bool,
+        save_as: Option<String>,
+    },
+    /// Saves a native Dev Tunnel profile and immediately connects it, signing
+    /// in first when it has no account.
     SaveAndConnectDevTunnel {
         profile: festerm_config::Profile,
     },
@@ -3831,7 +3842,8 @@ impl AppState {
             | AppCommand::AddDevTunnelAccount
             | AppCommand::RemoveDevTunnelAccount { .. }
             | AppCommand::SaveAndConnectDevTunnel { .. }
-            | AppCommand::SaveAndConnectRunningDevTunnel { .. }
+            | AppCommand::ConnectRunningDevTunnel { .. }
+            | AppCommand::ConnectDevTunnelForm { .. }
             | AppCommand::NativeDevTunnel { .. }
             | AppCommand::StartConfiguredDevTunnelProfile { .. }
             | AppCommand::StoreProfilePrivateKey { .. }

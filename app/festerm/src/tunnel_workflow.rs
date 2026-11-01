@@ -152,6 +152,10 @@ pub(super) struct Workflow {
     stage: Stage,
     connect: bool,
     remember: bool,
+    /// An ephemeral workflow's profile exists only in memory: nothing is
+    /// saved, and the connection is not attributed to a saved profile.
+    ephemeral: bool,
+    takeover: bool,
     focus_cancel: bool,
     ready: Option<Box<Prepared>>,
     _slot: Option<Arc<WorkerSlot>>,
@@ -181,6 +185,8 @@ impl Workflow {
         sign_in: bool,
         remember: bool,
         connect: bool,
+        ephemeral: bool,
+        takeover: bool,
         extend_days: Option<u32>,
         context: &egui::Context,
     ) -> Self {
@@ -194,6 +200,8 @@ impl Workflow {
             stage: Stage::Working,
             connect,
             remember,
+            ephemeral,
+            takeover,
             focus_cancel: true,
             ready: None,
             _slot: None,
@@ -222,7 +230,7 @@ impl Workflow {
                     context.request_repaint();
                     sent
                 };
-                let result = profile_identity_lease(account.as_ref(), remember).and_then(|lease| {
+                let result = profile_identity_lease(account.as_ref(), remember || ephemeral).and_then(|lease| {
                     if let Some(lease) = lease {
                         _slot.identity_lease.set(lease).map_err(|_| Error::Busy)?;
                     }
@@ -233,7 +241,7 @@ impl Workflow {
                         tokio::select! {
                             _ = cancel.cancelled() => Err(Error::Cancelled),
                             _ = tokio::time::sleep(Duration::from_secs(1800)) => Err(Error::Expired),
-                            value = prepare(expected, account, store, client_id, sign_in, remember, extend_days, &cancel, &notify) => value.map(Box::new),
+                            value = prepare(expected, account, store, client_id, sign_in, remember, ephemeral, extend_days, &cancel, &notify) => value.map(Box::new),
                         }
                     }));
                 notify(Event::Complete(result));
@@ -254,6 +262,7 @@ async fn prepare(
     client_id: &str,
     force_sign_in: bool,
     remember: bool,
+    reuse_account: bool,
     extend_days: Option<u32>,
     cancel: &CancellationToken,
     notify: &impl Fn(Event) -> bool,
@@ -261,7 +270,7 @@ async fn prepare(
     let profile = expected.as_dev_tunnel().ok_or(Error::Tunnel)?;
     let name = profile.tunnel_name().ok_or(Error::Tunnel)?;
     let http = Https::new()?;
-    let new_account = force_sign_in || account.is_none() || !remember;
+    let new_account = force_sign_in || account.is_none() || !(remember || reuse_account);
     let identity = if new_account {
         identity::sign_in(&http, client_id, None, cancel, |prompt| {
             if !notify(Event::Device(prompt)) {
@@ -535,6 +544,55 @@ impl FesTermApp {
                 return;
             }
         };
+        self.start_native_workflow(
+            profile, store, sign_in, remember, connect, false, true, context,
+        );
+    }
+
+    /// Connects to `tunnel` once without saving a profile or any credential.
+    /// With a signed-in `account` its stored sign-in is reused; otherwise the
+    /// device-code sign-in runs and is discarded afterwards.
+    pub(super) fn connect_dev_tunnel_once(
+        &mut self,
+        tunnel: &str,
+        account: Option<String>,
+        takeover: bool,
+        context: &egui::Context,
+    ) {
+        if self.native_tunnel.is_some() {
+            return;
+        }
+        let account = account.filter(|key| self.state.configuration().account(key).is_some());
+        let Ok(profile) = Profile::named_dev_tunnel("Dev Tunnel (not saved)", tunnel.trim())
+            .and_then(|profile| profile.with_tunnel_account_selection(account.clone()))
+        else {
+            self.secure_storage_feedback = Some("Enter a valid Dev Tunnel name or id.");
+            return;
+        };
+        let store = match (&self.secret_store, account.is_some()) {
+            (Ok(store), _) => Arc::clone(store),
+            (Err(_), false) => Arc::new(festerm_secret_store::MemorySecretStore::new()),
+            (Err(_), true) => {
+                self.secure_storage_feedback =
+                    Some("Secure storage unavailable. Sign-in could not be reused.");
+                return;
+            }
+        };
+        self.start_native_workflow(profile, store, false, false, true, true, takeover, context);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_native_workflow(
+        &mut self,
+        profile: Profile,
+        store: Arc<dyn SecretStore>,
+        sign_in: bool,
+        remember: bool,
+        connect: bool,
+        ephemeral: bool,
+        takeover: bool,
+        context: &egui::Context,
+    ) {
         let account = profile
             .as_dev_tunnel()
             .and_then(|profile| profile.account())
@@ -551,6 +609,8 @@ impl FesTermApp {
             sign_in,
             remember,
             connect,
+            ephemeral,
+            takeover,
             extend_days,
             context,
         ));
@@ -558,15 +618,29 @@ impl FesTermApp {
         context.request_repaint();
     }
 
+    /// Connects a just-saved profile with the form's takeover choice.
+    pub(super) fn begin_native_tunnel_with_takeover(
+        &mut self,
+        profile_id: String,
+        takeover: bool,
+        context: &egui::Context,
+    ) {
+        self.begin_native_tunnel(profile_id, false, true, true, context);
+        if let Some(workflow) = self.native_tunnel.as_mut() {
+            workflow.takeover = takeover;
+        }
+    }
+
     pub(super) fn poll_native_tunnel(&mut self, context: &egui::Context) {
         let Some(mut workflow) = self.native_tunnel.take() else {
             return;
         };
-        if self
-            .state
-            .configuration()
-            .profile(workflow.expected.identifier())
-            != Some(&workflow.expected)
+        if !workflow.ephemeral
+            && self
+                .state
+                .configuration()
+                .profile(workflow.expected.identifier())
+                != Some(&workflow.expected)
         {
             self.secure_storage_feedback = Some("Profile changed. Sign-in cancelled.");
             self.overlays.native_tunnel = false;
@@ -626,11 +700,12 @@ impl FesTermApp {
         let Some(mut workflow) = self.native_tunnel.take() else {
             return;
         };
-        if self
-            .state
-            .configuration()
-            .profile(workflow.expected.identifier())
-            != Some(&workflow.expected)
+        if !workflow.ephemeral
+            && self
+                .state
+                .configuration()
+                .profile(workflow.expected.identifier())
+                != Some(&workflow.expected)
         {
             self.secure_storage_feedback = Some("Profile changed. Sign-in cancelled.");
             self.overlays.native_tunnel = false;
@@ -648,9 +723,11 @@ impl FesTermApp {
                 ready.stored.references.clear();
             }
             if workflow.connect {
-                let profile_id = Some(workflow.expected.identifier().to_owned());
+                let profile_id =
+                    (!workflow.ephemeral).then(|| workflow.expected.identifier().to_owned());
+                let launch = ready.launch.with_takeover(workflow.takeover);
                 self.state
-                    .start_tunnel_launch(profile_id, move || Ok(ready.launch), context);
+                    .start_tunnel_launch(profile_id, move || Ok(launch), context);
             }
             self.overlays.native_tunnel = false;
             return;

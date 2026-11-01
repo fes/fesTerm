@@ -531,6 +531,7 @@ is logged and never blocks the connection.
 
 `show_running_dev_tunnels = true` lists the first signed-in account's running
 bridge tunnels that have no saved profile in New Session. The list is cached
-for a minute (the Running Sessions refresh button re-lists). Choosing one saves
-an unsigned profile linked to that account and connects; nothing is saved
-unless you do.
+for a minute (the Running Sessions refresh button re-lists). Choosing one
+connects once with that account's stored sign-in; no profile is saved. The
+New Session **Dev Tunnel** card opens a compact form that connects the same way
+and saves a profile only when **Save as profile** is checked.
