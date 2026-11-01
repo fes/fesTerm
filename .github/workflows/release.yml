@@ -354,7 +354,7 @@ jobs:
         shell: pwsh
         run: |
           cargo packager --config packaging/windows.toml --formats nsis --target '${{ matrix.target }}'
-          $installers = @(Get-ChildItem target/release -Filter '*-setup.exe')
+          $installers = @(Get-ChildItem target/release -Filter 'festerm_*-setup.exe')
           if ($installers.Count -ne 1) {
             throw "Expected one NSIS installer, found $($installers.Count)"
           }
