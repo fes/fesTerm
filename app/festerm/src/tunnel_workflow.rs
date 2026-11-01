@@ -755,7 +755,7 @@ impl FesTermApp {
                     ui.label("Sign in to Microsoft Dev Tunnels");
                     ui.label("Enter this code on GitHub:");
                     ui.add_space(6.0);
-                    if action_button_monospace(ui, ActionButtonRole::Secondary, &prompt.user_code)
+                    if action_button_monospace(ui, ActionButtonRole::Accent, &prompt.user_code)
                         .on_hover_text("Copy code and open GitHub")
                         .clicked()
                     {
