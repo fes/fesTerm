@@ -66,6 +66,18 @@ class TestFlightTests(unittest.TestCase):
         self.assertEqual(tf.distribution_identity(listing), "199ED63BF21520901884550CCA8DFFD062DFB3E0")
         self.assertIsNone(tf.distribution_identity(listing, "OTHER00000"))
 
+    def test_info_plist_adopts_uiscene_with_a_delegate_defined_in_rust(self):
+        # iOS 27 terminates apps without a UIScene lifecycle at launch.
+        manifest = tf.testflight_info("0.13.0", "7")["UIApplicationSceneManifest"]
+        self.assertIs(manifest["UIApplicationSupportsMultipleScenes"], False)
+        configs = manifest["UISceneConfigurations"]["UIWindowSceneSessionRoleApplication"]
+        name = configs[0]["UISceneDelegateClassName"]
+        source = (SCRIPT.parents[1] / "crates/festerm-ios-window/src/ios.rs").read_text()
+        self.assertIn(f'#[name = "{name}"]', source)
+        self.assertIn("scene:willConnectToSession:options:", source)
+        main = (SCRIPT.parents[1] / "app/festerm-mobile/src/main.rs").read_text()
+        self.assertIn("register_scene_delegate()", main)
+
     def test_icon_source_is_marketing_size(self):
         tf.check_icon()
 

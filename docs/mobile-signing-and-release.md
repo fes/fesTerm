@@ -78,6 +78,21 @@ remain: adding testers to an internal TestFlight group in App Store Connect and
 answering any export-compliance or beta-information prompts. External testing
 and App Review are out of scope.
 
+### UIScene lifecycle (required on iOS 27)
+
+iOS 27 terminates, at launch, apps linked against its SDK that do not adopt the
+UIScene lifecycle (`___UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`).
+Simulator runtimes up to 26.5 only warn, so this reproduces on iOS 27 devices
+only. winit 0.30 creates a scene-less `UIWindow` and has no app delegate, so
+the Info.plist carries a `UIApplicationSceneManifest` naming
+`FesTermSceneDelegate`, defined in `crates/festerm-ios-window` (conforms to
+`UIWindowSceneDelegate`, registered by `register_scene_delegate()` before
+`UIApplicationMain`). The scene connects before winit creates its window, so the
+host calls `attach_scene_windows()` after each `resumed` to set
+`UIWindow.windowScene`. `scripts/tests/test_ios_testflight.py` checks the
+manifest/class pairing. Verify on an iOS 27 device with
+`scripts/build-ios-device.py` and `devicectl device process launch --console`.
+
 ### Store-mediated release
 
 ADR 0021 exists because fesTerm ships its own binary and update channel with
