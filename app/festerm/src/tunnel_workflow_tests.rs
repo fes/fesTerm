@@ -218,6 +218,8 @@ fn workflow(profile: Profile, receiver: mpsc::Receiver<Event>) -> Workflow {
         stage: Stage::Working,
         connect: false,
         remember: true,
+        ephemeral: false,
+        takeover: true,
         focus_cancel: true,
         ready: None,
         _slot: None,
@@ -507,4 +509,17 @@ fn remembered_sign_ins_for_one_github_user_share_a_single_account() {
     assert_eq!(configuration.accounts().len(), 1);
     assert_eq!(configuration.account_profile_count("github-owner"), 2);
     assert!(store.get(&first_reference).is_err());
+}
+
+#[test]
+fn form_connect_without_save_as_is_ephemeral_and_keeps_the_choice_of_takeover() {
+    let mut app = FesTermApp::for_test_with_configuration(Configuration::new(Vec::new()).unwrap());
+    let context = egui::Context::default();
+    app.connect_dev_tunnel_form("owned.usw3".into(), None, false, None, &context);
+    let workflow = app.native_tunnel.as_ref().expect("a connection started");
+    assert!(workflow.ephemeral && !workflow.takeover);
+    assert!(
+        app.state.configuration().profiles().is_empty(),
+        "connecting once must not create a profile"
+    );
 }

@@ -130,6 +130,17 @@ pub fn start_client(
     token: Zeroizing<String>,
     notifier: Arc<dyn SessionEventNotifier>,
 ) -> io::Result<ClientSession> {
+    start_client_with_takeover(destination, token, notifier, true)
+}
+
+/// Like [`start_client`], but `takeover` chooses whether this client asks to
+/// displace the current holder; the host's own setting still has to allow it.
+pub fn start_client_with_takeover(
+    destination: Destination,
+    token: Zeroizing<String>,
+    notifier: Arc<dyn SessionEventNotifier>,
+    takeover: bool,
+) -> io::Result<ClientSession> {
     let (input, commands) = flume::bounded(QUEUE);
     let (output, events) = flume::bounded(QUEUE);
     let cancel = CancellationToken::new();
@@ -169,7 +180,7 @@ pub fn start_client(
             runtime.block_on(async move {
                 tokio::select! {
                     _ = stopped.cancelled() => {}
-                    _ = client_session(destination, token, commands, output, file_rx) => {}
+                    _ = client_session(destination, token, commands, output, file_rx, takeover) => {}
                 }
                 stopped.cancel();
             });
@@ -193,6 +204,7 @@ async fn client_session(
     commands: flume::Receiver<Vec<u8>>,
     output: flume::Sender<Vec<u8>>,
     files: flume::Receiver<FileCall>,
+    takeover: bool,
 ) -> io::Result<()> {
     let mut connection = tokio::time::timeout(DEADLINE, relay::connect(&destination, &token))
         .await
@@ -208,6 +220,7 @@ async fn client_session(
             read: destination.file_read,
             windows_paths: destination.path_style == crate::files::PathStyle::Windows,
         },
+        takeover,
     )
     .await
 }
@@ -219,9 +232,10 @@ async fn client_io_with_files(
     output: flume::Sender<Vec<u8>>,
     files: flume::Receiver<FileCall>,
     file_access: FileAccess,
+    takeover: bool,
 ) -> io::Result<()> {
     let hello = serde_json::to_vec(&Hello {
-        takeover: true,
+        takeover,
         files: file_access,
         version: VERSION,
         snapshot_schema: 3,
@@ -845,11 +859,13 @@ mod tests {
                 read: true,
                 windows_paths: false,
             },
+            false,
         ));
         let (kind, bytes) = read_frame(&mut host).await.unwrap();
         assert_eq!(kind, HELLO);
         let hello: Hello = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(hello.target.pid, 7);
+        assert!(!hello.takeover, "the client declined to displace a holder");
         write_frame(&mut host, CAPABILITIES, &[1, 0]).await.unwrap();
         let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
         terminal.ingest(b"same retained shell\r\n");

@@ -5,6 +5,7 @@ pub struct Launch {
     pub destination: Destination,
     pub account: Option<festerm_tunnel_client::identity::Account>,
     token: zeroize::Zeroizing<String>,
+    takeover: bool,
 }
 
 impl fmt::Debug for Launch {
@@ -19,7 +20,13 @@ impl Launch {
             destination,
             token,
             account: None,
+            takeover: true,
         }
+    }
+    /// Whether this client may displace the session's current holder.
+    pub fn with_takeover(mut self, takeover: bool) -> Self {
+        self.takeover = takeover;
+        self
     }
     pub fn with_account(mut self, account: festerm_tunnel_client::identity::Account) -> Self {
         self.account = Some(account);
@@ -44,6 +51,7 @@ impl Launch {
             destination,
             token,
             account: None,
+            takeover: true,
         })
     }
 
@@ -70,7 +78,7 @@ impl Launch {
         self,
         notifier: std::sync::Arc<dyn festerm_session::SessionEventNotifier>,
     ) -> io::Result<transport::ClientSession> {
-        transport::start_client(self.destination, self.token, notifier)
+        transport::start_client_with_takeover(self.destination, self.token, notifier, self.takeover)
     }
 }
 
@@ -94,6 +102,7 @@ pub fn parse_env() -> io::Result<Option<Launch>> {
         destination,
         token,
         account: None,
+        takeover: true,
     }))
 }
 

@@ -96,29 +96,51 @@ impl FesTermApp {
             .collect()
     }
 
-    /// Creates a profile for a listed running tunnel and connects to it.
-    pub(super) fn save_and_connect_running_tunnel(
-        &mut self,
-        locator: &str,
-        context: &egui::Context,
-    ) {
-        let Some(tunnel) = self
+    /// Connects a listed running tunnel once; no profile is saved.
+    pub(super) fn connect_running_tunnel(&mut self, locator: &str, context: &egui::Context) {
+        if !self
             .running_tunnels
             .tunnels
             .iter()
-            .find(|tunnel| tunnel.locator == locator)
-            .cloned()
-        else {
+            .any(|tunnel| tunnel.locator == locator)
+        {
             return;
-        };
+        }
         let account = self
             .state
             .configuration()
             .accounts()
             .first()
             .map(|account| account.identifier().to_owned());
-        if let Some(id) = self.create_profile_from_summary(&tunnel, account) {
-            self.begin_native_tunnel(id, false, true, true, context);
+        self.connect_dev_tunnel_once(locator, account, true, context);
+    }
+
+    /// The New Session form's Connect: ephemeral unless `save_as` names a
+    /// profile to save and connect through.
+    pub(super) fn connect_dev_tunnel_form(
+        &mut self,
+        tunnel: String,
+        account: Option<String>,
+        takeover: bool,
+        save_as: Option<String>,
+        context: &egui::Context,
+    ) {
+        let Some(name) = save_as else {
+            self.connect_dev_tunnel_once(&tunnel, account, takeover, context);
+            return;
+        };
+        let profile = Profile::named_dev_tunnel(name.trim().to_owned(), tunnel.trim().to_owned())
+            .and_then(|profile| profile.with_tunnel_account_selection(account));
+        let Ok(profile) = profile else {
+            self.secure_storage_feedback =
+                Some("The Dev Tunnel profile name or tunnel is invalid.");
+            return;
+        };
+        let id = profile.identifier().to_owned();
+        if self.state.configuration().profile(&id).is_some() {
+            self.secure_storage_feedback = Some("A profile with that name already exists.");
+        } else if self.save_profile(profile) {
+            self.begin_native_tunnel_with_takeover(id, takeover, context);
         }
     }
 }

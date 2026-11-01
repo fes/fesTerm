@@ -353,6 +353,26 @@ feature panic without changing updater HTTPS clients.
 
 ## Native Name/Tunnel connection
 
+### Connect once from New Session
+
+The New Session **Dev Tunnel** card opens a compact form, like SSH, instead of
+the profile editor. Pick a GitHub account (**Add GitHub account** signs in),
+pick one of your running tunnels or type a tunnel name or id, and choose
+**Connect**. Nothing is saved: the connection uses an in-memory profile and the
+account's stored sign-in (or a one-off device sign-in that is discarded when
+you are not signed in), and you confirm the host fingerprint each time. Ad-hoc
+SSH connections are not recorded as recents either, so Dev Tunnel connects once
+are not.
+
+**Allow takeover of an attached session** (default on) controls whether this
+client asks to displace the client that holds the session; the host's own
+`--no-takeover` setting still decides. **Save as profile** (default off, with a
+name) saves a profile and connects through it. **My running Dev Tunnels** rows
+connect once the same way. The full editor remains under Manage Profiles and
+New Profile → Dev Tunnel. A host exports one session, so there is no session
+picker. The running-tunnel list follows `show_running_dev_tunnels`. See
+[ADR 0064](adr/0064-dev-tunnel-new-session-connect-once-form.md).
+
 The preferred client needs no CLI, metadata transfer or token paste.
 Choose **New profile → Dev Tunnel**, enter **Name** and **Tunnel** (logical
 alias or `tunnel-id.cluster`), and **Save profile**. Choose **Sign in with

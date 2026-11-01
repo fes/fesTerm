@@ -6513,11 +6513,22 @@ impl FesTermApp {
                     #[cfg(not(feature = "experimental-dev-tunnels"))]
                     let _ = account;
                 }
-                AppCommand::SaveAndConnectRunningDevTunnel { locator } => {
+                AppCommand::ConnectRunningDevTunnel { locator } => {
                     #[cfg(feature = "experimental-dev-tunnels")]
-                    self.save_and_connect_running_tunnel(&locator, ui.ctx());
+                    self.connect_running_tunnel(&locator, ui.ctx());
                     #[cfg(not(feature = "experimental-dev-tunnels"))]
                     let _ = locator;
+                }
+                AppCommand::ConnectDevTunnelForm {
+                    tunnel,
+                    account,
+                    takeover,
+                    save_as,
+                } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.connect_dev_tunnel_form(tunnel, account, takeover, save_as, ui.ctx());
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    let _ = (tunnel, account, takeover, save_as);
                 }
                 AppCommand::RefreshRunningSessions => {
                     #[cfg(feature = "experimental-dev-tunnels")]
