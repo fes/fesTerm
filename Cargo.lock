@@ -2191,6 +2191,7 @@ dependencies = [
  "festerm-config",
  "festerm-core",
  "festerm-document",
+ "festerm-host-setup",
  "festerm-linux-power",
  "festerm-macos-window",
  "festerm-markdown",

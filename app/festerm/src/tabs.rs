@@ -2049,6 +2049,8 @@ pub enum NewProfileKind {
     Sftp,
     Serial,
     DevTunnel,
+    /// The Dev Tunnel host-setup surface rather than a profile editor.
+    HostSetup,
     SshFromDraft(SshProfileDraftSeed),
 }
 
@@ -2150,6 +2152,13 @@ pub enum AppCommand {
     /// open. Distinct from `OpenProfiles`, which lands on the list.
     CreateProfile {
         kind: NewProfileKind,
+    },
+    /// Opens the Profiles surface on the "Set up a Dev Tunnel host" panel.
+    OpenDevTunnelHostSetup,
+    /// Opens the exact installer script embedded in this build as a read-only
+    /// untitled editor tab so it can be reviewed before it is run.
+    OpenHostSetupScript {
+        platform: festerm_host_setup::HostPlatform,
     },
     /// Opens the Profiles surface in a new SSH profile editor pre-populated
     /// from a one-off SSH launch draft. This carries only connection metadata;
@@ -3739,6 +3748,11 @@ impl AppState {
                 self.open_profiles();
                 self.pending_profile_create = Some(kind);
             }
+            AppCommand::OpenDevTunnelHostSetup => {
+                self.open_profiles();
+                self.pending_profile_create = Some(NewProfileKind::HostSetup);
+            }
+            AppCommand::OpenHostSetupScript { platform } => self.open_host_setup_script(platform),
             AppCommand::CreateSshProfileFromDraft { draft } => {
                 self.open_profiles();
                 self.pending_profile_create = Some(NewProfileKind::SshFromDraft(draft));
@@ -4522,6 +4536,25 @@ impl AppState {
             }
             Err(failure) => Some(failure),
         }
+    }
+
+    fn open_host_setup_script(&mut self, platform: festerm_host_setup::HostPlatform) {
+        let document = self.documents.borrow_mut().adopt_read_only_untitled(
+            &format!("dev-tunnel-host-setup-{}", platform.script_name()),
+            platform.script_name(),
+            "Dev Tunnel host installer (read-only)",
+            platform.script().as_bytes(),
+        );
+        if let Some(existing) = self.tabs.iter().find_map(|tab| match &tab.content {
+            TabContent::TextEditor(editor) if editor.document() == document => Some(tab.id),
+            _ => None,
+        }) {
+            self.documents.borrow_mut().release(document);
+            self.set_active(existing);
+            self.workspace_dirty = true;
+            return;
+        }
+        self.open_text_document(document);
     }
 
     fn new_text_document(&mut self) {

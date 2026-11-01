@@ -656,6 +656,22 @@ impl DocumentRegistry {
         self.insert(DocumentOrigin::from(origin), text, None, None, false)
     }
 
+    /// Opens (or re-views) an in-memory read-only document that has no save
+    /// target, such as an embedded script offered for review.
+    pub(crate) fn adopt_read_only_untitled(
+        &mut self,
+        key: &str,
+        file_name: &str,
+        qualified_label: &str,
+        bytes: &[u8],
+    ) -> DocumentId {
+        let origin = UntitledOrigin::new(key, file_name, qualified_label)
+            .expect("read-only untitled origins are valid");
+        let text = TextDocument::from_bytes(bytes, self.bounds)
+            .expect("embedded text fits the editor bounds");
+        self.adopt(DocumentOrigin::from(origin), text, true)
+    }
+
     /// Records one fewer view. The document is forgotten when the last view
     /// goes, which is also when a watcher would be released.
     ///
