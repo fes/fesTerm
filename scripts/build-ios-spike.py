@@ -118,6 +118,7 @@ def main() -> int:
             check_dependencies(target, "festerm-sftp")
             check_dependencies(target, "festerm-ios-lock")
             check_dependencies(target, "festerm-mobile-docs")
+            check_dependencies(target, "festerm-host-setup")
             check_dependencies(target, "festerm-tunnel-client")
             check_dependencies(target, "festerm-tunnel-bridge", False, True)
             check_dependencies(target, "festerm-mobile-tunnels")

@@ -27,11 +27,11 @@ class IosSshDependencyTests(unittest.TestCase):
             self.assertEqual(build.main(), 0)
         self.assertEqual([call.args for call in check.call_args_list], [
             ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"), ("aarch64-apple-ios", "festerm-mobile-profiles"), ("aarch64-apple-ios", "festerm-sftp"),
-            ("aarch64-apple-ios", "festerm-ios-lock"), ("aarch64-apple-ios", "festerm-mobile-docs"),
+            ("aarch64-apple-ios", "festerm-ios-lock"), ("aarch64-apple-ios", "festerm-mobile-docs"), ("aarch64-apple-ios", "festerm-host-setup"),
             ("aarch64-apple-ios", "festerm-tunnel-client"), ("aarch64-apple-ios", "festerm-tunnel-bridge", False, True), ("aarch64-apple-ios", "festerm-mobile-tunnels"),
             ("aarch64-apple-ios", "festerm-mobile", True),
             ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"), ("aarch64-apple-ios-sim", "festerm-mobile-profiles"), ("aarch64-apple-ios-sim", "festerm-sftp"),
-            ("aarch64-apple-ios-sim", "festerm-ios-lock"), ("aarch64-apple-ios-sim", "festerm-mobile-docs"),
+            ("aarch64-apple-ios-sim", "festerm-ios-lock"), ("aarch64-apple-ios-sim", "festerm-mobile-docs"), ("aarch64-apple-ios-sim", "festerm-host-setup"),
             ("aarch64-apple-ios-sim", "festerm-tunnel-client"), ("aarch64-apple-ios-sim", "festerm-tunnel-bridge", False, True), ("aarch64-apple-ios-sim", "festerm-mobile-tunnels"),
             ("aarch64-apple-ios-sim", "festerm-mobile", True),
         ])
@@ -94,10 +94,10 @@ class IosSshDependencyTests(unittest.TestCase):
             self.assertEqual(build.main(), 0)
         self.assertEqual([call.args for call in check.call_args_list], [
             ("aarch64-apple-ios",), ("aarch64-apple-ios", "festerm-ssh"), ("aarch64-apple-ios", "festerm-mobile-profiles"), ("aarch64-apple-ios", "festerm-sftp"),
-            ("aarch64-apple-ios", "festerm-ios-lock"), ("aarch64-apple-ios", "festerm-mobile-docs"),
+            ("aarch64-apple-ios", "festerm-ios-lock"), ("aarch64-apple-ios", "festerm-mobile-docs"), ("aarch64-apple-ios", "festerm-host-setup"),
             ("aarch64-apple-ios", "festerm-tunnel-client"), ("aarch64-apple-ios", "festerm-tunnel-bridge", False, True), ("aarch64-apple-ios", "festerm-mobile-tunnels"),
             ("aarch64-apple-ios-sim",), ("aarch64-apple-ios-sim", "festerm-ssh"), ("aarch64-apple-ios-sim", "festerm-mobile-profiles"), ("aarch64-apple-ios-sim", "festerm-sftp"),
-            ("aarch64-apple-ios-sim", "festerm-ios-lock"), ("aarch64-apple-ios-sim", "festerm-mobile-docs"),
+            ("aarch64-apple-ios-sim", "festerm-ios-lock"), ("aarch64-apple-ios-sim", "festerm-mobile-docs"), ("aarch64-apple-ios-sim", "festerm-host-setup"),
             ("aarch64-apple-ios-sim", "festerm-tunnel-client"), ("aarch64-apple-ios-sim", "festerm-tunnel-bridge", False, True), ("aarch64-apple-ios-sim", "festerm-mobile-tunnels"),
         ])
         run.assert_not_called()
