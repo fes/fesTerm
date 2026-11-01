@@ -13674,7 +13674,11 @@ mod tests {
         for platform in HostPlatform::ALL {
             app.state
                 .dispatch(AppCommand::OpenHostSetupScript { platform }, &context);
-            assert_eq!(active_document_text(&app), platform.script());
+            // The editor normalises line endings; the scripts are pinned to LF.
+            assert_eq!(
+                active_document_text(&app),
+                platform.script().replace("\r\n", "\n")
+            );
             let document = app.state.active_document().unwrap();
             let documents = app.state.documents().clone();
             let registry = documents.borrow();
