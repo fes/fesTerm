@@ -159,6 +159,47 @@ fn private_directory(path: &Path) -> io::Result<fs::File> {
     }
 }
 
+/// The user's home directory, where the tunnel shell starts; `None` leaves the
+/// daemon's own working directory in place.
+pub(crate) fn shell_home() -> Option<PathBuf> {
+    home_from(std::env::var_os(if cfg!(windows) {
+        "USERPROFILE"
+    } else {
+        "HOME"
+    }))
+}
+
+/// The user's own shell (from `$SHELL`, as set by the terminal running setup),
+/// started as a login shell so history, line editing and profile settings
+/// work. Falls back to `/bin/sh`, which may lack line editing (e.g. dash).
+#[cfg(unix)]
+pub(crate) fn shell_command(start: &mut Command) {
+    let shell = shell_from(std::env::var_os("SHELL"));
+    start.arg("--shell").arg(&shell);
+    if shell != Path::new("/bin/sh") {
+        start.args(["--arg", "-l"]);
+    }
+}
+
+#[cfg(unix)]
+fn shell_from(value: Option<OsString>) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    value
+        .map(PathBuf::from)
+        .filter(|path| {
+            path.is_absolute()
+                && std::fs::metadata(path)
+                    .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        })
+        .unwrap_or_else(|| PathBuf::from("/bin/sh"))
+}
+
+fn home_from(value: Option<OsString>) -> Option<PathBuf> {
+    value
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_dir())
+}
+
 fn arguments() -> io::Result<(PathBuf, PathBuf)> {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     if args.len() != 4 || args[0] != "--devtunnel" || args[2] != "--state-dir" {
@@ -236,7 +277,10 @@ async fn run() -> io::Result<()> {
         .join("cmd.exe"),
     );
     #[cfg(unix)]
-    start.args(["--shell", "/bin/sh"]);
+    shell_command(&mut start);
+    if let Some(home) = shell_home() {
+        start.arg("--cwd").arg(home);
+    }
     let status = start
         .current_dir(&state)
         .args([
@@ -395,6 +439,36 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_prefers_an_executable_absolute_shell_and_falls_back_to_sh() {
+        assert_eq!(shell_from(Some("/bin/sh".into())), PathBuf::from("/bin/sh"));
+        assert_eq!(shell_from(None), PathBuf::from("/bin/sh"));
+        assert_eq!(shell_from(Some("bash".into())), PathBuf::from("/bin/sh"));
+        assert_eq!(
+            shell_from(Some("/no/such/shell".into())),
+            PathBuf::from("/bin/sh")
+        );
+        assert_eq!(
+            shell_from(Some("/etc/hosts".into())),
+            PathBuf::from("/bin/sh")
+        );
+    }
+
+    #[test]
+    fn shell_home_requires_an_existing_absolute_directory() {
+        let existing = std::env::temp_dir();
+        assert_eq!(home_from(Some(existing.clone().into())), Some(existing));
+        assert_eq!(home_from(None), None);
+        assert_eq!(home_from(Some("relative/home".into())), None);
+        assert_eq!(
+            home_from(Some(
+                std::env::temp_dir().join("festerm-no-such-home").into()
+            )),
+            None
+        );
+    }
 
     #[test]
     fn scoped_host_token_decoding_rejects_empty_multiline_nonascii_and_oversized() {
