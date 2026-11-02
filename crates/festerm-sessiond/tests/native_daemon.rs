@@ -684,7 +684,7 @@ fn native_discovery_churn_reconnect_pins_generation_and_explicit_registry() {
     session.try_send_input(&test_input("original")).unwrap();
     read_session_until(&session, "BEFORE:original");
 
-    let mut takeover = connect(&selected.endpoint);
+    let mut takeover = connect(&selected.endpoint, selected_admission(&selected, true));
     assert!(terminal_contains(&takeover.snapshot, b"BEFORE:original"));
     bounded_poll(|| session.reconnect_available(), "takeover disconnect");
     // A stale Launcher selection cannot steal, but this tab's explicit
@@ -706,7 +706,7 @@ fn native_discovery_churn_reconnect_pins_generation_and_explicit_registry() {
 
     // Leave A reconnectable rather than naturally exited, then replace its
     // name with B while keeping B's client attached throughout the attempt.
-    let takeover = connect(&selected.endpoint);
+    let takeover = connect(&selected.endpoint, selected_admission(&selected, true));
     assert!(terminal_contains(&takeover.snapshot, b"AFTER:reconnected"));
     bounded_poll(
         || session.reconnect_available(),
@@ -1049,7 +1049,7 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
     );
     assert_native_permissions(&registry, &endpoint);
 
-    let mut first = connect(&endpoint);
+    let mut first = connect(&endpoint, registry_admission(&registry_path, &name, false));
     eprintln!("sessiond-native phase=first-connected");
     #[cfg(windows)]
     assert_windows_ready(&mut first);
@@ -1059,7 +1059,7 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
     assert_contains(&mut first, b"first-marker");
     eprintln!("sessiond-native phase=first-output");
 
-    let mut second = connect(&endpoint);
+    let mut second = connect(&endpoint, registry_admission(&registry_path, &name, true));
     eprintln!("sessiond-native phase=second-connected");
     assert_contains(&mut first, STOLEN_NOTICE);
     assert_eof(&mut first);
@@ -1151,7 +1151,10 @@ fn native_daemon_snapshot_matches_fresh_terminal_after_large_output() {
     let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
 
     let client = loop {
-        let client = connect(&endpoint);
+        let client = connect(
+            &endpoint,
+            registry_admission(&registry.join("registry.json"), &name, true),
+        );
         if terminal_contains(&client.snapshot, b"END") {
             break client;
         }
@@ -1301,7 +1304,14 @@ fn native_windows_packaged_helper_can_be_replaced_while_staged_daemon_remains_us
         .expect("an installer must be able to replace the package-owned helper");
 
     let endpoint = record["socket"].as_str().unwrap();
-    let mut client = connect(endpoint);
+    let mut client = connect(
+        endpoint,
+        Admission {
+            pid: record["pid"].as_u64().unwrap() as u32,
+            generation: u128::from(record["created_at_unix_ms"].as_u64().unwrap()),
+            takeover: false,
+        },
+    );
     assert_windows_ready(&mut client);
     send_input(&mut client, &test_input("after-package-replacement")).unwrap();
     assert_contains(&mut client, b"after-package-replacement");
@@ -1352,7 +1362,10 @@ fn native_windows_versioned_helper_installs_beside_a_live_legacy_daemon() {
 
     let registry = runtime_root.join("fesTerm").join("sessiond");
     let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
-    let mut client = connect(&endpoint);
+    let mut client = connect(
+        &endpoint,
+        registry_admission(&registry.join("registry.json"), &name, false),
+    );
     assert_windows_ready(&mut client);
     send_input(&mut client, &test_input("after-side-by-side-install")).unwrap();
     assert_contains(&mut client, b"after-side-by-side-install");
@@ -1400,7 +1413,10 @@ fn native_daemon_exits_and_deregisters_when_its_shell_exits() {
 
     let registry = runtime_root.join("festerm").join("sessiond");
     let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
-    let mut client = connect(&endpoint);
+    let mut client = connect(
+        &endpoint,
+        registry_admission(&registry.join("registry.json"), &name, false),
+    );
     #[cfg(windows)]
     assert_windows_ready(&mut client);
 
@@ -1468,7 +1484,10 @@ fn native_daemon_keeps_a_slow_client_through_a_large_output_burst() {
 
     let registry = runtime_root.join("festerm").join("sessiond");
     let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
-    let mut client = connect(&endpoint);
+    let mut client = connect(
+        &endpoint,
+        registry_admission(&registry.join("registry.json"), &name, false),
+    );
     #[cfg(windows)]
     assert_windows_ready(&mut client);
 
@@ -1838,6 +1857,46 @@ fn test_input(marker: &str) -> Vec<u8> {
     format!("{marker}\r\n").into_bytes()
 }
 
+struct Admission {
+    pid: u32,
+    generation: u128,
+    takeover: bool,
+}
+
+fn registry_admission(path: &Path, name: &str, takeover: bool) -> Admission {
+    let registry: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let record = &registry["sessions"][name];
+    Admission {
+        pid: record["pid"].as_u64().unwrap() as u32,
+        generation: u128::from(record["created_at_unix_ms"].as_u64().unwrap()),
+        takeover,
+    }
+}
+
+fn selected_admission(selected: &festerm_sessiond::UnattachedSession, takeover: bool) -> Admission {
+    Admission {
+        pid: selected.pid,
+        generation: selected.created_at_unix_ms,
+        takeover,
+    }
+}
+
+// A protocol-3 daemon sends nothing until it has admitted the client.
+fn admit(stream: &mut dyn ClientStream, admission: Admission) {
+    let request = festerm_sessiond::encode_admission(
+        admission.pid,
+        admission.generation,
+        admission.takeover,
+        768 * 1024 * 1024,
+    );
+    stream.write_all(&request).unwrap();
+    #[cfg(not(windows))]
+    stream.flush().unwrap();
+    let mut reply = [0u8];
+    stream.read_exact(&mut reply).unwrap();
+    assert_eq!(reply, [1], "daemon refused admission");
+}
+
 fn registry_endpoint(path: &Path, name: &str) -> String {
     let registry: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     registry["sessions"][name]["socket"]
@@ -1887,7 +1946,7 @@ fn terminal_text(terminal: &Terminal) -> String {
 }
 
 #[cfg(unix)]
-fn connect(endpoint: &str) -> ConnectedClient {
+fn connect(endpoint: &str, admission: Admission) -> ConnectedClient {
     let stream = UnixStream::connect(endpoint).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -1896,6 +1955,7 @@ fn connect(endpoint: &str) -> ConnectedClient {
         .set_write_timeout(Some(Duration::from_secs(2)))
         .unwrap();
     let mut stream: Box<dyn ClientStream> = Box::new(stream);
+    admit(&mut *stream, admission);
     let snapshot = read_recovery_terminal(&mut *stream);
     acknowledge_recovery(&mut *stream).unwrap();
     ConnectedClient {
@@ -1906,7 +1966,7 @@ fn connect(endpoint: &str) -> ConnectedClient {
 }
 
 #[cfg(windows)]
-fn connect(endpoint: &str) -> ConnectedClient {
+fn connect(endpoint: &str, admission: Admission) -> ConnectedClient {
     // Bundled ConPTY spawns a separate OpenConsole.exe host process for the
     // child shell. On a cold GitHub Actions Windows runner, that host's own
     // startup (plus first-write scheduling for the test child's `READY`
@@ -1924,6 +1984,7 @@ fn connect(endpoint: &str) -> ConnectedClient {
     stream.set_read_timeout(Duration::from_secs(10));
     stream.set_write_timeout(Duration::from_secs(10));
     let mut stream: Box<dyn ClientStream> = Box::new(stream);
+    admit(&mut *stream, admission);
     let snapshot = read_recovery_terminal(&mut *stream);
     acknowledge_recovery(&mut *stream).unwrap();
     ConnectedClient {
