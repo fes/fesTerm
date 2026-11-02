@@ -221,7 +221,7 @@ impl FesTermApp {
         context.request_repaint();
     }
 
-    pub(super) fn poll_tunnel_browser(&mut self) {
+    pub(super) fn poll_tunnel_browser(&mut self, context: &egui::Context) {
         let Some(browser) = self.tunnel_browser.as_mut() else {
             return;
         };
@@ -244,7 +244,7 @@ impl FesTermApp {
                 .take()
                 .map(|browser| Arc::clone(&browser.store));
             self.overlays.native_tunnel = false;
-            self.save_signed_in_account(account, store);
+            self.save_signed_in_account(account, store, context);
         }
     }
 
@@ -254,6 +254,7 @@ impl FesTermApp {
         &mut self,
         account: DevTunnelAccount,
         store: Option<Arc<dyn SecretStore>>,
+        context: &egui::Context,
     ) {
         let configuration = self.state.configuration();
         let previous = configuration
@@ -263,9 +264,11 @@ impl FesTermApp {
             .map(|known| known.credential_reference().duplicate_for_transport());
         let new_reference = account.credential_reference().duplicate_for_transport();
         let login = account.login().to_owned();
-        let replacement = configuration
-            .with_account(account)
-            .map(|(config, _)| config);
+        let mut key = None;
+        let replacement = configuration.with_account(account).map(|(config, added)| {
+            key = Some(added);
+            config
+        });
         let saved = self.apply_configuration_save(
             replacement,
             super::ConfigurationStartupStatus::ProfileSaveFailure,
@@ -276,6 +279,12 @@ impl FesTermApp {
             if let Some(reference) = discarded {
                 let _ = store.delete(&reference);
             }
+        }
+        if let Some(key) = key.filter(|_| saved) {
+            context.data_mut(|data| {
+                data.insert_temp(signed_in_account_id(), SignedInAccount(key));
+            });
+            context.request_repaint();
         }
         self.secure_storage_feedback = Some(if saved {
             let _ = login;
@@ -479,6 +488,22 @@ fn picked_tunnel_id() -> egui::Id {
     egui::Id::new("picked_dev_tunnel")
 }
 
+/// An account that just finished signing in, waiting for the open form to
+/// select it.
+#[derive(Clone, Default)]
+struct SignedInAccount(String);
+
+fn signed_in_account_id() -> egui::Id {
+    egui::Id::new("signed_in_dev_tunnel_account")
+}
+
+/// Takes the identifier of the account that just signed in, if any.
+pub(crate) fn take_signed_in_account(context: &egui::Context) -> Option<String> {
+    context
+        .data_mut(|data| data.remove_temp::<SignedInAccount>(signed_in_account_id()))
+        .map(|account| account.0)
+}
+
 /// Takes the tunnel the picker just chose, if any.
 pub(crate) fn take_picked_tunnel(context: &egui::Context) -> Option<PickedTunnel> {
     context.data_mut(|data| data.remove_temp::<PickedTunnel>(picked_tunnel_id()))
@@ -505,5 +530,16 @@ mod tests {
         assert_eq!(picked.locator, "abc123.use");
         assert_eq!(picked.account.as_deref(), Some("acct"));
         assert!(take_picked_tunnel(&context).is_none());
+    }
+
+    #[test]
+    fn signed_in_account_is_taken_exactly_once() {
+        let context = egui::Context::default();
+        assert!(take_signed_in_account(&context).is_none());
+        context.data_mut(|data| {
+            data.insert_temp(signed_in_account_id(), SignedInAccount("acct".into()))
+        });
+        assert_eq!(take_signed_in_account(&context).as_deref(), Some("acct"));
+        assert!(take_signed_in_account(&context).is_none());
     }
 }

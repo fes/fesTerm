@@ -1024,6 +1024,9 @@ pub(crate) fn show_profiles(
                 draft.credential = profile.credential_reference()
                     .map(|reference| Arc::new(reference.duplicate_for_transport()));
             }
+            if let Some(account) = crate::app::tunnel_browser::take_signed_in_account(ui.ctx()) {
+                draft.account = Some(account);
+            }
             if let Some(picked) = crate::app::tunnel_browser::take_picked_tunnel(ui.ctx()) {
                 draft.tunnel = picked.locator;
                 if picked.account.is_some() {
@@ -1058,9 +1061,9 @@ pub(crate) fn show_profiles(
                     let selected = draft.account.as_deref().and_then(|key| configuration.account(key));
                     egui::ComboBox::from_id_salt(("profile_tunnel_account", tab_id))
                         .selected_text(selected.map(|account| format!("GitHub · {}", account.login()))
-                            .unwrap_or_else(|| "Not signed in".into()))
+                            .unwrap_or_else(|| no_account_label(configuration.accounts()).into()))
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut draft.account, None, "Not signed in");
+                            ui.selectable_value(&mut draft.account, None, no_account_label(configuration.accounts()));
                             for account in configuration.accounts() {
                                 ui.selectable_value(
                                     &mut draft.account,
