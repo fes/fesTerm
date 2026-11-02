@@ -2208,6 +2208,16 @@ impl DevTunnelLauncherForm {
     }
 }
 
+/// The account combo's empty choice: prompts a choice once any account
+/// exists instead of claiming the user is signed out.
+fn no_account_label<T>(accounts: &[T]) -> &'static str {
+    if accounts.is_empty() {
+        "Not signed in"
+    } else {
+        "Select account"
+    }
+}
+
 fn show_dev_tunnel_form(
     ui: &mut Ui,
     tab_id: TabId,
@@ -2224,6 +2234,9 @@ fn show_dev_tunnel_form(
             .map(|account| account.identifier().to_owned());
     }
     let focus_tunnel = std::mem::take(&mut form.focus_tunnel);
+    if let Some(account) = crate::app::tunnel_browser::take_signed_in_account(ui.ctx()) {
+        form.account = Some(account);
+    }
     if let Some(picked) = crate::app::tunnel_browser::take_picked_tunnel(ui.ctx()) {
         form.tunnel = picked.locator;
         form.feedback = None;
@@ -2254,10 +2267,14 @@ fn show_dev_tunnel_form(
                 .selected_text(
                     selected
                         .map(|account| format!("GitHub · {}", account.login()))
-                        .unwrap_or_else(|| "Not signed in".to_owned()),
+                        .unwrap_or_else(|| no_account_label(configuration.accounts()).to_owned()),
                 )
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut form.account, None, "Not signed in");
+                    ui.selectable_value(
+                        &mut form.account,
+                        None,
+                        no_account_label(configuration.accounts()),
+                    );
                     for account in configuration.accounts() {
                         ui.selectable_value(
                             &mut form.account,
@@ -2280,9 +2297,13 @@ fn show_dev_tunnel_form(
             if form.account.is_none() {
                 ui.add_space(4.0);
                 ui.label(
-                    egui::RichText::new("Not signed in: Connect asks you to sign in with GitHub.")
-                        .size(11.0)
-                        .color(theme::TEXT_SECONDARY),
+                    egui::RichText::new(if configuration.accounts().is_empty() {
+                        "Not signed in: Connect asks you to sign in with GitHub."
+                    } else {
+                        "No account selected: Connect asks you to sign in with GitHub."
+                    })
+                    .size(11.0)
+                    .color(theme::TEXT_SECONDARY),
                 );
             }
 

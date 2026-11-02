@@ -5815,7 +5815,7 @@ impl FesTermApp {
         #[cfg(feature = "experimental-dev-tunnels")]
         {
             self.poll_native_tunnel(context);
-            self.poll_tunnel_browser();
+            self.poll_tunnel_browser(context);
         }
         if context.input(|i| i.viewport().close_requested()) {
             let accepted = self.evaluate_close_request(context);
