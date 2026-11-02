@@ -4,7 +4,7 @@
 mod ios;
 #[cfg(target_os = "ios")]
 pub use ios::{
-    attach_scene_windows, clipboard_text, open_url, register_scene_delegate, set_clipboard_text,
+    attach_window, clipboard_text, open_url, register_scene_delegate, set_clipboard_text,
     KeyboardBridge, SCENE_DELEGATE_CLASS,
 };
 
@@ -27,7 +27,7 @@ impl KeyboardBridge {
 
 /// No UIScene exists off iOS.
 #[cfg(not(target_os = "ios"))]
-pub fn attach_scene_windows() {}
+pub fn attach_window(_window: raw_window_handle::WindowHandle<'_>) {}
 
 /// No UIScene delegate exists off iOS.
 #[cfg(not(target_os = "ios"))]

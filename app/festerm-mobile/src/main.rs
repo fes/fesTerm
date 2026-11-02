@@ -58,7 +58,6 @@ impl ApplicationHandler<eframe::UserEvent> for MobileHost<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.update_lifecycle(Lifecycle::resume);
         self.app.resumed(event_loop);
-        festerm_ios_window::attach_scene_windows();
     }
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
@@ -183,6 +182,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("festerm-mobile: renderer initialized");
             let context = cc.egui_ctx.clone();
             let _ = repaint.set(context.clone());
+            if let Ok(handle) = cc.window_handle() {
+                festerm_ios_window::attach_window(handle);
+            }
             let bridge = cc
                 .window_handle()
                 .ok()
