@@ -7557,6 +7557,7 @@ dependencies = [
  "russh",
  "rustls",
  "rustls-native-certs",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

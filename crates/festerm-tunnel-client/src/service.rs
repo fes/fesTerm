@@ -176,10 +176,11 @@ pub fn summarize(tunnels: Vec<Tunnel>) -> Vec<TunnelSummary> {
                 .as_ref()
                 .and_then(|status| status.host_connection_count.as_ref())
                 .is_some_and(|count| count.get_count() > 0);
+            let present = |text: Option<String>| text.filter(|text| !text.trim().is_empty());
             Some(TunnelSummary {
                 locator,
-                name: tunnel.name,
-                description: tunnel.description,
+                name: present(tunnel.name),
+                description: present(tunnel.description),
                 active: hosts || !tunnel.endpoints.is_empty(),
             })
         })
@@ -344,6 +345,16 @@ mod tests {
             [("live1.euw", true), ("idle1.use", false)]
         );
         assert_eq!(summaries[0].description.as_deref(), Some("laptop"));
+    }
+
+    #[test]
+    fn blank_tunnel_names_are_treated_as_absent() {
+        let summaries = summarize(listed(
+            r#"[{"tunnelId":"t1","clusterId":"use","name":"","description":"  ",
+              "ports":[{"portNumber":22,"labels":["festerm-bridge-v1"]}]}]"#,
+        ));
+        assert_eq!(summaries[0].name, None);
+        assert_eq!(summaries[0].description, None);
     }
 
     #[test]

@@ -87,6 +87,7 @@ impl MobileApp {
         let Some(client) = self.tunnel_client() else {
             return;
         };
+        eprintln!("festerm-mobile: listing tunnels for {account}");
         let target = account.clone();
         let job = Job::spawn(ctx, move |cancel| client.list_tunnels(&target, cancel));
         self.tunnel.list = Some(TunnelList {
@@ -222,14 +223,20 @@ impl MobileApp {
                 match job.poll() {
                     Poll::Pending => {}
                     Poll::Done(Ok(items)) => {
+                        eprintln!("festerm-mobile: listed {} tunnel(s)", items.len());
                         list.items = items;
                         list.job = None;
                     }
                     Poll::Done(Err(error)) => {
+                        eprintln!("festerm-mobile: tunnel listing failed: {error:?}");
                         list.error = Some(describe_error(&error));
                         list.job = None;
                     }
-                    Poll::Lost => list.job = None,
+                    Poll::Lost => {
+                        eprintln!("festerm-mobile: tunnel listing stopped without a result");
+                        list.error = Some("Listing stopped. Refresh to try again.".to_owned());
+                        list.job = None;
+                    }
                 }
             }
         }
@@ -576,5 +583,6 @@ fn tunnel_label(tunnel: &festerm_mobile_tunnels::TunnelInfo) -> String {
     tunnel
         .name
         .clone()
+        .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| tunnel.locator.clone())
 }

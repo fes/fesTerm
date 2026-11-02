@@ -464,13 +464,20 @@ pub fn text_field(
         ui.set_width(width);
         caption_label(ui, caption);
         let margin = Margin::symmetric(14, 14);
-        ui.add_sized(
+        let response = ui.add_sized(
             [width, space::FIELD_HEIGHT],
+            // A stable id keeps focus (and the keyboard) when content above
+            // the field appears or disappears between frames.
             egui::TextEdit::singleline(text)
+                .id_salt(("text_field", caption))
                 .hint_text(hint)
                 .margin(margin)
                 .char_limit(255),
-        )
+        );
+        if response.has_focus() && !ui.clip_rect().contains_rect(response.rect) {
+            response.scroll_to_me(Some(egui::Align::Center));
+        }
+        response
     })
     .inner
 }

@@ -557,7 +557,13 @@ impl TunnelClient {
                 .connector
                 .connect(&prepared.resolved)
                 .await
-                .map_err(|_| TunnelError::Network)?;
+                .map_err(|error| {
+                    eprintln!(
+                        "festerm-tunnels: attach relay connect failed: {:?}: {error}",
+                        error.kind()
+                    );
+                    TunnelError::Network
+                })?;
             let name = prepared.description.target.name.clone();
             let handshake =
                 mobile::establish(stream, prepared.description.target, takeover, &cancel.0)
@@ -584,11 +590,15 @@ impl TunnelClient {
     ) -> Result<mobile::Description, TunnelError> {
         let mut stream = tokio::select! {
             () = cancel.cancelled() => return Err(TunnelError::Cancelled),
-            stream = self.connector.connect(resolved) => stream.map_err(|_| TunnelError::Network)?,
+            stream = self.connector.connect(resolved) => stream.map_err(|error| {
+                eprintln!("festerm-tunnels: describe relay connect failed: {:?}: {error}", error.kind());
+                TunnelError::Network
+            })?,
         };
         tokio::select! {
             () = cancel.cancelled() => Err(TunnelError::Cancelled),
             description = mobile::describe(&mut stream) => description.map_err(|error| {
+                eprintln!("festerm-tunnels: describe failed: {:?}: {error}", error.kind());
                 if error.kind() == io::ErrorKind::InvalidData { TunnelError::Protocol } else { TunnelError::Network }
             }),
         }

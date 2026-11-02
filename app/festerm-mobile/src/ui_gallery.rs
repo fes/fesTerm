@@ -570,3 +570,52 @@ fn capture_mobile_ui_gallery() {
     )
     .expect("save mobile capture manifest");
 }
+
+#[test]
+fn dev_tunnel_host_session_field_keeps_the_keyboard_up() {
+    use egui_kittest::kittest::{By, Queryable};
+    let lifecycle = Rc::new(Cell::new(Lifecycle {
+        active: true,
+        ..Default::default()
+    }));
+    let mut app = MobileApp::new(lifecycle);
+    configure(&mut app, "editor-devtunnel");
+    let occlusion = Rc::new(Cell::new(0.0_f32));
+    let shared = Rc::clone(&occlusion);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(
+            move |ui, app: &mut MobileApp| app.show_with_occlusion(ui, shared.get()),
+            app,
+        );
+    harness.run_steps(3);
+    harness
+        .get(By::new().predicate(|node| node.placeholder() == Some("Host session")))
+        .click();
+    let mut log = Vec::new();
+    for step in 0..12 {
+        harness.step();
+        let ime = harness.output().platform_output.ime;
+        log.push((
+            step,
+            occlusion.get(),
+            ime.map(|ime| ime.should_interrupt_composition),
+            harness.ctx.memory(|memory| memory.focused()),
+        ));
+        // UIKit reports the docked keyboard once the IME is allowed.
+        occlusion.set(if ime.is_some() { 0.36 } else { 0.0 });
+    }
+    let focused: Vec<_> = log.iter().map(|entry| entry.3).collect();
+    assert!(
+        log.iter().skip(1).all(|entry| entry.2 == Some(false))
+            && focused.windows(2).all(|pair| pair[0] == pair[1]),
+        "keyboard must stay up: {log:#?}"
+    );
+    let field = harness
+        .get(By::new().predicate(|node| node.placeholder() == Some("Host session")))
+        .rect();
+    assert!(
+        field.bottom() <= 844.0 * (1.0 - 0.36),
+        "the focused field scrolls above the keyboard: {field:?}"
+    );
+}

@@ -245,6 +245,34 @@ fn relay_tls_connector(
     if request.uri().scheme_str() != Some("wss") {
         return Ok(None);
     }
+    // The desktop app enables both providers through different HTTPS clients.
+    // Select this connector's provider without changing the process-wide default.
+    let builder = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .map_err(io::Error::other)?;
+    let config = relay_verification(builder)?.with_no_client_auth();
+    Ok(Some(tokio_tungstenite::Connector::Rustls(
+        std::sync::Arc::new(config),
+    )))
+}
+
+/// iOS exposes no readable root store; use the system trust evaluator.
+#[cfg(target_os = "ios")]
+fn relay_verification(
+    builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier>,
+) -> Result<rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>, io::Error>
+{
+    use rustls_platform_verifier::BuilderVerifierExt;
+    builder.with_platform_verifier().map_err(io::Error::other)
+}
+
+#[cfg(not(target_os = "ios"))]
+fn relay_verification(
+    builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier>,
+) -> Result<rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>, io::Error>
+{
     let native = rustls_native_certs::load_native_certs();
     if !native.errors.is_empty() {
         log::warn!(
@@ -259,21 +287,9 @@ fn relay_tls_connector(
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             "no native root CA certificates found",
-        )
-        .into());
+        ));
     }
-    // The desktop app enables both providers through different HTTPS clients.
-    // Select this connector's provider without changing the process-wide default.
-    let config = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
-        rustls::crypto::aws_lc_rs::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .map_err(io::Error::other)?
-    .with_root_certificates(roots)
-    .with_no_client_auth();
-    Ok(Some(tokio_tungstenite::Connector::Rustls(
-        std::sync::Arc::new(config),
-    )))
+    Ok(builder.with_root_certificates(roots))
 }
 
 pub async fn connect_via_proxy(

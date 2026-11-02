@@ -18,6 +18,9 @@ Local modifications:
   native roots and normal certificate/hostname verification, without setting
   a process-wide crypto provider. The full desktop app also enables ring;
   implicit Rustls provider selection would otherwise panic on first relay use.
+- On iOS, which has no readable root store, that connector verifies with
+  `rustls-platform-verifier` (the system trust evaluator) instead of native
+  roots; hostname and chain verification are unchanged.
 - The management JSON success path reads at most 64 KiB; errors omit body
   content on the endpoint-registration path. The caller disables redirects
   and sets a 20-second HTTP timeout.

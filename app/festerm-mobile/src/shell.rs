@@ -278,9 +278,8 @@ fn profiles_screen(
                     if button(ui, ButtonKind::Primary, "New profile", true).clicked() {
                         actions.push(ShellAction::NewProfile);
                     }
-                    if true
-                        && button(ui, ButtonKind::Secondary, "Open offline demo", true).clicked()
-                    {
+                    ui.add_space(space::SM);
+                    if button(ui, ButtonKind::Secondary, "Open offline demo", true).clicked() {
                         actions.push(ShellAction::OpenDemo);
                     }
                 });
