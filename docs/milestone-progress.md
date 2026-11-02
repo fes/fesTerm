@@ -144,6 +144,13 @@ through those paths, ordinary saves and buffer reuse. Replacement-parent
 identity is checked before opening a child, while legitimate regular-file
 replacement and dirty-buffer conflict handling remain supported.
 
+## v0.13.1: Dev Tunnel picker fills the form and iOS 27 launch fix
+
+Picking a tunnel from "Pick from my tunnels" now fills the Tunnel name or id
+of the profile editor or New Session form, and New Session gains the button.
+The iOS app adopts the UIScene lifecycle so it launches on iOS 27, and the
+native daemon smoke tests send the FSA3 admission again.
+
 ## v0.13.0: in-app host setup and ephemeral Dev Tunnel connect
 
 This release adds the reviewable "Set up a Dev Tunnel host" panel (embedded
