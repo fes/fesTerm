@@ -46,6 +46,9 @@ pub struct InstallOptions {
     pub takeover: bool,
     /// Linux only: install missing runtime packages with sudo.
     pub install_dependencies: bool,
+    /// Switch an existing host to this version's helpers, keeping its
+    /// tunnel, host key and running session.
+    pub upgrade: bool,
 }
 
 impl Default for InstallOptions {
@@ -53,6 +56,7 @@ impl Default for InstallOptions {
         Self {
             takeover: true,
             install_dependencies: false,
+            upgrade: false,
         }
     }
 }
@@ -71,25 +75,44 @@ pub fn script_url(platform: HostPlatform) -> String {
     )
 }
 
+fn windows_flags(options: InstallOptions) -> String {
+    let mut flags = String::new();
+    if !options.takeover {
+        flags.push_str(" -NoTakeover");
+    }
+    if options.upgrade {
+        flags.push_str(" -Upgrade");
+    }
+    flags
+}
+
+fn unix_flags(platform: HostPlatform, options: InstallOptions) -> String {
+    let mut flags = String::new();
+    if options.install_dependencies && platform == HostPlatform::Linux {
+        flags.push_str(" --install-dependencies");
+    }
+    if !options.takeover {
+        flags.push_str(" --no-takeover");
+    }
+    if options.upgrade {
+        flags.push_str(" --upgrade");
+    }
+    flags
+}
+
 /// The command to paste on the host. It downloads this version's installer
 /// and pins the host bundle to this version.
 pub fn install_command(platform: HostPlatform, options: InstallOptions) -> String {
     let url = script_url(platform);
     match platform {
         HostPlatform::Windows => {
-            let flag = if options.takeover { "" } else { " -NoTakeover" };
+            let flags = windows_flags(options);
             format!(
-                "& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing {url}).Content)) -Version {VERSION}{flag}"
+                "& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing {url}).Content)) -Version {VERSION}{flags}"
             )
         }
         _ => {
-            let mut flags = String::new();
-            if options.install_dependencies && platform == HostPlatform::Linux {
-                flags.push_str(" --install-dependencies");
-            }
-            if !options.takeover {
-                flags.push_str(" --no-takeover");
-            }
+            let flags = unix_flags(platform, options);
             format!("curl -fsSL {url} | bash -s -- {VERSION}{flags}")
         }
     }
@@ -100,17 +123,11 @@ pub fn local_command(platform: HostPlatform, options: InstallOptions) -> String 
     let name = platform.script_name();
     match platform {
         HostPlatform::Windows => {
-            let flag = if options.takeover { "" } else { " -NoTakeover" };
-            format!("./{name} -Version {VERSION}{flag}")
+            let flags = windows_flags(options);
+            format!("./{name} -Version {VERSION}{flags}")
         }
         _ => {
-            let mut flags = String::new();
-            if options.install_dependencies && platform == HostPlatform::Linux {
-                flags.push_str(" --install-dependencies");
-            }
-            if !options.takeover {
-                flags.push_str(" --no-takeover");
-            }
+            let flags = unix_flags(platform, options);
             format!("bash {name} {VERSION}{flags}")
         }
     }
@@ -124,6 +141,8 @@ mod tests {
     fn embedded_scripts_are_the_release_installers() {
         assert!(BASH_INSTALLER.starts_with("#!/usr/bin/env bash"));
         assert!(POWERSHELL_INSTALLER.contains("[switch]$NoTakeover"));
+        assert!(POWERSHELL_INSTALLER.contains("[switch]$Upgrade"));
+        assert!(BASH_INSTALLER.contains("[--no-takeover] [--upgrade]"));
     }
 
     #[test]
@@ -132,6 +151,7 @@ mod tests {
         let off = InstallOptions {
             takeover: false,
             install_dependencies: true,
+            upgrade: false,
         };
         assert!(
             install_command(HostPlatform::MacOs, on).ends_with(&format!("bash -s -- {VERSION}"))
@@ -141,5 +161,22 @@ mod tests {
         assert!(!install_command(HostPlatform::MacOs, off).contains("--install-dependencies"));
         assert!(install_command(HostPlatform::Windows, off).ends_with("-NoTakeover"));
         assert!(local_command(HostPlatform::Windows, on).starts_with("./install-dev-tunnel.ps1"));
+    }
+
+    #[test]
+    fn upgrade_defaults_off_and_appends_the_platform_flag_last() {
+        assert!(!InstallOptions::default().upgrade);
+        let upgrade = InstallOptions {
+            takeover: false,
+            upgrade: true,
+            ..InstallOptions::default()
+        };
+        for platform in [HostPlatform::MacOs, HostPlatform::Linux] {
+            assert!(install_command(platform, upgrade).ends_with(" --no-takeover --upgrade"));
+            assert!(local_command(platform, upgrade).ends_with(" --no-takeover --upgrade"));
+            assert!(!install_command(platform, InstallOptions::default()).contains("--upgrade"));
+        }
+        assert!(install_command(HostPlatform::Windows, upgrade).ends_with(" -NoTakeover -Upgrade"));
+        assert!(local_command(HostPlatform::Windows, upgrade).ends_with(" -NoTakeover -Upgrade"));
     }
 }

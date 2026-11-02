@@ -6670,6 +6670,19 @@ without logging raw SDK errors, URLs or response bodies. The exact live
 lookup status and remote host type remain unknown. Successful tunnel-service
 authorization and host discovery remain DT-07 follow-up, not passed gates.
 
+### Explicit host upgrade without losing the tunnel or shell
+
+Managed setup deliberately kept an existing installation's helpers on every
+rerun, so a host could never pick up bridge fixes such as concurrent relay
+clients or reclaiming a client's own stale attachment. `--upgrade` (installer
+`--upgrade`/`-Upgrade`, plus an off-by-default toggle in the desktop and iOS
+host setup panels) now journals an `upgrading` phase, stops and rewrites only
+the installation's own service definition, and restarts the worker on the new
+release's bridge. The tunnel, host key, account binding and the independently
+started daemon shell are untouched; the new bridge reattaches to the same
+exact generation. Interrupted upgrades resume with `--upgrade`, and a plain
+rerun with a newer installer now says how to upgrade (ADR 0053 amendment).
+
 ## iOS shell stage 1 (ios/shell)
 
 Added the mobile design system, Profiles/Sessions/Settings shell, terminal

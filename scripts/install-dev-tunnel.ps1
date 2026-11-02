@@ -2,7 +2,10 @@
 param(
     [ValidatePattern('\A[0-9]+\.[0-9]+\.[0-9]+\z')]
     [string]$Version = '',
-    [switch]$NoTakeover
+    [switch]$NoTakeover,
+    # Switch an existing host's service to this release's helpers, keeping its
+    # tunnel, host key and running daemon session.
+    [switch]$Upgrade
 )
 
 Set-StrictMode -Version Latest
@@ -163,7 +166,7 @@ try {
     }
     $cli = Join-Path $cached 'devtunnel.exe'
     Write-Host "Installed private helpers: $cached"
-    & (Join-Path $cached 'festerm-tunnel-setup.exe') --managed --devtunnel $cli --state-dir (Join-Path $root 'state') @(if ($NoTakeover) { '--no-takeover' })
+    & (Join-Path $cached 'festerm-tunnel-setup.exe') --managed --devtunnel $cli --state-dir (Join-Path $root 'state') @(if ($NoTakeover) { '--no-takeover' }) @(if ($Upgrade) { '--upgrade' })
     if ($LASTEXITCODE -ne 0) { throw 'Experimental tunnel setup refused/stopped.' }
     $profile = Join-Path $root 'state\festerm-profile.json'
     if (-not (Test-Path -LiteralPath $profile -PathType Leaf)) {

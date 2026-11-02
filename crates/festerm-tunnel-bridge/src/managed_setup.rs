@@ -45,7 +45,14 @@ struct Installation {
     /// Remote takeover is on unless this is set; absent from older records.
     #[serde(default, skip_serializing_if = "is_false")]
     no_takeover: bool,
+    /// Helper executables an interrupted explicit upgrade may still find in
+    /// the service definition; empty (and absent) outside phase `upgrading`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    upgrading_from: Vec<PathBuf>,
 }
+
+const UPGRADING: &str = "upgrading";
+const MAX_UPGRADE_SOURCES: usize = 8;
 
 fn is_false(value: &bool) -> bool {
     !*value
@@ -112,6 +119,12 @@ fn validate_record(record: &Installation) -> io::Result<()> {
         || record.account.is_empty()
         || record.account.len() > 256
         || !record.account.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(refused("setup.installation_identity"));
+    }
+    if (record.phase == UPGRADING) == record.upgrading_from.is_empty()
+        || record.upgrading_from.len() > MAX_UPGRADE_SOURCES
+        || !record.upgrading_from.iter().all(|path| path.is_absolute())
     {
         return Err(refused("setup.installation_identity"));
     }
@@ -288,22 +301,12 @@ fn exact_target_alive(root: &Path, target: &Target) -> io::Result<()> {
 }
 
 pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
-    super::service_install::ensure_unprivileged_user()?;
-    let (cli_path, state, no_takeover) = {
-        let (args, no_takeover) = match args {
-            [rest @ .., last] if last == "--no-takeover" => (rest, true),
-            _ => (args, false),
-        };
-        let [flag, cli_path, state_flag, state] = args else {
-            return Err(refused(
-                "usage: --managed --devtunnel PATH --state-dir PRIVATE_DIRECTORY [--no-takeover]",
-            ));
-        };
-        if flag != "--devtunnel" || state_flag != "--state-dir" {
-            return Err(refused("setup.managed_arguments"));
-        }
-        (PathBuf::from(cli_path), PathBuf::from(state), no_takeover)
-    };
+    let ManagedArguments {
+        cli: cli_path,
+        state,
+        no_takeover,
+        upgrade,
+    } = managed_arguments(args)?;
     if !cli_path.is_absolute() || !state.is_absolute() {
         return Err(refused("setup.absolute_paths_required"));
     }
@@ -312,6 +315,10 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => true,
         Err(error) => return Err(error),
     };
+    if upgrade && create {
+        return Err(refused("setup.upgrade_requires_an_existing_installation"));
+    }
+    super::service_install::ensure_unprivileged_user()?;
     let directory = setup_storage::private_directory(&state, create)?;
     let installer = lock(&directory, "installer.lock")?;
     installer
@@ -320,6 +327,9 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     let record = match read_json::<Installation>(&directory, CONFIG) {
         Ok(record) => record,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if upgrade {
+                return Err(refused("setup.upgrade_requires_an_existing_installation"));
+            }
             refuse_orphaned_state(&state)?;
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             super::service_install::preflight_registration_directory()?;
@@ -334,7 +344,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                 version: 1,
                 id: uuid::Uuid::new_v4().to_string(),
                 executable: std::env::current_exe()?,
-                cli: cli_path,
+                cli: cli_path.clone(),
                 runtime_root,
                 account,
                 tunnel: None,
@@ -342,6 +352,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                 target: None,
                 fingerprint: identity.fingerprint()?,
                 no_takeover,
+                upgrading_from: Vec::new(),
             };
             validate_record(&record)?;
             setup_storage::write_new_private(
@@ -455,11 +466,30 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         Err(error) => return Err(error),
     };
     validate_record(&record)?;
-    if record.phase != "configured" {
-        return Err(refused(
-            "setup.incomplete_previous_operation_reconcile_explicitly_no_retry",
-        ));
-    }
+    let executable = std::env::current_exe()?;
+    let record = match rerun_plan(&record, &executable, &cli_path, no_takeover, upgrade)? {
+        Rerun::Keep(hint) => {
+            if let Some(hint) = hint {
+                println!("{hint}");
+            }
+            record
+        }
+        Rerun::AlreadyCurrent => {
+            println!("Already running this release's helpers; --upgrade has nothing to switch.");
+            record
+        }
+        Rerun::Upgrade => {
+            upgrade_installation(
+                &directory,
+                &state,
+                &record,
+                executable,
+                cli_path,
+                no_takeover,
+            )
+            .await?
+        }
+    };
     if let Some(ready) = healthy_record(&directory, &record)? {
         print_profile(&state, &record, &ready)?;
         return Ok(());
@@ -474,8 +504,8 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     if verify_account(&record.cli).await? != record.account {
         return Err(refused("setup.changed_cli_account"));
     }
-    // Keep an existing installation's executable/CLI paths: reruns cannot
-    // replace a live helper or silently upgrade another daemon generation.
+    // Keep an existing installation's executable/CLI paths: only an explicit
+    // --upgrade switches helpers, and never replaces the daemon generation.
     let specification = service(&record, &state);
     super::service_install::install_and_start(&specification)?;
     timeout(Duration::from_secs(50), async {
@@ -489,6 +519,206 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     .await
     .map_err(|_| refused("setup.service_not_ready_check_private_service_logs"))??;
     Ok(())
+}
+
+struct ManagedArguments {
+    cli: PathBuf,
+    state: PathBuf,
+    no_takeover: bool,
+    upgrade: bool,
+}
+
+fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
+    let usage = || {
+        refused(
+            "usage: --managed --devtunnel PATH --state-dir PRIVATE_DIRECTORY [--no-takeover] [--upgrade]",
+        )
+    };
+    let [flag, cli, state_flag, state, options @ ..] = args else {
+        return Err(usage());
+    };
+    if flag != "--devtunnel" || state_flag != "--state-dir" {
+        return Err(refused("setup.managed_arguments"));
+    }
+    let (mut no_takeover, mut upgrade) = (false, false);
+    for option in options {
+        let seen = if option == "--no-takeover" {
+            &mut no_takeover
+        } else if option == "--upgrade" {
+            &mut upgrade
+        } else {
+            return Err(usage());
+        };
+        if std::mem::replace(seen, true) {
+            return Err(usage());
+        }
+    }
+    Ok(ManagedArguments {
+        cli: PathBuf::from(cli),
+        state: PathBuf::from(state),
+        no_takeover,
+        upgrade,
+    })
+}
+
+/// The release a helper directory was installed from, as the installer
+/// recorded it next to the binaries; the directory itself as a fallback.
+fn release_label(executable: &Path) -> String {
+    let Some(directory) = executable.parent() else {
+        return executable.display().to_string();
+    };
+    fs::read(directory.join("VERSION"))
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .map(|text| text.trim().to_owned())
+        .filter(|version| {
+            !version.is_empty()
+                && version.len() <= 32
+                && version.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+        })
+        .unwrap_or_else(|| directory.display().to_string())
+}
+
+fn upgrade_hint(record: &Installation, executable: &Path) -> Option<String> {
+    (record.executable != executable).then(|| {
+        format!(
+            "NOTE: this host is running fesTerm {} helpers; this installer is {}. Re-run the installer with --upgrade (-Upgrade on Windows) to switch to this version, keeping the tunnel, host key and session.",
+            release_label(&record.executable),
+            release_label(executable),
+        )
+    })
+}
+
+#[derive(Debug, PartialEq)]
+enum Rerun {
+    /// Plain rerun: keep the recorded helpers, optionally hinting at --upgrade.
+    Keep(Option<String>),
+    /// --upgrade, but the recorded helpers already are this release's.
+    AlreadyCurrent,
+    Upgrade,
+}
+
+fn rerun_plan(
+    record: &Installation,
+    executable: &Path,
+    cli: &Path,
+    no_takeover: bool,
+    upgrade: bool,
+) -> io::Result<Rerun> {
+    if record.phase == UPGRADING && !upgrade {
+        return Err(io::Error::other(
+            "setup.upgrade_interrupted: re-run the installer with --upgrade (-Upgrade on Windows) to finish switching this host's helpers",
+        ));
+    }
+    if record.phase != "configured" && record.phase != UPGRADING {
+        return Err(refused(
+            "setup.incomplete_previous_operation_reconcile_explicitly_no_retry",
+        ));
+    }
+    Ok(if !upgrade {
+        Rerun::Keep(upgrade_hint(record, executable))
+    } else if record.phase == UPGRADING
+        || record.executable != executable
+        || record.cli != cli
+        || no_takeover && !record.no_takeover
+    {
+        Rerun::Upgrade
+    } else {
+        Rerun::AlreadyCurrent
+    })
+}
+
+/// Journals the switch to new helpers. Only `executable`/`cli` (and an
+/// explicit `--no-takeover`) change; tunnel, target generation, host identity
+/// and account stay. Resuming accumulates every definition still possible.
+fn upgrade_record(
+    record: &Installation,
+    executable: PathBuf,
+    cli: PathBuf,
+    no_takeover: bool,
+) -> io::Result<Installation> {
+    let mut next = record.clone();
+    if !next.upgrading_from.contains(&record.executable) {
+        next.upgrading_from.push(record.executable.clone());
+    }
+    if next.upgrading_from.len() > MAX_UPGRADE_SOURCES {
+        return Err(refused(
+            "setup.upgrade_interrupted_too_often_reconcile_explicitly",
+        ));
+    }
+    next.executable = executable;
+    next.cli = cli;
+    next.no_takeover = record.no_takeover || no_takeover;
+    next.phase = UPGRADING.into();
+    validate_record(&next)?;
+    Ok(next)
+}
+
+fn upgrade_completed(record: &Installation) -> Installation {
+    let mut next = record.clone();
+    next.upgrading_from.clear();
+    next.phase = "configured".into();
+    next
+}
+
+async fn wait_worker_stopped(directory: &File) -> io::Result<()> {
+    let worker = lock(directory, "worker.lock")?;
+    timeout(Duration::from_secs(30), async {
+        loop {
+            match worker.try_lock_exclusive() {
+                Ok(()) => return FileExt::unlock(&worker),
+                Err(error) if festerm_sessiond::lock_is_contended(&error) => {}
+                Err(error) => return Err(error),
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .map_err(|_| refused("setup.previous_worker_still_running"))?
+}
+
+async fn upgrade_installation(
+    directory: &File,
+    state: &Path,
+    record: &Installation,
+    executable: PathBuf,
+    cli: PathBuf,
+    no_takeover: bool,
+) -> io::Result<Installation> {
+    let target = record
+        .target
+        .as_ref()
+        .ok_or_else(|| refused("setup.target_missing"))?;
+    exact_target_alive(&record.runtime_root, target)?;
+    if verify_account(&cli).await? != record.account {
+        return Err(refused("setup.changed_cli_account"));
+    }
+    let next = upgrade_record(record, executable, cli, no_takeover)?;
+    checkpoint(directory, &next)?;
+    println!(
+        "Upgrading host helpers from {} to {}; keeping tunnel {}, host key {} and daemon session {} (pid {}). Only the bridge restarts.",
+        release_label(next.upgrading_from.last().unwrap_or(&record.executable)),
+        release_label(&next.executable),
+        next.tunnel.as_deref().unwrap_or("-"),
+        next.fingerprint,
+        target.name,
+        target.pid,
+    );
+    let previous: Vec<_> = next
+        .upgrading_from
+        .iter()
+        .map(|executable| super::service_install::ServiceSpec {
+            id: next.id.clone(),
+            executable: executable.clone(),
+            state: state.into(),
+        })
+        .collect();
+    super::service_install::stop_and_replace(&previous, &service(&next, state))?;
+    wait_worker_stopped(directory).await?;
+    let next = upgrade_completed(&next);
+    validate_record(&next)?;
+    checkpoint(directory, &next)?;
+    Ok(next)
 }
 
 pub(super) async fn serve(args: &[OsString]) -> io::Result<()> {
@@ -680,6 +910,7 @@ mod tests {
             }),
             fingerprint: "fixture".into(),
             no_takeover: false,
+            upgrading_from: Vec::new(),
         };
         validate_record(&record).unwrap();
         record.tunnel = Some("foreign.usw2".into());
@@ -790,6 +1021,7 @@ mod tests {
             }),
             fingerprint: host_fingerprint(public_key).unwrap(),
             no_takeover: false,
+            upgrading_from: Vec::new(),
         };
         validate_record(&record).unwrap();
         checkpoint(&directory, &record).unwrap();
@@ -847,5 +1079,215 @@ mod tests {
             fs::remove_file(root.join(name)).unwrap();
         }
         fs::remove_dir(root).unwrap();
+    }
+
+    fn configured_fixture(executable: PathBuf) -> Installation {
+        let id = uuid::Uuid::new_v4();
+        Installation {
+            version: 1,
+            id: id.to_string(),
+            executable,
+            cli: std::env::current_exe().unwrap(),
+            runtime_root: festerm_sessiond::runtime_root().unwrap(),
+            account: "123".into(),
+            tunnel: Some(format!("festerm-{}.usw2", id.simple())),
+            phase: "configured".into(),
+            target: Some(Target {
+                name: format!("festerm-{}", id.simple()),
+                pid: 123,
+                generation: 456,
+                endpoint: "fixture-123-456".into(),
+            }),
+            fingerprint: "fixture-fingerprint".into(),
+            no_takeover: true,
+            upgrading_from: Vec::new(),
+        }
+    }
+
+    fn old_executable() -> PathBuf {
+        std::env::current_dir()
+            .unwrap()
+            .join("releases/0.0.1-fixture/festerm-tunnel-setup")
+    }
+
+    #[test]
+    fn managed_upgrade_switches_helpers_and_keeps_tunnel_target_identity_and_takeover() {
+        let current = std::env::current_exe().unwrap();
+        let new_cli = current.with_file_name("devtunnel-new");
+        let record = configured_fixture(old_executable());
+        let upgrading = upgrade_record(&record, current.clone(), new_cli.clone(), false).unwrap();
+        assert_eq!(upgrading.phase, UPGRADING);
+        assert_eq!(upgrading.upgrading_from, [old_executable()]);
+        let done = upgrade_completed(&upgrading);
+        validate_record(&done).unwrap();
+        assert_eq!(
+            (done.executable.clone(), done.cli.clone()),
+            (current, new_cli)
+        );
+        assert_eq!(done.phase, "configured");
+        assert!(done.upgrading_from.is_empty());
+        assert_eq!(
+            (&done.id, &done.tunnel, &done.account, &done.runtime_root),
+            (
+                &record.id,
+                &record.tunnel,
+                &record.account,
+                &record.runtime_root
+            )
+        );
+        assert_eq!(done.fingerprint, record.fingerprint);
+        let (old, new) = (record.target.unwrap(), done.target.clone().unwrap());
+        assert_eq!(
+            (old.name, old.pid, old.generation, old.endpoint),
+            (new.name, new.pid, new.generation, new.endpoint)
+        );
+        // A recorded no-takeover stays on; an explicit flag turns it on.
+        assert!(done.no_takeover);
+        let mut takeover = configured_fixture(old_executable());
+        takeover.no_takeover = false;
+        let exe = std::env::current_exe().unwrap();
+        assert!(
+            !upgrade_record(&takeover, exe.clone(), exe.clone(), false)
+                .unwrap()
+                .no_takeover
+        );
+        assert!(
+            upgrade_record(&takeover, exe.clone(), exe, true)
+                .unwrap()
+                .no_takeover
+        );
+        // A completed record serializes exactly like one older helpers wrote.
+        let json = serde_json::to_value(&done).unwrap();
+        assert!(json.get("upgrading_from").is_none());
+    }
+
+    #[test]
+    fn managed_rerun_with_other_helpers_hints_upgrade_and_keeps_the_record() {
+        let current = std::env::current_exe().unwrap();
+        let record = configured_fixture(old_executable());
+        let Rerun::Keep(Some(hint)) =
+            rerun_plan(&record, &current, &record.cli, false, false).unwrap()
+        else {
+            panic!("plain rerun must keep the record and hint");
+        };
+        assert!(
+            hint.contains("--upgrade") && hint.contains("-Upgrade"),
+            "{hint}"
+        );
+        assert!(
+            hint.contains("keeping the tunnel, host key and session"),
+            "{hint}"
+        );
+        let same = configured_fixture(current.clone());
+        assert_eq!(
+            rerun_plan(&same, &current, &same.cli, false, false).unwrap(),
+            Rerun::Keep(None)
+        );
+        assert_eq!(
+            rerun_plan(&same, &current, &same.cli, false, true).unwrap(),
+            Rerun::AlreadyCurrent
+        );
+        assert_eq!(
+            rerun_plan(&record, &current, &record.cli, false, true).unwrap(),
+            Rerun::Upgrade
+        );
+        let mut partial = configured_fixture(current.clone());
+        partial.phase = "starting-session".into();
+        assert!(rerun_plan(&partial, &current, &partial.cli, false, true).is_err());
+    }
+
+    #[test]
+    fn managed_release_label_reads_the_installed_version() {
+        let root = crate::test_support::private_directory("festerm-managed-label");
+        let executable = root.join("festerm-tunnel-setup");
+        assert_eq!(release_label(&executable), root.display().to_string());
+        fs::write(root.join("VERSION"), "0.14.0\n").unwrap();
+        assert_eq!(release_label(&executable), "0.14.0");
+        fs::write(root.join("VERSION"), "not a version").unwrap();
+        assert_eq!(release_label(&executable), root.display().to_string());
+        fs::remove_file(root.join("VERSION")).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn managed_interrupted_upgrade_refuses_plain_rerun_and_resumes_with_upgrade() {
+        let current = std::env::current_exe().unwrap();
+        let interrupted_target = current.with_file_name("other-release-setup");
+        let record = configured_fixture(old_executable());
+        let upgrading = upgrade_record(
+            &record,
+            interrupted_target.clone(),
+            record.cli.clone(),
+            false,
+        )
+        .unwrap();
+        let encoded = serde_json::to_vec(&upgrading).unwrap();
+        let decoded: Installation = serde_json::from_slice(&encoded).unwrap();
+        validate_record(&decoded).unwrap();
+        let refusal = rerun_plan(&decoded, &current, &decoded.cli, false, false).unwrap_err();
+        assert!(refusal.to_string().contains("--upgrade"), "{refusal}");
+        assert_eq!(
+            rerun_plan(&decoded, &interrupted_target, &decoded.cli, false, true).unwrap(),
+            Rerun::Upgrade
+        );
+        // Resuming keeps every definition the service might still hold.
+        let resumed =
+            upgrade_record(&decoded, current.clone(), decoded.cli.clone(), false).unwrap();
+        assert_eq!(
+            resumed.upgrading_from,
+            [old_executable(), interrupted_target]
+        );
+        assert_eq!(upgrade_completed(&resumed).executable, current);
+        // The journal is consistent: sources exist exactly while upgrading.
+        let mut inconsistent = decoded.clone();
+        inconsistent.phase = "configured".into();
+        assert!(validate_record(&inconsistent).is_err());
+        let mut inconsistent = decoded;
+        inconsistent.upgrading_from.clear();
+        assert!(validate_record(&inconsistent).is_err());
+    }
+
+    #[test]
+    fn managed_upgrade_arguments_and_missing_installation_refuse() {
+        let parse = |extra: &[&str]| {
+            let mut args: Vec<OsString> = ["--devtunnel", "/cli", "--state-dir", "/state"]
+                .into_iter()
+                .map(OsString::from)
+                .collect();
+            args.extend(extra.iter().map(OsString::from));
+            managed_arguments(&args).map(|parsed| (parsed.no_takeover, parsed.upgrade))
+        };
+        assert_eq!(parse(&[]).unwrap(), (false, false));
+        assert_eq!(parse(&["--upgrade"]).unwrap(), (false, true));
+        assert_eq!(
+            parse(&["--upgrade", "--no-takeover"]).unwrap(),
+            (true, true)
+        );
+        assert_eq!(
+            parse(&["--no-takeover", "--upgrade"]).unwrap(),
+            (true, true)
+        );
+        assert!(parse(&["--upgrade", "--upgrade"]).is_err());
+        assert!(parse(&["--force"]).is_err());
+        let missing = std::env::current_dir()
+            .unwrap()
+            .join(format!("missing-managed-state-{}", uuid::Uuid::new_v4()));
+        let args: Vec<OsString> = vec![
+            "--devtunnel".into(),
+            std::env::current_exe().unwrap().into(),
+            "--state-dir".into(),
+            missing.clone().into(),
+            "--upgrade".into(),
+        ];
+        let error = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(install(&args))
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "setup.upgrade_requires_an_existing_installation"
+        );
+        assert!(!missing.exists());
     }
 }

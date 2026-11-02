@@ -15,6 +15,7 @@ pub struct HostSetupState {
     pub platform_index: usize,
     pub takeover: bool,
     pub install_dependencies: bool,
+    pub upgrade: bool,
     /// The read-only script viewer is showing instead of the command sheet.
     pub viewing: bool,
     pub notice: Option<&'static str>,
@@ -27,6 +28,7 @@ impl Default for HostSetupState {
             platform_index: 0,
             takeover: InstallOptions::default().takeover,
             install_dependencies: false,
+            upgrade: InstallOptions::default().upgrade,
             viewing: false,
             notice: None,
         }
@@ -55,6 +57,7 @@ impl HostSetupState {
             takeover: self.takeover,
             install_dependencies: self.install_dependencies
                 && self.platform() == HostPlatform::Linux,
+            upgrade: self.upgrade,
         }
     }
 
@@ -140,6 +143,13 @@ fn command_sheet(ctx: &egui::Context, bounds: Rect, state: &mut HostSetupState) 
                     true,
                 );
             }
+            switch_row(
+                ui,
+                "Upgrade an existing host",
+                Some("Keeps its tunnel, host key and session."),
+                &mut state.upgrade,
+                true,
+            );
         });
         caption_label(ui, "Command");
         mono_block(ui, &state.command());
@@ -262,6 +272,16 @@ mod tests {
         assert!(state.command().ends_with("--no-takeover"));
         state.platform_index = 2;
         assert!(state.command().ends_with("-NoTakeover"));
+    }
+
+    #[test]
+    fn upgrade_defaults_off_and_on_adds_the_flag() {
+        let mut state = HostSetupState::default();
+        assert!(!state.command().contains("--upgrade"));
+        state.upgrade = true;
+        assert!(state.command().ends_with(" --upgrade"));
+        state.platform_index = 2;
+        assert!(state.command().ends_with(" -Upgrade"));
     }
 
     #[test]

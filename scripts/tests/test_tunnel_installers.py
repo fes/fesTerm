@@ -65,7 +65,7 @@ class UnixInstallerTests(unittest.TestCase):
         tool.write_text("#!/bin/sh\nset -eu\n" + body + "\n")
         tool.chmod(0o700)
 
-    def make_archive(self, extra=None, duplicate=False, link=False, version=VERSION):
+    def make_archive(self, extra=None, duplicate=False, link=False, version=VERSION, release=VERSION):
         files = {
             "VERSION": version + "\n",
             "LICENSE": "fixture",
@@ -101,7 +101,7 @@ class UnixInstallerTests(unittest.TestCase):
                         entry.mode = 0o700
                         archive.addfile(entry, io.BytesIO(data))
         digest = hashlib.sha256(self.archive.read_bytes()).hexdigest()
-        self.checksum.write_text(f"{digest}  fesTerm-tunnel-{VERSION}-linux-x86_64.tar.gz\n")
+        self.checksum.write_text(f"{digest}  fesTerm-tunnel-{release}-linux-x86_64.tar.gz\n")
 
     def run_installer(self, *args, include_version=True):
         environment = os.environ.copy()
@@ -168,6 +168,21 @@ class UnixInstallerTests(unittest.TestCase):
         repeated = self.run_installer()
         self.assertEqual(repeated.returncode, 0, repeated.stderr)
         self.assertEqual(first.stdout, repeated.stdout)
+
+    def test_upgrade_installs_next_to_the_previous_release_and_passes_the_flag(self):
+        first = self.run_installer("--no-takeover")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertNotIn("--upgrade", first.stdout)
+        newer = "123.4.6"
+        self.make_archive(version=newer, release=newer)
+        upgraded = self.run_installer(newer, "--upgrade", "--no-takeover", include_version=False)
+        self.assertEqual(upgraded.returncode, 0, upgraded.stderr)
+        self.assertIn("--no-takeover\n--upgrade\n", upgraded.stdout)
+        self.assertIn(f"/releases/{newer}-linux-x86_64\n", upgraded.stdout)
+        releases = self.home / ".local/share/festerm-tunnels/releases"
+        self.assertEqual(sorted(entry.name for entry in releases.iterdir()),
+                         [f"{VERSION}-linux-x86_64", f"{newer}-linux-x86_64"])
+        self.assert_refused(self.run_installer("--upgrade", "--upgrade-everything"), "Usage:")
 
     def test_foreign_cache_lock_is_not_removed(self):
         self.assertEqual(self.run_installer().returncode, 0)

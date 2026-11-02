@@ -226,6 +226,27 @@ by itself, and Running Sessions shows who holds it. To refuse instead, add
 `--no-takeover` (bash) or `-NoTakeover` (PowerShell) when first installing; an
 existing installation keeps its recorded choice.
 
+To move an existing host to a newer release's helpers (for example to pick up
+bridge fixes), rerun the installer with `--upgrade` (bash) or `-Upgrade`
+(PowerShell):
+
+```sh
+curl -fsSL https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.sh | bash -s -- --upgrade
+```
+
+```powershell
+& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.ps1).Content)) -Upgrade
+```
+
+The upgrade keeps the tunnel, host key/fingerprint, account binding, recorded
+take-over choice (unless `--no-takeover`/`-NoTakeover` is also passed) and the
+running daemon shell; only the service's worker and bridge restart and the
+new bridge reattaches to the same daemon generation. The previous release's
+cache directory stays. A plain rerun with a newer installer prints this hint
+and keeps the old helpers; an interrupted upgrade is completed by rerunning
+with `--upgrade`. Daemon-side improvements apply only to a daemon started by a
+release that includes them.
+
 When setup finishes, the installer prints the public connection JSON, saves it
 as `festerm-profile.json` in the private state directory (`~/.local/share/festerm-tunnels/state`
 or `fesTerm-tunnels\state` under the per-user local app data folder) and copies it to the clipboard when one is
