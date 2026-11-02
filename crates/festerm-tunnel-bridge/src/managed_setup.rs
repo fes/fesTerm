@@ -408,7 +408,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
             start.env(variable, base);
             start.args(["start", "--name", &name]);
             #[cfg(unix)]
-            start.args(["--shell", "/bin/sh"]);
+            super::shell_command(&mut start);
             #[cfg(windows)]
             start.arg("--shell").arg(
                 PathBuf::from(
@@ -417,6 +417,9 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                 )
                 .join("System32/cmd.exe"),
             );
+            if let Some(home) = super::shell_home() {
+                start.arg("--cwd").arg(home);
+            }
             let status = start
                 .current_dir(&state)
                 .args([

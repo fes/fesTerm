@@ -270,7 +270,8 @@ apps, tunnels or services. Required license/notice texts accompany the binaries.
 
 First setup opens official GitHub **device-code authentication**, creates a new
 private 30-day tunnel, marks one virtual bridge port and starts one uniquely
-named `/bin/sh` or Windows `cmd.exe` daemon session. It requests a scoped **host**
+named daemon session running your login shell (`$SHELL -l`, falling back to
+`/bin/sh`) or Windows `cmd.exe`, started in your home directory. It requests a scoped **host**
 token into bounded, zeroized memory and passes it only through the bridge's
 stdin. No token is printed, placed in argv/environment or saved by fesTerm.
 The official CLI owns its own sign-in/cache policy; the installer does not read
