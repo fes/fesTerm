@@ -759,7 +759,22 @@ fn tunnel_profile_default_name(
     editing: bool,
     tunnel: &festerm_mobile_tunnels::TunnelInfo,
 ) -> Option<String> {
-    (name_is_empty && !editing).then(|| tunnel_label(tunnel))
+    (name_is_empty && !editing).then(|| {
+        let label: String = tunnel_label(tunnel)
+            .chars()
+            .map(|ch| if ch.is_control() { ' ' } else { ch })
+            .collect();
+        let name = if label.trim().is_empty() {
+            tunnel.locator.as_str()
+        } else {
+            label.trim()
+        };
+        name.chars()
+            .take(festerm_mobile_profiles::MAX_NAME_CHARS)
+            .collect::<String>()
+            .trim_end()
+            .to_owned()
+    })
 }
 
 #[cfg(test)]
@@ -780,5 +795,31 @@ mod friendly_name_tests {
         );
         assert_eq!(tunnel_profile_default_name(false, false, &tunnel), None);
         assert_eq!(tunnel_profile_default_name(true, true, &tunnel), None);
+    }
+
+    #[test]
+    fn picked_tunnel_profile_name_respects_ios_name_constraints() {
+        let mut tunnel = festerm_mobile_tunnels::TunnelInfo {
+            locator: "abc123.use".into(),
+            name: None,
+            description: Some("\u{754c}".repeat(100)),
+            active: true,
+        };
+        assert_eq!(
+            tunnel_profile_default_name(true, false, &tunnel),
+            Some("\u{754c}".repeat(80))
+        );
+
+        tunnel.description = Some(" Production\nserver ".into());
+        assert_eq!(
+            tunnel_profile_default_name(true, false, &tunnel).as_deref(),
+            Some("Production server")
+        );
+
+        tunnel.description = Some("\0".into());
+        assert_eq!(
+            tunnel_profile_default_name(true, false, &tunnel).as_deref(),
+            Some("abc123.use")
+        );
     }
 }
