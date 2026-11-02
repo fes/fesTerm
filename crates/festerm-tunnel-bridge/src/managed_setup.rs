@@ -306,6 +306,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         state,
         no_takeover,
         upgrade,
+        friendly_name,
     } = managed_arguments(args)?;
     if !cli_path.is_absolute() || !state.is_absolute() {
         return Err(refused("setup.absolute_paths_required"));
@@ -315,6 +316,11 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => true,
         Err(error) => return Err(error),
     };
+    if !create && friendly_name.is_some() {
+        return Err(refused(
+            "setup.friendly_name_only_applies_to_new_hosts_rename_existing_tunnels_in_festerm",
+        ));
+    }
     if upgrade && create {
         return Err(refused("setup.upgrade_requires_an_existing_installation"));
     }
@@ -367,6 +373,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                     .map_err(|_| refused("setup.installation_identity"))?
                     .simple()
             );
+            let description = friendly_name.unwrap_or_else(default_friendly_name);
             println!("Provisioning only this new private tunnel/session: {name}. Interrupted cloud mutations are journaled and never blindly retried.");
             let response = cli(
                 &record.cli,
@@ -376,7 +383,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                     "--expiration",
                     "30d",
                     "--description",
-                    "fesTerm managed private shell",
+                    &description,
                     "--json",
                 ],
                 "setup.create_tunnel",
@@ -526,12 +533,13 @@ struct ManagedArguments {
     state: PathBuf,
     no_takeover: bool,
     upgrade: bool,
+    friendly_name: Option<String>,
 }
 
 fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
     let usage = || {
         refused(
-            "usage: --managed --devtunnel PATH --state-dir PRIVATE_DIRECTORY [--no-takeover] [--upgrade]",
+            "usage: --managed --devtunnel PATH --state-dir PRIVATE_DIRECTORY [--no-takeover] [--upgrade] [--friendly-name NAME]",
         )
     };
     let [flag, cli, state_flag, state, options @ ..] = args else {
@@ -540,25 +548,50 @@ fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
     if flag != "--devtunnel" || state_flag != "--state-dir" {
         return Err(refused("setup.managed_arguments"));
     }
-    let (mut no_takeover, mut upgrade) = (false, false);
-    for option in options {
+    let (mut no_takeover, mut upgrade, mut friendly_name) = (false, false, None);
+    let mut index = 0;
+    while index < options.len() {
+        let option = &options[index];
         let seen = if option == "--no-takeover" {
             &mut no_takeover
         } else if option == "--upgrade" {
             &mut upgrade
+        } else if option == "--friendly-name" {
+            if friendly_name.is_some() || index + 1 >= options.len() {
+                return Err(usage());
+            }
+            let name = options[index + 1].to_str().ok_or_else(usage)?;
+            let name = name.trim();
+            if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
+                return Err(refused("setup.invalid_friendly_name"));
+            }
+            friendly_name = Some(name.to_owned());
+            index += 2;
+            continue;
         } else {
             return Err(usage());
         };
         if std::mem::replace(seen, true) {
             return Err(usage());
         }
+        index += 1;
     }
     Ok(ManagedArguments {
         cli: PathBuf::from(cli),
         state: PathBuf::from(state),
         no_takeover,
         upgrade,
+        friendly_name,
     })
+}
+
+fn default_friendly_name() -> String {
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .ok()
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty() && name.chars().count() <= 100)
+        .unwrap_or_else(|| "fesTerm host".to_owned())
 }
 
 /// The release a helper directory was installed from, as the installer
@@ -1255,18 +1288,26 @@ mod tests {
                 .map(OsString::from)
                 .collect();
             args.extend(extra.iter().map(OsString::from));
-            managed_arguments(&args).map(|parsed| (parsed.no_takeover, parsed.upgrade))
+            managed_arguments(&args)
+                .map(|parsed| (parsed.no_takeover, parsed.upgrade, parsed.friendly_name))
         };
-        assert_eq!(parse(&[]).unwrap(), (false, false));
-        assert_eq!(parse(&["--upgrade"]).unwrap(), (false, true));
+        assert_eq!(parse(&[]).unwrap(), (false, false, None));
+        assert_eq!(parse(&["--upgrade"]).unwrap(), (false, true, None));
+        assert_eq!(
+            parse(&["--friendly-name", "Raspberry Pi 5"]).unwrap(),
+            (false, false, Some("Raspberry Pi 5".into()))
+        );
         assert_eq!(
             parse(&["--upgrade", "--no-takeover"]).unwrap(),
-            (true, true)
+            (true, true, None)
         );
         assert_eq!(
             parse(&["--no-takeover", "--upgrade"]).unwrap(),
-            (true, true)
+            (true, true, None)
         );
+        assert!(parse(&["--friendly-name", " "]).is_err());
+        assert!(parse(&["--friendly-name", "first", "--friendly-name", "second"]).is_err());
+        assert!(parse(&["--friendly-name", "line\nbreak"]).is_err());
         assert!(parse(&["--upgrade", "--upgrade"]).is_err());
         assert!(parse(&["--force"]).is_err());
         let missing = std::env::current_dir()

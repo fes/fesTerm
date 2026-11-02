@@ -1042,7 +1042,8 @@ impl MobileApp {
             | forms::EditorAction::RefreshTunnels
             | forms::EditorAction::SignOut
             | forms::EditorAction::PickTunnel(_)
-            | forms::EditorAction::DeleteTunnel(_) => {
+            | forms::EditorAction::DeleteTunnel(_)
+            | forms::EditorAction::RenameTunnel(_) => {
                 #[cfg(feature = "live-ssh")]
                 self.apply_tunnel_editor_action(&ctx, action);
             }

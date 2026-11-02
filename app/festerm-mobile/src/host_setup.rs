@@ -4,7 +4,7 @@
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
     bottom_sheet, button, caption_label, card, footnote, segmented, sheet_title, switch_row,
-    ButtonKind,
+    text_field_with_limit, ButtonKind,
 };
 use eframe::egui::{self, CornerRadius, Rect, Stroke, Ui};
 use festerm_host_setup::{HostPlatform, InstallOptions};
@@ -16,6 +16,7 @@ pub struct HostSetupState {
     pub takeover: bool,
     pub install_dependencies: bool,
     pub upgrade: bool,
+    pub friendly_name: String,
     /// The read-only script viewer is showing instead of the command sheet.
     pub viewing: bool,
     pub notice: Option<&'static str>,
@@ -29,6 +30,7 @@ impl Default for HostSetupState {
             takeover: InstallOptions::default().takeover,
             install_dependencies: false,
             upgrade: InstallOptions::default().upgrade,
+            friendly_name: String::new(),
             viewing: false,
             notice: None,
         }
@@ -58,6 +60,7 @@ impl HostSetupState {
             install_dependencies: self.install_dependencies
                 && self.platform() == HostPlatform::Linux,
             upgrade: self.upgrade,
+            friendly_name: self.friendly_name.clone(),
         }
     }
 
@@ -127,6 +130,16 @@ fn command_sheet(ctx: &egui::Context, bounds: Rect, state: &mut HostSetupState) 
         let items: Vec<_> = labels.iter().map(|label| (None, *label)).collect();
         segmented(ui, &items, &mut state.platform_index, false);
         card(ui, |ui| {
+            ui.add_enabled_ui(!state.upgrade, |ui| {
+                text_field_with_limit(
+                    ui,
+                    "Friendly host name (optional; defaults to this computer's name)",
+                    &mut state.friendly_name,
+                    "Raspberry Pi 5",
+                    ui.available_width(),
+                    100,
+                );
+            });
             switch_row(
                 ui,
                 "Allow remote takeover",
@@ -282,6 +295,15 @@ mod tests {
         assert!(state.command().ends_with(" --upgrade"));
         state.platform_index = 2;
         assert!(state.command().ends_with(" -Upgrade"));
+    }
+
+    #[test]
+    fn friendly_name_is_included_in_the_generated_command() {
+        let state = HostSetupState {
+            friendly_name: "Raspberry Pi 5".into(),
+            ..HostSetupState::default()
+        };
+        assert!(state.command().contains("--friendly-name 'Raspberry Pi 5'"));
     }
 
     #[test]

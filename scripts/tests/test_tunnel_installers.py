@@ -184,6 +184,15 @@ class UnixInstallerTests(unittest.TestCase):
                          [f"{VERSION}-linux-x86_64", f"{newer}-linux-x86_64"])
         self.assert_refused(self.run_installer("--upgrade", "--upgrade-everything"), "Usage:")
 
+    def test_friendly_name_is_forwarded_as_one_managed_setup_argument(self):
+        result = self.run_installer("--friendly-name", "Raspberry Pi 5")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--friendly-name\nRaspberry Pi 5\n", result.stdout)
+
+    def test_friendly_name_is_refused_when_upgrading_an_existing_host(self):
+        result = self.run_installer("--upgrade", "--friendly-name", "Raspberry Pi 5")
+        self.assert_refused(result, "applies only when creating a new host")
+
     def test_foreign_cache_lock_is_not_removed(self):
         self.assertEqual(self.run_installer().returncode, 0)
         lock = self.home / f".local/share/festerm-tunnels/releases/{VERSION}-linux-x86_64.lock"

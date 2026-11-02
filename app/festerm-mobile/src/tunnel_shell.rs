@@ -111,7 +111,7 @@ impl MobileApp {
         let Some(tunnel) = list.items.get(index) else {
             return;
         };
-        if self.editor.tunnel_name == tunnel_label(tunnel) {
+        if self.editor.tunnel_name == tunnel.locator {
             self.editor.tunnel_name.clear();
         }
         let account = list.account.clone();
@@ -120,6 +120,28 @@ impl MobileApp {
             client.delete_tunnel(&account, &locator, cancel)?;
             client.list_tunnels(&account, cancel)
         }));
+        list.error = None;
+    }
+
+    fn rename_listed_tunnel(&mut self, ctx: &egui::Context, index: usize) {
+        let Some(client) = self.tunnel_client() else {
+            return;
+        };
+        let Some(list) = self.tunnel.list.as_mut().filter(|list| list.job.is_none()) else {
+            return;
+        };
+        let Some(tunnel) = list.items.get(index) else {
+            return;
+        };
+        let account = list.account.clone();
+        let locator = tunnel.locator.clone();
+        let description = self.editor.friendly_name_draft.trim().to_owned();
+        list.job = Some(Job::spawn(ctx, move |cancel| {
+            client.update_tunnel_description(&account, &locator, &description, cancel)?;
+            client.list_tunnels(&account, cancel)
+        }));
+        self.editor.renaming_tunnel = None;
+        self.editor.friendly_name_draft.clear();
         list.error = None;
     }
 
@@ -591,7 +613,16 @@ impl MobileApp {
         self.editor.tunnel = Some(model::DevTunnelChoices {
             account_login: login,
             tunnels: list
-                .map(|list| list.items.iter().map(tunnel_label).collect())
+                .map(|list| {
+                    list.items
+                        .iter()
+                        .map(|tunnel| model::DevTunnelChoice {
+                            locator: tunnel.locator.clone(),
+                            name: tunnel.name.clone(),
+                            description: tunnel.description.clone(),
+                        })
+                        .collect()
+                })
                 .unwrap_or_default(),
             loading: list.is_some_and(|list| list.job.is_some()),
             error: list.and_then(|list| list.error.clone()),
@@ -623,11 +654,21 @@ impl MobileApp {
                     .list
                     .as_ref()
                     .and_then(|list| list.items.get(index))
+                    .cloned()
                 {
-                    self.editor.tunnel_name = tunnel_label(tunnel);
+                    let friendly_name = tunnel_profile_default_name(
+                        self.editor.name.trim().is_empty(),
+                        self.editor.editing.is_some(),
+                        &tunnel,
+                    );
+                    self.editor.tunnel_name = tunnel.locator;
+                    if let Some(name) = friendly_name {
+                        self.editor.name = name;
+                    }
                 }
             }
             forms::EditorAction::DeleteTunnel(index) => self.delete_listed_tunnel(ctx, index),
+            forms::EditorAction::RenameTunnel(index) => self.rename_listed_tunnel(ctx, index),
             _ => {}
         }
     }
@@ -706,8 +747,38 @@ impl MobileApp {
 /// The name a profile stores for a listed tunnel.
 fn tunnel_label(tunnel: &festerm_mobile_tunnels::TunnelInfo) -> String {
     tunnel
-        .name
+        .description
         .clone()
+        .or_else(|| tunnel.name.clone())
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| tunnel.locator.clone())
+}
+
+fn tunnel_profile_default_name(
+    name_is_empty: bool,
+    editing: bool,
+    tunnel: &festerm_mobile_tunnels::TunnelInfo,
+) -> Option<String> {
+    (name_is_empty && !editing).then(|| tunnel_label(tunnel))
+}
+
+#[cfg(test)]
+mod friendly_name_tests {
+    use super::*;
+
+    #[test]
+    fn picked_tunnel_friendly_name_defaults_only_a_new_blank_profile_name() {
+        let tunnel = festerm_mobile_tunnels::TunnelInfo {
+            locator: "abc123.use".into(),
+            name: Some("festerm-abc123".into()),
+            description: Some("Raspberry Pi 5".into()),
+            active: true,
+        };
+        assert_eq!(
+            tunnel_profile_default_name(true, false, &tunnel).as_deref(),
+            Some("Raspberry Pi 5")
+        );
+        assert_eq!(tunnel_profile_default_name(false, false, &tunnel), None);
+        assert_eq!(tunnel_profile_default_name(true, true, &tunnel), None);
+    }
 }

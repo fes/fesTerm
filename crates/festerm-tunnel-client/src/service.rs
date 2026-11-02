@@ -104,6 +104,45 @@ pub fn extension_update(mut tunnel: Tunnel, days: u32) -> Tunnel {
     tunnel
 }
 
+/// Builds an update that changes only the tunnel's user-visible description.
+pub fn description_update(mut tunnel: Tunnel, description: &str) -> Tunnel {
+    wipe_tokens(&mut tunnel);
+    tunnel.access_tokens = None;
+    tunnel.status = None;
+    tunnel.endpoints = Vec::new();
+    tunnel.ports = Vec::new();
+    tunnel.created = None;
+    tunnel.expiration = None;
+    tunnel.custom_expiration = None;
+    tunnel.description = Some(description.to_owned());
+    tunnel
+}
+
+/// Changes the user-visible description of an owned tunnel.
+pub async fn update_description(
+    identity: &Identity,
+    name: &str,
+    description: &str,
+    cancel: &CancellationToken,
+) -> Result<(), Error> {
+    let locator = locator(name)?;
+    let identity_http = Https::new()?;
+    identity.confirm_account(&identity_http, cancel).await?;
+    let management = management_client(identity)?;
+    let options = TunnelRequestOptions::default();
+    let tunnel = tokio::select! {
+        _ = cancel.cancelled() => return Err(Error::Cancelled),
+        value = management.get_tunnel(&locator, &options) => value.map_err(management_error)?,
+    };
+    let update = description_update(tunnel, description);
+    tokio::select! {
+        _ = cancel.cancelled() => Err(Error::Cancelled),
+        value = management.update_tunnel(&update, &options) => {
+            value.map(|_| ()).map_err(management_error)
+        }
+    }
+}
+
 /// Pushes the tunnel's service-side expiry `days` forward. Only the tunnel's
 /// owner can do this; callers treat failure as non-fatal.
 pub async fn extend_lifetime(
@@ -392,6 +431,26 @@ mod tests {
         assert!(update.ports.is_empty());
         assert!(update.expiration.is_none());
         assert_eq!(update.name.as_deref(), Some("mine"));
+    }
+
+    #[test]
+    fn description_update_preserves_tunnel_identity_and_removes_server_state() {
+        let tunnel = listed(
+            r#"[{"tunnelId":"t1","clusterId":"use","name":"machine-id","description":"old",
+              "accessTokens":{"connect":"secret"},"status":{"hostConnectionCount":1},
+              "expiration":"2030-01-01T00:00:00Z",
+              "ports":[{"portNumber":22}],"endpoints":[]}]"#,
+        )
+        .remove(0);
+        let update = description_update(tunnel, "Raspberry Pi 5");
+        assert_eq!(update.tunnel_id.as_deref(), Some("t1"));
+        assert_eq!(update.cluster_id.as_deref(), Some("use"));
+        assert_eq!(update.name.as_deref(), Some("machine-id"));
+        assert_eq!(update.description.as_deref(), Some("Raspberry Pi 5"));
+        assert!(update.access_tokens.is_none());
+        assert!(update.status.is_none());
+        assert!(update.ports.is_empty());
+        assert!(update.expiration.is_none());
     }
 
     #[test]

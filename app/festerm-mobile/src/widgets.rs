@@ -458,6 +458,17 @@ pub fn text_field(
     hint: &str,
     width: f32,
 ) -> Response {
+    text_field_with_limit(ui, caption, text, hint, width, 255)
+}
+
+pub fn text_field_with_limit(
+    ui: &mut Ui,
+    caption: &str,
+    text: &mut dyn egui::TextBuffer,
+    hint: &str,
+    width: f32,
+    char_limit: usize,
+) -> Response {
     let layout = egui::Layout::top_down(egui::Align::Min);
     ui.allocate_ui_with_layout(egui::vec2(width, 0.0), layout, |ui| {
         ui.spacing_mut().item_spacing.y = 6.0;
@@ -472,7 +483,7 @@ pub fn text_field(
                 .id_salt(("text_field", caption))
                 .hint_text(hint)
                 .margin(margin)
-                .char_limit(255),
+                .char_limit(char_limit),
         );
         if response.has_focus() && !ui.clip_rect().contains_rect(response.rect) {
             response.scroll_to_me(Some(egui::Align::Center));

@@ -2238,6 +2238,7 @@ fn show_dev_tunnel_form(
         form.account = Some(account);
     }
     if let Some(picked) = crate::app::tunnel_browser::take_picked_tunnel(ui.ctx()) {
+        picked.seed_profile_name(&mut form.name);
         form.tunnel = picked.locator;
         form.feedback = None;
         if picked.account.is_some() {

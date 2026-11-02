@@ -309,7 +309,18 @@ fn configure(app: &mut MobileApp, state: &str) {
             app.editor.auto_reconnect = true;
             app.editor.tunnel = Some(DevTunnelChoices {
                 account_login: Some("octo".to_owned()),
-                tunnels: vec!["build-tunnel".to_owned(), "docs-tunnel".to_owned()],
+                tunnels: vec![
+                    super::model::DevTunnelChoice {
+                        locator: "build-tunnel.usa".to_owned(),
+                        name: Some("build-tunnel".to_owned()),
+                        description: Some("Build box".to_owned()),
+                    },
+                    super::model::DevTunnelChoice {
+                        locator: "docs-tunnel.usa".to_owned(),
+                        name: Some("docs-tunnel".to_owned()),
+                        description: Some("Docs server".to_owned()),
+                    },
+                ],
                 ..DevTunnelChoices::default()
             });
         }

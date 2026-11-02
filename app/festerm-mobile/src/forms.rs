@@ -69,6 +69,8 @@ pub struct EditorState {
     pub confirm_delete: bool,
     /// Dev Tunnel profiles: the next "Delete tunnel" tap deletes it.
     pub confirm_delete_tunnel: bool,
+    pub renaming_tunnel: Option<String>,
+    pub friendly_name_draft: String,
     pub tunnel: Option<DevTunnelChoices>,
     /// Dev Tunnel profiles: the chosen (or typed) tunnel name.
     pub tunnel_name: String,
@@ -178,6 +180,8 @@ impl EditorState {
         self.error = None;
         self.confirm_delete = false;
         self.confirm_delete_tunnel = false;
+        self.renaming_tunnel = None;
+        self.friendly_name_draft.clear();
     }
 
     pub fn wipe_secrets(&mut self) {
@@ -266,6 +270,7 @@ pub enum EditorAction {
     RefreshTunnels,
     PickTunnel(usize),
     DeleteTunnel(usize),
+    RenameTunnel(usize),
     SignOut,
     OpenHostSetup,
 }
@@ -787,14 +792,16 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
         }
         if !choices.tunnels.is_empty() {
             card(ui, |ui| {
-                for (index, name) in choices.tunnels.iter().enumerate() {
-                    let mut row = RowSpec::new(name);
+                for (index, tunnel) in choices.tunnels.iter().enumerate() {
+                    let name = format!("{} · {}", tunnel.friendly_name(), tunnel.locator);
+                    let mut row = RowSpec::new(&name);
                     row.icon = Some(Icon::DevTunnel);
-                    row.selected = *name == state.tunnel_name;
+                    row.selected = tunnel.locator == state.tunnel_name;
                     row.divider = index > 0;
                     if list_row(ui, &row).clicked() {
                         *action = EditorAction::PickTunnel(index);
                         state.confirm_delete_tunnel = false;
+                        state.renaming_tunnel = None;
                     }
                 }
             });
@@ -804,10 +811,37 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
                 choices
                     .tunnels
                     .iter()
-                    .position(|name| *name == state.tunnel_name)
+                    .position(|tunnel| tunnel.locator == state.tunnel_name)
             })
             .flatten();
         if let Some(index) = selected {
+            if state.renaming_tunnel.as_deref()
+                == choices
+                    .tunnels
+                    .get(index)
+                    .map(|tunnel| tunnel.locator.as_str())
+            {
+                text_field(
+                    ui,
+                    "Friendly name",
+                    &mut state.friendly_name_draft,
+                    "Raspberry Pi 5",
+                    ui.available_width(),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Save friendly name").clicked() {
+                        *action = EditorAction::RenameTunnel(index);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        state.renaming_tunnel = None;
+                    }
+                });
+            } else if ui.button("Change friendly name").clicked() {
+                let tunnel = &choices.tunnels[index];
+                state.renaming_tunnel = Some(tunnel.locator.clone());
+                state.friendly_name_draft = tunnel.description.clone().unwrap_or_default();
+                state.confirm_delete_tunnel = false;
+            }
             let label = if state.confirm_delete_tunnel {
                 format!("Tap again to delete {}", state.tunnel_name)
             } else {

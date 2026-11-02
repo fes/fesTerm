@@ -35,6 +35,7 @@ enum Stage {
         tunnels: Vec<TunnelSummary>,
         /// The tunnel awaiting delete confirmation.
         confirm_delete: Option<String>,
+        rename: Option<(String, String)>,
     },
     Error(Error),
 }
@@ -64,6 +65,7 @@ impl Browser {
         store: Arc<dyn SecretStore>,
         context: &egui::Context,
         delete: Option<String>,
+        rename: Option<(String, String)>,
     ) -> Self {
         let cancel = CancellationToken::new();
         let (sender, receiver) = mpsc::sync_channel(2);
@@ -106,7 +108,7 @@ impl Browser {
                             tokio::select! {
                                 _ = cancel.cancelled() => Err(Error::Cancelled),
                                 _ = tokio::time::sleep(Duration::from_secs(1800)) => Err(Error::Expired),
-                                value = run(account, &store, client_id, &cancel, &notify, delete.as_deref()) => value,
+                                value = run(account, &store, client_id, &cancel, &notify, delete.as_deref(), rename.as_ref()) => value,
                             }
                         })
                     });
@@ -131,7 +133,17 @@ pub(super) async fn list_for_account(
     cancel: &CancellationToken,
 ) -> Result<Vec<TunnelSummary>, Error> {
     let client_id = identity::registered_client_id().ok_or(Error::Registration)?;
-    match run(Some(account), store, client_id, cancel, &|_| true, None).await? {
+    match run(
+        Some(account),
+        store,
+        client_id,
+        cancel,
+        &|_| true,
+        None,
+        None,
+    )
+    .await?
+    {
         Outcome::Listed(_, tunnels) => Ok(tunnels),
         Outcome::Signed(_) => Err(Error::Response),
     }
@@ -149,6 +161,7 @@ async fn run(
     cancel: &CancellationToken,
     notify: &impl Fn(Event) -> bool,
     delete: Option<&str>,
+    rename: Option<&(String, String)>,
 ) -> Result<Outcome, Error> {
     let http = Https::new()?;
     let Some(account) = account else {
@@ -188,6 +201,9 @@ async fn run(
     if let Some(tunnel) = delete {
         service::delete(&identity, tunnel, cancel).await?;
     }
+    if let Some((tunnel, friendly_name)) = rename {
+        service::update_description(&identity, tunnel, friendly_name, cancel).await?;
+    }
     let tunnels = service::list(&identity, cancel).await?;
     Ok(Outcome::Listed(identity.account.login.clone(), tunnels))
 }
@@ -195,9 +211,9 @@ async fn run(
 /// The name a tunnel is listed under.
 pub(super) fn display_name(summary: &TunnelSummary) -> String {
     summary
-        .name
+        .description
         .as_deref()
-        .or(summary.description.as_deref())
+        .or(summary.name.as_deref())
         .filter(|text| !text.trim().is_empty())
         .unwrap_or(&summary.locator)
         .to_owned()
@@ -226,7 +242,7 @@ impl FesTermApp {
             },
             None => None,
         };
-        self.tunnel_browser = Some(Browser::start(account, store, context, None));
+        self.tunnel_browser = Some(Browser::start(account, store, context, None, None));
         self.overlays.native_tunnel = true;
         context.request_repaint();
     }
@@ -247,6 +263,7 @@ impl FesTermApp {
                     login,
                     tunnels,
                     confirm_delete: None,
+                    rename: None,
                 },
                 Event::Listed(Err(error)) => Stage::Error(error),
             };
@@ -369,6 +386,7 @@ impl FesTermApp {
         let mut dismiss = escape;
         let mut picked = None;
         let mut delete = None;
+        let mut rename = None;
         egui::Modal::new(egui::Id::new("browse_dev_tunnels")).show(context, |ui| {
             super::confirmations::prepare_confirmation(ui, context, 520.0);
             ui.heading("Dev Tunnels");
@@ -398,6 +416,7 @@ impl FesTermApp {
                     login,
                     tunnels,
                     confirm_delete: confirm_delete @ Some(_),
+                    ..
                 } => {
                     let locator = confirm_delete.clone().unwrap_or_default();
                     let locator = &locator;
@@ -437,9 +456,10 @@ impl FesTermApp {
                     login,
                     tunnels,
                     confirm_delete,
+                    rename: rename_draft,
                 } => {
                     ui.label(format!("GitHub · {login}"));
-                    ui.label("Choose a tunnel to fill in the tunnel name or id.");
+                    ui.label("Choose a tunnel; its friendly name will prefill the profile name.");
                     ui.add_space(6.0);
                     if tunnels.is_empty() {
                         ui.label("No fesTerm bridge tunnels found for this account.");
@@ -450,14 +470,9 @@ impl FesTermApp {
                                 profile.tunnel_name() == Some(&tunnel.locator)
                             })
                         });
-                        let title = tunnel
-                            .name
-                            .as_deref()
-                            .or(tunnel.description.as_deref())
-                            .unwrap_or(&tunnel.locator);
+                        let title = display_name(tunnel);
                         let label = format!(
-                            "{title} · {}{}{}",
-                            tunnel.locator,
+                            "{title}{}{}",
                             if tunnel.active { " · active" } else { "" },
                             if saved { " · saved" } else { "" }
                         );
@@ -477,6 +492,25 @@ impl FesTermApp {
                             }
                             if super::confirmations::dialog_action(
                                 ui,
+                                ActionButtonRole::Secondary,
+                                if rename_draft
+                                    .as_ref()
+                                    .is_some_and(|(id, _)| id == &tunnel.locator)
+                                {
+                                    "Editing name"
+                                } else {
+                                    "Rename"
+                                },
+                            )
+                            .clicked()
+                            {
+                                *rename_draft = Some((
+                                    tunnel.locator.clone(),
+                                    tunnel.description.clone().unwrap_or_default(),
+                                ));
+                            }
+                            if super::confirmations::dialog_action(
+                                ui,
                                 ActionButtonRole::DangerOutline,
                                 "Delete",
                             )
@@ -486,6 +520,43 @@ impl FesTermApp {
                                 *confirm_delete = Some(tunnel.locator.clone());
                             }
                         });
+                        ui.small(format!("Tunnel ID: {}", tunnel.locator));
+                        let mut cancel_rename = false;
+                        if let Some((locator, friendly_name)) = rename_draft
+                            .as_mut()
+                            .filter(|(locator, _)| locator == &tunnel.locator)
+                        {
+                            ui.vertical(|ui| {
+                                ui.label(format!("Friendly name for {locator}"));
+                                ui.text_edit_singleline(friendly_name);
+                                ui.horizontal(|ui| {
+                                    if super::confirmations::dialog_action(
+                                        ui,
+                                        ActionButtonRole::Accent,
+                                        "Save",
+                                    )
+                                    .clicked()
+                                    {
+                                        rename = Some((
+                                            locator.clone(),
+                                            friendly_name.trim().to_owned(),
+                                        ));
+                                    }
+                                    if super::confirmations::dialog_action(
+                                        ui,
+                                        ActionButtonRole::Secondary,
+                                        "Cancel",
+                                    )
+                                    .clicked()
+                                    {
+                                        cancel_rename = true;
+                                    }
+                                });
+                            });
+                        }
+                        if cancel_rename {
+                            *rename_draft = None;
+                        }
                     }
                 }
                 Stage::Error(error) => {
@@ -514,8 +585,28 @@ impl FesTermApp {
             if let (Some(account), Some(store)) = (account, store) {
                 // Drop the old browser first so its account lease is released.
                 self.tunnel_browser = None;
-                self.tunnel_browser =
-                    Some(Browser::start(Some(account), store, context, Some(locator)));
+                self.tunnel_browser = Some(Browser::start(
+                    Some(account),
+                    store,
+                    context,
+                    Some(locator),
+                    None,
+                ));
+            }
+            return;
+        }
+        if let Some(rename) = rename {
+            let account = self.tunnel_browser.as_ref().and_then(|b| b.account.clone());
+            let store = self.tunnel_browser.as_ref().map(|b| Arc::clone(&b.store));
+            if let (Some(account), Some(store)) = (account, store) {
+                self.tunnel_browser = None;
+                self.tunnel_browser = Some(Browser::start(
+                    Some(account),
+                    store,
+                    context,
+                    None,
+                    Some(rename),
+                ));
             }
             return;
         }
@@ -551,6 +642,7 @@ impl FesTermApp {
                 PickedTunnel {
                     account,
                     locator: tunnel.locator.clone(),
+                    friendly_name: display_name(tunnel),
                 },
             )
         });
@@ -563,6 +655,15 @@ impl FesTermApp {
 pub(crate) struct PickedTunnel {
     pub(crate) account: Option<String>,
     pub(crate) locator: String,
+    pub(crate) friendly_name: String,
+}
+
+impl PickedTunnel {
+    pub(crate) fn seed_profile_name(&self, name: &mut String) {
+        if name.trim().is_empty() {
+            *name = self.friendly_name.clone();
+        }
+    }
 }
 
 fn picked_tunnel_id() -> egui::Id {
@@ -595,6 +696,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn listed_tunnel_description_is_its_friendly_name() {
+        let tunnel = TunnelSummary {
+            locator: "abc123.use".into(),
+            name: Some("festerm-abc123".into()),
+            description: Some("Raspberry Pi 5".into()),
+            active: true,
+        };
+        assert_eq!(display_name(&tunnel), "Raspberry Pi 5");
+    }
+
+    #[test]
     fn picked_tunnel_is_taken_exactly_once() {
         let context = egui::Context::default();
         assert!(take_picked_tunnel(&context).is_none());
@@ -604,13 +716,29 @@ mod tests {
                 PickedTunnel {
                     account: Some("acct".into()),
                     locator: "abc123.use".into(),
+                    friendly_name: "Raspberry Pi".into(),
                 },
             )
         });
         let picked = take_picked_tunnel(&context).expect("picked");
         assert_eq!(picked.locator, "abc123.use");
+        assert_eq!(picked.friendly_name, "Raspberry Pi");
         assert_eq!(picked.account.as_deref(), Some("acct"));
         assert!(take_picked_tunnel(&context).is_none());
+    }
+
+    #[test]
+    fn picked_tunnel_seeds_only_an_empty_profile_name() {
+        let picked = PickedTunnel {
+            friendly_name: "Raspberry Pi 5".into(),
+            ..PickedTunnel::default()
+        };
+        let mut name = String::new();
+        picked.seed_profile_name(&mut name);
+        assert_eq!(name, "Raspberry Pi 5");
+        name = "My own name".into();
+        picked.seed_profile_name(&mut name);
+        assert_eq!(name, "My own name");
     }
 
     #[test]

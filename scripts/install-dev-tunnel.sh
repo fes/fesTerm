@@ -3,22 +3,30 @@ set -euo pipefail
 umask 077
 
 fail() { printf 'fesTerm tunnel setup: %s\n' "$*" >&2; exit 1; }
-usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade]'
+usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade] [--friendly-name NAME]'
 version=
 install_dependencies=false
 no_takeover=false
 upgrade=false
-for arg in "$@"; do
-    if [[ $arg == --install-dependencies ]]; then
+friendly_name=
+while (($#)); do
+    if [[ $1 == --install-dependencies ]]; then
         install_dependencies=true
-    elif [[ $arg == --no-takeover ]]; then
+        shift
+    elif [[ $1 == --no-takeover ]]; then
         no_takeover=true
-    elif [[ $arg == --upgrade ]]; then
+        shift
+    elif [[ $1 == --upgrade ]]; then
         # Switch an existing host's service to this release's helpers,
         # keeping its tunnel, host key and running daemon session.
         upgrade=true
-    elif [[ $arg =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -z $version ]]; then
-        version=$arg
+        shift
+    elif [[ $1 == --friendly-name && $# -ge 2 && -n $2 ]]; then
+        friendly_name=$2
+        shift 2
+    elif [[ $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -z $version ]]; then
+        version=$1
+        shift
     else
         fail "$usage"
     fi
@@ -26,6 +34,10 @@ done
 setup_extra=()
 if "$no_takeover"; then setup_extra+=(--no-takeover); fi
 if "$upgrade"; then setup_extra+=(--upgrade); fi
+if [[ -n $friendly_name ]]; then
+    "$upgrade" && fail '--friendly-name applies only when creating a new host; rename an existing tunnel in fesTerm.'
+    setup_extra+=(--friendly-name "$friendly_name")
+fi
 [[ $(id -u) != 0 ]] || fail 'Run as your normal user, not root.'
 if [[ -z $version ]]; then
     # The newest published release; its redirect names the tag without the API.
