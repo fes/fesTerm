@@ -772,6 +772,12 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
         } else if let Some(error) = &choices.error {
             ui.label(egui::RichText::new(error).color(color::DANGER));
         }
+        if !choices.loading && choices.error.is_none() && choices.tunnels.is_empty() {
+            footnote(
+                ui,
+                "No fesTerm host tunnels found for this account. Set up a host below, or type a tunnel name.",
+            );
+        }
         if !choices.tunnels.is_empty() {
             card(ui, |ui| {
                 for (index, name) in choices.tunnels.iter().enumerate() {

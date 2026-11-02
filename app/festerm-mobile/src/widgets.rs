@@ -466,7 +466,10 @@ pub fn text_field(
         let margin = Margin::symmetric(14, 14);
         ui.add_sized(
             [width, space::FIELD_HEIGHT],
+            // A stable id keeps focus (and the keyboard) when content above
+            // the field appears or disappears between frames.
             egui::TextEdit::singleline(text)
+                .id_salt(("text_field", caption))
                 .hint_text(hint)
                 .margin(margin)
                 .char_limit(255),

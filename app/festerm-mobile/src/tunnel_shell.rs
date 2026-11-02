@@ -222,14 +222,20 @@ impl MobileApp {
                 match job.poll() {
                     Poll::Pending => {}
                     Poll::Done(Ok(items)) => {
+                        eprintln!("festerm-mobile: listed {} tunnel(s)", items.len());
                         list.items = items;
                         list.job = None;
                     }
                     Poll::Done(Err(error)) => {
+                        eprintln!("festerm-mobile: tunnel listing failed: {error:?}");
                         list.error = Some(describe_error(&error));
                         list.job = None;
                     }
-                    Poll::Lost => list.job = None,
+                    Poll::Lost => {
+                        eprintln!("festerm-mobile: tunnel listing stopped without a result");
+                        list.error = Some("Listing stopped. Refresh to try again.".to_owned());
+                        list.job = None;
+                    }
                 }
             }
         }
