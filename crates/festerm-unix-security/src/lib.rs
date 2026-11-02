@@ -30,6 +30,18 @@ mod imp {
         Ok(user.dir)
     }
 
+    /// Checks effective write/search access without creating entries or reopening a path.
+    pub fn writable_directory(directory: &File) -> io::Result<()> {
+        current_user_id()?;
+        nix::unistd::faccessat(
+            directory,
+            ".",
+            nix::unistd::AccessFlags::W_OK | nix::unistd::AccessFlags::X_OK,
+            nix::fcntl::AtFlags::AT_EACCESS,
+        )
+        .map_err(io::Error::from)
+    }
+
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct SecurityMetadata {
         uid: u32,
@@ -915,7 +927,7 @@ pub use imp::{
     preserve_security_metadata, remove_private_staging_file, rename_noreplace,
     reopen_directory_read, replace_private_file, secure_staging_parent, security_metadata,
     security_metadata_matches, staging_parent_matches, trusted_private_storage_ancestor,
-    SecurityMetadata, StagingParentSecurity,
+    writable_directory, SecurityMetadata, StagingParentSecurity,
 };
 
 #[cfg(all(test, unix))]

@@ -527,6 +527,13 @@ Explicit host installers are a separate operator-side setup action: a new
 private tunnel/marked virtual port and uniquely named local daemon, with an
 explicitly approved per-user service or controlled foreground mode. They
 never add a remote create RPC or run during GUI startup.
+Linux/macOS first setup preflights existing service-directory ancestors before
+sign-in/provisioning, with named permission failures and no implicit permission
+repair or directory creation. Registration rechecks the unchanged trust policy.
+All supported hosts also preflight access to the per-user service manager
+before cloud mutation, without registering a probe or elevating setup.
+Windows helpers explicitly embed `asInvoker` to prevent setup-filename
+installer-detection elevation; ordinary-user/token checks remain mandatory.
 Release artifacts/signing/clean-machine qualification remain prerequisites.
 The earlier macOS/Pi scoped-token GUI fixture passed independently. The former
 fesTerm-owned registration's HTTP 401 is historical failed evidence, not the
@@ -1013,6 +1020,14 @@ exists.
 | `EDIT-16` | `Editor → SyntaxHighlighting` | Open a source file in a supported language, one in a language with no grammar, and one past the highlighting size bound; then toggle highlighting off. | Colour is presentation only: it never changes the document's bytes, revision, dirty state, or undo depth; the parse is cached per document revision and shared by every view of the file; only the visible range is queried; an unknown language, an exceeded bound, or a grammar failure falls back to plain text and says which, without a dialog; no application or document state is expressed through a syntax colour. | Turn Syntax highlighting off in the options menu. | P,H,V,N,U; design-approved |
 | `EDIT-17` | `Application → UntitledEditor` | Choose **New File** from More actions or the native File menu. | A separate blank editor opens immediately with a unique `Untitled-N.txt` identity, explicit unwritten dirty/unsaved state, and `UNTITLED` origin, without a synthetic undo entry or revision bump. Undoing real edits does not mark never-saved content clean. Auto-save is unavailable before a destination exists, and the first Save enters the ordinary Save As flow. No existing New Session, New Window, or Start Local Shell shortcut is reassigned. | Save As to bind the document to a file, or close through the final-view dirty-document policy. | P,H,V,N,U; implemented |
 | `EDIT-18` | `SavedLocalEditor → PreviewImages` | Open a saved local Markdown file, including a symlinked filename, in Preview/Split; edit prose around an unchanged image; retarget the alias and reload; explicitly load beyond the automatic reference limit; first Save/Save As/rebind to a different parent or nonlocal origin, fail source resolution, and fail a reparse. | Complete canonical typed local file identity, its loaded parent identity, and the exact loaded generation authorize reads; lexical symlink-file parents, labels and fallback names never do. An unresolvable or replaced local source keeps readable text Preview with a visible image-refusal reason. An ordinary reparse retains completed state only for the same reference kind/class/target at the same index, preserving its admission count and avoiding repeated decode/upload; pending or changed references are discarded. Reload/save/rebinding discards old approvals/cache/receivers before parsing the new generation; stale results cannot populate the new snapshot or use an old directory. Ordinary Save uses the loaded canonical parent (including through a selected symlink); Save As captures the newly selected destination and its absent-or-exact generation expectation. Both retain capability-bound authority through owner-only unpredictable staging, final no-follow target validation, conditional replacement and sync; Windows uses native handle-relative staging/child creation and verifies non-reparse, same-volume, current-user-owned protected handles before bytes; existing Unix owner/group/mode/ACL/xattrs or Windows owner/group/DACL/label/resource/scoped-policy/attributes are preserved without a broader intermediate file; late/partial failure retains all versions for visible manual recovery; and authority is never recovered from a later pathname occupant. Preview uses `MD-05`/`SET-13` policy and the same central image command as the viewer. Failed parsing releases hidden images without reloading the old snapshot. Remote/untitled/history Preview explains the saved-local requirement instead of offering a non-working local-load button. Document bytes, dirty state and undo are unchanged by image work. | Close the view/fixtures, or return to Edit. | P,H,N,U; partial |
+
+For `EDIT-04`, Windows private-DACL creation/publication and explicit
+missing-privilege refusal run in the default suite. Audit-preservation and
+privileged thread-scoping assertions run in a separate mandatory Windows CI
+job; unavailable privileges fail that job. The refusal test removes the audit
+privilege only in an isolated child and verifies unchanged bytes/DACLs, no
+new audit-capable file and no residual impersonation. This changes validation
+organization, not the save or installer privilege policy.
 
 For `EDIT-03`, `EDIT-05`, `EDIT-07` and `EDIT-13`, ordered multi-edit apply,
 inverse replay and vi scratch share borrowed-span construction instead of

@@ -134,7 +134,12 @@ class TunnelBundleTests(unittest.TestCase):
                 if kind == "empty":
                     path.write_bytes(b"")
                 elif kind == "symlink":
-                    path.symlink_to(self.binaries / "festerm-sessiond")
+                    try:
+                        path.symlink_to(self.binaries / "festerm-sessiond")
+                    except OSError as error:
+                        if getattr(error, "winerror", None) == 1314:
+                            self.skipTest("Windows test user lacks symbolic-link creation privilege")
+                        raise
                 with self.assertRaisesRegex(ValueError, "helper binary"):
                     self.build()
                 self.assertFalse((self.root / "dist").exists())
@@ -208,7 +213,12 @@ class TunnelBundleTests(unittest.TestCase):
                     metadata["packages"][-1]["license_file"] = "../Cargo.toml"
                 else:
                     link = self.root / "dependency/NOTICE-unsafe"
-                    link.symlink_to(self.root / "Cargo.toml")
+                    try:
+                        link.symlink_to(self.root / "Cargo.toml")
+                    except OSError as error:
+                        if getattr(error, "winerror", None) == 1314:
+                            self.skipTest("Windows test user lacks symbolic-link creation privilege")
+                        raise
                 with self.assertRaisesRegex(ValueError, "unsafe dependency license"):
                     self.build(metadata=metadata)
 

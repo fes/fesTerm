@@ -2542,6 +2542,7 @@ dependencies = [
  "tokio-util",
  "tunnels",
  "uuid",
+ "winresource",
  "zeroize",
 ]
 

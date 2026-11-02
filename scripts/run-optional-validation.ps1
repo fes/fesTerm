@@ -130,6 +130,20 @@ Write-OptionalResult 'status=running'
 try {
 
 if ($env:OS -eq 'Windows_NT') {
+    if ($env:FESTERM_RUN_WINDOWS_SECURITY_PRIVILEGED -eq '1') {
+        Get-Command cargo -CommandType Application -ErrorAction Stop | Out-Null
+        Invoke-NativeCommand {
+            cargo test --locked -p festerm-windows-security --lib -- --ignored --nocapture
+        }
+        if ($LASTEXITCODE -eq 0) {
+            Write-OptionalResult "`nsuite=windows-security-privileged status=pass"
+        } else {
+            Write-OptionalResult "`nsuite=windows-security-privileged status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Write-OptionalResult "`nsuite=windows-security-privileged status=skipped reason=explicit-privileged-opt-in"
+    }
     try {
         & "$PSScriptRoot\stage-conpty.ps1" -RunSmoke
         if ($LASTEXITCODE -ne 0) {

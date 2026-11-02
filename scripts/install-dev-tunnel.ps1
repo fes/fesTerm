@@ -180,8 +180,8 @@ try {
         if (Test-Path -LiteralPath $temporaryFile) {
             Remove-Item -LiteralPath $temporaryFile -Force
         }
-        if ((Get-ChildItem -LiteralPath $install -Force | Measure-Object).Count -eq 0) {
-            [IO.Directory]::Delete($install)
-        }
+    }
+    if ((Get-ChildItem -LiteralPath $install -Force | Measure-Object).Count -eq 0) {
+        [IO.Directory]::Delete($install)
     }
 }

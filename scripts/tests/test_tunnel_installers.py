@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -13,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 UNIX_INSTALLER = ROOT / "scripts/install-dev-tunnel.sh"
 WINDOWS_INSTALLER = ROOT / "scripts/install-dev-tunnel.ps1"
 VERSION = "123.4.5"
+POWERSHELL = shutil.which("pwsh") or (shutil.which("powershell.exe") if os.name == "nt" else None)
 
 
 @unittest.skipIf(os.name == "nt", "Unix installer uses native Unix tools")
@@ -101,7 +103,7 @@ class UnixInstallerTests(unittest.TestCase):
         digest = hashlib.sha256(self.archive.read_bytes()).hexdigest()
         self.checksum.write_text(f"{digest}  fesTerm-tunnel-{VERSION}-linux-x86_64.tar.gz\n")
 
-    def run_installer(self, *args):
+    def run_installer(self, *args, include_version=True):
         environment = os.environ.copy()
         environment.update(
             HOME=str(self.home),
@@ -112,7 +114,7 @@ class UnixInstallerTests(unittest.TestCase):
             FIXTURE_CLI=str(self.cli),
         )
         return subprocess.run(
-            ["bash", str(self.script), VERSION, *args],
+            ["bash", str(self.script), *([VERSION] if include_version else []), *args],
             env=environment,
             capture_output=True,
             text=True,
@@ -207,16 +209,67 @@ class UnixInstallerTests(unittest.TestCase):
         (parent / "festerm-tunnels").symlink_to(self.root, target_is_directory=True)
         self.assert_refused(self.run_installer(), "must not be a symbolic link")
 
+    def test_root_is_refused_before_downloads_or_dependency_installation(self):
+        self.write_tool("id", "echo 0")
+        self.write_tool("curl", "echo UNEXPECTED-DOWNLOAD >&2; exit 99")
+        for include_version in [True, False]:
+            with self.subTest(include_version=include_version):
+                result = self.run_installer("--install-dependencies", include_version=include_version)
+                self.assert_refused(result, "normal user, not root")
+                self.assertNotIn("UNEXPECTED-DOWNLOAD", result.stderr)
+                self.assertFalse((self.home / ".local").exists())
+
+    def test_dependency_elevation_runs_only_explicit_package_manager_commands(self):
+        self.write_tool("apt-get", "exit 99")
+        self.write_tool("apt-cache", "printf 'libicu76\\n'")
+        self.write_tool(
+            "sudo",
+            'printf "%s\\n" "$*" >> "$HOME/sudo-commands"\n'
+            '[ "$1" = apt-get ] || exit 99',
+        )
+        result = self.run_installer("--install-dependencies")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (self.home / "sudo-commands").read_text().splitlines(),
+            ["apt-get update",
+             "apt-get install -y ca-certificates curl tar gzip libsecret-1-0 libicu76"],
+        )
+        self.assertIn("tunnel setup remains unelevated", result.stdout)
+        self.assertIn("FIXTURE-SETUP-EXECUTED", result.stdout)
+
+    def test_macos_dependency_flag_refuses_without_elevation_or_installation(self):
+        self.write_tool("uname", 'case "$1" in -s) echo Darwin;; -m) echo arm64;; esac')
+        self.assert_refused(self.run_installer("--install-dependencies"), "Linux-only")
+        self.assertFalse((self.home / ".local").exists())
+
+    def test_denied_dependency_elevation_refuses_before_download_or_setup(self):
+        self.write_tool("apt-get", "exit 99")
+        self.write_tool("sudo", "echo FIXTURE-SUDO-DENIED >&2; exit 77")
+        self.write_tool("curl", "echo UNEXPECTED-DOWNLOAD >&2; exit 99")
+        result = self.run_installer("--install-dependencies")
+        self.assert_refused(result, "FIXTURE-SUDO-DENIED")
+        self.assertNotIn("UNEXPECTED-DOWNLOAD", result.stderr)
+        self.assertFalse((self.home / ".local").exists())
+
+    def test_archive_type_inspection_failure_executes_nothing(self):
+        tar = shutil.which("tar")
+        self.assertIsNotNone(tar)
+        self.write_tool(
+            "tar",
+            f'[ "$1" != -tvzf ] || exit 17\nexec "{tar}" "$@"',
+        )
+        self.assert_refused(self.run_installer(), "Could not validate helper archive file types")
+
 
 class InstallerSyntaxTests(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "Bash native syntax check")
     def test_unix_shell_syntax(self):
         subprocess.run(["bash", "-n", str(UNIX_INSTALLER)], check=True)
 
-    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell parser requires pwsh")
+    @unittest.skipUnless(POWERSHELL, "PowerShell parser requires a native PowerShell engine")
     def test_powershell_syntax(self):
         result = subprocess.run(
-            ["pwsh", "-NoLogo", "-NoProfile", "-Command",
+            [POWERSHELL, "-NoLogo", "-NoProfile", "-Command",
              "$tokens=$null; $errors=$null; "
              "[Management.Automation.Language.Parser]::ParseFile($env:FESTERM_INSTALLER_PARSE_PATH,"
              "[ref]$tokens,[ref]$errors) > $null; "
@@ -226,6 +279,81 @@ class InstallerSyntaxTests(unittest.TestCase):
             text=True, capture_output=True, timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+@unittest.skipUnless(os.name == "nt" and POWERSHELL, "Native Windows user/ACL tests")
+class WindowsInstallerTests(unittest.TestCase):
+    def setUp(self):
+        identity = subprocess.run(
+            [POWERSHELL, "-NoProfile", "-NonInteractive", "-Command",
+             "$i=[Security.Principal.WindowsIdentity]::GetCurrent(); "
+             "$p=New-Object Security.Principal.WindowsPrincipal($i); "
+             "($i.IsSystem -or $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"],
+            capture_output=True, text=True, check=True, timeout=15,
+        )
+        if identity.stdout.strip() != "False":
+            self.skipTest("Positive native installer checks require an unelevated ordinary user")
+        self.temporary = tempfile.TemporaryDirectory(prefix="festerm-windows-installer-test-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.local = self.root / "profile"
+        self.local.mkdir()
+        self.curl = self.root / "fixture-curl.cmd"
+        source = WINDOWS_INSTALLER.read_text()
+        substitutions = {
+            "$curl = (Get-Command curl.exe -CommandType Application -ErrorAction Stop).Source":
+                "$curl = '" + str(self.curl).replace("'", "''") + "'",
+            "$local = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)":
+                "$local = '" + str(self.local).replace("'", "''") + "'",
+        }
+        for original, replacement in substitutions.items():
+            self.assertEqual(source.count(original), 1)
+            source = source.replace(original, replacement)
+        self.script = self.root / "installer.ps1"
+        self.script.write_text(source, encoding="utf-8-sig")
+
+    def run_installer(self):
+        return subprocess.run(
+            [POWERSHELL, "-NoProfile", "-NonInteractive", "-File", str(self.script),
+             "-Version", VERSION],
+            capture_output=True, text=True, timeout=30,
+        )
+
+    def assert_clean_refusal(self, result, message):
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(message, result.stdout + result.stderr)
+        self.assertNotIn("Cannot find path", result.stderr)
+        self.assertNotIn("Installed private helpers", result.stdout)
+        root = self.local / "fesTerm-tunnels"
+        self.assertEqual(sorted(path.name for path in root.iterdir()), ["releases"])
+        self.assertEqual(list((root / "releases").iterdir()), [])
+        acl = subprocess.run(
+            [POWERSHELL, "-NoProfile", "-NonInteractive", "-Command",
+             "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; "
+             "$result=@(); foreach($path in @($env:FESTERM_TEST_INSTALL_ROOT,"
+             "(Join-Path $env:FESTERM_TEST_INSTALL_ROOT 'releases'))){"
+             "$acl=Get-Acl -LiteralPath $path; "
+             "$foreign=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])"
+             "|Where-Object {$_.AccessControlType -eq 'Allow' -and $_.IdentityReference -ne $sid}); "
+             "$result+=($acl.AreAccessRulesProtected -and "
+             "$acl.GetOwner([Security.Principal.SecurityIdentifier]) -eq $sid -and $foreign.Count -eq 0)}; "
+             "ConvertTo-Json -InputObject $result -Compress"],
+            env={**os.environ, "FESTERM_TEST_INSTALL_ROOT": str(root)},
+            capture_output=True, text=True, check=True, timeout=15,
+        )
+        self.assertEqual(json.loads(acl.stdout), [True, True])
+
+    def test_powershell_download_failure_preserves_error_and_cleans_empty_stage(self):
+        self.curl.write_text("@echo off\nexit /b 22\n")
+        self.assert_clean_refusal(self.run_installer(), "Authenticated HTTPS download failed")
+
+    def test_powershell_invalid_checksum_executes_nothing_and_cleans_stage(self):
+        self.curl.write_text(
+            '@echo off\n:next\nif "%~1"=="" exit /b 22\n'
+            'if "%~1"=="-o" goto write\nshift\ngoto next\n'
+            ':write\nshift\n>"%~1" echo invalid-checksum\nexit /b 0\n'
+        )
+        self.assert_clean_refusal(self.run_installer(), "Checksum does not name this exact release")
 
 
 if __name__ == "__main__":

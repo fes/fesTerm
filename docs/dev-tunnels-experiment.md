@@ -199,15 +199,17 @@ command and **View script** to read the exact installer shipped with your
 version in a read-only editor tab before running anything.
 
 The source now defines standalone helper bundles for Linux x86_64/ARM64
-(glibc 2.39+), macOS Intel/Apple Silicon, and Windows x64/ARM64. **No release
-containing these assets has been published.** Existing releases cannot run
-these commands; do not substitute a current version and expect missing assets
-to exist. Once a qualified release is published, the one-liners need no version
+(glibc 2.39+), macOS Intel/Apple Silicon, and Windows x64/ARM64.
+v0.13.0 publishes these assets; native clean-machine/service qualification remains
+open in #432. The preflight/diagnostic corrections below are unreleased.
+The one-liners need no version
 (they use the newest published release; pass the exact numeric `VERSION` as the
 first argument or `-Version` to pin one):
 
 ```sh
-# Linux: explicitly authorizes apt/dnf runtime prerequisites, not compilers.
+# Linux: no elevation when runtime prerequisites are already installed.
+curl -fsSL https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.sh | bash
+# Optional Linux dependency installation: explicitly authorizes sudo apt/dnf.
 curl -fsSL https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.sh | bash -s -- --install-dependencies
 # macOS: uses the system curl, tar, unzip and codesign.
 curl -fsSL https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.sh | bash
@@ -237,6 +239,24 @@ Python, desktop fesTerm, system service or firewall change is required.
 Other distributions must provide compatible runtimes themselves; musl/Alpine
 and older glibc are not supported. Windows ARM64 uses native fesTerm helpers
 and the official x64 Dev Tunnels CLI under Windows' x64 emulation.
+
+| Variant | Installation/setup privilege | Service prerequisite |
+| --- | --- | --- |
+| Linux x86_64/ARM64 | Normal user; sudo only for explicitly requested apt/dnf runtime packages. Never run the complete installer/helper under sudo. | Reachable systemd user manager. Boot startup requires previously enabled lingering; setup does not enable it. |
+| macOS Intel/Apple Silicon | Normal user; system curl/tar/unzip/codesign. No sudo/Homebrew/Xcode installation by the script; Linux's dependency flag refuses. | The current user's `gui/UID` launchd domain must exist. SSH-only login without a GUI login is not sufficient for this LaunchAgent. |
+| Windows x64/ARM64 | Unelevated PowerShell. No UAC/admin fallback, system service, runtime installer or machine-wide task. | Reachable Task Scheduler; current-user `InteractiveToken`/`LeastPrivilege` task and interactive logon. Enterprise task-creation restrictions may still refuse. ARM64 also needs supported Windows x64 emulation. |
+
+Missing OS/runtime or administrator-controlled policy prerequisites must be
+resolved separately, then setup rerun as the same ordinary user. Elevating the
+whole installer is not a workaround. Manager preflight is read-only and does
+not prove task-creation authorization, future logon/reboot behavior or network
+availability; registration/start failures remain journaled and explicit.
+Windows helper builds now require an embedded `asInvoker` manifest: without it,
+Windows can mistake the `festerm-tunnel-setup.exe` filename for an elevated
+installer. This unreleased correction avoids UAC rather than requesting it;
+the helper still refuses an elevated or service-account token. Saved `.ps1`
+files may separately be blocked by the user's execution policy. The installer
+does not change that policy or request a bypass.
 
 The installer verifies the release's exact archive SHA-256, flat member
 allowlist, regular-file types and version before execution. Checksums and
@@ -280,6 +300,23 @@ bridge process group without terminating the independently started daemon.
 An interrupted cache lock requires explicit inspection/removal; it is never
 stolen by a second installer. New releases do not silently replace a running
 installation's helper paths or daemon generation.
+
+On Linux/macOS, first setup checks existing service-directory ancestors before
+sign-in, cloud provisioning or daemon startup. Linux uses
+`$XDG_CONFIG_HOME/systemd/user` (default `~/.config/systemd/user`); macOS uses
+`~/Library/LaunchAgents`. These directories and their ancestors must be owned by
+root/current user and not group/world writable. The final directory, or nearest
+existing ancestor where a missing suffix will be created, must also grant
+effective current-user write/search access. Missing suffixes are allowed
+without being created by the preflight; installation rechecks before writing.
+Failures name the refused directory. Existing permissions are never repaired
+automatically. After an operator deliberately resolves the permissions, a
+retained `configured` installation may resume its same live generation; do not
+delete its journal or blindly repeat incomplete cloud operations.
+First setup also checks access to the systemd user manager, GUI launchd domain
+or Windows Task Scheduler before sign-in/provisioning. No probe service/task
+is registered. Configured/healthy reruns retain their existing identity and
+reuse behavior.
 
 The pinned CLI cache is reverified before reuse, so a later change to
 Microsoft's mutable download URL does not break an already-installed healthy

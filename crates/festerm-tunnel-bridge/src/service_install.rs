@@ -401,14 +401,32 @@ fn exact_file(file: File, expected: &[u8]) -> io::Result<()> {
 }
 
 #[cfg(unix)]
+fn check_trusted_directory(directory: &File, path: &Path) -> io::Result<()> {
+    festerm_unix_security::trusted_private_storage_ancestor(directory).map_err(|error| {
+        if error.kind() == io::ErrorKind::PermissionDenied {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "service.directory_permissions: {} requires root/current-user ownership and no group/world write; existing permissions were not changed",
+                    path.display()
+                ),
+            )
+        } else {
+            error
+        }
+    })
+}
+
+#[cfg(unix)]
 fn trusted_directory(path: &Path, create: bool) -> io::Result<File> {
     path_text(path)?;
     let mut directory = File::open("/")?;
+    let mut prefix = PathBuf::from("/");
     for component in path.components().skip(1) {
         let Component::Normal(name) = component else {
             return Err(refused("service.registration_directory"));
         };
-        festerm_unix_security::trusted_private_storage_ancestor(&directory)?;
+        check_trusted_directory(&directory, &prefix)?;
         directory = match festerm_unix_security::open_directory_read_nofollow(
             &directory,
             Path::new(name),
@@ -419,9 +437,103 @@ fn trusted_directory(path: &Path, create: bool) -> io::Result<File> {
             }
             Err(error) => return Err(error),
         };
+        prefix.push(name);
     }
-    festerm_unix_security::trusted_private_storage_ancestor(&directory)?;
+    check_trusted_directory(&directory, &prefix)?;
     Ok(directory)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn registration_directory_path() -> io::Result<PathBuf> {
+    let home =
+        festerm_unix_security::current_user_home().map_err(|_| refused("service.user_context"))?;
+    #[cfg(target_os = "linux")]
+    let directory = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"))
+        .join("systemd/user");
+    #[cfg(target_os = "macos")]
+    let directory = home.join("Library/LaunchAgents");
+    path_text(&directory)?;
+    Ok(directory)
+}
+
+#[cfg(unix)]
+fn preflight_directory(path: &Path) -> io::Result<()> {
+    path_text(path)?;
+    let mut existing = path.to_path_buf();
+    loop {
+        match trusted_directory(&existing, false) {
+            Ok(directory) => {
+                return festerm_unix_security::writable_directory(&directory).map_err(|error| {
+                    io::Error::new(
+                        error.kind(),
+                        format!(
+                            "service.directory_not_writable: {} requires current-user write/search access; existing permissions were not changed",
+                            existing.display()
+                        ),
+                    )
+                })
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if !existing.pop() {
+                    return Err(refused("service.registration_directory"));
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(super) fn preflight_registration_directory() -> io::Result<()> {
+    preflight_directory(&registration_directory_path()?)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub(super) fn preflight_service_manager() -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    run(
+        Path::new("/usr/bin/systemctl"),
+        &args(&["--user", "--no-pager", "show", "--property=Version"]),
+        "service.systemd_user_manager_required",
+    )?;
+    #[cfg(target_os = "macos")]
+    {
+        let uid = festerm_unix_security::current_user_id()
+            .map_err(|_| refused("service.user_context"))?;
+        run(
+            Path::new("/bin/launchctl"),
+            &args(&["print-disabled", &format!("gui/{uid}")]),
+            "service.gui_login_required",
+        )?;
+    }
+    #[cfg(windows)]
+    {
+        let (_, system) = festerm_windows_security::current_user_service_context()
+            .map_err(|_| refused("service.user_context"))?;
+        run(
+            &system.join("WindowsPowerShell/v1.0/powershell.exe"),
+            &args(&[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$ErrorActionPreference='Stop'; \
+                 $s=[Activator]::CreateInstance([type]::GetTypeFromProgID('Schedule.Service')); \
+                 $s.Connect(); $null=$s.GetFolder('\\')",
+            ]),
+            "service.task_scheduler_required",
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+pub(super) fn preflight_service_manager() -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "service.unsupported_platform",
+    ))
 }
 
 #[cfg(unix)]
@@ -462,13 +574,7 @@ pub fn start_existing(spec: &ServiceSpec) -> io::Result<()> {
 #[cfg(target_os = "linux")]
 fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
     let _state = spec.validate()?;
-    let home =
-        festerm_unix_security::current_user_home().map_err(|_| refused("service.user_context"))?;
-    let config = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config"));
-    path_text(&config)?;
-    let directory_path = config.join("systemd/user");
+    let directory_path = registration_directory_path()?;
     let directory = trusted_directory(&directory_path, create)?;
     let name = format!("festerm-tunnel-{}.service", spec.id);
     let path = directory_path.join(&name);
@@ -526,9 +632,7 @@ fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
     let _state = spec.validate()?;
     let uid =
         festerm_unix_security::current_user_id().map_err(|_| refused("service.user_context"))?;
-    let home =
-        festerm_unix_security::current_user_home().map_err(|_| refused("service.user_context"))?;
-    let directory_path = home.join("Library/LaunchAgents");
+    let directory_path = registration_directory_path()?;
     let directory = trusted_directory(&directory_path, create)?;
     let label = format!("dev.fes.festerm.tunnel.{}", spec.id);
     let name = format!("{label}.plist");
@@ -836,6 +940,68 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn service_directory_preflight_refuses_unsafe_ancestors_without_repair_or_creation() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let root = std::env::current_dir().unwrap().join(format!(
+            ".service-preflight-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        drop(setup_storage::private_directory(&root, true).unwrap());
+        let config = root.join("config");
+        let directory = config.join("systemd/user");
+        preflight_directory(&directory).unwrap();
+        assert!(!config.exists());
+        for path in [&config, &config.join("systemd"), &directory] {
+            drop(setup_storage::private_directory(path, true).unwrap());
+        }
+        for path in [&config, &config.join("systemd"), &directory] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o775)).unwrap();
+            let error = preflight_directory(&directory).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+            assert!(error.to_string().contains("service.directory_permissions"));
+            assert!(error.to_string().contains(&path.display().to_string()));
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o775
+            );
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        preflight_directory(&directory).unwrap();
+        for path in [&config, &config.join("systemd"), &directory] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o555)).unwrap();
+            let target = if path == &directory {
+                directory.clone()
+            } else {
+                path.join("missing/user")
+            };
+            let error = preflight_directory(&target).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+            assert!(error.to_string().contains("service.directory_not_writable"));
+            assert!(error.to_string().contains(&path.display().to_string()));
+            assert!(!path.join("missing").exists());
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o555
+            );
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let link = root.join("link");
+        symlink(&config, &link).unwrap();
+        assert!(preflight_directory(&link.join("missing/user")).is_err());
+        assert!(!config.join("missing").exists());
+        assert!(preflight_directory(&root.join("missing/../config")).is_err());
+        assert!(preflight_directory(Path::new("relative/missing")).is_err());
+        std::fs::remove_file(link).unwrap();
+        std::fs::remove_dir(&directory).unwrap();
+        std::fs::remove_dir(config.join("systemd")).unwrap();
+        std::fs::remove_dir(config).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn service_definition_collision_refuses_and_identical_install_is_idempotent() {
         use std::os::unix::fs::{symlink, PermissionsExt};
 
@@ -942,6 +1108,18 @@ mod tests {
             "service.fixed_exit",
         );
         assert_eq!(failure.err().unwrap().to_string(), "service.fixed_exit");
+    }
+
+    #[test]
+    #[ignore = "read-only native prerequisite check; requires FESTERM_TUNNEL_SERVICE_NATIVE_SMOKE=1"]
+    fn service_native_manager_preflight_smoke() {
+        assert_eq!(
+            std::env::var("FESTERM_TUNNEL_SERVICE_NATIVE_SMOKE").as_deref(),
+            Ok("1")
+        );
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        preflight_registration_directory().unwrap();
+        preflight_service_manager().unwrap();
     }
 
     #[cfg(target_os = "macos")]
