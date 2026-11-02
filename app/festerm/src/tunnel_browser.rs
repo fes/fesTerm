@@ -33,6 +33,8 @@ enum Stage {
     Pick {
         login: String,
         tunnels: Vec<TunnelSummary>,
+        /// The tunnel awaiting delete confirmation.
+        confirm_delete: Option<String>,
     },
     Error(Error),
 }
@@ -43,6 +45,7 @@ pub(super) struct Browser {
     stage: Stage,
     focus_cancel: bool,
     store: Arc<dyn SecretStore>,
+    account: Option<DevTunnelAccount>,
     _lease: Option<std::fs::File>,
 }
 
@@ -53,12 +56,14 @@ impl Drop for Browser {
 }
 
 impl Browser {
-    /// With an account, lists its tunnels using the stored credential. Without
-    /// one, runs the GitHub device flow and stores the result as an account.
+    /// With an account, lists its tunnels using the stored credential, first
+    /// deleting `delete` if given. Without one, runs the GitHub device flow and
+    /// stores the result as an account.
     fn start(
         account: Option<DevTunnelAccount>,
         store: Arc<dyn SecretStore>,
         context: &egui::Context,
+        delete: Option<String>,
     ) -> Self {
         let cancel = CancellationToken::new();
         let (sender, receiver) = mpsc::sync_channel(2);
@@ -68,6 +73,7 @@ impl Browser {
             stage: Stage::Working,
             focus_cancel: true,
             store: Arc::clone(&store),
+            account: account.clone(),
             _lease: None,
         };
         let Some(client_id) = identity::registered_client_id() else {
@@ -100,7 +106,7 @@ impl Browser {
                             tokio::select! {
                                 _ = cancel.cancelled() => Err(Error::Cancelled),
                                 _ = tokio::time::sleep(Duration::from_secs(1800)) => Err(Error::Expired),
-                                value = run(account, &store, client_id, &cancel, &notify) => value,
+                                value = run(account, &store, client_id, &cancel, &notify, delete.as_deref()) => value,
                             }
                         })
                     });
@@ -125,7 +131,7 @@ pub(super) async fn list_for_account(
     cancel: &CancellationToken,
 ) -> Result<Vec<TunnelSummary>, Error> {
     let client_id = identity::registered_client_id().ok_or(Error::Registration)?;
-    match run(Some(account), store, client_id, cancel, &|_| true).await? {
+    match run(Some(account), store, client_id, cancel, &|_| true, None).await? {
         Outcome::Listed(_, tunnels) => Ok(tunnels),
         Outcome::Signed(_) => Err(Error::Response),
     }
@@ -142,6 +148,7 @@ async fn run(
     client_id: &str,
     cancel: &CancellationToken,
     notify: &impl Fn(Event) -> bool,
+    delete: Option<&str>,
 ) -> Result<Outcome, Error> {
     let http = Https::new()?;
     let Some(account) = account else {
@@ -177,6 +184,9 @@ async fn run(
                 &SecretBytes::copy_from_slice(&identity.encode_private()?),
             )
             .map_err(|_| Error::Store)?;
+    }
+    if let Some(tunnel) = delete {
+        service::delete(&identity, tunnel, cancel).await?;
     }
     let tunnels = service::list(&identity, cancel).await?;
     Ok(Outcome::Listed(identity.account.login.clone(), tunnels))
@@ -216,7 +226,7 @@ impl FesTermApp {
             },
             None => None,
         };
-        self.tunnel_browser = Some(Browser::start(account, store, context));
+        self.tunnel_browser = Some(Browser::start(account, store, context, None));
         self.overlays.native_tunnel = true;
         context.request_repaint();
     }
@@ -233,7 +243,11 @@ impl FesTermApp {
                     signed = Some(account);
                     continue;
                 }
-                Event::Listed(Ok((login, tunnels))) => Stage::Pick { login, tunnels },
+                Event::Listed(Ok((login, tunnels))) => Stage::Pick {
+                    login,
+                    tunnels,
+                    confirm_delete: None,
+                },
                 Event::Listed(Err(error)) => Stage::Error(error),
             };
             browser.focus_cancel = true;
@@ -354,10 +368,11 @@ impl FesTermApp {
         let configuration = self.state.configuration();
         let mut dismiss = escape;
         let mut picked = None;
+        let mut delete = None;
         egui::Modal::new(egui::Id::new("browse_dev_tunnels")).show(context, |ui| {
             super::confirmations::prepare_confirmation(ui, context, 520.0);
             ui.heading("Dev Tunnels");
-            super::confirmations::confirmation_body(ui, |ui| match &browser.stage {
+            super::confirmations::confirmation_body(ui, |ui| match &mut browser.stage {
                 Stage::Working => {
                     ui.horizontal(|ui| {
                         ui.spinner();
@@ -379,7 +394,50 @@ impl FesTermApp {
                     ui.add_space(6.0);
                     ui.label("Waiting for sign-in…");
                 }
-                Stage::Pick { login, tunnels } => {
+                Stage::Pick {
+                    login,
+                    tunnels,
+                    confirm_delete: confirm_delete @ Some(_),
+                } => {
+                    let locator = confirm_delete.clone().unwrap_or_default();
+                    let locator = &locator;
+                    let title = tunnels
+                        .iter()
+                        .find(|tunnel| &tunnel.locator == locator)
+                        .map_or_else(|| locator.clone(), display_name);
+                    ui.label(format!("GitHub · {login}"));
+                    ui.label(format!("Delete the Dev Tunnel “{title}” ({locator})?"));
+                    ui.label(
+                        "Its host becomes unreachable until its bridge is set up again. \
+                         This cannot be undone.",
+                    );
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if super::confirmations::dialog_action(
+                            ui,
+                            ActionButtonRole::DangerOutline,
+                            "Delete tunnel",
+                        )
+                        .clicked()
+                        {
+                            delete = Some(locator.clone());
+                        }
+                        if super::confirmations::dialog_action(
+                            ui,
+                            ActionButtonRole::Secondary,
+                            "Keep",
+                        )
+                        .clicked()
+                        {
+                            *confirm_delete = None;
+                        }
+                    });
+                }
+                Stage::Pick {
+                    login,
+                    tunnels,
+                    confirm_delete,
+                } => {
                     ui.label(format!("GitHub · {login}"));
                     ui.label("Choose a tunnel to fill in the tunnel name or id.");
                     ui.add_space(6.0);
@@ -403,19 +461,31 @@ impl FesTermApp {
                             if tunnel.active { " · active" } else { "" },
                             if saved { " · saved" } else { "" }
                         );
-                        if super::confirmations::dialog_action(
-                            ui,
-                            if tunnel.active {
-                                ActionButtonRole::Accent
-                            } else {
-                                ActionButtonRole::Secondary
-                            },
-                            &label,
-                        )
-                        .clicked()
-                        {
-                            picked = Some(tunnel.clone());
-                        }
+                        ui.horizontal(|ui| {
+                            if super::confirmations::dialog_action(
+                                ui,
+                                if tunnel.active {
+                                    ActionButtonRole::Accent
+                                } else {
+                                    ActionButtonRole::Secondary
+                                },
+                                &label,
+                            )
+                            .clicked()
+                            {
+                                picked = Some(tunnel.clone());
+                            }
+                            if super::confirmations::dialog_action(
+                                ui,
+                                ActionButtonRole::DangerOutline,
+                                "Delete",
+                            )
+                            .on_hover_text("Delete this Dev Tunnel")
+                            .clicked()
+                            {
+                                *confirm_delete = Some(tunnel.locator.clone());
+                            }
+                        });
                     }
                 }
                 Stage::Error(error) => {
@@ -438,6 +508,17 @@ impl FesTermApp {
             }
             dismiss |= cancel.clicked();
         });
+        if let Some(locator) = delete {
+            let account = self.tunnel_browser.as_ref().and_then(|b| b.account.clone());
+            let store = self.tunnel_browser.as_ref().map(|b| Arc::clone(&b.store));
+            if let (Some(account), Some(store)) = (account, store) {
+                // Drop the old browser first so its account lease is released.
+                self.tunnel_browser = None;
+                self.tunnel_browser =
+                    Some(Browser::start(Some(account), store, context, Some(locator)));
+            }
+            return;
+        }
         if let Some(tunnel) = picked {
             self.hand_picked_tunnel_to_form(context, &tunnel);
             dismiss = true;

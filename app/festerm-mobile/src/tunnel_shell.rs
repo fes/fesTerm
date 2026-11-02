@@ -98,6 +98,29 @@ impl MobileApp {
         });
     }
 
+    /// Deletes a listed tunnel from the service, then lists the account again.
+    fn delete_listed_tunnel(&mut self, ctx: &egui::Context, index: usize) {
+        let Some(client) = self.tunnel_client() else {
+            return;
+        };
+        let Some(list) = self.tunnel.list.as_mut().filter(|list| list.job.is_none()) else {
+            return;
+        };
+        let Some(tunnel) = list.items.get(index) else {
+            return;
+        };
+        if self.editor.tunnel_name == tunnel_label(tunnel) {
+            self.editor.tunnel_name.clear();
+        }
+        let account = list.account.clone();
+        let locator = tunnel.locator.clone();
+        list.job = Some(Job::spawn(ctx, move |cancel| {
+            client.delete_tunnel(&account, &locator, cancel)?;
+            client.list_tunnels(&account, cancel)
+        }));
+        list.error = None;
+    }
+
     /// Connects (or re-attaches `tab`) to a saved Dev Tunnel profile.
     pub(super) fn start_tunnel_connect(&mut self, ctx: &egui::Context, id: &str, tab: Option<u64>) {
         self.notice = None;
@@ -506,6 +529,7 @@ impl MobileApp {
                     self.editor.tunnel_name = tunnel_label(tunnel);
                 }
             }
+            forms::EditorAction::DeleteTunnel(index) => self.delete_listed_tunnel(ctx, index),
             _ => {}
         }
     }

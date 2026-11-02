@@ -67,6 +67,8 @@ pub struct EditorState {
     pub start_dir: String,
     pub error: Option<String>,
     pub confirm_delete: bool,
+    /// Dev Tunnel profiles: the next "Delete tunnel" tap deletes it.
+    pub confirm_delete_tunnel: bool,
     pub tunnel: Option<DevTunnelChoices>,
     /// Dev Tunnel profiles: the chosen (or typed) tunnel name.
     pub tunnel_name: String,
@@ -172,6 +174,7 @@ impl EditorState {
         self.auth_sheet = false;
         self.error = None;
         self.confirm_delete = false;
+        self.confirm_delete_tunnel = false;
     }
 
     pub fn wipe_secrets(&mut self) {
@@ -259,6 +262,7 @@ pub enum EditorAction {
     SignIn,
     RefreshTunnels,
     PickTunnel(usize),
+    DeleteTunnel(usize),
     SignOut,
     OpenHostSetup,
 }
@@ -787,9 +791,33 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
                     row.divider = index > 0;
                     if list_row(ui, &row).clicked() {
                         *action = EditorAction::PickTunnel(index);
+                        state.confirm_delete_tunnel = false;
                     }
                 }
             });
+        }
+        let selected = (!choices.loading)
+            .then(|| {
+                choices
+                    .tunnels
+                    .iter()
+                    .position(|name| *name == state.tunnel_name)
+            })
+            .flatten();
+        if let Some(index) = selected {
+            let label = if state.confirm_delete_tunnel {
+                format!("Tap again to delete {}", state.tunnel_name)
+            } else {
+                "Delete tunnel".to_owned()
+            };
+            if button(ui, ButtonKind::Destructive, &label, true).clicked() {
+                if state.confirm_delete_tunnel {
+                    state.confirm_delete_tunnel = false;
+                    *action = EditorAction::DeleteTunnel(index);
+                } else {
+                    state.confirm_delete_tunnel = true;
+                }
+            }
         }
         if !choices.loading && button(ui, ButtonKind::Secondary, "Refresh tunnels", true).clicked()
         {
