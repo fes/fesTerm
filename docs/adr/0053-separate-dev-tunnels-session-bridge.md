@@ -286,7 +286,10 @@ report `attached` alone are shown as attached locally. The displaced client sees
 the existing `SESSION_STOLEN` notice and never reattaches automatically, so
 local and remote cannot fight over a session. Remote takeover is on by default
 per Dev Tunnel profile and can be turned off; with it off, an occupied session
-is refused exactly as before.
+is refused exactly as before. The relay host therefore services a small bounded
+number of encrypted clients concurrently (four: the attached client, one taking
+over, and a discovery) instead of one at a time, so a second device reaches the
+daemon's admission instead of being dropped by the relay.
 
 Recovery retains ADR 0038's snapshot-before-live-output and adoption barrier.
 Preserve ordered resize/control events and exactly-once query-reply ownership.

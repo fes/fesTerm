@@ -161,19 +161,25 @@ fn run() -> io::Result<()> {
         eprintln!("Experimental bridge ready: one configured session; attach/detach only.");
         if allow_file_read { eprintln!("Read-only file capability enabled: connect credentials also authorize bounded regular-file reads as this remote OS user."); }
         let files = festerm_tunnel_bridge::files::FileService::new(allow_file_read);
+        // Connections are served concurrently (bounded by the relay host) so a
+        // second client can request takeover; the session daemon arbitrates.
+        let mut clients = tokio::task::JoinSet::new();
         loop {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => break,
+                Some(_) = clients.join_next(), if !clients.is_empty() => {}
                 incoming = host.connections.recv() => {
                     let Some(stream) = incoming else {
                         return Err(std::io::Error::other(
                             host.failure_category().unwrap_or("host.outer_task_closed"),
                         ));
                     };
-                    tokio::select! {
-                        _ = tokio::signal::ctrl_c() => break,
-                        _ = transport::serve_with_takeover(stream, identity.clone(), files.clone(), takeover) => {}
-                    }
+                    clients.spawn(transport::serve_with_takeover(
+                        stream,
+                        identity.clone(),
+                        files.clone(),
+                        takeover,
+                    ));
                 }
             }
         }

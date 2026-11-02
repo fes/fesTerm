@@ -1,7 +1,8 @@
 // Relay handshake derived from microsoft/dev-tunnels (MIT), pinned in vendor/dev-tunnels.
 //! Narrow modern-russh port of the pinned SDK relay handshake. Unlike the
-//! upstream host, this admits one encrypted client and one configured port,
-//! with no TCP listeners, port-management API, or unbounded forwarding queues.
+//! upstream host, this admits a small bounded number of encrypted clients (so a
+//! second device can request takeover) and one configured port, with no TCP
+//! listeners, port-management API, or unbounded forwarding queues.
 use std::{io, sync::Arc, time::Duration};
 
 use russh::{client, Channel, ChannelStream};
