@@ -50,6 +50,12 @@ impl MobileApp {
         view
     }
 
+    pub(super) fn parked_views(&mut self) -> impl Iterator<Item = &mut TerminalView> {
+        self.tabs
+            .iter_mut()
+            .filter_map(|tab| tab.parked.as_mut().map(|(_, view)| view))
+    }
+
     fn release_focus(&mut self) {
         self.gestures.cancel();
         self.control = false;

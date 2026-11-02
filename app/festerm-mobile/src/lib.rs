@@ -270,6 +270,7 @@ pub struct MobileApp {
     shell: shell::ShellState,
     profiles: Option<profiles::Profiles>,
     lock: Option<app_lock::LockHost>,
+    text_size: shell::TextSize,
     #[cfg(feature = "live-ssh")]
     tunnel: tunnel_link::TunnelUi,
     caps: model::Capabilities,
@@ -294,13 +295,11 @@ pub struct MobileApp {
     polled_frame: Option<u64>,
 }
 
-/// Phone-density default (about 46 columns on a 390pt screen); pinch-zoom
-/// still moves it within the view's bounds.
-const MOBILE_TERMINAL_FONT_SIZE: f32 = 11.5;
-
 fn mobile_terminal_view() -> TerminalView {
     let mut view = TerminalView::default();
-    view.zoom_by_factor(MOBILE_TERMINAL_FONT_SIZE / view.font_size_points());
+    // Phone-density default (about 46 columns on a 390pt screen); the Settings
+    // text size and pinch-zoom move it within the view's bounds.
+    view.zoom_by_factor(shell::TextSize::Normal.points() / view.font_size_points());
     view
 }
 
@@ -333,6 +332,7 @@ impl MobileApp {
             shell: shell::ShellState::default(),
             profiles: None,
             lock: None,
+            text_size: shell::TextSize::default(),
             caps: model::Capabilities::production(),
             tabs: Vec::new(),
             active_tab: None,
@@ -363,8 +363,21 @@ impl MobileApp {
 
     /// Plugs in the saved-profile store (Keychain-backed in production).
     pub fn with_profiles(mut self, profiles: profiles::Profiles) -> Self {
+        let text_size = profiles.text_size();
         self.profiles = Some(profiles);
+        self.apply_text_size(text_size);
         self
+    }
+
+    /// Sets every terminal, open or parked, to the preset size.
+    fn apply_text_size(&mut self, size: shell::TextSize) {
+        self.text_size = size;
+        let points = size.points();
+        self.view
+            .zoom_by_factor(points / self.view.font_size_points());
+        for view in self.parked_views() {
+            view.zoom_by_factor(points / view.font_size_points());
+        }
     }
 
     /// Plugs in the app lock; content is drawn only while it is unlocked.
@@ -736,6 +749,7 @@ impl MobileApp {
             diagnostics,
             notice,
             lock: self.lock.as_ref().map(app_lock::LockHost::view),
+            text_size: self.text_size,
         }
     }
 
@@ -781,6 +795,13 @@ impl MobileApp {
                 }
                 ShellAction::EditProfile(id) => self.edit_profile(&id),
                 ShellAction::OpenHostSetup => self.host_setup.open(),
+                ShellAction::SetTextSize(size) => {
+                    self.apply_text_size(size);
+                    if let Some(Err(error)) = self.profiles.as_ref().map(|p| p.save_text_size(size))
+                    {
+                        self.notice = Some(error);
+                    }
+                }
                 ShellAction::Lock(action) => {
                     if let Some(lock) = self.lock.as_mut() {
                         lock.apply(action);
@@ -1658,6 +1679,26 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn text_size_setting_resizes_open_and_parked_terminals_and_is_saved() {
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle::default())))
+            .with_profiles(profiles::testing::profiles());
+        app.park_active();
+        app.apply_shell_actions(
+            &egui::Context::default(),
+            vec![shell::ShellAction::SetTextSize(shell::TextSize::Large)],
+        );
+        let large = |size: f32| (size - 14.0).abs() < 1e-3;
+        assert!(large(app.view.font_size_points()));
+        let parked: Vec<f32> = app.parked_views().map(|v| v.font_size_points()).collect();
+        assert!(parked.len() == 1 && large(parked[0]));
+        let profiles = app.profiles.take().unwrap();
+        assert_eq!(profiles.text_size(), shell::TextSize::Large);
+        let reopened =
+            MobileApp::new(Rc::new(Cell::new(Lifecycle::default()))).with_profiles(profiles);
+        assert!(large(reopened.view.font_size_points()));
+    }
 
     #[test]
     fn mobile_editor_saves_edits_and_deletes_profiles_with_credentials() {

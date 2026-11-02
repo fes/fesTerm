@@ -47,6 +47,49 @@ pub struct ShellData<'a> {
     pub notice: Option<&'a str>,
     /// App-lock settings, when the host has a lock.
     pub lock: Option<super::app_lock::LockView>,
+    pub text_size: TextSize,
+}
+
+/// Terminal text size preset. Pinch-zoom still adjusts a session freely; this
+/// sets the size every terminal starts at.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TextSize {
+    Small,
+    #[default]
+    Normal,
+    Large,
+}
+
+impl TextSize {
+    pub const ALL: [TextSize; 3] = [TextSize::Small, TextSize::Normal, TextSize::Large];
+
+    pub fn points(self) -> f32 {
+        match self {
+            Self::Small => 9.5,
+            Self::Normal => 11.5,
+            Self::Large => 14.0,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Small => "Small",
+            Self::Normal => "Normal",
+            Self::Large => "Large",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Normal => "normal",
+            Self::Large => "large",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|size| size.key() == key.trim())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,6 +106,7 @@ pub enum ShellAction {
     HideSessions,
     OpenProfilesTab,
     Lock(super::app_lock::LockAction),
+    SetTextSize(TextSize),
 }
 
 fn state_dot(state: SurfaceState) -> Dot {
@@ -354,6 +398,19 @@ fn settings_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAct
             }
         });
     }
+    section_header(ui, "Terminal", None, false);
+    let mut index = TextSize::ALL
+        .iter()
+        .position(|size| *size == data.text_size)
+        .unwrap_or(1);
+    let items = TextSize::ALL.map(|size| (None, size.label()));
+    if widgets::segmented(ui, &items, &mut index, false) {
+        actions.push(ShellAction::SetTextSize(TextSize::ALL[index]));
+    }
+    footnote(
+        ui,
+        "Text size for terminals. Pinch to zoom a single session.",
+    );
     section_header(ui, "Dev Tunnel hosts", None, false);
     card(ui, |ui| {
         let mut row = RowSpec::new("Set up a host");
