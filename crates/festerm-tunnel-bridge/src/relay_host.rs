@@ -18,6 +18,10 @@ use crate::{
     },
 };
 
+/// Concurrent relay clients: enough for one attached device, one taking it over
+/// and a read-only discovery, without letting a peer queue unbounded work.
+const RELAY_CLIENTS: usize = 4;
+
 pub struct HostConnection {
     pub endpoint: TunnelEndpoint,
     pub connections: mpsc::Receiver<ChannelStream<server::Msg>>,
@@ -120,8 +124,8 @@ pub async fn host_with_identity(
         .as_deref()
         .ok_or_else(|| stage_error("host.endpoint_uri_missing"))?;
     let rw = websocket(url, token, "tunnel-relay-host").await?;
-    let (outer_tx, mut outer_rx) = mpsc::channel(1);
-    let slots = Arc::new(Semaphore::new(1));
+    let (outer_tx, mut outer_rx) = mpsc::channel(RELAY_CLIENTS);
+    let slots = Arc::new(Semaphore::new(RELAY_CLIENTS));
     let session = client::connect_stream(
         Arc::new(outer_client_config()),
         rw,
@@ -135,7 +139,7 @@ pub async fn host_with_identity(
     .map_err(|_| stage_error("host.outer_ssh"))?;
     let cancel = CancellationToken::new();
     let stopped = cancel.clone();
-    let (tx, connections) = mpsc::channel(1);
+    let (tx, connections) = mpsc::channel(RELAY_CLIENTS);
     let (exit_sender, exit) = tokio::sync::watch::channel(None);
     tokio::spawn(async move {
         let server_config = Arc::new(server::Config {
@@ -148,12 +152,14 @@ pub async fn host_with_identity(
             ..Default::default()
         });
         let service = async {
+            let mut clients = tokio::task::JoinSet::new();
             loop {
                 let incoming = tokio::select! {
                     _ = stopped.cancelled() => break,
                     value = outer_rx.recv() => match value { Some(value) => value, None => break },
                 };
                 let (channel, permit) = incoming;
+                while clients.try_join_next().is_some() {}
                 let (authed, adopted) = oneshot::channel();
                 let handler = Port {
                     port,
@@ -161,30 +167,36 @@ pub async fn host_with_identity(
                     opened: false,
                     authed: Some(authed),
                 };
-                // Only one encrypted client is serviced; keeping its permit until
-                // completion also prevents an upstream per-client task backlog.
-                let result = async {
-                    let mut running = server::run_stream(server_config.clone(), channel, handler)
-                        .await
-                        .map_err(|_| invalid())?;
-                    tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_secs(30)) => return Err(invalid()),
-                        _ = &mut running => return Ok(()),
-                        result = adopted => { result.map_err(|_| invalid())?; }
-                    }
-                    running
-                        .handle()
-                        .forward_tcpip("127.0.0.1".into(), port as u32)
-                        .await
-                        .map_err(|_| invalid())?;
-                    tokio::select! {
-                        _ = stopped.cancelled() => {}
-                        _ = &mut running => {}
-                    }
-                    Ok::<_, io::Error>(())
-                };
-                tokio::select! { _ = stopped.cancelled() => break, _ = result => {} }
-                drop(permit);
+                let server_config = server_config.clone();
+                let stopped = stopped.clone();
+                // Clients are serviced concurrently so a second device can reach
+                // the session daemon and take the session over; the daemon, not
+                // the relay, arbitrates the attachment. Each client holds its
+                // permit until it finishes, bounding the per-client tasks.
+                clients.spawn(async move {
+                    let result = async {
+                        let mut running = server::run_stream(server_config, channel, handler)
+                            .await
+                            .map_err(|_| invalid())?;
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_secs(30)) => return Err(invalid()),
+                            _ = &mut running => return Ok(()),
+                            result = adopted => { result.map_err(|_| invalid())?; }
+                        }
+                        running
+                            .handle()
+                            .forward_tcpip("127.0.0.1".into(), port as u32)
+                            .await
+                            .map_err(|_| invalid())?;
+                        tokio::select! {
+                            _ = stopped.cancelled() => {}
+                            _ = &mut running => {}
+                        }
+                        Ok::<_, io::Error>(())
+                    };
+                    tokio::select! { _ = stopped.cancelled() => {}, _ = result => {} }
+                    drop(permit);
+                });
             }
         };
         supervise_outer(session, service, stopped.clone(), exit_sender).await;
