@@ -264,6 +264,24 @@ fn expired_credentials_are_refreshed_once_and_stored_in_place() {
 }
 
 #[test]
+fn deleting_a_tunnel_uses_the_account_identity() {
+    let f = fixture(script(None, false), false);
+    let cancel = CancelToken::new();
+    assert!(f
+        .client
+        .delete_tunnel(&f.account, "devbox.euw", &cancel)
+        .is_ok());
+    assert!(f
+        .client
+        .delete_tunnel(&f.account, "missing.euw", &cancel)
+        .is_err());
+    assert!(f
+        .client
+        .delete_tunnel("nobody", "devbox.euw", &cancel)
+        .is_err());
+}
+
+#[test]
 fn describing_a_tunnel_reports_host_identity_trust_and_session_state() {
     let f = fixture(script(Some(Displacer::Local), true), false);
     let cancel = CancelToken::new();

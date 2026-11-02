@@ -66,6 +66,12 @@ pub trait TunnelDirectory: Send + Sync {
         name: &'a str,
         cancel: &'a CancellationToken,
     ) -> BoxFuture<'a, Result<ResolvedTunnel, ClientError>>;
+    fn delete<'a>(
+        &'a self,
+        identity: &'a Identity,
+        name: &'a str,
+        cancel: &'a CancellationToken,
+    ) -> BoxFuture<'a, Result<(), ClientError>>;
 }
 
 /// Opens the encrypted byte stream to a resolved bridge, replaceable in tests.
@@ -89,6 +95,14 @@ impl TunnelDirectory for Microsoft {
         cancel: &'a CancellationToken,
     ) -> BoxFuture<'a, Result<ResolvedTunnel, ClientError>> {
         Box::pin(service::resolve(identity, name, cancel))
+    }
+    fn delete<'a>(
+        &'a self,
+        identity: &'a Identity,
+        name: &'a str,
+        cancel: &'a CancellationToken,
+    ) -> BoxFuture<'a, Result<(), ClientError>> {
+        Box::pin(service::delete(identity, name, cancel))
     }
 }
 impl BridgeConnector for Microsoft {
@@ -459,6 +473,19 @@ impl TunnelClient {
                     active: t.active,
                 })
                 .collect())
+        })
+    }
+
+    /// Permanently deletes one of the account's tunnels.
+    pub fn delete_tunnel(
+        &self,
+        account: &str,
+        tunnel: &str,
+        cancel: &CancelToken,
+    ) -> Result<(), TunnelError> {
+        self.run(cancel, NETWORK_LIMIT, async {
+            let identity = self.identity(account, &cancel.0).await?;
+            Ok(self.directory.delete(&identity, tunnel, &cancel.0).await?)
         })
     }
 

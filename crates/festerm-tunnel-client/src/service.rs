@@ -128,6 +128,26 @@ pub async fn extend_lifetime(
     }
 }
 
+/// Permanently deletes a tunnel the account owns. Its host stops being
+/// reachable; the host machine's bridge must be set up again to come back.
+pub async fn delete(
+    identity: &Identity,
+    name: &str,
+    cancel: &CancellationToken,
+) -> Result<(), Error> {
+    let locator = locator(name)?;
+    let identity_http = Https::new()?;
+    identity.confirm_account(&identity_http, cancel).await?;
+    let management = management_client(identity)?;
+    let options = TunnelRequestOptions::default();
+    tokio::select! {
+        _ = cancel.cancelled() => Err(Error::Cancelled),
+        value = management.delete_tunnel(&locator, &options) => {
+            value.map(|_| ()).map_err(management_error)
+        }
+    }
+}
+
 /// A tunnel owned by the signed-in account that hosts a fesTerm bridge.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TunnelSummary {
