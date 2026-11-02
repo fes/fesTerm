@@ -115,10 +115,13 @@ pub enum KeyImportFailure {
     Message(String),
 }
 
+const TEXT_SIZE_FILE: &str = "terminal-text-size";
+
 pub struct Profiles {
     store: Arc<Mutex<ProfileStore>>,
     hosts: KnownHosts,
     durable_credentials: bool,
+    directory: PathBuf,
 }
 
 /// The Keychain can be present but unusable (for example a build signed
@@ -147,7 +150,21 @@ impl Profiles {
             store: Arc::new(Mutex::new(store)),
             hosts,
             durable_credentials,
+            directory: directory.to_path_buf(),
         })
+    }
+
+    /// The saved terminal text size; unset or unreadable means the default.
+    pub fn text_size(&self) -> super::shell::TextSize {
+        std::fs::read_to_string(self.directory.join(TEXT_SIZE_FILE))
+            .ok()
+            .and_then(|key| super::shell::TextSize::from_key(&key))
+            .unwrap_or_default()
+    }
+
+    pub fn save_text_size(&self, size: super::shell::TextSize) -> Result<(), String> {
+        std::fs::write(self.directory.join(TEXT_SIZE_FILE), size.key())
+            .map_err(|_| "The text size could not be saved".to_owned())
     }
 
     fn store(&self) -> MutexGuard<'_, ProfileStore> {
