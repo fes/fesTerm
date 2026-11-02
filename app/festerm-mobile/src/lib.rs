@@ -282,6 +282,9 @@ pub struct MobileApp {
     host_setup: host_setup::HostSetupState,
     keys_panel: terminal_chrome::KeysPanel,
     keyboard_visible: bool,
+    /// The focused form field's last IME request, kept while the field is
+    /// clipped (e.g. under the keyboard) so UIKit does not dismiss it.
+    field_ime: Option<(egui::Id, egui::output::IMEOutput)>,
     /// Gallery/test fixtures; production derives these from live state.
     sessions_override: Option<model::StaticSessions>,
     chrome_override: Option<model::ChromeModel>,
@@ -339,6 +342,7 @@ impl MobileApp {
             host_setup: host_setup::HostSetupState::default(),
             keys_panel: terminal_chrome::KeysPanel::default(),
             keyboard_visible: true,
+            field_ime: None,
             sessions_override: None,
             chrome_override: None,
             #[cfg(test)]
@@ -433,6 +437,33 @@ impl MobileApp {
             ui.painter()
                 .rect_filled(safe_rect, 0.0, ui.visuals().panel_fill);
             self.show_content(ui);
+        });
+        self.keep_field_keyboard(ui.ctx());
+    }
+
+    /// egui only requests the keyboard for a text field it painted. When the
+    /// keyboard's own occlusion clips the focused field, that request would
+    /// vanish, UIKit would hide the keyboard, the field would reappear, and
+    /// the keyboard would flicker. Reuse the field's request while it keeps
+    /// focus; the field scrolls itself back into view meanwhile.
+    fn keep_field_keyboard(&mut self, ctx: &egui::Context) {
+        if self.terminal_surface() {
+            self.field_ime = None;
+            return;
+        }
+        let focused = ctx.memory(|memory| memory.focused());
+        ctx.output_mut(|output| match (focused, output.ime) {
+            (Some(id), Some(ime)) => self.field_ime = Some((id, ime)),
+            (Some(id), None) => match self.field_ime {
+                Some((kept, ime)) if kept == id => {
+                    output.ime = Some(egui::output::IMEOutput {
+                        should_interrupt_composition: false,
+                        ..ime
+                    });
+                }
+                _ => self.field_ime = None,
+            },
+            (None, _) => self.field_ime = None,
         });
     }
 

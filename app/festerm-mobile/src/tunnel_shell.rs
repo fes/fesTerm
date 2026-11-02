@@ -87,6 +87,7 @@ impl MobileApp {
         let Some(client) = self.tunnel_client() else {
             return;
         };
+        eprintln!("festerm-mobile: listing tunnels for {account}");
         let target = account.clone();
         let job = Job::spawn(ctx, move |cancel| client.list_tunnels(&target, cancel));
         self.tunnel.list = Some(TunnelList {
@@ -582,5 +583,6 @@ fn tunnel_label(tunnel: &festerm_mobile_tunnels::TunnelInfo) -> String {
     tunnel
         .name
         .clone()
+        .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| tunnel.locator.clone())
 }
