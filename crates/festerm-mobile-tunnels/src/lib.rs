@@ -83,6 +83,13 @@ pub trait TunnelDirectory: Send + Sync {
         name: &'a str,
         cancel: &'a CancellationToken,
     ) -> BoxFuture<'a, Result<(), ClientError>>;
+    fn update_description<'a>(
+        &'a self,
+        identity: &'a Identity,
+        name: &'a str,
+        description: &'a str,
+        cancel: &'a CancellationToken,
+    ) -> BoxFuture<'a, Result<(), ClientError>>;
 }
 
 /// Opens the encrypted byte stream to a resolved bridge, replaceable in tests.
@@ -114,6 +121,20 @@ impl TunnelDirectory for Microsoft {
         cancel: &'a CancellationToken,
     ) -> BoxFuture<'a, Result<(), ClientError>> {
         Box::pin(service::delete(identity, name, cancel))
+    }
+    fn update_description<'a>(
+        &'a self,
+        identity: &'a Identity,
+        name: &'a str,
+        description: &'a str,
+        cancel: &'a CancellationToken,
+    ) -> BoxFuture<'a, Result<(), ClientError>> {
+        Box::pin(service::update_description(
+            identity,
+            name,
+            description,
+            cancel,
+        ))
     }
 }
 impl BridgeConnector for Microsoft {
@@ -497,6 +518,23 @@ impl TunnelClient {
         self.run(cancel, NETWORK_LIMIT, async {
             let identity = self.identity(account, &cancel.0).await?;
             Ok(self.directory.delete(&identity, tunnel, &cancel.0).await?)
+        })
+    }
+
+    /// Updates the user-visible description of one of the account's tunnels.
+    pub fn update_tunnel_description(
+        &self,
+        account: &str,
+        tunnel: &str,
+        description: &str,
+        cancel: &CancelToken,
+    ) -> Result<(), TunnelError> {
+        self.run(cancel, NETWORK_LIMIT, async {
+            let identity = self.identity(account, &cancel.0).await?;
+            Ok(self
+                .directory
+                .update_description(&identity, tunnel, description, &cancel.0)
+                .await?)
         })
     }
 

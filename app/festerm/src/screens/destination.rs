@@ -54,6 +54,7 @@ pub(super) struct FieldOptions {
     hint: &'static str,
     width: Option<f32>,
     password: bool,
+    char_limit: Option<usize>,
 }
 
 impl FieldOptions {
@@ -63,6 +64,7 @@ impl FieldOptions {
             hint: "",
             width: None,
             password: false,
+            char_limit: None,
         }
     }
 
@@ -86,6 +88,11 @@ impl FieldOptions {
 
     pub(super) fn password(mut self, password: bool) -> Self {
         self.password = password;
+        self
+    }
+
+    pub(super) fn char_limit(mut self, char_limit: usize) -> Self {
+        self.char_limit = Some(char_limit);
         self
     }
 }
@@ -112,13 +119,15 @@ pub(super) fn labeled_text_edit(
         )
     };
     let show_field = |ui: &mut Ui| {
-        ui.add(
-            TextEdit::singleline(value)
-                .id_salt(id)
-                .hint_text(options.hint)
-                .password(options.password)
-                .desired_width(width),
-        )
+        let edit = TextEdit::singleline(value)
+            .id_salt(id)
+            .hint_text(options.hint)
+            .password(options.password)
+            .desired_width(width);
+        ui.add(match options.char_limit {
+            Some(limit) => edit.char_limit(limit),
+            None => edit,
+        })
     };
     match options.style {
         FieldStyle::Stacked => {

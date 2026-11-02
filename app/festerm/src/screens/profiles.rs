@@ -36,7 +36,7 @@ struct ProfilesScreenState {
 
 /// Choices for the one-line Dev Tunnel host installer. Nothing here is a
 /// secret and nothing is persisted.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct HostSetupDraft {
     platform: festerm_host_setup::HostPlatform,
     options: festerm_host_setup::InstallOptions,
@@ -60,7 +60,7 @@ impl Default for HostSetupDraft {
 
 impl HostSetupDraft {
     fn command(&self) -> String {
-        festerm_host_setup::install_command(self.platform, self.options)
+        festerm_host_setup::install_command(self.platform, self.options.clone())
     }
 }
 
@@ -994,6 +994,17 @@ pub(crate) fn show_profiles(
                         &mut draft.options.upgrade,
                         "Upgrade an existing host (keeps its tunnel, host key and session)",
                     );
+                    ui.add_enabled_ui(!draft.options.upgrade, |ui| {
+                        labeled_text_edit(
+                            ui,
+                            ("profiles_form", tab_id, "friendly_host_name"),
+                            "Friendly host name (optional; defaults to this computer's name)",
+                            &mut draft.options.friendly_name,
+                            FieldOptions::stacked()
+                                .hint("Raspberry Pi 5")
+                                .char_limit(100),
+                        );
+                    });
                     ssh_section_heading(ui, "Run this on the host");
                     let mut command_text = draft.command();
                     let command_box = ui.add(
@@ -1040,6 +1051,7 @@ pub(crate) fn show_profiles(
                 draft.account = Some(account);
             }
             if let Some(picked) = crate::app::tunnel_browser::take_picked_tunnel(ui.ctx()) {
+                picked.seed_profile_name(&mut draft.name);
                 draft.tunnel = picked.locator;
                 if picked.account.is_some() {
                     draft.account = picked.account;

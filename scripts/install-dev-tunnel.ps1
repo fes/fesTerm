@@ -5,7 +5,8 @@ param(
     [switch]$NoTakeover,
     # Switch an existing host's service to this release's helpers, keeping its
     # tunnel, host key and running daemon session.
-    [switch]$Upgrade
+    [switch]$Upgrade,
+    [string]$FriendlyName = ''
 )
 
 Set-StrictMode -Version Latest
@@ -166,7 +167,19 @@ try {
     }
     $cli = Join-Path $cached 'devtunnel.exe'
     Write-Host "Installed private helpers: $cached"
-    & (Join-Path $cached 'festerm-tunnel-setup.exe') --managed --devtunnel $cli --state-dir (Join-Path $root 'state') @(if ($NoTakeover) { '--no-takeover' }) @(if ($Upgrade) { '--upgrade' })
+    if ($FriendlyName -and ($FriendlyName.Trim().Length -eq 0 -or $FriendlyName.Trim().Length -gt 100 -or $FriendlyName -match '[\x00-\x1f\x7f]')) {
+        throw 'FriendlyName must be non-empty and contain no control characters.'
+    }
+    if ($Upgrade -and $FriendlyName) {
+        throw 'FriendlyName applies only when creating a new host; rename an existing tunnel in fesTerm.'
+    }
+    $setupArguments = @('--managed', '--devtunnel', $cli, '--state-dir', (Join-Path $root 'state'))
+    if ($NoTakeover) { $setupArguments += '--no-takeover' }
+    if ($Upgrade) { $setupArguments += '--upgrade' }
+    if ($FriendlyName) {
+        $setupArguments += @('--friendly-name', $FriendlyName.Trim())
+    }
+    & (Join-Path $cached 'festerm-tunnel-setup.exe') @setupArguments
     if ($LASTEXITCODE -ne 0) { throw 'Experimental tunnel setup refused/stopped.' }
     $profile = Join-Path $root 'state\festerm-profile.json'
     if (-not (Test-Path -LiteralPath $profile -PathType Leaf)) {

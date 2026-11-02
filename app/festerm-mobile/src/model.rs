@@ -212,7 +212,24 @@ pub struct BannerText {
 pub struct DevTunnelChoices {
     /// GitHub login of the bound account; `None` until signed in.
     pub account_login: Option<String>,
-    pub tunnels: Vec<String>,
+    pub tunnels: Vec<DevTunnelChoice>,
     pub loading: bool,
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DevTunnelChoice {
+    pub locator: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+impl DevTunnelChoice {
+    pub fn friendly_name(&self) -> &str {
+        self.description
+            .as_deref()
+            .or(self.name.as_deref())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(&self.locator)
+    }
 }

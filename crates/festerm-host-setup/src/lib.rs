@@ -40,7 +40,7 @@ impl HostPlatform {
 }
 
 /// Options the installer accepts.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstallOptions {
     /// Allow a remote client to displace the current holder (the default).
     pub takeover: bool,
@@ -49,6 +49,8 @@ pub struct InstallOptions {
     /// Switch an existing host to this version's helpers, keeping its
     /// tunnel, host key and running session.
     pub upgrade: bool,
+    /// Optional user-facing description for a newly created tunnel.
+    pub friendly_name: String,
 }
 
 impl Default for InstallOptions {
@@ -57,6 +59,7 @@ impl Default for InstallOptions {
             takeover: true,
             install_dependencies: false,
             upgrade: false,
+            friendly_name: String::new(),
         }
     }
 }
@@ -75,7 +78,15 @@ pub fn script_url(platform: HostPlatform) -> String {
     )
 }
 
-fn windows_flags(options: InstallOptions) -> String {
+fn windows_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn unix_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn windows_flags(options: &InstallOptions) -> String {
     let mut flags = String::new();
     if !options.takeover {
         flags.push_str(" -NoTakeover");
@@ -83,10 +94,14 @@ fn windows_flags(options: InstallOptions) -> String {
     if options.upgrade {
         flags.push_str(" -Upgrade");
     }
+    if !options.upgrade && !options.friendly_name.trim().is_empty() {
+        flags.push_str(" -FriendlyName ");
+        flags.push_str(&windows_quote(options.friendly_name.trim()));
+    }
     flags
 }
 
-fn unix_flags(platform: HostPlatform, options: InstallOptions) -> String {
+fn unix_flags(platform: HostPlatform, options: &InstallOptions) -> String {
     let mut flags = String::new();
     if options.install_dependencies && platform == HostPlatform::Linux {
         flags.push_str(" --install-dependencies");
@@ -97,6 +112,10 @@ fn unix_flags(platform: HostPlatform, options: InstallOptions) -> String {
     if options.upgrade {
         flags.push_str(" --upgrade");
     }
+    if !options.upgrade && !options.friendly_name.trim().is_empty() {
+        flags.push_str(" --friendly-name ");
+        flags.push_str(&unix_quote(options.friendly_name.trim()));
+    }
     flags
 }
 
@@ -106,13 +125,13 @@ pub fn install_command(platform: HostPlatform, options: InstallOptions) -> Strin
     let url = script_url(platform);
     match platform {
         HostPlatform::Windows => {
-            let flags = windows_flags(options);
+            let flags = windows_flags(&options);
             format!(
                 "& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing {url}).Content)) -Version {VERSION}{flags}"
             )
         }
         _ => {
-            let flags = unix_flags(platform, options);
+            let flags = unix_flags(platform, &options);
             format!("curl -fsSL {url} | bash -s -- {VERSION}{flags}")
         }
     }
@@ -123,11 +142,11 @@ pub fn local_command(platform: HostPlatform, options: InstallOptions) -> String 
     let name = platform.script_name();
     match platform {
         HostPlatform::Windows => {
-            let flags = windows_flags(options);
+            let flags = windows_flags(&options);
             format!("./{name} -Version {VERSION}{flags}")
         }
         _ => {
-            let flags = unix_flags(platform, options);
+            let flags = unix_flags(platform, &options);
             format!("bash {name} {VERSION}{flags}")
         }
     }
@@ -152,13 +171,15 @@ mod tests {
             takeover: false,
             install_dependencies: true,
             upgrade: false,
+            ..InstallOptions::default()
         };
-        assert!(
-            install_command(HostPlatform::MacOs, on).ends_with(&format!("bash -s -- {VERSION}"))
-        );
-        assert!(install_command(HostPlatform::Linux, off)
+        assert!(install_command(HostPlatform::MacOs, on.clone())
+            .ends_with(&format!("bash -s -- {VERSION}")));
+        assert!(install_command(HostPlatform::Linux, off.clone())
             .ends_with(&format!("{VERSION} --install-dependencies --no-takeover")));
-        assert!(!install_command(HostPlatform::MacOs, off).contains("--install-dependencies"));
+        assert!(
+            !install_command(HostPlatform::MacOs, off.clone()).contains("--install-dependencies")
+        );
         assert!(install_command(HostPlatform::Windows, off).ends_with("-NoTakeover"));
         assert!(local_command(HostPlatform::Windows, on).starts_with("./install-dev-tunnel.ps1"));
     }
@@ -172,11 +193,32 @@ mod tests {
             ..InstallOptions::default()
         };
         for platform in [HostPlatform::MacOs, HostPlatform::Linux] {
-            assert!(install_command(platform, upgrade).ends_with(" --no-takeover --upgrade"));
-            assert!(local_command(platform, upgrade).ends_with(" --no-takeover --upgrade"));
+            assert!(
+                install_command(platform, upgrade.clone()).ends_with(" --no-takeover --upgrade")
+            );
+            assert!(local_command(platform, upgrade.clone()).ends_with(" --no-takeover --upgrade"));
             assert!(!install_command(platform, InstallOptions::default()).contains("--upgrade"));
         }
-        assert!(install_command(HostPlatform::Windows, upgrade).ends_with(" -NoTakeover -Upgrade"));
+        assert!(install_command(HostPlatform::Windows, upgrade.clone())
+            .ends_with(" -NoTakeover -Upgrade"));
         assert!(local_command(HostPlatform::Windows, upgrade).ends_with(" -NoTakeover -Upgrade"));
+    }
+
+    #[test]
+    fn friendly_name_is_quoted_and_not_forwarded_during_upgrade() {
+        let options = InstallOptions {
+            friendly_name: "Pi's build box".into(),
+            ..InstallOptions::default()
+        };
+        assert!(install_command(HostPlatform::Linux, options.clone())
+            .ends_with("--friendly-name 'Pi'\\''s build box'"));
+        assert!(install_command(HostPlatform::Windows, options.clone())
+            .ends_with("-FriendlyName 'Pi''s build box'"));
+        let upgrade = InstallOptions {
+            upgrade: true,
+            ..options
+        };
+        assert!(!install_command(HostPlatform::Linux, upgrade.clone()).contains("friendly-name"));
+        assert!(!install_command(HostPlatform::Windows, upgrade).contains("FriendlyName"));
     }
 }

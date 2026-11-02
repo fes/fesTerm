@@ -201,6 +201,21 @@ impl TunnelDirectory for FixedDirectory {
             }
         })
     }
+    fn update_description<'a>(
+        &'a self,
+        _: &'a Identity,
+        name: &'a str,
+        _: &'a str,
+        _: &'a CancellationToken,
+    ) -> BoxFuture<'a, Result<(), ClientError>> {
+        Box::pin(async move {
+            if name == "devbox.euw" {
+                Ok(())
+            } else {
+                Err(ClientError::TunnelNotFound)
+            }
+        })
+    }
 }
 
 /// Hands out one in-memory stream per connection from `open`.
