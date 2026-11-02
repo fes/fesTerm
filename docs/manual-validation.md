@@ -131,11 +131,14 @@ sudo for package-manager commands; test denied/missing sudo without proceeding
 to authentication. Native prerequisite installation remains distinct from the
 unelevated tunnel setup and from mock installer tests.
 
-On 2026-11-01, isolated Parallels Linux/Windows ARM64 clones used the existing
+On 2026-11-01/02, isolated Parallels Linux/Windows ARM64 clones used the existing
 ordinary lab accounts, not Parallels' default SYSTEM execution. Linux bridge
 and Unix-security package tests, strict Clippy, manager preflight and installer/
 bundle fixtures passed; published v0.13.0 helper entry points and the pinned
 official ARM64 CLI also ran without installing runtime packages or signing in.
+An extracted Linux checkout initially inherited group-write and correctly
+failed private-storage fixtures; only the disposable checkout directories were
+tightened before the committed-source rerun passed, without weakening policy.
 Windows-native parser/protected-DACL/download-refusal fixtures passed; two
 bundle symlink subcases explicitly skipped because the standard user lacks
 symbolic-link creation privilege. Real current-SID `InteractiveToken`/
@@ -149,10 +152,23 @@ The published Windows setup helper exposed another release blocker:
 from the standard-user SSH context (interactive-window-station error), while
 a byte-identical renamed diagnostic copy ran `--help`. Signed sessiond/bridge
 entry points did run. The source now embeds explicit `asInvoker`, failing the
-build if embedding fails; the original-name native launch regression must pass
-before qualifying the correction. The diagnostic rename is not an installation
-workaround. None of these checks qualifies OAuth, interactive logon, reboot,
-other CPU architectures or an elevated-admin-account campaign.
+build if embedding fails. The committed-source original-name launch regression,
+complete bridge package tests, targeted private-storage/DACL regressions,
+read-only Scheduler preflight and strict Clippy passed as a genuine
+medium-integrity user outside Administrators. The pinned, signed official x64
+CLI also ran under Windows ARM64 emulation. The diagnostic rename is not an
+installation workaround, and no corrected signed release has been produced.
+
+The expanded Windows-security library run separately recorded 37 passes and
+four failures because the standard user lacks `SeSecurityPrivilege`; those
+unchanged security-metadata tests were not weakened, silently skipped or run
+elevated. The complete library suite is therefore not qualified under that
+account, even though the applicable private-storage/DACL tests passed.
+Unix installer/bundle fixtures recorded 36 passes and three explicit
+platform/tool skips; Windows recorded three installer and 15 bundle passes,
+19 Unix-only skips and the two symlink-privilege skips above. None of these
+checks qualifies OAuth, interactive logon, reboot, other CPU architectures or
+an unelevated administrator-member account.
 
 An explicitly gated macOS LaunchAgent smoke passed with an isolated dummy
 worker, including repeat/start/foreign-definition checks, service-stop child
