@@ -144,6 +144,13 @@ through those paths, ordinary saves and buffer reuse. Replacement-parent
 identity is checked before opening a child, while legitimate regular-file
 replacement and dirty-buffer conflict handling remain supported.
 
+## v0.13.3: Friendly Dev Tunnel names
+
+Host setup accepts an optional friendly name for a new Dev Tunnel. Desktop
+and iOS show and edit that name in their tunnel pickers, and selecting a
+tunnel prefills an editable profile name while keeping the tunnel ID for
+connections.
+
 ## v0.13.2: Dev Tunnel auto-reconnect, takeover and host upgrade
 
 Dev Tunnel tabs on desktop and iOS reconnect automatically when the app or
