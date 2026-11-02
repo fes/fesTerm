@@ -1,5 +1,7 @@
 //! Dedicated, unelevated login services. Definitions are create-only: an
 //! existing entry must match exactly, and no daemon/session is ever stopped.
+//! The one exception is an explicit upgrade ([`stop_and_replace`]), which may
+//! stop and rewrite only this UUID's own worker definition.
 use festerm_tunnel_bridge::setup_storage;
 use std::{
     ffi::OsString,
@@ -571,6 +573,309 @@ pub fn start_existing(spec: &ServiceSpec) -> io::Result<()> {
     install(spec, false)
 }
 
+/// Explicit upgrade: stops only this UUID's worker (and its bridge child) and
+/// rewrites its definition for `spec`'s executable without starting it. The
+/// existing definition must be exactly one of `previous` (or already `spec`);
+/// any other content, identity or state directory still refuses. The daemon
+/// session is not part of the service and keeps running.
+pub fn stop_and_replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
+    spec.validate_syntax()?;
+    for prior in previous {
+        prior.validate_syntax()?;
+        if prior.id != spec.id || prior.state != spec.state {
+            return Err(refused("service.foreign_definition"));
+        }
+    }
+    replace(previous, spec)
+}
+
+/// Reads this UUID's current definition and requires it to be one we own.
+/// Returns `None` only when no definition exists.
+#[cfg(unix)]
+fn owned_definition(
+    directory: &File,
+    name: &Path,
+    accepted: &[String],
+) -> io::Result<Option<Vec<u8>>> {
+    let file = match festerm_unix_security::open_private_file(directory, name, false) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !festerm_unix_security::is_current_user_only(&file, false)? {
+        return Err(refused("service.definition_permissions"));
+    }
+    owned_bytes(file, accepted).map(Some)
+}
+
+fn owned_bytes(file: File, accepted: &[String]) -> io::Result<Vec<u8>> {
+    if file.metadata()?.len() > OUTPUT_LIMIT as u64 {
+        return Err(refused("service.foreign_definition"));
+    }
+    let mut existing = Vec::new();
+    file.take(OUTPUT_LIMIT as u64 + 1)
+        .read_to_end(&mut existing)?;
+    if !accepted
+        .iter()
+        .any(|definition| definition.as_bytes() == existing)
+    {
+        return Err(refused("service.foreign_definition"));
+    }
+    Ok(existing)
+}
+
+/// Atomically publishes `expected` over an owned definition already verified
+/// by [`owned_definition`]; a failed publication leaves the original in place.
+#[cfg(unix)]
+fn publish_definition(directory: &File, name: &Path, expected: &[u8]) -> io::Result<()> {
+    let staging = PathBuf::from(format!(
+        ".{}.upgrade-{}",
+        name.display(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let mut file = festerm_unix_security::open_private_file(directory, &staging, true)?;
+    let result = (|| {
+        file.write_all(expected)?;
+        file.sync_all()?;
+        festerm_unix_security::replace_private_file(directory, &staging, name)?;
+        directory.sync_all()
+    })();
+    if result.is_err() {
+        let _ = festerm_unix_security::remove_private_staging_file(directory, &staging);
+    }
+    result
+}
+
+#[cfg(target_os = "linux")]
+fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
+    let _state = spec.validate()?;
+    let directory_path = registration_directory_path()?;
+    let directory = trusted_directory(&directory_path, false)?;
+    let name = format!("festerm-tunnel-{}.service", spec.id);
+    let path = directory_path.join(&name);
+    let expected = linux_definition(spec)?;
+    let accepted = previous
+        .iter()
+        .map(linux_definition)
+        .chain([Ok(expected.clone())])
+        .collect::<io::Result<Vec<_>>>()?;
+    let tool = Path::new("/usr/bin/systemctl");
+    let shown = native(
+        tool,
+        &args(&[
+            "--user",
+            "--no-pager",
+            "show",
+            &name,
+            "--property=LoadState,FragmentPath,DropInPaths",
+        ]),
+        "service.systemd_inspect",
+    )?
+    .bytes;
+    linux_loaded_matches(&shown, &path, true)?;
+    let Some(existing) = owned_definition(&directory, Path::new(&name), &accepted)? else {
+        // Never registered: nothing runs, and a normal install creates it.
+        return linux_loaded_matches(&shown, &path, false)
+            .map_or(Ok(()), |()| Err(refused("service.foreign_definition")));
+    };
+    // KillMode=control-group stops the worker and its bridge child only.
+    let _ = native(
+        tool,
+        &args(&["--user", "stop", &name]),
+        "service.systemd_stop",
+    )?;
+    if native(
+        tool,
+        &args(&["--user", "is-active", "--quiet", &name]),
+        "service.systemd_stop",
+    )?
+    .success
+    {
+        return Err(refused("service.systemd_stop"));
+    }
+    if existing != expected.as_bytes() {
+        publish_definition(&directory, Path::new(&name), expected.as_bytes())?;
+    }
+    run(
+        tool,
+        &args(&["--user", "daemon-reload"]),
+        "service.systemd_reload",
+    )?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
+    let _state = spec.validate()?;
+    let uid =
+        festerm_unix_security::current_user_id().map_err(|_| refused("service.user_context"))?;
+    let directory_path = registration_directory_path()?;
+    let directory = trusted_directory(&directory_path, false)?;
+    let label = format!("dev.fes.festerm.tunnel.{}", spec.id);
+    let name = format!("{label}.plist");
+    let path = directory_path.join(&name);
+    let domain = format!("gui/{uid}");
+    let target = format!("{domain}/{label}");
+    let tool = Path::new("/bin/launchctl");
+    run(
+        tool,
+        &args(&["print-disabled", &domain]),
+        "service.gui_login_required",
+    )?;
+    let expected = mac_definition(spec)?;
+    let accepted = previous
+        .iter()
+        .map(mac_definition)
+        .chain([Ok(expected.clone())])
+        .collect::<io::Result<Vec<_>>>()?;
+    let existing = owned_definition(&directory, Path::new(&name), &accepted)?;
+    let loaded = native(tool, &args(&["print", &target]), "service.launchd_inspect")?;
+    if loaded.success {
+        if existing.is_none()
+            || !previous
+                .iter()
+                .chain([spec])
+                .any(|owned| mac_loaded_matches(&loaded.bytes, &path, owned).is_ok())
+        {
+            return Err(refused("service.foreign_definition"));
+        }
+        // bootout terminates the worker's process group (its bridge child);
+        // the daemon was started outside the service and is not in it.
+        run(tool, &args(&["bootout", &target]), "service.launchd_stop")?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while native(tool, &args(&["print", &target]), "service.launchd_inspect")?.success {
+            if std::time::Instant::now() > deadline {
+                return Err(refused("service.launchd_stop"));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    match existing {
+        Some(existing) if existing != expected.as_bytes() => {
+            publish_definition(&directory, Path::new(&name), expected.as_bytes())
+        }
+        _ => Ok(()),
+    }
+}
+
+#[cfg(any(windows, test))]
+fn powershell_literal(value: &str) -> io::Result<String> {
+    // PowerShell also treats typographic single quotes as delimiters.
+    if value
+        .chars()
+        .any(|c| matches!(c, '\u{2018}'..='\u{201B}') || c.is_control())
+    {
+        return Err(refused("service.invalid_path"));
+    }
+    Ok(format!("'{}'", value.replace('\'', "''")))
+}
+
+/// Fixed script that terminates only this state directory's `--serve` worker
+/// and its bridge child running one of the owned helper images. Never the
+/// daemon (a different image) and never the calling process.
+#[cfg(any(windows, test))]
+fn windows_stop_script(owned: &[&ServiceSpec], state: &Path, own_pid: u32) -> io::Result<String> {
+    let mut images = Vec::new();
+    for spec in owned {
+        let directory = spec
+            .executable
+            .parent()
+            .ok_or_else(|| refused("service.invalid_path"))?;
+        images.push(powershell_literal(path_text(&spec.executable)?)?);
+        images.push(powershell_literal(path_text(
+            &directory.join("festerm-tunnel-bridge.exe"),
+        )?)?);
+    }
+    Ok(format!(
+        "$ErrorActionPreference='Stop'; $state={}; $images=@({}); \
+         Get-CimInstance Win32_Process | Where-Object {{ $_.ProcessId -ne {own_pid} -and \
+         $_.ExecutablePath -and ($images -contains $_.ExecutablePath) -and $_.CommandLine -and \
+         $_.CommandLine.Contains($state) -and ($_.CommandLine.Contains(' --serve ') -or \
+         $_.CommandLine.Contains('--existing-host-identity')) }} | \
+         ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+        powershell_literal(path_text(state)?)?,
+        images.join(","),
+    ))
+}
+
+#[cfg(windows)]
+fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
+    let state = spec.validate()?;
+    let (sid, system) = festerm_windows_security::current_user_service_context()
+        .map_err(|_| refused("service.user_context"))?;
+    let expected = windows_definition(spec, &sid)?;
+    let accepted = previous
+        .iter()
+        .map(|prior| windows_definition(prior, &sid))
+        .chain([Ok(expected.clone())])
+        .collect::<io::Result<Vec<_>>>()?;
+    let definition_name = Path::new("service-task.xml");
+    let snapshot_name = Path::new("service-task-owned.xml");
+    let tool = system.join("schtasks.exe");
+    let name = format!("fesTerm-DevTunnel-{}", spec.id);
+    let existing = match setup_storage::open_private_file(&state, definition_name, false) {
+        Ok(file) => Some(owned_bytes(file, &accepted)?),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(_) => return Err(refused("service.foreign_definition")),
+    };
+    let current = native(
+        &tool,
+        &args(&["/Query", "/TN", &name, "/XML"]),
+        "service.task_inspect",
+    )?;
+    if current.success {
+        if existing.is_none() {
+            return Err(refused("service.foreign_definition"));
+        }
+        exact_file(
+            setup_storage::open_private_file(&state, snapshot_name, false)
+                .map_err(|_| refused("service.foreign_definition"))?,
+            &current.bytes,
+        )?;
+        // AllowHardTerminate=false means the Scheduler cannot stop the task,
+        // so terminate exactly this installation's worker and bridge.
+        let owned: Vec<_> = previous.iter().chain([spec]).collect();
+        run(
+            &system.join("WindowsPowerShell/v1.0/powershell.exe"),
+            &[
+                OsString::from("-NoProfile"),
+                OsString::from("-NonInteractive"),
+                OsString::from("-Command"),
+                OsString::from(windows_stop_script(
+                    &owned,
+                    &spec.state,
+                    std::process::id(),
+                )?),
+            ],
+            "service.task_stop",
+        )?;
+        run(
+            &tool,
+            &args(&["/Delete", "/TN", &name, "/F"]),
+            "service.task_delete",
+        )?;
+    }
+    match std::fs::remove_file(spec.state.join(snapshot_name)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    match existing {
+        Some(existing) if existing != expected.as_bytes() => {
+            setup_storage::replace_private(&state, definition_name, expected.as_bytes())
+        }
+        _ => Ok(()),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn replace(_previous: &[ServiceSpec], _spec: &ServiceSpec) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "service.unsupported_platform",
+    ))
+}
+
 #[cfg(target_os = "linux")]
 fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
     let _state = spec.validate()?;
@@ -1030,6 +1335,68 @@ mod tests {
         std::fs::remove_file(root.join(name)).unwrap();
         std::fs::remove_file(unrelated).unwrap();
         std::fs::remove_dir(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn service_upgrade_replaces_only_an_owned_definition_atomically() {
+        let root = std::env::current_dir().unwrap().join(format!(
+            ".service-upgrade-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let directory = setup_storage::private_directory(&root, true).unwrap();
+        let name = Path::new("owned.service");
+        let accepted = ["old definition".to_owned(), "new definition".to_owned()];
+        assert!(owned_definition(&directory, name, &accepted)
+            .unwrap()
+            .is_none());
+        definition_file(&directory, name, b"old definition", true).unwrap();
+        let existing = owned_definition(&directory, name, &accepted)
+            .unwrap()
+            .unwrap();
+        assert_eq!(existing, b"old definition");
+        publish_definition(&directory, name, b"new definition").unwrap();
+        assert_eq!(std::fs::read(root.join(name)).unwrap(), b"new definition");
+        // The strict create-only check now accepts the replaced definition.
+        definition_file(&directory, name, b"new definition", true).unwrap();
+        std::fs::write(root.join(name), b"foreign definition").unwrap();
+        assert!(owned_definition(&directory, name, &accepted).is_err());
+        let entries: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(entries, [std::ffi::OsString::from("owned.service")]);
+        std::fs::remove_file(root.join(name)).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn service_upgrade_refuses_another_identity_or_state() {
+        let new = spec();
+        let mut foreign = spec();
+        foreign.id = "d17273e0-a8a3-4fce-b3cd-49f112d8b15c".into();
+        assert!(stop_and_replace(&[foreign], &new).is_err());
+        let mut moved = spec();
+        moved.state = moved.state.with_file_name("other state");
+        assert!(stop_and_replace(&[moved], &new).is_err());
+    }
+
+    #[test]
+    fn service_windows_stop_script_targets_only_owned_workers_and_bridges() {
+        let mut old = spec();
+        old.executable = old
+            .executable
+            .with_file_name("o'ld")
+            .join("festerm-tunnel-setup.exe");
+        let script = windows_stop_script(&[&old], &spec().state, 4242).unwrap();
+        assert!(script.contains("$_.ProcessId -ne 4242"));
+        assert!(script.contains("o''ld"));
+        assert!(script.contains("festerm-tunnel-bridge.exe"));
+        assert!(script.contains("' --serve '"));
+        assert!(script.contains("'--existing-host-identity'"));
+        assert!(!script.contains("sessiond"));
+        assert!(powershell_literal("C:\\a\u{2019}b").is_err());
     }
 
     #[test]

@@ -21,7 +21,9 @@ builds the version-pinned commands.
   **Set up a host…** in the Dev Tunnel profile editor.
 - The panel offers a platform picker (defaulting to the local OS), the
   take-over toggle (default on; off adds `--no-takeover` / `-NoTakeover`), a
-  Linux-only dependency toggle, the generated command in a monospace
+  Linux-only dependency toggle, an "Upgrade an existing host" toggle (default
+  off; on appends `--upgrade` / `-Upgrade`, see ADR 0053's explicit host
+  upgrade amendment), the generated command in a monospace
   selectable box, **Copy command**, **View script** and **Copy script**.
   Choices are not persisted and hold no secrets.
 - **View script** (`AppCommand::OpenHostSetupScript`) opens the embedded script
@@ -55,6 +57,7 @@ installer; users who want a file can copy the script from the editor.
 - **Automated tests required:**
   `host_setup_toggles_change_the_generated_command`,
   `host_setup_dependency_toggle_is_linux_only_and_windows_uses_its_flag`,
+  `host_setup_upgrade_toggle_defaults_off_and_adds_the_platform_flag`,
   `host_setup_view_script_requests_the_selected_platforms_script_only`,
   `host_setup_copy_command_and_copy_script_put_exact_text_on_the_clipboard`,
   `host_setup_palette_entry_opens_profiles_on_the_host_setup_panel`,

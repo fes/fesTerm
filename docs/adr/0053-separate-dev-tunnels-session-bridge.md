@@ -419,7 +419,8 @@ service restart. A stopped service may resume only that same live generation;
 stale/replaced generations refuse. Uncertain interrupted cloud mutations
 remain explicit operator-reconciliation failures, never blind create retries.
 Versioned helper caches are immutable; reruns cannot overwrite live binaries
-or silently upgrade a retained daemon.
+or silently upgrade a retained daemon (an explicit `--upgrade` switches only
+the service's helpers; see "Amendment: explicit host upgrade").
 Stopping the service withdraws its entire worker/bridge process group, not
 the independently started session daemon.
 
@@ -742,3 +743,57 @@ automatic helper deployment and daemon hot handoff remain out of scope.
 - **Coverage superseded:** No existing local/SSH evidence is retired. Trace
   entries distinguish the partial experimental subset from deferred management
   operations and pending real-service/native qualification.
+
+## Amendment: explicit host upgrade
+
+Bridge improvements only reach an existing host when its service runs the new
+release's helpers, but a plain rerun deliberately keeps the recorded helpers.
+`festerm-tunnel-setup --managed ... --upgrade` (installer `--upgrade` /
+`-Upgrade`) is the single explicit, opt-in path:
+
+- It requires an existing `configured` (or interrupted `upgrading`) journal,
+  the exact live daemon generation and the same CLI account, as a rerun does.
+  Without an installation it refuses before creating any state.
+- Only the journal's `executable` (the new release's setup helper) and `cli`
+  change. Installation ID, tunnel, account, runtime namespace, exact daemon
+  target and host identity/fingerprint are kept, so clients' pinned host key
+  and profile stay valid. The recorded take-over choice is kept unless
+  `--no-takeover` is passed with `--upgrade`.
+- The journal is checkpointed as phase `upgrading` with the helper
+  executables whose service definitions may still exist. The service layer
+  then stops and rewrites only this UUID's own definition, accepting exactly
+  one of those owned definitions (or the new one); foreign, edited or
+  differently scoped definitions still refuse. Linux stops the systemd user
+  unit and reloads; macOS boots out the LaunchAgent; Windows, whose task cannot
+  be hard-terminated by the Scheduler, terminates only this state directory's
+  `--serve` worker and bridge images and re-registers the task. After the
+  worker lock is released the journal returns to `configured`, then the normal
+  start/health wait runs and prints the profile.
+- An interrupted upgrade is resumed by rerunning with `--upgrade`; a plain
+  rerun refuses with that instruction. A plain rerun whose installer differs
+  from the recorded helpers prints a hint to rerun with `--upgrade` and
+  otherwise behaves as before. If the recorded helpers already are this
+  release's, `--upgrade` restarts nothing.
+- The session daemon is never stopped, replaced or restarted: it was started
+  outside the service, so stopping the service withdraws only the worker and
+  its bridge child. The new bridge attaches to the recorded exact generation.
+  Bridge/daemon compatibility is the persistent-session protocol: the bridge
+  requires a protocol-3 daemon record and the exact generation identity, and
+  uses `FSA4` kind-aware admission only when the daemon advertises it. Daemon-
+  side behavior (for example new admission semantics) applies only to daemon
+  generations started by a release that includes it; the retained shell keeps
+  its original daemon until the operator deliberately ends it.
+- Each release keeps its own immutable cache directory; the previous one is
+  left in place.
+
+Automated tests: `managed_upgrade_switches_helpers_and_keeps_tunnel_target_identity_and_takeover`,
+`managed_rerun_with_other_helpers_hints_upgrade_and_keeps_the_record`,
+`managed_interrupted_upgrade_refuses_plain_rerun_and_resumes_with_upgrade`,
+`managed_upgrade_arguments_and_missing_installation_refuse`,
+`managed_release_label_reads_the_installed_version`,
+`service_upgrade_replaces_only_an_owned_definition_atomically`,
+`service_upgrade_refuses_another_identity_or_state`,
+`service_windows_stop_script_targets_only_owned_workers_and_bridges` and the
+installer test `test_upgrade_installs_next_to_the_previous_release_and_passes_the_flag`.
+A real-service upgrade on each platform (daemon shell survives, profile and
+fingerprint unchanged) remains native `DT-05` evidence.

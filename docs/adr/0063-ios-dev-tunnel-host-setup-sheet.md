@@ -17,7 +17,8 @@ what they paste before running it.
 - `host_setup.rs` adds a bottom sheet, opened from the Dev Tunnel editor and
   from Settings > Dev Tunnel hosts: platform control (macOS/Linux/Windows),
   "Allow remote takeover" (default on; off adds `--no-takeover`/`-NoTakeover`),
-  Linux-only "Install dependencies", the monospace command and Copy command.
+  Linux-only "Install dependencies", "Upgrade an existing host" (default off;
+  on appends `--upgrade`/`-Upgrade`), the monospace command and Copy command.
 - "View script" opens a read-only, scrollable monospace viewer of the embedded
   script (line numbers, only visible rows laid out) with Copy script, and the
   command to run after saving it locally.

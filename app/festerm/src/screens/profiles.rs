@@ -982,6 +982,10 @@ pub(crate) fn show_profiles(
                             "Install missing dependencies (apt/dnf, uses sudo)",
                         );
                     }
+                    ui.checkbox(
+                        &mut draft.options.upgrade,
+                        "Upgrade an existing host (keeps its tunnel, host key and session)",
+                    );
                     ssh_section_heading(ui, "Run this on the host");
                     let mut command_text = draft.command();
                     let command_box = ui.add(
@@ -1977,6 +1981,24 @@ mod tests {
         assert!(command.contains("--no-takeover"), "{command}");
         assert!(command.contains("--install-dependencies"), "{command}");
         assert!(command.contains(festerm_host_setup::VERSION));
+    }
+
+    #[test]
+    fn host_setup_upgrade_toggle_defaults_off_and_adds_the_platform_flag() {
+        use festerm_host_setup::HostPlatform;
+        for (platform, flag) in [
+            (HostPlatform::Linux, "--upgrade"),
+            (HostPlatform::Windows, "-Upgrade"),
+        ] {
+            let mut harness = host_setup_harness(platform);
+            assert!(!host_setup_draft(&harness).command().contains(flag));
+            harness
+                .get_by_label("Upgrade an existing host (keeps its tunnel, host key and session)")
+                .click();
+            harness.run();
+            let command = host_setup_draft(&harness).command();
+            assert!(command.ends_with(&format!(" {flag}")), "{command}");
+        }
     }
 
     #[test]

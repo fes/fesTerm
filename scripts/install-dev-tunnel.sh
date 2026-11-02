@@ -3,21 +3,29 @@ set -euo pipefail
 umask 077
 
 fail() { printf 'fesTerm tunnel setup: %s\n' "$*" >&2; exit 1; }
-usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover]'
+usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade]'
 version=
 install_dependencies=false
-setup_extra=()
+no_takeover=false
+upgrade=false
 for arg in "$@"; do
     if [[ $arg == --install-dependencies ]]; then
         install_dependencies=true
     elif [[ $arg == --no-takeover ]]; then
-        setup_extra=(--no-takeover)
+        no_takeover=true
+    elif [[ $arg == --upgrade ]]; then
+        # Switch an existing host's service to this release's helpers,
+        # keeping its tunnel, host key and running daemon session.
+        upgrade=true
     elif [[ $arg =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -z $version ]]; then
         version=$arg
     else
         fail "$usage"
     fi
 done
+setup_extra=()
+if "$no_takeover"; then setup_extra+=(--no-takeover); fi
+if "$upgrade"; then setup_extra+=(--upgrade); fi
 [[ $(id -u) != 0 ]] || fail 'Run as your normal user, not root.'
 if [[ -z $version ]]; then
     # The newest published release; its redirect names the tag without the API.
@@ -171,6 +179,8 @@ fi
 install=$cached
 printf 'Installed private helpers: %s\n' "$install"
 printf 'Setup reuses this user installation and its exact tunnel/session; a dedicated per-user service hosts it.\n'
+# Each release has its own cache directory; an upgrade leaves the previous
+# release's helpers in place next to it.
 cleanup
 trap - EXIT
 "$install/festerm-tunnel-setup" --managed --devtunnel "$install/devtunnel" --state-dir "$root/state" ${setup_extra[@]+"${setup_extra[@]}"}
