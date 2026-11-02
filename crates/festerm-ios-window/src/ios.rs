@@ -9,7 +9,7 @@ use objc2_foundation::{
 use objc2_ui_kit::{
     UIApplication, UIKeyboardDidChangeFrameNotification, UIKeyboardWillChangeFrameNotification,
     UIPasteboard, UIScene, UISceneConnectionOptions, UISceneDelegate, UISceneSession, UIView,
-    UIWindowScene, UIWindowSceneDelegate,
+    UIWindow, UIWindowScene, UIWindowSceneDelegate,
 };
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 use std::{cell::Cell, ptr::NonNull, sync::Arc};
@@ -152,7 +152,7 @@ define_class!(
             let mtm = MainThreadMarker::from(self);
             if let Some(window_scene) = scene.downcast_ref::<UIWindowScene>() {
                 CONNECTED_SCENE.set(Some(window_scene.retain()));
-                attach_windows(mtm, window_scene);
+                attach_pending(mtm);
             }
         }
     }
@@ -162,34 +162,45 @@ define_class!(
 
 thread_local! {
     static CONNECTED_SCENE: Cell<Option<Retained<UIWindowScene>>> = const { Cell::new(None) };
+    static APP_WINDOW: Cell<Option<Retained<UIWindow>>> = const { Cell::new(None) };
 }
 
-/// Attaches windows created after the scene connected (winit's window usually
-/// is) to it. Idempotent; main thread only.
-pub fn attach_scene_windows() {
+/// Hands winit's window (the one hosting `window`'s view) to the scene
+/// delegate. iOS 27 omits scene-less windows from `UIApplication.windows`, so
+/// the window is taken from the view rather than searched for. Main thread
+/// only; attaches immediately if the scene already connected.
+pub fn attach_window(window: WindowHandle<'_>) {
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
-    if let Some(scene) = CONNECTED_SCENE.take() {
-        attach_windows(mtm, &scene);
-        CONNECTED_SCENE.set(Some(scene));
-    }
+    let RawWindowHandle::UiKit(handle) = window.as_raw() else {
+        return;
+    };
+    // SAFETY: WindowHandle guarantees a valid UIKit UIView pointer for this
+    // call; it is retained before the borrow ends, on the main thread.
+    let Some(view) = (unsafe { Retained::retain(handle.ui_view.as_ptr().cast::<UIView>()) }) else {
+        return;
+    };
+    let Some(window) = view.window() else {
+        eprintln!("festerm-mobile: renderer view has no window");
+        return;
+    };
+    APP_WINDOW.set(Some(window));
+    attach_pending(mtm);
 }
 
-#[allow(deprecated)] // `UIApplication.windows` is the only list of scene-less windows.
-fn attach_windows(mtm: MainThreadMarker, scene: &UIWindowScene) {
-    let windows = UIApplication::sharedApplication(mtm).windows();
-    eprintln!(
-        "festerm-mobile: scene connected, {} window(s) present",
-        windows.count()
-    );
-    for index in 0..windows.count() {
-        let window = windows.objectAtIndex(index);
+fn attach_pending(_mtm: MainThreadMarker) {
+    let scene = CONNECTED_SCENE.take();
+    let window = APP_WINDOW.take();
+    if let (Some(scene), Some(window)) = (&scene, &window) {
         if window.windowScene().is_none() {
             window.setWindowScene(Some(scene));
-            eprintln!("festerm-mobile: attached a scene-less window to the scene");
+            window.makeKeyAndVisible();
+            eprintln!("festerm-mobile: attached the app window to the scene");
         }
     }
+    CONNECTED_SCENE.set(scene);
+    APP_WINDOW.set(window);
 }
 
 /// Registers the scene delegate class with the Objective-C runtime. Call
