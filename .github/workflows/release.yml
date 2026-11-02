@@ -150,8 +150,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Apple's ticket service intermittently drops runner connections
+          # after notarization succeeds; retry stapling. Validation below
+          # still fails the job if no ticket was stapled.
+          staple() {
+            for delay in 0 30 60 120 240; do
+              sleep "$delay"
+              xcrun stapler staple "$1" && return 0
+            done
+            return 1
+          }
           cargo build --release -p festerm -p festerm-sessiond
-          cargo packager --config packaging/macos-release.toml --formats app
+          if ! cargo packager --config packaging/macos-release.toml --formats app; then
+            echo "::warning::cargo-packager failed; retrying the notarization staple"
+            staple target/release/fesTerm.app
+          fi
           codesign --verify --deep --strict --verbose=2 target/release/fesTerm.app
           xcrun stapler validate target/release/fesTerm.app
           spctl --assess --type execute --verbose=2 target/release/fesTerm.app
@@ -171,7 +184,7 @@ jobs:
             --output-format json > dmg-notarization.json
           python3 -c \
             'import json; assert json.load(open("dmg-notarization.json"))["status"] == "Accepted"'
-          xcrun stapler staple "$dmg"
+          staple "$dmg"
           xcrun stapler validate "$dmg"
           spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
           hdiutil verify "$dmg"
