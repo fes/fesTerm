@@ -149,7 +149,8 @@ replacement and dirty-buffer conflict handling remain supported.
 Host setup accepts an optional friendly name for a new Dev Tunnel. Desktop
 and iOS show and edit that name in their tunnel pickers, and selecting a
 tunnel prefills an editable profile name while keeping the tunnel ID for
-connections.
+connections. On iOS, the prefilled name respects the 80-character profile
+name limit.
 
 ## v0.13.2: Dev Tunnel auto-reconnect, takeover and host upgrade
 
