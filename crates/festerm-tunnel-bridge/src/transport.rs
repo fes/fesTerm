@@ -130,16 +130,20 @@ pub fn start_client(
     token: Zeroizing<String>,
     notifier: Arc<dyn SessionEventNotifier>,
 ) -> io::Result<ClientSession> {
-    start_client_with_takeover(destination, token, notifier, true)
+    start_client_with_takeover(destination, token, notifier, true, None)
 }
 
 /// Like [`start_client`], but `takeover` chooses whether this client asks to
 /// displace the current holder; the host's own setting still has to allow it.
+/// `client` identifies the tab to a host that advertised reclaim, so the tab
+/// can later reclaim its own stale attachment. A refused attachment ends the
+/// session as displaced, never as a lost connection.
 pub fn start_client_with_takeover(
     destination: Destination,
     token: Zeroizing<String>,
     notifier: Arc<dyn SessionEventNotifier>,
     takeover: bool,
+    client: Option<ClientId>,
 ) -> io::Result<ClientSession> {
     let (input, commands) = flume::bounded(QUEUE);
     let (output, events) = flume::bounded(QUEUE);
@@ -180,7 +184,7 @@ pub fn start_client_with_takeover(
             runtime.block_on(async move {
                 tokio::select! {
                     _ = stopped.cancelled() => {}
-                    _ = client_session(destination, token, commands, output, file_rx, takeover) => {}
+                    _ = client_session(destination, token, commands, output, file_rx, takeover, client) => {}
                 }
                 stopped.cancel();
             });
@@ -205,6 +209,7 @@ async fn client_session(
     output: flume::Sender<Vec<u8>>,
     files: flume::Receiver<FileCall>,
     takeover: bool,
+    client: Option<ClientId>,
 ) -> io::Result<()> {
     let mut connection = tokio::time::timeout(DEADLINE, relay::connect(&destination, &token))
         .await
@@ -221,10 +226,12 @@ async fn client_session(
             windows_paths: destination.path_style == crate::files::PathStyle::Windows,
         },
         takeover,
+        client,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn client_io_with_files(
     mut stream: impl AsyncRead + AsyncWrite + Unpin,
     target: Target,
@@ -233,6 +240,7 @@ async fn client_io_with_files(
     files: flume::Receiver<FileCall>,
     file_access: FileAccess,
     takeover: bool,
+    client: Option<ClientId>,
 ) -> io::Result<()> {
     let hello = serde_json::to_vec(&Hello {
         takeover,
@@ -240,12 +248,21 @@ async fn client_io_with_files(
         version: VERSION,
         snapshot_schema: 3,
         target,
+        client,
     })
     .map_err(|_| invalid())?;
     write_frame(&mut stream, HELLO, &hello).await?;
     let (kind, capabilities) = tokio::time::timeout(DEADLINE, read_frame(&mut stream))
         .await
         .map_err(|_| invalid())??;
+    if kind == REFUSED {
+        // Someone else holds the session: end as displaced so the tab offers a
+        // deliberate takeover and never reconnects automatically.
+        let _ = output
+            .send_async(festerm_sessiond::encode_server_stolen_frame())
+            .await;
+        return Err(invalid());
+    }
     if kind != CAPABILITIES
         || capabilities.len() != 2
         || capabilities[0] != u8::from(file_access.read)
@@ -382,10 +399,11 @@ async fn client_receive(
                 festerm_sessiond::encode_server_recovery_sync_frame(&encoded)
             }
             EXITED if bytes.is_empty() => festerm_sessiond::encode_server_exited_frame(),
+            DISPLACED if bytes.len() == 1 => festerm_sessiond::encode_server_stolen_frame(),
             _ => return Err(invalid()),
         };
         output.send_async(frame).await.map_err(|_| invalid())?;
-        if kind == EXITED {
+        if kind == EXITED || kind == DISPLACED {
             return Err(invalid());
         }
     }
@@ -441,10 +459,65 @@ pub async fn serve_with_files(
 
 /// `takeover` lets a remote connection displace whichever client holds the session.
 pub async fn serve_with_takeover(
+    stream: impl AsyncRead + AsyncWrite + Unpin,
+    selected: NativeSessionIdentity,
+    file_service: FileService,
+    takeover: bool,
+) -> io::Result<()> {
+    serve_with_reclaim(stream, selected, file_service, takeover, &Holder::default()).await
+}
+
+/// Which client tab holds this bridge's live attachment. A client reconnecting
+/// after its connection silently died (sleep, screen lock) presents the same
+/// [`ClientId`] and reclaims the attachment without a general takeover. The
+/// record is cleared whenever that attachment ends, including when another
+/// client displaces it, so a client that was taken over from never reclaims.
+/// Shared by every connection one bridge serves.
+#[derive(Clone, Default)]
+pub struct Holder(Arc<std::sync::Mutex<Option<(ClientId, u64)>>>);
+
+impl Holder {
+    fn is(&self, client: &ClientId) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|(held, _)| held == client)
+    }
+
+    fn claim(&self, client: Option<ClientId>) -> HolderGuard {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let token = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = client.map(|client| (client, token));
+        HolderGuard {
+            holder: self.clone(),
+            token,
+        }
+    }
+}
+
+struct HolderGuard {
+    holder: Holder,
+    token: u64,
+}
+
+impl Drop for HolderGuard {
+    fn drop(&mut self) {
+        let mut slot = self.holder.0.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.as_ref().is_some_and(|(_, token)| *token == self.token) {
+            *slot = None;
+        }
+    }
+}
+
+/// Serves one client connection. `holder` is shared across the bridge's
+/// connections so a client can reclaim its own stale attachment.
+pub async fn serve_with_reclaim(
     mut stream: impl AsyncRead + AsyncWrite + Unpin,
     selected: NativeSessionIdentity,
     file_service: FileService,
     takeover: bool,
+    holder: &Holder,
 ) -> io::Result<()> {
     let target = Target {
         name: selected.name.clone(),
@@ -462,6 +535,7 @@ pub async fn serve_with_takeover(
         let description = Description {
             attached_by,
             takeover_allowed: takeover,
+            reclaim: takeover,
             version: VERSION,
             target,
             files: FileAccess {
@@ -486,7 +560,15 @@ pub async fn serve_with_takeover(
         write_frame(&mut stream, REFUSED, &[]).await?;
         return Err(invalid());
     }
-    let takeover = takeover && hello.takeover;
+    // Reclaiming needs the same host consent as takeover; it is advertised only
+    // with it. The check and the daemon admission below are not atomic: a
+    // client displacing this holder in between could itself be displaced.
+    let reclaim = takeover
+        && hello
+            .client
+            .as_ref()
+            .is_some_and(|client| holder.is(client));
+    let takeover = (takeover && hello.takeover) || reclaim;
     let displacement_probe = selected.clone();
     let file_read_admitted = hello.files.read;
     write_frame(
@@ -523,6 +605,7 @@ pub async fn serve_with_takeover(
                 return Err(invalid());
             }
         };
+    let _held = holder.claim(hello.client);
     let terminal = tokio::time::timeout(DEADLINE, async {
         loop {
             let notified = notify.notified();
@@ -762,6 +845,7 @@ mod tests {
                 files: FileAccess::default(),
                 version,
                 snapshot_schema: schema,
+                client: None,
                 target: Target {
                     name: "test-owned".into(),
                     pid: 7,
@@ -860,6 +944,7 @@ mod tests {
                 windows_paths: false,
             },
             false,
+            None,
         ));
         let (kind, bytes) = read_frame(&mut host).await.unwrap();
         assert_eq!(kind, HELLO);

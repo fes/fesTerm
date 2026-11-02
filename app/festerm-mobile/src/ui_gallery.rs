@@ -306,6 +306,7 @@ fn configure(app: &mut MobileApp, state: &str) {
             app.tunnel.preview_editor = true;
             app.editor.tunnel_name = "build-tunnel".to_owned();
             app.editor.take_over = true;
+            app.editor.auto_reconnect = true;
             app.editor.tunnel = Some(DevTunnelChoices {
                 account_login: Some("octo".to_owned()),
                 tunnels: vec!["build-tunnel".to_owned(), "docs-tunnel".to_owned()],
@@ -338,6 +339,7 @@ fn configure(app: &mut MobileApp, state: &str) {
             app.editor.kind_index = 1;
             app.editor.name = "build-box".to_owned();
             app.editor.take_over = true;
+            app.editor.auto_reconnect = true;
             app.tunnel.preview_prompt = Some(festerm_mobile_tunnels::SignInPrompt {
                 user_code: "ABCD-1234".to_owned(),
                 verification_url: "https://github.com/login/device".to_owned(),
@@ -354,6 +356,7 @@ fn configure(app: &mut MobileApp, state: &str) {
                     tunnel: "build-tunnel".to_owned(),
                     session: None,
                     take_over: true,
+                    auto_reconnect: true,
                 });
                 tab.spec = None;
             }

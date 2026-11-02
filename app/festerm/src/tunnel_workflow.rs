@@ -2,12 +2,13 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc, Arc, OnceLock,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use festerm_config::{AccountProvider, DevTunnelAccount, DevTunnelHost, Profile};
 use festerm_secret_store::{SecretBytes, SecretReference, SecretStore};
 use festerm_tunnel_bridge::{
+    protocol::ClientId,
     relay::{self, Destination},
     transport,
 };
@@ -23,7 +24,16 @@ use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use super::{ConfigurationStartupStatus, FesTermApp};
-use crate::{tabs::TunnelConnectToken, tunnel_activation::Launch};
+use crate::{
+    tabs::{
+        tunnel_reconnect::{TunnelOrigin, TunnelReconnectRequest, TunnelTab},
+        TabId, TunnelConnectToken,
+    },
+    tunnel_activation::Launch,
+};
+
+/// How long an automatic reconnect may run before it gives up quietly.
+const AUTOMATIC_RECONNECT_LIMIT: Duration = Duration::from_secs(60);
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
@@ -117,7 +127,21 @@ struct Binding {
 struct Prepared {
     binding: Option<Binding>,
     launch: Launch,
+    /// The host lets a client reclaim its own stale attachment, so it
+    /// understands a client id.
+    reclaim: bool,
     stored: Stored,
+}
+
+/// The connection to start: a client id goes only to a host that advertised
+/// reclaim, because older hosts reject an unknown hello field.
+fn connection_launch(launch: Launch, takeover: bool, reclaim: bool, client: &ClientId) -> Launch {
+    let launch = launch.with_takeover(takeover);
+    if reclaim {
+        launch.with_client(client.clone())
+    } else {
+        launch
+    }
 }
 
 enum Event {
@@ -158,6 +182,11 @@ pub(super) struct Workflow {
     takeover: bool,
     focus_cancel: bool,
     ready: Option<Box<Prepared>>,
+    /// Reconnects this tab in place, presenting its client id.
+    reconnect: Option<(TabId, ClientId)>,
+    /// Started by itself: it never prompts and never reports failure; it is
+    /// dropped instead, leaving the tab's manual Reconnect.
+    automatic: Option<Instant>,
     _slot: Option<Arc<WorkerSlot>>,
 }
 impl Drop for Workflow {
@@ -204,6 +233,8 @@ impl Workflow {
             takeover,
             focus_cancel: true,
             ready: None,
+            reconnect: None,
+            automatic: None,
             _slot: None,
         };
         let Some(client_id) = identity::registered_client_id() else {
@@ -412,6 +443,7 @@ async fn prepare(
         binding: updated,
         launch: Launch::from_destination(destination, resolved.connect_token)
             .with_account(identity.account.clone()),
+        reclaim: description.reclaim,
         stored,
     })
 }
@@ -631,6 +663,92 @@ impl FesTermApp {
         }
     }
 
+    /// Re-arms and drains Dev Tunnel tab reconnects, both the user's and the
+    /// automatic ones for a lost tab brought to the front.
+    pub(super) fn drive_tunnel_reconnects(&mut self, context: &egui::Context) {
+        let focused = context.input(|input| input.viewport().focused.unwrap_or(true));
+        self.state.poll_tunnel_reconnects(focused, context);
+        for request in self.state.take_tunnel_reconnect_requests() {
+            self.reconnect_tunnel_tab(request, context);
+        }
+    }
+
+    /// Connects a Dev Tunnel tab again in place with the tab's client id. A
+    /// manual reconnect may take over; an automatic one may only reclaim the
+    /// tab's own stale attachment and never prompts.
+    pub(super) fn reconnect_tunnel_tab(
+        &mut self,
+        request: TunnelReconnectRequest,
+        context: &egui::Context,
+    ) {
+        let TunnelReconnectRequest { tab, automatic } = request;
+        let Some(tunnel) = self.state.tunnel_tab(tab) else {
+            return;
+        };
+        let client = tunnel.client.clone();
+        let (profile, ephemeral) = match &tunnel.origin {
+            TunnelOrigin::Profile(id) => match self.state.configuration().profile(id).cloned() {
+                Some(profile) => (profile, false),
+                None => {
+                    if !automatic {
+                        self.secure_storage_feedback =
+                            Some("This Dev Tunnel profile no longer exists.");
+                    }
+                    return;
+                }
+            },
+            TunnelOrigin::Ephemeral(profile) => ((**profile).clone(), true),
+        };
+        let Some(tunnel_profile) = profile.as_dev_tunnel() else {
+            return;
+        };
+        let takeover = !automatic;
+        if tunnel_profile.tunnel_name().is_none() {
+            let Ok(store) = self.secret_store.as_ref().map(Arc::clone) else {
+                if !automatic {
+                    self.secure_storage_feedback = Some("Secure storage unavailable.");
+                }
+                return;
+            };
+            self.state.start_tunnel_reconnect(
+                tab,
+                move || {
+                    Launch::from_profile(&profile, store.as_ref())
+                        .map(|launch| launch.with_takeover(takeover))
+                },
+                context,
+            );
+            return;
+        }
+        if self.native_tunnel.is_some() {
+            return;
+        }
+        let store = match (
+            &self.secret_store,
+            ephemeral && tunnel_profile.account().is_none(),
+        ) {
+            (Ok(store), _) => Arc::clone(store),
+            (Err(_), true) => Arc::new(festerm_secret_store::MemorySecretStore::new()),
+            (Err(_), false) => {
+                if !automatic {
+                    self.secure_storage_feedback =
+                        Some("Secure storage unavailable. Sign-in could not be reused.");
+                }
+                return;
+            }
+        };
+        self.start_native_workflow(
+            profile, store, false, !ephemeral, true, ephemeral, takeover, context,
+        );
+        if let Some(workflow) = self.native_tunnel.as_mut() {
+            workflow.reconnect = Some((tab, client));
+            if automatic {
+                workflow.automatic = Some(Instant::now() + AUTOMATIC_RECONNECT_LIMIT);
+                self.overlays.native_tunnel = false;
+            }
+        }
+    }
+
     pub(super) fn poll_native_tunnel(&mut self, context: &egui::Context) {
         let Some(mut workflow) = self.native_tunnel.take() else {
             return;
@@ -642,7 +760,9 @@ impl FesTermApp {
                 .profile(workflow.expected.identifier())
                 != Some(&workflow.expected)
         {
-            self.secure_storage_feedback = Some("Profile changed. Sign-in cancelled.");
+            if workflow.automatic.is_none() {
+                self.secure_storage_feedback = Some("Profile changed. Sign-in cancelled.");
+            }
             self.overlays.native_tunnel = false;
             return;
         }
@@ -692,8 +812,26 @@ impl FesTermApp {
                 Event::Complete(Err(error)) => workflow.stage = Stage::Error(error),
             }
         }
+        if let Some(deadline) = workflow.automatic {
+            // A prompt, a failure or a stall ends an automatic attempt
+            // quietly; dropping the workflow cancels it.
+            if matches!(
+                workflow.stage,
+                Stage::Device(_) | Stage::Host { .. } | Stage::Error(_)
+            ) || Instant::now() >= deadline
+            {
+                return;
+            }
+            let ready = workflow.ready.is_some();
+            self.native_tunnel = Some(workflow);
+            if ready {
+                self.finish_native_tunnel(context);
+            } else {
+                context.request_repaint_after(deadline.saturating_duration_since(Instant::now()));
+            }
+            return;
+        }
         self.native_tunnel = Some(workflow);
-        let _ = context;
     }
 
     fn finish_native_tunnel(&mut self, context: &egui::Context) {
@@ -707,7 +845,9 @@ impl FesTermApp {
                 .profile(workflow.expected.identifier())
                 != Some(&workflow.expected)
         {
-            self.secure_storage_feedback = Some("Profile changed. Sign-in cancelled.");
+            if workflow.automatic.is_none() {
+                self.secure_storage_feedback = Some("Profile changed. Sign-in cancelled.");
+            }
             self.overlays.native_tunnel = false;
             return;
         }
@@ -715,19 +855,49 @@ impl FesTermApp {
             if let Some(binding) = ready.binding.take() {
                 if !self.save_tunnel_binding(&workflow.expected, workflow.account.as_ref(), binding)
                 {
-                    self.secure_storage_feedback =
-                        Some("Account could not be saved. Sign in again.");
+                    if workflow.automatic.is_none() {
+                        self.secure_storage_feedback =
+                            Some("Account could not be saved. Sign in again.");
+                    }
                     self.overlays.native_tunnel = false;
                     return;
                 }
                 ready.stored.references.clear();
             }
             if workflow.connect {
-                let profile_id =
-                    (!workflow.ephemeral).then(|| workflow.expected.identifier().to_owned());
-                let launch = ready.launch.with_takeover(workflow.takeover);
-                self.state
-                    .start_tunnel_launch(profile_id, move || Ok(launch), context);
+                let ready = *ready;
+                match workflow.reconnect.take() {
+                    Some((tab, client)) => {
+                        let launch = connection_launch(
+                            ready.launch,
+                            workflow.takeover,
+                            ready.reclaim,
+                            &client,
+                        );
+                        self.state
+                            .start_tunnel_reconnect(tab, move || Ok(launch), context);
+                    }
+                    None => {
+                        let profile_id = (!workflow.ephemeral)
+                            .then(|| workflow.expected.identifier().to_owned());
+                        let tunnel = TunnelTab::new(match &profile_id {
+                            Some(id) => TunnelOrigin::Profile(id.clone()),
+                            None => TunnelOrigin::Ephemeral(Box::new(workflow.expected.clone())),
+                        });
+                        let launch = connection_launch(
+                            ready.launch,
+                            workflow.takeover,
+                            ready.reclaim,
+                            &tunnel.client,
+                        );
+                        self.state.start_tunnel_launch(
+                            profile_id,
+                            Some(tunnel),
+                            move || Ok(launch),
+                            context,
+                        );
+                    }
+                }
             }
             self.overlays.native_tunnel = false;
             return;
@@ -736,7 +906,11 @@ impl FesTermApp {
     }
 
     pub(super) fn show_native_tunnel(&mut self, context: &egui::Context, escape: bool) {
-        let Some(workflow) = self.native_tunnel.as_mut() else {
+        let Some(workflow) = self
+            .native_tunnel
+            .as_mut()
+            .filter(|workflow| workflow.automatic.is_none())
+        else {
             return;
         };
         let mut dismiss = escape;

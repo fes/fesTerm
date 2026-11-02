@@ -289,7 +289,11 @@ per Dev Tunnel profile and can be turned off; with it off, an occupied session
 is refused exactly as before. The relay host therefore services a small bounded
 number of encrypted clients concurrently (four: the attached client, one taking
 over, and a discovery) instead of one at a time, so a second device reaches the
-daemon's admission instead of being dropped by the relay.
+daemon's admission instead of being dropped by the relay. With takeover allowed
+the bridge also lets a client *reclaim* its own stale attachment by presenting
+the same per-tab client id without asking for takeover; this is what automatic
+reconnects use, and it never displaces a different client (ADR 0057,
+amendment on automatic reconnect).
 
 Recovery retains ADR 0038's snapshot-before-live-output and adoption barrier.
 Preserve ordered resize/control events and exactly-once query-reply ownership.

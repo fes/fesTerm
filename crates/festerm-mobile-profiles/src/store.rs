@@ -436,6 +436,7 @@ impl ProfileStore {
                 account,
                 session: None,
                 take_over_if_attached: true,
+                auto_reconnect: true,
                 source: TunnelSource::Imported {
                     destination: Box::new(import.into_destination()),
                 },

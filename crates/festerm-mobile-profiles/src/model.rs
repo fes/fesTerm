@@ -451,6 +451,10 @@ pub struct DevTunnelProfile {
     /// matching the installer's default (ADR 0053).
     #[serde(default = "default_true")]
     pub take_over_if_attached: bool,
+    /// Reconnect a lost (not displaced) session automatically when the app
+    /// or its tab becomes active again (ADR 0057). On by default.
+    #[serde(default = "default_true")]
+    pub auto_reconnect: bool,
 }
 
 impl DevTunnelProfile {
@@ -466,6 +470,7 @@ impl DevTunnelProfile {
             },
             session: None,
             take_over_if_attached: true,
+            auto_reconnect: true,
         }
     }
 

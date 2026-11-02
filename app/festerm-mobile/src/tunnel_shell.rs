@@ -9,7 +9,9 @@ use super::tunnel_link::{
     SignInFlow, SignInView, TunnelList,
 };
 use super::*;
-use festerm_mobile_tunnels::{Attachment, HostTrust, SignInState, TunnelClient, TunnelError};
+use festerm_mobile_tunnels::{
+    AttachMode, Attachment, ClientId, HostTrust, SignInState, TunnelClient, TunnelError,
+};
 use std::time::Duration;
 
 const NOT_CONFIGURED: &str = "Dev Tunnel sign-in is not available in this build.";
@@ -121,8 +123,16 @@ impl MobileApp {
         list.error = None;
     }
 
-    /// Connects (or re-attaches `tab`) to a saved Dev Tunnel profile.
-    pub(super) fn start_tunnel_connect(&mut self, ctx: &egui::Context, id: &str, tab: Option<u64>) {
+    /// Connects (or re-attaches `tab`) to a saved Dev Tunnel profile. An
+    /// `automatic` reconnect never prompts and only reclaims the tab's own
+    /// attachment (ADR 0057).
+    pub(super) fn start_tunnel_connect(
+        &mut self,
+        ctx: &egui::Context,
+        id: &str,
+        tab: Option<u64>,
+        automatic: bool,
+    ) {
         self.notice = None;
         self.tunnel.attach_error = None;
         let Some(spec) = self
@@ -143,6 +153,10 @@ impl MobileApp {
             .filter(|account| client.accounts().iter().any(|known| known.id == **account))
             .cloned();
         let Some(account) = signed_in else {
+            if automatic {
+                self.tunnel.attach_error = Some(describe_error(&TunnelError::SignInRequired));
+                return;
+            }
             self.start_sign_in(
                 ctx,
                 spec.account.clone(),
@@ -158,29 +172,92 @@ impl MobileApp {
         let job = Job::spawn(ctx, move |cancel| {
             client.describe_tunnel(&account, &tunnel, trusted.as_ref(), cancel)
         });
+        let client = tab
+            .and_then(|id| self.tabs.iter().find(|tab| tab.id == id))
+            .and_then(|tab| tab.tunnel_client.clone())
+            .unwrap_or_default();
         self.tunnel.connect = Some(ConnectFlow {
             spec,
             tab,
+            client,
+            automatic,
             stage: ConnectStage::Describing(job),
         });
     }
 
-    fn begin_attach(&mut self, ctx: &egui::Context, spec: TunnelSpec, tab: Option<u64>) {
-        let Some(client) = self.tunnel_client() else {
+    fn begin_attach(
+        &mut self,
+        ctx: &egui::Context,
+        spec: TunnelSpec,
+        tab: Option<u64>,
+        client: ClientId,
+        automatic: bool,
+    ) {
+        let Some(tunnels) = self.tunnel_client() else {
             return;
         };
         let notifier = Arc::new(live_ssh::Repaint(ctx.clone()));
         let profile = spec.profile.clone();
-        let job = Job::spawn(ctx, move |cancel| client.attach(&profile, notifier, cancel));
+        let id = client.clone();
+        let mode = if automatic {
+            AttachMode::Automatic
+        } else {
+            AttachMode::Manual
+        };
+        let job = Job::spawn(ctx, move |cancel| {
+            tunnels.attach_as(&profile, &id, mode, notifier, cancel)
+        });
         self.tunnel.connect = Some(ConnectFlow {
             spec,
             tab,
+            client,
+            automatic,
             stage: ConnectStage::Attaching(job),
         });
     }
 
+    /// Reconnects the active Dev Tunnel tab once per activation (app resume or
+    /// tab switch) when its profile allows it and the session was lost.
+    pub(super) fn auto_reconnect_tunnel(&mut self, ctx: &egui::Context) {
+        if self.tunnel.connect.is_some() || self.tunnel.sign_in.is_some() {
+            return;
+        }
+        let Some(id) = self.active_tab else {
+            return;
+        };
+        let lost = self
+            .sink
+            .live
+            .connection
+            .borrow()
+            .as_ref()
+            .is_some_and(live_ssh::LiveSsh::tunnel_lost);
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) else {
+            return;
+        };
+        if !lost || !tab.reconnect_armed {
+            return;
+        }
+        let Some(profile) = tab
+            .tunnel
+            .as_ref()
+            .map(|spec| spec.profile.as_str().to_owned())
+        else {
+            return;
+        };
+        tab.reconnect_armed = false;
+        let enabled = self
+            .profiles
+            .as_ref()
+            .and_then(|profiles| profiles.tunnel_spec(&profile))
+            .is_some_and(|spec| spec.auto_reconnect);
+        if enabled {
+            self.start_tunnel_connect(ctx, &profile, Some(id), true);
+        }
+    }
+
     fn fail_tunnel_connect(&mut self, ctx: &egui::Context, flow: ConnectFlow, error: TunnelError) {
-        if error.needs_sign_in() {
+        if error.needs_sign_in() && !flow.automatic {
             self.start_sign_in(
                 ctx,
                 flow.spec.account.clone(),
@@ -211,6 +288,7 @@ impl MobileApp {
         ctx: &egui::Context,
         spec: TunnelSpec,
         tab: Option<u64>,
+        client: ClientId,
         attachment: Attachment,
     ) {
         let recovered = attachment.take_recovered_terminal();
@@ -228,6 +306,13 @@ impl MobileApp {
                 }
                 self.active_tab = Some(id);
             }
+        }
+        if let Some(tab) = self
+            .active_tab
+            .and_then(|id| self.tabs.iter_mut().find(|tab| tab.id == id))
+        {
+            tab.tunnel_client = Some(client);
+            tab.reconnect_armed = true;
         }
         self.terminal = terminal;
         self.view = self.fresh_view();
@@ -272,14 +357,23 @@ impl MobileApp {
                 Poll::Lost => {}
                 Poll::Done(Err(error)) => self.fail_tunnel_connect(ctx, flow, error),
                 Poll::Done(Ok(description)) => {
-                    let ConnectFlow { spec, tab, .. } = flow;
                     if description.trust == HostTrust::Trusted {
-                        self.begin_attach(ctx, spec, tab);
-                    } else {
-                        self.tunnel.connect = Some(ConnectFlow {
+                        let ConnectFlow {
                             spec,
                             tab,
+                            client,
+                            automatic,
+                            ..
+                        } = flow;
+                        self.begin_attach(ctx, spec, tab, client, automatic);
+                    } else if flow.automatic {
+                        self.tunnel.attach_error = Some(
+                            "The host needs verifying. Tap Reconnect to review it.".to_owned(),
+                        );
+                    } else {
+                        self.tunnel.connect = Some(ConnectFlow {
                             stage: ConnectStage::Verify(description),
+                            ..flow
                         });
                     }
                 }
@@ -290,8 +384,10 @@ impl MobileApp {
                 Poll::Lost => {}
                 Poll::Done(Err(error)) => self.fail_tunnel_connect(ctx, flow, error),
                 Poll::Done(Ok(attachment)) => {
-                    let ConnectFlow { spec, tab, .. } = flow;
-                    self.install_attachment(ctx, spec, tab, attachment);
+                    let ConnectFlow {
+                        spec, tab, client, ..
+                    } = flow;
+                    self.install_attachment(ctx, spec, tab, client, attachment);
                 }
             },
         }
@@ -326,7 +422,7 @@ impl MobileApp {
                     self.tunnel.attach_error = None;
                     match flow.resume {
                         Resume::Connect { profile, tab } => {
-                            self.start_tunnel_connect(ctx, &profile, tab);
+                            self.start_tunnel_connect(ctx, &profile, tab, false);
                         }
                         Resume::Nothing => {
                             self.editor.tunnel_account = Some(account.id.clone());
@@ -409,6 +505,8 @@ impl MobileApp {
                 let Some(ConnectFlow {
                     spec,
                     tab,
+                    client: tab_client,
+                    automatic,
                     stage: ConnectStage::Verify(description),
                 }) = self.tunnel.connect.take()
                 else {
@@ -421,7 +519,7 @@ impl MobileApp {
                     return;
                 };
                 match client.approve_host(&spec.profile, description.host) {
-                    Ok(()) => self.begin_attach(ctx, spec, tab),
+                    Ok(()) => self.begin_attach(ctx, spec, tab, tab_client, automatic),
                     Err(error) => self.notice = Some(describe_error(&error)),
                 }
             }
@@ -558,7 +656,10 @@ impl MobileApp {
             Some(account),
             &tunnel,
             (!session.is_empty()).then_some(session),
-            self.editor.take_over,
+            super::profiles::TunnelBehaviour {
+                take_over: self.editor.take_over,
+                auto_reconnect: self.editor.auto_reconnect,
+            },
         ) {
             Ok(id) => {
                 self.editor.error = None;
@@ -598,7 +699,7 @@ impl MobileApp {
                     .is_some_and(|spec| spec.profile.as_str() == id)
             })
             .map(|tab| tab.id);
-        self.start_tunnel_connect(ctx, id, stale);
+        self.start_tunnel_connect(ctx, id, stale, false);
     }
 }
 

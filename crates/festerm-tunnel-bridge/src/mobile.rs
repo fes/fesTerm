@@ -28,7 +28,7 @@ use crate::{
     wire::{decode_size, encode_size, read_frame, write_frame, DEADLINE},
 };
 
-pub use crate::protocol::{Description, Displacer, Target};
+pub use crate::protocol::{ClientId, Description, Displacer, Target};
 
 /// Any ordered byte stream to a bridge: the Dev Tunnels relay channel in
 /// production, an in-memory pipe in tests.
@@ -112,10 +112,13 @@ pub async fn describe(
 
 /// Sends `Hello` and receives the recovery snapshot. The host holds the session
 /// until [`TunnelSession::spawn`] acknowledges adoption.
+/// `client` is sent only to hosts that advertised reclaim (see
+/// [`ClientId`]).
 pub async fn establish(
     mut stream: BoxStream,
     target: Target,
     takeover: bool,
+    client: Option<ClientId>,
     cancel: &CancellationToken,
 ) -> Result<Handshake, AttachError> {
     let work = async {
@@ -125,6 +128,7 @@ pub async fn establish(
             version: VERSION,
             snapshot_schema: 3,
             target,
+            client,
         })
         .map_err(|_| AttachError::Protocol)?;
         write_frame(&mut stream, HELLO, &hello)
@@ -578,6 +582,7 @@ mod tests {
             Box::new(client),
             target(),
             takeover,
+            None,
             &CancellationToken::new(),
         )
         .await
@@ -707,7 +712,14 @@ mod tests {
             read_frame(&mut host).await.unwrap();
             write_frame(&mut host, REFUSED, &[]).await.unwrap();
         });
-        let result = establish(Box::new(client), target(), false, &CancellationToken::new()).await;
+        let result = establish(
+            Box::new(client),
+            target(),
+            false,
+            None,
+            &CancellationToken::new(),
+        )
+        .await;
         assert_eq!(result.err(), Some(AttachError::Refused));
 
         let (client, mut host) = tokio::io::duplex(4096);
@@ -715,13 +727,20 @@ mod tests {
             read_frame(&mut host).await.unwrap();
             write_frame(&mut host, CAPABILITIES, &[1, 0]).await.unwrap();
         });
-        let result = establish(Box::new(client), target(), true, &CancellationToken::new()).await;
+        let result = establish(
+            Box::new(client),
+            target(),
+            true,
+            None,
+            &CancellationToken::new(),
+        )
+        .await;
         assert_eq!(result.err(), Some(AttachError::Protocol));
 
         let (client, _host) = tokio::io::duplex(4096);
         let cancel = CancellationToken::new();
         cancel.cancel();
-        let result = establish(Box::new(client), target(), true, &cancel).await;
+        let result = establish(Box::new(client), target(), true, None, &cancel).await;
         assert_eq!(result.err(), Some(AttachError::Cancelled));
     }
 

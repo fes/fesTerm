@@ -142,6 +142,24 @@ impl LiveSsh {
         }
     }
 
+    /// Whether this Dev Tunnel tab ended through no choice of anyone (network
+    /// loss or app suspension), so reconnecting automatically is appropriate.
+    /// Displacement, a shell exit and an explicit disconnect never qualify.
+    pub(super) fn tunnel_lost(&self) -> bool {
+        use festerm_mobile_tunnels::TunnelError;
+        let Some(tunnel) = self.tunnel.as_ref() else {
+            return false;
+        };
+        if !self.can_reset() {
+            return false;
+        }
+        match tunnel.end_error() {
+            Some(TunnelError::ConnectionLost) => true,
+            Some(_) => false,
+            None => self.status == super::SUSPENDED,
+        }
+    }
+
     /// Why a Dev Tunnel attachment ended, in words that name who is responsible.
     fn tunnel_end_status(&self) -> &'static str {
         use festerm_mobile_tunnels::{Displacer, TunnelError};

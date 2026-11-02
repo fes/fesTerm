@@ -641,11 +641,21 @@ impl MobileApp {
         ]
     }
 
+    /// Stops every live session for an app suspension and lets each tab
+    /// reconnect once when it is next active.
+    #[cfg(feature = "live-ssh")]
+    fn suspend_sessions(&mut self) {
+        self.sink.live.suspend();
+        for tab in &mut self.tabs {
+            tab.reconnect_armed = true;
+        }
+    }
+
     fn show_content(&mut self, ui: &mut egui::Ui) {
         let lifecycle = self.lifecycle.get();
         if lifecycle.suspensions != self.observed_suspensions {
             #[cfg(feature = "live-ssh")]
-            self.sink.live.suspend();
+            self.suspend_sessions();
             self.gestures.cancel();
             self.control = false;
             self.alt = false;
@@ -669,6 +679,7 @@ impl MobileApp {
             self.persist_new_trust();
             self.poll_background(ui.ctx());
             self.poll_tunnels(ui.ctx());
+            self.auto_reconnect_tunnel(ui.ctx());
         }
         #[cfg(feature = "live-ssh")]
         if lifecycle.active {
@@ -1522,7 +1533,7 @@ impl MobileApp {
                     .active_tunnel()
                     .map(|spec| spec.profile.as_str().to_owned())
                 {
-                    self.start_tunnel_connect(ui.ctx(), &id, self.active_tab);
+                    self.start_tunnel_connect(ui.ctx(), &id, self.active_tab, false);
                 } else if let Err(error) = self.reconnect_active(ui.ctx()) {
                     self.notice = Some(error);
                 }

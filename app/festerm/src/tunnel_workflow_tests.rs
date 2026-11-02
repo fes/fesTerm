@@ -203,6 +203,7 @@ fn prepared(
             destination,
             zeroize::Zeroizing::new("PRIVATE_CONNECT".into()),
         ),
+        reclaim: false,
         stored: Stored {
             store,
             references: vec![reference],
@@ -222,6 +223,8 @@ fn workflow(profile: Profile, receiver: mpsc::Receiver<Event>) -> Workflow {
         takeover: true,
         focus_cancel: true,
         ready: None,
+        reconnect: None,
+        automatic: None,
         _slot: None,
     }
 }
@@ -522,4 +525,63 @@ fn form_connect_without_save_as_is_ephemeral_and_keeps_the_choice_of_takeover() 
         app.state.configuration().profiles().is_empty(),
         "connecting once must not create a profile"
     );
+}
+
+#[test]
+fn a_client_id_goes_only_to_hosts_that_advertise_reclaim() {
+    let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+    let store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let reference = store.put(&SecretBytes::copy_from_slice(b"x")).unwrap();
+    let client = ClientId::new();
+    let old_host = connection_launch(
+        prepared(
+            &profile,
+            Arc::clone(&store),
+            reference.duplicate_for_transport(),
+        )
+        .launch,
+        true,
+        false,
+        &client,
+    );
+    assert!(old_host.takeover() && old_host.client().is_none());
+    let reclaiming = connection_launch(
+        prepared(&profile, store, reference).launch,
+        false,
+        true,
+        &client,
+    );
+    assert!(!reclaiming.takeover());
+    assert_eq!(reclaiming.client(), Some(&client));
+}
+
+#[test]
+fn an_automatic_tunnel_reconnect_reclaims_only_and_gives_up_quietly() {
+    let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+    let mut app = FesTermApp::for_test_with_configuration(Configuration::new(Vec::new()).unwrap());
+    let context = egui::Context::default();
+    let tab = app
+        .state
+        .place_tunnel_tab_for_test(TunnelOrigin::Ephemeral(Box::new(profile)));
+    let client = app.state.tunnel_tab(tab).unwrap().client.clone();
+    app.state.drop_tunnel_for_test(tab, "transport closed");
+    app.drive_tunnel_reconnects(&context);
+    let workflow = app
+        .native_tunnel
+        .as_mut()
+        .expect("an automatic reconnect started");
+    assert!(
+        !workflow.takeover,
+        "an automatic reconnect never takes over"
+    );
+    assert_eq!(workflow.reconnect, Some((tab, client)));
+    assert!(workflow.automatic.is_some() && !app.overlays.native_tunnel);
+    // Anything that would need the user ends the attempt without a word.
+    workflow.stage = Stage::Error(Error::Network);
+    app.poll_native_tunnel(&context);
+    assert!(app.native_tunnel.is_none());
+    assert!(app.secure_storage_feedback.is_none());
+    // One attempt per activation: the still-lost tab is not retried.
+    app.drive_tunnel_reconnects(&context);
+    assert!(app.native_tunnel.is_none());
 }
