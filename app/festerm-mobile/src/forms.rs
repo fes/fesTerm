@@ -76,6 +76,7 @@ pub struct EditorState {
     #[cfg_attr(not(feature = "live-ssh"), allow(dead_code))]
     pub tunnel_account: Option<String>,
     pub take_over: bool,
+    pub auto_reconnect: bool,
 }
 
 /// The remote session name used when the field is left empty.
@@ -88,6 +89,7 @@ impl EditorState {
             open: true,
             port: "22".to_owned(),
             take_over: true,
+            auto_reconnect: true,
             durable_credentials: self.durable_credentials,
             ..Self::default()
         };
@@ -136,6 +138,7 @@ impl EditorState {
             tunnel_account: spec.account.clone(),
             session_name: spec.session.clone().unwrap_or_default(),
             take_over: spec.take_over,
+            auto_reconnect: spec.auto_reconnect,
             durable_credentials: self.durable_credentials,
             ..Self::default()
         };
@@ -837,6 +840,13 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
             "Take over if attached elsewhere",
             Some("Otherwise attaching is refused while it is in use."),
             &mut state.take_over,
+            false,
+        );
+        switch_row(
+            ui,
+            "Reconnect automatically",
+            Some("Reattach a dropped session when the app or tab becomes active."),
+            &mut state.auto_reconnect,
             false,
         );
     });

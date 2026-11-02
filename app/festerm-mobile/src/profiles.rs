@@ -45,6 +45,13 @@ impl SessionSpec {
 }
 
 /// A launchable snapshot of a saved Dev Tunnel profile.
+/// How a Dev Tunnel profile behaves when its session is held or lost.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TunnelBehaviour {
+    pub take_over: bool,
+    pub auto_reconnect: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct TunnelSpec {
     pub profile: ProfileId,
@@ -55,6 +62,7 @@ pub struct TunnelSpec {
     pub tunnel: String,
     pub session: Option<String>,
     pub take_over: bool,
+    pub auto_reconnect: bool,
 }
 
 impl TunnelSpec {
@@ -318,6 +326,7 @@ impl Profiles {
             tunnel: name.to_owned(),
             session: tunnel.session.clone(),
             take_over: tunnel.take_over_if_attached,
+            auto_reconnect: tunnel.auto_reconnect,
         })
     }
 
@@ -334,12 +343,13 @@ impl Profiles {
         account: Option<String>,
         tunnel_name: &str,
         session: Option<String>,
-        take_over: bool,
+        behaviour: TunnelBehaviour,
     ) -> Result<String, String> {
         let existing = id.and_then(Self::id);
         let mut profile = DevTunnelProfile::named(tunnel_name, account.clone());
         profile.session = session;
-        profile.take_over_if_attached = take_over;
+        profile.take_over_if_attached = behaviour.take_over;
+        profile.auto_reconnect = behaviour.auto_reconnect;
         if let Some(existing) = &existing {
             if let Some(StoredKind::DevTunnel(DevTunnelProfile {
                 account: old_account,

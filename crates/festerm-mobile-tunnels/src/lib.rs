@@ -42,7 +42,18 @@ use festerm_tunnel_client::{
 use tokio_util::sync::CancellationToken;
 
 pub use error::TunnelError;
-pub use festerm_tunnel_bridge::mobile::{apply_recovery_sync, Displacer, EndReason, TunnelSession};
+pub use festerm_tunnel_bridge::mobile::{
+    apply_recovery_sync, ClientId, Displacer, EndReason, TunnelSession,
+};
+
+/// How an attach treats a session another client holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachMode {
+    /// A user-initiated attach; takeover follows the profile.
+    Manual,
+    /// A background reconnect; it only reclaims this tab's own attachment.
+    Automatic,
+}
 
 const PROMPT_WAIT: Duration = Duration::from_secs(30);
 const NETWORK_LIMIT: Duration = Duration::from_secs(45);
@@ -573,11 +584,39 @@ impl TunnelClient {
         notifier: Arc<dyn SessionEventNotifier>,
         cancel: &CancelToken,
     ) -> Result<Attachment, TunnelError> {
+        self.attach_inner(profile, None, AttachMode::Manual, notifier, cancel)
+    }
+
+    /// Attaches on behalf of one terminal tab identified by `client`, so the
+    /// host can recognise that tab's own stale attachment later.
+    /// [`AttachMode::Automatic`] never displaces another client: it succeeds
+    /// on a free session or by reclaiming this tab's own lingering attachment,
+    /// and otherwise fails with [`TunnelError::SessionInUse`].
+    pub fn attach_as(
+        &self,
+        profile: &ProfileId,
+        client: &ClientId,
+        mode: AttachMode,
+        notifier: Arc<dyn SessionEventNotifier>,
+        cancel: &CancelToken,
+    ) -> Result<Attachment, TunnelError> {
+        self.attach_inner(profile, Some(client), mode, notifier, cancel)
+    }
+
+    fn attach_inner(
+        &self,
+        profile: &ProfileId,
+        client: Option<&ClientId>,
+        mode: AttachMode,
+        notifier: Arc<dyn SessionEventNotifier>,
+        cancel: &CancelToken,
+    ) -> Result<Attachment, TunnelError> {
         let attachment = self.run(cancel, ATTACH_LIMIT, async {
             let prepared = self.prepare(profile, &cancel.0).await?;
-            let takeover = prepared.profile.take_over_if_attached;
+            let takeover = mode == AttachMode::Manual && prepared.profile.take_over_if_attached;
+            let reclaim = prepared.description.reclaim;
             let held = prepared.description.attached_by;
-            if held.is_some() && !takeover {
+            if held.is_some() && !takeover && !(reclaim && client.is_some()) {
                 return Err(TunnelError::SessionInUse { by: held });
             }
             let stream = self
@@ -592,17 +631,24 @@ impl TunnelClient {
                     TunnelError::Network
                 })?;
             let name = prepared.description.target.name.clone();
-            let handshake =
-                mobile::establish(stream, prepared.description.target, takeover, &cancel.0)
-                    .await
-                    .map_err(|error| match error {
-                        mobile::AttachError::Refused => TunnelError::SessionInUse { by: held },
-                        other => other.into(),
-                    })?;
+            // Hosts that do not advertise reclaim reject unknown hello fields.
+            let client = client.filter(|_| reclaim).cloned();
+            let handshake = mobile::establish(
+                stream,
+                prepared.description.target,
+                takeover,
+                client,
+                &cancel.0,
+            )
+            .await
+            .map_err(|error| match error {
+                mobile::AttachError::Refused => TunnelError::SessionInUse { by: held },
+                other => other.into(),
+            })?;
             let session = TunnelSession::spawn(self.runtime.handle(), handshake, notifier);
             Ok(Attachment {
                 session: Arc::new(session),
-                took_over: held.map(Some),
+                took_over: if takeover { held.map(Some) } else { None },
                 session_name: name,
             })
         })?;

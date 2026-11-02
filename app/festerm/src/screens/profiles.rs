@@ -83,6 +83,8 @@ struct DevTunnelProfileDraft {
     legacy: bool,
     /// Key of the shared account selected for this profile.
     account: Option<String>,
+    /// Inverted so a new draft reconnects automatically, like a new profile.
+    manual_reconnect_only: bool,
     saved: Option<Profile>,
     credential: Option<Arc<festerm_secret_store::SecretReference>>,
     token: zeroize::Zeroizing<String>,
@@ -98,6 +100,7 @@ impl DevTunnelProfileDraft {
             tunnel: profile.tunnel_name().unwrap_or_default().to_owned(),
             legacy: profile.tunnel_name().is_none(),
             account: profile.account().map(str::to_owned),
+            manual_reconnect_only: !profile.auto_reconnect(),
             saved: Some(Profile::DevTunnel(profile.clone())),
             credential: profile
                 .credential_reference()
@@ -107,6 +110,11 @@ impl DevTunnelProfileDraft {
     }
 
     fn build(&self) -> Result<Profile, festerm_config::ConfigError> {
+        self.build_connection()?
+            .with_tunnel_auto_reconnect(!self.manual_reconnect_only)
+    }
+
+    fn build_connection(&self) -> Result<Profile, festerm_config::ConfigError> {
         if !self.legacy {
             if let Some(saved) = &self.saved {
                 if saved
@@ -1114,6 +1122,11 @@ pub(crate) fn show_profiles(
                     });
                     if !saved { ssh_paragraph(ui, "Save & connect signs in, saves, and connects in one step."); }
                 }
+                ui.add_space(8.0);
+                let mut auto_reconnect = !draft.manual_reconnect_only;
+                ui.checkbox(&mut auto_reconnect, "Reconnect automatically")
+                    .on_hover_text("When a lost connection's tab is brought back to the front, reconnect it. Never takes over another device's session.");
+                draft.manual_reconnect_only = !auto_reconnect;
                 ui.collapsing("Advanced", |ui| {
                     ui.checkbox(&mut draft.legacy, "Use destination file");
                     if draft.legacy {
@@ -2299,6 +2312,18 @@ mod tests {
             .unwrap();
         let mut draft = DevTunnelProfileDraft::from_profile(profile.as_dev_tunnel().unwrap());
         assert_eq!(draft.build().unwrap(), profile);
+        draft.manual_reconnect_only = true;
+        let manual = draft.build().unwrap();
+        assert!(!manual.as_dev_tunnel().unwrap().auto_reconnect());
+        assert!(
+            !DevTunnelProfileDraft::from_profile(manual.as_dev_tunnel().unwrap())
+                .build()
+                .unwrap()
+                .as_dev_tunnel()
+                .unwrap()
+                .auto_reconnect()
+        );
+        draft.manual_reconnect_only = false;
         draft.tunnel = "changed.usw3".into();
         let changed = draft.build().unwrap();
         assert_eq!(

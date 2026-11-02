@@ -9,7 +9,7 @@ default = ["relay"]
 # `client` is the portable (iOS-capable) attach path: relay connect, bridge
 # discovery and the host-independent session client. `relay` adds the host side
 # and the desktop persistent-session adapter (ADR 0057).
-client = ["dep:tunnels", "dep:russh", "dep:tokio", "dep:tokio-util", "dep:reqwest", "dep:flume", "dep:zeroize"]
+client = ["dep:uuid", "dep:tunnels", "dep:russh", "dep:tokio", "dep:tokio-util", "dep:reqwest", "dep:flume", "dep:zeroize"]
 relay = ["client", "dep:festerm-sessiond", "dep:fs2", "dep:uuid", "dep:rpassword", "dep:festerm-unix-security", "dep:festerm-windows-security"]
 
 [dependencies]

@@ -5816,6 +5816,7 @@ impl FesTermApp {
         {
             self.poll_native_tunnel(context);
             self.poll_tunnel_browser(context);
+            self.drive_tunnel_reconnects(context);
         }
         if context.input(|i| i.viewport().close_requested()) {
             let accepted = self.evaluate_close_request(context);

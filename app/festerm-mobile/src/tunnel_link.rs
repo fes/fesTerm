@@ -93,6 +93,10 @@ pub(super) struct ConnectFlow {
     pub(super) spec: TunnelSpec,
     /// Set for an explicit re-attach of an existing tab.
     pub(super) tab: Option<u64>,
+    /// Identifies the tab to the host so it can reclaim its own attachment.
+    pub(super) client: festerm_mobile_tunnels::ClientId,
+    /// A background reconnect: never prompts and never takes over.
+    pub(super) automatic: bool,
     pub(super) stage: ConnectStage,
 }
 

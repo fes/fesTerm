@@ -136,6 +136,9 @@ fn make_notifier(context: &egui::Context) -> Arc<dyn SessionEventNotifier> {
     Arc::new(EguiRepaintNotifier(context.clone()))
 }
 
+#[cfg(feature = "experimental-dev-tunnels")]
+#[path = "tunnel_reconnect.rs"]
+pub(crate) mod tunnel_reconnect;
 #[cfg(all(test, windows, target_arch = "x86_64"))]
 pub(crate) fn session_notifier_for_test(context: &egui::Context) -> Arc<dyn SessionEventNotifier> {
     make_notifier(context)
@@ -646,6 +649,9 @@ pub struct SessionTab {
     /// "Terminal-content search"). Never logged or persisted.
     pub search: crate::search::TerminalSearchState,
     terminal_path: TerminalPathState,
+    /// Present for a Dev Tunnel tab that can be connected again in place.
+    #[cfg(feature = "experimental-dev-tunnels")]
+    tunnel: Option<tunnel_reconnect::TunnelTab>,
 }
 
 /// Exact per-transport counts of sessions that would lose something by
@@ -1444,6 +1450,8 @@ impl SessionTab {
             has_new_output_since_active: false,
             search: crate::search::TerminalSearchState::default(),
             terminal_path: TerminalPathState::default(),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            tunnel: None,
         }
     }
 
@@ -1765,7 +1773,10 @@ impl SessionTab {
             self.inspector_transport,
             InspectorTransport::DevTunnel { .. }
         ) {
-            return Some("Experimental tunnel disconnected. Verify the pinned host, same unattached session generation and a fresh scoped connect token; reopen explicitly. Queued input is discarded, never replayed.");
+            if error.message() == festerm_sessiond::DISPLACED_REASON {
+                return Some("Another client took over this Dev Tunnel session. Reconnect to take it back. Queued input is discarded, never replayed.");
+            }
+            return Some("Dev Tunnel connection lost. Reconnect to resume it. Queued input is discarded, never replayed.");
         }
         (matches!(
             self.inspector_transport,
@@ -1844,6 +1855,13 @@ impl SessionTab {
 
     /// Reports whether the transport can accept a user-directed reconnect.
     pub fn reconnect_available(&self) -> bool {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if self.tunnel.is_some() {
+            return matches!(
+                self.controller.lifecycle(),
+                Some(SessionLifecycle::Disconnected(_) | SessionLifecycle::Failed(_))
+            );
+        }
         self.controller
             .session()
             .is_some_and(ApplicationSession::reconnect_available)
@@ -2808,6 +2826,8 @@ pub struct AppState {
     pub resume_error: Option<String>,
     pending_resume: Option<PendingResume>,
     pending_native_termination: Option<PendingNativeTermination>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    tunnel_reconnects: tunnel_reconnect::TunnelReconnects,
     tabs: Vec<Tab>,
     active: TabId,
     /// Which tabs were looked at, oldest first, so that closing the active tab
@@ -2945,6 +2965,8 @@ impl AppState {
             resume_error: None,
             pending_resume: None,
             pending_native_termination: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            tunnel_reconnects: Default::default(),
             tabs,
             active,
             activation_history: Vec::new(),
@@ -3701,7 +3723,7 @@ impl AppState {
         match command {
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::ConnectDevTunnel(launch) => {
-                self.start_tunnel_launch(None, move || Ok(launch), context);
+                self.start_tunnel_launch(None, None, move || Ok(launch), context);
             }
             AppCommand::ConnectTransientDevTunnel {
                 destination_file,
@@ -3709,6 +3731,7 @@ impl AppState {
             } => {
                 #[cfg(feature = "experimental-dev-tunnels")]
                 self.start_tunnel_launch(
+                    None,
                     None,
                     move || {
                         crate::tunnel_activation::Launch::from_secret(
@@ -3923,7 +3946,10 @@ impl AppState {
             AppCommand::ResolveSshPassword { tab, password } => {
                 self.resolve_ssh_password(tab, password)
             }
-            AppCommand::ReconnectSession(tab) => self.request_reconnect(tab),
+            AppCommand::ReconnectSession(tab) => {
+                self.request_reconnect(tab);
+                context.request_repaint();
+            }
             AppCommand::ActivateTab(id) => self.activate(id),
             AppCommand::RedrawTerminal(id) => {
                 if let Some(session) = self.session_tab_mut(id) {
@@ -5321,8 +5347,12 @@ impl AppState {
         };
         // Capture the exact profile/reference before scheduling secret lookup.
         // Rotation always creates a fresh reference, never mutates this binding.
+        let tunnel = tunnel_reconnect::TunnelTab::new(tunnel_reconnect::TunnelOrigin::Profile(
+            profile_id.clone(),
+        ));
         self.start_tunnel_launch(
             Some(profile_id),
+            Some(tunnel),
             move || crate::tunnel_activation::Launch::from_profile(&profile, store.as_ref()),
             context,
         );
@@ -5332,6 +5362,7 @@ impl AppState {
     pub(crate) fn start_tunnel_launch(
         &mut self,
         profile_id: Option<String>,
+        tunnel: Option<tunnel_reconnect::TunnelTab>,
         load: impl FnOnce() -> std::io::Result<crate::tunnel_activation::Launch> + Send + 'static,
         context: &egui::Context,
     ) {
@@ -5346,21 +5377,14 @@ impl AppState {
         self.open_launcher();
         self.begin_attach(move || {
                 let launch = load().map_err(|_| "Dev Tunnel destination or connect credential unavailable. Check this profile's trusted metadata and native credential.".to_owned())?;
-                let host = launch.destination.tunnel_id.clone();
-                let port = launch.destination.port;
-                let name = launch.destination.target.name.clone();
-                let account = launch.account.clone().map(|account| (account.id, account.login));
-                let mut files = None;
-                let result = launch.start(make_notifier(&context)).map(|remote| {
-                    files = remote.files.map(crate::remote_files::RemoteFileCapability::DevTunnel);
-                    ApplicationSession::DevTunnel(remote.session)
-                });
-                let mut tab = SessionTab::from_session_result(result, Dimensions::new(80,24).expect("default dimensions"), SessionResultMeta {
-                    label: &name, launch_secondary: Some("Experimental Dev Tunnel · attach only".into()),
+                let started = tunnel_reconnect::start_tunnel(launch, &context);
+                let mut tab = SessionTab::from_session_result(started.result, Dimensions::new(80,24).expect("default dimensions"), SessionResultMeta {
+                    label: &started.name, launch_secondary: Some("Experimental Dev Tunnel · attach only".into()),
                     profile_identifier: profile_id, session_name: "Dev Tunnel",
-                    inspector_transport: InspectorTransport::DevTunnel {host, port, account}, ssh_password_retry: None,
+                    inspector_transport: started.transport, ssh_password_retry: None,
                 });
-                tab.remote_files = files;
+                tab.remote_files = started.files;
+                tab.tunnel = tunnel;
                 Ok(tab)
             }, false);
     }
@@ -5949,6 +5973,13 @@ impl AppState {
         let Some(session) = self.session_tab_mut(tab) else {
             return;
         };
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if session.tunnel.is_some() {
+            if session.reconnect_available() {
+                self.queue_tunnel_reconnect(tab);
+            }
+            return;
+        }
         if let Err(error) = session.request_reconnect() {
             session
                 .controller
@@ -6445,6 +6476,8 @@ impl SessionTab {
             has_new_output_since_active: false,
             search: crate::search::TerminalSearchState::default(),
             terminal_path: TerminalPathState::default(),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            tunnel: None,
         }
     }
 }

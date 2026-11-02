@@ -73,6 +73,7 @@ async fn host(mut stream: tokio::io::DuplexStream, script: Arc<Script>) {
             files: FileAccess::default(),
             attached_by: script.attached_by,
             takeover_allowed: script.takeover_allowed,
+            reclaim: script.takeover_allowed,
         };
         let _ = write_frame(
             &mut stream,
@@ -177,6 +178,7 @@ fn profile(f: &Fixture, takeover: bool, trusted: bool) -> ProfileId {
                 },
                 session: None,
                 take_over_if_attached: takeover,
+                auto_reconnect: true,
             }),
         )
         .unwrap()

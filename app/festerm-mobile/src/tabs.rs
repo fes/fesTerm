@@ -13,6 +13,13 @@ pub(super) struct SessionTab {
     pub spec: Option<SessionSpec>,
     /// Set for Dev Tunnel tabs, which have no SSH spec.
     pub tunnel: Option<TunnelSpec>,
+    /// The Dev Tunnel client identity of this tab, kept across reconnects.
+    #[cfg(feature = "live-ssh")]
+    pub tunnel_client: Option<festerm_mobile_tunnels::ClientId>,
+    /// Whether one automatic reconnect may run; re-armed when the tab or app
+    /// becomes active again.
+    #[cfg(feature = "live-ssh")]
+    pub reconnect_armed: bool,
     parked: Option<(Terminal, TerminalView)>,
 }
 
@@ -108,6 +115,10 @@ impl MobileApp {
             }
         }
         self.active_tab = Some(id);
+        #[cfg(feature = "live-ssh")]
+        {
+            self.tabs[position].reconnect_armed = true;
+        }
         self.workspace = workspaces::Workspace::Terminal;
         self.keys_panel.open = false;
     }
@@ -120,6 +131,10 @@ impl MobileApp {
             title,
             spec,
             tunnel: None,
+            #[cfg(feature = "live-ssh")]
+            tunnel_client: None,
+            #[cfg(feature = "live-ssh")]
+            reconnect_armed: false,
             parked: None,
         });
         id

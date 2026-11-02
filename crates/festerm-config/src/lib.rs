@@ -1281,6 +1281,28 @@ port = 47461
     }
 
     #[test]
+    fn dev_tunnel_auto_reconnect_defaults_on_and_persists_only_when_declined() {
+        let profile = Profile::named_dev_tunnel("build", "build.usw3").unwrap();
+        assert!(profile.as_dev_tunnel().unwrap().auto_reconnect());
+        let enabled = Configuration::new(vec![profile.clone()]).unwrap();
+        let document = enabled.to_toml().unwrap();
+        assert!(!document.contains("auto_reconnect"));
+        // A document written before the setting existed reconnects by default.
+        assert_eq!(Configuration::parse(&document).unwrap(), enabled);
+
+        let declined =
+            Configuration::new(vec![profile.with_tunnel_auto_reconnect(false).unwrap()]).unwrap();
+        let document = declined.to_toml().unwrap();
+        assert!(document.contains("auto_reconnect = false"));
+        let restored = Configuration::parse(&document).unwrap();
+        assert!(!restored
+            .profile("build")
+            .and_then(Profile::as_dev_tunnel)
+            .unwrap()
+            .auto_reconnect());
+    }
+
+    #[test]
     fn automatic_update_checks_are_on_until_the_user_says_otherwise() {
         assert!(InterfaceSettings::DEFAULT.automatic_update_checks());
         let document = Configuration::empty();

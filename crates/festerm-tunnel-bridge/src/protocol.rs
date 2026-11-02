@@ -44,6 +44,48 @@ fn default_true() -> bool {
     true
 }
 
+/// A random id one client tab keeps across its reconnects. A host that
+/// advertises [`Description::reclaim`] remembers the id that holds its live
+/// attachment, so the same tab can reclaim it after the old connection died
+/// silently (sleep, screen lock) without taking over anyone else (ADR 0057).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct ClientId(String);
+impl ClientId {
+    #[cfg(feature = "client")]
+    pub fn new() -> Self {
+        Self(uuid::Uuid::new_v4().simple().to_string())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+#[cfg(feature = "client")]
+impl Default for ClientId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl TryFrom<String> for ClientId {
+    type Error = io::Error;
+    fn try_from(value: String) -> io::Result<Self> {
+        if value.len() == 32
+            && value
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            Ok(Self(value))
+        } else {
+            Err(invalid())
+        }
+    }
+}
+impl From<ClientId> for String {
+    fn from(value: ClientId) -> Self {
+        value.0
+    }
+}
+
 /// Which kind of client holds (or took) the session.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -83,6 +125,10 @@ pub struct Hello {
     pub version: u16,
     pub snapshot_schema: u16,
     pub target: Target,
+    /// Sent only to hosts that advertise [`Description::reclaim`]; older hosts
+    /// reject unknown fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<ClientId>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -97,6 +143,11 @@ pub struct Description {
     /// Whether this host lets a remote client displace the current holder.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub takeover_allowed: bool,
+    /// The host accepts [`Hello::client`] and lets that client reclaim its own
+    /// stale attachment. Advertised only with `takeover_allowed`, so clients
+    /// that predate both fields see no new incompatibility.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reclaim: bool,
 }
 
 #[derive(Clone, Copy, Default, Deserialize, Serialize)]

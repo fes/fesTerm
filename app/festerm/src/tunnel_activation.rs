@@ -1,4 +1,8 @@
-use festerm_tunnel_bridge::{protocol::invalid, relay::Destination, transport};
+use festerm_tunnel_bridge::{
+    protocol::{invalid, ClientId},
+    relay::Destination,
+    transport,
+};
 use std::{fmt, io, path::Path};
 
 pub struct Launch {
@@ -6,6 +10,7 @@ pub struct Launch {
     pub account: Option<festerm_tunnel_client::identity::Account>,
     token: zeroize::Zeroizing<String>,
     takeover: bool,
+    client: Option<ClientId>,
 }
 
 impl fmt::Debug for Launch {
@@ -21,12 +26,27 @@ impl Launch {
             token,
             account: None,
             takeover: true,
+            client: None,
         }
     }
     /// Whether this client may displace the session's current holder.
     pub fn with_takeover(mut self, takeover: bool) -> Self {
         self.takeover = takeover;
         self
+    }
+    /// Identifies the tab to a host that advertised reclaim. Never set it for
+    /// a host that did not: older hosts refuse the unknown field.
+    pub fn with_client(mut self, client: ClientId) -> Self {
+        self.client = Some(client);
+        self
+    }
+    #[cfg(test)]
+    pub fn takeover(&self) -> bool {
+        self.takeover
+    }
+    #[cfg(test)]
+    pub fn client(&self) -> Option<&ClientId> {
+        self.client.as_ref()
     }
     pub fn with_account(mut self, account: festerm_tunnel_client::identity::Account) -> Self {
         self.account = Some(account);
@@ -52,6 +72,7 @@ impl Launch {
             token,
             account: None,
             takeover: true,
+            client: None,
         })
     }
 
@@ -78,7 +99,13 @@ impl Launch {
         self,
         notifier: std::sync::Arc<dyn festerm_session::SessionEventNotifier>,
     ) -> io::Result<transport::ClientSession> {
-        transport::start_client_with_takeover(self.destination, self.token, notifier, self.takeover)
+        transport::start_client_with_takeover(
+            self.destination,
+            self.token,
+            notifier,
+            self.takeover,
+            self.client,
+        )
     }
 }
 
@@ -103,6 +130,7 @@ pub fn parse_env() -> io::Result<Option<Launch>> {
         token,
         account: None,
         takeover: true,
+        client: None,
     }))
 }
 

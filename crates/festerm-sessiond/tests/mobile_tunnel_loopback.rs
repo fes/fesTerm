@@ -19,7 +19,7 @@ use festerm_mobile_profiles::{
 };
 use festerm_mobile_tunnels::{
     testing::{seed_account, FakeGithub, FixedDirectory, StreamConnector, CLIENT_ID},
-    CancelToken, SessionState, TunnelClient, TunnelError,
+    AttachMode, CancelToken, ClientId, SessionState, TunnelClient, TunnelError,
 };
 use festerm_secret_store::MemorySecretStore;
 use festerm_session::{noop_session_event_notifier, Session, SessionEvent, SessionLifecycle};
@@ -29,7 +29,7 @@ use festerm_sessiond::{
 use festerm_tunnel_bridge::{
     files::FileService,
     mobile::{BoxStream, Displacer},
-    transport::serve_with_takeover,
+    transport::{serve_with_reclaim, Holder},
 };
 
 struct Cleanup {
@@ -95,6 +95,7 @@ fn profile(
                 },
                 session: None,
                 take_over_if_attached: takeover,
+                auto_reconnect: true,
             }),
         )
         .unwrap()
@@ -170,14 +171,23 @@ fn mobile_api_attaches_takes_over_and_is_displaced_on_a_real_daemon() {
     let account = seed_account(&store, 42, "octo", false);
     let directory = Arc::new(FixedDirectory::new());
     let connections = Arc::new(AtomicUsize::new(0));
+    let bridge_holder = Holder::default();
     let connector = {
         let connections = connections.clone();
         StreamConnector(move || -> BoxStream {
             connections.fetch_add(1, Ordering::SeqCst);
             let (client, server) = tokio::io::duplex(1 << 16);
             let identity = identity.clone();
+            let bridge_holder = bridge_holder.clone();
             tokio::spawn(async move {
-                let _ = serve_with_takeover(server, identity, FileService::new(false), true).await;
+                let _ = serve_with_reclaim(
+                    server,
+                    identity,
+                    FileService::new(false),
+                    true,
+                    &bridge_holder,
+                )
+                .await;
             });
             Box::new(client)
         })
@@ -285,4 +295,60 @@ fn mobile_api_attaches_takes_over_and_is_displaced_on_a_real_daemon() {
     );
     again.detach(Duration::from_secs(3)).unwrap();
     poll(|| holder() == Some(None), "released after detach");
+
+    // Automatic reconnects only ever reclaim the same tab's own attachment.
+    let tab = ClientId::new();
+    let other_tab = ClientId::new();
+    let automatic = |id: &ClientId| {
+        client.attach_as(
+            &refusing,
+            id,
+            AttachMode::Automatic,
+            noop_session_event_notifier(),
+            &cancel,
+        )
+    };
+    let stale = automatic(&tab).unwrap();
+    stale.take_recovered_terminal().unwrap();
+    poll(|| holder() == Some(Some(AttachKind::Remote)), "tab holder");
+    assert_eq!(
+        automatic(&other_tab).err(),
+        Some(TunnelError::SessionInUse {
+            by: Some(Displacer::Remote)
+        }),
+        "another tab never steals automatically"
+    );
+    let reclaimed = automatic(&tab).unwrap();
+    assert_eq!(reclaimed.took_over, None);
+    reclaimed.take_recovered_terminal().unwrap();
+    poll(|| stale.end_error().is_some(), "stale attachment replaced");
+    let session = reclaimed.session();
+    poll(
+        || matches!(session.lifecycle(), SessionLifecycle::Running),
+        "reclaimed running",
+    );
+    session.try_send_input(b"ping-after-reclaim\n").unwrap();
+    read_until(&session, "ping-after-reclaim");
+
+    // Once another client takes the session over, the displaced tab cannot reclaim it.
+    let thief = client
+        .attach_as(
+            &taking,
+            &other_tab,
+            AttachMode::Manual,
+            noop_session_event_notifier(),
+            &cancel,
+        )
+        .unwrap();
+    thief.take_recovered_terminal().unwrap();
+    poll(|| reclaimed.end_error().is_some(), "reclaimed displaced");
+    assert_eq!(
+        automatic(&tab).err(),
+        Some(TunnelError::SessionInUse {
+            by: Some(Displacer::Remote)
+        }),
+        "a displaced tab does not take the session back"
+    );
+    thief.detach(Duration::from_secs(3)).unwrap();
+    poll(|| holder() == Some(None), "released after thief detach");
 }

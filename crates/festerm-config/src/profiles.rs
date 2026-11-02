@@ -96,6 +96,11 @@ pub struct DevTunnelProfileConfiguration {
     trusted_host: Option<DevTunnelHost>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     credential_id: Option<CredentialReference>,
+    /// Whether a lost connection reconnects by itself when its tab is
+    /// activated or the window wakes. It only ever reclaims this client's own
+    /// stale attachment; it never takes over another client.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    auto_reconnect: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -223,6 +228,10 @@ impl DevTunnelProfileConfiguration {
     pub fn trusted_host(&self) -> Option<&DevTunnelHost> {
         self.trusted_host.as_ref()
     }
+    /// Whether a lost connection reconnects automatically on activation.
+    pub const fn auto_reconnect(&self) -> bool {
+        self.auto_reconnect
+    }
     pub fn credential_reference(&self) -> Option<&SecretReference> {
         self.credential_id
             .as_ref()
@@ -309,6 +318,7 @@ impl Profile {
             identity: None,
             trusted_host: None,
             credential_id: None,
+            auto_reconnect: true,
         });
         profile.validate()?;
         Ok(profile)
@@ -326,6 +336,7 @@ impl Profile {
             identity: None,
             trusted_host: None,
             credential_id: None,
+            auto_reconnect: true,
         });
         profile.validate()?;
         Ok(profile)
@@ -363,6 +374,15 @@ impl Profile {
         }
         profile.account = account;
         self.validate()?;
+        Ok(self)
+    }
+
+    /// Chooses whether a lost connection reconnects automatically.
+    pub fn with_tunnel_auto_reconnect(mut self, enabled: bool) -> Result<Self, ConfigError> {
+        let Self::DevTunnel(profile) = &mut self else {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidDevTunnelProfile));
+        };
+        profile.auto_reconnect = enabled;
         Ok(self)
     }
 

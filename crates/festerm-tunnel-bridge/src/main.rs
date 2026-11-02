@@ -164,6 +164,7 @@ fn run() -> io::Result<()> {
         // Connections are served concurrently (bounded by the relay host) so a
         // second client can request takeover; the session daemon arbitrates.
         let mut clients = tokio::task::JoinSet::new();
+        let holder = transport::Holder::default();
         loop {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => break,
@@ -174,12 +175,10 @@ fn run() -> io::Result<()> {
                             host.failure_category().unwrap_or("host.outer_task_closed"),
                         ));
                     };
-                    clients.spawn(transport::serve_with_takeover(
-                        stream,
-                        identity.clone(),
-                        files.clone(),
-                        takeover,
-                    ));
+                    let (identity, files, holder) = (identity.clone(), files.clone(), holder.clone());
+                    clients.spawn(async move {
+                        transport::serve_with_reclaim(stream, identity, files, takeover, &holder).await
+                    });
                 }
             }
         }
