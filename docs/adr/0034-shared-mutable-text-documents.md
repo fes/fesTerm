@@ -794,6 +794,15 @@ existing Markdown rendering stays out of scope.
   `CP-15` and the traceability prerequisites. `EDIT-17` adds deterministic coverage for independent blank
   untitled documents, per-kind sequential names, first-save routing, More
   actions, and native-menu command convergence.
+- **Windows privilege validation:** ordinary-user private creation/publication
+  and missing-privilege refusal run in the default suite. The refusal regression
+  removes `SeSecurityPrivilege` only in an isolated child, then verifies audit
+  capture/creation refuse without changing existing bytes, DACLs or thread
+  impersonation. Four audit/metadata/thread-scoping tests are explicitly
+  privilege-required and run mandatorily in the Windows CI lane with
+  `cargo test --locked -p festerm-windows-security --lib -- --ignored --nocapture`.
+  An unavailable privilege fails that lane; it never silently skips assertions
+  or changes the application's existing safe-save/elevation policy.
 - **Vi recording refinement:** `EDIT-07` now has deterministic engine and
   production-view regressions for the exact 8,192-key boundary, Insert/Replace
   and Visual churn, capacity retirement, visible nonfatal warnings, refusal of

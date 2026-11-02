@@ -2097,6 +2097,8 @@
         "manual_recovery_outranks_conflict_and_disables_retry",
         "security_copy_preserves_an_explicit_audit_sacl",
         "security_privilege_is_scoped_to_the_saving_thread",
+        "missing_security_privilege_refuses_capture_without_mutation",
+        "conditional_replacement_preserves_audit_metadata_and_private_dacl",
         "post_capture_recovery_read_error_restores_before_cleanup",
         "staging_name_substitution_cannot_redirect_publication_or_cleanup",
         "security_metadata_change_before_publication_conflicts_without_overwrite",

@@ -119,6 +119,19 @@ jobs:
           path: target/esctest2.log
           if-no-files-found: ignore
 
+  windows-security-privileged:
+    name: Windows privileged security metadata
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-security-privileged
+      - name: Require audit-metadata preservation and thread-scoped privileges
+        run: cargo test --locked -p festerm-windows-security --lib -- --ignored --nocapture
+
   quality:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

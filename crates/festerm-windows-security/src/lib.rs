@@ -2211,6 +2211,7 @@ mod imp {
         }
 
         #[test]
+        #[ignore = "requires SeSecurityPrivilege; mandatory in the separate Windows privileged CI lane"]
         fn security_privilege_is_scoped_to_the_saving_thread() {
             let directory = TemporaryDirectory::new();
             fs::write(directory.0.join("source.md"), b"source").unwrap();
@@ -2232,6 +2233,128 @@ mod imp {
                 Some(windows_sys::Win32::Foundation::ERROR_PRIVILEGE_NOT_HELD as i32),
                 "{error:?}"
             );
+        }
+
+        #[test]
+        fn missing_security_privilege_refuses_capture_without_mutation() {
+            const CHILD: &str = "FESTERM_TEST_WITHOUT_SECURITY_PRIVILEGE";
+            // Removing a privilege is irreversible; isolate it from the other tests.
+            if std::env::var_os(CHILD).is_none() {
+                let output = Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "imp::tests::missing_security_privilege_refuses_capture_without_mutation",
+                        "--nocapture",
+                    ])
+                    .env(CHILD, "1")
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "privilege-denial child failed: {output:?}"
+                );
+                assert!(
+                    String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+                    "privilege-denial child did not run its assertion: {output:?}"
+                );
+                return;
+            }
+            assert_eq!(std::env::var(CHILD).as_deref(), Ok("1"));
+            let mut token = ptr::null_mut();
+            assert_ne!(
+                unsafe {
+                    OpenProcessToken(
+                        GetCurrentProcess(),
+                        TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES,
+                        &raw mut token,
+                    )
+                },
+                0
+            );
+            let token = unsafe { OwnedHandle::from_raw_handle(token) };
+            let mut luid = windows_sys::Win32::Foundation::LUID::default();
+            assert_ne!(
+                unsafe {
+                    windows_sys::Win32::Security::LookupPrivilegeValueW(
+                        ptr::null(),
+                        SE_SECURITY_NAME,
+                        &raw mut luid,
+                    )
+                },
+                0
+            );
+            let removed = TOKEN_PRIVILEGES {
+                PrivilegeCount: 1,
+                Privileges: [windows_sys::Win32::Security::LUID_AND_ATTRIBUTES {
+                    Luid: luid,
+                    Attributes: windows_sys::Win32::Security::SE_PRIVILEGE_REMOVED,
+                }],
+            };
+            unsafe { SetLastError(ERROR_SUCCESS) };
+            assert_ne!(
+                unsafe {
+                    AdjustTokenPrivileges(
+                        token.as_raw_handle(),
+                        0,
+                        &raw const removed,
+                        0,
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                    )
+                },
+                0
+            );
+            assert!(matches!(
+                unsafe { GetLastError() },
+                ERROR_SUCCESS | ERROR_NOT_ALL_ASSIGNED
+            ));
+
+            let directory = TemporaryDirectory::new();
+            let root = directory.handle();
+            let mut source = create_current_user_only_file(&root, Path::new("source.md")).unwrap();
+            source.write_all(b"unchanged").unwrap();
+            source.sync_all().unwrap();
+            let before = security_descriptor(&source, ACCESS_INFORMATION).unwrap();
+            let error = enable_security_privilege()
+                .err()
+                .expect("audit privilege must remain unavailable");
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+            assert_eq!(error.to_string(), "SeSecurityPrivilege is unavailable");
+            let mut thread_token = ptr::null_mut();
+            assert_eq!(
+                unsafe {
+                    OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &raw mut thread_token)
+                },
+                0
+            );
+            assert_eq!(unsafe { GetLastError() }, ERROR_NO_TOKEN);
+            let error = open_file_no_reparse_for_security_capture(&root, Path::new("source.md"))
+                .unwrap_err();
+            assert_eq!(
+                error.raw_os_error(),
+                Some(windows_sys::Win32::Foundation::ERROR_PRIVILEGE_NOT_HELD as i32)
+            );
+            let error = create_current_user_only_file_with_audit(&root, Path::new("refused.tmp"))
+                .unwrap_err();
+            assert_eq!(
+                error.raw_os_error(),
+                Some(windows_sys::Win32::Foundation::ERROR_PRIVILEGE_NOT_HELD as i32)
+            );
+            assert_eq!(
+                fs::metadata(directory.0.join("refused.tmp"))
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::NotFound
+            );
+            assert_eq!(
+                fs::read(directory.0.join("source.md")).unwrap(),
+                b"unchanged"
+            );
+            assert_eq!(
+                security_descriptor(&source, ACCESS_INFORMATION).unwrap(),
+                before
+            );
+            assert_current_user_only_dacl(&source);
         }
 
         fn copied_mandatory_label_fixture() -> (Vec<u8>, Vec<u8>) {
@@ -2323,6 +2446,7 @@ mod imp {
         }
 
         #[test]
+        #[ignore = "requires SeSecurityPrivilege; mandatory in the separate Windows privileged CI lane"]
         fn security_copy_preserves_an_explicit_mandatory_integrity_label() {
             let _privilege = enable_security_privilege().unwrap();
             let directory = TemporaryDirectory::new();
@@ -2360,6 +2484,7 @@ mod imp {
         }
 
         #[test]
+        #[ignore = "requires SeSecurityPrivilege; mandatory in the separate Windows privileged CI lane"]
         fn security_copy_preserves_an_explicit_audit_sacl() {
             let _privilege = enable_security_privilege().unwrap();
             let directory = TemporaryDirectory::new();
@@ -3419,13 +3544,12 @@ mod imp {
 
         #[test]
         fn private_creation_and_conditional_publication_keep_the_current_user_only_dacl() {
-            let _privilege = enable_security_privilege().unwrap();
             let directory = TemporaryDirectory::new();
             let directory_handle = directory.handle();
             let staging_handle =
                 create_current_user_only_directory(&directory_handle, Path::new("private.stage"))
                     .unwrap();
-            let staging = TemporaryDirectory(directory.0.join("private.stage"));
+            let _staging = TemporaryDirectory(directory.0.join("private.stage"));
             assert_current_user_only_dacl(&staging_handle);
             restrict_to_current_user(&staging_handle).unwrap();
             let mut unpublished =
@@ -3446,7 +3570,23 @@ mod imp {
             )
             .is_err());
             assert_eq!(fs::read(directory.0.join("published.md")).unwrap(), b"new");
+            assert_current_user_only_dacl(&unpublished);
+            let published =
+                open_file_no_reparse(&directory_handle, Path::new("published.md")).unwrap();
+            assert_current_user_only_dacl(&published);
+        }
 
+        #[test]
+        #[ignore = "requires SeSecurityPrivilege; mandatory in the separate Windows privileged CI lane"]
+        fn conditional_replacement_preserves_audit_metadata_and_private_dacl() {
+            let _privilege = enable_security_privilege().unwrap();
+            let directory = TemporaryDirectory::new();
+            let directory_handle = directory.handle();
+            let staging_handle =
+                create_current_user_only_directory(&directory_handle, Path::new("private.stage"))
+                    .unwrap();
+            let staging = TemporaryDirectory(directory.0.join("private.stage"));
+            assert_current_user_only_dacl(&staging_handle);
             let mut target =
                 create_current_user_only_file_with_audit(&directory_handle, Path::new("target.md"))
                     .unwrap();

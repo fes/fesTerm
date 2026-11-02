@@ -162,8 +162,20 @@ installation workaround, and no corrected signed release has been produced.
 The expanded Windows-security library run separately recorded 37 passes and
 four failures because the standard user lacks `SeSecurityPrivilege`; those
 unchanged security-metadata tests were not weakened, silently skipped or run
-elevated. The complete library suite is therefore not qualified under that
-account, even though the applicable private-storage/DACL tests passed.
+elevated. That initial run did not qualify the complete library suite under
+that account, even though the applicable private-storage/DACL tests passed.
+The follow-up separates those privilege-required assertions from ordinary-user
+creation/publication and adds a child-process regression that removes the audit
+privilege and checks explicit refusal without file/DACL mutation or residual
+thread impersonation. The four privileged tests are required separately by
+Windows CI; a missing privilege fails that lane rather than silently skipping.
+On the isolated Windows ARM64 clone, the complete default security suite passed
+as the genuine standard user (39 passed, four explicitly privilege-required).
+The same built test executable separately passed all four privileged tests in
+the clone's SYSTEM context; the privilege-removal child regression also passed
+there. Strict native Clippy and PowerShell parsing passed. This used SYSTEM
+only for the security-metadata tests, never the installer; no account privilege,
+machine execution policy or production behavior changed.
 Unix installer/bundle fixtures recorded 36 passes and three explicit
 platform/tool skips; Windows recorded three installer and 15 bundle passes,
 19 Unix-only skips and the two symlink-privilege skips above. None of these

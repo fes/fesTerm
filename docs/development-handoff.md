@@ -241,6 +241,18 @@ download or staging behavior. The suite remains opt-in because host GUI,
 graphics, and installed reference applications vary. A `not-run` reference
 tool is recorded by the P5 result file and is not acceptance evidence.
 
+Windows security tests have separate privilege boundaries. The ordinary
+`cargo test --locked -p festerm-windows-security` suite needs no elevation and
+includes private-DACL publication and explicit privilege-denial coverage.
+Four audit/metadata tests are marked privilege-required, not silently omitted
+from acceptance: Windows CI separately requires
+`cargo test --locked -p festerm-windows-security --lib -- --ignored --nocapture`
+on its privileged runner. That command fails if `SeSecurityPrivilege` is
+unavailable. On a deliberately authorized privileged test host, set
+`FESTERM_RUN_WINDOWS_SECURITY_PRIVILEGED=1` to include the same command in the
+optional PowerShell suite; otherwise its result explicitly records the missing
+opt-in. Neither entry point elevates, grants privileges or changes account policy.
+
 The OpenSSH suite builds an Alpine fixture, generates its server host keys and
 password at container start, generates ephemeral unencrypted and encrypted
 client keys outside the repository, and selects a randomized loopback host
