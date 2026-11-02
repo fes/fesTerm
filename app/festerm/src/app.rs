@@ -4,7 +4,7 @@ mod confirmations;
 mod running_tunnels;
 #[cfg(feature = "experimental-dev-tunnels")]
 #[path = "tunnel_browser.rs"]
-mod tunnel_browser;
+pub(crate) mod tunnel_browser;
 #[cfg(feature = "experimental-dev-tunnels")]
 #[path = "tunnel_workflow.rs"]
 mod tunnel_workflow;

@@ -2224,6 +2224,13 @@ fn show_dev_tunnel_form(
             .map(|account| account.identifier().to_owned());
     }
     let focus_tunnel = std::mem::take(&mut form.focus_tunnel);
+    if let Some(picked) = crate::app::tunnel_browser::take_picked_tunnel(ui.ctx()) {
+        form.tunnel = picked.locator;
+        form.feedback = None;
+        if picked.account.is_some() {
+            form.account = picked.account;
+        }
+    }
     let mut result = None;
     crate::software_background::show_frame(
         ui,
@@ -2260,9 +2267,16 @@ fn show_dev_tunnel_form(
                     }
                 });
             ui.add_space(6.0);
-            if launcher_text_button(ui, "Add GitHub account", None, false).clicked() {
-                result = Some(AppCommand::AddDevTunnelAccount);
-            }
+            ui.horizontal_wrapped(|ui| {
+                if launcher_text_button(ui, "Add GitHub account", None, false).clicked() {
+                    result = Some(AppCommand::AddDevTunnelAccount);
+                }
+                if let Some(account) = form.account.clone() {
+                    if launcher_text_button(ui, "Pick from my tunnels", None, false).clicked() {
+                        result = Some(AppCommand::BrowseDevTunnels { account });
+                    }
+                }
+            });
             if form.account.is_none() {
                 ui.add_space(4.0);
                 ui.label(
