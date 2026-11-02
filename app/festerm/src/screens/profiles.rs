@@ -1024,6 +1024,12 @@ pub(crate) fn show_profiles(
                 draft.credential = profile.credential_reference()
                     .map(|reference| Arc::new(reference.duplicate_for_transport()));
             }
+            if let Some(picked) = crate::app::tunnel_browser::take_picked_tunnel(ui.ctx()) {
+                draft.tunnel = picked.locator;
+                if picked.account.is_some() {
+                    draft.account = picked.account;
+                }
+            }
             show_bounded_content_scroll(ui, (tab_id, "edit_dev_tunnel_profile"), |ui| {
                 dev_tunnel_card(ui, if draft.original_id.is_some() { "Edit Dev Tunnel Profile" } else { "New Dev Tunnel Profile" }, |ui| {
                 ssh_section_heading(ui, "Profile · Experimental");

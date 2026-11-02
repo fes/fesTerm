@@ -193,29 +193,6 @@ pub(super) fn display_name(summary: &TunnelSummary) -> String {
         .to_owned()
 }
 
-/// A profile identifier that does not collide with an existing profile.
-pub(super) fn unique_profile_id(summary: &TunnelSummary, exists: impl Fn(&str) -> bool) -> String {
-    let base = summary
-        .name
-        .as_deref()
-        .filter(|name| !name.trim().is_empty())
-        .or(summary
-            .description
-            .as_deref()
-            .filter(|text| !text.trim().is_empty()))
-        .map(|text| text.chars().filter(|c| !c.is_control()).collect::<String>())
-        .map(|text| text.trim().chars().take(60).collect::<String>())
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| summary.locator.clone());
-    if !exists(&base) {
-        return base;
-    }
-    (2..)
-        .map(|n| format!("{base} ({n})"))
-        .find(|candidate| !exists(candidate))
-        .expect("unbounded range")
-}
-
 impl FesTermApp {
     /// Opens the shared-account sign-in (`None`) or the tunnel picker for an
     /// existing account.
@@ -395,6 +372,7 @@ impl FesTermApp {
                 }
                 Stage::Pick { login, tunnels } => {
                     ui.label(format!("GitHub · {login}"));
+                    ui.label("Choose a tunnel to fill in the tunnel name or id.");
                     ui.add_space(6.0);
                     if tunnels.is_empty() {
                         ui.label("No fesTerm bridge tunnels found for this account.");
@@ -416,21 +394,19 @@ impl FesTermApp {
                             if tunnel.active { " · active" } else { "" },
                             if saved { " · saved" } else { "" }
                         );
-                        ui.add_enabled_ui(!saved, |ui| {
-                            if super::confirmations::dialog_action(
-                                ui,
-                                if tunnel.active {
-                                    ActionButtonRole::Accent
-                                } else {
-                                    ActionButtonRole::Secondary
-                                },
-                                &label,
-                            )
-                            .clicked()
-                            {
-                                picked = Some(tunnel.clone());
-                            }
-                        });
+                        if super::confirmations::dialog_action(
+                            ui,
+                            if tunnel.active {
+                                ActionButtonRole::Accent
+                            } else {
+                                ActionButtonRole::Secondary
+                            },
+                            &label,
+                        )
+                        .clicked()
+                        {
+                            picked = Some(tunnel.clone());
+                        }
                     }
                 }
                 Stage::Error(error) => {
@@ -454,7 +430,7 @@ impl FesTermApp {
             dismiss |= cancel.clicked();
         });
         if let Some(tunnel) = picked {
-            self.create_profile_from_tunnel(&tunnel);
+            self.hand_picked_tunnel_to_form(context, &tunnel);
             dismiss = true;
         }
         if dismiss {
@@ -463,22 +439,10 @@ impl FesTermApp {
         }
     }
 
-    /// Saves an unsigned profile for `tunnel` linked to `account`; returns its
-    /// identifier.
-    pub(super) fn create_profile_from_summary(
-        &mut self,
-        tunnel: &TunnelSummary,
-        account: Option<String>,
-    ) -> Option<String> {
-        let configuration = self.state.configuration();
-        let id = unique_profile_id(tunnel, |id| configuration.profile(id).is_some());
-        Profile::named_dev_tunnel(id.clone(), tunnel.locator.clone())
-            .and_then(|profile| profile.with_tunnel_account_selection(account))
-            .is_ok_and(|profile| self.save_profile(profile))
-            .then_some(id)
-    }
-
-    fn create_profile_from_tunnel(&mut self, tunnel: &TunnelSummary) {
+    /// Leaves the chosen tunnel for the form that opened the picker (the
+    /// profile editor or the New Session form), which fills its tunnel field
+    /// on its next frame.
+    fn hand_picked_tunnel_to_form(&mut self, context: &egui::Context, tunnel: &TunnelSummary) {
         let configuration = self.state.configuration();
         let account = self
             .tunnel_browser
@@ -491,44 +455,55 @@ impl FesTermApp {
                     .map(|account| account.identifier().to_owned()),
                 _ => None,
             });
-        let saved = self.create_profile_from_summary(tunnel, account).is_some();
-        self.secure_storage_feedback = Some(if saved {
-            "Dev Tunnel profile created. Open it and choose Connect."
-        } else {
-            "The Dev Tunnel profile could not be created."
+        context.data_mut(|data| {
+            data.insert_temp(
+                picked_tunnel_id(),
+                PickedTunnel {
+                    account,
+                    locator: tunnel.locator.clone(),
+                },
+            )
         });
+        context.request_repaint();
     }
+}
+
+/// A tunnel chosen in the picker, waiting for its form to consume it.
+#[derive(Clone, Default)]
+pub(crate) struct PickedTunnel {
+    pub(crate) account: Option<String>,
+    pub(crate) locator: String,
+}
+
+fn picked_tunnel_id() -> egui::Id {
+    egui::Id::new("picked_dev_tunnel")
+}
+
+/// Takes the tunnel the picker just chose, if any.
+pub(crate) fn take_picked_tunnel(context: &egui::Context) -> Option<PickedTunnel> {
+    context.data_mut(|data| data.remove_temp::<PickedTunnel>(picked_tunnel_id()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn summary(name: Option<&str>, description: Option<&str>) -> TunnelSummary {
-        TunnelSummary {
-            locator: "abc123.use".into(),
-            name: name.map(Into::into),
-            description: description.map(Into::into),
-            active: true,
-        }
-    }
-
     #[test]
-    fn profile_names_prefer_tunnel_name_then_description_then_locator_and_never_collide() {
-        let none = |_: &str| false;
-        assert_eq!(
-            unique_profile_id(&summary(Some("dev-box"), Some("x")), none),
-            "dev-box"
-        );
-        assert_eq!(
-            unique_profile_id(&summary(None, Some("laptop")), none),
-            "laptop"
-        );
-        assert_eq!(unique_profile_id(&summary(None, None), none), "abc123.use");
-        let taken = |id: &str| id == "dev-box" || id == "dev-box (2)";
-        assert_eq!(
-            unique_profile_id(&summary(Some("dev-box"), None), taken),
-            "dev-box (3)"
-        );
+    fn picked_tunnel_is_taken_exactly_once() {
+        let context = egui::Context::default();
+        assert!(take_picked_tunnel(&context).is_none());
+        context.data_mut(|data| {
+            data.insert_temp(
+                picked_tunnel_id(),
+                PickedTunnel {
+                    account: Some("acct".into()),
+                    locator: "abc123.use".into(),
+                },
+            )
+        });
+        let picked = take_picked_tunnel(&context).expect("picked");
+        assert_eq!(picked.locator, "abc123.use");
+        assert_eq!(picked.account.as_deref(), Some("acct"));
+        assert!(take_picked_tunnel(&context).is_none());
     }
 }
