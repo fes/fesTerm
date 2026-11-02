@@ -234,3 +234,61 @@ async fn setup_refuses_existing_state_directory_before_authentication() {
     assert!(!output.status.success());
     assert!(!fixture.root.join("commands").exists());
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn managed_setup_refuses_service_prerequisites_before_authentication_or_provisioning() {
+    for (mode, stage) in [
+        (0o775, "service.directory_permissions"),
+        (0o555, "service.directory_not_writable"),
+        (0o700, "service.systemd_user_manager_required"),
+    ] {
+        let root = std::env::current_dir()
+            .unwrap()
+            .join(format!(".managed-setup-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let fixture = Fixture { root };
+        fixture.normal_cli("synthetic-host-token-not-a-credential");
+        let config = fixture.root.join("config");
+        fs::create_dir(&config).unwrap();
+        fs::set_permissions(&config, fs::Permissions::from_mode(mode)).unwrap();
+        let state = fixture.root.join("state");
+        let output = timeout(
+            Duration::from_secs(5),
+            Command::new(env!("CARGO_BIN_EXE_festerm-tunnel-setup"))
+                .arg("--managed")
+                .arg("--devtunnel")
+                .arg(fixture.root.join("devtunnel"))
+                .arg("--state-dir")
+                .arg(&state)
+                .env("XDG_CONFIG_HOME", &config)
+                .env(
+                    "DBUS_SESSION_BUS_ADDRESS",
+                    format!("unix:path={}", fixture.root.join("absent-bus").display()),
+                )
+                .env("XDG_RUNTIME_DIR", &fixture.root)
+                .env("MOCK_ROOT", &fixture.root)
+                .stdin(Stdio::null())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains(stage));
+        if mode != 0o700 {
+            assert!(String::from_utf8_lossy(&output.stderr).contains(&config.display().to_string()));
+        }
+        assert!(!fixture.root.join("commands").exists());
+        assert!(!fixture.root.join("retained-shell").exists());
+        assert!(!state.join("installation.json").exists());
+        assert!(!state.join("host-identity.key").exists());
+        assert!(!config.join("systemd").exists());
+        assert_eq!(
+            fs::metadata(config).unwrap().permissions().mode() & 0o777,
+            mode
+        );
+    }
+}

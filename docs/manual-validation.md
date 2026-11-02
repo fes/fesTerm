@@ -89,8 +89,9 @@ original port-1313 service stayed unchanged. This is partial DT-01/02 scoped-tok
 evidence, not native OAuth, clean-machine installer or broad platform acceptance.
 The native flow passed GitHub `/user` verification but management lookup logged
 `stage=tunnel-lookup-http`, `http_status=401`; root cause is not established.
-Standalone helper release bundles/installers are implemented but unpublished.
-Before release, qualify native signing/notarization and clean-machine GitHub
+Standalone helper release bundles/installers were published in v0.13.0;
+broader native acceptance remains open. Before the next release, qualify native
+signing/notarization and clean-machine GitHub
 login/runtime/credential storage, foreground Ctrl+C/shell retention and
 existing-service preservation on all six platform/architecture combinations.
 Mock archive/process tests do not establish these native gates.
@@ -110,6 +111,48 @@ separate authentication. Reboot does not preserve the old daemon shell;
 auto-start must not silently create another. Protected signing, actual native
 credential storage, clean-machine setup and physical import usability remain
 native acceptance gates.
+
+The released v0.13.0 Linux ARM64 fixture on 2026-11-01 reached a retained
+`configured` journal but refused group-writable systemd-user directory
+ancestors. After explicit operator approval, only group-write on the three
+registration directories was removed; setup resumed the same tunnel and daemon
+generation, with the dedicated service enabled/running and the original service
+unchanged. Lingering was already enabled; no reboot was performed or qualified.
+Linux/macOS preflight and refusal diagnostics now have owned-directory coverage;
+a native Linux managed subprocess passed unsafe-directory, unwritable-directory
+and unavailable-manager refusal before CLI/auth/provisioning. Manager preflight
+also checks macOS's GUI launchd domain and Windows Scheduler connection without
+registering a probe task.
+Before release, test genuine standard/non-elevated admin Windows accounts,
+macOS GUI-login/LaunchAgent permissions and Linux user-systemd/Secret Service
+prerequisites, including unavailable/denied service managers. Default setup must
+never request elevation. Only explicit Linux dependency installation may invoke
+sudo for package-manager commands; test denied/missing sudo without proceeding
+to authentication. Native prerequisite installation remains distinct from the
+unelevated tunnel setup and from mock installer tests.
+
+On 2026-11-01, isolated Parallels Linux/Windows ARM64 clones used the existing
+ordinary lab accounts, not Parallels' default SYSTEM execution. Linux bridge
+and Unix-security package tests, strict Clippy, manager preflight and installer/
+bundle fixtures passed; published v0.13.0 helper entry points and the pinned
+official ARM64 CLI also ran without installing runtime packages or signing in.
+Windows-native parser/protected-DACL/download-refusal fixtures passed; two
+bundle symlink subcases explicitly skipped because the standard user lacks
+symbolic-link creation privilege. Real current-SID `InteractiveToken`/
+`LeastPrivilege` task registration and exact cleanup passed without a task run
+or saved password. Saved harness files were initially blocked by Restricted
+policy; the owner explicitly approved RemoteSigned for only the disposable
+test user, with no machine-policy or original-VM change.
+
+The published Windows setup helper exposed another release blocker:
+`festerm-tunnel-setup.exe` had no execution-level manifest and could not launch
+from the standard-user SSH context (interactive-window-station error), while
+a byte-identical renamed diagnostic copy ran `--help`. Signed sessiond/bridge
+entry points did run. The source now embeds explicit `asInvoker`, failing the
+build if embedding fails; the original-name native launch regression must pass
+before qualifying the correction. The diagnostic rename is not an installation
+workaround. None of these checks qualifies OAuth, interactive logon, reboot,
+other CPU architectures or an elevated-admin-account campaign.
 
 An explicitly gated macOS LaunchAgent smoke passed with an isolated dummy
 worker, including repeat/start/foreign-definition checks, service-stop child

@@ -321,6 +321,9 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         Ok(record) => record,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             refuse_orphaned_state(&state)?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            super::service_install::preflight_registration_directory()?;
+            super::service_install::preflight_service_manager()?;
             let runtime_root =
                 festerm_sessiond::runtime_root().map_err(|_| refused("setup.daemon_runtime"))?;
             daemon_namespace(&runtime_root)?;

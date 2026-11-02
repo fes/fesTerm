@@ -687,6 +687,29 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   exact-generation service startup and no reprovisioning on healthy repeat.
   Service-definition tests must cover argument/XML/specifier escaping,
   ownership collisions, user-only/non-elevated execution and bounded runners.
+  Service-directory preflight additionally covers group-writable and unwritable ancestors,
+  missing suffixes, symlink/path refusal and unchanged permissions. A Linux
+  managed-setup subprocess must refuse unsafe registration storage or an
+  unavailable user service manager before
+  invoking the CLI, creating cloud resources or starting a daemon. Registration
+  rechecks the same trust policy; existing configured/healthy reuse and stale
+  generation refusal remain unchanged.
+  Read-only manager preflight uses the user systemd manager, macOS GUI launchd
+  domain or Windows Scheduler connection, without a probe service or elevated
+  fallback. Installer fixtures cover early root refusal, explicitly scoped
+  package-manager sudo, unsupported macOS dependency requests and fail-closed
+  archive type inspection. Native standard-user/task-creation, GUI-login and
+  dependency-administrator policies remain separate release gates.
+  Windows-native fixtures use the real PowerShell parser, unelevated identity
+  and protected current-user ACLs, with only downloads/profile roots replaced;
+  failed downloads and malformed checksums must preserve their original error
+  and remove empty staging. Native manager reachability has an explicitly
+  gated read-only smoke distinct from registration and authentication.
+  Windows helper builds must embed an `asInvoker`/`uiAccess=false` manifest and
+  fail compilation if resource embedding fails. A native regression launches
+  the original setup executable filename without a UAC prompt; the manifest
+  prevents installer-detection elevation, not the existing elevated-token
+  refusal. No executable renaming or administrator fallback is permitted.
   `private_storage_ancestor_trust_adds_only_the_exact_servicing_sid` distinguishes
   the private-storage exception from unchanged save staging and rejects unrelated
   services/users. `staging_parent_rejects_a_dacl_that_allows_child_substitution`

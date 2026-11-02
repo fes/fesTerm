@@ -527,6 +527,13 @@ Explicit host installers are a separate operator-side setup action: a new
 private tunnel/marked virtual port and uniquely named local daemon, with an
 explicitly approved per-user service or controlled foreground mode. They
 never add a remote create RPC or run during GUI startup.
+Linux/macOS first setup preflights existing service-directory ancestors before
+sign-in/provisioning, with named permission failures and no implicit permission
+repair or directory creation. Registration rechecks the unchanged trust policy.
+All supported hosts also preflight access to the per-user service manager
+before cloud mutation, without registering a probe or elevating setup.
+Windows helpers explicitly embed `asInvoker` to prevent setup-filename
+installer-detection elevation; ordinary-user/token checks remain mandatory.
 Release artifacts/signing/clean-machine qualification remain prerequisites.
 The earlier macOS/Pi scoped-token GUI fixture passed independently. The former
 fesTerm-owned registration's HTTP 401 is historical failed evidence, not the

@@ -18,6 +18,7 @@ for arg in "$@"; do
         fail "$usage"
     fi
 done
+[[ $(id -u) != 0 ]] || fail 'Run as your normal user, not root.'
 if [[ -z $version ]]; then
     # The newest published release; its redirect names the tag without the API.
     command -v curl >/dev/null || fail 'Missing curl; install the runtime prerequisites first.'
@@ -27,7 +28,6 @@ if [[ -z $version ]]; then
     version=${latest##*/v}
     [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'No published fesTerm release was found; pass VERSION explicitly.'
 fi
-[[ $(id -u) != 0 ]] || fail 'Run as your normal user, not root.'
 case "$(uname -s):$(uname -m)" in
     Linux:x86_64)
         platform=linux; arch=x86_64; cli_kind=linux-x64
@@ -45,13 +45,17 @@ case "$(uname -s):$(uname -m)" in
         cli_sha=f2fd04e1746345c7a009c17d6091b85b80b2633e0565623f851a8a298e8b56eb ;;
     *) fail 'Supported hosts: glibc Linux and macOS, x86_64 or ARM64.' ;;
 esac
+if "$install_dependencies" && [[ $platform != linux ]]; then
+    fail '--install-dependencies is Linux-only; macOS setup does not use sudo.'
+fi
 if [[ $platform == linux ]]; then cli_file_sha=$cli_sha; fi
 if [[ $platform == linux ]]; then
     libc=$(getconf GNU_LIBC_VERSION) || fail 'glibc Linux is required; musl/Alpine is unsupported.'
     awk -v v="${libc#glibc }" 'BEGIN {split(v,a,"."); exit !(a[1]>2 || (a[1]==2 && a[2]>=39))}' ||
         fail 'The helper release requires glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+).'
     if "$install_dependencies"; then
-        printf 'Installing runtime prerequisites with sudo; no compiler or service is installed.\n'
+        command -v sudo >/dev/null || fail 'Dependency installation requires sudo; have an administrator install prerequisites, then rerun as your normal user.'
+        printf 'Installing runtime packages with sudo; tunnel setup remains unelevated.\n'
         if command -v apt-get >/dev/null; then
             sudo apt-get update
             icu=$(apt-cache pkgnames | grep -E '^libicu[0-9]+$' | sort -V | tail -n 1)
@@ -76,7 +80,7 @@ else
 fi
 stage=$(mktemp -d "${TMPDIR:-/tmp}/festerm-tunnel.XXXXXXXX")
 cleanup() {
-    rm -f -- "$stage/bundle" "$stage/checksum" "$stage/cli" "$stage/expected" "$stage/actual"
+    rm -f -- "$stage/bundle" "$stage/checksum" "$stage/cli" "$stage/expected" "$stage/actual" "$stage/types"
     rmdir -- "$stage"
     if [[ -n ${candidate:-} && -d $candidate && ! -L $candidate ]]; then
         rm -f -- "$candidate/LICENSE" "$candidate/THIRD_PARTY_NOTICES.txt" "$candidate/VERSION" \
@@ -103,7 +107,8 @@ printf '%s\n' LICENSE THIRD_PARTY_NOTICES.txt VERSION festerm-sessiond festerm-t
     LC_ALL=C sort > "$stage/expected"
 tar -tzf "$stage/bundle" | LC_ALL=C sort > "$stage/actual"
 cmp -s "$stage/expected" "$stage/actual" || fail 'Helper archive has unexpected, duplicated or missing entries.'
-if tar -tvzf "$stage/bundle" | grep -qv '^-'; then
+tar -tvzf "$stage/bundle" > "$stage/types" || fail 'Could not validate helper archive file types.'
+if grep -qv '^-' "$stage/types"; then
     fail 'Helper archive contains a non-regular file.'
 fi
 root="$HOME/.local/share/festerm-tunnels"
