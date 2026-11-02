@@ -22,6 +22,7 @@ BUNDLE_ID = "org.festerm.mobile-spike"
 # Placeholder team prefix for the ad-hoc Simulator build; a device build uses its real team ID.
 KEYCHAIN_TEAM_PREFIX = "FESTERM000"
 MINIMUM_IOS = "15.0"
+SCENE_DELEGATE_CLASS = "FesTermSceneDelegate"
 FORBIDDEN = {"festerm", "festerm-pty", "festerm-sessiond", "festerm-serial", "cargo-packager-updater"}
 DESKTOP_SECRET_BACKENDS = {
     "windows-native-keyring-store", "zbus-secret-service-keyring-store",
@@ -86,6 +87,15 @@ def bundle_info(live_ssh: bool = False) -> dict:
         "LSSupportsOpeningDocumentsInPlace": True,
         "UIDeviceFamily": [1, 2],
         "UILaunchScreen": {},
+        # iOS 27 terminates apps that do not adopt the UIScene lifecycle; the
+        # delegate class is defined in crates/festerm-ios-window.
+        "UIApplicationSceneManifest": {
+            "UIApplicationSupportsMultipleScenes": False,
+            "UISceneConfigurations": {"UIWindowSceneSessionRoleApplication": [{
+                "UISceneConfigurationName": "Default Configuration",
+                "UISceneDelegateClassName": SCENE_DELEGATE_CLASS,
+            }]},
+        },
         "UISupportedInterfaceOrientations": [
             "UIInterfaceOrientationPortrait",
             "UIInterfaceOrientationLandscapeLeft",

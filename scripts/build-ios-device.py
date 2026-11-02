@@ -56,7 +56,7 @@ def development_entitlements(profile: dict, bundle_id: str, team: str,
     expiry = expiry.replace(tzinfo=timezone.utc) if expiry.tzinfo is None else expiry
     if expiry <= (now or datetime.now(timezone.utc)):
         raise ValueError("Provisioning profile has expired")
-    if profile.get("Platform") != ["iOS"]:
+    if "iOS" not in (profile.get("Platform") or []):
         raise ValueError("An iOS development profile is required")
     if profile.get("TeamIdentifier") != [team]:
         raise ValueError("Provisioning profile belongs to another team")

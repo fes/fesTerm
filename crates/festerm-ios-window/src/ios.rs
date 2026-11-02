@@ -1,15 +1,18 @@
 use block2::RcBlock;
-use objc2::{rc::Retained, runtime::ProtocolObject};
+use objc2::{
+    define_class, rc::Retained, runtime::ProtocolObject, ClassType, MainThreadOnly, Message,
+};
 use objc2_foundation::{
-    MainThreadMarker, NSDictionary, NSNotification, NSNotificationCenter, NSObjectProtocol,
-    NSString, NSURL,
+    MainThreadMarker, NSDictionary, NSNotification, NSNotificationCenter, NSObject,
+    NSObjectProtocol, NSString, NSURL,
 };
 use objc2_ui_kit::{
     UIApplication, UIKeyboardDidChangeFrameNotification, UIKeyboardWillChangeFrameNotification,
-    UIPasteboard, UIView,
+    UIPasteboard, UIScene, UISceneConnectionOptions, UISceneDelegate, UISceneSession, UIView,
+    UIWindowScene, UIWindowSceneDelegate,
 };
 use raw_window_handle::{RawWindowHandle, WindowHandle};
-use std::{ptr::NonNull, sync::Arc};
+use std::{cell::Cell, ptr::NonNull, sync::Arc};
 
 /// Main-thread-only: owns a retain on the host view and removes observers on
 /// drop. Notification callbacks capture only a Send + Sync repaint closure.
@@ -121,5 +124,77 @@ pub fn open_url(url: &str) -> bool {
     unsafe {
         application.openURL_options_completionHandler(&url, &NSDictionary::new(), None);
     }
+    true
+}
+
+/// Class name referenced by `UISceneDelegateClassName` in the iOS Info.plist.
+pub const SCENE_DELEGATE_CLASS: &str = "FesTermSceneDelegate";
+
+define_class!(
+    /// Minimal UIScene adoption (required from iOS 27). winit 0.30 creates its
+    /// window in `didFinishLaunching`, before the scene connects, so the
+    /// delegate attaches any scene-less window when the scene arrives.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "FesTermSceneDelegate"]
+    struct SceneDelegate;
+
+    unsafe impl NSObjectProtocol for SceneDelegate {}
+
+    unsafe impl UISceneDelegate for SceneDelegate {
+        #[unsafe(method(scene:willConnectToSession:options:))]
+        fn scene_will_connect(
+            &self,
+            scene: &UIScene,
+            _session: &UISceneSession,
+            _options: &UISceneConnectionOptions,
+        ) {
+            let mtm = MainThreadMarker::from(self);
+            if let Some(window_scene) = scene.downcast_ref::<UIWindowScene>() {
+                CONNECTED_SCENE.set(Some(window_scene.retain()));
+                attach_windows(mtm, window_scene);
+            }
+        }
+    }
+
+    unsafe impl UIWindowSceneDelegate for SceneDelegate {}
+);
+
+thread_local! {
+    static CONNECTED_SCENE: Cell<Option<Retained<UIWindowScene>>> = const { Cell::new(None) };
+}
+
+/// Attaches windows created after the scene connected (winit's window usually
+/// is) to it. Idempotent; main thread only.
+pub fn attach_scene_windows() {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    if let Some(scene) = CONNECTED_SCENE.take() {
+        attach_windows(mtm, &scene);
+        CONNECTED_SCENE.set(Some(scene));
+    }
+}
+
+#[allow(deprecated)] // `UIApplication.windows` is the only list of scene-less windows.
+fn attach_windows(mtm: MainThreadMarker, scene: &UIWindowScene) {
+    let windows = UIApplication::sharedApplication(mtm).windows();
+    eprintln!(
+        "festerm-mobile: scene connected, {} window(s) present",
+        windows.count()
+    );
+    for index in 0..windows.count() {
+        let window = windows.objectAtIndex(index);
+        if window.windowScene().is_none() {
+            window.setWindowScene(Some(scene));
+            eprintln!("festerm-mobile: attached a scene-less window to the scene");
+        }
+    }
+}
+
+/// Registers the scene delegate class with the Objective-C runtime. Call
+/// before the event loop starts `UIApplicationMain`; main thread only.
+pub fn register_scene_delegate() -> bool {
+    let _ = SceneDelegate::class();
     true
 }

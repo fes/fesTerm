@@ -58,6 +58,7 @@ impl ApplicationHandler<eframe::UserEvent> for MobileHost<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.update_lifecycle(Lifecycle::resume);
         self.app.resumed(event_loop);
+        festerm_ios_window::attach_scene_windows();
     }
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
@@ -149,6 +150,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::set_logger(&STARTUP_LOGGER).expect("single mobile logger");
     log::set_max_level(log::LevelFilter::Warn);
     eprintln!("festerm-mobile: starting native host");
+    // iOS 27 terminates apps without a UIScene delegate; the class must exist
+    // before UIApplicationMain reads the Info.plist scene manifest.
+    festerm_ios_window::register_scene_delegate();
     let event_loop = EventLoop::<eframe::UserEvent>::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let lifecycle = Rc::new(Cell::new(Lifecycle::default()));
