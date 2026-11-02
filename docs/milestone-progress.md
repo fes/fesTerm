@@ -144,6 +144,17 @@ through those paths, ordinary saves and buffer reuse. Replacement-parent
 identity is checked before opening a child, while legitimate regular-file
 replacement and dirty-buffer conflict handling remain supported.
 
+## v0.13.2: Dev Tunnel auto-reconnect, takeover and host upgrade
+
+Dev Tunnel tabs on desktop and iOS reconnect automatically when the app or
+tab becomes active again (per-profile "Reconnect automatically", on by
+default); an automatic reconnect only reclaims its own stale attachment. The
+bridge now serves relay clients concurrently so a second device can take
+over, tunnels can be deleted from the desktop picker and iOS editor, iOS
+gains Small/Normal/Large terminal text and relay TLS fixes, and existing
+hosts can move to the new helpers with `install-dev-tunnel --upgrade`
+(`-Upgrade` on Windows) while keeping the tunnel, host key and live shell.
+
 ## v0.13.1: Dev Tunnel picker fills the form and iOS 27 launch fix
 
 Picking a tunnel from "Pick from my tunnels" now fills the Tunnel name or id
