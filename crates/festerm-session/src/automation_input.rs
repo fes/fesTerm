@@ -167,6 +167,8 @@ impl ReservedAutomationInput {
         {
             return Err(CommitAutomationInputError::ClosedOrExpired);
         }
+        // Check after taking the slot so descheduling cannot start a late
+        // authority callback without first proving the claim was timely.
         if now() >= self.slot.deadline {
             self.slot.cancel_open();
             return Err(CommitAutomationInputError::ClosedOrExpired);
