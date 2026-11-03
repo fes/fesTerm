@@ -1,5 +1,31 @@
 # Milestone Progress Narrative
 
+## Windows Dev Tunnel shell exited before its worker started
+
+After task registration was repaired, a Windows install reached
+`service.worker_not_running`. The task had launched correctly: its private log
+showed a permanent refusal because the exact daemon generation was already
+gone. The daemon had cleaned up its registry and lease, pointing to an orderly
+exit rather than proving the nearby job-breakaway warning was responsible.
+
+Isolated launches with the published helper reproduced the actual difference:
+the managed installer built `System32/cmd.exe`, and CMD immediately exited.
+The native `System32\cmd.exe` spelling stayed interactive under the same job
+restriction. Rather than retaining a separate CMD default, both Windows setup
+paths now leave shell selection to the daemon's existing local-shell discovery:
+prefer `pwsh.exe` from the user's Store alias, PATH or standard installation
+directories, then fall back to COMSPEC or Windows PowerShell. No PowerShell
+installation is required and shell profiles remain enabled.
+
+The daemon now accepts a working directory with its default shell, preserving
+home-directory startup and the discovered shell's arguments; shell-specific
+arguments still require an explicit shell. Deterministic regressions cover
+both launch subcommands and existing PowerShell discovery/fallback policy.
+An opt-in native regression starts the default shell in an isolated registry
+and verifies actual interactive output and the requested working directory.
+No failed installation is silently replaced or retargeted, and survival after
+the containing job closes remains a separate Windows lifetime limitation.
+
 ## Verify the Dev Tunnel installer before execution
 
 The setup panel could display the exact embedded installer for review, but its
