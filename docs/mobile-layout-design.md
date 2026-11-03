@@ -38,22 +38,28 @@ These values correctly select Compact on the tested iPhone 17 portrait surface
 and keep both stacked Files panes visible. They remain provisional until iPad,
 rotation, Split View, Dynamic Type and physical-device evidence is recorded.
 
-The compact header shows the current surface and a short offline/SSH indicator,
-with Connect/Cancel and More. More contains demo reset and on-demand
-diagnostics. Experiment notices, counters and redundant
+In the terminal, the header holds the session chips between Back and More:
+each chip shows the tab's name and a connection dot (green connected, amber
+connecting, red disconnected, grey offline demo), ringed while a background tab
+has unseen output. The chips scroll sideways, with `All N` and `+` pinned on
+the right. There is no title, subtitle or separate status row. More holds the
+connection status text, Files (SSH tabs), Force redraw, Disconnect, demo reset,
+Close session and on-demand diagnostics. Files and Markdown keep a
+title/subtitle header. Experiment notices, counters and redundant
 explanatory strips do not occupy the terminal screen. Switching preserves each
 surface's in-memory state and terminal keyboard focus is requested only while
-Terminal is active. Files and Markdown open from the terminal's Files button and from file rows.
+Terminal is active. Files and Markdown open from More → Files and from file rows.
 
 ## Phone portrait: terminal layout
 
-- A minimal top chip strip (current session/tab identity), collapsing to a
-  detail sheet on tap rather than persistently consuming vertical space —
+- Session chips live in the header row rather than a separate strip, so they
+  consume no extra vertical space; `All N` opens the detail sheet —
   the mobile analog of ADR 0022's focused-chip-first single-row chrome
   allocation, not a new chrome concept.
 - The terminal view fills all remaining space above the input region.
 - The native system keyboard is requested persistently while the terminal
-  surface is active, including after touching the extra-keys row or scrolling.
+  surface is active and the built-in keyboard is selected, including after
+  touching the extra-keys row or scrolling.
   The terminal sits above the docked Esc/Tab/Ctrl/Alt/Shift row and keyboard.
   Ctrl, Alt and Shift are one-shot latches. Ctrl+Shift+C copies the selection
   locally; Ctrl+Shift+P pastes from the iOS clipboard, not a remote control chord.
@@ -64,6 +70,105 @@ Terminal is active. Files and Markdown open from the terminal's Files button and
   UIKit owns hardware/floating keyboard presentation. With no docked keyboard,
   the terminal reclaims that region while the terminal-key row stays available.
   Never reserve a guessed device-specific keyboard height.
+
+### Optional terminal-user keyboards
+
+Settings → Default keyboard selects **Built-in keyboard** (the unchanged
+initial default), **Terminal: Hold symbols**, or **Terminal: Shell row**.
+The setting is saved for app startup. The globe **Switch keyboard** key, in
+both the terminal keyboards' utility strip and the built-in keyboard's
+accessory row, flips between the built-in keyboard and the most recent terminal
+keyboard (the default if it is a terminal keyboard, otherwise Hold symbols).
+The More menu lists all three directly under a Keyboard heading; it is not a
+hover submenu, which touch screens cannot open reliably. Either pick is sticky:
+it also becomes the saved startup keyboard shown in Settings. There is no separate underlined ABC switch key: ABC on the
+symbols layer only returns to letters. The plain keyboard icon hides the
+keyboard, without an up/down-arrow adornment. When hidden, the accessory row
+retains Show keyboard.
+Forms and authentication
+continue to use the native keyboard regardless of the terminal preference.
+
+Both terminal layouts follow the owner's 2026-11-02 keyboard bundle: a grouped
+Esc/Tab/Ctrl/Alt/Shift utility strip with Left/Down/Up/Right arrows, permanent
+number row, QWERTY with an inset middle row, synchronized lower Shift and
+Backspace, and a symbols/ABC layer, comma, Space, period and Return. Shell row
+adds directly tappable `/ \ - _ ' " | & $ ~`. Hold symbols instead shows those
+and other shell characters as letter-key hints; a 400 ms stationary hold emits
+the alternate once, never the base character on release. Shift changes letters
+and digits, not explicit symbols. Ctrl/Alt/Shift remain one-shot and the
+existing local Ctrl+Shift+C/P clipboard shortcuts are unchanged.
+
+Intentional reconciliations with the mockup: the existing single-row header
+stays; switching (globe) and hiding live in the pinned utility strip, leaving
+the bottom row for Extended keys (⊞), symbols/letters, comma, a centered Space,
+period and Return. Space occupies 48% of the usable bottom-row width, with
+equal left/right flanks. ⊞ opens the Extended keys panel (navigation, F-keys,
+symbols); its ABC control returns to the selected terminal keyboard. More also exposes Paste and Extended keys;
+closing the extended panel returns to the selected keyboard. Utility keys use
+the typing-row height rather than the mockup's shorter 35 px targets. Letter
+keys use proportional text, numbers/symbols monospace, and modifier/Return
+selection uses the bundle's light-blue fill. Every app-owned key — terminal
+keyboard keys, modifiers, arrows, Backspace, globe/hide, the built-in
+keyboard's accessory row and the Extended keys panel — shows a larger callout
+above it while pressed; after a hold alternate fires, the callout shows that
+alternate. The callout does not capture input and disappears on release or
+cancellation. The mobile app remains dark-only;
+the bundle's light appearance is not a new app-theme feature.
+
+Keyboard height is computed from the space available before the bottom panel
+is laid out, not its cached previous height. Normal typing keys are 44 points
+with 6-point gaps; short views reduce them to 32 points with 4-point gaps.
+The middle typing area scrolls only when necessary; utility and bottom controls
+stay pinned and the terminal retains space above. Wide layouts cap the keys
+at 720 points. Ten keys across a narrow phone cannot all be 44 points wide:
+native typing comfort, VoiceOver and Dynamic Type remain acceptance gates.
+
+Held keys repeat like a hardware keyboard: input keys emit once on press, then
+repeat after 500 ms every 80 ms, with at most one repeat per frame. This covers
+characters without a hold alternate, Space, Backspace, Esc, Tab, arrows and the
+Extended keys (navigation, F-keys, symbols). Exceptions: Return and Insert act
+once on release so a long press never reruns a command; Hold-symbols letters
+keep hold-for-alternate; Ctrl/Alt/Shift, globe, hide, Paste and Extended act
+once on tap. A key pressed while a one-shot Ctrl/Alt/Shift is latched
+fires once without repeating, so repeats never arrive without that modifier. Leaving a held key, cancelling a
+touch, a second contact, focus/geometry/lifecycle changes, menus, forms, lock,
+tab/workspace changes and keyboard switches cancel pending holds/repeats.
+No key is queued for replay after input refusal or resume.
+
+Voice input remains the built-in keyboard's microphone (where iOS enables it):
+switch with the globe key, dictate, then switch back. SSH/Dev Tunnel carries
+the resulting text, not iPhone microphone audio. Triggering voice mode in a
+remote Copilot process cannot capture the phone microphone. Hold-Space dictation
+would require an explicit local speech feature; no microphone permissions,
+speech services or private dictation APIs are added by these keyboards.
+
+Custom key clicks use UIKit's `UIInputViewAudioFeedback` / `playInputClick`,
+which honors the user's Keyboard Feedback sound setting. iOS does not expose
+the corresponding keyboard-haptics preference through a supported public API;
+the app does not force vibration or read private preferences. Physical-device
+audio/settings qualification remains separate from portable tests.
+
+The UIKit adapter selects exactly one of System, Terminal or Hidden presentation.
+Terminal explicitly resigns the native receiver before acquiring the custom
+responder and reloads its empty input view on that transition. Hidden dismisses
+both receivers, including while the extended-key panel is open; System releases
+the custom receiver before restoring native input. Calls are idempotent while
+the desired responder already owns focus, avoiding idle-frame reload/flicker.
+The zero-height-input-view responder is used only while the
+terminal is eligible for custom-keyboard input. Hardware text/deletion forwards
+to winit's existing UIKeyInput receiver; it owns no text buffer. Native IME
+requests, lock and input readiness stay independently gated. Returning to the
+built-in keyboard or a form relinquishes this responder. Hardware/IME handoff,
+keyboard animations, physical touch, accessibility and native clipboard prompts
+remain manual checks; portable tests and compilation do not establish them.
+
+On 2026-11-03 an isolated iPhone 17 / iOS 26.5 Simulator UI check observed the
+real native keyboard, switched to both terminal layouts with native letter keys
+absent, admitted exactly one byte from a real synthesized QWERTY touch, restored
+the native keyboard, and opened Extended keys without native letter keys
+underneath. Attributed phone/tablet gallery states include a held-key callout.
+This does not qualify the physical phone's OS, hardware keyboard, microphone,
+audio/haptic settings, accessibility or finger comfort.
 
 ## Owner-provided product mock-ups
 
@@ -114,8 +219,9 @@ the core key encoder, and Ctrl/Alt/Shift apply to the next key.
 The owner's updated navigation order is Home / Up / End / PgUp, then
 Left / Down / Right / PgDn, then Insert / Delete / Shift+Tab / Return.
 More → Force redraw reuses the shared view-local redraw operation without
-terminal input or state reset. Native keyboard symbol-page controls remain
-owned by UIKit; the app's separate Symbols tab is not a replacement for them.
+terminal input or state reset. Native keyboard symbol-page controls remain owned by UIKit. The optional
+terminal-user keyboards have their own explicit symbols layer; the extended
+panel's Symbols tab remains available in either mode.
 
 ## Touch navigation and Termius conventions
 
@@ -280,7 +386,7 @@ sheet (Keep both / Skip / Replace, optionally remembered). The This iPhone side
 is the app's `Documents` folder, shown in the Files app. Below 700 pt the panes
 stack; at tablet widths they sit side by side (Remote left, This device right)
 with the Upload / Download row and Transfers row beneath, in a column capped at
-1100 pt. The terminal's session-chip row, key row and extended-keys panel
+1100 pt. The terminal's key row and extended-keys panel
 center in a 720 / 640 pt column on wide screens while their bar fills still
 span the full width.
 

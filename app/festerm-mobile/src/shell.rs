@@ -3,6 +3,7 @@
 
 use super::model::{Profile, Reattachable, SurfaceState, SurfaceSummary};
 use super::profiles::TrustedHostRow;
+use super::terminal_keyboard::KeyboardKind;
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
     self, bottom_sheet, button, card, edit_zone_clicked, footnote, labelled, list_row, paint_fit,
@@ -48,6 +49,7 @@ pub struct ShellData<'a> {
     /// App-lock settings, when the host has a lock.
     pub lock: Option<super::app_lock::LockView>,
     pub text_size: TextSize,
+    pub default_keyboard: KeyboardKind,
 }
 
 /// Terminal text size preset. Pinch-zoom still adjusts a session freely; this
@@ -107,6 +109,7 @@ pub enum ShellAction {
     OpenProfilesTab,
     Lock(super::app_lock::LockAction),
     SetTextSize(TextSize),
+    SetDefaultKeyboard(KeyboardKind),
 }
 
 fn state_dot(state: SurfaceState) -> Dot {
@@ -410,6 +413,26 @@ fn settings_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAct
     footnote(
         ui,
         "Text size for terminals. Pinch to zoom a single session.",
+    );
+    section_header(ui, "Default keyboard", None, false);
+    card(ui, |ui| {
+        for (index, kind) in KeyboardKind::ALL.into_iter().enumerate() {
+            let mut row = RowSpec::new(kind.label());
+            row.selected = data.default_keyboard == kind;
+            row.trailing = if row.selected {
+                Trailing::Check
+            } else {
+                Trailing::None
+            };
+            row.divider = index > 0;
+            if list_row(ui, &row).clicked() {
+                actions.push(ShellAction::SetDefaultKeyboard(kind));
+            }
+        }
+    });
+    footnote(
+        ui,
+        "Used when fesTerm starts. More > Keyboard switches while typing without changing this default.",
     );
     section_header(ui, "Dev Tunnel hosts", None, false);
     card(ui, |ui| {

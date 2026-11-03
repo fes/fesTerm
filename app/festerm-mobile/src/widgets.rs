@@ -131,6 +131,7 @@ pub enum Dot {
     Connected,
     Idle,
     Warning,
+    Danger,
 }
 
 impl Dot {
@@ -139,6 +140,7 @@ impl Dot {
             Self::Connected => color::SUCCESS,
             Self::Idle => color::TEXT_FAINT,
             Self::Warning => color::WARNING,
+            Self::Danger => color::DANGER,
         }
     }
 }
@@ -604,14 +606,14 @@ pub fn segmented(
     changed
 }
 
-/// Session chip: optional icon, label and an optional trailing count badge.
-pub fn chip(ui: &mut Ui, glyph: Option<Icon>, label: &str, active: bool) -> Response {
+/// Header session chip: connection dot (a ring around it while a background
+/// tab has unseen output, as on desktop) and the tab's name.
+pub fn session_chip(ui: &mut Ui, label: &str, dot: Dot, unread: bool, active: bool) -> Response {
     let font = type_scale::font(type_scale::CAPTION + 0.5);
     let galley = ui
         .painter()
-        .layout_no_wrap(label.to_owned(), font, color::TEXT);
-    let icon_width = if glyph.is_some() { 26.0 } else { 0.0 };
-    let width = (galley.size().x + icon_width + 28.0).clamp(56.0, 120.0);
+        .layout_no_wrap(label.to_owned(), font.clone(), color::TEXT);
+    let width = (galley.size().x + 40.0).clamp(56.0, 150.0);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, space::CHIP_HEIGHT), Sense::CLICK);
     let painter = ui.painter();
@@ -635,30 +637,32 @@ pub fn chip(ui: &mut Ui, glyph: Option<Icon>, label: &str, active: bool) -> Resp
         },
         StrokeKind::Inside,
     );
-    let mut x = rect.left() + 14.0;
-    if let Some(glyph) = glyph {
-        icon::paint(
-            painter,
-            glyph,
-            Rect::from_center_size(egui::pos2(x + 8.0, rect.center().y), egui::vec2(18.0, 18.0)),
-            if active {
-                color::ACCENT_TEXT
-            } else {
-                color::TEXT_MUTED
-            },
-        );
-        x += 26.0;
+    let center = egui::pos2(rect.left() + 16.0, rect.center().y);
+    if unread {
+        painter.circle_stroke(center, 4.5, Stroke::new(1.0, dot.color()));
+        painter.circle_filled(center, 2.5, dot.color());
+    } else {
+        painter.circle_filled(center, 4.0, dot.color());
     }
     paint_fit(
         painter,
-        egui::pos2(x, rect.center().y),
+        egui::pos2(rect.left() + 28.0, rect.center().y),
         Align2::LEFT_CENTER,
         label,
-        type_scale::font(type_scale::CAPTION + 0.5),
-        color::TEXT,
-        rect.right() - x - 10.0,
+        font,
+        if active {
+            color::TEXT
+        } else {
+            color::TEXT_MUTED
+        },
+        rect.right() - rect.left() - 38.0,
     );
-    labelled(response, label, true)
+    let name = if unread {
+        format!("{label}, new output")
+    } else {
+        label.to_owned()
+    };
+    labelled(response, &name, true)
 }
 
 /// "All 4" counter chip and the "+" affordance share this compact shape.

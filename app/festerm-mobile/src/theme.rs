@@ -60,7 +60,7 @@ pub mod space {
     pub const BUTTON_HEIGHT: f32 = 48.0;
     pub const FIELD_HEIGHT: f32 = 48.0;
     pub const TAB_BAR_HEIGHT: f32 = 56.0;
-    pub const CHIP_HEIGHT: f32 = 40.0;
+    pub const CHIP_HEIGHT: f32 = 34.0;
     pub const KEY_HEIGHT: f32 = 40.0;
 }
 

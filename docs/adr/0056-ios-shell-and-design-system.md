@@ -25,6 +25,19 @@ sheets.
   including modifiers; Ctrl/Alt remain one-shot.
 - The live SSH flow keeps its policies (explicit host trust, password retry,
   no replay); only its presentation moved into shared sheets.
+- The optional terminal-user keyboards follow the owner-supplied 2026-11-02
+  designs, with Hold symbols and Shell row choices. Live switching to/from
+  the built-in keyboard is always available and the latest pick becomes the
+  saved startup default. Shared
+  one-shot modifiers, local clipboard shortcuts, hide/show, Paste and extended
+  keys remain available; layout/control reconciliations are documented in
+  `docs/mobile-layout-design.md#optional-terminal-user-keyboards`.
+  Following device feedback, switching uses a globe key (and an inline More
+  list) rather than an underlined ABC key; the bottom row has a centered,
+  expanded Space bar. Every app-owned key shows an enlarged press callout and
+  input keys repeat like a hardware keyboard (Return excepted). Hide/show uses
+  a plain keyboard icon in the utility strip. Native dictation remains available by switching
+  to the built-in keyboard; no remote microphone forwarding is implied.
 
 ## Consequences
 
@@ -40,3 +53,12 @@ acceptance evidence.
 `navigation_and_function_keys_use_xterm_sequences_with_modifiers` cover the
 shell, one-shot modifiers and new encodings; the loopback tests cover the
 unchanged live SSH policy. Headless captures are non-native review images.
+
+The optional keyboard slice maps to `MOB-02` in `docs/gui-action-graph.md`
+and `validation/traceability.json`. Tests distinguish saved defaults from live
+selection, exercise hold/repeat cancellation and bounded scheduling, measure
+pinned controls across short/narrow layouts, and observe actual backend bytes
+for characters, Shift/Ctrl, navigation and function keys. Native IME/hardware
+handoff, physical typing and accessibility remain in the manual MOB-02 inventory.
+The feedback revision adds press/hold preview assertions and checks Space's
+width/centering alongside the real More-menu switching path.

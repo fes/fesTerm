@@ -1,18 +1,26 @@
 use block2::RcBlock;
 use objc2::{
-    define_class, rc::Retained, runtime::ProtocolObject, ClassType, MainThreadOnly, Message,
+    define_class, msg_send,
+    rc::{Retained, Weak},
+    runtime::ProtocolObject,
+    sel, ClassType, DeclaredClass, MainThreadOnly, Message,
 };
 use objc2_foundation::{
     MainThreadMarker, NSDictionary, NSNotification, NSNotificationCenter, NSObject,
     NSObjectProtocol, NSString, NSURL,
 };
 use objc2_ui_kit::{
-    UIApplication, UIKeyboardDidChangeFrameNotification, UIKeyboardWillChangeFrameNotification,
-    UIPasteboard, UIScene, UISceneConnectionOptions, UISceneDelegate, UISceneSession, UIView,
-    UIWindow, UIWindowScene, UIWindowSceneDelegate,
+    UIApplication, UIDevice, UIInputViewAudioFeedback, UIKeyInput,
+    UIKeyboardDidChangeFrameNotification, UIKeyboardWillChangeFrameNotification, UIPasteboard,
+    UIScene, UISceneConnectionOptions, UISceneDelegate, UISceneSession,
+    UITextAutocapitalizationType, UITextAutocorrectionType, UITextInputTraits,
+    UITextSmartDashesType, UITextSmartQuotesType, UITextSpellCheckingType, UIView, UIWindow,
+    UIWindowScene, UIWindowSceneDelegate,
 };
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 use std::{cell::Cell, ptr::NonNull, sync::Arc};
+
+use crate::KeyboardMode;
 
 /// Main-thread-only: owns a retain on the host view and removes observers on
 /// drop. Notification callbacks capture only a Send + Sync repaint closure.
@@ -20,14 +28,103 @@ pub struct KeyboardBridge {
     view: Retained<UIView>,
     center: Retained<NSNotificationCenter>,
     observers: Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>,
+    terminal_responder: Retained<TerminalResponder>,
 }
+
+struct TerminalResponderIvars {
+    target: Weak<UIView>,
+    empty_input: Retained<TerminalInputView>,
+}
+
+define_class!(
+    #[unsafe(super(UIView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "FesTermTerminalInputView"]
+    struct TerminalInputView;
+
+    unsafe impl NSObjectProtocol for TerminalInputView {}
+
+    unsafe impl UIInputViewAudioFeedback for TerminalInputView {
+        #[unsafe(method(enableInputClicksWhenVisible))]
+        fn enable_input_clicks_when_visible(&self) -> bool {
+            true
+        }
+    }
+);
+
+define_class!(
+    /// Keep UIKit's hardware text delivery without showing a second software
+    /// keyboard. Forward to winit's existing UIKeyInput rather than storing text.
+    #[unsafe(super(UIView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "FesTermTerminalKeyboardResponder"]
+    #[ivars = TerminalResponderIvars]
+    struct TerminalResponder;
+
+    unsafe impl NSObjectProtocol for TerminalResponder {}
+
+    impl TerminalResponder {
+        #[unsafe(method(canBecomeFirstResponder))]
+        fn can_become_first_responder(&self) -> bool { true }
+
+        #[unsafe(method(inputView))]
+        fn input_view(&self) -> &UIView {
+            &self.ivars().empty_input
+        }
+    }
+
+    unsafe impl UITextInputTraits for TerminalResponder {
+        #[unsafe(method(autocapitalizationType))]
+        fn autocapitalization_type(&self) -> UITextAutocapitalizationType {
+            UITextAutocapitalizationType::None
+        }
+        #[unsafe(method(autocorrectionType))]
+        fn autocorrection_type(&self) -> UITextAutocorrectionType {
+            UITextAutocorrectionType::No
+        }
+        #[unsafe(method(spellCheckingType))]
+        fn spell_checking_type(&self) -> UITextSpellCheckingType {
+            UITextSpellCheckingType::No
+        }
+        #[unsafe(method(smartQuotesType))]
+        fn smart_quotes_type(&self) -> UITextSmartQuotesType {
+            UITextSmartQuotesType::No
+        }
+        #[unsafe(method(smartDashesType))]
+        fn smart_dashes_type(&self) -> UITextSmartDashesType {
+            UITextSmartDashesType::No
+        }
+    }
+
+    unsafe impl UIKeyInput for TerminalResponder {
+        #[unsafe(method(hasText))]
+        fn has_text(&self) -> bool { true }
+
+        #[unsafe(method(insertText:))]
+        fn insert_text(&self, text: &NSString) {
+            if let Some(target) = self.ivars().target.load() {
+                // SAFETY: selectors are checked when the bridge is constructed;
+                // the retained winit view is accessed only on the main thread.
+                let _: () = unsafe { msg_send![&*target, insertText: text] };
+            }
+        }
+
+        #[unsafe(method(deleteBackward))]
+        fn delete_backward(&self) {
+            if let Some(target) = self.ivars().target.load() {
+                // SAFETY: same checked winit UIKeyInput receiver as insertText:.
+                let _: () = unsafe { msg_send![&*target, deleteBackward] };
+            }
+        }
+    }
+);
 
 impl KeyboardBridge {
     pub fn new(
         window: WindowHandle<'_>,
         repaint: impl Fn() + Send + Sync + 'static,
     ) -> Option<Self> {
-        let _main_thread = MainThreadMarker::new()?;
+        let main_thread = MainThreadMarker::new()?;
         let RawWindowHandle::UiKit(handle) = window.as_raw() else {
             return None;
         };
@@ -35,6 +132,23 @@ impl KeyboardBridge {
         // this call; retain it before the handle borrow ends. UIKit access
         // is confined to this main-thread-only type (UIView is !Send/!Sync).
         let view = unsafe { Retained::retain(handle.ui_view.as_ptr().cast::<UIView>()) }?;
+        if !view.respondsToSelector(sel!(insertText:))
+            || !view.respondsToSelector(sel!(deleteBackward))
+        {
+            eprintln!("festerm-mobile: host view has no keyboard input receiver");
+            return None;
+        }
+        let input = TerminalInputView::alloc(main_thread).set_ivars(());
+        // SAFETY: UIView initializer on a newly allocated main-thread object.
+        let empty_input: Retained<TerminalInputView> = unsafe { msg_send![super(input), init] };
+        let responder = TerminalResponder::alloc(main_thread).set_ivars(TerminalResponderIvars {
+            target: Weak::from_retained(&view),
+            empty_input,
+        });
+        // SAFETY: UIView initializer on a newly allocated main-thread object.
+        let terminal_responder: Retained<TerminalResponder> =
+            unsafe { msg_send![super(responder), init] };
+        view.addSubview(&terminal_responder);
         // Create the guide before the first keyboard animation/layout pass.
         let _ = view.keyboardLayoutGuide();
         let center = NSNotificationCenter::defaultCenter();
@@ -59,6 +173,7 @@ impl KeyboardBridge {
             view,
             center,
             observers,
+            terminal_responder,
         })
     }
 
@@ -74,10 +189,52 @@ impl KeyboardBridge {
         ((bounds.origin.y + bounds.size.height - frame.origin.y) / bounds.size.height)
             .clamp(0.0, 1.0) as f32
     }
+
+    pub fn set_keyboard_mode(&self, mode: KeyboardMode) -> Result<(), &'static str> {
+        match mode {
+            KeyboardMode::Terminal => {
+                if self.view.isFirstResponder() && !self.view.resignFirstResponder() {
+                    return Err("The built-in keyboard could not be dismissed");
+                }
+                if !self.terminal_responder.isFirstResponder() {
+                    if !self.terminal_responder.becomeFirstResponder() {
+                        return Err(
+                            "Hardware keyboard input is unavailable; switch to the built-in keyboard",
+                        );
+                    }
+                    self.terminal_responder.reloadInputViews();
+                }
+            }
+            KeyboardMode::System | KeyboardMode::Hidden => {
+                if self.terminal_responder.isFirstResponder()
+                    && !self.terminal_responder.resignFirstResponder()
+                {
+                    return Err("The terminal keyboard could not release input");
+                }
+                if mode == KeyboardMode::System {
+                    if !self.view.isFirstResponder() && !self.view.becomeFirstResponder() {
+                        return Err("The built-in keyboard is unavailable");
+                    }
+                } else if self.view.isFirstResponder() && !self.view.resignFirstResponder() {
+                    return Err("The built-in keyboard could not be dismissed");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn play_input_click(&self) {
+        if self.terminal_responder.isFirstResponder() {
+            UIDevice::currentDevice(MainThreadMarker::from(&*self.terminal_responder))
+                .playInputClick();
+        }
+    }
 }
 
 impl Drop for KeyboardBridge {
     fn drop(&mut self) {
+        self.terminal_responder.resignFirstResponder();
+        self.terminal_responder.removeFromSuperview();
         for observer in &self.observers {
             // SAFETY: each token was returned by this center and is still
             // retained; removal prevents callbacks after the bridge is gone.
