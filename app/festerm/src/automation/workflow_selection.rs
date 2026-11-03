@@ -26,7 +26,7 @@ pub(crate) enum Status {
 #[derive(Clone, Default)]
 pub(crate) struct View {
     pub status: Status,
-    pub bundle: Option<Arc<ApprovedBundle>>,
+    bundle: Option<Arc<ApprovedBundle>>,
     cancelled: Option<Arc<AtomicBool>>,
 }
 
@@ -44,9 +44,30 @@ impl View {
         )
     }
 
+    pub(crate) fn current_bundle(&self) -> Option<&Arc<ApprovedBundle>> {
+        if self
+            .cancelled
+            .as_ref()
+            .is_some_and(|cancelled| cancelled.load(Ordering::Acquire))
+        {
+            None
+        } else {
+            self.bundle.as_ref()
+        }
+    }
+
     pub(crate) fn disable(&self) {
         if let Some(cancelled) = &self.cancelled {
             cancelled.store(true, Ordering::Release);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn captured_for_test(bundle: ApprovedBundle) -> Self {
+        Self {
+            status: Status::Captured,
+            bundle: Some(Arc::new(bundle)),
+            cancelled: Some(Arc::new(AtomicBool::new(false))),
         }
     }
 }

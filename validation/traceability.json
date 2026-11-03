@@ -74,6 +74,7 @@
       "automated_tests": [
         "automation_selected_workflow_preview_requires_opt_in_and_grants_no_access",
         "workflow_selection_is_available_only_when_javascript_is_enabled",
+        "workflow_preview_disappears_when_another_window_disables_it",
         "workflow_picker_requires_opt_in_and_does_not_retarget_the_file_picker",
         "cancelled_workflow_capture_keeps_its_slot_and_discards_late_result",
         "newer_workflow_selection_waits_for_io_and_discards_superseded_results",

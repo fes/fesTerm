@@ -261,14 +261,14 @@ fn automation_selected_workflow_preview_requires_opt_in_and_grants_no_access() {
     }
     let preview = coordinator.settings(&[&enabled]).workflow;
     assert_eq!(preview.status, WorkflowStatus::Captured);
-    assert_eq!(preview.bundle.unwrap().manifest().name, "test");
+    assert_eq!(preview.current_bundle().unwrap().manifest().name, "test");
     assert!(coordinator.broker.is_none());
     assert!(coordinator.server.is_none());
 
     coordinator.workflow.view().disable();
     coordinator.tick(&context, &[&disabled]);
     assert_eq!(coordinator.workflow.view().status, WorkflowStatus::Empty);
-    assert!(coordinator.workflow.view().bundle.is_none());
+    assert!(coordinator.workflow.view().current_bundle().is_none());
 }
 
 #[test]

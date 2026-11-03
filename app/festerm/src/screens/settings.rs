@@ -850,7 +850,7 @@ fn workflow_settings(
             ui.colored_label(theme::STATUS_ERROR, error);
         }
         WorkflowStatus::Captured => {
-            if let Some(bundle) = &snapshot.workflow.bundle {
+            if let Some(bundle) = snapshot.workflow.current_bundle() {
                 let manifest = bundle.manifest();
                 ui.label(format!("Workflow: {}", manifest.name));
                 ui.label(format!("Captured snapshot SHA-256: {}", bundle.digest()));
@@ -903,7 +903,7 @@ fn workflow_settings(
             }
         }
     }
-    if (snapshot.workflow.busy() || snapshot.workflow.bundle.is_some())
+    if (snapshot.workflow.busy() || snapshot.workflow.current_bundle().is_some())
         && ui.button("Clear workflow preview").clicked()
     {
         command = Some(AppCommand::Automation(NativeCommand::ClearWorkflow));
@@ -1465,6 +1465,47 @@ mod tests {
                 assert!(harness.query_by_label("Select workflow JSON").is_none());
             }
         }
+    }
+
+    #[test]
+    fn workflow_preview_disappears_when_another_window_disables_it() {
+        use festerm_automation_js::snapshot::{ApprovedBundle, Manifest, SourceSnapshot};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let bundle = ApprovedBundle::new(SourceSnapshot {
+            manifest: Manifest {
+                version: 1,
+                api_version: 1,
+                name: "cancelled-preview".into(),
+                entry: "main.js".into(),
+                modules: vec!["main.js".into()],
+                parameters: BTreeMap::new(),
+                capabilities: BTreeSet::new(),
+            },
+            modules: BTreeMap::from([("main.js".into(), "export default 1;".into())]),
+        })
+        .unwrap();
+        let mut snapshot = crate::automation::SettingsSnapshot::default();
+        snapshot.workflow = crate::automation::WorkflowView::captured_for_test(bundle);
+        let other_window_view = snapshot.workflow.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 500.0))
+            .build_ui_state(
+                move |ui, _: &mut ()| {
+                    workflow_settings(ui, &snapshot, true);
+                },
+                (),
+            );
+        harness.run();
+        assert!(harness
+            .query_by_label("Workflow: cancelled-preview")
+            .is_some());
+
+        other_window_view.disable();
+        harness.step();
+        assert!(harness
+            .query_by_label("Workflow: cancelled-preview")
+            .is_none());
     }
 
     #[test]
