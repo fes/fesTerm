@@ -623,10 +623,12 @@ fn parse_session_options(
                 working_directory,
             },
             None => {
-                if !shell_arguments.is_empty() || working_directory.is_some() {
-                    return Err(format!("{command} requires --shell with --arg or --cwd").into());
+                if !shell_arguments.is_empty() {
+                    return Err(format!("{command} requires --shell with --arg").into());
                 }
-                default_shell()
+                let mut shell = default_shell();
+                shell.working_directory = working_directory;
+                shell
             }
         },
         cols: cols.unwrap_or(80),
@@ -5086,6 +5088,53 @@ mod tests {
             ),
             9
         );
+    }
+
+    #[test]
+    fn default_shell_accepts_a_working_directory_without_losing_its_arguments() {
+        let expected = default_shell();
+        let directory = env::temp_dir().to_string_lossy().into_owned();
+        for command in ["start", "daemon"] {
+            let parsed = parse_args(
+                [command, "--name", "default-shell", "--cwd", &directory]
+                    .map(str::to_owned)
+                    .to_vec(),
+            )
+            .unwrap();
+            let shell = match parsed {
+                CommandSpec::Start { shell, .. } | CommandSpec::Daemon { shell, .. } => shell,
+                _ => panic!("expected a session launch"),
+            };
+            assert_eq!(shell.executable, expected.executable);
+            assert_eq!(shell.arguments, expected.arguments);
+            assert_eq!(shell.working_directory.as_deref(), Some(directory.as_str()));
+        }
+    }
+
+    #[test]
+    fn shell_arguments_still_require_an_explicit_shell_with_or_without_a_directory() {
+        let mut args = vec![
+            "--name".to_owned(),
+            "default-shell".to_owned(),
+            "--arg".to_owned(),
+            "-NoProfile".to_owned(),
+        ];
+        for with_directory in [false, true] {
+            if with_directory {
+                args.extend([
+                    "--cwd".to_owned(),
+                    env::temp_dir().to_string_lossy().into_owned(),
+                ]);
+            }
+            assert!(parse_start(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("requires --shell"));
+            assert!(parse_daemon(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("requires --shell"));
+        }
     }
 
     #[test]
