@@ -14,6 +14,15 @@ qualification rather than running unconfined. Installed-helper provenance,
 native x86-64 and broader distribution evidence, GUI grants and end-to-end
 lifecycle integration remain open; this component does not enable scripting.
 
+The worker's completion boundary also has an explicit admission
+acknowledgement: JavaScript cannot settle while an earlier forwarded effect is
+still awaiting broker admission. A one-shot atomic claim orders exact prepared
+broker commits against watchdog closure, while explicit cancellation serializes
+the broker cut before signalling the worker. Promise jobs retain their order
+between staged results, and a result that wins an acknowledgement race does not
+fail the run. This is a component protocol, not yet proof of application-level
+lifecycle integration.
+
 ## Shared automation authority before external access
 
 The owner authorized the P1-P3 MCP/JavaScript campaign in

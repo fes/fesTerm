@@ -498,6 +498,20 @@ result delivery. Runtime destruction follows the broker's transition, never
 drives it; late callbacks/results are epoch-rejected. This rule applies to
 direct invocations and nested runs as well as JavaScript.
 
+The standalone worker protocol pauses further JavaScript jobs while a forwarded
+host call has not crossed broker admission or been refused. The parent
+acknowledges only after the exact effect/operation is admitted; an immediate
+result also closes that admission phase. Admitted asynchronous calls can still
+await their results while JavaScript proceeds. The future application must
+prepare the exact broker request, cap its run deadline at the supervisor's,
+and consume a one-shot admission permit at the nonblocking broker/controller
+commit. The permit atomically orders the claim against watchdog closure; an
+already claimed effect may physically execute later. Explicit cancellation
+serializes the broker cut before signalling the worker, while the watchdog can
+still reap at deadline without waiting for a stalled admission gate. App
+integration must also serialize target, privacy and cross-run revocation; this
+component alone does not provide those lifecycle hooks.
+
 A `SessionRef` binds app-instance identity, logical tab/session identity and
 transport attachment generation; durable sessions also bind provider/host/
 generation. Control additionally requires a broker-issued `InputLeaseRef`

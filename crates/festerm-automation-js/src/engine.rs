@@ -12,12 +12,13 @@ use rquickjs::{
 };
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     rc::Rc,
     time::{Duration, Instant},
 };
 
 pub(crate) enum Input {
+    Admitted(u32),
     Result(u32, HostResult),
     Cancel,
     Idle,
@@ -68,6 +69,14 @@ struct Pending<'js> {
     request: HostRequest,
     resolve: Function<'js>,
     reject: Function<'js>,
+}
+
+struct PendingCleanup<'js>(Rc<RefCell<BTreeMap<u32, Pending<'js>>>>);
+
+impl Drop for PendingCleanup<'_> {
+    fn drop(&mut self) {
+        self.0.borrow_mut().clear();
+    }
 }
 
 const BOOTSTRAP: &str = r#"
@@ -141,6 +150,7 @@ pub(crate) fn run(
     let result = context.with(|ctx| -> rquickjs::Result<Outcome> {
         let pending: Rc<RefCell<BTreeMap<u32, Pending<'_>>>> =
             Rc::new(RefCell::new(BTreeMap::new()));
+        let _pending_cleanup = PendingCleanup(pending.clone());
         let outgoing = Rc::new(RefCell::new(VecDeque::new()));
         let next_id = Rc::new(Cell::new(0u32));
         let closed = Rc::new(Cell::new(false));
@@ -221,6 +231,9 @@ pub(crate) fn run(
             ctx.json_parse(serde_json::to_vec(&values).map_err(|_| rquickjs::Error::Exception)?)?,
         )?;
         let main_promise: Promise = invoke.call((main, args))?;
+        let mut dispatched = BTreeSet::new();
+        let mut unadmitted = BTreeSet::new();
+        let mut settled = VecDeque::new();
         loop {
             if start.elapsed() >= wall_limit
                 || platform::cpu_time().is_none_or(|now| now.saturating_sub(cpu_start) >= cpu_limit)
@@ -250,14 +263,37 @@ pub(crate) fn run(
                 }
                 return Ok(Outcome::Completed { value });
             }
-            // Check root settlement after *every* job. A microtask that sends
-            // after completion must never run as cleanup.
-            if ctx.execute_pending_job() {
-                continue;
-            }
-            while let Some((id, request)) = outgoing.borrow_mut().pop_front() {
-                if transport.send(id, request).is_err() {
-                    return Ok(Outcome::ProtocolFailed {});
+            if unadmitted.is_empty() {
+                // Preserve Promise job order between separately received
+                // results, while still cutting off newly queued host calls
+                // if the root settles during those jobs.
+                if ctx.execute_pending_job() {
+                    continue;
+                }
+                while let Some((id, request)) = outgoing.borrow_mut().pop_front() {
+                    if transport.send(id, request).is_err() {
+                        return Ok(Outcome::ProtocolFailed {});
+                    }
+                    dispatched.insert(id);
+                    unadmitted.insert(id);
+                }
+                if !unadmitted.is_empty() {
+                    continue;
+                }
+                if let Some((id, result)) = settled.pop_front() {
+                    let Some(call) = pending.borrow_mut().remove(&id) else {
+                        return Ok(Outcome::ProtocolFailed {});
+                    };
+                    if let HostResult::Error { code } = result {
+                        // Only the typed content-free code enters a rejection.
+                        call.reject.call::<_, ()>((format!("{code:?}"),))?;
+                    } else {
+                        let value = ctx.json_parse(
+                            serde_json::to_vec(&result).map_err(|_| rquickjs::Error::Exception)?,
+                        )?;
+                        call.resolve.call::<_, ()>((value,))?;
+                    }
+                    continue;
                 }
             }
             match transport.receive() {
@@ -268,22 +304,22 @@ pub(crate) fn run(
                     }
                     std::thread::sleep(Duration::from_millis(1));
                 }
+                Ok(Input::Admitted(id)) => {
+                    if !unadmitted.remove(&id) {
+                        return Ok(Outcome::ProtocolFailed {});
+                    }
+                }
                 Ok(Input::Result(id, result)) => {
-                    let Some(call) = pending.borrow_mut().remove(&id) else {
-                        return Ok(Outcome::ProtocolFailed {});
-                    };
-                    if result.validate_for(&call.request).is_err() {
+                    if !dispatched.remove(&id)
+                        || pending
+                            .borrow()
+                            .get(&id)
+                            .is_none_or(|call| result.validate_for(&call.request).is_err())
+                    {
                         return Ok(Outcome::ProtocolFailed {});
                     }
-                    if let HostResult::Error { code } = result {
-                        // Only the typed content-free code enters a rejection.
-                        call.reject.call::<_, ()>((format!("{code:?}"),))?;
-                    } else {
-                        let value = ctx.json_parse(
-                            serde_json::to_vec(&result).map_err(|_| rquickjs::Error::Exception)?,
-                        )?;
-                        call.resolve.call::<_, ()>((value,))?;
-                    }
+                    unadmitted.remove(&id);
+                    settled.push_back((id, result));
                 }
                 Err(_) => return Ok(Outcome::ProtocolFailed {}),
             }
@@ -418,6 +454,134 @@ mod tests {
         assert_eq!(
             run(&bundle, &Parameters::new(), &Limits::default(), &mut broker),
             Outcome::ScriptFailed {}
+        );
+    }
+
+    #[test]
+    fn root_cannot_settle_while_a_forwarded_call_is_unadmitted() {
+        struct DelayedAdmission {
+            calls: Vec<u32>,
+            step: u8,
+            acknowledged: bool,
+        }
+
+        impl Transport for DelayedAdmission {
+            fn send(&mut self, id: u32, _: HostRequest) -> Result<(), crate::Error> {
+                self.calls.push(id);
+                Ok(())
+            }
+
+            fn receive(&mut self) -> Result<Input, crate::Error> {
+                assert_eq!(self.calls, [1, 2]);
+                self.step += 1;
+                Ok(match self.step {
+                    1 => Input::Result(2, HostResult::Observation { targets: vec![] }),
+                    2 => Input::Idle,
+                    3 => {
+                        self.acknowledged = true;
+                        Input::Admitted(1)
+                    }
+                    _ => Input::Idle,
+                })
+            }
+        }
+
+        let bundle = fixture(
+            "export async function main({fesTerm}) { \
+             fesTerm.observe(); await fesTerm.observe(); return 1; }",
+        );
+        let mut transport = DelayedAdmission {
+            calls: Vec::new(),
+            step: 0,
+            acknowledged: false,
+        };
+        assert_eq!(
+            run(
+                &bundle,
+                &Parameters::new(),
+                &Limits::default(),
+                &mut transport
+            ),
+            Outcome::UnsettledWork {}
+        );
+        assert!(transport.acknowledged);
+    }
+
+    #[test]
+    fn admitted_results_preserve_promise_job_order() {
+        let bundle = fixture(
+            r#"
+            export async function main({fesTerm}) {
+                const first = fesTerm.observe().then(() => "first").then(value => value);
+                const second = fesTerm.observe().then(() => "second");
+                const winner = Promise.race([first, second]);
+                await Promise.all([first, second]);
+                return await winner;
+            }
+            "#,
+        );
+        assert_eq!(
+            run(
+                &bundle,
+                &Parameters::new(),
+                &Limits::default(),
+                &mut Broker::default()
+            ),
+            Outcome::Completed {
+                value: "first".into()
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_or_duplicate_host_admissions_fail_closed() {
+        struct InvalidAdmissions(VecDeque<u32>);
+        impl Transport for InvalidAdmissions {
+            fn send(&mut self, _: u32, _: HostRequest) -> Result<(), crate::Error> {
+                Ok(())
+            }
+
+            fn receive(&mut self) -> Result<Input, crate::Error> {
+                Ok(self.0.pop_front().map_or(Input::Idle, Input::Admitted))
+            }
+        }
+
+        let bundle = fixture("export async function main({fesTerm}) { await fesTerm.observe(); }");
+        for ids in [vec![2], vec![1, 1]] {
+            let mut transport = InvalidAdmissions(ids.into());
+            assert_eq!(
+                run(
+                    &bundle,
+                    &Parameters::new(),
+                    &Limits::default(),
+                    &mut transport
+                ),
+                Outcome::ProtocolFailed {}
+            );
+        }
+    }
+
+    #[test]
+    fn cancellation_cleans_up_awaited_host_promises() {
+        struct Cancel;
+        impl Transport for Cancel {
+            fn send(&mut self, _: u32, _: HostRequest) -> Result<(), crate::Error> {
+                Ok(())
+            }
+
+            fn receive(&mut self) -> Result<Input, crate::Error> {
+                Ok(Input::Cancel)
+            }
+        }
+
+        assert_eq!(
+            run(
+                &fixture("export async function main({fesTerm}) { await fesTerm.observe(); }"),
+                &Parameters::new(),
+                &Limits::default(),
+                &mut Cancel,
+            ),
+            Outcome::Cancelled {}
         );
     }
 
