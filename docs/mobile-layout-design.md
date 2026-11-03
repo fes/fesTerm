@@ -124,7 +124,13 @@ keyboard keys, modifiers, arrows, Backspace, globe/hide, the built-in
 keyboard's accessory row and the Extended keys panel — shows a larger callout
 above it while pressed; after a hold alternate fires, the callout shows that
 alternate. The callout does not capture input and disappears on release or
-cancellation. The mobile app remains dark-only;
+cancellation. Hold symbols follows Gboard's number-row hints (`q%` `w^` `e~`
+`r|` `t[` `y]` `u<` `i>` `o{` `p}`; `a@` `s#` `d&` `f*` `g-` `h+` `j=` `k(`
+`l)`; `z_` `x$` `c"` `v'` `b:` `n;` `m/`), plus comma → backtick and period →
+`?`. The #+= page groups brackets (`[]{}()<>=+`), paths and quotes
+(`-/\|_~` and backtick, `'`, `"`) and shell operators (`;:?!&*$`); together
+with the shifted number row it reaches every ASCII symbol. Shell row keeps
+its dedicated `/\-_'"|&$~` row. The mobile app remains dark-only;
 the bundle's light appearance is not a new app-theme feature.
 
 Keyboard height is computed from the space available before the bottom panel

@@ -3601,6 +3601,8 @@
         "terminal_keyboard_hold_and_repeat_cancel_without_a_late_key_or_catchup_burst",
         "terminal_keyboard_previews_utility_keys_and_repeats_held_return",
         "terminal_keyboard_puts_globe_beside_symbols_and_extended_keys_in_utility_row",
+        "terminal_keyboard_symbol_page_reaches_every_ascii_symbol",
+        "terminal_keyboard_holding_period_types_question_mark",
         "globe_glyph_is_centered_on_its_key",
         "long_pressing_a_session_chip_asks_before_closing_it",
         "swiping_a_session_row_left_reveals_close",

@@ -56,14 +56,14 @@ fn terminal_keyboard_hold_emits_one_alternate_and_never_its_base_on_release() {
         }
         harness.step();
     }
-    assert_eq!(harness.state().1, [KeyRowAction::Key(Key::Character('/'))]);
+    assert_eq!(harness.state().1, [KeyRowAction::Key(Key::Character('%'))]);
     harness.run();
     harness.get_by_label("q").click();
     harness.run();
     assert_eq!(
         harness.state().1,
         [
-            KeyRowAction::Key(Key::Character('/')),
+            KeyRowAction::Key(Key::Character('%')),
             KeyRowAction::Key(Key::Character('q')),
         ]
     );
@@ -87,9 +87,9 @@ fn terminal_keyboard_previews_track_taps_and_alternates_without_early_input() {
     harness.step();
     assert_eq!(
         harness.state().0.keys.preview_glyph(),
-        Some(&Glyph::text("/"))
+        Some(&Glyph::text("%"))
     );
-    assert_eq!(harness.state().1, [KeyRowAction::Key(Key::Character('/'))]);
+    assert_eq!(harness.state().1, [KeyRowAction::Key(Key::Character('%'))]);
     harness.event(pointer(false, q));
     harness.step();
     assert!(harness.state().0.keys.preview_glyph().is_none());
@@ -128,7 +128,7 @@ fn terminal_keyboard_previews_track_taps_and_alternates_without_early_input() {
     assert_eq!(
         harness.state().1,
         [
-            KeyRowAction::Key(Key::Character('/')),
+            KeyRowAction::Key(Key::Character('%')),
             KeyRowAction::Key(Key::Character('[')),
             KeyRowAction::Key(Key::Character('[')),
             KeyRowAction::Key(Key::Character('[')),
@@ -273,4 +273,41 @@ fn terminal_keyboard_puts_globe_beside_symbols_and_extended_keys_in_utility_row(
         harness.state().1,
         [KeyRowAction::SwitchKeyboard, KeyRowAction::TogglePanel]
     );
+}
+
+#[test]
+fn terminal_keyboard_symbol_page_reaches_every_ascii_symbol() {
+    let shifted_numbers = "!@#$%^&*()";
+    let reachable: String = SYMBOLS.concat() + shifted_numbers + ",.";
+    let missing: String = (b'!'..=b'~')
+        .map(char::from)
+        .filter(|c| c.is_ascii_punctuation() && !reachable.contains(*c))
+        .collect();
+    assert_eq!(
+        missing, "",
+        "#+= page must offer every symbol, quotes included"
+    );
+}
+
+#[test]
+fn terminal_keyboard_holding_period_types_question_mark() {
+    let mut harness = harness();
+    harness.run();
+    let period = harness.get_by_label(".").rect().center();
+    let now = harness.ctx.input(|input| input.time);
+    for (elapsed, events) in [
+        (
+            0.01,
+            vec![egui::Event::PointerMoved(period), pointer(true, period)],
+        ),
+        (0.8, vec![]),
+        (0.9, vec![pointer(false, period)]),
+    ] {
+        harness.input_mut().time = Some(now + elapsed);
+        for event in events {
+            harness.event(event);
+        }
+        harness.step();
+    }
+    assert_eq!(harness.state().1, [KeyRowAction::Key(Key::Character('?'))]);
 }

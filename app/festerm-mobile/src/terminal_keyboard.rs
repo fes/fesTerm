@@ -46,8 +46,13 @@ impl KeyboardKind {
 }
 
 const LETTERS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
-const ALTERNATES: [&str; 3] = ["/\\-_'\"|&$~", "@#=+*()[]", "{}<>;:?"];
-const SYMBOLS: [&str; 3] = ["[]{}()<>=+", "@#*%!;:?`", "/\\-_|&$"];
+/// Gboard's number-row hints, so the long-press layer matches a familiar phone layout.
+const ALTERNATES: [&str; 3] = ["%^~|[]<>{}", "@#&*-+=()", "_$\"':;/"];
+const COMMA_ALTERNATE: char = '`';
+const PERIOD_ALTERNATE: char = '?';
+const SHELL_ROW: &str = "/\\-_'\"|&$~";
+/// Characters the shifted number row does not already offer, quotes included.
+const SYMBOLS: [&str; 3] = ["[]{}()<>=+", "-/\\|_~`'\"", ";:?!&*$"];
 const BOARD: Color32 = color::TERMINAL_CHROME;
 const KEY: Color32 = color::TERMINAL_KEY;
 const SPECIAL: Color32 = color::TERMINAL_KEY_MUTED;
@@ -188,7 +193,7 @@ impl TerminalKeyboard {
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
                     if shell {
-                        self.character_row(ui, ALTERNATES[0], None, height, &mut output);
+                        self.character_row(ui, SHELL_ROW, None, height, &mut output);
                     }
                     self.character_row(
                         ui,
@@ -293,24 +298,25 @@ impl TerminalKeyboard {
                     self.cancel();
                     output.click = true;
                 }
-                for (label, width, key) in [
-                    (",", small, Key::Character(',')),
-                    ("Space", space_width, Key::Character(' ')),
-                    (".", small, Key::Character('.')),
-                    ("Return", side - gap - small, Key::Enter),
+                let holds = kind == KeyboardKind::HoldSymbols && !self.symbols;
+                for (label, width, key, alternate) in [
+                    (",", small, Key::Character(','), Some(COMMA_ALTERNATE)),
+                    ("Space", space_width, Key::Character(' '), None),
+                    (".", small, Key::Character('.'), Some(PERIOD_ALTERNATE)),
+                    ("Return", side - gap - small, Key::Enter, None),
                 ] {
+                    let alternate = alternate.filter(|_| holds);
                     let response = draw_key(
                         ui,
                         width,
                         height,
                         label,
-                        None,
+                        alternate,
                         false,
                         matches!(key, Key::Enter | Key::Character(' ')),
                     );
-                    if let Some(key) =
-                        self.key(ui, &response, key, Glyph::text(label), Repeat::Auto)
-                    {
+                    let repeat = alternate.map_or(Repeat::Auto, Repeat::Hold);
+                    if let Some(key) = self.key(ui, &response, key, Glyph::text(label), repeat) {
                         output.action = KeyRowAction::Key(key);
                     }
                 }
