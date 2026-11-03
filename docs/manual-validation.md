@@ -29,6 +29,16 @@ TrustedInstaller SID is admitted only for ancestors; final private objects stay
 current-user-only. Hosted policy/fixture tests are not clean-machine installer,
 native-service or credential-lifecycle acceptance under #432.
 
+Windows task-file encoding has a deterministic Unicode regression and an
+opt-in Scheduler validation-only check in the optional Windows runner.
+A controlled native import rejected the old UTF-8 declaration, silently
+corrupted Unicode when the declaration was omitted, and preserved it with
+the corrected UTF-16LE/BOM file. Only uniquely named disabled probe tasks were
+registered, never run, and all were deleted. Complete installer/service
+recovery remains unqualified. Also exercise setup from a constrained terminal
+job: a daemon breakaway warning is a separate lifetime limitation, not fixed
+by successful task registration; do not claim shell survival without testing it.
+
 Publication and broader qualification remain gated on clarification of
 standalone fesTerm usage rights, as recorded in ADR 0053. The owner subsequently
 authorized the bounded service-application tests and integration below; the current service terms

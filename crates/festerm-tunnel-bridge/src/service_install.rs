@@ -286,7 +286,7 @@ fn windows_definition(spec: &ServiceSpec, sid: &str) -> io::Result<String> {
         windows_argument(path_text(&spec.state)?)?
     );
     Ok(format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+        "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n\
          <Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n\
          <RegistrationInfo><URI>\\fesTerm-DevTunnel-{}</URI></RegistrationInfo>\n\
          <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{sid}</UserId>\
@@ -307,6 +307,15 @@ fn windows_definition(spec: &ServiceSpec, sid: &str) -> io::Result<String> {
         xml(executable),
         xml(&arguments),
     ))
+}
+
+#[cfg(any(windows, test))]
+fn windows_task_bytes(definition: &str) -> Vec<u8> {
+    // schtasks rejects declared UTF-8 and misdecodes undeclared UTF-8.
+    [0xff, 0xfe]
+        .into_iter()
+        .chain(definition.encode_utf16().flat_map(u16::to_le_bytes))
+        .collect()
 }
 
 struct NativeOutput {
@@ -608,7 +617,7 @@ fn owned_definition(
     owned_bytes(file, accepted).map(Some)
 }
 
-fn owned_bytes(file: File, accepted: &[String]) -> io::Result<Vec<u8>> {
+fn owned_bytes(file: File, accepted: &[impl AsRef<[u8]>]) -> io::Result<Vec<u8>> {
     if file.metadata()?.len() > OUTPUT_LIMIT as u64 {
         return Err(refused("service.foreign_definition"));
     }
@@ -617,7 +626,7 @@ fn owned_bytes(file: File, accepted: &[String]) -> io::Result<Vec<u8>> {
         .read_to_end(&mut existing)?;
     if !accepted
         .iter()
-        .any(|definition| definition.as_bytes() == existing)
+        .any(|definition| definition.as_ref() == existing)
     {
         return Err(refused("service.foreign_definition"));
     }
@@ -803,12 +812,23 @@ fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
     let state = spec.validate()?;
     let (sid, system) = festerm_windows_security::current_user_service_context()
         .map_err(|_| refused("service.user_context"))?;
-    let expected = windows_definition(spec, &sid)?;
+    let expected = windows_task_bytes(&windows_definition(spec, &sid)?);
     let accepted = previous
         .iter()
-        .map(|prior| windows_definition(prior, &sid))
-        .chain([Ok(expected.clone())])
-        .collect::<io::Result<Vec<_>>>()?;
+        .chain([spec])
+        .map(|prior| {
+            let definition = windows_definition(prior, &sid)?;
+            Ok([
+                windows_task_bytes(&definition),
+                definition
+                    .replacen("encoding=\"UTF-16\"", "encoding=\"UTF-8\"", 1)
+                    .into_bytes(),
+            ])
+        })
+        .collect::<io::Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     let definition_name = Path::new("service-task.xml");
     let snapshot_name = Path::new("service-task-owned.xml");
     let tool = system.join("schtasks.exe");
@@ -861,8 +881,8 @@ fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
         Err(error) => return Err(error),
     }
     match existing {
-        Some(existing) if existing != expected.as_bytes() => {
-            setup_storage::replace_private(&state, definition_name, expected.as_bytes())
+        Some(existing) if existing != expected => {
+            setup_storage::replace_private(&state, definition_name, &expected)
         }
         _ => Ok(()),
     }
@@ -1024,7 +1044,7 @@ fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
     let state = spec.validate()?;
     let (sid, system) = festerm_windows_security::current_user_service_context()
         .map_err(|_| refused("service.user_context"))?;
-    let definition = windows_definition(spec, &sid)?;
+    let definition = windows_task_bytes(&windows_definition(spec, &sid)?);
     let definition_name = Path::new("service-task.xml");
     let snapshot_name = Path::new("service-task-owned.xml");
     let tool = system.join("schtasks.exe");
@@ -1041,7 +1061,7 @@ fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
         exact_file(
             setup_storage::open_private_file(&state, definition_name, false)
                 .map_err(|_| refused("service.foreign_definition"))?,
-            definition.as_bytes(),
+            &definition,
         )?;
         exact_file(
             setup_storage::open_private_file(&state, snapshot_name, false)
@@ -1054,13 +1074,13 @@ fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
         }
         match setup_storage::open_private_file(&state, definition_name, true) {
             Ok(mut file) => {
-                file.write_all(definition.as_bytes())?;
+                file.write_all(&definition)?;
                 file.sync_all()?;
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 exact_file(
                     setup_storage::open_private_file(&state, definition_name, false)?,
-                    definition.as_bytes(),
+                    &definition,
                 )?;
             }
             Err(error) => return Err(error),
@@ -1188,6 +1208,23 @@ mod tests {
         assert!(!linux.contains("ExecStop="));
         assert!(!linux.contains("sessiond"));
         assert!(!mac.contains("sessiond"));
+    }
+
+    #[test]
+    fn service_windows_task_file_preserves_unicode_in_scheduler_encoding() {
+        let mut spec = spec();
+        spec.state.push("terminal-\u{1f980}");
+        let definition = windows_definition(&spec, "S-1-5-21-123-456-789-1001").unwrap();
+        let bytes = windows_task_bytes(&definition);
+        assert!(bytes.starts_with(&[0xff, 0xfe]));
+        let (pairs, remainder) = bytes[2..].as_chunks::<2>();
+        assert!(remainder.is_empty());
+        let units: Vec<_> = pairs.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
+        let decoded = String::from_utf16(&units).unwrap();
+        assert_eq!(decoded, definition);
+        assert!(decoded.starts_with("<?xml version=\"1.0\" encoding=\"UTF-16\"?>"));
+        assert!(decoded.contains("folder &amp; été%"));
+        assert!(decoded.contains("terminal-\u{1f980}"));
     }
 
     #[test]
@@ -1487,6 +1524,45 @@ mod tests {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         preflight_registration_directory().unwrap();
         preflight_service_manager().unwrap();
+        #[cfg(windows)]
+        {
+            let (sid, system) = festerm_windows_security::current_user_service_context().unwrap();
+            let root = std::env::temp_dir().join(format!(
+                "festerm-task-xml-validation-{}",
+                uuid::Uuid::new_v4()
+            ));
+            std::fs::create_dir(&root).unwrap();
+            let path = root.join("service-task.xml");
+            let result = (|| {
+                let mut spec = spec();
+                spec.state.push("terminal-\u{1f980}");
+                std::fs::write(&path, windows_task_bytes(&windows_definition(&spec, &sid)?))?;
+                let expression = format!(
+                    "$ErrorActionPreference='Stop'; \
+                     $s=[Activator]::CreateInstance([type]::GetTypeFromProgID('Schedule.Service')); \
+                     $s.Connect(); $xml=[IO.File]::ReadAllText({}); \
+                     $null=$s.GetFolder('\\').RegisterTask('fesTerm-XmlValidation-{}',\
+                     $xml,1,$null,$null,3,$null)",
+                    powershell_literal(path_text(&path)?)?,
+                    spec.id,
+                );
+                run(
+                    &system.join("WindowsPowerShell/v1.0/powershell.exe"),
+                    &[
+                        OsString::from("-NoProfile"),
+                        OsString::from("-NonInteractive"),
+                        OsString::from("-Command"),
+                        OsString::from(expression),
+                    ],
+                    "service.task_xml_validation",
+                )
+            })();
+            let file_cleanup = std::fs::remove_file(&path);
+            let directory_cleanup = std::fs::remove_dir(&root);
+            result.unwrap();
+            file_cleanup.unwrap();
+            directory_cleanup.unwrap();
+        }
     }
 
     #[cfg(target_os = "macos")]
