@@ -19,6 +19,9 @@ Supervisor::spawn(&WorkerProgram, &ApprovedBundle, Parameters, Limits)
     -> Result<Supervisor, Error>
 Supervisor::spawn_bound(&WorkerProgram, &ApprovedBundle, &BoundParameters, Limits)
     -> Result<Supervisor, Error>
+event_wake_channel() -> (EventWake, Receiver<()>)
+Supervisor::{spawn_with_wake, spawn_bound_with_wake}(..., EventWake)
+    -> Result<Supervisor, Error>
 Supervisor::try_event(&self) -> Result<Option<Event>, Error>
 Supervisor::host_result(&self, id: u32, HostResult, Arc<dyn DisclosureGuard>)
     -> Result<(), Error>
@@ -50,6 +53,17 @@ executables. It never uses a shell or PATH lookup. Linux additionally refuses
 an executable whose initial process mappings already exceed 128 MiB.
 
 Events are `HostCall { id, request }`, `Finished { outcome }`, and `Failed(Error)`.
+An application event loop must use a wake-enabled spawn and bridge the shared
+one-slot wake receiver to its GUI notifier on a separate thread. Each wake
+coalesces any number of queued events: drain all active supervisors or schedule
+another frame when a per-frame budget leaves work. A startup thread must publish
+its success or failure and signal the application. After registering a
+successfully started supervisor, the application must signal again: the bridge
+may already have consumed its first wake before the run was in the active set.
+Keep the receiver and an application-owned `EventWake` alive until all runs are
+cleaned up. The watchdog never invokes the GUI callback and does not wait for
+the receiver; a closed receiver stops the worker instead of silently abandoning
+host calls.
 For **every** host call, authorize the live run, exact target generation,
 readable sources and all reachable recipients in the trusted parent broker.
 Only then dispatch through existing application/controller APIs and deliver a

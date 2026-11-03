@@ -75,6 +75,41 @@ impl std::fmt::Debug for Event {
     }
 }
 
+/// A bounded, coalescing worker-event wake-up shared by application consumers.
+#[derive(Clone)]
+pub struct EventWake(mpsc::SyncSender<()>);
+
+/// Creates a one-slot wake channel. Drain each worker's events after a wake;
+/// the receiver may be bridged to a GUI notifier on a separate thread.
+pub fn event_wake_channel() -> (EventWake, mpsc::Receiver<()>) {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    (EventWake(sender), receiver)
+}
+
+impl EventWake {
+    /// Signal without waiting; an already-pending signal is sufficient.
+    pub fn notify(&self) -> Result<(), Error> {
+        match self.0.try_send(()) {
+            Ok(()) | Err(mpsc::TrySendError::Full(())) => Ok(()),
+            Err(mpsc::TrySendError::Disconnected(())) => {
+                Err(Error::Unavailable("worker event wake receiver closed"))
+            }
+        }
+    }
+}
+
+fn deliver_event(
+    events: &mpsc::SyncSender<Event>,
+    wake: Option<&EventWake>,
+    event: Event,
+) -> Result<(), Error> {
+    events.try_send(event).map_err(|_| Error::Protocol)?;
+    if let Some(wake) = wake {
+        wake.notify()?;
+    }
+    Ok(())
+}
+
 /// A held application-owned disclosure boundary.
 pub trait DisclosurePermit {}
 
@@ -330,6 +365,19 @@ impl Supervisor {
         Self::spawn_bound(program, bundle, &parameters, limits)
     }
 
+    /// Like `spawn`, with a nonblocking, coalesced event wake-up.
+    pub fn spawn_with_wake(
+        program: &WorkerProgram,
+        bundle: &ApprovedBundle,
+        parameters: Parameters,
+        limits: Limits,
+        wake: EventWake,
+    ) -> Result<Self, Error> {
+        platform::availability()?;
+        let parameters = bundle.bind_parameters(parameters, BTreeMap::new())?;
+        Self::spawn_bound_with_wake(program, bundle, &parameters, limits, wake)
+    }
+
     /// Start with target references derived from an immutable invocation.
     /// The caller must still enforce the native grant and broker checks.
     pub fn spawn_bound(
@@ -337,6 +385,27 @@ impl Supervisor {
         bundle: &ApprovedBundle,
         parameters: &BoundParameters,
         limits: Limits,
+    ) -> Result<Self, Error> {
+        Self::spawn_inner(program, bundle, parameters, limits, None)
+    }
+
+    /// Like `spawn_bound`, with a nonblocking, coalesced event wake-up.
+    pub fn spawn_bound_with_wake(
+        program: &WorkerProgram,
+        bundle: &ApprovedBundle,
+        parameters: &BoundParameters,
+        limits: Limits,
+        wake: EventWake,
+    ) -> Result<Self, Error> {
+        Self::spawn_inner(program, bundle, parameters, limits, Some(wake))
+    }
+
+    fn spawn_inner(
+        program: &WorkerProgram,
+        bundle: &ApprovedBundle,
+        parameters: &BoundParameters,
+        limits: Limits,
+        wake: Option<EventWake>,
     ) -> Result<Self, Error> {
         platform::availability()?;
         if cleanup_failed() {
@@ -391,7 +460,9 @@ impl Supervisor {
         let open = admission.clone();
         let join = thread::Builder::new()
             .name("automation-js-watchdog".into())
-            .spawn(move || supervise(child, frames, limits, receiver, sender, startup, open))?;
+            .spawn(move || {
+                supervise(child, frames, limits, receiver, sender, startup, open, wake)
+            })?;
         match ready.recv_timeout(Duration::from_secs(3)) {
             Ok(Ok(())) => Ok(Self {
                 controls,
@@ -552,6 +623,7 @@ fn supervise(
     events: mpsc::SyncSender<Event>,
     startup: mpsc::SyncSender<Result<(), ()>>,
     admission: Arc<Admission>,
+    wake: Option<EventWake>,
 ) -> Result<(), Error> {
     let child = &mut owned.0;
     let result = (|| -> Result<Outcome, Error> {
@@ -654,9 +726,7 @@ fn supervise(
                         request.validate()?;
                         next_id += 1;
                         outstanding.insert(id, (request.clone(), false));
-                        events
-                            .try_send(Event::HostCall { id, request })
-                            .map_err(|_| Error::Protocol)?;
+                        deliver_event(&events, wake.as_ref(), Event::HostCall { id, request })?;
                     }
                     WorkerMessage::Finished { outcome } if qualified => {
                         if cancelling.is_some() {
@@ -691,15 +761,15 @@ fn supervise(
     let _ = startup.try_send(Err(()));
     if cleanup.is_err() {
         CLEANUP_FAILED.store(true, Ordering::SeqCst);
-        let _ = events.try_send(Event::Failed(Error::Cleanup));
+        let _ = deliver_event(&events, wake.as_ref(), Event::Failed(Error::Cleanup));
         return Err(Error::Cleanup);
     }
     match result {
         Ok(outcome) => {
-            let _ = events.try_send(Event::Finished { outcome });
+            let _ = deliver_event(&events, wake.as_ref(), Event::Finished { outcome });
         }
         Err(error) => {
-            let _ = events.try_send(Event::Failed(error));
+            let _ = deliver_event(&events, wake.as_ref(), Event::Failed(error));
         }
     }
     Ok(())
@@ -708,6 +778,20 @@ fn supervise(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn event_wake_coalesces_without_blocking_and_refuses_a_lost_receiver() {
+        let (wake, receiver) = event_wake_channel();
+        wake.notify().unwrap();
+        wake.notify().unwrap();
+        assert_eq!(receiver.try_recv(), Ok(()));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        drop(receiver);
+        assert!(matches!(wake.notify(), Err(Error::Unavailable(_))));
+    }
 
     struct TestDisclosure;
 
@@ -1045,6 +1129,7 @@ mod tests {
                 sender,
                 startup,
                 worker_gate,
+                None,
             )
         });
         assert!(matches!(
@@ -1089,6 +1174,7 @@ mod tests {
                 sender,
                 startup,
                 worker_gate,
+                None,
             )
         });
         let qualified = ready.recv_timeout(Duration::from_secs(2));

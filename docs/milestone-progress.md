@@ -45,6 +45,11 @@ require an application-supplied, nonblocking disclosure guard for every pipe
 write. The application must still supply and qualify the guard against its live
 broker, recipients and source generations; this change does not enable runs.
 
+The worker can now signal a bounded, coalescing event-wake channel without
+calling the GUI from its watchdog. A future application bridge must drain
+active runs and handle startup and per-frame backlogs; an unresponsive GUI
+cannot block the worker deadline through this channel.
+
 ## Shared automation authority before external access
 
 The owner authorized the P1-P3 MCP/JavaScript campaign in

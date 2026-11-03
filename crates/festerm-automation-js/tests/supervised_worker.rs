@@ -1,5 +1,5 @@
 use festerm_automation_js::{
-    platform,
+    event_wake_channel, platform,
     protocol::{HostRequest, HostResult, Limits, Outcome},
     snapshot::{
         ApprovedBundle, Manifest, ParameterType, ParameterValue, Parameters, SourceSnapshot,
@@ -88,6 +88,99 @@ fn terminal(worker: &Supervisor, broker: bool) -> Event {
         }
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+#[test]
+fn worker_events_wake_a_consumer_without_polling() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let (wake, notifications) = event_wake_channel();
+    let worker = Supervisor::spawn_with_wake(
+        &program(),
+        &bundle("export async function main({fesTerm}) { await fesTerm.observe(); return 7; }"),
+        Parameters::new(),
+        Limits::default(),
+        wake.clone(),
+    )
+    .unwrap();
+    // The bridge may consume the worker's first signal before registration.
+    notifications.recv_timeout(Duration::from_secs(8)).unwrap();
+    wake.notify().unwrap();
+    notifications.recv_timeout(Duration::from_secs(8)).unwrap();
+    let Some(Event::HostCall { id, request }) = worker.try_event().unwrap() else {
+        panic!("host call must be queued before its wake");
+    };
+    assert_eq!(request, HostRequest::Observe {});
+    worker
+        .host_result(
+            id,
+            HostResult::Observation { targets: vec![] },
+            disclosure(),
+        )
+        .unwrap();
+    notifications.recv_timeout(Duration::from_secs(8)).unwrap();
+    assert!(matches!(
+        worker.try_event().unwrap(),
+        Some(Event::Finished {
+            outcome: Outcome::Completed { value }
+        }) if value == 7
+    ));
+    worker.shutdown().unwrap();
+}
+
+#[test]
+fn undrained_wake_does_not_block_worker_deadline_or_cleanup() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let (wake, notifications) = event_wake_channel();
+    wake.notify().unwrap();
+    let worker = Supervisor::spawn_with_wake(
+        &program(),
+        &bundle("export async function main({fesTerm}) { await fesTerm.observe(); }"),
+        Parameters::new(),
+        Limits {
+            run_ms: 500,
+            ..Limits::default()
+        },
+        wake,
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(750));
+    notifications.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(matches!(
+        terminal(&worker, false),
+        Event::Failed(Error::Deadline)
+    ));
+    worker.shutdown().unwrap();
+}
+
+#[test]
+fn losing_the_wake_receiver_closes_the_worker() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let (wake, notifications) = event_wake_channel();
+    drop(notifications);
+    let worker = Supervisor::spawn_with_wake(
+        &program(),
+        &bundle("export async function main({fesTerm}) { await fesTerm.observe(); }"),
+        Parameters::new(),
+        Limits::default(),
+        wake,
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        assert!(Instant::now() < deadline);
+        match worker.try_event().unwrap() {
+            Some(Event::Failed(Error::Unavailable("worker event wake receiver closed"))) => break,
+            Some(Event::HostCall { .. }) | None => std::thread::sleep(Duration::from_millis(1)),
+            Some(event) => panic!("worker ended unexpectedly: {event:?}"),
+        }
+    }
+    worker.shutdown().unwrap();
 }
 
 #[test]

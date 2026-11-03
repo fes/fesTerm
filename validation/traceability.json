@@ -117,6 +117,10 @@
         "host_admission_acknowledgement_unblocks_concurrent_calls",
         "result_before_separate_acknowledgement_does_not_fail_the_run",
         "watchdog_is_independent_of_application_polling",
+        "event_wake_coalesces_without_blocking_and_refuses_a_lost_receiver",
+        "worker_events_wake_a_consumer_without_polling",
+        "undrained_wake_does_not_block_worker_deadline_or_cleanup",
+        "losing_the_wake_receiver_closes_the_worker",
         "unsupported_platform_never_launches_or_executes_script"
       ],
       "manual_scenarios": ["AUTO-02", "AUTO-03"],

@@ -11,8 +11,8 @@ mod supervisor;
 mod worker;
 
 pub use supervisor::{
-    cleanup_failed, AdmissionPermit, DisclosureGuard, DisclosurePermit, Event, Supervisor,
-    WorkerProgram,
+    cleanup_failed, event_wake_channel, AdmissionPermit, DisclosureGuard, DisclosurePermit, Event,
+    EventWake, Supervisor, WorkerProgram,
 };
 pub use worker::worker_entry;
 

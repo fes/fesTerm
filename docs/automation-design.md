@@ -534,6 +534,14 @@ recipient, privacy state, deadline and all source attachment generations, using
 the same serialization boundary as revocation. A guard is not itself a broker
 grant, and bytes already written to the worker cannot be recalled.
 
+Worker events can signal a shared one-slot wake channel without calling GUI
+code from the watchdog. A separate application bridge must request a frame and
+drain every active run, rescheduling when a frame budget leaves queued work.
+The startup thread must publish its success or failure and signal the
+application, which must signal again after registering a successful supervisor:
+the bridge may have consumed an earlier wake before the run was installed.
+A full wake channel coalesces signals; a disconnected receiver closes the worker.
+
 A `SessionRef` binds app-instance identity, logical tab/session identity and
 transport attachment generation; durable sessions also bind provider/host/
 generation. Control additionally requires a broker-issued `InputLeaseRef`
