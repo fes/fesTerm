@@ -268,14 +268,6 @@ async fn run() -> io::Result<()> {
     .await?;
     let mut start = Command::new(&daemon);
     start.args(["start", "--name", &name]);
-    #[cfg(windows)]
-    start.arg("--shell").arg(
-        PathBuf::from(
-            std::env::var_os("SystemRoot").ok_or_else(|| refused("setup.windows_system_root"))?,
-        )
-        .join("System32")
-        .join("cmd.exe"),
-    );
     #[cfg(unix)]
     shell_command(&mut start);
     if let Some(home) = shell_home() {
