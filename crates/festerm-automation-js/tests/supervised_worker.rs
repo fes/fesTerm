@@ -1,7 +1,9 @@
 use festerm_automation_js::{
     platform,
     protocol::{HostRequest, HostResult, Limits, Outcome},
-    snapshot::{ApprovedBundle, Manifest, Parameters, SourceSnapshot},
+    snapshot::{
+        ApprovedBundle, Manifest, ParameterType, ParameterValue, Parameters, SourceSnapshot,
+    },
     Error, Event, Supervisor, WorkerProgram,
 };
 use std::{
@@ -54,6 +56,71 @@ fn terminal(worker: &Supervisor, broker: bool) -> Event {
         }
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+#[test]
+fn target_parameter_reaches_worker_as_exact_bound_handle() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let mut snapshot = bundle(
+        "export async function main({fesTerm,params}) { \
+         const result = await fesTerm.readScreen({target: params.target, maxBytes: 12}); \
+         return result.text; }",
+    )
+    .snapshot()
+    .clone();
+    snapshot
+        .manifest
+        .parameters
+        .insert("target".into(), ParameterType::Target {});
+    let bundle = ApprovedBundle::new(snapshot).unwrap();
+    let parameters = bundle
+        .bind_parameters(
+            BTreeMap::from([("target".into(), ParameterValue::Target("selected".into()))]),
+            BTreeMap::from([("selected".into(), 42)]),
+        )
+        .unwrap();
+    let worker =
+        Supervisor::spawn_bound(&program(), &bundle, &parameters, Limits::default()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        assert!(Instant::now() < deadline);
+        match worker.try_event().unwrap() {
+            Some(Event::HostCall { id, request }) => {
+                assert_eq!(
+                    request,
+                    HostRequest::ReadScreen {
+                        target: festerm_automation_js::protocol::Target {
+                            id: "selected".into(),
+                            generation: 42,
+                        },
+                        max_bytes: 12,
+                    }
+                );
+                worker
+                    .host_result(
+                        id,
+                        HostResult::Text {
+                            text: "ready".into(),
+                            revision: 1,
+                            truncated: false,
+                        },
+                    )
+                    .unwrap();
+                break;
+            }
+            Some(event) => panic!("worker ended before its bound read: {event:?}"),
+            None => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+    assert!(matches!(
+        terminal(&worker, false),
+        Event::Finished {
+            outcome: Outcome::Completed { value }
+        } if value == "ready"
+    ));
+    worker.shutdown().unwrap();
 }
 
 #[test]

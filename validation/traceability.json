@@ -74,6 +74,9 @@
       "automated_tests": [
         "frozen_bindings_include_code_parameters_and_exact_target_mapping",
         "manifest_and_frozen_target_scopes_attenuate_host_calls",
+        "target_parameters_require_exact_safe_generation_bindings",
+        "target_parameters_are_generation_bound_handles",
+        "target_parameter_reaches_worker_as_exact_bound_handle",
         "projection_does_not_replace_broker_approval_or_completion_cut"
       ],
       "manual_scenarios": ["AUTO-01"],

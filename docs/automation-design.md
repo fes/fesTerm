@@ -294,22 +294,22 @@ terminal output as JavaScript is never a host API or workflow trigger.
 An illustrative read-only workflow, after native approval, could be:
 
 ```js
-export async function main({ fesTerm, params, signal }) {
-  const session = await fesTerm.sessions.get(params.target);
-  const first = await session.readScreen({ maxBytes: 16_384 });
-  const change = await session.waitForChange({
-    afterRevision: first.revision, timeoutMs: 30_000, signal
+export async function main({ fesTerm, params }) {
+  const first = await fesTerm.readScreen({ target: params.target, maxBytes: 16_384 });
+  const change = await fesTerm.waitForChange({
+    target: params.target, afterRevision: first.revision, timeoutMs: 30_000
   });
-  return change.kind === "changed"
-    ? await session.readScreen({ maxBytes: 16_384 })
-    : { status: change.kind };
+  return change.changed
+    ? await fesTerm.readScreen({ target: params.target, maxBytes: 16_384 })
+    : { status: "unchanged" };
 }
 ```
 
-`params.target` is an opaque reference validated against the run's target
-binding, not a script-selected current tab. The returned observation is itself
-subject to recipient/budget checks. `signal` is broker-owned cancellation state;
-ignoring it cannot keep an expired run authorized.
+`params.target` is an opaque, generation-bound handle derived from the run's
+frozen target mapping, not a script-selected current tab. It does not imply
+permission to discover other sessions. The returned observation is itself
+subject to recipient/budget checks; worker cancellation and the broker deadline
+apply even when JavaScript does not cooperate.
 
 ### Immutable workflow bundles
 
@@ -331,8 +331,11 @@ target names to application-instance/session/generation references. Its
 parameter digest includes that mapping, so swapping two approved targets cannot
 silently retarget an unchanged parameter. It rejects host calls outside the
 manifest and frozen scopes; profile opening and child workflow calls remain
-unavailable there. This is only an intake projection, not a native grant,
-worker launch or substitute for live broker and controller checks.
+unavailable there. Target parameters reach the worker only as handles derived
+from this mapping and bound to the exact bundle; the application must still use
+the matching frozen invocation when launching and projecting requests. This is
+only an intake projection, not a native grant, worker launch or substitute for
+live broker and controller checks.
 
 Code, parameter schema, permissions, dependency or API version changes produce
 a new digest and require a new grant. Filename, display version, publisher

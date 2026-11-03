@@ -16,7 +16,7 @@ use festerm_automation::{
 };
 use festerm_automation_js::{
     protocol::{HostRequest, Target, MAX_SAFE_INTEGER},
-    snapshot::{ApprovedBundle, Capability, ParameterValue, Parameters},
+    snapshot::{ApprovedBundle, BoundParameters, Capability, ParameterValue, Parameters},
 };
 use sha2::{Digest as _, Sha256};
 
@@ -53,7 +53,7 @@ pub enum ProjectedCall {
 /// scopes shown to the native approver. No mutable view of them is exposed.
 pub struct FrozenInvocation {
     bundle: ApprovedBundle,
-    parameters: Parameters,
+    parameters: BoundParameters,
     targets: BTreeMap<String, TargetRef>,
     scope: Scope,
     binding: InvocationBinding,
@@ -157,6 +157,22 @@ impl FrozenInvocation {
             },
             parameters: Digest(parameters_hash.finalize().into()),
         };
+        let target_generations = parameters
+            .values()
+            .filter_map(|value| match value {
+                ParameterValue::Target(id) => Some(id),
+                _ => None,
+            })
+            .map(|id| {
+                mapped
+                    .get(id)
+                    .map(|reference| (id.clone(), reference.generation()))
+                    .ok_or(Error::InvalidInput)
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let parameters = bundle
+            .bind_parameters(parameters, target_generations)
+            .map_err(|_| Error::InvalidInput)?;
         Ok(Self {
             bundle,
             parameters,
@@ -171,6 +187,10 @@ impl FrozenInvocation {
     }
 
     pub fn parameters(&self) -> &Parameters {
+        self.parameters.values()
+    }
+
+    pub fn worker_parameters(&self) -> &BoundParameters {
         &self.parameters
     }
 
@@ -312,6 +332,9 @@ mod tests {
             changed_parameter.binding().parameters
         );
         assert_eq!(original.targets()["a"], a);
+        assert_eq!(original.worker_parameters().target("a"), Some(wire("a", 1)));
+        assert_eq!(swapped.worker_parameters().target("a"), Some(wire("a", 2)));
+        assert_eq!(original.worker_parameters().target("b"), None);
 
         let changed_source = FrozenInvocation::new(
             bundle(

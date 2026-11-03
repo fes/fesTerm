@@ -11,6 +11,11 @@ calls are projected. These checks do not grant access: native approval,
 single-broker dispatch, worker lifecycle, session creation and child workflows
 remain separate, disabled integration work.
 
+Target-valued parameters now reach the worker as exact generation-bound handles
+derived from that frozen mapping, without requiring broader session discovery.
+The launch rejects bindings made for a different source bundle. These handles
+remain references only and do not bypass the broker or native approval.
+
 ## Isolated JavaScript worker without authority
 
 The P2 worker snapshots and hashes a bounded static JavaScript module graph

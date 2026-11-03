@@ -4,7 +4,7 @@ use crate::{
         encode_frame, Decoder, HostRequest, HostResult, Limits, Outcome, ParentMessage,
         WorkerFailure, WorkerMessage, CHUNK_BYTES, MAX_PENDING_CALLS,
     },
-    snapshot::{ApprovedBundle, Parameters},
+    snapshot::{ApprovedBundle, BoundParameters, Parameters},
     Error,
 };
 use std::{
@@ -114,17 +114,30 @@ impl Supervisor {
         limits: Limits,
     ) -> Result<Self, Error> {
         platform::availability()?;
+        let parameters = bundle.bind_parameters(parameters, BTreeMap::new())?;
+        Self::spawn_bound(program, bundle, &parameters, limits)
+    }
+
+    /// Start with target references derived from an immutable invocation.
+    /// The caller must still enforce the native grant and broker checks.
+    pub fn spawn_bound(
+        program: &WorkerProgram,
+        bundle: &ApprovedBundle,
+        parameters: &BoundParameters,
+        limits: Limits,
+    ) -> Result<Self, Error> {
+        platform::availability()?;
         if cleanup_failed() {
             return Err(Error::Unavailable("an owned worker could not be reaped"));
         }
         limits.validate()?;
-        bundle.validate_parameters(&parameters)?;
+        parameters.validate(bundle)?;
         let source = serde_json::to_vec(bundle.snapshot()).map_err(|_| Error::Snapshot)?;
         let mut frames = VecDeque::new();
         frames.push_back(encode_frame(&ParentMessage::Begin {
             digest: bundle.digest().into(),
             snapshot_bytes: source.len() as u32,
-            parameters,
+            parameters: parameters.clone(),
             limits: limits.clone(),
         })?);
         for bytes in source.chunks(CHUNK_BYTES) {

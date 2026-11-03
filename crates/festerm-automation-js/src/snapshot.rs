@@ -65,6 +65,63 @@ pub enum ParameterValue {
 
 pub type Parameters = BTreeMap<String, ParameterValue>;
 
+/// Run-local parameter values and the exact generations for target values.
+/// These are references, not grants; the application must derive them from its
+/// frozen invocation and still authorize every host call.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BoundParameters {
+    bundle_digest: String,
+    #[serde(deserialize_with = "unique_map")]
+    values: Parameters,
+    #[serde(deserialize_with = "unique_map")]
+    target_generations: BTreeMap<String, u64>,
+}
+
+impl std::fmt::Debug for BoundParameters {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("BoundParameters(<private>)")
+    }
+}
+
+impl BoundParameters {
+    pub fn values(&self) -> &Parameters {
+        &self.values
+    }
+
+    pub fn target(&self, id: &str) -> Option<crate::protocol::Target> {
+        self.target_generations
+            .get(id)
+            .map(|generation| crate::protocol::Target {
+                id: id.to_owned(),
+                generation: *generation,
+            })
+    }
+
+    pub(crate) fn validate(&self, bundle: &ApprovedBundle) -> Result<(), Error> {
+        if self.bundle_digest != bundle.digest() {
+            return Err(Error::Snapshot);
+        }
+        bundle.validate_parameters(&self.values)?;
+        let referenced: BTreeSet<_> = self
+            .values
+            .values()
+            .filter_map(|value| match value {
+                ParameterValue::Target(id) => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        if referenced.len() != self.target_generations.len()
+            || self.target_generations.iter().any(|(id, generation)| {
+                !referenced.contains(id.as_str()) || *generation > crate::protocol::MAX_SAFE_INTEGER
+            })
+        {
+            return Err(Error::Snapshot);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceSnapshot {
@@ -136,6 +193,20 @@ impl ApprovedBundle {
 
     pub fn snapshot(&self) -> &SourceSnapshot {
         &self.snapshot
+    }
+
+    pub fn bind_parameters(
+        &self,
+        values: Parameters,
+        target_generations: BTreeMap<String, u64>,
+    ) -> Result<BoundParameters, Error> {
+        let bound = BoundParameters {
+            bundle_digest: self.digest.clone(),
+            values,
+            target_generations,
+        };
+        bound.validate(self)?;
+        Ok(bound)
     }
 
     pub fn validate_parameters(&self, values: &Parameters) -> Result<(), Error> {
@@ -411,5 +482,58 @@ mod tests {
                 ParameterValue::Boolean(true)
             )]))
             .is_err());
+    }
+
+    #[test]
+    fn target_parameters_require_exact_safe_generation_bindings() {
+        let mut snapshot = fixture("export function main(){}").snapshot().clone();
+        snapshot
+            .manifest
+            .parameters
+            .insert("first".into(), ParameterType::Target {});
+        snapshot
+            .manifest
+            .parameters
+            .insert("second".into(), ParameterType::Target {});
+        let bundle = ApprovedBundle::new(snapshot).unwrap();
+        let values = BTreeMap::from([
+            ("first".into(), ParameterValue::Target("selected".into())),
+            ("second".into(), ParameterValue::Target("selected".into())),
+        ]);
+        let bound = bundle
+            .bind_parameters(values.clone(), BTreeMap::from([("selected".into(), 42)]))
+            .unwrap();
+        assert_eq!(
+            bound.target("selected"),
+            Some(crate::protocol::Target {
+                id: "selected".into(),
+                generation: 42,
+            })
+        );
+        assert!(bundle
+            .bind_parameters(values.clone(), BTreeMap::new())
+            .is_err());
+        assert!(bundle
+            .bind_parameters(
+                values.clone(),
+                BTreeMap::from([("selected".into(), 42), ("extra".into(), 43)]),
+            )
+            .is_err());
+        assert!(bundle
+            .bind_parameters(
+                values,
+                BTreeMap::from([("selected".into(), crate::protocol::MAX_SAFE_INTEGER + 1)]),
+            )
+            .is_err());
+        let mut changed = bundle.snapshot().clone();
+        changed
+            .modules
+            .insert("main.js".into(), "export function main(){return 1}".into());
+        let changed = ApprovedBundle::new(changed).unwrap();
+        assert!(bound.validate(&changed).is_err());
+        assert!(serde_json::from_str::<BoundParameters>(
+            r#"{"bundleDigest":"x","values":{},"targetGenerations":{"x":1,"x":2}}"#
+        )
+        .is_err());
     }
 }

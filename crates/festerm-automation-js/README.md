@@ -101,21 +101,21 @@ whitespace. This includes the manifest's typed parameter schema and capability
 maxima. **Actual parameter values are separately validated and moved into the
 immutable per-launch message; the broker must bind their exact values to its
 approval/grant.** Values are text, safe integers, booleans or opaque target
-tokens, with no unknown/extra parameters. JSON maps reject duplicate keys.
+tokens, with no unknown/extra parameters. The frozen invocation binds each
+target parameter to its approved generation and passes it to JavaScript as an
+opaque `{ id, generation }` handle. Bindings are tied to the exact bundle and
+do not grant discovery or session access. JSON maps reject duplicate keys.
 Each run gets a new runtime and new process; no module/global cache survives.
 
 Every `fesTerm` method returns a Promise, including malformed calls:
 
 ```js
 export async function main({ fesTerm, params }) {
-  const observation = await fesTerm.observe();
-  const binding = observation.targets.find(item => item.target.id === params.target);
-  if (!binding) throw new Error("target unavailable");
   const screen = await fesTerm.readScreen({
-    target: binding.target,
+    target: params.target,
     maxBytes: 4096
   });
-  return { observation, screen };
+  return screen;
 }
 ```
 
