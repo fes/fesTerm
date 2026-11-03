@@ -316,6 +316,21 @@ Auto-start is at sign-in (Linux can start at boot when lingering was already
 enabled). Neither daemon-shell reboot survival nor automatic replacement of a
 dead/stale generation is promised.
 
+On Linux the service restarts the worker 15 seconds after a transient failure
+(relay drop, bridge exit/crash, token or network error), indefinitely, keeping
+the same tunnel, host key and daemon session. Refusals a restart cannot fix
+(the recorded daemon generation is gone, or the account, host identity or
+tunnel changed) exit with status 78 and stay stopped until setup is rerun.
+macOS and Windows services are unchanged: they start at sign-in and are not
+restarted. On every platform the
+worker appends start, ready, bridge-exit, worker-exit and client open/close
+events to `worker.log` in its private state directory (one 256 KiB file plus
+one rotated `worker.log.1`). Lines hold timestamps, PIDs and stage codes only:
+no tokens, paths, addresses or terminal data. Only `--upgrade` migrates a
+Linux unit installed by an earlier release, and it accepts only that
+release's exact `Restart=no` definition. A plain rerun keeps the old helpers
+and does not restart them.
+
 Rerunning the same one-liner verifies/reuses the immutable release cache and
 protected installation journal. A healthy service returns the same public
 connection details without a second sign-in, tunnel, shell or service restart.

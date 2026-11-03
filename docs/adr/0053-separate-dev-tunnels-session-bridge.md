@@ -801,3 +801,38 @@ Automated tests: `managed_upgrade_switches_helpers_and_keeps_tunnel_target_ident
 installer test `test_upgrade_installs_next_to_the_previous_release_and_passes_the_flag`.
 A real-service upgrade on each platform (daemon shell survives, profile and
 fingerprint unchanged) remains native `DT-05` evidence.
+
+## Amendment: Linux worker restart and private worker log
+
+A Linux host went offline overnight when its bridge exited. `Restart=no` and
+`/dev/null` output left no recovery and no record of why. Decision:
+
+- The Linux unit now uses `Restart=on-failure`, `RestartSec=15` and
+  `StartLimitIntervalSec=0`. Each restart reruns the normal worker checks
+  (exact daemon generation, account, host identity, fresh scoped token), so a
+  restart never creates a tunnel, shell or key, or weakens access. This is a
+  bridge restart under the "Bridge crash or restart" row above. Clients still
+  reattach deliberately.
+- Refusals that need operator action exit `78` (`PERMANENT_REFUSAL_EXIT`) and
+  are excluded through `RestartPreventExitStatus`. Other failures, including
+  `setup.verify_account` and `setup.host_token` (sign-in/network), retry.
+- Only `--upgrade`, which also switches `ExecStart` to helpers that implement
+  exit 78, accepts and atomically migrates the exact earlier `Restart=no`
+  definition. A plain rerun keeps the old helpers and their legacy unit. Any
+  other content still refuses.
+- On all platforms the worker appends to a bounded private `worker.log`
+  (256 KiB plus one rotation): start, ready, bridge exit status, worker exit
+  stage code and permanence, panics, and bridge `client_opened`/
+  `client_closed` events. The bridge writes these events as stage-code-shaped
+  `festerm-event` stderr lines, and the worker forwards only lines that pass
+  validation. Service stdout/stderr remain `null`.
+- macOS and Windows service definitions are unchanged. They gain logging but
+  not restart.
+
+Automated tests: `service_definitions_are_deterministic_scoped_and_have_no_secrets`,
+`service_linux_legacy_definition_is_byte_exact_for_migration`,
+`managed_worker_retries_transient_failures_but_not_operator_refusals`,
+`worker_log_values_are_stage_codes_only`,
+`worker_log_forwards_only_well_formed_bridge_events` and
+`worker_log_timestamps_are_utc_iso8601`. Restarting after a real relay drop
+on Linux remains native evidence.

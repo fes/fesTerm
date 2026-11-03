@@ -175,18 +175,43 @@ fn systemd_word(value: &str) -> String {
     )
 }
 
+/// `--serve` exits with this status when a retry cannot succeed without
+/// operator action (stale daemon generation, changed account or identity).
+/// Linux units exclude it from automatic restart.
+pub const PERMANENT_REFUSAL_EXIT: i32 = 78;
+
 #[cfg(any(target_os = "linux", test))]
-fn linux_definition(spec: &ServiceSpec) -> io::Result<String> {
+fn linux_unit(spec: &ServiceSpec, unit: &str, restart: &str) -> io::Result<String> {
     spec.validate_syntax()?;
     Ok(format!(
-        "[Unit]\nDescription=fesTerm dedicated Dev Tunnel {}\n\
+        "[Unit]\nDescription=fesTerm dedicated Dev Tunnel {}\n{unit}\
          [Service]\nType=exec\nExecStart={} --serve --state-dir {}\n\
-         Restart=no\nKillMode=control-group\nStandardOutput=null\nStandardError=null\n\
+         {restart}KillMode=control-group\nStandardOutput=null\nStandardError=null\n\
          [Install]\nWantedBy=default.target\n",
         spec.id,
         systemd_word(path_text(&spec.executable)?),
         systemd_word(path_text(&spec.state)?),
     ))
+}
+
+/// Transient bridge/relay failures restart indefinitely at a fixed interval;
+/// permanent refusals stop. The worker records each exit in its private log.
+#[cfg(any(target_os = "linux", test))]
+fn linux_definition(spec: &ServiceSpec) -> io::Result<String> {
+    linux_unit(
+        spec,
+        "StartLimitIntervalSec=0\n",
+        &format!("Restart=on-failure\nRestartSec=15\nRestartPreventExitStatus={PERMANENT_REFUSAL_EXIT}\n"),
+    )
+}
+
+/// The exact definition earlier releases installed (no restart). Accepted only
+/// by an explicit `--upgrade` ([`stop_and_replace`]), which also switches
+/// `ExecStart` to helpers that implement [`PERMANENT_REFUSAL_EXIT`]. A plain
+/// rerun keeps the old binary, so its unit must not gain restarts.
+#[cfg(any(target_os = "linux", test))]
+fn legacy_linux_definition(spec: &ServiceSpec) -> io::Result<String> {
+    linux_unit(spec, "", "Restart=no\n")
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -665,8 +690,8 @@ fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
     let expected = linux_definition(spec)?;
     let accepted = previous
         .iter()
-        .map(linux_definition)
-        .chain([Ok(expected.clone())])
+        .chain([spec])
+        .flat_map(|owned| [linux_definition(owned), legacy_linux_definition(owned)])
         .collect::<io::Result<Vec<_>>>()?;
     let tool = Path::new("/usr/bin/systemctl");
     let shown = native(
@@ -1162,7 +1187,7 @@ mod tests {
     }
 
     #[test]
-    fn service_definitions_are_deterministic_scoped_and_have_no_retry_or_secrets() {
+    fn service_definitions_are_deterministic_scoped_and_have_no_secrets() {
         let spec = spec();
         let linux = linux_definition(&spec).unwrap();
         let mac = mac_definition(&spec).unwrap();
@@ -1173,7 +1198,10 @@ mod tests {
             windows,
             windows_definition(&spec, "S-1-5-21-123-456-789-1001").unwrap()
         );
-        assert!(linux.contains("Restart=no\n"));
+        assert!(linux.contains("Restart=on-failure\nRestartSec=15\n"));
+        assert!(linux.contains("RestartPreventExitStatus=78\n"));
+        assert!(linux.contains("StartLimitIntervalSec=0\n"));
+        assert!(!linux.contains("Restart=no"));
         assert!(linux.contains("WantedBy=default.target"));
         assert!(mac.contains("<key>RunAtLoad</key><true/>"));
         assert!(mac.contains("<key>KeepAlive</key><false/>"));
@@ -1195,6 +1223,29 @@ mod tests {
             }
             assert!(!definition.contains("--state-dir --"));
         }
+    }
+
+    #[test]
+    fn service_linux_legacy_definition_is_byte_exact_for_migration() {
+        let spec = spec();
+        let unit = |restart: &str| {
+            format!(
+                "[Unit]\nDescription=fesTerm dedicated Dev Tunnel {}\n[Service]\nType=exec\n\
+                 ExecStart={} --serve --state-dir {}\n{restart}KillMode=control-group\n\
+                 StandardOutput=null\nStandardError=null\n[Install]\nWantedBy=default.target\n",
+                spec.id,
+                systemd_word(spec.executable.to_str().unwrap()),
+                systemd_word(spec.state.to_str().unwrap()),
+            )
+        };
+        assert_eq!(
+            legacy_linux_definition(&spec).unwrap(),
+            unit("Restart=no\n")
+        );
+        assert_ne!(
+            legacy_linux_definition(&spec).unwrap(),
+            linux_definition(&spec).unwrap()
+        );
     }
 
     #[test]

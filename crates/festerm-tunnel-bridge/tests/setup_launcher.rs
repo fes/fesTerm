@@ -1,7 +1,38 @@
 #![cfg(all(unix, feature = "relay"))]
 
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Stdio, time::Duration};
-use tokio::{io::AsyncReadExt, process::Command, time::timeout};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+    process::{Output, Stdio},
+    sync::Mutex,
+    time::Duration,
+};
+use tokio::{
+    io::AsyncReadExt,
+    process::{Child, Command},
+    time::timeout,
+};
+
+// Tests run on parallel threads: a fork in one thread can inherit another
+// thread's still-open writable executable, making exec fail with ETXTBSY.
+// Writing fixture executables and spawning children under one lock prevents it.
+static EXEC_FILES: Mutex<()> = Mutex::new(());
+
+fn spawn(command: &mut Command) -> Child {
+    let _guard = EXEC_FILES
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    command.spawn().unwrap()
+}
+
+async fn output(command: &mut Command) -> Output {
+    let child = spawn(command.stdout(Stdio::piped()).stderr(Stdio::piped()));
+    timeout(Duration::from_secs(5), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap()
+}
 
 struct Fixture {
     root: PathBuf,
@@ -13,6 +44,9 @@ impl Fixture {
             std::env::temp_dir().join(format!("festerm-setup-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let _guard = EXEC_FILES
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         fs::copy(
             env!("CARGO_BIN_EXE_festerm-tunnel-setup"),
             root.join("festerm-tunnel-setup"),
@@ -23,6 +57,9 @@ impl Fixture {
 
     fn script(&self, name: &str, body: &str) {
         let path = self.root.join(name);
+        let _guard = EXEC_FILES
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         fs::write(&path, format!("#!/bin/sh\nset -eu\n{body}\n")).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
@@ -71,16 +108,12 @@ impl Drop for Fixture {
 
 #[tokio::test]
 async fn setup_help_distinguishes_managed_service_from_foreground_mode() {
-    let output = timeout(
-        Duration::from_secs(5),
-        Command::new(env!("CARGO_BIN_EXE_festerm-tunnel-setup"))
+    let output = output(
+        &mut Command::new(env!("CARGO_BIN_EXE_festerm-tunnel-setup"))
             .arg("--help")
-            .kill_on_drop(true)
-            .output(),
+            .kill_on_drop(true),
     )
-    .await
-    .unwrap()
-    .unwrap();
+    .await;
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).unwrap();
     for contract in [
@@ -127,12 +160,12 @@ printf '{{"version":1,"file_read":false,"path_style":"posix","tunnel_id":"%s","c
 while :; do sleep 1; done"#
         ),
     );
-    let mut child = fixture
-        .command()
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = spawn(
+        fixture
+            .command()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    );
     let mut stdout = child.stdout.take().unwrap();
     let mut output = Vec::new();
     timeout(Duration::from_secs(10), async {
@@ -192,10 +225,7 @@ case "$1 $2" in
     *) printf 'SYNTHETIC-SENSITIVE-ERROR' >&2; exit 41 ;;
 esac"#,
     );
-    let output = timeout(Duration::from_secs(5), fixture.command().output())
-        .await
-        .unwrap()
-        .unwrap();
+    let output = output(&mut fixture.command()).await;
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("setup.create_tunnel"));
     assert!(!String::from_utf8_lossy(&output.stderr).contains("SYNTHETIC-SENSITIVE-ERROR"));
@@ -210,10 +240,7 @@ async fn setup_refuses_invalid_token_without_starting_bridge_or_reporting_ready(
         "festerm-tunnel-bridge",
         r#"touch "$MOCK_ROOT/bridge-started""#,
     );
-    let output = timeout(Duration::from_secs(5), fixture.command().output())
-        .await
-        .unwrap()
-        .unwrap();
+    let output = output(&mut fixture.command()).await;
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("setup.token_response"));
     assert!(!fixture.root.join("bridge-started").exists());
@@ -227,10 +254,7 @@ async fn setup_refuses_existing_state_directory_before_authentication() {
     fixture.normal_cli("synthetic-host-token-not-a-credential");
     fixture.script("festerm-tunnel-bridge", "exit 0");
     fs::create_dir(fixture.root.join("run")).unwrap();
-    let output = timeout(Duration::from_secs(5), fixture.command().output())
-        .await
-        .unwrap()
-        .unwrap();
+    let output = output(&mut fixture.command()).await;
     assert!(!output.status.success());
     assert!(!fixture.root.join("commands").exists());
 }
@@ -254,9 +278,8 @@ async fn managed_setup_refuses_service_prerequisites_before_authentication_or_pr
         fs::create_dir(&config).unwrap();
         fs::set_permissions(&config, fs::Permissions::from_mode(mode)).unwrap();
         let state = fixture.root.join("state");
-        let output = timeout(
-            Duration::from_secs(5),
-            Command::new(env!("CARGO_BIN_EXE_festerm-tunnel-setup"))
+        let output = output(
+            &mut Command::new(env!("CARGO_BIN_EXE_festerm-tunnel-setup"))
                 .arg("--managed")
                 .arg("--devtunnel")
                 .arg(fixture.root.join("devtunnel"))
@@ -270,12 +293,9 @@ async fn managed_setup_refuses_service_prerequisites_before_authentication_or_pr
                 .env("XDG_RUNTIME_DIR", &fixture.root)
                 .env("MOCK_ROOT", &fixture.root)
                 .stdin(Stdio::null())
-                .kill_on_drop(true)
-                .output(),
+                .kill_on_drop(true),
         )
-        .await
-        .unwrap()
-        .unwrap();
+        .await;
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains(stage));
         if mode != 0o700 {

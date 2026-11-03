@@ -16,6 +16,8 @@ pub mod setup_storage;
 pub mod transport;
 #[cfg(feature = "client")]
 pub mod wire;
+#[cfg(feature = "relay")]
+pub mod worker_log;
 
 #[cfg(all(test, feature = "relay"))]
 mod test_support;
