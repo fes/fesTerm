@@ -23,7 +23,7 @@ advanced scoped-token activation remains available.
 The iOS port has started with an isolated [rendering/lifecycle
 spike](app/festerm-mobile/README.md), reusing the terminal core and renderer.
 The first input surface uses the same terminal-above-persistent-keyboard
-layout on iPhone and iPad, with sticky Ctrl/Alt and a docked terminal-key row.
+layout on iPhone and iPad, with sticky Ctrl/Alt/Shift and a docked terminal-key row.
 Long-press/drag sends arrows with a temporary helper and three repeat speeds.
 Two-finger pinch scales terminal text within the shared zoom limits.
 Affected PRs retain mobile unit/dependency checks, device compilation and

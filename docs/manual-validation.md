@@ -663,6 +663,16 @@ Headless screenshots do not establish native text contrast, Dynamic Type,
 VoiceOver, keyboard pixels or finger usability; these remain MOB-05/MOB-06 checks.
 No saved profiles, session switcher, Keychain or app lock is implied by this pass.
 
+The owner's terminal-key update adds one-shot Shift after Alt and changes the
+navigation grid to Home/Up/End/PgUp, Left/Down/Right/PgDn and
+Insert/Delete/Shift+Tab/Return. Actual-widget tests cover that order and narrow
+row fit, local Ctrl+Shift+C selection-copy output, Ctrl+Shift+P clipboard-read
+and paste ordering, and More → Force redraw without terminal input or reset.
+For MOB-02/MOB-06, verify copy/paste against the real iOS pasteboard, the native
+keyboard's 123 / #+= buttons, modifier highlighting, and full redraw while
+connected and while reading disconnected history. A linked device build and
+headless tests do not establish UIKit keyboard pixels or native pasteboard use.
+
 The #424 owned-loopback tests automate the host-side connection form, real SSH
 host trust and unknown/changed-key refusal before credentials, password retry,
 terminal text/IME/control/application-cursor input, DSR replies, remote resize and

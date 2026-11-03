@@ -556,6 +556,7 @@ mod tests {
         })));
         app.control = true;
         app.alt = true;
+        app.shift = true;
         app.terminal.ingest(b"\x1b[?1003h\x1b[?1006h\x1b[?1004h");
         *app.sink.live.connection.borrow_mut() = Some(live);
         let context = egui::Context::default();
@@ -577,7 +578,7 @@ mod tests {
             assert!(output.platform_output.ime.is_none());
             output.drop_without_applying_deltas();
         }
-        assert!(!app.control && !app.alt);
+        assert!(!app.control && !app.alt && !app.shift);
         assert!(app.toolbar_rect.is_none());
         assert!(app.gestures.helper().is_none());
         let grid = app.view.diagnostics().grid_rect.unwrap();

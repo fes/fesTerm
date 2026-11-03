@@ -257,6 +257,8 @@ pub struct MobileApp {
     keys: HardwareKeys,
     control: bool,
     alt: bool,
+    shift: bool,
+    input_notice: Option<&'static str>,
     toolbar_rect: Option<egui::Rect>,
     #[cfg(test)]
     control_rect: Option<egui::Rect>,
@@ -317,6 +319,8 @@ impl MobileApp {
             keys: HardwareKeys::default(),
             control: false,
             alt: false,
+            shift: false,
+            input_notice: None,
             toolbar_rect: None,
             #[cfg(test)]
             control_rect: None,
@@ -484,7 +488,14 @@ impl MobileApp {
         self.send_key_with(key, Modifiers::NONE);
     }
 
-    /// Sticky Ctrl/Alt apply to the next key whichever surface produced it.
+    fn clear_sticky_modifiers(&mut self) {
+        self.control = false;
+        self.alt = false;
+        self.shift = false;
+        self.input_notice = None;
+    }
+
+    /// Sticky modifiers apply to the next key whichever surface produced it.
     fn send_key_with(&mut self, key: Key, extra: Modifiers) {
         let mut modifiers = extra;
         if self.control {
@@ -493,37 +504,114 @@ impl MobileApp {
         if self.alt {
             modifiers = modifiers.with(Modifiers::ALT);
         }
+        if self.shift {
+            modifiers = modifiers.with(Modifiers::SHIFT);
+        }
+        let key = match key {
+            Key::Character(character) if modifiers.contains(Modifiers::SHIFT) => {
+                Key::Character(character.to_ascii_uppercase())
+            }
+            _ => key,
+        };
+        self.input_notice = None;
         route_input(
             &mut self.terminal,
             InputEvent::ModifiedKey { key, modifiers },
             &mut self.sink,
         );
-        self.control = false;
-        self.alt = false;
+        self.clear_sticky_modifiers();
     }
 
-    fn consume_sticky_text(&mut self, events: &mut Vec<egui::Event>) {
+    fn consume_sticky_text(
+        &mut self,
+        events: &mut Vec<egui::Event>,
+        mut clipboard_text: impl FnMut() -> Option<String>,
+    ) {
         if !self.lifecycle.get().active {
             return;
         }
-        events.retain_mut(|event| {
-            if !self.control && !self.alt {
-                return true;
+        let mut processed = Vec::with_capacity(events.len());
+        for mut event in std::mem::take(events) {
+            let hardware_shortcut = match &event {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.ctrl
+                    && (modifiers.shift || self.shift)
+                    && !modifiers.alt
+                    && !modifiers.mac_cmd
+                    && !self.alt =>
+                {
+                    match key {
+                        egui::Key::C => Some('c'),
+                        egui::Key::P => Some('p'),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(character) = hardware_shortcut {
+                self.queue_clipboard_shortcut(character, &mut processed, &mut clipboard_text);
+                continue;
             }
-            match event {
-                egui::Event::Text(text) | egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
+            if self.control || self.alt || self.shift {
+                if let egui::Event::Text(text) | egui::Event::Ime(egui::ImeEvent::Commit(text)) =
+                    &mut event
+                {
+                    let committed = std::mem::take(text);
+                    let mut characters = committed.chars();
+                    if let Some(character) = characters.next() {
+                        if self.control
+                            && self.shift
+                            && !self.alt
+                            && matches!(character.to_ascii_lowercase(), 'c' | 'p')
+                        {
+                            // Finish IME composition before the local action, then
+                            // let trailing committed text follow it in the same batch.
+                            processed.push(event);
+                            self.queue_clipboard_shortcut(
+                                character,
+                                &mut processed,
+                                &mut clipboard_text,
+                            );
+                            let rest: String = characters.collect();
+                            if !rest.is_empty() {
+                                processed.push(egui::Event::Text(rest));
+                            }
+                            continue;
+                        }
+                    }
                     // One-shot latch on the first character; preserve the rest
                     // of a multi-character commit in order through the encoder.
-                    for character in std::mem::take(text).chars() {
+                    for character in committed.chars() {
                         self.send_key(Key::Character(character));
                     }
                     // Preserve the empty commit event so the shared adapter
                     // finishes any preedit composition without duplicate text.
-                    true
                 }
-                _ => true,
             }
-        });
+            processed.push(event);
+        }
+        *events = processed;
+    }
+
+    fn queue_clipboard_shortcut(
+        &mut self,
+        character: char,
+        events: &mut Vec<egui::Event>,
+        clipboard_text: &mut impl FnMut() -> Option<String>,
+    ) {
+        self.clear_sticky_modifiers();
+        self.input_notice = None;
+        if character.eq_ignore_ascii_case(&'c') {
+            events.push(egui::Event::Copy);
+        } else if let Some(text) = clipboard_text().filter(|text| !text.is_empty()) {
+            events.push(egui::Event::Paste(text));
+        } else {
+            self.input_notice = Some("The clipboard has no text to paste");
+        }
     }
 
     #[cfg(feature = "live-ssh")]
@@ -657,8 +745,7 @@ impl MobileApp {
             #[cfg(feature = "live-ssh")]
             self.suspend_sessions();
             self.gestures.cancel();
-            self.control = false;
-            self.alt = false;
+            self.clear_sticky_modifiers();
             self.observed_suspensions = lifecycle.suspensions;
         }
         if lifecycle.memory_warnings != self.observed_memory_warnings {
@@ -691,8 +778,7 @@ impl MobileApp {
             lock.frame_presented();
             if hidden {
                 self.gestures.cancel();
-                self.control = false;
-                self.alt = false;
+                self.clear_sticky_modifiers();
                 return;
             }
         }
@@ -966,8 +1052,7 @@ impl MobileApp {
     fn leave_terminal(&mut self) {
         if self.surface == Surface::Terminal {
             self.gestures.cancel();
-            self.control = false;
-            self.alt = false;
+            self.clear_sticky_modifiers();
             self.keys_panel.open = false;
             if self.workspace == workspaces::Workspace::Terminal {
                 if let Some(focus) = self.view.relinquish_transient_input() {
@@ -1285,8 +1370,7 @@ impl MobileApp {
             return;
         }
         self.gestures.cancel();
-        self.control = false;
-        self.alt = false;
+        self.clear_sticky_modifiers();
         if self.workspace == workspaces::Workspace::Terminal {
             if let Some(focus) = self.view.relinquish_transient_input() {
                 route_input(&mut self.terminal, InputEvent::Focus(focus), &mut self.sink);
@@ -1305,8 +1389,7 @@ impl MobileApp {
             self.open_local_tab();
         }
         self.sink.diagnostics = InputSinkDiagnostics::default();
-        self.control = false;
-        self.alt = false;
+        self.clear_sticky_modifiers();
         self.editor.close();
     }
 
@@ -1336,6 +1419,15 @@ impl MobileApp {
                 back = header.back;
                 files = header.files;
                 let menu = egui::Popup::menu(&header.more).show(|ui| {
+                    if in_terminal
+                        && ui
+                            .add_enabled(lifecycle.active, egui::Button::new("Force redraw"))
+                            .clicked()
+                    {
+                        self.view.request_full_redraw();
+                        ui.ctx().request_repaint();
+                        ui.close();
+                    }
                     if session_active && ui.button("Disconnect").clicked() {
                         #[cfg(feature = "live-ssh")]
                         if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
@@ -1442,8 +1534,7 @@ impl MobileApp {
         #[cfg(not(feature = "live-ssh"))]
         let read_only = false;
         if !input_ready {
-            self.control = false;
-            self.alt = false;
+            self.clear_sticky_modifiers();
         }
         let surfaces = self.surfaces();
         let panel_open = self.keys_panel.open && input_ready && !read_only;
@@ -1475,6 +1566,7 @@ impl MobileApp {
                             &terminal_chrome::KeyRowState {
                                 control: self.control,
                                 alt: self.alt,
+                                shift: self.shift,
                                 panel_open,
                                 keyboard_visible: self.keyboard_visible,
                                 paste: self.caps.paste,
@@ -1543,7 +1635,12 @@ impl MobileApp {
         }
         let history_ready = lifecycle.active && !self.editor.open && (input_ready || read_only);
         if input_ready && !self.menu_open {
-            ui.input_mut(|input| self.consume_sticky_text(&mut input.events));
+            ui.input_mut(|input| {
+                self.consume_sticky_text(&mut input.events, festerm_ios_window::clipboard_text)
+            });
+        }
+        if let Some(notice) = self.input_notice {
+            ui.label(egui::RichText::new(notice).color(theme::color::DANGER));
         }
         let terminal_rect = ui.available_rect_before_wrap();
         let gesture = ui.input_mut(|input| {
@@ -1575,8 +1672,6 @@ impl MobileApp {
                 terminal_input_enabled: history_ready && !self.menu_open && !gesture.block_pointer,
                 keyboard_input_enabled: input_ready && !self.menu_open,
                 persistent_keyboard_focus: input_ready && !self.menu_open,
-                // No clipboard/paste policy is implemented by this probe.
-                defer_paste_to_application: true,
                 ..Default::default()
             },
         );
@@ -1609,16 +1704,20 @@ impl MobileApp {
         match action {
             KeyRowAction::None => {}
             KeyRowAction::Paste => {
+                self.clear_sticky_modifiers();
                 if let Some(text) =
                     festerm_ios_window::clipboard_text().filter(|text| !text.is_empty())
                 {
                     route_input(&mut self.terminal, InputEvent::Paste(text), &mut self.sink);
+                } else {
+                    self.input_notice = Some("The clipboard has no text to paste");
                 }
             }
             KeyRowAction::Escape => self.send_key(Key::Escape),
             KeyRowAction::Tab => self.send_key(Key::Tab),
             KeyRowAction::ToggleControl => self.control = !self.control,
             KeyRowAction::ToggleAlt => self.alt = !self.alt,
+            KeyRowAction::ToggleShift => self.shift = !self.shift,
             KeyRowAction::TogglePanel => self.keys_panel.open = !self.keys_panel.open,
             KeyRowAction::ToggleKeyboard => {
                 self.keyboard_visible = !self.keyboard_visible;
@@ -1672,6 +1771,20 @@ impl eframe::App for MobileApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
+        #[cfg(target_os = "ios")]
+        ui.ctx().output_mut(|output| {
+            output.commands.retain(|command| {
+                if let egui::OutputCommand::CopyText(text) = command {
+                    if !festerm_ios_window::set_clipboard_text(text) {
+                        log::error!("iOS pasteboard copy failed");
+                        self.input_notice = Some("Copy is unavailable here");
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+        });
         if !self.reported_first_ui {
             eprintln!("festerm-mobile: first UI built");
             self.reported_first_ui = true;
@@ -2342,10 +2455,11 @@ mod tests {
         let mut app = MobileApp::new_terminal(lifecycle);
         app.control = true;
         app.alt = true;
+        app.shift = true;
         let mut events = vec![egui::Event::Ime(egui::ImeEvent::Commit("cx".into()))];
-        app.consume_sticky_text(&mut events);
+        app.consume_sticky_text(&mut events, || panic!("not a clipboard shortcut"));
         assert_eq!(app.sink.diagnostics.byte_count, 3); // ESC, Ctrl-C, literal x.
-        assert!(!app.control && !app.alt);
+        assert!(!app.control && !app.alt && !app.shift);
         assert!(
             matches!(&events[0], egui::Event::Ime(egui::ImeEvent::Commit(text)) if text.is_empty())
         );
@@ -2360,11 +2474,223 @@ mod tests {
         }));
         let mut app = MobileApp::new_terminal(lifecycle);
         app.apply_key_row(terminal_chrome::KeyRowAction::ToggleControl);
+        app.apply_key_row(terminal_chrome::KeyRowAction::ToggleShift);
         assert!(app.control);
         app.send_key_with(Key::Function(5), Modifiers::NONE);
-        assert!(!app.control, "Ctrl is consumed by the next key");
+        assert!(
+            !app.control && !app.shift,
+            "modifiers are consumed by the next key"
+        );
         app.send_key_with(Key::Tab, Modifiers::SHIFT);
         assert_eq!(app.sink.diagnostics.byte_count, 10); // CSI 15;5 ~ then CSI Z.
+    }
+
+    #[test]
+    fn mobile_clipboard_chords_do_not_leak_key_text_or_control_bytes() {
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        app.control = true;
+        app.shift = true;
+        let mut events = vec![
+            egui::Event::Key {
+                key: egui::Key::C,
+                physical_key: Some(egui::Key::C),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::Ime(egui::ImeEvent::Commit("cx".into())),
+        ];
+        app.consume_sticky_text(&mut events, || panic!("Copy must not read the clipboard"));
+        assert!(matches!(
+            &events[0],
+            egui::Event::Key {
+                key: egui::Key::C,
+                ..
+            }
+        ));
+        assert!(
+            matches!(&events[1], egui::Event::Ime(egui::ImeEvent::Commit(text)) if text.is_empty())
+        );
+        assert!(matches!(&events[2], egui::Event::Copy));
+        assert!(matches!(&events[3], egui::Event::Text(text) if text == "x"));
+        assert_eq!(app.sink.diagnostics.byte_count, 0);
+        assert!(!app.control && !app.shift);
+
+        app.control = true;
+        app.shift = true;
+        let mut events = vec![egui::Event::Text("p".into())];
+        let mut reads = 0;
+        app.consume_sticky_text(&mut events, || {
+            reads += 1;
+            Some("clipboard text".into())
+        });
+        assert_eq!(reads, 1);
+        assert!(
+            matches!(&events[..], [egui::Event::Text(empty), egui::Event::Paste(text)] if empty.is_empty() && text == "clipboard text")
+        );
+        assert_eq!(app.sink.diagnostics.byte_count, 0);
+        assert!(!app.control && !app.shift);
+
+        let mut events = vec![egui::Event::Key {
+            key: egui::Key::P,
+            physical_key: Some(egui::Key::P),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+        }];
+        app.consume_sticky_text(&mut events, || None);
+        assert!(events.is_empty());
+        assert_eq!(app.input_notice, Some("The clipboard has no text to paste"));
+        assert_eq!(app.sink.diagnostics.byte_count, 0);
+    }
+
+    #[test]
+    fn mobile_clipboard_shortcut_paste_reaches_the_encoder_before_trailing_text() {
+        #[derive(Default)]
+        struct Sink(Vec<u8>);
+        impl EncodedInputSink for Sink {
+            fn record_encoded_input(&mut self, bytes: &[u8]) {
+                self.0.extend_from_slice(bytes);
+            }
+        }
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        app.control = true;
+        app.shift = true;
+        app.terminal.ingest(b"\x1b[?2004h");
+        let mut events = vec![egui::Event::Text("px".into())];
+        app.consume_sticky_text(&mut events, || Some("pasted".into()));
+        let mut sink = Sink::default();
+        let ctx = egui::Context::default();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.view.show(ui, &mut app.terminal, &mut sink);
+        })
+        .drop_without_applying_deltas();
+        ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                app.view.show(ui, &mut app.terminal, &mut sink);
+            },
+        )
+        .drop_without_applying_deltas();
+        assert_eq!(sink.0, b"\x1b[200~pasted\x1b[201~x");
+    }
+
+    #[test]
+    fn mobile_ctrl_shift_copy_uses_selected_text_without_remote_input() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        app.terminal.ingest(b"\x1b[2J\x1b[Hcopy this text");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(
+                |ui, state: &mut (MobileApp, Vec<String>)| {
+                    state.0.show_with_occlusion(ui, 0.35);
+                    ui.ctx().output(|output| {
+                        for command in &output.commands {
+                            if let egui::OutputCommand::CopyText(text) = command {
+                                state.1.push(text.clone());
+                            }
+                        }
+                    });
+                },
+                (app, Vec::new()),
+            );
+        harness.run();
+        let grid = harness.state().0.view.diagnostics().grid_rect.unwrap();
+        let dimensions = harness.state().0.terminal.dimensions();
+        let cell = egui::vec2(
+            grid.width() / dimensions.columns() as f32,
+            grid.height() / dimensions.rows() as f32,
+        );
+        let start = grid.min + egui::vec2(cell.x * 0.2, cell.y * 0.5);
+        let end = start + egui::vec2(cell.x * 3.0, 0.0);
+        for (point, pressed) in [(start, true), (end, false)] {
+            harness.event(egui::Event::PointerMoved(point));
+            harness.event(egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run();
+        }
+        let selected = harness
+            .state()
+            .0
+            .view
+            .selected_text(&harness.state().0.terminal)
+            .expect("selected fixture text");
+        let bytes = harness.state().0.sink.diagnostics.byte_count;
+        harness.get_by_label("Ctrl").click();
+        harness.run();
+        harness.get_by_label("Shift").click();
+        harness.run();
+        harness.event(egui::Event::Key {
+            key: egui::Key::C,
+            physical_key: Some(egui::Key::C),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::Text("c".into()));
+        harness.run();
+        assert_eq!(harness.state().1, [selected]);
+        assert_eq!(harness.state().0.sink.diagnostics.byte_count, bytes);
+        assert!(!harness.state().0.control && !harness.state().0.shift);
+    }
+
+    #[test]
+    fn mobile_force_redraw_menu_rebuilds_without_resetting_or_sending_input() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let app = Rc::new(RefCell::new(MobileApp::new_terminal(Rc::new(Cell::new(
+            Lifecycle {
+                active: true,
+                ..Default::default()
+            },
+        )))));
+        app.borrow_mut().view.zoom_by_factor(1.2);
+        let displayed = app.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(
+                move |ui, _: &mut ()| displayed.borrow_mut().show_with_occlusion(ui, 0.35),
+                (),
+            );
+        harness.run();
+        let before = app.borrow().terminal.clone();
+        let font_size = app.borrow().view.font_size_points();
+        let bytes = app.borrow().sink.diagnostics.byte_count;
+        let redrawn = std::sync::Arc::new(std::sync::Mutex::new(0));
+        let observed = redrawn.clone();
+        festerm_ui_egui::install_root_terminal_painter(&harness.ctx, move |_, frame| {
+            if frame.full_redraw {
+                *observed.lock().unwrap() += 1;
+            }
+            None
+        });
+        harness.get_by_label("More").click();
+        harness.run();
+        harness.get_by_label("Force redraw").click();
+        harness.run();
+        assert_eq!(*redrawn.lock().unwrap(), 1);
+        let app = app.borrow();
+        assert_eq!(app.terminal, before);
+        assert_eq!(app.view.font_size_points(), font_size);
+        assert_eq!(app.sink.diagnostics.byte_count, bytes);
     }
 
     #[test]

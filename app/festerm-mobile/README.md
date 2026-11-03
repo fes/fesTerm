@@ -330,7 +330,7 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
 
 - Shared terminal fixture with ANSI colors, combining/wide glyph coverage and
   emoji; scrollback limited to 256 KiB, resize handled by the existing view.
-- A docked Esc/Tab/Ctrl/Alt row and persistent native keyboard request
+- A docked Esc/Tab/Ctrl/Alt/Shift row and persistent native keyboard request
   use the same vertical arrangement on iPhone and iPad, including landscape
   and Split View. A UIKit keyboard-layout guide measures available space;
   hardware-keyboard use reclaims system-keyboard space but retains the row.
@@ -340,12 +340,21 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
   the app sets `should_interrupt_composition` to false inside its UI callback.
   The regression checks the final platform output after egui completes the
   frame, including accessory taps, keyboard events, geometry changes and resume.
-  One-shot Ctrl/Alt chords and ordinary hardware input use the core encoder. Counters
+  One-shot Ctrl/Alt/Shift chords and ordinary hardware input use the core encoder.
+  Ctrl+Shift+C copies the terminal selection to the iOS pasteboard; Ctrl+Shift+P
+  pastes its text through the same ordered, bracketed-paste-aware input path as
+  the Paste button. These two shortcuts are local, not remote control bytes.
+  The native keyboard's 123 / #+= pages are not replaced by the extra keys.
+  Counters
   retain no typed text; nothing executes. More → Reset demo returns to a known fixture.
 - Native resume/suspend/memory-warning counters under More → Diagnostics. No rendering while suspended;
   the next frame after a memory warning rebuilds view caches while preserving
   text size. OS termination
   starts a new fixture, with no restoration claim.
+- More → Force redraw rebuilds only the current terminal presentation, without
+  resetting its session, history, selection or text size and without sending input.
+- Terminal keys → Navigation uses these rows: Home / Up / End / PgUp;
+  Left / Down / Right / PgDn; Insert / Delete / Shift+Tab / Return.
 - Hold the terminal for 450 ms, then drag to send arrows. A temporary helper
   highlights direction; dragging farther selects one of three repeat speeds.
   Return to the center to pause; release to dismiss. There are no permanent
