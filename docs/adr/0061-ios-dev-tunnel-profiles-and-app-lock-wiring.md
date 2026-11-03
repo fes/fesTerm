@@ -39,3 +39,9 @@ the attach path is covered by scripted in-memory relay tests.
 
 `tunnel_tests::*` and `app_lock::tests::*` cover attach, trust, take-over,
 displacement and recovery, and the lock gate.
+
+The #496 amendment in [ADR 0057](0057-portable-dev-tunnels-client-for-ios.md#amendment-retained-mobile-attachments-and-foreground-host-checks-496)
+separates native privacy/app-lock state from tunnel lifetime. Established active
+and parked tunnels survive inactivity; an attachment-owned asynchronous host
+probe gates input on foreground return, with bounded safe recovery on failure.
+No native/device evidence is claimed; MOB-03/MOB-06 retain those checks.

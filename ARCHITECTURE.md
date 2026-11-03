@@ -668,10 +668,16 @@ The pump runs even while Files/README is selected, once per frame rather than
 per layout pass. The worker notifier wakes the UI; bounded backend queues own payload admission.
 Encoded keyboard input and core protocol replies use that same admission path.
 Refusal retires the connection with no automatic replay, and one pending resize
-coalesces geometry changes. Replacement/suspension drops prompt/transport
-ownership and rejects stale work. A main-thread suspension handle lets the
-native callback retire transport and wipe sensitive prompts without a redraw;
+coalesces geometry changes. Replacement drops prompt/transport ownership and
+rejects stale work. A main-thread suspension handle lets the native callback
+retire plain-SSH transport and wipe sensitive prompts without a redraw;
 it never mutates the terminal. Existing SshSession Drop is nonblocking.
+Established mobile Dev Tunnel attachments are retained instead (ADR 0057):
+active and parked tabs gate input until an attachment-owned asynchronous
+authenticated-host ping completes within 8 seconds. Failure uses the existing
+bounded same-client recovery, pinned to the original durable generation.
+Cancellation/replacement invalidates late results. App lock/privacy remains
+independent; neither transport retention nor a healthy ping unlocks content.
 
 Transient zeroizing authentication and memory-only host pins stay outside
 configuration; iOS persistent native storage remains Unsupported. This changes

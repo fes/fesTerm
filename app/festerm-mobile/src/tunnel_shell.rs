@@ -226,8 +226,31 @@ impl MobileApp {
         } else {
             AttachMode::Manual
         };
+        let target = tab.and_then(|tab| {
+            if self.active_tab == Some(tab) {
+                self.sink
+                    .live
+                    .connection
+                    .borrow()
+                    .as_ref()
+                    .and_then(live_ssh::LiveSsh::tunnel_target)
+            } else {
+                self.sink
+                    .live
+                    .background
+                    .borrow()
+                    .iter()
+                    .find(|(id, _)| *id == tab)
+                    .and_then(|(_, live)| live.tunnel_target())
+            }
+        });
         let job = Job::spawn(ctx, move |cancel| {
-            tunnels.attach_as(&profile, &id, mode, notifier, cancel)
+            if automatic {
+                let target = target.ok_or(TunnelError::SessionNotFound)?;
+                tunnels.resume_as(&profile, &id, &target, notifier, cancel)
+            } else {
+                tunnels.attach_as(&profile, &id, mode, notifier, cancel)
+            }
         });
         self.tunnel.connect = Some(ConnectFlow {
             spec,
@@ -313,6 +336,10 @@ impl MobileApp {
         client: ClientId,
         attachment: Attachment,
     ) {
+        if tab.is_some_and(|id| !self.tabs.iter().any(|tab| tab.id == id)) {
+            let _ = attachment.session().try_shutdown();
+            return;
+        }
         let recovered = attachment.take_recovered_terminal();
         let live = live_ssh::LiveSsh::from_tunnel(attachment, ctx);
         let terminal = recovered.unwrap_or_else(|| self.blank_terminal());

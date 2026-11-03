@@ -187,7 +187,7 @@ pub(crate) fn outer_client_config() -> client::Config {
 
 pub struct ClientConnection {
     pub stream: ChannelStream<client::Msg>,
-    pub(crate) _session: client::Handle<VerifiedHost>,
+    pub(crate) _session: Arc<client::Handle<VerifiedHost>>,
 }
 
 impl tokio::io::AsyncRead for ClientConnection {
@@ -236,16 +236,41 @@ pub async fn connect(destination: &Destination, token: &str) -> io::Result<Clien
     connect_endpoint(&destination.endpoint, destination.port, token).await
 }
 
+// The stream owns the transport. A retained metadata/probe handle must not
+// keep a retired attachment alive after detach or liveness failure.
+struct HostProbe(std::sync::Weak<client::Handle<VerifiedHost>>);
+impl crate::mobile::HostLiveness for HostProbe {
+    fn check(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + '_>> {
+        Box::pin(async {
+            self.0
+                .upgrade()
+                .ok_or_else(|| stage_error("host.closed"))?
+                .send_ping()
+                .await
+                .map_err(|_| stage_error("host.liveness"))
+        })
+    }
+}
+
 impl ClientConnection {
+    /// Shares only the authenticated host handle, without opening another stream.
+    pub fn host_liveness(&self) -> Arc<dyn crate::mobile::HostLiveness> {
+        Arc::new(HostProbe(Arc::downgrade(&self._session)))
+    }
+
     pub(crate) async fn close(self) -> io::Result<()> {
         self._session
             .disconnect(russh::Disconnect::ByApplication, "complete", "")
             .await
             .map_err(|_| invalid())?;
-        tokio::time::timeout(Duration::from_secs(5), self._session)
-            .await
-            .map(|_| ())
-            .map_err(|_| invalid())
+        if let Ok(session) = Arc::try_unwrap(self._session) {
+            let _ = tokio::time::timeout(Duration::from_secs(5), session)
+                .await
+                .map_err(|_| invalid())?;
+        }
+        Ok(())
     }
 }
 
@@ -289,7 +314,7 @@ pub async fn connect_endpoint(
         .into_stream();
     Ok(ClientConnection {
         stream,
-        _session: session,
+        _session: Arc::new(session),
     })
 }
 
@@ -323,3 +348,137 @@ impl client::Handler for VerifiedHost {
 
 #[cfg(feature = "relay")]
 pub use crate::relay_host::*;
+
+#[cfg(test)]
+mod liveness_tests {
+    use super::*;
+    use crate::mobile::HostLiveness;
+    use std::{
+        pin::Pin,
+        sync::atomic::{AtomicBool, Ordering},
+        task::{Context, Poll},
+    };
+    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+    // Models a relay that accepts writes while the authenticated host is unreachable.
+    struct Gate {
+        stream: tokio::io::DuplexStream,
+        blackhole: Arc<AtomicBool>,
+    }
+    impl AsyncRead for Gate {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            if self.blackhole.load(Ordering::SeqCst) {
+                Poll::Pending
+            } else {
+                Pin::new(&mut self.stream).poll_read(cx, buf)
+            }
+        }
+    }
+    impl AsyncWrite for Gate {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            bytes: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            if self.blackhole.load(Ordering::SeqCst) {
+                Poll::Ready(Ok(bytes.len()))
+            } else {
+                Pin::new(&mut self.stream).poll_write(cx, bytes)
+            }
+        }
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.stream).poll_flush(cx)
+        }
+        fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.stream).poll_shutdown(cx)
+        }
+    }
+    struct Host;
+    impl russh::server::Handler for Host {
+        type Error = russh::Error;
+        async fn auth_none(&mut self, _: &str) -> Result<russh::server::Auth, Self::Error> {
+            Ok(russh::server::Auth::Accept)
+        }
+    }
+
+    #[tokio::test]
+    async fn retained_host_ping_requires_peer_reply_and_rejects_closed_transport() {
+        let key = russh::keys::PrivateKey::random(
+            &mut russh::keys::key::safe_rng(),
+            russh::keys::Algorithm::Ed25519,
+        )
+        .unwrap();
+        let pin = key
+            .public_key()
+            .to_openssh()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .to_owned();
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let config = Arc::new(russh::server::Config {
+            keys: vec![key],
+            ..Default::default()
+        });
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let running = russh::server::run_stream(config, server_io, Host)
+                .await
+                .unwrap();
+            tx.send(running.handle()).unwrap();
+            running.await
+        });
+        let blackhole = Arc::new(AtomicBool::new(false));
+        let mut config = client_config();
+        config.keepalive_interval = None;
+        let mut client = client::connect_stream(
+            Arc::new(config),
+            Gate {
+                stream: client_io,
+                blackhole: blackhole.clone(),
+            },
+            VerifiedHost(pin),
+        )
+        .await
+        .unwrap();
+        assert!(client.authenticate_none("tunnel").await.unwrap().success());
+        let host = rx.await.unwrap();
+        let client = Arc::new(client);
+        let probe = HostProbe(Arc::downgrade(&client));
+        tokio::time::timeout(Duration::from_secs(2), probe.check())
+            .await
+            .unwrap()
+            .unwrap();
+        blackhole.store(true, Ordering::SeqCst);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), probe.check())
+                .await
+                .is_err(),
+            "local enqueue/write is insufficient"
+        );
+        // Start a new ping and prove that it is awaiting its reply before
+        // ending the host. This specifically covers russh's dropped sender bug.
+        let pending = probe.check();
+        tokio::pin!(pending);
+        tokio::select! {
+            result = &mut pending => panic!("ping completed without a host response: {result:?}"),
+            () = tokio::time::sleep(Duration::from_millis(50)) => {},
+        }
+        blackhole.store(false, Ordering::SeqCst);
+        host.disconnect(russh::Disconnect::ByApplication, "done".into(), "".into())
+            .await
+            .unwrap();
+        // Wake the SSH loop after lifting the synthetic blackhole.
+        let _ = client.send_keepalive(false).await;
+        let result = tokio::time::timeout(Duration::from_secs(2), pending)
+            .await
+            .unwrap();
+        assert!(result.is_err(), "a dropped reply channel is not a pong");
+        let _ = server.await.unwrap();
+    }
+}

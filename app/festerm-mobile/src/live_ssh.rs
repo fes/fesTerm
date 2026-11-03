@@ -21,6 +21,8 @@ use zeroize::Zeroizing;
 mod loopback_tests;
 
 const EVENT_BUDGET: usize = 32;
+const TUNNEL_LOST: &str = "Tunnel connection lost. The remote session may still be running.";
+const PROBE_FAILED: &str = "Tunnel liveness check failed. Reconnect to continue.";
 
 const TAKEN_OVER_LOCAL: &str =
     "Taken over on the host computer. Attach again to take the session back.";
@@ -54,6 +56,8 @@ pub(super) struct LiveSsh {
     password: PasswordBuffer,
     pending_resize: Option<(Dimensions, Instant)>,
     running: bool,
+    resume_check: bool,
+    probe: Option<super::tunnel_link::Job<Result<(), festerm_mobile_tunnels::TunnelError>>>,
     pub(super) status: &'static str,
     pub(super) accepted_pin: Option<String>,
     /// A fingerprint the user just trusted that the app has yet to persist.
@@ -102,6 +106,8 @@ pub(super) fn disconnected_fixture() -> LiveSsh {
         password: PasswordBuffer::default(),
         pending_resize: None,
         running: false,
+        resume_check: false,
+        probe: None,
         status: "Connection lost. Connect again for a fresh shell.",
         accepted_pin: None,
         new_trust: None,
@@ -135,6 +141,8 @@ impl LiveSsh {
             password: PasswordBuffer::default(),
             pending_resize: None,
             running: true,
+            resume_check: false,
+            probe: None,
             status: "Attached",
             accepted_pin: None,
             new_trust: None,
@@ -150,14 +158,18 @@ impl LiveSsh {
         let Some(tunnel) = self.tunnel.as_ref() else {
             return false;
         };
-        if !self.can_reset() {
+        if !self.can_reset() || !matches!(self.status, PROBE_FAILED | TUNNEL_LOST) {
             return false;
         }
         match tunnel.end_error() {
             Some(TunnelError::ConnectionLost) => true,
             Some(_) => false,
-            None => self.status == super::SUSPENDED,
+            None => self.status == PROBE_FAILED,
         }
+    }
+
+    pub(super) fn tunnel_target(&self) -> Option<festerm_mobile_tunnels::Target> {
+        self.tunnel.as_ref().map(|t| t.target())
     }
 
     /// Why a Dev Tunnel attachment ended, in words that name who is responsible.
@@ -168,7 +180,7 @@ impl LiveSsh {
             Some(TunnelError::Displaced(Displacer::Remote)) => TAKEN_OVER_REMOTE,
             Some(TunnelError::Displaced(_)) => TAKEN_OVER_UNKNOWN,
             Some(TunnelError::SessionExited) => "The remote shell exited.",
-            _ => "Tunnel connection lost. The remote session may still be running.",
+            _ => TUNNEL_LOST,
         }
     }
 
@@ -219,6 +231,8 @@ impl LiveSsh {
             password: PasswordBuffer::default(),
             pending_resize: None,
             running: false,
+            resume_check: false,
+            probe: None,
             status: "Connecting",
             accepted_pin: pin.map(str::to_owned),
             new_trust: None,
@@ -227,14 +241,30 @@ impl LiveSsh {
     }
 
     pub(super) fn input_enabled(&self) -> bool {
-        self.running && self.host_prompt.is_none() && self.password_prompt.is_none()
+        self.running
+            && !self.resume_check
+            && self.probe.is_none()
+            && self.host_prompt.is_none()
+            && self.password_prompt.is_none()
     }
 
     pub(super) fn can_reset(&self) -> bool {
         self.session.is_none()
     }
 
+    /// Native callback: retain established tunnels, cancel any old check and gate input.
+    pub(super) fn suspend(&mut self) {
+        if self.tunnel.is_some() && self.session.is_some() {
+            self.probe = None;
+            self.resume_check = true;
+        } else if self.tunnel.is_none() {
+            self.stop(super::SUSPENDED);
+        }
+    }
+
     pub(super) fn stop(&mut self, status: &'static str) {
+        self.probe = None;
+        self.resume_check = false;
         self.running = false;
         self.status = status;
         self.password.clear();
@@ -336,7 +366,41 @@ impl LiveSsh {
                 Ok(_) => {}
                 Err(SessionTryReceiveError::Empty) => break,
                 Err(SessionTryReceiveError::Closed) => {
-                    self.stop("SSH worker closed");
+                    let status = if self.tunnel.is_some() {
+                        self.tunnel_end_status()
+                    } else {
+                        "SSH worker closed"
+                    };
+                    self.stop(status);
+                    return;
+                }
+            }
+        }
+        if self.resume_check && self.probe.is_none() {
+            self.resume_check = false;
+            if let Some(attachment) = self.tunnel.clone() {
+                self.status = "Checking tunnel connection";
+                self.probe = Some(super::tunnel_link::Job::spawn(context, move |cancel| {
+                    attachment.check_liveness(cancel)
+                }));
+            }
+        }
+        if let Some(probe) = self.probe.as_ref() {
+            use super::tunnel_link::Poll;
+            match probe.poll() {
+                Poll::Pending => {}
+                Poll::Done(Ok(())) => {
+                    self.probe = None;
+                    self.status = "Attached";
+                }
+                Poll::Done(Err(_)) | Poll::Lost => {
+                    // Preserve typed exit/displacement reasons if the worker ended in flight.
+                    let status = if self.tunnel.as_ref().and_then(|t| t.end_error()).is_some() {
+                        self.tunnel_end_status()
+                    } else {
+                        PROBE_FAILED
+                    };
+                    self.stop(status);
                     return;
                 }
             }
@@ -531,6 +595,8 @@ mod tests {
             password: PasswordBuffer::default(),
             pending_resize: None,
             running: true,
+            resume_check: false,
+            probe: None,
             status: "Connected",
             accepted_pin: None,
             new_trust: None,

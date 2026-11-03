@@ -44,6 +44,7 @@ pub enum TunnelError {
     SessionExited,
     Protocol,
     Timeout,
+    ProbeUnsupported,
     Profile(String),
 }
 
@@ -74,6 +75,9 @@ impl fmt::Display for TunnelError {
             Self::ConnectionLost => f.write_str("Connection lost."),
             Self::SessionExited => f.write_str("The remote shell exited."),
             Self::Protocol => f.write_str("Unexpected host response."),
+            Self::ProbeUnsupported => {
+                f.write_str("Host liveness check unavailable; reconnect to continue.")
+            }
             Self::Timeout => f.write_str("The operation timed out."),
             Self::Profile(reason) => write!(f, "Profile problem: {reason}"),
         }

@@ -144,7 +144,7 @@ impl Lifecycle {
     }
 }
 
-/// Retires transport and sensitive prompts on the native thread without a redraw.
+/// Clears sensitive SSH prompts; retains established tunnels with input gated until checked.
 #[cfg(feature = "live-ssh")]
 #[derive(Clone, Default)]
 pub struct SuspensionHandle {
@@ -161,10 +161,10 @@ const SUSPENDED: &str =
 impl SuspensionHandle {
     pub fn suspend(&self) {
         if let Some(live) = self.connection.borrow_mut().as_mut() {
-            live.stop(SUSPENDED);
+            live.suspend();
         }
         for (_, live) in self.background.borrow_mut().iter_mut() {
-            live.stop(SUSPENDED);
+            live.suspend();
         }
     }
 }
@@ -729,8 +729,8 @@ impl MobileApp {
         ]
     }
 
-    /// Stops every live session for an app suspension and lets each tab
-    /// reconnect once when it is next active.
+    /// Retains tunnel sessions for a foreground host check. Plain SSH still stops.
+    /// Lost tabs may recover once when next active.
     #[cfg(feature = "live-ssh")]
     fn suspend_sessions(&mut self) {
         self.sink.live.suspend();

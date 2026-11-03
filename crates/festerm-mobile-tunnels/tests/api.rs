@@ -428,3 +428,45 @@ fn a_pinned_session_name_that_the_host_does_not_serve_is_reported() {
         Some(TunnelError::SessionNotFound)
     );
 }
+
+#[test]
+fn unsupported_and_closed_resume_probes_fail_closed_without_dialling() {
+    let f = fixture(script(None, true), false);
+    let profile = profile(&f, true, true);
+    let attachment = f
+        .client
+        .attach(&profile, noop_session_event_notifier(), &CancelToken::new())
+        .unwrap();
+    attachment.take_recovered_terminal().unwrap();
+    let dials = f.script.connections.load(Ordering::SeqCst);
+    assert_eq!(
+        attachment.check_liveness(&CancelToken::new()),
+        Err(TunnelError::ProbeUnsupported)
+    );
+    assert_eq!(f.script.connections.load(Ordering::SeqCst), dials);
+    attachment.detach(Duration::from_secs(2)).unwrap();
+    assert_eq!(
+        attachment.check_liveness(&CancelToken::new()),
+        Err(TunnelError::ConnectionLost)
+    );
+}
+
+#[test]
+fn automatic_resume_refuses_a_different_durable_generation() {
+    let f = fixture(script(None, true), false);
+    let profile = profile(&f, true, true);
+    let mut original = target();
+    original.generation = "old-generation".into();
+    let result = f.client.resume_as(
+        &profile,
+        &Default::default(),
+        &original,
+        noop_session_event_notifier(),
+        &CancelToken::new(),
+    );
+    assert!(matches!(result, Err(TunnelError::SessionNotFound)));
+    assert!(
+        f.script.hellos.lock().unwrap().is_empty(),
+        "no attachment to a replacement shell"
+    );
+}

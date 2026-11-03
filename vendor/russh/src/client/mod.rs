@@ -995,8 +995,7 @@ impl<H: Handler> Handle<H> {
             })
             .await
             .map_err(|_| Error::SendError)?;
-        let _ = receiver.await;
-        Ok(())
+        receiver.await.map_err(|_| Error::SendError)
     }
 
     /// Send a no-more-sessions request to the remote peer.
