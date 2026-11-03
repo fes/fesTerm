@@ -18,6 +18,7 @@ icons = [
 binaries = [
   { path = "festerm", main = true },
   { path = "festerm-sessiond", main = false },
+  { path = "festerm-automation-js-worker", main = false },
 ]
 file-associations = [
   { extensions = ["md", "markdown"], mime-type = "text/markdown", name = "Markdown Document", description = "Markdown document", role = "viewer" },

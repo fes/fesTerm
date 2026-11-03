@@ -177,6 +177,10 @@ in the design must be visible in implementation/release review.
   `--automation-worker` entry before application initialization, exercised by
   subprocess tests. This is not a launcher or an approval, and does not qualify
   executable provenance, its 128 MiB memory baseline or a platform sandbox.
+  Linux AppImage and Debian package definitions also include the smaller
+  standalone worker. Native package smoke requires that the packaged executable
+  report its confined Ready frame before receiving source. Presence and that
+  probe do not establish install provenance or enable application execution.
 - **Native/manual evidence required:** `AUTO-01` through `AUTO-04` remain open;
   observation requires real platform/client/lock evidence, and later stages
   additionally require engine, platform sandbox and input-ownership evidence.

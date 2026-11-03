@@ -29,6 +29,10 @@ EXPECTED_BINARIES = [
     {"path": "festerm", "main": True},
     {"path": "festerm-sessiond", "main": False},
 ]
+EXPECTED_LINUX_BINARIES = [
+    *EXPECTED_BINARIES,
+    {"path": "festerm-automation-js-worker", "main": False},
+]
 EXPECTED_MARKDOWN_ASSOCIATION = {
     "extensions": ["md", "markdown"],
     "mime-type": "text/markdown",
@@ -179,11 +183,12 @@ def verify() -> None:
         if config.get("formats") != EXPECTED_FORMATS[platform]:
             errors.append(f"{path.relative_to(ROOT)} has unexpected package formats")
         binaries = config.get("binaries")
-        expected_binaries = (
-            [{"path": "festerm", "main": True}]
-            if platform == "windows"
-            else EXPECTED_BINARIES
-        )
+        if platform == "windows":
+            expected_binaries = [{"path": "festerm", "main": True}]
+        elif platform == "linux":
+            expected_binaries = EXPECTED_LINUX_BINARIES
+        else:
+            expected_binaries = EXPECTED_BINARIES
         if binaries != expected_binaries:
             errors.append(
                 f"{path.relative_to(ROOT)} has unexpected packaged binaries"
