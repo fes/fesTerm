@@ -3593,6 +3593,7 @@
         "mobile_persistent_keyboard_does_not_restart_ime_between_frames",
         "mobile_sticky_modifiers_are_one_shot_and_preserve_ime_commit_boundaries",
         "keyboard_live_picks_persist_as_the_default_but_hiding_does_not",
+        "latched_modifiers_never_swallow_return_backspace_or_escape",
         "default_keyboard_errors_are_reported_instead_of_overwriting_the_preference",
         "terminal_keyboards_fit_measured_space_and_yield_to_forms_and_lifecycle",
         "terminal_keyboards_send_encoded_keys_and_local_shortcuts_without_replay",

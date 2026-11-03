@@ -445,7 +445,7 @@ fn settings_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAct
     });
     footnote(
         ui,
-        "Used when fesTerm starts. More > Keyboard switches while typing without changing this default.",
+        "Used when fesTerm starts. Switching from More > Keyboard or the globe key also changes this default.",
     );
     section_header(ui, "Dev Tunnel hosts", None, false);
     card(ui, |ui| {

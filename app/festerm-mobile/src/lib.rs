@@ -44,7 +44,7 @@ mod workspaces;
 mod ui_gallery;
 
 use eframe::egui;
-use festerm_core::{Dimensions, InputEvent, Key, Modifiers, Terminal};
+use festerm_core::{Dimensions, InputEvent, InputEventOutcome, Key, Modifiers, Terminal};
 use festerm_ui_egui::{
     route_input, EncodedInputSink, InputRoute, InputSinkDiagnostics, TerminalView,
     TerminalViewOptions,
@@ -589,11 +589,23 @@ impl MobileApp {
             _ => key,
         };
         self.input_notice = None;
-        route_input(
+        let route = route_input(
             &mut self.terminal,
             InputEvent::ModifiedKey { key, modifiers },
             &mut self.sink,
         );
+        // A latched modifier the key cannot carry (e.g. Shift+Return) must not
+        // swallow the key: send it with only the explicit modifiers.
+        if route.outcome == InputEventOutcome::Rejected && modifiers != extra {
+            route_input(
+                &mut self.terminal,
+                InputEvent::ModifiedKey {
+                    key,
+                    modifiers: extra,
+                },
+                &mut self.sink,
+            );
+        }
         self.clear_sticky_modifiers();
     }
 
@@ -1999,6 +2011,30 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn latched_modifiers_never_swallow_return_backspace_or_escape() {
+        let ctx = egui::Context::default();
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        for toggle in [
+            terminal_chrome::KeyRowAction::ToggleShift,
+            terminal_chrome::KeyRowAction::ToggleControl,
+        ] {
+            for key in [Key::Enter, Key::Backspace, Key::Escape] {
+                app.apply_key_row(&ctx, toggle);
+                let before = app.sink.diagnostics.byte_count;
+                app.apply_key_row(&ctx, terminal_chrome::KeyRowAction::Key(key));
+                assert!(
+                    app.sink.diagnostics.byte_count > before,
+                    "{toggle:?} then {key:?} must still send the key"
+                );
+                assert!(!app.shift && !app.control);
+            }
+        }
+    }
 
     #[test]
     fn keyboard_live_picks_persist_as_the_default_but_hiding_does_not() {
