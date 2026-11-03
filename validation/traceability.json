@@ -75,6 +75,9 @@
         "automation_selected_workflow_preview_requires_opt_in_and_grants_no_access",
         "workflow_selection_is_available_only_when_javascript_is_enabled",
         "workflow_preview_disappears_when_another_window_disables_it",
+        "workflow_source_pages_cover_utf8_without_splitting_characters",
+        "workflow_source_display_escapes_spoofing_and_literal_backslashes",
+        "workflow_source_review_pages_the_captured_snapshot_and_revokes_display",
         "workflow_picker_requires_opt_in_and_does_not_retarget_the_file_picker",
         "cancelled_workflow_capture_keeps_its_slot_and_discards_late_result",
         "newer_workflow_selection_waits_for_io_and_discards_superseded_results",
@@ -99,7 +102,7 @@
       "manual_scenarios": ["AUTO-01"],
       "status": "partial",
       "prerequisites": [
-        "iOS security-scoped selection, pending-approval invalidation, exact approval UI, worker/broker integration and platform qualification remain open; the desktop metadata preview is not an approval"
+        "iOS security-scoped selection, pending-approval invalidation, exact approval UI, worker/broker integration and platform qualification remain open; the desktop metadata and source previews are not an approval"
       ]
     },
     {

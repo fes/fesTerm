@@ -1,13 +1,21 @@
 # Milestone Progress Narrative
 
+## Reviewing the captured workflow source
+
+The desktop workflow preview now lets the user browse every captured module
+without reopening the selected file. Bounded pages preserve UTF-8 boundaries;
+an escaped representation exposes controls and non-ASCII characters rather
+than allowing them to change the surrounding UI. Browsing is not
+consent, and exact approval, execution and native usability remain open.
+
 ## Selecting a workflow without granting access
 
 When JavaScript workflows are enabled, desktop Settings can select a local JSON
 bundle and preview its captured digest, requested capabilities, parameter
 schema and module names. Capture runs off the UI thread, retains its single
 slot until I/O finishes, and discards cancelled or superseded results. This is
-not approval: source review, parameter/target selection, worker execution, iOS
-selection and native platform qualification remain open.
+not approval: source review within approval, parameter/target selection,
+worker execution, iOS selection and native platform qualification remain open.
 
 ## Capturing a selected workflow before consent
 

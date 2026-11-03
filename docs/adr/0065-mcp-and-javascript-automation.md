@@ -171,9 +171,9 @@ in the design must be visible in implementation/release review.
   prove native lock behavior, client interoperability, a confined engine or
   native input ordering. P2 intake tests cover bounded single-file capture,
   strict decoding, path/link refusal and frozen invocation identity. Desktop
-  selection provides a non-authorizing metadata preview; approval, execution,
-  iOS selection and platform qualification remain open. Run the traceability
-  gate and documentation checks.
+  selection provides a non-authorizing metadata and captured-source preview;
+  approval, execution, iOS selection and platform qualification remain open.
+  Run the traceability gate and documentation checks.
 - **Native/manual evidence required:** `AUTO-01` through `AUTO-04` remain open;
   observation requires real platform/client/lock evidence, and later stages
   additionally require engine, platform sandbox and input-ownership evidence.

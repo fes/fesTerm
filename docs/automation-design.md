@@ -393,12 +393,15 @@ Filesystem/provider I/O can stall even for a regular file. The application must
 bound concurrent intake tasks, retain each slot until the underlying I/O exits
 even after cancellation, and discard results from cancelled or superseded
 selections. Desktop Settings now offers an opt-in, local-file picker and a
-non-authorizing metadata preview of the captured snapshot. It retains one
+non-authorizing preview of the captured snapshot. It retains one
 background intake slot until the read exits, discards cancelled results, and
 holds at most the latest superseding selection until that slot is free. It
-displays the canonical digest and requested capabilities. It does not display
-the source or provide approval, execution, or publisher verification; those
-remain separate requirements. There is no iOS picker integration, file watcher,
+displays the canonical digest and requested capabilities and allows browsing
+the captured source, not a reopened file. The source view pages at bounded
+UTF-8 boundaries and makes backslashes, controls, newlines and non-ASCII
+characters explicit; this representation is not executable source. It does
+not provide approval, execution, or publisher verification; those remain
+separate requirements. There is no iOS picker integration, file watcher,
 worker launch or execution here.
 
 The standalone workflow binding component freezes the snapshot, validated

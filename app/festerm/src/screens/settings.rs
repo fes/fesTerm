@@ -802,6 +802,111 @@ const fn terminal_font_label(font: TerminalFontPreference) -> &'static str {
     }
 }
 
+const WORKFLOW_SOURCE_PAGE_BYTES: usize = 2048;
+
+#[derive(Clone, Default)]
+struct WorkflowSourceCursor {
+    digest: String,
+    module: String,
+    page: usize,
+}
+
+fn workflow_source_page(source: &str, requested: usize) -> (usize, usize, std::ops::Range<usize>) {
+    let pages = source.len().div_ceil(WORKFLOW_SOURCE_PAGE_BYTES).max(1);
+    let page = requested.min(pages - 1);
+    let boundary = |offset: usize| {
+        let mut offset = offset.min(source.len());
+        while !source.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        offset
+    };
+    let start = boundary(page * WORKFLOW_SOURCE_PAGE_BYTES);
+    let end = boundary((page + 1) * WORKFLOW_SOURCE_PAGE_BYTES);
+    (page, pages, start..end)
+}
+
+fn escape_workflow_source(source: &str) -> String {
+    let mut escaped = String::new();
+    for character in source.chars() {
+        match character {
+            '\n' => escaped.push_str("\\n\n"),
+            '\\' => escaped.push_str("\\\\"),
+            ' '..='~' => escaped.push(character),
+            _ => escaped.extend(character.escape_unicode()),
+        }
+    }
+    escaped
+}
+
+fn workflow_source_review(ui: &mut Ui, bundle: &festerm_automation_js::snapshot::ApprovedBundle) {
+    let snapshot = bundle.snapshot();
+    ui.collapsing("Review captured source (not approval)", |ui| {
+        ssh_paragraph(
+            ui,
+            "This is the captured source, not a live file. Backslashes are doubled; \
+             non-ASCII and control characters are shown as Unicode escapes. \
+             Each newline is marked \\n before the line break. Pages may split a line.",
+        );
+        let id = ui.id().with("workflow-source-review");
+        let mut cursor = ui
+            .data(|data| data.get_temp::<WorkflowSourceCursor>(id))
+            .unwrap_or_default();
+        if cursor.digest != bundle.digest() || !snapshot.modules.contains_key(&cursor.module) {
+            cursor = WorkflowSourceCursor {
+                digest: bundle.digest().to_owned(),
+                module: snapshot.manifest.entry.clone(),
+                page: 0,
+            };
+        }
+        egui::ComboBox::from_label("Source module")
+            .selected_text(&cursor.module)
+            .show_ui(ui, |ui| {
+                for module in &snapshot.manifest.modules {
+                    if ui
+                        .selectable_label(cursor.module == *module, module)
+                        .clicked()
+                    {
+                        cursor.module.clone_from(module);
+                        cursor.page = 0;
+                    }
+                }
+            });
+        let source = &snapshot.modules[&cursor.module];
+        let (page, pages, _) = workflow_source_page(source, cursor.page);
+        cursor.page = page;
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(cursor.page > 0, egui::Button::new("Previous source page"))
+                .clicked()
+            {
+                cursor.page -= 1;
+            }
+            if ui
+                .add_enabled(
+                    cursor.page + 1 < pages,
+                    egui::Button::new("Next source page"),
+                )
+                .clicked()
+            {
+                cursor.page += 1;
+            }
+        });
+        let (page, pages, range) = workflow_source_page(source, cursor.page);
+        let first = if range.is_empty() { 0 } else { range.start + 1 };
+        ui.label(format!(
+            "Page {} of {} - source bytes {}-{} of {}",
+            page + 1,
+            pages,
+            first,
+            range.end,
+            source.len()
+        ));
+        ui.label(egui::RichText::new(escape_workflow_source(&source[range])).monospace());
+        ui.data_mut(|data| data.insert_temp(id, cursor));
+    });
+}
+
 fn workflow_settings(
     ui: &mut Ui,
     snapshot: &crate::automation::SettingsSnapshot,
@@ -856,8 +961,8 @@ fn workflow_settings(
                 ui.label(format!("Captured snapshot SHA-256: {}", bundle.digest()));
                 ssh_paragraph(
                     ui,
-                    "This snapshot has not been approved. Its source is not displayed here, \
-                     and the selected file is not proof of publisher identity.",
+                    "This snapshot has not been approved. The selected file is not proof \
+                     of publisher identity.",
                 );
                 ui.collapsing("Requested capabilities (not granted)", |ui| {
                     if manifest.capabilities.is_empty() {
@@ -900,6 +1005,7 @@ fn workflow_settings(
                         ui.label(format!("{module}{suffix}"));
                     }
                 });
+                workflow_source_review(ui, bundle);
             }
         }
     }
@@ -1465,6 +1571,116 @@ mod tests {
                 assert!(harness.query_by_label("Select workflow JSON").is_none());
             }
         }
+    }
+
+    #[test]
+    fn workflow_source_pages_cover_utf8_without_splitting_characters() {
+        let source = format!(
+            "{}\u{1f512}{}",
+            "a".repeat(WORKFLOW_SOURCE_PAGE_BYTES - 2),
+            "b".repeat(WORKFLOW_SOURCE_PAGE_BYTES + 1)
+        );
+        let (_, pages, _) = workflow_source_page(&source, 0);
+        let mut reconstructed = String::new();
+        let mut previous_end = 0;
+        for requested in 0..pages {
+            let (page, count, range) = workflow_source_page(&source, requested);
+            assert_eq!(page, requested);
+            assert_eq!(count, pages);
+            assert_eq!(range.start, previous_end);
+            assert!(source.is_char_boundary(range.start));
+            assert!(source.is_char_boundary(range.end));
+            assert!(range.len() <= WORKFLOW_SOURCE_PAGE_BYTES + 3);
+            previous_end = range.end;
+            reconstructed.push_str(&source[range]);
+        }
+        assert_eq!(reconstructed, source);
+        assert_eq!(
+            workflow_source_page(&source, usize::MAX).0,
+            pages.saturating_sub(1)
+        );
+        assert_eq!(workflow_source_page("", 7), (0, 1, 0..0));
+    }
+
+    #[test]
+    fn workflow_source_display_escapes_spoofing_and_literal_backslashes() {
+        assert_eq!(
+            escape_workflow_source("say\\\t\u{1b}\u{202e}\u{e9}\n"),
+            concat!(r"say\\\u{9}\u{1b}\u{202e}\u{e9}\n", "\n")
+        );
+    }
+
+    #[test]
+    fn workflow_source_review_pages_the_captured_snapshot_and_revokes_display() {
+        use festerm_automation_js::snapshot::{ApprovedBundle, Manifest, SourceSnapshot};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let source = format!(
+            "import 'helper.js';\n//{}\nexport default 1;",
+            "a".repeat(WORKFLOW_SOURCE_PAGE_BYTES)
+        );
+        let bundle = ApprovedBundle::new(SourceSnapshot {
+            manifest: Manifest {
+                version: 1,
+                api_version: 1,
+                name: "source-review".into(),
+                entry: "main.js".into(),
+                modules: vec!["helper.js".into(), "main.js".into()],
+                parameters: BTreeMap::new(),
+                capabilities: BTreeSet::new(),
+            },
+            modules: BTreeMap::from([
+                ("helper.js".into(), "export const helper = 2;".into()),
+                ("main.js".into(), source),
+            ]),
+        })
+        .unwrap();
+        let mut snapshot = crate::automation::SettingsSnapshot::default();
+        snapshot.workflow = crate::automation::WorkflowView::captured_for_test(bundle);
+        let other_window_view = snapshot.workflow.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 700.0))
+            .build_ui_state(
+                move |ui, _: &mut ()| {
+                    workflow_settings(ui, &snapshot, true);
+                },
+                (),
+            );
+        harness.run();
+        harness
+            .get_by_label("Review captured source (not approval)")
+            .click();
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("Page 1 of 2 - source bytes 1-2048")
+            .is_some());
+        harness.get_by_label("Next source page").click();
+        harness.step();
+        assert!(harness
+            .query_by_label_contains("Page 2 of 2 - source bytes 2049-")
+            .is_some());
+        assert!(harness
+            .query_by_label_contains("export default 1;")
+            .is_some());
+        assert!(harness.query_by_label("Run workflow").is_none());
+
+        harness.get_by_label("main.js").click();
+        harness.run();
+        harness.get_by_label("helper.js").click();
+        harness.run();
+        assert!(harness.query_by_label_contains("Page 1 of 1").is_some());
+        assert!(harness
+            .query_by_label_contains("export const helper = 2;")
+            .is_some());
+
+        other_window_view.disable();
+        harness.step();
+        assert!(harness
+            .query_by_label("Review captured source (not approval)")
+            .is_none());
+        assert!(harness
+            .query_by_label_contains("export const helper = 2;")
+            .is_none());
     }
 
     #[test]
