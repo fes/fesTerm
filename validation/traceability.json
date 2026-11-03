@@ -37,7 +37,6 @@
     {
       "id": "mcp-javascript-automation-proposal",
       "edges": [
-        "AUT-01",
         "AUT-03",
         "AUT-04"
       ],
@@ -62,6 +61,37 @@
         "P1 authenticated broker/adapter and observation gates; P2 engine plus per-platform OS confinement qualification",
         "P3 writer-lease/lifecycle/unknown-outcome and native grant UI qualification before control",
         "P4 separate review for command jobs, HTTP, file APIs, unattended grants/triggers and iOS execution"
+      ]
+    },
+    {
+      "id": "automation-frozen-workflow-bindings",
+      "edges": ["AUT-01"],
+      "requirements": [
+        "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
+        "docs/automation-design.md#immutable-workflow-bundles"
+      ],
+      "decisions": ["ADR-0065"],
+      "automated_tests": [
+        "selected_bundle_and_invocation_remain_frozen_after_file_changes",
+        "selected_file_handle_survives_path_replacement",
+        "bundle_intake_hashes_exact_decoded_source_not_json_spelling",
+        "bundle_intake_never_reads_more_than_the_limit_plus_one",
+        "bundle_intake_enforces_the_encoded_size_limit",
+        "bundle_intake_rejects_malformed_duplicate_and_invalid_snapshots",
+        "bundle_intake_rejects_traversal_aliases_and_nonregular_files",
+        "bundle_intake_rejects_file_and_ancestor_links",
+        "bundle_intake_keeps_ios_private_storage_checks_closed",
+        "ios_worker_refuses_before_reading_source_or_writing",
+        "bundle_intake_rejects_windows_device_network_and_stream_paths",
+        "bundle_intake_fails_closed_on_unsupported_platforms",
+        "frozen_bindings_include_code_parameters_and_exact_target_mapping",
+        "manifest_and_frozen_target_scopes_attenuate_host_calls",
+        "projection_does_not_replace_broker_approval_or_completion_cut"
+      ],
+      "manual_scenarios": ["AUTO-01"],
+      "status": "partial",
+      "prerequisites": [
+        "Native workflow selection, security-scoped access, pending-approval invalidation, exact approval UI, worker/broker integration and platform qualification remain open"
       ]
     },
     {

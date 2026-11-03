@@ -327,6 +327,85 @@ user-modifiable global library directory. Never accept foreign bytecode or
 serialized engine snapshots; QuickJS itself warns its bytecode is not a safe
 untrusted interchange format. Recompile approved source in the worker.
 
+#### User-selected single-file intake
+
+The unintegrated `festerm_automation_workflow::intake::load_user_selected_bundle`
+API accepts one absolute, locally user-selected JSON file containing a
+`SourceSnapshot`. For example:
+
+```json
+{
+  "manifest": {
+    "version": 1,
+    "apiVersion": 1,
+    "name": "example",
+    "entry": "main.js",
+    "modules": ["main.js"],
+    "parameters": {},
+    "capabilities": []
+  },
+  "modules": {
+    "main.js": "export function main() { return 1; }"
+  }
+}
+```
+
+All shown fields are required. The manifest's sorted `modules` list must be
+the exact reachable static module graph; its names are canonical ASCII
+root-relative `.js` paths, and its parameter schema and capability names use
+the worker's [snapshot contract](../crates/festerm-automation-js/README.md#snapshot-and-language-profile).
+Duplicate fields, module-map or parameter-map keys, duplicate/case-colliding
+module names, unknown fields, missing/extra/unreachable modules, aliases,
+traversal and unsupported syntax are rejected. The input file itself is at
+most 2 MiB of UTF-8 JSON, including whitespace and escapes; the existing
+snapshot validator also limits decoded source to 1 MiB, the manifest to 64 KiB,
+the canonical snapshot to 2 MiB, and module and parameter counts to 64 each.
+
+On Linux, macOS and iOS, intake anchors at `/` and opens each component
+relative to the retained directory with no-follow flags. On Windows it accepts
+only Unicode absolute local drive paths whose opened root resolves to that
+drive's volume root, and uses retained no-reparse handles on the same volume.
+Windows UNC, mapped network, device and verbatim roots, alternate streams,
+reserved names, and ambiguous trailing dots/spaces are refused. On all these
+platforms, empty, `.` and `..` path components, symlinks/reparse points and
+nonregular final files are refused; path encoding is limited to 4096 bytes
+(UTF-8 on Windows, native bytes on Unix). Other platforms fail closed. These
+are component implementations, not native-platform qualification; iOS
+security-scoped document access must be held by the caller, and provider URLs
+that are not file URLs cannot be passed as paths. Snapshot intake can compile
+for iOS without the unqualified JavaScript engine; worker startup remains
+unavailable. The Unix security crate's
+unqualified iOS private-storage checks remain unavailable. Filesystems, mounts
+and hard links are not provenance or publisher verification; Unix mounts may
+be crossed. Opening a special file may itself have filesystem-specific effects
+before its type is rejected.
+
+The read consumes at most the JSON limit plus one byte, even if the file grows.
+Concurrent modification can produce different or mixed captured bytes; only a
+successfully validated captured snapshot is hashed and returned. The digest is
+over the existing canonical snapshot encoding, not the raw JSON whitespace or
+escape spelling, and includes the exact decoded source strings. The returned
+`ApprovedBundle` name does **not** mean the user has granted authority. A
+future native UI must show and approve that frozen snapshot and must satisfy the
+pending-approval invalidation policy for edits; execution must use the frozen
+snapshot without reopening its pathname. The API does not establish that a path
+came from a person: its caller must enforce trusted native selection, keep I/O
+off the UI thread, and never expose it as an MCP-supplied source/eval path.
+Filesystem/provider I/O can stall even for a regular file. The application must
+bound concurrent intake tasks, retain each slot until the underlying I/O exits
+even after cancellation, and discard results from cancelled or superseded
+selections. There is no file watcher, approval UI, worker launch or execution
+here.
+
+The standalone workflow binding component freezes the snapshot, validated
+parameters, requested scopes and the complete one-to-one mapping from opaque
+target names to application-instance/session/generation references. Its
+parameter digest includes that mapping, so swapping two approved targets cannot
+silently retarget an unchanged parameter. It rejects host calls outside the
+manifest and frozen scopes; profile opening and child workflow calls remain
+unavailable there. This is only an intake projection, not a native grant,
+worker launch or substitute for live broker and controller checks.
+
 Code, parameter schema, permissions, dependency or API version changes produce
 a new digest and require a new grant. Filename, display version, publisher
 signature and an assistant's description are provenance/context only. In the

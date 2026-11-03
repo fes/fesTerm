@@ -3,6 +3,7 @@ members = [
     "crates/festerm-automation",
     "crates/festerm-automation-js",
     "crates/festerm-automation-mcp",
+    "crates/festerm-automation-workflow",
     "app/festerm",
     "app/festerm-mobile",
     "crates/festerm-core",

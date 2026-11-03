@@ -14,6 +14,31 @@ an application executable whose initial mappings exceed the hard process limit,
 so a separate packaged helper may still be necessary. Native confinement,
 privacy monitoring, approval and broker integration remain separate gates.
 
+## Capturing a selected workflow before consent
+
+The P2 composition crate can now ingest one explicitly user-selected JSON
+snapshot into a frozen bundle. It walks retained directories without following
+links or reparse points, bounds the file read, and hands the captured source to
+the existing strict graph validator and canonical digest. Changing the file
+afterward cannot change the frozen invocation; execution must use the frozen
+source without reopening the file. This is not an approval, provenance
+guarantee, MCP eval path or application integration; native selection,
+pending-approval invalidation, platform evidence and worker authorization
+remain open. Other platforms and unsupported path shapes refuse.
+The iOS build excludes the unqualified interpreter and refuses worker startup;
+compilation does not establish native document access or execution support.
+
+## Freezing workflow targets before consent
+
+The workflow intake component now binds validated parameters to the complete,
+one-to-one mapping of opaque names to application-instance and attachment
+generations, in addition to the immutable source and manifest. Swapping two
+targets therefore changes the invocation binding even if both remain in scope.
+Manifest capabilities and requested target scopes are checked again when host
+calls are projected. These checks do not grant access: native approval,
+single-broker dispatch, worker lifecycle, session creation and child workflows
+remain separate, disabled integration work.
+
 ## Isolated JavaScript worker without authority
 
 The P2 worker snapshots and hashes a bounded static JavaScript module graph

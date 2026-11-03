@@ -169,7 +169,10 @@ in the design must be visible in implementation/release review.
   independent default-off opt-ins. MCP protocol, private framing, bounded
   observation, pairing and stale-target tests cover the P1 path. These do not
   prove native lock behavior, client interoperability, a confined engine or
-  native input ordering. Run the traceability gate and documentation checks.
+  native input ordering. P2 intake tests cover bounded single-file capture,
+  strict decoding, path/link refusal and frozen invocation identity; native
+  file selection and platform qualification remain open. Run the traceability
+  gate and documentation checks.
 - **Worker process entry:** The desktop executable has a private
   `--automation-worker` entry before application initialization, exercised by
   subprocess tests. This is not a launcher or an approval, and does not qualify
