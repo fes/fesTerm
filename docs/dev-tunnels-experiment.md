@@ -705,3 +705,11 @@ terminal/TUI and physical GUI input, saturation, bridge restart,
 expiry/revocation and native usability evidence remain open. Public-preview Dev Tunnels
 has no SLA; no production, unattended-service, logoff/reboot survival or
 established-stream revocation-timing claim is made.
+
+### iOS retained-attachment resume
+
+The #496 behavior and validation bounds are specified in
+[ADR 0057](adr/0057-portable-dev-tunnels-client-for-ios.md#amendment-retained-mobile-attachments-and-foreground-host-checks-496).
+Brief inactivity retains established attachments; only an authenticated host
+response can validate foreground reuse. Native-device qualification remains
+open under MOB-03/MOB-06, independently of app-lock privacy.

@@ -126,9 +126,57 @@ phone lock or laptop sleep.*
   from each other. The holder check and the daemon admission are not atomic;
   a takeover racing a reclaim resolves like two takeovers (last one wins).
 - **Validation impact:** new invariant above; automated tests
-  `a_suspended_tunnel_tab_reconnects_once_as_the_same_client` and
+  `a_failed_resume_probe_reconnects_once_as_the_same_client` and
   `being_taken_over_ends_the_session_without_reattaching` (iOS shell), the
   real-daemon loopback `mobile_api_attaches_takes_over_and_is_displaced_on_a_real_daemon`
   (own tab reclaims, other tab refused, displaced tab cannot reclaim) and the
   desktop tunnel reconnect tests. Device evidence: lock and unlock the phone
   and wake the laptop with a tunnel tab open.
+
+### Amendment: retained mobile attachments and foreground host checks (#496)
+
+Native inactivity/suspension retains established Dev Tunnel attachments for
+both active and parked tabs. Plain SSH still retires its transport and clears
+passwords/prompts synchronously in the native callback. App lock and the native
+privacy shield remain independent: retaining a transport never unlocks content.
+No background entitlement, rendering, busy polling, unbounded queue or promise
+of indefinite iOS execution is added.
+
+On the first active event pump after suspension, each retained attachment runs
+one asynchronous worker check with an **8-second timeout**. Input stays gated
+until it succeeds. The check uses the retained, pinned and authenticated **host
+SSH handle**, not the WebSocket relay ping or a newly opened connection. The
+vendored russh `send_ping` sends a want-reply global request; REQUEST_SUCCESS or
+REQUEST_FAILURE both prove peer responsiveness. A dropped reply sender now
+returns an error rather than falsely reporting success. A successful enqueue,
+write/flush, or relay response alone cannot validate the host. This proves
+transport responsiveness, not remote PTY or application progress.
+
+A healthy result retains the exact attachment, tab/client id, terminal and view
+(including scroll position), without discovery, authentication, setup or
+RecoverySync renegotiation. Failure, timeout, missing probe support or a lost
+worker gates input and retires only that attachment. The existing profile
+policy may then attempt bounded safe recovery once per activation (60-second
+attach bound, after the 8-second check; initial describe also retains its
+45-second network bound). It uses saved credentials/trust, the original durable
+name/PID/generation and the same client id, never takeover. A changed/missing
+generation, changed identity, unavailable credentials, displacement or shell
+exit remains explicit; a different shell is never substituted. Disabled
+recovery leaves manual Reconnect available. Terminal input is never replayed.
+
+Repeated suspension notifications coalesce while a check is pending for the
+next foreground. A new suspension cancels any in-flight check and re-gates
+input. The check job belongs to the live attachment; close, disconnect or
+replacement drops/cancels it, so queued late results cannot validate or retire
+a newer attachment. Closing a recovering tab also cancels its attach job and a
+late installation cannot recreate a closed tab.
+
+Validation impact: `GUI:MOB-03`, `GUI:MOB-06`, ADRs 0042/0057/0061. Automated
+coverage includes healthy active/parked reuse, failed/blackholed checks,
+cancellation, explicit disconnect and stale results, unsupported/closed probes,
+original-generation refusal, and a real encrypted SSH peer proving that local
+writes with an unavailable host cannot pass. Existing trust, expired-account,
+takeover, exit and lock regressions remain required. Physical iPhone/iPad app
+switching, lock/unlock/Face ID, snapshots, Wi-Fi/cellular transitions and long
+suspension remain **unperformed**, recorded under MOB-03/MOB-06 in
+`docs/manual-validation.md`. Compilation and host loopbacks do not qualify them.

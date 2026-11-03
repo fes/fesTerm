@@ -187,7 +187,7 @@ storage remains Unsupported on iOS; no memory/plaintext persistence fallback
 is introduced. Cancellation and replacement retire prompts and transport
 ownership. A main-thread suspension handle shares only the live connection
 state with the native host, not terminal ownership. The native suspension
-callback clears prompts/passwords and retires transport without waiting for
+callback clears plain-SSH prompts/passwords and retires plain-SSH transport without waiting for
 a UI frame or synchronous worker shutdown. Resetting the offline fixture
 preserves this callback binding. Reconnection is explicit and starts a fresh shell;
 neither always-live background sockets nor remote process survival is promised.
@@ -409,3 +409,12 @@ Termius interaction or experimental native smoke policy changes.
 - **Native/manual evidence required:** `MOB-01` through `MOB-05` in
   `docs/manual-validation.md`, on Simulator and a physical iOS device.
 - **Coverage superseded:** None; desktop acceptance is unchanged.
+
+### Dev Tunnel lifecycle exception (#496)
+
+ADR 0057's retained-mobile amendment narrows the earlier suspension teardown
+wording to plain SSH. Established Dev Tunnel attachments remain owned while
+inactive, including parked tabs. On foreground return a bounded asynchronous
+host-authenticated ping gates input independently of app lock/privacy. Healthy
+attachments retain terminal/view state; failures use safe same-generation
+recovery. MOB-03/MOB-06 native-device qualification remains pending.

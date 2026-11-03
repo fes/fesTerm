@@ -688,7 +688,7 @@ mod tests {
         drop(accepted);
         ClientConnection {
             stream: channel,
-            _session: client,
+            _session: Arc::new(client),
         }
         .close()
         .await

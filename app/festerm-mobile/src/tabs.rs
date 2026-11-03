@@ -257,6 +257,15 @@ impl MobileApp {
     }
 
     pub(super) fn close_tab(&mut self, id: u64) {
+        #[cfg(feature = "live-ssh")]
+        if self
+            .tunnel
+            .connect
+            .as_ref()
+            .is_some_and(|flow| flow.tab == Some(id))
+        {
+            self.tunnel.connect = None;
+        }
         if self.active_tab == Some(id) {
             self.release_focus();
             #[cfg(feature = "live-ssh")]

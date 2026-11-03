@@ -69,7 +69,7 @@ protocol replies. Refused backend input disconnects with a notice rather than
 silently dropping a command suffix or replaying it. Resize is coalesced; output
 work per frame and backend queues are bounded. Disconnect retains the visible
 terminal until a new connection or **More → Use offline demo** is selected.
-Suspension requires an explicit new connection; it does not promise remote
+Plain SSH suspension requires an explicit new connection; it does not promise remote
 process survival or uninterrupted background networking.
 
 Termius for iOS is the interaction reference. This first form deliberately
@@ -443,3 +443,18 @@ history when its worker starts, before authentication. Details remain available
 without a verbose top strip; earlier-execution warnings stay visible. Native
 touch/clipboard, dropped-network recovery and signed-device SSH remain MOB-06
 checks, not established by synthetic disconnected gallery images.
+
+### Dev Tunnel resume (#496)
+
+Established active and parked Dev Tunnel attachments remain retained across
+brief inactivity. On foreground return a worker checks the retained pinned,
+authenticated host SSH transport with an 8-second ping deadline. Input stays
+disabled until the check passes, and app lock/privacy remain independent. A
+healthy return preserves terminal/history/view without negotiation. A failed,
+timed-out or unsupported check retires only that attachment; enabled automatic
+recovery uses the existing bounded path, same client and original durable
+session generation, without takeover or input replay. Explicit disconnect,
+displacement and shell exit do not recover automatically. iOS may still suspend
+or terminate sockets/processes; no indefinite background execution is promised.
+See ADR 0057 and MOB-03/MOB-06 for bounds and the unperformed physical-device
+matrix (switching, lock/Face ID, snapshots, network changes, long suspension).

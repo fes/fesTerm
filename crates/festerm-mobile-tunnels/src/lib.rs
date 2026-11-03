@@ -36,15 +36,16 @@ use festerm_tunnel_bridge::{
 };
 use festerm_tunnel_client::{
     identity::{self, Identity},
-    service::{self, HostBinding, ResolvedTunnel, TunnelSummary},
+    service::{self, HostBinding, TunnelSummary},
     Error as ClientError, Https, IdentityRequest, IdentityTransport, ResponseFuture,
 };
 use tokio_util::sync::CancellationToken;
 
 pub use error::TunnelError;
 pub use festerm_tunnel_bridge::mobile::{
-    apply_recovery_sync, ClientId, Displacer, EndReason, TunnelSession,
+    apply_recovery_sync, ClientId, Displacer, EndReason, Target, TunnelSession,
 };
+pub use festerm_tunnel_client::service::ResolvedTunnel;
 
 /// How an attach treats a session another client holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +96,26 @@ pub trait TunnelDirectory: Send + Sync {
 /// Opens the encrypted byte stream to a resolved bridge, replaceable in tests.
 pub trait BridgeConnector: Send + Sync {
     fn connect<'a>(&'a self, resolved: &'a ResolvedTunnel) -> BoxFuture<'a, io::Result<BoxStream>>;
+
+    /// Custom connectors without a host probe fail closed on resume.
+    fn connect_retained<'a>(
+        &'a self,
+        resolved: &'a ResolvedTunnel,
+    ) -> BoxFuture<'a, io::Result<RetainedConnection>> {
+        Box::pin(async {
+            Ok(RetainedConnection {
+                stream: self.connect(resolved).await?,
+                probe: None,
+            })
+        })
+    }
+}
+
+pub use festerm_tunnel_bridge::mobile::HostLiveness;
+
+pub struct RetainedConnection {
+    pub stream: BoxStream,
+    pub probe: Option<Arc<dyn HostLiveness>>,
 }
 
 struct Microsoft;
@@ -138,6 +159,25 @@ impl TunnelDirectory for Microsoft {
     }
 }
 impl BridgeConnector for Microsoft {
+    fn connect_retained<'a>(
+        &'a self,
+        resolved: &'a ResolvedTunnel,
+    ) -> BoxFuture<'a, io::Result<RetainedConnection>> {
+        Box::pin(async move {
+            let connection = relay::connect_endpoint(
+                &resolved.endpoint,
+                resolved.binding.port,
+                &resolved.connect_token,
+            )
+            .await?;
+            let probe = Some(connection.host_liveness());
+            Ok(RetainedConnection {
+                stream: Box::new(connection),
+                probe,
+            })
+        })
+    }
+
     fn connect<'a>(&'a self, resolved: &'a ResolvedTunnel) -> BoxFuture<'a, io::Result<BoxStream>> {
         Box::pin(async move {
             let connection = relay::connect_endpoint(
@@ -288,13 +328,53 @@ pub struct TunnelDescription {
 }
 
 /// A live attachment. Hand [`Self::session`] to the terminal view.
+#[derive(Clone)]
 pub struct Attachment {
+    probe: Option<Arc<dyn HostLiveness>>,
+    runtime: tokio::runtime::Handle,
     session: Arc<TunnelSession>,
     /// Set when this attach displaced a holder (`Some(None)`: holder unknown).
     pub took_over: Option<Option<Displacer>>,
     pub session_name: String,
+    target: mobile::Target,
 }
+/// Maximum foreground host-ping wait, separate from the existing 60s attach bound.
+pub const RESUME_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+
 impl Attachment {
+    pub fn target(&self) -> mobile::Target {
+        self.target.clone()
+    }
+
+    /// Blocking worker API; never call on the UI thread or from a runtime.
+    pub fn check_liveness(&self, cancel: &CancelToken) -> Result<(), TunnelError> {
+        self.runtime
+            .block_on(self.check_liveness_async(cancel, RESUME_PROBE_TIMEOUT))
+    }
+
+    async fn check_liveness_async(
+        &self,
+        cancel: &CancelToken,
+        timeout: Duration,
+    ) -> Result<(), TunnelError> {
+        let check_open = || match self.session.end_reason() {
+            None => Ok(()),
+            Some(reason) => {
+                Err(TunnelError::from_end(reason).unwrap_or(TunnelError::ConnectionLost))
+            }
+        };
+        check_open()?;
+        let probe = self.probe.as_ref().ok_or(TunnelError::ProbeUnsupported)?;
+        tokio::select! {
+            biased;
+            () = cancel.0.cancelled() => return Err(TunnelError::Cancelled),
+            result = tokio::time::timeout(timeout, probe.check()) => {
+                result.map_err(|_| TunnelError::Timeout)?.map_err(|_| TunnelError::ConnectionLost)?;
+            }
+        }
+        check_open()
+    }
+
     #[must_use]
     pub fn session(&self) -> Arc<dyn Session> {
         self.session.clone()
@@ -622,7 +702,7 @@ impl TunnelClient {
         notifier: Arc<dyn SessionEventNotifier>,
         cancel: &CancelToken,
     ) -> Result<Attachment, TunnelError> {
-        self.attach_inner(profile, None, AttachMode::Manual, notifier, cancel)
+        self.attach_inner(profile, None, AttachMode::Manual, None, notifier, cancel)
     }
 
     /// Attaches on behalf of one terminal tab identified by `client`, so the
@@ -638,7 +718,26 @@ impl TunnelClient {
         notifier: Arc<dyn SessionEventNotifier>,
         cancel: &CancelToken,
     ) -> Result<Attachment, TunnelError> {
-        self.attach_inner(profile, Some(client), mode, notifier, cancel)
+        self.attach_inner(profile, Some(client), mode, None, notifier, cancel)
+    }
+
+    /// Recover this tab only to its original durable generation. Never create a shell.
+    pub fn resume_as(
+        &self,
+        profile: &ProfileId,
+        client: &ClientId,
+        target: &mobile::Target,
+        notifier: Arc<dyn SessionEventNotifier>,
+        cancel: &CancelToken,
+    ) -> Result<Attachment, TunnelError> {
+        self.attach_inner(
+            profile,
+            Some(client),
+            AttachMode::Automatic,
+            Some(target),
+            notifier,
+            cancel,
+        )
     }
 
     fn attach_inner(
@@ -646,11 +745,15 @@ impl TunnelClient {
         profile: &ProfileId,
         client: Option<&ClientId>,
         mode: AttachMode,
+        expected_target: Option<&mobile::Target>,
         notifier: Arc<dyn SessionEventNotifier>,
         cancel: &CancelToken,
     ) -> Result<Attachment, TunnelError> {
         let attachment = self.run(cancel, ATTACH_LIMIT, async {
             let prepared = self.prepare(profile, &cancel.0).await?;
+            if expected_target.is_some_and(|target| target != &prepared.description.target) {
+                return Err(TunnelError::SessionNotFound);
+            }
             let takeover = mode == AttachMode::Manual && prepared.profile.take_over_if_attached;
             let reclaim = prepared.description.reclaim;
             let held = prepared.description.attached_by;
@@ -659,7 +762,7 @@ impl TunnelClient {
             }
             let stream = self
                 .connector
-                .connect(&prepared.resolved)
+                .connect_retained(&prepared.resolved)
                 .await
                 .map_err(|error| {
                     eprintln!(
@@ -668,11 +771,12 @@ impl TunnelClient {
                     );
                     TunnelError::Network
                 })?;
-            let name = prepared.description.target.name.clone();
+            let target = prepared.description.target.clone();
+            let name = target.name.clone();
             // Hosts that do not advertise reclaim reject unknown hello fields.
             let client = client.filter(|_| reclaim).cloned();
             let handshake = mobile::establish(
-                stream,
+                stream.stream,
                 prepared.description.target,
                 takeover,
                 client,
@@ -685,9 +789,12 @@ impl TunnelClient {
             })?;
             let session = TunnelSession::spawn(self.runtime.handle(), handshake, notifier);
             Ok(Attachment {
+                probe: stream.probe,
+                runtime: self.runtime.handle().clone(),
                 session: Arc::new(session),
                 took_over: if takeover { held.map(Some) } else { None },
                 session_name: name,
+                target,
             })
         })?;
         let _ = lock(&self.store).mark_used(profile);

@@ -36,6 +36,14 @@ pub trait BridgeStream: AsyncRead + AsyncWrite + Unpin + Send + 'static {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> BridgeStream for T {}
 pub type BoxStream = Box<dyn BridgeStream>;
 
+/// Checks the retained authenticated host transport, never a relay-only ping.
+/// Completion must require a peer response; callers own deadlines/cancellation.
+pub trait HostLiveness: Send + std::marker::Sync {
+    fn check(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + '_>>;
+}
+
 const EVENT_QUEUE: usize = 64;
 const COMMAND_QUEUE: usize = 64;
 const INPUT_LIMIT: usize = CHUNK_LIMIT;
