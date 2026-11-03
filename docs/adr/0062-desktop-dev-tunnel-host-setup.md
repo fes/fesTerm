@@ -7,8 +7,8 @@
 
 ## Context
 
-A Dev Tunnel host is prepared by a one-line installer piped from a release URL
-into a shell. Users should be able to read that script before running it, and
+A Dev Tunnel host is prepared by a one-line command downloading a release
+installer. Users should be able to read that script before running it, and
 the command must match the version of the app that shows it. The
 `festerm-host-setup` crate embeds `scripts/install-dev-tunnel.{sh,ps1}` and
 builds the version-pinned commands.
@@ -33,6 +33,12 @@ builds the version-pinned commands.
   release publishes.
 - The panel is not gated by `experimental-dev-tunnels`: it only displays text
   and copies it to the clipboard.
+- The copied command pins a SHA-256 derived from this build's embedded script,
+  not a checksum downloaded from the release. Both shell paths verify the
+  downloaded bytes before interpreting them and refuse mismatches or failed
+  downloads. The Unix command uses a private temporary file and cleans it up;
+  PowerShell hashes and interprets the same in-memory bytes. This shared
+  command generator also protects the iOS setup sheet (ADR 0063).
 
 ## Alternatives considered
 
@@ -44,14 +50,16 @@ builds the version-pinned commands.
 
 ## Consequences
 
-The app depends on `festerm-host-setup` (no further dependencies). The
+The app depends on `festerm-host-setup`, which uses `sha2` to pin installer
+bytes in generated commands. The
 read-only document has no save target, so it cannot be edited or saved over the
 installer; users who want a file can copy the script from the editor.
 
 ## Validation impact
 
 - **Invariants introduced or changed:** The reviewed script is byte-identical
-  to the embedded installer; the command pins this version; the viewer is
+  to the embedded installer; the command pins this version and refuses a
+  downloaded installer whose bytes differ from the embedded script; the viewer is
   read-only and never writes a file.
 - **GUI/action edges affected:** `TUNNEL-13`.
 - **Automated tests required:**
@@ -61,6 +69,9 @@ installer; users who want a file can copy the script from the editor.
   `host_setup_view_script_requests_the_selected_platforms_script_only`,
   `host_setup_copy_command_and_copy_script_put_exact_text_on_the_clipboard`,
   `host_setup_palette_entry_opens_profiles_on_the_host_setup_panel`,
-  `viewing_the_host_setup_script_opens_the_embedded_text_read_only`.
+  `viewing_the_host_setup_script_opens_the_embedded_text_read_only`,
+  `download_commands_pin_the_embedded_script_digest`,
+  `unix_download_verifies_before_execution_and_cleans_up`,
+  `powershell_download_verifies_exact_bytes_before_execution`.
 - **Native/manual evidence required:** None; the panel runs no installer.
 - **Coverage superseded:** None.
