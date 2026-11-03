@@ -1,5 +1,19 @@
 # Milestone Progress Narrative
 
+## Reserving ordered local input without granting authority
+
+The local PTY's existing bounded command queue can now hold an inert,
+time-bounded automation input reservation. Its exact bytes are published only
+after an application callback commits authority; cancellation, expiry or a
+failed callback release no input, and later commands do not overtake it.
+If authority commits after the slot is lost, the caller must treat the outcome
+conservatively and never replay it automatically.
+
+Component and controlled-PTY tests cover ordering, refusal and stalled
+commitment. This is not a control adapter or a lease: native handoff, human
+takeover, privacy and broker integration remain open, as do reservations for
+SSH, persistent, tunnel and serial backends.
+
 ## Separating shared automation and MCP lifetimes
 
 The application coordinator now prepares the broker and privacy gate separately

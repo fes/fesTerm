@@ -23,11 +23,12 @@ use std::{
 use std::time::Instant;
 
 use festerm_session::{
-    noop_session_event_notifier, AutomationEpoch, FlowDirection, Session, SessionError,
-    SessionErrorKind, SessionEvent, SessionEventNotifier, SessionExit, SessionId, SessionLifecycle,
-    SessionMetrics, SessionOperation, SessionSendError, SessionTryReceiveError, ShutdownError,
-    ShutdownResult, TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY,
-    MAX_IO_CHUNK_BYTES,
+    automation_input_slot, noop_session_event_notifier, AutomationEpoch, AutomationInputStatus,
+    FlowDirection, PendingAutomationInput, ReserveAutomationInputError, ReservedAutomationInput,
+    Session, SessionError, SessionErrorKind, SessionEvent, SessionEventNotifier, SessionExit,
+    SessionId, SessionLifecycle, SessionMetrics, SessionOperation, SessionSendError,
+    SessionTryReceiveError, ShutdownError, ShutdownResult, TerminalSize,
+    DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
@@ -807,6 +808,7 @@ impl std::error::Error for LocalPtyError {}
 
 enum SessionCommand {
     Input(Vec<u8>),
+    AutomationInput(PendingAutomationInput),
     Resize(TerminalSize),
     Shutdown,
 }
@@ -1309,6 +1311,20 @@ impl Session for LocalPtySession {
         )
     }
 
+    fn reserve_automation_input(
+        &self,
+        bytes: &[u8],
+    ) -> Result<ReservedAutomationInput, ReserveAutomationInputError> {
+        let (reservation, pending) = automation_input_slot(bytes)?;
+        send_command(
+            &self.command_sender,
+            SessionCommand::AutomationInput(pending),
+            SessionOperation::Input,
+        )
+        .map_err(ReserveAutomationInputError::Rejected)?;
+        Ok(reservation)
+    }
+
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
         send_command(
             &self.command_sender,
@@ -1470,6 +1486,36 @@ fn send_command(
     }
 }
 
+fn receive_command(
+    receiver: &Receiver<SessionCommand>,
+    pending: &mut Option<PendingAutomationInput>,
+) -> Result<SessionCommand, RecvTimeoutError> {
+    if let Some(reservation) = pending {
+        match reservation.poll() {
+            AutomationInputStatus::Pending => {
+                thread::sleep(POLL_INTERVAL);
+                Err(RecvTimeoutError::Timeout)
+            }
+            AutomationInputStatus::Ready(bytes) => {
+                *pending = None;
+                Ok(SessionCommand::Input(bytes.to_vec()))
+            }
+            AutomationInputStatus::Cancelled => {
+                *pending = None;
+                Err(RecvTimeoutError::Timeout)
+            }
+        }
+    } else {
+        match receiver.recv_timeout(POLL_INTERVAL)? {
+            SessionCommand::AutomationInput(reservation) => {
+                *pending = Some(reservation);
+                Err(RecvTimeoutError::Timeout)
+            }
+            command => Ok(command),
+        }
+    }
+}
+
 #[cfg(unix)]
 fn local_pty_writer(master: &dyn MasterPty) -> Result<Box<dyn Write + Send>, LocalPtyError> {
     // portable-pty's Unix writer injects newline/VEOF on Drop. A multiplexer
@@ -1547,15 +1593,17 @@ fn control_worker(
 ) {
     let mut stopping = false;
     let mut worker_failure = None;
+    let mut pending_automation_input = None;
     #[cfg(unix)]
     let mut hangup_progress = None;
     loop {
         if shared.cancel.load(Ordering::Acquire) {
             stopping = true;
+            pending_automation_input = None;
             shared.terminate_process_tree();
         }
 
-        match command_receiver.recv_timeout(POLL_INTERVAL) {
+        match receive_command(&command_receiver, &mut pending_automation_input) {
             Ok(SessionCommand::Input(bytes)) if !stopping => {
                 if let Err(error) = writer.write_all(&bytes).and_then(|()| writer.flush()) {
                     let error = SessionError::new(
@@ -2387,6 +2435,100 @@ mod tests {
     impl SessionEventNotifier for CountingNotifier {
         fn notify(&self) {
             self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn automation_reservation_preserves_order_and_releases_cancelled_slots() {
+        let (sender, receiver) = mpsc::sync_channel(2);
+        let (reservation, pending) = automation_input_slot(b"automation-").unwrap();
+        assert!(sender
+            .try_send(SessionCommand::AutomationInput(pending))
+            .is_ok());
+        assert!(sender
+            .try_send(SessionCommand::Input(b"human".to_vec()))
+            .is_ok());
+        let mut held = None;
+        assert!(matches!(
+            receive_command(&receiver, &mut held),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        reservation.commit_with(|_| Ok::<_, ()>(())).unwrap();
+        assert!(matches!(
+            receive_command(&receiver, &mut held),
+            Ok(SessionCommand::Input(bytes)) if bytes == b"automation-"
+        ));
+        assert!(matches!(
+            receive_command(&receiver, &mut held),
+            Ok(SessionCommand::Input(bytes)) if bytes == b"human"
+        ));
+
+        let (reservation, pending) = automation_input_slot(b"must-not-send").unwrap();
+        assert!(sender
+            .try_send(SessionCommand::AutomationInput(pending))
+            .is_ok());
+        assert!(sender
+            .try_send(SessionCommand::Input(b"takeover".to_vec()))
+            .is_ok());
+        drop(reservation);
+        assert!(matches!(
+            receive_command(&receiver, &mut held),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        assert!(matches!(
+            receive_command(&receiver, &mut held),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        assert!(matches!(
+            receive_command(&receiver, &mut held),
+            Ok(SessionCommand::Input(bytes)) if bytes == b"takeover"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_pty_automation_reservation_cannot_send_cancelled_bytes() {
+        for committed in [false, true] {
+            let profile = LocalProfile::new(test_child_path()).with_arguments([
+                "emit:READY",
+                "read-line",
+                "echo:INPUT",
+                "exit:0",
+            ]);
+            let session =
+                LocalPtySession::start(profile, TerminalSize::new(80, 24).unwrap()).unwrap();
+            let mut output = Vec::new();
+            wait_for(&session, Duration::from_secs(4), &mut output, |bytes| {
+                bytes
+                    .windows(b"READY".len())
+                    .any(|window| window == b"READY")
+            });
+            let reservation = session.reserve_automation_input(b"automated-").unwrap();
+            session.try_send_input(b"human\n").unwrap();
+            if committed {
+                reservation.commit_with(|_| Ok::<_, ()>(())).unwrap();
+            } else {
+                drop(reservation);
+            }
+            let expected = if committed {
+                b"INPUT:automated-human".as_slice()
+            } else {
+                b"INPUT:human".as_slice()
+            };
+            wait_for(&session, Duration::from_secs(4), &mut output, |bytes| {
+                bytes
+                    .windows(expected.len())
+                    .any(|window| window == expected)
+            });
+            if !committed {
+                assert!(!output
+                    .windows(b"automated-".len())
+                    .any(|window| window == b"automated-"));
+            }
+            assert!(matches!(
+                session.shutdown(Duration::from_secs(4)),
+                Ok(ShutdownResult::AlreadyStopped) | Ok(ShutdownResult::Stopped)
+            ));
         }
     }
 

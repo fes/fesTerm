@@ -600,6 +600,21 @@ Already transport-admitted bytes may have executed and are not recalled.
 No unbounded input buffering, “wait for reconnect then send” behavior or
 partially replayed command is allowed. Backpressure is an explicit refusal.
 
+The local PTY component can reserve an inert position in its existing bounded
+command queue before an exact broker commit. Its immutable bytes become
+sendable only after the application completes the broker callback while
+retaining worker, privacy and attachment admission fences through publication.
+An unresolved slot expires after 250 ms, without allowing later commands to
+overtake it. The bounded admission claim must be confirmed by a monotonic clock
+read after the claim; a timely published reservation remains admitted even if
+the transport consumes it later. If the callback succeeds but publication loses
+the slot, the caller must report an unknown outcome and must not retry
+automatically.
+Reservation alone is not authority: the application must still serialize
+human takeover, clipboard/IME state, writer leases and every broker/target
+check. Other session backends currently refuse this reservation, and no
+application control adapter uses it yet.
+
 Lock, native suspension, explicit disconnect, tab close, attachment replacement,
 caller disconnect, expiry and worker crash close new-effect/data admission,
 cancel outstanding work and wake waiters. Invalidate grants/leases and discard

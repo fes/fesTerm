@@ -109,13 +109,27 @@
         "host_admission_acknowledgement_unblocks_concurrent_calls",
         "result_before_separate_acknowledgement_does_not_fail_the_run",
         "watchdog_is_independent_of_application_polling",
-        "unsupported_platform_never_launches_or_executes_script"
+        "unsupported_platform_never_launches_or_executes_script",
+        "reserved_input_waits_for_exact_commit_and_is_delivered_once",
+        "reservation_refusal_drop_and_missing_receiver_release_no_input",
+        "reservation_expires_while_commit_is_stalled_without_releasing_input",
+        "receiver_loss_during_commit_reports_a_lost_authority_boundary",
+        "reservation_refuses_late_commit_even_if_backend_has_not_polled",
+        "reservation_refuses_a_claim_that_crossed_the_deadline",
+        "reservation_refuses_a_late_start_without_invoking_authority",
+        "receiver_loss_during_claim_prevents_publication",
+        "timely_admission_remains_ready_after_the_backend_deadline",
+        "reservation_enforces_input_bounds_and_expiry_before_authority",
+        "automation_reservation_preserves_order_and_releases_cancelled_slots",
+        "local_pty_automation_reservation_cannot_send_cancelled_bytes"
       ],
       "manual_scenarios": ["AUTO-02", "AUTO-03"],
       "status": "partial",
       "prerequisites": [
         "Installed helper provenance and native sandbox qualification remain required per supported platform",
-        "Native approval, broker dispatch and lifecycle integration remain unavailable"
+        "Native approval, broker dispatch and lifecycle integration remain unavailable",
+        "Controller writer leases, human takeover and worker admission integration remain unavailable",
+        "SSH, persistent, tunnel and serial transports do not yet support reservations"
       ]
     },
     {

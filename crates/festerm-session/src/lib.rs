@@ -3,6 +3,13 @@
 //! A session backend owns process or connection I/O. It emits bytes and
 //! lifecycle events only; the application owns terminal-core mutation.
 
+mod automation_input;
+
+pub use automation_input::{
+    automation_input_slot, AutomationInputStatus, CommitAutomationInputError,
+    PendingAutomationInput, ReserveAutomationInputError, ReservedAutomationInput,
+};
+
 use std::{
     fmt,
     sync::{
@@ -688,6 +695,14 @@ pub trait Session: Send + Sync {
     fn lifecycle(&self) -> SessionLifecycle;
     fn metrics(&self) -> SessionMetrics;
     fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError>;
+    /// Reserves a position in the ordinary ordered transport queue without
+    /// admitting automation input. Unsupported backends must refuse.
+    fn reserve_automation_input(
+        &self,
+        _bytes: &[u8],
+    ) -> Result<ReservedAutomationInput, ReserveAutomationInputError> {
+        Err(ReserveAutomationInputError::Unsupported)
+    }
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError>;
     fn try_shutdown(&self) -> Result<(), SessionSendError>;
     fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError>;

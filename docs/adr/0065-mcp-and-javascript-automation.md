@@ -88,6 +88,14 @@ to bypass another's restrictions.
    accepted writes may have executed and cannot be rolled back. Recovery never
    silently retargets or replays a run; a new run requires a fresh grant. No
    automatic takeover or recreation of an exited shell is introduced.
+   The local PTY backend can reserve an inert position in its existing bounded
+   command queue before an exact broker commit. The controller must hold its
+   worker, privacy and attachment fences through publication, and must verify
+   the writer lease and immutable bytes at commit. A reservation that is
+   dropped, refused or not committed within 250 ms cannot release input; later
+   commands retain their order. A lost slot after the broker callback succeeds
+   requires conservative unknown-outcome handling, not replay. This primitive
+   is not authority, and other backends refuse reservations until implemented.
 8. **Gate execution and platform claims in stages.** The full contract,
    capability matrix, limits, threat model, outcomes and validation plan live
    in [the companion design](../automation-design.md), which is part of this
@@ -171,8 +179,10 @@ in the design must be visible in implementation/release review.
   prove native lock behavior, client interoperability, a confined engine or
   native input ordering. Coordinator lifecycle tests additionally distinguish
   MCP-only cleanup from global privacy revocation; they do not prove an
-  integrated JavaScript adapter. Run the traceability gate and documentation
-  checks.
+  integrated JavaScript adapter. Local PTY reservation tests exercise ordered
+  commitment, cancellation and expiration, including a stalled callback; they
+  do not prove application writer-lease or human-takeover integration. Run the
+  traceability gate and documentation checks.
 - **Native/manual evidence required:** `AUTO-01` through `AUTO-04` remain open;
   observation requires real platform/client/lock evidence, and later stages
   additionally require engine, platform sandbox and input-ownership evidence.

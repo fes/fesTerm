@@ -44,10 +44,11 @@ use festerm_pty::{
 use festerm_secret_store::{SecretBytes, SecretStore};
 use festerm_serial::{LineSettings, SerialSession, SerialSessionError};
 use festerm_session::{
-    AutomationEpoch, HostKeyPrompt, PasswordPrompt, Session, SessionErrorKind, SessionEvent,
-    SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics, SessionSendError,
-    SessionTryReceiveError, ShutdownError, ShutdownResult, SshPortForwardDirection,
-    SshPortForwardRuntime, SshPortForwardState, TerminalSize,
+    AutomationEpoch, HostKeyPrompt, PasswordPrompt, ReserveAutomationInputError,
+    ReservedAutomationInput, Session, SessionErrorKind, SessionEvent, SessionEventNotifier,
+    SessionId, SessionLifecycle, SessionMetrics, SessionSendError, SessionTryReceiveError,
+    ShutdownError, ShutdownResult, SshPortForwardDirection, SshPortForwardRuntime,
+    SshPortForwardState, TerminalSize,
 };
 use festerm_sessiond::{PersistentSession, PersistentSessionError};
 use festerm_ssh::{
@@ -560,6 +561,16 @@ impl Session for ApplicationSession {
             Self::Serial(session) => session.try_send_input(bytes),
             #[cfg(test)]
             Self::TestSsh(session) => session.try_send_input(bytes),
+        }
+    }
+
+    fn reserve_automation_input(
+        &self,
+        bytes: &[u8],
+    ) -> Result<ReservedAutomationInput, ReserveAutomationInputError> {
+        match self {
+            Self::Local(session) => session.reserve_automation_input(bytes),
+            _ => Err(ReserveAutomationInputError::Unsupported),
         }
     }
 
