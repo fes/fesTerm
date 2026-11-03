@@ -428,14 +428,6 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
             start.args(["start", "--name", &name]);
             #[cfg(unix)]
             super::shell_command(&mut start);
-            #[cfg(windows)]
-            start.arg("--shell").arg(
-                PathBuf::from(
-                    std::env::var_os("SystemRoot")
-                        .ok_or_else(|| refused("setup.windows_system_root"))?,
-                )
-                .join("System32/cmd.exe"),
-            );
             if let Some(home) = super::shell_home() {
                 start.arg("--cwd").arg(home);
             }
