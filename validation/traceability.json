@@ -117,6 +117,13 @@
       "automated_tests": [
         "wire_catalog_contains_only_exact_observation_schemas_and_hints",
         "operation_schemas_refuse_unknown_fields_invalid_types_and_limits",
+        "channel_fingerprint_is_independently_derived_and_frames_are_bounded",
+        "split_handshakes_have_different_fingerprints_and_cannot_replay",
+        "tampering_reflection_and_out_of_order_records_permanently_close",
+        "invalid_lengths_and_malformed_handshakes_fail_closed",
+        "verification_requires_the_complete_independent_fingerprint",
+        "fresh_handshakes_reject_old_responses_and_ciphertexts",
+        "malformed_authenticated_frame_headers_close_without_disclosure",
         "automation_native_observation_approval_is_exact_and_channel_owned",
         "automation_direct_invocations_bind_exact_validated_parameters",
         "automation_target_replacement_invalidates_queued_responses_immediately",
@@ -153,6 +160,7 @@
       "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04"],
       "status": "partial",
       "prerequisites": [
+        "Private peer authentication, trusted human comparison and relay/disconnect liveness must be qualified before activation",
         "Native Windows pairing, lock/suspend, packaging and client interoperability remain unverified",
         "macOS and Linux activation remains unavailable until reliable screen-lock monitoring is qualified",
         "JavaScript, control, mobile hosting and network MCP require their separate stages"

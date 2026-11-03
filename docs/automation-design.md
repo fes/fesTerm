@@ -382,6 +382,19 @@ does not prove the identity of the image a process actually loaded if the path
 was replaced. The bootstrap is therefore unqualified and both listener and
 stdio adapter refuse activation on every platform.
 
+An unused channel primitive explores `Noise_NN_25519_ChaChaPoly_SHA256` with
+fresh ephemeral keys and the complete SHA-256 handshake fingerprint. Noise NN
+alone authenticates neither endpoint. Each endpoint must independently display
+its own complete fingerprint, and both must receive a trusted human comparison
+before forwarding sensitive client data or granting terminal access. A
+model-controlled MCP tool call that copies the adapter's own public fingerprint
+is not evidence of human verification. The existing public pairing code is not
+this fingerprint. The primitive refuses low-order X25519 contributions and
+rejects tampering, replay and malformed bounded records, but it is not wired
+into the adapter and does not qualify bootstrap or executable provenance.
+An active relay can delay ciphertext or suppress disconnect; independently
+qualified liveness is required for strict caller-loss guarantees.
+
 Once bootstrap is qualified, the application binds a distinct broker principal
 to the accepted handle; neither `clientInfo`, a wire ID nor a copied code owns
 the grant. The public random verification code shown by

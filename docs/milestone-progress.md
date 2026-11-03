@@ -1,5 +1,19 @@
 # Milestone Progress Narrative
 
+## Exploring channel binding without trusting process names
+
+The observation prototype remains disabled because a same-user pipe and an
+executable path cannot prove the identity of a running peer. An independent
+Noise NN channel component now derives a full transcript fingerprint at each
+endpoint, rejects non-contributory X25519 inputs, and bounds authenticated
+records. Adversarial tests cover split handshakes, replay, malformed framing and
+failed fingerprint comparison.
+
+This is not peer authentication by itself. Trusted human confirmation,
+adapter/client integration, relay and disconnect liveness, native privacy
+monitoring and real-platform qualification remain open; the production gate
+has not changed.
+
 ## Shared automation authority before external access
 
 The owner authorized the P1-P3 MCP/JavaScript campaign in
