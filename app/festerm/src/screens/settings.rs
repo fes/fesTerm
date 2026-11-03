@@ -816,7 +816,7 @@ fn automation_settings(
     }
     let mut command = None;
     if ui
-        .button("Restart local MCP (revokes all access)")
+        .button("Restart local MCP (revokes MCP access)")
         .clicked()
     {
         command = Some(NativeCommand::RestartMcp);

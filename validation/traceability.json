@@ -127,7 +127,8 @@
       ],
       "decisions": ["ADR-0065"],
       "automated_tests": [
-        "automation_settings_are_independent_explicit_opt_ins"
+        "automation_settings_are_independent_explicit_opt_ins",
+        "automation_preferences_do_not_start_unqualified_or_javascript_adapters"
       ],
       "manual_scenarios": ["AUTO-01"],
       "status": "partial",
@@ -177,6 +178,16 @@
         "automation_direct_invocations_bind_exact_validated_parameters",
         "automation_target_replacement_invalidates_queued_responses_immediately",
         "automation_backend_replacement_revokes_even_without_lifecycle_events",
+        "automation_mcp_loss_preserves_independent_broker_state",
+        "automation_privacy_loss_revokes_every_principal_and_invalidates_targets",
+        "automation_privacy_gate_closes_replaced_and_later_mcp_stops",
+        "automation_queued_restart_cannot_cross_privacy_loss",
+        "automation_cancelled_shared_start_discards_queued_restart",
+        "automation_shared_start_refuses_privacy_or_randomness_failure",
+        "automation_cancelled_startup_does_not_block_or_restart_before_cleanup",
+        "automation_cleanup_spawn_failure_retains_resources_and_blocks_restart",
+        "automation_cleanup_panic_blocks_shared_and_mcp_restarts",
+        "automation_stopping_mcp_does_not_cancel_shared_startup",
         "automation_closed_tabs_do_not_exhaust_target_registrations",
         "closed_targets_can_be_forgotten_without_resurrecting_old_references",
         "automation_revision_exhaustion_invalidates_queued_responses",

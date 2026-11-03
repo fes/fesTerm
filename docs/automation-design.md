@@ -59,6 +59,24 @@ The application composition root owns the broker and native approvals. Its
 coordinator remains the one owner of product actions and presented terminals.
 The terminal core remains UI/runtime/protocol-adapter independent.
 
+The coordinator's broker and privacy monitor have a shared lifetime separate
+from the MCP listener and its peers. Stopping, restarting or losing MCP closes
+only MCP admission and disconnects its principals; it does not discard other
+broker state. Privacy loss, an internal shared safety failure or application
+shutdown closes shared admission and revokes all principals. A successfully
+started shared lifetime can remain dormant until a global stop; it does not
+itself authorize an adapter or retain terminal contents. A restart queued
+before a global loss is discarded; a later explicit restart is required.
+Cleanup runs outside the UI thread; if cleanup cannot be started or fails,
+the affected service remains closed until the application is restarted.
+
+Only an actual adapter may request shared startup. The JavaScript preference
+alone starts neither the broker nor an MCP listener, and there is no integrated
+JavaScript adapter in this slice. Future worker integration must serialize its
+own admission and delivery against the shared privacy gate and arrange
+cancellation/reaping on global loss; this prerequisite does not provide those
+worker guarantees.
+
 An adapter cannot call a session backend or GUI object directly. The broker
 copies bounded immutable observations and sends typed application/input
 requests; it never transfers terminal pointers, SSH handles, tokens or arbitrary
@@ -393,7 +411,9 @@ remote clients, but this alone does not authenticate another process belonging
 to the same user. Resolving and reopening an OS-reported executable path also
 does not prove the identity of the image a process actually loaded if the path
 was replaced. The bootstrap is therefore unqualified and both listener and
-stdio adapter refuse activation on every platform.
+stdio adapter refuse activation on every platform. MCP checks this gate before
+requesting shared startup, and the listener checks it again before binding.
+This does not replace the independently required privacy-monitor qualification.
 
 Once bootstrap is qualified, the application binds a distinct broker principal
 to the accepted handle; neither `clientInfo`, a wire ID nor a copied code owns

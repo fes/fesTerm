@@ -28,6 +28,8 @@ fn fixture() -> (Coordinator, FesTermApp, TabId, impl Fn() -> Option<Vec<u8>>) {
     let mut coordinator = Coordinator::default();
     coordinator.broker = Some(Broker::new([1; 16]));
     coordinator.stop = Arc::new(AtomicBool::new(false));
+    coordinator.privacy_gate = Arc::new(PrivacyGate::new(false));
+    assert!(coordinator.privacy_gate.bind_mcp(&coordinator.stop));
     coordinator.enabled = true;
     let mut broker = coordinator.broker.take().unwrap();
     coordinator.reconcile(&mut broker, &[&app]);
@@ -46,6 +48,58 @@ fn fixture() -> (Coordinator, FesTermApp, TabId, impl Fn() -> Option<Vec<u8>>) {
     );
     coordinator.broker = Some(broker);
     (coordinator, app, id, receive)
+}
+
+fn independent_run(
+    coordinator: &mut Coordinator,
+    target: TargetRef,
+) -> (ConnectionId, RunId, Instant) {
+    let now = Instant::now();
+    let scope = Scope {
+        observe: BTreeSet::from([target]),
+        return_results: true,
+        ..Scope::default()
+    };
+    let request = GrantRequest {
+        scope: scope.clone(),
+        bindings: BTreeSet::new(),
+        direct_read_calls: BTreeSet::from([DirectKind::Observation]),
+    };
+    let binding = direct_binding(
+        &Operation::TerminalReadScreen {
+            session_ref: String::new(),
+            max_bytes: 1024,
+        },
+        Some(target),
+    )
+    .unwrap();
+    let broker = coordinator.broker.as_mut().unwrap();
+    let connection = broker.accept_connection().unwrap();
+    let approval = broker
+        .request_approval(connection, request.clone(), now)
+        .unwrap();
+    broker
+        .approve(
+            connection,
+            approval,
+            NativeApproval::new(request, Duration::from_secs(300)),
+            now,
+        )
+        .unwrap();
+    let run = broker
+        .admit_run(
+            connection,
+            None,
+            RunSpec {
+                binding,
+                scope,
+                budget: Budget::default(),
+                deadline: now + Duration::from_secs(60),
+            },
+            now,
+        )
+        .unwrap();
+    (connection, run, now)
 }
 
 fn call(
@@ -161,28 +215,403 @@ fn automation_ascii_selection_uses_its_actual_encoded_size() {
 #[test]
 fn automation_cancelled_startup_does_not_block_or_restart_before_cleanup() {
     let (release, blocked) = mpsc::sync_channel::<()>(1);
-    let (send, result) = mpsc::sync_channel(1);
+    let (send, result) = mpsc::sync_channel::<Result<ipc::Server, StartFailure>>(1);
     let worker = std::thread::spawn(move || {
         blocked.recv_timeout(Duration::from_secs(5)).unwrap();
         let _ = send.send(Err(StartFailure::Cancelled));
+    });
+    let mut coordinator = Coordinator::default();
+    coordinator.mcp_starting = Some(Starting {
+        result,
+        thread: worker,
+    });
+    coordinator.stop = Arc::new(AtomicBool::new(false));
+    let old_stop = coordinator.stop.clone();
+    coordinator.privacy_gate = Arc::new(PrivacyGate::new(false));
+    assert!(coordinator.privacy_gate.bind_mcp(&old_stop));
+    coordinator.broker = Some(Broker::new([1; 16]));
+    coordinator.enabled = true;
+    let context = egui::Context::default();
+    let before = Instant::now();
+    coordinator.restart_with_bootstrap(&context, Ok(()));
+    assert!(before.elapsed() < Duration::from_secs(1));
+    assert!(old_stop.load(Ordering::Acquire));
+    assert!(coordinator.mcp_starting.is_none());
+    assert!(coordinator.want_start);
+    assert!(coordinator.mcp_retiring.thread.is_some());
+    assert!(coordinator.broker.is_some());
+    release.send(()).unwrap();
+    assert!(coordinator
+        .mcp_retiring
+        .thread
+        .take()
+        .unwrap()
+        .join()
+        .unwrap());
+    coordinator.want_start = false;
+}
+
+#[test]
+fn automation_cleanup_spawn_failure_retains_resources_and_blocks_restart() {
+    struct DropMarker(Arc<AtomicBool>);
+    impl Drop for DropMarker {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    let dropped = Arc::new(AtomicBool::new(false));
+    let resource = DropMarker(dropped.clone());
+    let (release, blocked) = mpsc::sync_channel::<()>(1);
+    let mut retiring = Retirement::default();
+    retiring.thread = Some(std::thread::spawn(move || {
+        blocked.recv_timeout(Duration::from_secs(5)).unwrap();
+        true
+    }));
+    retire_with(
+        &mut retiring,
+        "test-cleanup",
+        move || {
+            drop(resource);
+            true
+        },
+        |_, _| Err(std::io::Error::other("injected spawn failure")),
+    );
+    assert!(!dropped.load(Ordering::Acquire));
+    assert!(retiring.failed);
+    assert_eq!(retiring.stranded.len(), 1);
+    assert!(!cleanup_ready(
+        &mut retiring,
+        &egui::Context::default(),
+        true
+    ));
+
+    release.send(()).unwrap();
+    let stranded = retiring.stranded.pop().unwrap();
+    let cleanup = stranded.lock().unwrap().take().unwrap();
+    assert!(cleanup());
+    assert!(dropped.load(Ordering::Acquire));
+
+    let mut coordinator = Coordinator::default();
+    coordinator.mcp_retiring = retiring;
+    coordinator.broker = Some(Broker::new([1; 16]));
+    coordinator.privacy_gate = Arc::new(PrivacyGate::new(false));
+    coordinator.enabled = true;
+    coordinator.restart_with_bootstrap(&egui::Context::default(), Ok(()));
+    assert_eq!(coordinator.status, CLEANUP_FAILED);
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    assert!(coordinator.mcp_starting.is_none());
+}
+
+#[test]
+fn automation_cleanup_panic_blocks_shared_and_mcp_restarts() {
+    for shared in [false, true] {
+        for chained in [false, true] {
+            let mut coordinator = Coordinator::default();
+            let retiring = if shared {
+                &mut coordinator.retiring
+            } else {
+                &mut coordinator.mcp_retiring
+            };
+            retiring.thread = Some(std::thread::spawn(|| panic!("injected cleanup failure")));
+            if chained {
+                retire(retiring, "test-cleanup", || true);
+            }
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !retiring.thread.as_ref().unwrap().is_finished() {
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            if !shared {
+                coordinator.broker = Some(Broker::new([1; 16]));
+                coordinator.privacy_gate = Arc::new(PrivacyGate::new(false));
+            }
+            coordinator.enabled = true;
+            coordinator.restart_with_bootstrap(&egui::Context::default(), Ok(()));
+            assert_eq!(coordinator.status, CLEANUP_FAILED);
+            assert!(coordinator.stop.load(Ordering::Acquire));
+            assert!(coordinator.starting.is_none());
+            assert!(coordinator.mcp_starting.is_none());
+        }
+    }
+}
+
+#[test]
+fn automation_stopping_mcp_does_not_cancel_shared_startup() {
+    let (release, blocked) = mpsc::sync_channel::<()>(1);
+    let (send, result) = mpsc::sync_channel::<Result<Prepared, StartFailure>>(1);
+    let worker = std::thread::spawn(move || {
+        blocked.recv_timeout(Duration::from_secs(5)).unwrap();
+        let _ = send.send(Err(StartFailure::Privacy));
     });
     let mut coordinator = Coordinator::default();
     coordinator.starting = Some(Starting {
         result,
         thread: worker,
     });
+    coordinator.privacy_gate = Arc::new(PrivacyGate::new(false));
     coordinator.stop = Arc::new(AtomicBool::new(false));
-    let context = egui::Context::default();
-    let before = Instant::now();
-    coordinator.start(&context);
-    assert!(before.elapsed() < Duration::from_secs(1));
+    assert!(coordinator.privacy_gate.bind_mcp(&coordinator.stop));
+
+    coordinator.stop_mcp();
     assert!(coordinator.stop.load(Ordering::Acquire));
-    assert!(coordinator.starting.is_none());
-    assert!(coordinator.want_start);
-    assert!(coordinator.retiring.is_some());
+    assert!(!coordinator.privacy_gate.is_closed());
+    assert!(coordinator.starting.is_some());
     release.send(()).unwrap();
-    coordinator.retiring.take().unwrap().join().unwrap();
-    coordinator.want_start = false;
+    let starting = coordinator.starting.take().unwrap();
+    assert!(matches!(
+        starting.result.recv_timeout(Duration::from_secs(5)),
+        Ok(Err(StartFailure::Privacy))
+    ));
+    starting.thread.join().unwrap();
+}
+
+#[test]
+fn automation_mcp_loss_preserves_independent_broker_state() {
+    for transport_failure in [false, true] {
+        let (mut coordinator, app, id, _) = fixture();
+        let target = coordinator.targets[&id.chip_id()].reference;
+        coordinator.approve(1, vec![target]).unwrap();
+        let peer = coordinator.peers[&1].connection.clone();
+        let mcp_principal = coordinator.peers[&1].principal;
+        let (independent, run, now) = independent_run(&mut coordinator, target);
+        let registration = coordinator.targets[&id.chip_id()].registration.clone();
+
+        if transport_failure {
+            coordinator.mcp_failed();
+        } else {
+            coordinator.tick(&egui::Context::default(), &[&app]);
+            assert_eq!(
+                coordinator.settings(&[&app]).status,
+                SettingsSnapshot::default().status
+            );
+        }
+
+        assert!(peer.is_closed());
+        assert!(coordinator.peers.is_empty());
+        assert!(!coordinator.privacy_gate.is_closed());
+        assert!(registration.load(Ordering::Acquire));
+        assert_eq!(coordinator.targets[&id.chip_id()].reference, target);
+        let broker = coordinator.broker.as_mut().unwrap();
+        assert_eq!(
+            broker.status(independent, run, now).unwrap().state,
+            festerm_automation::RunState::Running
+        );
+        assert!(broker
+            .request_approval(
+                mcp_principal,
+                GrantRequest {
+                    scope: Scope::default(),
+                    bindings: BTreeSet::new(),
+                    direct_read_calls: BTreeSet::from([DirectKind::Discovery]),
+                },
+                now,
+            )
+            .is_err());
+        let snapshot = coordinator.settings(&[&app]);
+        assert!(snapshot.channels.is_empty());
+        assert!(snapshot.targets.is_empty());
+
+        coordinator.start(&egui::Context::default());
+        assert_eq!(
+            coordinator.status,
+            start_failure_status(StartFailure::PeerIdentity)
+        );
+        assert!(coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .status(independent, run, now)
+            .is_ok());
+    }
+}
+
+#[test]
+fn automation_privacy_loss_revokes_every_principal_and_invalidates_targets() {
+    let (mut coordinator, app, id, _) = fixture();
+    let target = coordinator.targets[&id.chip_id()].reference;
+    coordinator.approve(1, vec![target]).unwrap();
+    let (independent, run, now) = independent_run(&mut coordinator, target);
+    let registration = coordinator.targets[&id.chip_id()].registration.clone();
+    let mcp_principal = coordinator.peers[&1].principal;
+    let operation = Operation::TerminalReadScreen {
+        session_ref: serde_json::to_string(&target).unwrap(),
+        max_bytes: 1024,
+    };
+    let (_, pending, _) = admit_request(
+        coordinator.broker.as_mut().unwrap(),
+        &coordinator.targets,
+        &coordinator.peers[&1],
+        &operation,
+        now,
+    )
+    .unwrap();
+
+    coordinator.privacy_gate.close();
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    let snapshot = coordinator.settings(&[&app]);
+    assert!(snapshot.status.contains("admission is closed"));
+    assert!(snapshot.channels.is_empty());
+    assert!(snapshot.targets.is_empty());
+    coordinator.close_shared_admission();
+    assert!(!registration.load(Ordering::Acquire));
+    let broker = coordinator.broker.as_mut().unwrap();
+    assert!(broker.status(independent, run, now).is_err());
+    assert!(broker
+        .commit_disclosure(mcp_principal, pending, 1, now)
+        .is_err());
+
+    coordinator.privacy_lost();
+    assert!(coordinator.broker.is_none());
+    assert!(coordinator.targets.is_empty());
+    assert!(coordinator.peers.is_empty());
+}
+
+#[test]
+fn automation_privacy_gate_closes_replaced_and_later_mcp_stops() {
+    let gate = PrivacyGate::new(false);
+    let first = Arc::new(AtomicBool::new(false));
+    let second = Arc::new(AtomicBool::new(false));
+    assert!(gate.bind_mcp(&first));
+    assert!(gate.bind_mcp(&second));
+    assert!(first.load(Ordering::Acquire));
+    assert!(!second.load(Ordering::Acquire));
+    gate.close();
+    assert!(second.load(Ordering::Acquire));
+    let late = Arc::new(AtomicBool::new(false));
+    assert!(!gate.bind_mcp(&late));
+    assert!(late.load(Ordering::Acquire));
+}
+
+#[test]
+fn automation_queued_restart_cannot_cross_privacy_loss() {
+    let context = egui::Context::default();
+    let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+    let configuration = festerm_config::Configuration::empty()
+        .with_interface_settings(settings)
+        .unwrap();
+    let app = FesTermApp::for_test_with_configuration(configuration);
+    for loss_processed in [false, true] {
+        let (mut coordinator, _, _, _) = fixture();
+        coordinator.privacy_gate.close();
+        if loss_processed {
+            coordinator.privacy_lost();
+        }
+        coordinator.command(NativeCommand::RestartMcp, &context);
+        assert!(coordinator.broker.is_none());
+        assert!(!coordinator.want_start);
+        assert!(coordinator
+            .status
+            .contains("all automation grants were revoked"));
+        coordinator.command(
+            NativeCommand::ApproveObservation {
+                channel: 1,
+                targets: Vec::new(),
+            },
+            &context,
+        );
+        assert!(coordinator
+            .status
+            .contains("all automation grants were revoked"));
+
+        coordinator.tick(&context, &[&app]);
+        coordinator.command(NativeCommand::RestartMcp, &context);
+        assert_eq!(
+            coordinator.status,
+            start_failure_status(StartFailure::PeerIdentity)
+        );
+        assert!(coordinator.broker.is_none());
+    }
+}
+
+#[test]
+fn automation_cancelled_shared_start_discards_queued_restart() {
+    let context = egui::Context::default();
+    let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+    let configuration = festerm_config::Configuration::empty()
+        .with_interface_settings(settings)
+        .unwrap();
+    let app = FesTermApp::for_test_with_configuration(configuration);
+    let (send, result) = mpsc::sync_channel::<Result<Prepared, StartFailure>>(1);
+    assert!(send.send(Err(StartFailure::Cancelled)).is_ok());
+    let mut coordinator = Coordinator::default();
+    coordinator.starting = Some(Starting {
+        result,
+        thread: std::thread::spawn(|| {}),
+    });
+    coordinator.privacy_gate = Arc::new(PrivacyGate::new(false));
+    coordinator.stop = Arc::new(AtomicBool::new(false));
+    assert!(coordinator.privacy_gate.bind_mcp(&coordinator.stop));
+    coordinator.enabled = true;
+    coordinator.want_start = true;
+    coordinator.privacy_gate.close();
+
+    coordinator.tick(&context, &[&app]);
+    coordinator.command(NativeCommand::RestartMcp, &context);
+    assert_eq!(
+        coordinator.status,
+        start_failure_status(StartFailure::Cancelled)
+    );
+    assert!(coordinator.broker.is_none());
+
+    coordinator.tick(&context, &[&app]);
+    coordinator.command(NativeCommand::RestartMcp, &context);
+    assert_eq!(
+        coordinator.status,
+        start_failure_status(StartFailure::PeerIdentity)
+    );
+}
+
+#[test]
+fn automation_shared_start_refuses_privacy_or_randomness_failure() {
+    let gate = PrivacyGate::new(false);
+    let stop = Arc::new(AtomicBool::new(false));
+    assert!(gate.bind_mcp(&stop));
+    assert_eq!(
+        prepare_shared(&gate, || Ok(()), || Err(StartFailure::Randomness)),
+        Err(StartFailure::Randomness)
+    );
+    assert!(gate.is_closed());
+    assert!(stop.load(Ordering::Acquire));
+
+    let gate = PrivacyGate::new(false);
+    assert_eq!(
+        prepare_shared(
+            &gate,
+            || Err::<(), _>(StartFailure::Privacy),
+            || panic!("randomness must not run without privacy monitoring"),
+        ),
+        Err(StartFailure::Privacy)
+    );
+    assert!(gate.is_closed());
+}
+
+#[test]
+fn automation_preferences_do_not_start_unqualified_or_javascript_adapters() {
+    for mcp in [false, true] {
+        let settings = festerm_config::InterfaceSettings::DEFAULT
+            .with_javascript_enabled(true)
+            .with_mcp_enabled(mcp);
+        let configuration = festerm_config::Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap();
+        let app = FesTermApp::for_test_with_configuration(configuration);
+        let mut coordinator = Coordinator::default();
+        coordinator.tick(&egui::Context::default(), &[&app]);
+        assert!(coordinator.broker.is_none());
+        assert!(coordinator.privacy.is_none());
+        assert!(coordinator.starting.is_none());
+        assert!(coordinator.mcp_starting.is_none());
+        assert!(coordinator.server.is_none());
+        if mcp {
+            assert_eq!(
+                coordinator.status,
+                start_failure_status(StartFailure::PeerIdentity)
+            );
+        } else {
+            assert_eq!(coordinator.status, SettingsSnapshot::default().status);
+        }
+    }
 }
 
 #[test]

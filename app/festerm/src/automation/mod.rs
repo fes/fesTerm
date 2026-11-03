@@ -7,7 +7,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -178,10 +178,10 @@ struct Target {
 
 struct Prepared {
     privacy: PrivacyMonitor,
-    server: ipc::Server,
     instance: [u8; 16],
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum StartFailure {
     Privacy,
     PeerIdentity,
@@ -190,20 +190,128 @@ enum StartFailure {
     Cancelled,
 }
 
-struct Starting {
-    result: mpsc::Receiver<Result<Prepared, StartFailure>>,
+struct Starting<T> {
+    result: mpsc::Receiver<Result<T, StartFailure>>,
     thread: JoinHandle<()>,
+}
+
+type Cleanup = Box<dyn FnOnce() -> bool + Send>;
+
+#[derive(Default)]
+struct Retirement {
+    thread: Option<JoinHandle<bool>>,
+    stranded: Vec<Arc<Mutex<Option<Cleanup>>>>,
+    failed: bool,
+}
+
+impl Drop for Retirement {
+    fn drop(&mut self) {
+        for cleanup in self.stranded.drain(..) {
+            // A cleanup worker could not be started. Do not join its resources on the UI thread.
+            std::mem::forget(cleanup);
+        }
+    }
+}
+
+// Privacy loss and adapter-stop replacement share the write-admission lock.
+struct PrivacyGate {
+    closed: AtomicBool,
+    mcp_stop: Mutex<Option<Arc<AtomicBool>>>,
+}
+
+impl PrivacyGate {
+    fn new(closed: bool) -> Self {
+        Self {
+            closed: AtomicBool::new(closed),
+            mcp_stop: Mutex::new(None),
+        }
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    fn close(&self) {
+        let guard = festerm_session::automation_admission_lock();
+        if guard.is_none() {
+            tracing::error!("automation admission lock poisoned; disclosure remains closed");
+        }
+        self.closed.store(true, Ordering::Release);
+        let stop = self
+            .mcp_stop
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(stop) = stop.as_ref() {
+            stop.store(true, Ordering::Release);
+        }
+    }
+
+    fn bind_mcp(&self, stop: &Arc<AtomicBool>) -> bool {
+        let Some(_guard) = festerm_session::automation_admission_lock() else {
+            self.close();
+            stop.store(true, Ordering::Release);
+            return false;
+        };
+        let mut current = match self.mcp_stop.lock() {
+            Ok(current) => current,
+            Err(error) => {
+                self.closed.store(true, Ordering::Release);
+                if let Some(previous) = error.into_inner().as_ref() {
+                    previous.store(true, Ordering::Release);
+                }
+                stop.store(true, Ordering::Release);
+                return false;
+            }
+        };
+        if self.is_closed() || stop.load(Ordering::Acquire) {
+            stop.store(true, Ordering::Release);
+            return false;
+        }
+        if let Some(previous) = current.replace(stop.clone()) {
+            if !Arc::ptr_eq(&previous, stop) {
+                previous.store(true, Ordering::Release);
+            }
+        }
+        true
+    }
+}
+
+fn prepare_shared<P>(
+    gate: &PrivacyGate,
+    install: impl FnOnce() -> Result<P, StartFailure>,
+    nonce: impl FnOnce() -> Result<[u8; 16], StartFailure>,
+) -> Result<(P, [u8; 16]), StartFailure> {
+    let result = (|| {
+        let privacy = install()?;
+        if gate.is_closed() {
+            return Err(StartFailure::Cancelled);
+        }
+        let instance = nonce()?;
+        if gate.is_closed() {
+            return Err(StartFailure::Cancelled);
+        }
+        Ok((privacy, instance))
+    })();
+    if result.is_err() {
+        gate.close();
+    }
+    result
 }
 
 pub(crate) struct Coordinator {
     broker: Option<Broker>,
     server: Option<ipc::Server>,
     privacy: Option<PrivacyMonitor>,
-    starting: Option<Starting>,
-    retiring: Option<JoinHandle<()>>,
+    starting: Option<Starting<Prepared>>,
+    mcp_starting: Option<Starting<ipc::Server>>,
+    retiring: Retirement,
+    mcp_retiring: Retirement,
+    want_shared_start: bool,
     want_start: bool,
+    privacy_gate: Arc<PrivacyGate>,
     stop: Arc<AtomicBool>,
     enabled: bool,
+    privacy_lost_this_tick: bool,
     status: &'static str,
     peers: BTreeMap<u64, Peer>,
     targets: BTreeMap<u64, Target>,
@@ -217,10 +325,15 @@ impl Default for Coordinator {
             server: None,
             privacy: None,
             starting: None,
-            retiring: None,
+            mcp_starting: None,
+            retiring: Retirement::default(),
+            mcp_retiring: Retirement::default(),
+            want_shared_start: false,
             want_start: false,
+            privacy_gate: Arc::new(PrivacyGate::new(true)),
             stop: Arc::new(AtomicBool::new(true)),
             enabled: false,
+            privacy_lost_this_tick: false,
             status: SettingsSnapshot::default().status,
             peers: BTreeMap::new(),
             targets: BTreeMap::new(),
@@ -283,145 +396,406 @@ fn retire_target(broker: &mut Broker, target: Target) {
     }
 }
 
+fn retire(retiring: &mut Retirement, name: &str, cleanup: impl FnOnce() -> bool + Send + 'static) {
+    retire_with(retiring, name, cleanup, |name, task| {
+        thread::Builder::new().name(name.into()).spawn(task)
+    });
+}
+
+fn retire_with(
+    retiring: &mut Retirement,
+    name: &str,
+    cleanup: impl FnOnce() -> bool + Send + 'static,
+    spawn: impl FnOnce(&str, Cleanup) -> std::io::Result<JoinHandle<bool>>,
+) {
+    let previous = retiring.thread.take();
+    let cleanup: Cleanup = Box::new(move || {
+        let current_ok = cleanup();
+        let previous_ok = previous.is_none_or(|thread| match thread.join() {
+            Ok(ok) => ok,
+            Err(_) => {
+                tracing::error!("automation previous cleanup worker failed");
+                false
+            }
+        });
+        current_ok && previous_ok
+    });
+    let cleanup = Arc::new(Mutex::new(Some(cleanup)));
+    let worker_cleanup = cleanup.clone();
+    let task: Cleanup = Box::new(move || {
+        let work = worker_cleanup
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        match work {
+            Some(work) => work(),
+            None => {
+                tracing::error!("automation cleanup ownership was lost");
+                false
+            }
+        }
+    });
+    match spawn(name, task) {
+        Ok(thread) => retiring.thread = Some(thread),
+        Err(error) => {
+            retiring.failed = true;
+            retiring.stranded.push(cleanup);
+            tracing::error!("automation cleanup worker unavailable: {error}");
+        }
+    }
+}
+
+fn cleanup_ready(retiring: &mut Retirement, context: &egui::Context, waiting: bool) -> bool {
+    if retiring
+        .thread
+        .as_ref()
+        .is_some_and(|thread| !thread.is_finished())
+    {
+        if waiting && !retiring.failed {
+            context.request_repaint_after(Duration::from_millis(50));
+        }
+        return false;
+    }
+    if let Some(thread) = retiring.thread.take() {
+        if !matches!(thread.join(), Ok(true)) {
+            retiring.failed = true;
+            tracing::error!("automation cleanup worker failed");
+        }
+    }
+    !retiring.failed
+}
+
+const CLEANUP_FAILED: &str =
+    "Automation cleanup failed. Restart fesTerm before starting this service.";
+
+fn start_failure_status(failure: StartFailure) -> &'static str {
+    match failure {
+        StartFailure::Privacy => {
+            "MCP unavailable: no qualified OS lock/suspend privacy monitor."
+        }
+        StartFailure::PeerIdentity => {
+            "MCP unavailable: private peer identity is not yet qualified."
+        }
+        StartFailure::Randomness => "MCP unavailable: secure randomness failed.",
+        StartFailure::Endpoint => {
+            "MCP unavailable: private endpoint refused. Check another app instance or private state-directory permissions."
+        }
+        StartFailure::Cancelled => {
+            "MCP stopped during startup. Restart explicitly; its grants were revoked."
+        }
+    }
+}
+
 impl Coordinator {
-    fn shutdown(&mut self) {
+    fn stop_mcp(&mut self) {
         self.want_start = false;
         set_admission_flag(&self.stop, true);
+        for (_, mut peer) in std::mem::take(&mut self.peers) {
+            peer.connection.close();
+            peer.machine.close();
+            if let Some(broker) = &mut self.broker {
+                broker.disconnect(peer.principal);
+            }
+        }
+        let starting = self.mcp_starting.take();
+        let server = self.server.take();
+        if starting.is_some() || server.is_some() {
+            retire(&mut self.mcp_retiring, "festerm-mcp-cleanup", move || {
+                let startup_ok = starting.is_none_or(|starting| {
+                    drop(starting.result);
+                    if starting.thread.join().is_err() {
+                        tracing::warn!("MCP startup worker failed");
+                        false
+                    } else {
+                        true
+                    }
+                });
+                drop(server);
+                startup_ok
+            });
+        }
+    }
+
+    fn close_shared_admission(&mut self) {
+        self.privacy_gate.close();
         if let Some(broker) = &mut self.broker {
             broker.revoke_all();
         }
-        for peer in self.peers.values_mut() {
-            peer.connection.close();
-            peer.machine.close();
+        for target in self.targets.values() {
+            set_admission_flag(&target.registration, false);
         }
-        self.peers.clear();
+    }
+
+    fn shutdown(&mut self) {
+        self.want_shared_start = false;
+        self.close_shared_admission();
+        self.stop_mcp();
         self.targets.clear();
         self.broker = None;
         let starting = self.starting.take();
-        let server = self.server.take();
         let privacy = self.privacy.take();
-        if starting.is_some() || server.is_some() || privacy.is_some() {
-            let previous = self.retiring.take();
-            match thread::Builder::new()
-                .name("festerm-automation-cleanup".into())
-                .spawn(move || {
-                    if let Some(starting) = starting {
+        if starting.is_some() || privacy.is_some() {
+            retire(
+                &mut self.retiring,
+                "festerm-automation-cleanup",
+                move || {
+                    let startup_ok = starting.is_none_or(|starting| {
                         drop(starting.result);
                         if starting.thread.join().is_err() {
                             tracing::warn!("automation startup worker failed");
+                            false
+                        } else {
+                            true
                         }
-                    }
-                    {
-                        let _privacy = privacy;
-                        drop(server);
-                    }
-                    if previous.is_some_and(|thread| thread.join().is_err()) {
-                        tracing::warn!("automation previous cleanup failed");
-                    }
-                }) {
-                Ok(thread) => self.retiring = Some(thread),
-                Err(error) => tracing::error!("automation cleanup worker unavailable: {error}"),
-            }
+                    });
+                    drop(privacy);
+                    startup_ok
+                },
+            );
         }
     }
 
     fn start(&mut self, context: &egui::Context) {
-        self.shutdown();
+        self.restart_with_bootstrap(context, ipc::require_qualified_bootstrap());
+    }
+
+    fn restart_with_bootstrap(&mut self, context: &egui::Context, bootstrap: std::io::Result<()>) {
+        if self.privacy_gate.is_closed() && (self.broker.is_some() || self.starting.is_some()) {
+            self.privacy_lost();
+            return;
+        }
+        self.stop_mcp();
+        self.stop = Arc::new(AtomicBool::new(false));
+        if let Err(error) = bootstrap {
+            set_admission_flag(&self.stop, true);
+            self.status =
+                start_failure_status(if error.kind() == std::io::ErrorKind::Unsupported {
+                    StartFailure::PeerIdentity
+                } else {
+                    StartFailure::Endpoint
+                });
+            tracing::warn!("{}", self.status);
+            return;
+        }
         self.want_start = true;
         self.status = "Starting MCP privacy monitoring; no access is available yet.";
+        self.ensure_shared();
         self.advance_start(context);
     }
 
-    fn advance_start(&mut self, context: &egui::Context) {
-        if let Some(retiring) = &self.retiring {
-            if !retiring.is_finished() {
-                if self.want_start {
-                    context.request_repaint_after(Duration::from_millis(50));
-                }
-                return;
-            }
-            if self
-                .retiring
-                .take()
-                .is_some_and(|thread| thread.join().is_err())
-            {
-                tracing::warn!("automation cleanup worker failed");
-            }
+    fn ensure_shared(&mut self) {
+        if self.broker.is_none() && self.starting.is_none() {
+            self.want_shared_start = true;
         }
+    }
 
-        if let Some(starting) = &self.starting {
-            match starting.result.try_recv() {
-                Ok(result) => {
-                    self.starting = None;
-                    match result {
-                        Ok(prepared) => {
-                            self.privacy = Some(prepared.privacy);
-                            self.server = Some(prepared.server);
-                            self.broker = Some(Broker::new(prepared.instance));
-                            if self.stop.load(Ordering::Acquire) {
-                                self.shutdown();
-                                self.status = "MCP stopped after privacy loss or transport failure. Restart explicitly; all grants were revoked.";
-                            } else {
-                                self.status = "MCP observation-only listener active. No terminal access until native approval.";
-                            }
+    fn privacy_lost(&mut self) {
+        self.privacy_lost_this_tick = true;
+        self.shutdown();
+        if !self.enabled {
+            self.status = SettingsSnapshot::default().status;
+        } else {
+            self.status = "Automation stopped after privacy loss or an internal safety limit. Restart explicitly; all automation grants were revoked.";
+        }
+    }
+
+    fn mcp_failed(&mut self) {
+        self.stop_mcp();
+        self.status =
+            "MCP stopped after transport failure. Restart explicitly; its grants were revoked.";
+    }
+
+    fn shared_start_failed(&mut self, failure: StartFailure) {
+        self.privacy_lost_this_tick = true;
+        self.privacy_gate.close();
+        if self.want_start {
+            self.stop_mcp();
+            self.status = start_failure_status(failure);
+            tracing::warn!("{}", self.status);
+        }
+    }
+
+    fn advance_shared(&mut self, context: &egui::Context) {
+        let result = self
+            .starting
+            .as_ref()
+            .map(|starting| starting.result.try_recv());
+        match result {
+            Some(Ok(result)) => {
+                self.starting = None;
+                match result {
+                    Ok(prepared) => {
+                        self.privacy = Some(prepared.privacy);
+                        if self.privacy_gate.is_closed() {
+                            self.privacy_lost();
+                            return;
                         }
-                        Err(failure) => {
-                            set_admission_flag(&self.stop, true);
-                            self.status = match failure {
-                            StartFailure::Privacy => {
-                                "MCP unavailable: no qualified OS lock/suspend privacy monitor."
-                            }
-                            StartFailure::PeerIdentity => {
-                                "MCP unavailable: private peer identity is not yet qualified."
-                            }
-                            StartFailure::Randomness => {
-                                "MCP unavailable: secure randomness failed."
-                            }
-                            StartFailure::Endpoint => {
-                                "MCP unavailable: private endpoint refused. Check another app instance or private state-directory permissions."
-                            }
-                            StartFailure::Cancelled => {
-                                "MCP stopped during startup. Restart explicitly; all grants were revoked."
-                            }
-                        };
-                            tracing::warn!("{}", self.status);
-                        }
+                        self.broker = Some(Broker::new(prepared.instance));
                     }
+                    Err(failure) => self.shared_start_failed(failure),
                 }
-                Err(mpsc::TryRecvError::Empty) => {
-                    context.request_repaint_after(Duration::from_millis(50));
-                }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    self.starting = None;
-                    set_admission_flag(&self.stop, true);
+            }
+            Some(Err(mpsc::TryRecvError::Empty)) => {
+                context.request_repaint_after(Duration::from_millis(50));
+            }
+            Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                self.starting = None;
+                self.privacy_lost_this_tick = true;
+                self.privacy_gate.close();
+                if self.want_start {
+                    self.stop_mcp();
                     self.status = "MCP unavailable: startup worker failed.";
                     tracing::warn!("{}", self.status);
                 }
             }
-            return;
+            None => {}
         }
 
-        if self.want_start {
-            self.want_start = false;
-            self.stop = Arc::new(AtomicBool::new(false));
-            let stop = self.stop.clone();
+        if !cleanup_ready(&mut self.retiring, context, self.want_shared_start) {
+            if self.retiring.failed && self.want_shared_start {
+                self.want_shared_start = false;
+                self.privacy_gate.close();
+                if self.want_start {
+                    self.stop_mcp();
+                }
+                self.status = CLEANUP_FAILED;
+            }
+            return;
+        }
+        if self.want_shared_start && self.broker.is_none() && self.starting.is_none() {
+            self.want_shared_start = false;
+            self.privacy_gate = Arc::new(PrivacyGate::new(false));
+            if festerm_session::automation_admission_lock().is_none() {
+                self.shared_start_failed(StartFailure::Privacy);
+                return;
+            }
+            if self.want_start
+                && !self.stop.load(Ordering::Acquire)
+                && !self.privacy_gate.bind_mcp(&self.stop)
+                && self.privacy_gate.is_closed()
+            {
+                self.shared_start_failed(StartFailure::Privacy);
+                return;
+            }
+            let gate = self.privacy_gate.clone();
             let notify = context.clone();
             let (send, result) = mpsc::sync_channel(1);
             match thread::Builder::new()
                 .name("festerm-automation-startup".into())
                 .spawn(move || {
-                    let prepared = (|| {
-                        let privacy_stop = stop.clone();
-                        let privacy_notify = notify.clone();
-                        let privacy = PrivacyMonitor::install(Arc::new(move || {
-                            set_admission_flag(&privacy_stop, true);
-                            privacy_notify.request_repaint();
-                        }))
-                        .map_err(|_| StartFailure::Privacy)?;
+                    let privacy_gate = gate.clone();
+                    let privacy_notify = notify.clone();
+                    let prepared = prepare_shared(
+                        &gate,
+                        || {
+                            PrivacyMonitor::install(Arc::new(move || {
+                                privacy_gate.close();
+                                privacy_notify.request_repaint();
+                            }))
+                            .map_err(|_| StartFailure::Privacy)
+                        },
+                        || random().map_err(|_| StartFailure::Randomness),
+                    )
+                    .map(|(privacy, instance)| Prepared { privacy, instance });
+                    let _ = send.send(prepared);
+                    notify.request_repaint();
+                }) {
+                Ok(thread) => {
+                    self.starting = Some(Starting { result, thread });
+                    context.request_repaint_after(Duration::from_millis(50));
+                }
+                Err(error) => {
+                    tracing::warn!("automation startup worker unavailable: {error}");
+                    self.privacy_lost_this_tick = true;
+                    self.privacy_gate.close();
+                    if self.want_start {
+                        self.stop_mcp();
+                        self.status = "MCP unavailable: startup worker failed.";
+                    }
+                }
+            }
+        }
+    }
+
+    fn advance_mcp(&mut self, context: &egui::Context) {
+        let result = self
+            .mcp_starting
+            .as_ref()
+            .map(|starting| starting.result.try_recv());
+        match result {
+            Some(Ok(result)) => {
+                self.mcp_starting = None;
+                match result {
+                    Ok(server) => {
+                        self.server = Some(server);
+                        if self.privacy_gate.is_closed() {
+                            self.privacy_lost();
+                            return;
+                        }
+                        if self.stop.load(Ordering::Acquire) || !self.enabled {
+                            self.stop_mcp();
+                            if self.enabled {
+                                self.status = start_failure_status(StartFailure::Cancelled);
+                            }
+                        } else {
+                            self.want_start = false;
+                            self.status = "MCP observation-only listener active. No terminal access until native approval.";
+                        }
+                    }
+                    Err(failure) => {
+                        self.stop_mcp();
+                        if self.enabled {
+                            self.status = start_failure_status(failure);
+                            tracing::warn!("{}", self.status);
+                        }
+                    }
+                }
+            }
+            Some(Err(mpsc::TryRecvError::Empty)) => {
+                context.request_repaint_after(Duration::from_millis(50));
+            }
+            Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                self.mcp_starting = None;
+                self.stop_mcp();
+                if self.enabled {
+                    self.status = "MCP unavailable: startup worker failed.";
+                    tracing::warn!("{}", self.status);
+                }
+            }
+            None => {}
+        }
+
+        if !cleanup_ready(&mut self.mcp_retiring, context, self.want_start) {
+            if self.mcp_retiring.failed && self.want_start {
+                self.stop_mcp();
+                self.status = CLEANUP_FAILED;
+            }
+            return;
+        }
+        if self.want_start
+            && self.broker.is_some()
+            && self.server.is_none()
+            && self.mcp_starting.is_none()
+        {
+            if !self.privacy_gate.bind_mcp(&self.stop) {
+                if self.privacy_gate.is_closed() {
+                    self.privacy_lost();
+                } else {
+                    self.stop_mcp();
+                    self.status = start_failure_status(StartFailure::Cancelled);
+                }
+                return;
+            }
+            let stop = self.stop.clone();
+            let notify = context.clone();
+            let (send, result) = mpsc::sync_channel(1);
+            match thread::Builder::new()
+                .name("festerm-mcp-startup".into())
+                .spawn(move || {
+                    let started = (|| {
                         if stop.load(Ordering::Acquire) {
                             return Err(StartFailure::Cancelled);
                         }
-                        let instance = random().map_err(|_| StartFailure::Randomness)?;
                         let server_notify = notify.clone();
                         let server = ipc::Server::start(
                             Arc::new(move || server_notify.request_repaint()),
@@ -437,43 +811,48 @@ impl Coordinator {
                         if stop.load(Ordering::Acquire) {
                             return Err(StartFailure::Cancelled);
                         }
-                        Ok(Prepared {
-                            privacy,
-                            server,
-                            instance,
-                        })
+                        Ok(server)
                     })();
-                    let _ = send.send(prepared);
+                    let _ = send.send(started);
                     notify.request_repaint();
                 }) {
                 Ok(thread) => {
-                    self.starting = Some(Starting { result, thread });
+                    self.mcp_starting = Some(Starting { result, thread });
                     context.request_repaint_after(Duration::from_millis(50));
                 }
                 Err(error) => {
-                    tracing::warn!("automation startup worker unavailable: {error}");
-                    set_admission_flag(&self.stop, true);
+                    tracing::warn!("MCP startup worker unavailable: {error}");
+                    self.stop_mcp();
                     self.status = "MCP unavailable: startup worker failed.";
                 }
             }
         }
     }
 
+    fn advance_start(&mut self, context: &egui::Context) {
+        self.advance_shared(context);
+        if self.broker.is_some() && self.privacy_gate.is_closed() {
+            self.privacy_lost();
+            return;
+        }
+        self.advance_mcp(context);
+    }
+
     pub(crate) fn tick(&mut self, context: &egui::Context, apps: &[&FesTermApp]) {
+        self.privacy_lost_this_tick = false;
         let enabled = apps.first().is_some_and(|app| app.automation_mcp_enabled());
         if enabled != self.enabled {
             self.enabled = enabled;
             if enabled {
                 self.start(context);
             } else {
-                self.shutdown();
+                self.stop_mcp();
                 self.status = SettingsSnapshot::default().status;
             }
         }
         self.advance_start(context);
         if self.server.as_ref().is_some_and(ipc::Server::failed) {
-            self.shutdown();
-            self.status = "MCP stopped after privacy loss or transport failure. Restart explicitly; all grants were revoked.";
+            self.mcp_failed();
         }
         let Some(mut broker) = self.broker.take() else {
             return;
@@ -481,6 +860,11 @@ impl Coordinator {
         let now = Instant::now();
         broker.poll_expiry(now);
         self.reconcile(&mut broker, apps);
+        if self.privacy_gate.is_closed() {
+            self.broker = Some(broker);
+            self.privacy_lost();
+            return;
+        }
         let closed: Vec<_> = self
             .peers
             .iter()
@@ -572,6 +956,9 @@ impl Coordinator {
             }
         }
         self.broker = Some(broker);
+        if self.privacy_gate.is_closed() {
+            self.privacy_lost();
+        }
     }
 
     fn reconcile(&mut self, broker: &mut Broker, apps: &[&FesTermApp]) {
@@ -651,7 +1038,7 @@ impl Coordinator {
                     retire_target(broker, target);
                 }
                 let Some(next) = self.generation.checked_add(1) else {
-                    set_admission_flag(&self.stop, true);
+                    self.privacy_gate.close();
                     tracing::warn!("automation target generations exhausted");
                     return;
                 };
@@ -682,23 +1069,31 @@ impl Coordinator {
                 }
             }
         }
-        if registration_refused {
-            self.status = REGISTRATION_REFUSED;
-        } else if self.status == REGISTRATION_REFUSED {
-            self.status =
-                "MCP observation-only listener active. No terminal access until native approval.";
+        if self.server.is_some() && !self.stop.load(Ordering::Acquire) {
+            if registration_refused {
+                self.status = REGISTRATION_REFUSED;
+            } else if self.status == REGISTRATION_REFUSED {
+                self.status =
+                    "MCP observation-only listener active. No terminal access until native approval.";
+            }
         }
     }
 
     pub(crate) fn command(&mut self, command: NativeCommand, context: &egui::Context) {
+        if self.privacy_gate.is_closed() && (self.broker.is_some() || self.starting.is_some()) {
+            self.privacy_lost();
+        }
         match command {
-            NativeCommand::RestartMcp if self.enabled => self.start(context),
+            NativeCommand::RestartMcp if self.enabled && !self.privacy_lost_this_tick => {
+                self.start(context);
+            }
             NativeCommand::RestartMcp => {}
             NativeCommand::Revoke { channel } => {
                 if let Some(peer) = self.peers.get(&channel) {
                     peer.connection.close();
                 }
             }
+            NativeCommand::ApproveObservation { .. } if self.privacy_lost_this_tick => {}
             NativeCommand::ApproveObservation { channel, targets } => {
                 if self.approve(channel, targets).is_err() {
                     self.status = "MCP approval refused: channel, target, lifetime or authority limit changed. No access was granted.";
@@ -710,7 +1105,11 @@ impl Coordinator {
     }
 
     fn approve(&mut self, channel: u64, targets: Vec<TargetRef>) -> Result<(), Refusal> {
-        if self.stop.load(Ordering::Acquire) || targets.is_empty() || targets.len() > 32 {
+        if self.stop.load(Ordering::Acquire)
+            || self.privacy_gate.is_closed()
+            || targets.is_empty()
+            || targets.len() > 32
+        {
             return Err(Refusal::NotAuthorized);
         }
         let peer = self.peers.get_mut(&channel).ok_or(Refusal::Closed)?;
@@ -771,10 +1170,20 @@ impl Coordinator {
     }
 
     pub(crate) fn settings(&self, apps: &[&FesTermApp]) -> SettingsSnapshot {
+        let privacy_closed = self.privacy_gate.is_closed();
+        let mcp_stopped = self.stop.load(Ordering::Acquire);
+        let mcp_open = !mcp_stopped && !privacy_closed;
+        let status = if privacy_closed && self.broker.is_some() && self.enabled {
+            "Automation is stopping after privacy loss or an internal safety limit; admission is closed."
+        } else if mcp_stopped && self.server.is_some() {
+            "MCP is stopping; no further access is available."
+        } else {
+            self.status
+        };
         let channels = self
             .peers
             .iter()
-            .filter(|(_, peer)| !peer.connection.is_closed())
+            .filter(|(_, peer)| mcp_open && !peer.connection.is_closed())
             .map(|(key, peer)| ChannelRow {
                 channel: *key,
                 verification_code: peer.code.as_str().to_owned(),
@@ -790,6 +1199,7 @@ impl Coordinator {
         let targets = self
             .targets
             .values()
+            .filter(|_| mcp_open && (self.server.is_some() || !self.peers.is_empty()))
             .filter_map(|target| {
                 apps.iter().enumerate().find_map(|(window, app)| {
                     let session =
@@ -835,7 +1245,7 @@ impl Coordinator {
             })
             .collect();
         SettingsSnapshot {
-            status: self.status,
+            status,
             channels,
             targets,
             stop: self.stop.clone(),

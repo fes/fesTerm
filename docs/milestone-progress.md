@@ -1,5 +1,14 @@
 # Milestone Progress Narrative
 
+## Separating shared automation and MCP lifetimes
+
+The application coordinator now prepares the broker and privacy gate separately
+from MCP's listener and peer cleanup. MCP-only loss or restart disconnects its
+own principals without discarding independent broker state; privacy loss and
+application shutdown still close admission and revoke everything. The
+unqualified MCP bootstrap remains closed, and the JavaScript preference alone
+starts no adapter. Worker integration and native platform evidence remain open.
+
 ## Freezing workflow targets before consent
 
 The workflow intake component now binds validated parameters to the complete,

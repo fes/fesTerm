@@ -508,7 +508,7 @@ fn forward_stdio_input(
     let _ = output.try_send(StdioInput::Stop);
 }
 
-fn require_qualified_bootstrap() -> io::Result<()> {
+pub(super) fn require_qualified_bootstrap() -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "MCP private peer identity is not yet qualified",
