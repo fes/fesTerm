@@ -114,7 +114,7 @@ platforms and unqualified adapters disabled in the application.
 
 ## Validation
 
-After parent workspace registration:
+From the workspace root:
 
 ```sh
 cargo test -p festerm-automation
