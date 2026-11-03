@@ -129,6 +129,7 @@
         "queued_reply_is_dropped_when_target_is_replaced_before_dispatch",
         "backpressured_reply_cannot_write_after_revocation",
         "stdio_eof_closes_the_private_channel_even_when_stdout_is_blocked",
+        "stdio_forwards_a_healthy_input_burst",
         "stdio_stdout_backpressure_closes_the_private_channel",
         "stdio_single_stalled_stdout_write_times_out_and_revokes",
         "bounded_input_waits_for_a_briefly_full_queue",

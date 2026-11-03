@@ -995,6 +995,38 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn stdio_forwards_a_healthy_input_burst() {
+        let StdioPair {
+            mut broker,
+            adapter,
+            mut input,
+            reader,
+            output,
+            waiting: _waiting,
+            release: _release,
+            output_finished,
+        } = stdio_pair();
+        let (finished, result) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            let result = proxy_stdio(adapter, io::BufReader::new(reader), output);
+            let _ = finished.send(result);
+        });
+        input.write_all(&b"{}\n".repeat(12)).unwrap();
+        let no = AtomicBool::new(false);
+        for _ in 0..12 {
+            assert_eq!(
+                read_frame(&mut broker, &no, &no).unwrap(),
+                Some(b"{}".to_vec())
+            );
+        }
+        drop(input);
+        assert!(result.recv_timeout(FRAME_DEADLINE).unwrap().is_ok());
+        worker.join().unwrap();
+        output_finished.recv_timeout(FRAME_DEADLINE).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn stdio_stdout_backpressure_closes_the_private_channel() {
         let StdioPair {
             mut broker,
@@ -1111,7 +1143,8 @@ mod tests {
                 .send(StdioInput::Message(b"queued".to_vec()))
                 .unwrap();
         }
-        let (staged, incoming) = mpsc::sync_channel(MAX_BUFFERED_INPUT);
+        let (staged, incoming) = mpsc::sync_channel(1);
+        staged.send(b"pending".to_vec()).unwrap();
         let (errors, _receive_errors) = mpsc::sync_channel(3);
         let forward_closed = closed.clone();
         let forward_output = output.clone();
@@ -1119,11 +1152,18 @@ mod tests {
         let forwarder = thread::spawn(move || {
             forward_stdio_input(incoming, forward_output, forward_errors, forward_closed)
         });
+        send_until(
+            &staged,
+            b"also pending".to_vec(),
+            Instant::now() + FRAME_DEADLINE,
+            &closed,
+        )
+        .unwrap();
         let read_closed = closed.clone();
         let (finished, result) = mpsc::sync_channel(1);
         let reader = thread::spawn(move || {
             read_stdio_input(
-                Cursor::new(b"{}\n{}\n{}\n{}\n{}\n".to_vec()),
+                Cursor::new(Vec::<u8>::new()),
                 staged,
                 output,
                 errors,
