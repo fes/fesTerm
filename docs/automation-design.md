@@ -600,6 +600,15 @@ Already transport-admitted bytes may have executed and are not recalled.
 No unbounded input buffering, “wait for reconnect then send” behavior or
 partially replayed command is allowed. Backpressure is an explicit refusal.
 
+The core can prepare a bounded batch of typed keyboard or paste events without
+changing its input queue. It captures the terminal modes used by the existing
+encoder and retains the exact immutable bytes. Preparation is not a target
+binding, writer lease, authorization or transport reservation. The future
+adapter must enforce the automation write limit, bind the exact target and
+attachment, and recheck the captured modes while holding the relevant terminal
+and admission fences through publication. A mismatch refuses the entire batch;
+it must not silently re-encode or retry an approved write.
+
 The local PTY component can reserve an inert position in its existing bounded
 command queue before an exact broker commit. Its immutable bytes become
 sendable only after the application completes the broker callback while

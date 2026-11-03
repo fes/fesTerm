@@ -1,5 +1,17 @@
 # Milestone Progress Narrative
 
+## Preparing exact terminal input without admission
+
+The terminal core can encode a bounded keyboard/paste batch against one
+captured set of terminal modes without mutating its input queue. It reuses the
+ordinary input encoder, refuses unsupported or oversized batches as a whole,
+and returns immutable bytes for a later reservation.
+
+This is not control authority. The application must still bind the target,
+enforce the automation limit, compare the modes under the live admission
+fences and complete the broker/transport commit. No automation execution is
+enabled by this component.
+
 ## Fencing controller-known human input
 
 The session controller can capture a composite input, IME and backend
