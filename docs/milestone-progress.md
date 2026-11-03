@@ -30,6 +30,15 @@ qualification rather than running unconfined. Installed-helper provenance,
 native x86-64 and broader distribution evidence, GUI grants and end-to-end
 lifecycle integration remain open; this component does not enable scripting.
 
+The worker's completion boundary also has an explicit admission
+acknowledgement: JavaScript cannot settle while an earlier forwarded effect is
+still awaiting broker admission. A one-shot atomic claim orders exact prepared
+broker commits against watchdog closure, while explicit cancellation serializes
+the broker cut before signalling the worker. Promise jobs retain their order
+between staged results, and a result that wins an acknowledgement race does not
+fail the run. This is a component protocol, not yet proof of application-level
+lifecycle integration.
+
 ## Shared automation authority before external access
 
 The owner authorized the P1-P3 MCP/JavaScript campaign in
@@ -46,6 +55,12 @@ qualify transport authentication, worker confinement or native UI/controller
 integration. No server/interpreter is enabled. iOS and unsupported desktop
 execution remain unavailable until their separate platform gates can be proved;
 P4 is not pulled into this campaign.
+
+The observation prototype excludes text-mode SFTP: its worker can continue
+producing local output after the SSH transport or SFTP subsystem is lost, and
+its backend cannot yet invalidate automation authority at that boundary. Other
+session types retain their own attachment-generation checks. All MCP bootstrap
+paths remain fail-closed pending authenticated native pairing.
 
 ## Verify the Dev Tunnel installer before execution
 

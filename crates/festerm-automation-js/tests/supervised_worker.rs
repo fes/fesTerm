@@ -241,11 +241,102 @@ fn cancellation_closes_admission_and_reaps_within_bounds() {
     .unwrap();
     worker.cancel();
     assert!(worker
+        .with_admission(|_| panic!("cancelled admission ran"))
+        .is_err());
+    assert!(worker
         .host_result(1, HostResult::Observation { targets: vec![] })
         .is_err());
     let started = Instant::now();
     worker.shutdown().unwrap();
     assert!(started.elapsed() < Duration::from_millis(2_500));
+}
+
+#[test]
+fn host_admission_acknowledgement_unblocks_concurrent_calls() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let worker = Supervisor::spawn(
+        &program(),
+        &bundle(
+            "export async function main({fesTerm}) { \
+             fesTerm.observe(); await fesTerm.observe(); return 1; }",
+        ),
+        Parameters::new(),
+        Limits::default(),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut ids = Vec::new();
+    while ids.len() < 2 {
+        assert!(Instant::now() < deadline);
+        match worker.try_event().unwrap() {
+            Some(Event::HostCall { id, request }) => {
+                assert_eq!(request, HostRequest::Observe {});
+                ids.push(id);
+            }
+            Some(event) => panic!("worker ended before both calls: {event:?}"),
+            None => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+    assert_eq!(ids, [1, 2]);
+    worker
+        .host_result(2, HostResult::Observation { targets: vec![] })
+        .unwrap();
+    worker.host_admitted(1).unwrap();
+    assert!(matches!(
+        terminal(&worker, false),
+        Event::Finished {
+            outcome: Outcome::UnsettledWork {}
+        }
+    ));
+    worker.shutdown().unwrap();
+}
+
+#[test]
+fn result_before_separate_acknowledgement_does_not_fail_the_run() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let worker = Supervisor::spawn(
+        &program(),
+        &bundle(
+            "export async function main({fesTerm}) { \
+             const first = fesTerm.observe(); const second = fesTerm.observe(); \
+             await first; await second; return 42; }",
+        ),
+        Parameters::new(),
+        Limits::default(),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut ids = Vec::new();
+    while ids.len() < 2 {
+        assert!(Instant::now() < deadline);
+        match worker.try_event().unwrap() {
+            Some(Event::HostCall { id, request }) => {
+                assert_eq!(request, HostRequest::Observe {});
+                ids.push(id);
+            }
+            Some(event) => panic!("worker ended before both calls: {event:?}"),
+            None => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+    assert_eq!(ids, [1, 2]);
+    worker
+        .host_result(1, HostResult::Observation { targets: vec![] })
+        .unwrap();
+    worker.host_admitted(1).unwrap();
+    worker
+        .host_result(2, HostResult::Observation { targets: vec![] })
+        .unwrap();
+    assert!(matches!(
+        terminal(&worker, false),
+        Event::Finished {
+            outcome: Outcome::Completed { value }
+        } if value == 42
+    ));
+    worker.shutdown().unwrap();
 }
 
 #[test]

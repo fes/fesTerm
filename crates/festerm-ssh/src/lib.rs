@@ -3344,10 +3344,8 @@ impl Session for SftpTerminalSession {
         self.foundation.lifecycle()
     }
 
-    fn automation_epoch(&self) -> Option<Arc<AutomationEpoch>> {
-        Some(Arc::clone(&self.foundation.shared.automation_epoch))
-    }
-
+    // The text SFTP worker can remain running after transport loss. Until loss
+    // detection is qualified, the default automation_epoch() must return None.
     fn metrics(&self) -> SessionMetrics {
         self.foundation.metrics()
     }

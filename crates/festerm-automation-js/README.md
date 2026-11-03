@@ -54,14 +54,17 @@ typed `HostResult`. Method/schema validity is **not** authorization. Manifest
 capabilities are only declared maxima and are never interpreted as grants here.
 P2 observation-only callers should deny all write/open/invocation variants.
 
-Close broker admission synchronously **before** `cancel()` on revocation,
-deadline, lock/suspension, caller disconnect, human takeover, or parent return.
-Already admitted effects cannot be undone. `cancel()` prevents delivery of
-queued new host-call events; at most 250 ms cooperation precedes forced kill.
-The independent watchdog does not depend on GUI polling. `shutdown()` reports
-cleanup errors; drop also cleans up. An unreaped worker or watchdog panic
-quarantines subsequent launches for the entire application process; surface
-`cleanup_failed()` and require a clean restart. Reaping has a 2-second bound.
+Use `cancel_with` to close broker admission synchronously before cancellation
+on revocation, lock/suspension, caller disconnect, human takeover, or parent
+return. Cap the broker run deadline at `Supervisor::deadline()`; the watchdog
+closes worker admission and reaps independently at that deadline. Already
+admitted effects cannot be undone. `cancel()` prevents delivery of queued new
+host-call events; at most 250 ms cooperation precedes forced kill. The
+independent watchdog does not depend on GUI polling or a busy admission gate.
+`shutdown()` reports cleanup errors; drop also cleans up. An unreaped worker
+or watchdog panic quarantines subsequent launches for the entire application
+process; surface `cleanup_failed()` and require a clean restart. Reaping has a
+2-second bound.
 
 `Outcome::Completed { value }` contains **script-controlled authorized result
 data**, not diagnostics. Gate retention/disclosure through the broker, just as
@@ -132,6 +135,19 @@ Root Promise settlement closes admission immediately. Outstanding host work
 produces `UnsettledWork`, not a successful result. No remaining microtasks are
 drained after completion, including while serializing the result. Unawaited
 work that was already broker-admitted remains the broker's cleanup obligation.
+After forwarding calls, the worker pauses JavaScript until each is either
+rejected with a result or acknowledged after its exact broker admission.
+An acknowledgement permits other JavaScript to proceed while an admitted
+asynchronous call is still waiting for its result; it is not that result.
+This prevents an unadmitted effect from racing the worker's completion cut.
+The application must use the supervisor's bounded `with_admission` boundary,
+prepare the exact operation, and consume its one-shot permit around the actual
+broker/controller commit. The atomic claim orders that admission against
+watchdog closure; an already claimed effect may physically execute later. If
+the claim fails, abort the prepared request or cut the run in the broker. Use
+`cancel_with` for the synchronous broker cut and still enforce all scopes,
+recipients and lifecycle checks. A successful host-result/acknowledgement send
+only queues a message, not a delivery receipt.
 
 ## Native policy and support
 
