@@ -37,7 +37,11 @@ sheets.
   expanded Space bar. Every app-owned key shows an enlarged press callout and
   input keys, including Return, repeat like a hardware keyboard (only the
   Insert mode toggle acts once). Hide/show uses
-  a plain keyboard icon in the utility strip. Native dictation remains available by switching
+  a plain keyboard icon in the utility strip. The globe now sits at the
+  bottom-left of the terminal keyboards (as on the system keyboard) and ⊞
+  Extended keys moves to the utility strip; the terminal header, accessory
+  row, Extended keys and keyboards share one bluer key palette. Session chips
+  close by long press plus confirmation; Sessions rows close by swipe-left. Native dictation remains available by switching
   to the built-in keyboard; no remote microphone forwarding is implied.
 
 ## Consequences

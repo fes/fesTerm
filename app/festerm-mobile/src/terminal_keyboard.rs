@@ -3,7 +3,7 @@
 
 use super::key_press::{paint_glyph, Fired, Glyph, KeyPress, Repeat};
 use super::terminal_chrome::{self, KeyRowAction, KeyRowOutput, KeyRowState};
-use super::theme::{color, type_scale};
+use super::theme::{color, radius, type_scale};
 use super::widgets::{labelled, paint_fit};
 use eframe::egui::{self, Align2, Color32, CornerRadius, Rect, Response, Sense, Stroke, Ui};
 use festerm_core::Key;
@@ -48,11 +48,11 @@ impl KeyboardKind {
 const LETTERS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 const ALTERNATES: [&str; 3] = ["/\\-_'\"|&$~", "@#=+*()[]", "{}<>;:?"];
 const SYMBOLS: [&str; 3] = ["[]{}()<>=+", "@#*%!;:?`", "/\\-_|&$"];
-const BOARD: Color32 = Color32::from_rgb(27, 42, 64);
-const KEY: Color32 = Color32::from_rgb(48, 65, 91);
-const SPECIAL: Color32 = Color32::from_rgb(35, 51, 75);
-const SELECTED: Color32 = Color32::from_rgb(139, 185, 255);
-const SELECTED_INK: Color32 = Color32::from_rgb(16, 33, 59);
+const BOARD: Color32 = color::TERMINAL_CHROME;
+const KEY: Color32 = color::TERMINAL_KEY;
+const SPECIAL: Color32 = color::TERMINAL_KEY_MUTED;
+const SELECTED: Color32 = color::TERMINAL_KEY_SELECTED;
+const SELECTED_INK: Color32 = color::TERMINAL_KEY_SELECTED_INK;
 
 #[derive(Default)]
 pub struct TerminalKeyboard {
@@ -166,12 +166,9 @@ impl TerminalKeyboard {
                         output.action = KeyRowAction::Key(key);
                     }
                 }
-                let switch = terminal_chrome::keyboard_switch_button(ui, width, utility_height);
-                if self
-                    .keys
-                    .toggle(ui, &switch, Glyph::Icon(Icon::RemoteGlobe))
-                {
-                    output.action = KeyRowAction::SwitchKeyboard;
+                let extended = glyph_key(ui, width, utility_height, "Extended keys", Glyph::Grid);
+                if self.keys.toggle(ui, &extended, Glyph::Grid) {
+                    output.action = KeyRowAction::TogglePanel;
                 }
                 let hide =
                     terminal_chrome::keyboard_visibility_button(ui, width, utility_height, true);
@@ -278,23 +275,16 @@ impl TerminalKeyboard {
                     }
                 });
             ui.horizontal(|ui| {
-                // Space stays centered with equal flanks: Extended, #+= and
+                // Space stays centered with equal flanks: the globe, #+= and
                 // comma on the left; period and Return on the right.
                 let space_width = ui.available_width() * 0.48;
                 let side = (ui.available_width() - space_width) / 2.0 - gap;
                 let small = (side - gap * 2.0) * 0.3;
                 let layer = (side - gap * 2.0 - small) / 2.0;
-                let extended = draw_key(ui, layer, height, "", None, false, true);
-                paint_glyph(
-                    ui.painter(),
-                    &Glyph::Grid,
-                    extended.rect.center(),
-                    1.0,
-                    color::TEXT,
-                );
-                let extended = labelled(extended, "Extended keys", ui.is_enabled());
-                if self.keys.toggle(ui, &extended, Glyph::Grid) {
-                    output.action = KeyRowAction::TogglePanel;
+                let globe = Glyph::Icon(Icon::RemoteGlobe);
+                let switch = glyph_key(ui, layer, height, "Switch keyboard", globe.clone());
+                if self.keys.toggle(ui, &switch, globe) {
+                    output.action = KeyRowAction::SwitchKeyboard;
                 }
                 let label = if self.symbols { "ABC" } else { "#+=" };
                 let response = draw_key(ui, layer, height, label, None, self.symbols, true);
@@ -388,7 +378,7 @@ fn draw_key(
     let pressed = response.is_pointer_button_down_on();
     ui.painter().rect_filled(
         rect,
-        CornerRadius::same(7),
+        CornerRadius::same(radius::KEY),
         if active || label == "Return" {
             SELECTED
         } else if special || pressed {
@@ -452,6 +442,18 @@ fn draw_key(
     } else {
         labelled(response, label, ui.is_enabled())
     }
+}
+
+fn glyph_key(ui: &mut Ui, width: f32, height: f32, label: &str, glyph: Glyph) -> Response {
+    let response = draw_key(ui, width, height, "", None, false, true);
+    paint_glyph(
+        ui.painter(),
+        &glyph,
+        response.rect.center(),
+        1.0,
+        color::TEXT,
+    );
+    labelled(response, label, ui.is_enabled())
 }
 
 fn arrow_key(ui: &mut Ui, width: f32, height: f32, label: &str, key: Key) -> Response {

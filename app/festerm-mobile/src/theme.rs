@@ -36,11 +36,23 @@ pub mod color {
     pub const WARNING_FILL: Color32 = Color32::from_rgb(52, 42, 35);
     pub const DANGER: Color32 = Color32::from_rgb(240, 98, 98);
     pub const SCRIM: Color32 = Color32::from_black_alpha(150);
+    /// Terminal-screen chrome: the header with session chips, the accessory
+    /// row, Extended keys and the app-owned keyboards share this bluer palette
+    /// so the controls around the terminal read as one surface.
+    pub const TERMINAL_CHROME: Color32 = Color32::from_rgb(27, 42, 64);
+    pub const TERMINAL_KEY: Color32 = Color32::from_rgb(48, 65, 91);
+    /// Utility keys (Esc, modifiers, arrows) and inactive header chips.
+    pub const TERMINAL_KEY_MUTED: Color32 = Color32::from_rgb(35, 51, 75);
+    pub const TERMINAL_KEY_SELECTED: Color32 = Color32::from_rgb(139, 185, 255);
+    pub const TERMINAL_KEY_SELECTED_INK: Color32 = Color32::from_rgb(16, 33, 59);
+    pub const TERMINAL_BORDER: Color32 = Color32::from_rgb(52, 74, 104);
 }
 
 /// Corner radii in points.
 pub mod radius {
     pub const CONTROL: u8 = 10;
+    /// Terminal keys, shared by the accessory row, Extended keys and keyboards.
+    pub const KEY: u8 = 7;
     pub const FIELD: u8 = 12;
     pub const BUTTON: u8 = 12;
     pub const CARD: u8 = 14;

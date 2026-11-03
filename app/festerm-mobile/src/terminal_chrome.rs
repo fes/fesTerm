@@ -6,11 +6,10 @@ use super::model::{ReconnectBanner, SurfaceKind, SurfaceState, SurfaceSummary};
 use super::terminal_keyboard::KeyboardKind;
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
-    button, count_chip, labelled, paint_fit, plus_chip, segmented, session_chip, ButtonKind, Dot,
+    bottom_sheet, button, count_chip, labelled, long_press_or_click, paint_fit, plus_chip,
+    segmented, session_chip, sheet_title, ButtonKind, Dot,
 };
-use eframe::egui::{
-    self, Align2, CornerRadius, Margin, Rect, Response, Sense, Stroke, StrokeKind, Ui,
-};
+use eframe::egui::{self, Align2, CornerRadius, Margin, Rect, Response, Sense, Stroke, Ui};
 use festerm_core::{Key, Modifiers};
 use festerm_ui_egui::icon::{self, Icon};
 
@@ -126,6 +125,8 @@ fn capped_margin(available: f32, max: f32, horizontal: i8, vertical: i8) -> Marg
 pub enum ChipAction {
     None,
     Select(u64),
+    /// Long-pressed: ask before closing this session.
+    Close(u64),
     All,
     New,
 }
@@ -177,8 +178,10 @@ fn chip_strip(ui: &mut Ui, surfaces: &[SurfaceSummary]) -> ChipAction {
                         if surface.current && shown != current {
                             response.scroll_to_me(Some(egui::Align::Center));
                         }
-                        if response.clicked() {
-                            action = ChipAction::Select(surface.id);
+                        match long_press_or_click(ui, &response) {
+                            (true, _) => action = ChipAction::Close(surface.id),
+                            (_, true) => action = ChipAction::Select(surface.id),
+                            _ => {}
                         }
                     }
                 });
@@ -237,27 +240,40 @@ fn key_button(
     active: bool,
     paint: impl FnOnce(&egui::Painter, Rect, egui::Color32),
 ) -> Response {
+    key_button_filled(
+        ui,
+        width,
+        height,
+        label,
+        active,
+        color::TERMINAL_KEY_MUTED,
+        paint,
+    )
+}
+
+/// Keys match the app-owned keyboards: utility keys use the muted fill,
+/// character-like keys the raised one, and a latched key the selected blue.
+fn key_button_filled(
+    ui: &mut Ui,
+    width: f32,
+    height: f32,
+    label: &str,
+    active: bool,
+    fill: egui::Color32,
+    paint: impl FnOnce(&egui::Painter, Rect, egui::Color32),
+) -> Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), Sense::CLICK);
     let painter = ui.painter();
-    let corner = CornerRadius::same(radius::CONTROL);
-    painter.rect_filled(
-        rect,
-        corner,
-        if active {
-            color::KEY_ACTIVE
-        } else {
-            color::KEY
-        },
-    );
-    if active {
-        painter.rect_stroke(
-            rect,
-            corner,
-            Stroke::new(1.0, color::ACCENT_TEXT),
-            StrokeKind::Inside,
-        );
-    }
-    paint(painter, rect, color::TEXT);
+    let (fill, ink) = if active {
+        (
+            color::TERMINAL_KEY_SELECTED,
+            color::TERMINAL_KEY_SELECTED_INK,
+        )
+    } else {
+        (fill, color::TEXT)
+    };
+    painter.rect_filled(rect, CornerRadius::same(radius::KEY), fill);
+    paint(painter, rect, ink);
     labelled(response, label, true)
 }
 
@@ -302,7 +318,7 @@ pub fn key_row(ui: &mut Ui, state: &KeyRowState, keys: &mut KeyPress) -> KeyRowO
     let mut control_rect = Rect::NOTHING;
     let margin = capped_margin(ui.available_width(), CHROME_MAX_WIDTH, 8, 6);
     egui::Frame::new()
-        .fill(color::BAR)
+        .fill(color::TERMINAL_CHROME)
         .inner_margin(margin)
         .show(ui, |ui| {
             keys.latch(state.control || state.alt || state.shift);
@@ -414,17 +430,6 @@ pub(super) fn keyboard_menu(ui: &mut Ui, kind: KeyboardKind) -> KeyRowAction {
     );
     ui.separator();
     action
-}
-
-pub(super) fn keyboard_switch_button(ui: &mut Ui, width: f32, height: f32) -> Response {
-    glyph_key(
-        ui,
-        width,
-        height,
-        "Switch keyboard",
-        &Glyph::Icon(Icon::RemoteGlobe),
-        false,
-    )
 }
 
 pub(super) fn keyboard_visibility_button(
@@ -570,8 +575,8 @@ const SYMBOLS: [PanelKey; 12] = [
 pub fn keys_panel(ui: &mut Ui, panel: &mut KeysPanel, keys: &mut KeyPress) -> KeysPanelOutput {
     let mut output = KeysPanelOutput::default();
     egui::Frame::new()
-        .fill(color::SURFACE)
-        .stroke(Stroke::new(1.0, color::DIVIDER))
+        .fill(color::TERMINAL_CHROME)
+        .stroke(Stroke::new(1.0, color::TERMINAL_BORDER))
         .inner_margin(capped_margin(
             ui.available_width(),
             KEYS_PANEL_MAX_WIDTH,
@@ -636,8 +641,17 @@ pub fn keys_panel(ui: &mut Ui, panel: &mut KeysPanel, keys: &mut KeyPress) -> Ke
                 ui.horizontal(|ui| {
                     for entry in row {
                         let glyph = entry.glyph();
-                        let response =
-                            glyph_key(ui, width, space::KEY_HEIGHT, entry.label, &glyph, false);
+                        let response = key_button_filled(
+                            ui,
+                            width,
+                            space::KEY_HEIGHT,
+                            entry.label,
+                            false,
+                            color::TERMINAL_KEY,
+                            |painter, rect, tint| {
+                                paint_glyph(painter, &glyph, rect.center(), 1.0, tint);
+                            },
+                        );
                         if keys.key(ui, &response, glyph, entry.repeat()).is_some() {
                             output.key = Some((entry.key, entry.modifiers));
                         }
@@ -721,10 +735,37 @@ pub fn reconnect_banner(ui: &mut Ui, banner: &ReconnectBanner, compact: bool) ->
     chosen
 }
 
+/// Confirmation raised by long-pressing a session chip. Returns `Some(true)`
+/// to close, `Some(false)` when cancelled or dismissed.
+pub fn close_session_sheet(ctx: &egui::Context, bounds: Rect, title: &str) -> Option<bool> {
+    let mut choice = None;
+    let outcome = bottom_sheet(ctx, "close-session", bounds, |ui| {
+        if sheet_title(ui, &format!("Close {title}?"), None) {
+            choice = Some(false);
+        }
+        ui.label(
+            egui::RichText::new("This closes the tab and ends its connection.")
+                .size(type_scale::BODY)
+                .color(color::TEXT_MUTED),
+        );
+        ui.add_space(space::SM);
+        if button(ui, ButtonKind::Destructive, "Close session", true).clicked() {
+            choice = Some(true);
+        }
+        if button(ui, ButtonKind::Secondary, "Cancel", true).clicked() {
+            choice = Some(false);
+        }
+    });
+    if outcome.dismissed && choice.is_none() {
+        choice = Some(false);
+    }
+    choice
+}
+
 /// Replaces the key row when the transport is gone but history stays usable.
 pub fn read_only_note(ui: &mut Ui) {
     egui::Frame::new()
-        .fill(color::BAR)
+        .fill(color::TERMINAL_CHROME)
         .inner_margin(Margin::symmetric(8, 14))
         .show(ui, |ui| {
             let (rect, _) =

@@ -44,7 +44,12 @@ connecting, red disconnected, grey offline demo), ringed while a background tab
 has unseen output. The chips scroll sideways, with `All N` and `+` pinned on
 the right. There is no title, subtitle or separate status row. More holds the
 connection status text, Files (SSH tabs), Force redraw, Disconnect, demo reset,
-Close session and on-demand diagnostics. Files and Markdown keep a
+Close session and on-demand diagnostics. Long-pressing any chip (0.5 s, without
+moving) asks "Close <name>?" in a bottom sheet with Close session and Cancel;
+the release that ends the long press does not also select the chip. In the
+Sessions list (`All N` sheet and Sessions tab), swiping an open surface left
+reveals a red Close button, Mail/Gmail style; tapping it closes that surface,
+while tapping the row or swiping back hides it. Files and Markdown keep a
 title/subtitle header. Experiment notices, counters and redundant
 explanatory strips do not occupy the terminal screen. Switching preserves each
 surface's in-memory state and terminal keyboard focus is requested only while
@@ -99,15 +104,22 @@ and digits, not explicit symbols. Ctrl/Alt/Shift remain one-shot and the
 existing local Ctrl+Shift+C/P clipboard shortcuts are unchanged.
 
 Intentional reconciliations with the mockup: the existing single-row header
-stays; switching (globe) and hiding live in the pinned utility strip, leaving
-the bottom row for Extended keys (⊞), symbols/letters, comma, a centered Space,
-period and Return. Space occupies 48% of the usable bottom-row width, with
-equal left/right flanks. ⊞ opens the Extended keys panel (navigation, F-keys,
-symbols); its ABC control returns to the selected terminal keyboard. More also exposes Paste and Extended keys;
+stays; Extended keys (⊞) and hiding live in the pinned utility strip, leaving
+the bottom row for the globe switch key, symbols/letters, comma, a centered
+Space, period and Return, where the system keyboard puts its globe. Space
+occupies 48% of the usable bottom-row width, with equal left/right flanks. ⊞
+opens the Extended keys panel (navigation, F-keys, symbols); its ABC control
+returns to the selected terminal keyboard. More also exposes Paste and Extended keys;
 closing the extended panel returns to the selected keyboard. Utility keys use
 the typing-row height rather than the mockup's shorter 35 px targets. Letter
 keys use proportional text, numbers/symbols monospace, and modifier/Return
-selection uses the bundle's light-blue fill. Every app-owned key — terminal
+selection uses the bundle's light-blue fill. The terminal header, accessory
+row, Extended keys panel and terminal keyboards share the bundle's bluer navy
+palette (`theme::color::TERMINAL_*`): muted utility keys, raised character
+keys, the same 7-point key corners and the light-blue latched state, so a
+latched Ctrl looks the same on every keyboard. Header chips use the muted and
+raised key fills. The globe glyph is the `RemoteGlobe` badge art re-centered
+on the key and enlarged to match the other key icons. Every app-owned key — terminal
 keyboard keys, modifiers, arrows, Backspace, globe/hide, the built-in
 keyboard's accessory row and the Extended keys panel — shows a larger callout
 above it while pressed; after a hold alternate fires, the callout shows that

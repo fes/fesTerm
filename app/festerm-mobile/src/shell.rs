@@ -6,9 +6,9 @@ use super::profiles::TrustedHostRow;
 use super::terminal_keyboard::KeyboardKind;
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
-    self, bottom_sheet, button, card, edit_zone_clicked, footnote, labelled, list_row, paint_fit,
-    screen_title, search_field, section_header, sheet_title, ButtonKind, Dot, RowSpec, TabItem,
-    Trailing,
+    self, bottom_sheet, button, card, edit_zone_clicked, footnote, labelled, list_row,
+    list_row_height, paint_fit, screen_title, search_field, section_header, sheet_title, swipe_row,
+    ButtonKind, Dot, RowSpec, TabItem, Trailing,
 };
 use eframe::egui::{self, Align2, CornerRadius, Margin, Rect, Sense, Stroke, StrokeKind, Ui};
 use festerm_ui_egui::icon::Icon;
@@ -101,6 +101,7 @@ pub enum ShellAction {
     EditProfile(String),
     ForgetHost(usize),
     OpenSurface(u64),
+    CloseSurface(u64),
     Reattach(usize),
     OpenDemo,
     OpenHostSetup,
@@ -135,7 +136,16 @@ fn surface_rows(ui: &mut Ui, surfaces: &[SurfaceSummary], actions: &mut Vec<Shel
             };
             row.selected = surface.current;
             row.divider = index > 0;
-            if list_row(ui, &row).clicked() {
+            let swipe = swipe_row(
+                ui,
+                ui.id().with(("surface-row", surface.id)),
+                "Close",
+                list_row_height(&row),
+                |ui| list_row(ui, &row),
+            );
+            if swipe.action {
+                actions.push(ShellAction::CloseSurface(surface.id));
+            } else if swipe.opened {
                 actions.push(ShellAction::OpenSurface(surface.id));
             }
         }
@@ -379,7 +389,10 @@ fn sessions_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAct
         }
     } else {
         surface_rows(ui, data.surfaces, actions);
-        footnote(ui, "Tap an open surface to switch without reconnecting.");
+        footnote(
+            ui,
+            "Tap an open surface to switch without reconnecting. Swipe left to close it.",
+        );
     }
     if !data.reattachable.is_empty() {
         section_header(ui, "Available to reattach", None, false);
@@ -561,7 +574,10 @@ pub fn sessions_sheet(ctx: &egui::Context, bounds: Rect, data: &ShellData<'_>) -
             section_header(ui, "Available to reattach", host.as_deref(), false);
             reattach_rows(ui, data.reattachable, &mut actions);
         }
-        footnote(ui, "Tap an open surface to switch without reconnecting.");
+        footnote(
+            ui,
+            "Tap an open surface to switch without reconnecting. Swipe left to close it.",
+        );
         if button(ui, ButtonKind::Primary, "+  Open a profile", true).clicked() {
             actions.push(ShellAction::OpenProfilesTab);
         }

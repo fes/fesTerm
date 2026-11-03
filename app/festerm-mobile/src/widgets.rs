@@ -226,7 +226,7 @@ impl<'a> RowSpec<'a> {
 /// Icon tile, two or three text lines and a trailing affordance.
 pub fn list_row(ui: &mut Ui, spec: &RowSpec<'_>) -> Response {
     let lines = 1 + usize::from(spec.subtitle.is_some()) + usize::from(spec.status.is_some());
-    let height = (22.0 + lines as f32 * 17.0).max(space::TOUCH + 12.0);
+    let height = list_row_height(spec);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::CLICK);
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
@@ -359,6 +359,180 @@ pub fn list_row(ui: &mut Ui, spec: &RowSpec<'_>) -> Response {
         );
     }
     labelled(response, spec.title, true)
+}
+
+/// How long a still press must last to count as a long press.
+pub const LONG_PRESS_SECS: f64 = 0.5;
+
+/// Classifies a press on `response` as a tap or a long press. A long press
+/// fires once while the finger is still down (so the reaction is immediate),
+/// and the release that ends it is not reported as a tap. Movement beyond a
+/// click's slop (e.g. scrolling the chip strip) cancels both.
+pub fn long_press_or_click(ui: &Ui, response: &Response) -> (bool, bool) {
+    let fired_id = response.id.with("long-press");
+    let fired = ui
+        .data(|data| data.get_temp::<bool>(fired_id))
+        .unwrap_or(false);
+    if !response.is_pointer_button_down_on() {
+        if fired {
+            ui.data_mut(|data| data.remove::<bool>(fired_id));
+            return (false, false);
+        }
+        return (false, response.clicked());
+    }
+    if fired {
+        return (false, false);
+    }
+    let (elapsed, moved) = ui.input(|input| {
+        let pointer = &input.pointer;
+        let moved = match (pointer.press_origin(), pointer.latest_pos()) {
+            (Some(origin), Some(latest)) => origin.distance(latest),
+            _ => 0.0,
+        };
+        (
+            pointer.press_start_time().map(|start| input.time - start),
+            moved,
+        )
+    });
+    if moved > 8.0 {
+        return (false, false);
+    }
+    match elapsed {
+        Some(elapsed) if elapsed >= LONG_PRESS_SECS => {
+            ui.data_mut(|data| data.insert_temp(fired_id, true));
+            (true, false)
+        }
+        Some(elapsed) => {
+            ui.ctx()
+                .request_repaint_after_secs((LONG_PRESS_SECS - elapsed) as f32);
+            (false, false)
+        }
+        None => (false, false),
+    }
+}
+
+/// Width of the action revealed behind a swiped row.
+pub const SWIPE_ACTION_WIDTH: f32 = 88.0;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct SwipeState {
+    open: bool,
+    /// Offset when the current press began; `None` while not pressed.
+    base: Option<f32>,
+    horizontal: bool,
+    live: f32,
+}
+
+pub struct SwipeRow {
+    pub row: Response,
+    /// The row was tapped while its action was hidden.
+    pub opened: bool,
+    /// The revealed action button was tapped.
+    pub action: bool,
+}
+
+/// Mail-style swipe: dragging a row left reveals a destructive `action`
+/// button at its trailing edge; tapping the button confirms it, while tapping
+/// the row or swiping back hides it. Vertical drags still scroll the list.
+pub fn swipe_row(
+    ui: &mut Ui,
+    id: Id,
+    action: &str,
+    height: f32,
+    add_row: impl FnOnce(&mut Ui) -> Response,
+) -> SwipeRow {
+    let state_id = id.with("swipe");
+    let mut state: SwipeState = ui.data(|data| data.get_temp(state_id)).unwrap_or_default();
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::hover());
+    let target = if state.base.is_some() && state.horizontal {
+        state.live
+    } else if state.open {
+        SWIPE_ACTION_WIDTH
+    } else {
+        0.0
+    };
+    let instant = state.base.is_some() && state.horizontal;
+    let offset = ui.ctx().animate_value_with_time(
+        state_id.with("offset"),
+        target,
+        if instant { 0.0 } else { 0.15 },
+    );
+    let clip = rect.intersect(ui.clip_rect());
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(id)
+            .max_rect(rect.translate(egui::vec2(-offset, 0.0))),
+    );
+    child.set_clip_rect(clip);
+    let row = add_row(&mut child);
+    let mut action_clicked = false;
+    if offset > 0.5 {
+        let revealed =
+            Rect::from_x_y_ranges((rect.right() - offset)..=rect.right(), rect.y_range());
+        let painter = ui.painter().with_clip_rect(clip);
+        painter.rect_filled(revealed, 0.0, color::DANGER);
+        paint_fit(
+            &painter,
+            revealed.center(),
+            Align2::CENTER_CENTER,
+            action,
+            type_scale::font(type_scale::BODY),
+            color::ON_PRIMARY,
+            revealed.width() - 8.0,
+        );
+        if offset >= SWIPE_ACTION_WIDTH - 1.0 {
+            let response = ui.interact(revealed, id.with("swipe-action"), Sense::CLICK);
+            action_clicked = labelled(response, action, true).clicked();
+        }
+    }
+    let mut opened = false;
+    // Once the finger moves, egui hands the drag to the enclosing ScrollArea
+    // and the row stops reporting the press, so follow the pointer until the
+    // press that started on the row ends.
+    let pressing = state.base.is_some() && ui.input(|input| input.pointer.primary_down());
+    if row.is_pointer_button_down_on() || pressing {
+        let base = *state.base.get_or_insert(target);
+        let delta =
+            ui.input(
+                |input| match (input.pointer.press_origin(), input.pointer.latest_pos()) {
+                    (Some(origin), Some(latest)) => latest - origin,
+                    _ => egui::Vec2::ZERO,
+                },
+            );
+        if !state.horizontal && delta.x.abs() > 8.0 && delta.x.abs() > delta.y.abs() {
+            state.horizontal = true;
+        }
+        if state.horizontal {
+            state.live = (base - delta.x).clamp(0.0, SWIPE_ACTION_WIDTH * 1.25);
+        }
+    } else if state.base.take().is_some() {
+        if state.horizontal {
+            state.open = state.live > SWIPE_ACTION_WIDTH / 2.0;
+        } else if row.clicked() {
+            opened = !state.open;
+            state.open = false;
+        }
+        state.horizontal = false;
+    } else if row.clicked() {
+        opened = !state.open;
+        state.open = false;
+    }
+    if action_clicked {
+        state = SwipeState::default();
+    }
+    ui.data_mut(|data| data.insert_temp(state_id, state));
+    SwipeRow {
+        row,
+        opened,
+        action: action_clicked,
+    }
+}
+
+/// Height `list_row` allocates for `spec`.
+pub fn list_row_height(spec: &RowSpec<'_>) -> f32 {
+    let lines = 1 + usize::from(spec.subtitle.is_some()) + usize::from(spec.status.is_some());
+    (22.0 + lines as f32 * 17.0).max(space::TOUCH + 12.0)
 }
 
 pub fn check_mark(painter: &egui::Painter, center: egui::Pos2, tint: Color32) {
@@ -622,9 +796,9 @@ pub fn session_chip(ui: &mut Ui, label: &str, dot: Dot, unread: bool, active: bo
         rect,
         corner,
         if active {
-            color::SURFACE_RAISED
+            color::TERMINAL_KEY
         } else {
-            color::SURFACE
+            color::TERMINAL_KEY_MUTED
         },
     );
     painter.rect_stroke(
@@ -633,7 +807,7 @@ pub fn session_chip(ui: &mut Ui, label: &str, dot: Dot, unread: bool, active: bo
         if active {
             Stroke::new(1.5, color::ACCENT_TEXT)
         } else {
-            Stroke::new(1.0, color::BORDER)
+            Stroke::new(1.0, color::TERMINAL_BORDER)
         },
         StrokeKind::Inside,
     );
@@ -676,11 +850,15 @@ pub fn count_chip(ui: &mut Ui, label: &str, count: usize) -> Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, space::CHIP_HEIGHT), Sense::CLICK);
     let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(radius::CHIP), color::SURFACE);
+    painter.rect_filled(
+        rect,
+        CornerRadius::same(radius::CHIP),
+        color::TERMINAL_KEY_MUTED,
+    );
     painter.rect_stroke(
         rect,
         CornerRadius::same(radius::CHIP),
-        Stroke::new(1.0, color::BORDER),
+        Stroke::new(1.0, color::TERMINAL_BORDER),
         StrokeKind::Inside,
     );
     painter.galley(

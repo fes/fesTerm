@@ -253,3 +253,24 @@ fn terminal_keyboard_hold_and_repeat_cancel_without_a_late_key_or_catchup_burst(
     harness.run();
     assert_eq!(harness.state().1, [KeyRowAction::Key(Key::Backspace); 2]);
 }
+
+#[test]
+fn terminal_keyboard_puts_globe_beside_symbols_and_extended_keys_in_utility_row() {
+    let mut harness = harness();
+    harness.run();
+    let globe = harness.get_by_label("Switch keyboard").rect();
+    let space = harness.get_by_label("Space").rect();
+    let symbols = harness.get_by_label("#+=").rect();
+    assert_eq!(globe.top(), space.top());
+    assert!(globe.right() < symbols.left());
+    let extended = harness.get_by_label("Extended keys").rect();
+    assert_eq!(extended.top(), harness.get_by_label("Esc").rect().top());
+    harness.get_by_label("Switch keyboard").click();
+    harness.run();
+    harness.get_by_label("Extended keys").click();
+    harness.run();
+    assert_eq!(
+        harness.state().1,
+        [KeyRowAction::SwitchKeyboard, KeyRowAction::TogglePanel]
+    );
+}

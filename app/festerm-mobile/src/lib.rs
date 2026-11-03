@@ -18,6 +18,8 @@ mod live_ssh;
 mod model;
 mod password_buffer;
 mod profiles;
+#[cfg(test)]
+mod session_close_tests;
 #[cfg(feature = "live-ssh")]
 mod sftp_link;
 mod shell;
@@ -265,6 +267,8 @@ pub struct MobileApp {
     #[cfg(test)]
     control_rect: Option<egui::Rect>,
     menu_open: bool,
+    /// Tab whose chip was long-pressed, awaiting close confirmation.
+    confirm_close: Option<u64>,
     gestures: terminal_gesture::TerminalGesture,
     workspace: workspaces::Workspace,
     files: Option<Box<files::FilesSession>>,
@@ -333,6 +337,7 @@ impl MobileApp {
             #[cfg(test)]
             control_rect: None,
             menu_open: false,
+            confirm_close: None,
             gestures: terminal_gesture::TerminalGesture::default(),
             workspace: workspaces::Workspace::Terminal,
             files: None,
@@ -1006,6 +1011,7 @@ impl MobileApp {
                         }
                     }
                 }
+                ShellAction::CloseSurface(id) => self.close_tab(id),
                 ShellAction::OpenSurface(id) => {
                     self.shell.sessions_sheet = false;
                     self.activate_tab(id);
@@ -1171,6 +1177,22 @@ impl MobileApp {
             );
             let actions = shell::sessions_sheet(ctx, bounds, &data);
             self.apply_shell_actions(ctx, actions);
+        }
+        if let Some(id) = self.confirm_close {
+            match self.tabs.iter().find(|tab| tab.id == id) {
+                Some(tab) => {
+                    let title = tab.title.clone();
+                    match terminal_chrome::close_session_sheet(ctx, bounds, &title) {
+                        Some(true) => {
+                            self.confirm_close = None;
+                            self.close_tab(id);
+                        }
+                        Some(false) => self.confirm_close = None,
+                        None => {}
+                    }
+                }
+                None => self.confirm_close = None,
+            }
         }
         #[cfg(feature = "live-ssh")]
         self.show_tunnel_sheets(ctx, bounds);
@@ -1508,7 +1530,11 @@ impl MobileApp {
         let mut keyboard_action = terminal_chrome::KeyRowAction::None;
         let input_ready = self.terminal_input_ready(lifecycle);
         egui::Panel::top("mobile-header")
-            .frame(egui::Frame::new().fill(theme::color::BAR))
+            .frame(egui::Frame::new().fill(if in_terminal {
+                theme::color::TERMINAL_CHROME
+            } else {
+                theme::color::BAR
+            }))
             .show_separator_line(false)
             .show(ui, |ui| {
                 let center = match &heading {
@@ -1617,6 +1643,7 @@ impl MobileApp {
                 self.activate_tab(id);
                 return;
             }
+            terminal_chrome::ChipAction::Close(id) => self.confirm_close = Some(id),
             terminal_chrome::ChipAction::All => self.shell.sessions_sheet = true,
             terminal_chrome::ChipAction::New => {
                 self.shell.tab = shell::Tab::Profiles;
@@ -1679,7 +1706,7 @@ impl MobileApp {
             .latch(self.control || self.alt || self.shift);
         if panel_open {
             let output = egui::Panel::bottom("terminal-keys-panel")
-                .frame(egui::Frame::new().fill(theme::color::BAR))
+                .frame(egui::Frame::new().fill(theme::color::TERMINAL_CHROME))
                 .show_separator_line(false)
                 .show(ui, |ui| {
                     terminal_chrome::keys_panel(
@@ -1705,7 +1732,7 @@ impl MobileApp {
                 && !panel_open;
             let keyboard_space = ui.available_height();
             let toolbar = egui::Panel::bottom("terminal-keys")
-                .frame(egui::Frame::new().fill(theme::color::BAR))
+                .frame(egui::Frame::new().fill(theme::color::TERMINAL_CHROME))
                 .show_separator_line(false)
                 .show(ui, |ui| {
                     ui.add_enabled_ui(input_ready && !self.menu_open, |ui| {
@@ -1740,7 +1767,7 @@ impl MobileApp {
         } else {
             self.toolbar_rect = None;
             egui::Panel::bottom("terminal-keys")
-                .frame(egui::Frame::new().fill(theme::color::BAR))
+                .frame(egui::Frame::new().fill(theme::color::TERMINAL_CHROME))
                 .show_separator_line(false)
                 .show(ui, terminal_chrome::read_only_note);
         }

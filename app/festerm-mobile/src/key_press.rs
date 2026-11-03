@@ -9,7 +9,7 @@ use festerm_ui_egui::icon::{self, Icon};
 pub(super) const HOLD_DELAY: f64 = 0.4;
 pub(super) const REPEAT_DELAY: f64 = 0.5;
 pub(super) const REPEAT_INTERVAL: f64 = 0.08;
-const PREVIEW_FILL: Color32 = Color32::from_rgb(48, 65, 91);
+const PREVIEW_FILL: Color32 = color::TERMINAL_KEY;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Glyph {
@@ -283,25 +283,28 @@ pub(super) fn paint_glyph(
         Glyph::Arrow(key) => paint_arrow(painter, center, *key, tint, scale),
         Glyph::Backspace => paint_backspace(painter, center, tint, scale),
         Glyph::Shift => paint_shift(painter, center, tint, scale),
-        Glyph::Icon(icon) => {
-            // The globe's artwork is drawn small within its box.
-            let size = if *icon == Icon::RemoteGlobe {
-                30.0
-            } else {
-                20.0
-            };
-            icon::paint(
-                painter,
-                *icon,
-                Rect::from_center_size(center, egui::Vec2::splat(size * scale)),
-                tint,
-            );
-        }
+        Glyph::Icon(icon) => icon::paint(painter, *icon, icon_rect(*icon, center, scale), tint),
         Glyph::Grid => paint_grid(
             painter,
             Rect::from_center_size(center, egui::Vec2::splat(18.0 * scale)),
             tint,
         ),
+    }
+}
+
+/// `RemoteGlobe` is badge art: a small globe in the lower-right of its
+/// 24-unit box, centered at (18.3, 15.4). Enlarge the box and shift it so the
+/// globe itself is the size of other key icons and sits on `center`.
+const GLOBE_CENTER: egui::Vec2 = egui::vec2(18.3, 15.4);
+const GLOBE_BOX: f32 = 44.0;
+
+fn icon_rect(icon: Icon, center: egui::Pos2, scale: f32) -> Rect {
+    if icon == Icon::RemoteGlobe {
+        let side = GLOBE_BOX * scale;
+        let offset = (GLOBE_CENTER - egui::Vec2::splat(12.0)) / 24.0 * side;
+        Rect::from_center_size(center - offset, egui::Vec2::splat(side))
+    } else {
+        Rect::from_center_size(center, egui::Vec2::splat(20.0 * scale))
     }
 }
 
@@ -382,5 +385,31 @@ fn paint_grid(painter: &egui::Painter, rect: Rect, tint: Color32) {
             Stroke::new(1.6, tint),
             egui::StrokeKind::Inside,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn globe_glyph_is_centered_on_its_key() {
+        let ctx = egui::Context::default();
+        let center = egui::pos2(100.0, 80.0);
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            paint_glyph(
+                ui.painter(),
+                &Glyph::Icon(Icon::RemoteGlobe),
+                center,
+                1.0,
+                Color32::WHITE,
+            );
+        });
+        let bounds = output.shapes.iter().fold(Rect::NOTHING, |bounds, shape| {
+            bounds.union(shape.shape.visual_bounding_rect())
+        });
+        assert!((bounds.center() - center).length() < 1.0, "{bounds:?}");
+        assert!(bounds.width() > 14.0, "{bounds:?}");
+        output.textures_delta.clear();
     }
 }
