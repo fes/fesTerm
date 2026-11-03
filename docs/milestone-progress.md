@@ -1,5 +1,19 @@
 # Milestone Progress Narrative
 
+## Isolated JavaScript worker without authority
+
+The P2 worker snapshots and hashes a bounded static JavaScript module graph
+before a fresh process starts. Host calls are typed requests to the parent,
+not grants; the application must still bind the snapshot, parameters, targets
+and recipients to native approval before integrating the worker.
+
+On Linux ARM64, an owned subprocess passed active denial and resource-limit
+probes under its own seccomp policy, including with the container seccomp
+profile disabled. The worker refuses unsupported platforms and failed
+qualification rather than running unconfined. Installed-helper provenance,
+native x86-64 and broader distribution evidence, GUI grants and end-to-end
+lifecycle integration remain open; this component does not enable scripting.
+
 ## Shared automation authority before external access
 
 The owner authorized the P1-P3 MCP/JavaScript campaign in

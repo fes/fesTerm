@@ -37,7 +37,9 @@
     {
       "id": "mcp-javascript-automation-proposal",
       "edges": [
-        "AUT-0[1-4]"
+        "AUT-01",
+        "AUT-03",
+        "AUT-04"
       ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
@@ -60,6 +62,30 @@
         "P1 authenticated broker/adapter and observation gates; P2 engine plus per-platform OS confinement qualification",
         "P3 writer-lease/lifecycle/unknown-outcome and native grant UI qualification before control",
         "P4 separate review for command jobs, HTTP, file APIs, unattended grants/triggers and iOS execution"
+      ]
+    },
+    {
+      "id": "automation-isolated-javascript-worker",
+      "edges": ["AUT-02"],
+      "requirements": [
+        "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
+        "docs/automation-design.md#javascript-execution-contract"
+      ],
+      "decisions": ["ADR-0065"],
+      "automated_tests": [
+        "identity_covers_manifest_schema_sources_and_dependencies",
+        "native_adversarial_probes_and_cumulative_cpu_ceiling",
+        "native_policy_and_hard_memory_ceiling_precede_first_script_instruction",
+        "runaway_jobs_unsettled_calls_and_private_errors_are_contained",
+        "cancellation_closes_admission_and_reaps_within_bounds",
+        "watchdog_is_independent_of_application_polling",
+        "unsupported_platform_never_launches_or_executes_script"
+      ],
+      "manual_scenarios": ["AUTO-02", "AUTO-03"],
+      "status": "partial",
+      "prerequisites": [
+        "Installed helper provenance and native sandbox qualification remain required per supported platform",
+        "Native approval, broker dispatch and lifecycle integration remain unavailable"
       ]
     },
     {
