@@ -1,26 +1,34 @@
 //! Terminal screen chrome: header, status line, session chips, key supplement
 //! row, extended-keys panel and reconnect banner (mock-ups 01-04 and 16).
 
-use super::model::{ConnectionLine, ReconnectBanner, SurfaceState, SurfaceSummary};
+use super::key_press::{paint_glyph, Glyph, KeyPress, Repeat};
+use super::model::{ReconnectBanner, SurfaceKind, SurfaceState, SurfaceSummary};
+use super::terminal_keyboard::KeyboardKind;
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
-    button, chip, count_chip, labelled, paint_fit, plus_chip, segmented, status_dot, ButtonKind,
-    Dot,
+    bottom_sheet, button, count_chip, labelled, long_press_or_click, paint_fit, plus_chip,
+    segmented, session_chip, sheet_title, ButtonKind, Dot,
 };
-use eframe::egui::{
-    self, Align2, CornerRadius, Margin, Rect, Response, Sense, Stroke, StrokeKind, Ui,
-};
+use eframe::egui::{self, Align2, CornerRadius, Margin, Rect, Response, Sense, Stroke, Ui};
 use festerm_core::{Key, Modifiers};
 use festerm_ui_egui::icon::{self, Icon};
 
 pub struct HeaderOutput {
     pub back: bool,
-    pub files: bool,
     pub more: Response,
+    pub chip: ChipAction,
 }
 
-/// Back chevron, title/subtitle and files/more buttons.
-pub fn header(ui: &mut Ui, title: &str, subtitle: &str, show_files: bool) -> HeaderOutput {
+/// What sits between the back chevron and the overflow button.
+pub enum HeaderCenter<'a> {
+    /// Workspace heading (files, markdown).
+    Title { title: &'a str, subtitle: &'a str },
+    /// Terminal: scrolling session chips, "All N" and "+".
+    Chips(&'a [SurfaceSummary]),
+}
+
+/// Back chevron, title or session chips, and the overflow button.
+pub fn header(ui: &mut Ui, center: HeaderCenter<'_>) -> HeaderOutput {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 56.0), Sense::hover());
     let back = ui.interact(
         Rect::from_min_size(rect.min, egui::vec2(44.0, 56.0)),
@@ -47,83 +55,52 @@ pub fn header(ui: &mut Ui, title: &str, subtitle: &str, show_files: bool) -> Hea
         Rect::from_center_size(more_rect.center(), egui::vec2(22.0, 22.0)),
         color::TEXT,
     );
-    let mut files = false;
-    let mut text_right = rect.right() - 56.0;
-    if show_files {
-        let files_rect = Rect::from_center_size(
-            egui::pos2(rect.right() - 68.0, rect.center().y),
-            egui::vec2(44.0, 44.0),
-        );
-        let response = ui.interact(files_rect, ui.id().with("header-files"), Sense::CLICK);
-        icon::paint(
-            ui.painter(),
-            Icon::FileTransfer,
-            Rect::from_center_size(files_rect.center(), egui::vec2(22.0, 22.0)),
-            color::TEXT,
-        );
-        files = labelled(response, "Files", true).clicked();
-        text_right = rect.right() - 100.0;
-    }
-    let text_left = rect.left() + 48.0;
-    let width = (text_right - text_left).max(40.0);
-    paint_fit(
-        ui.painter(),
-        egui::pos2(text_left, rect.center().y - 9.0),
-        Align2::LEFT_CENTER,
-        title,
-        type_scale::font(type_scale::NAV_TITLE),
-        color::TEXT,
-        width,
+    let middle = Rect::from_x_y_ranges(
+        (rect.left() + 44.0)..=(more_rect.left() - 2.0),
+        rect.y_range(),
     );
-    paint_fit(
-        ui.painter(),
-        egui::pos2(text_left, rect.center().y + 12.0),
-        Align2::LEFT_CENTER,
-        subtitle,
-        type_scale::font(type_scale::CAPTION),
-        color::TEXT_MUTED,
-        width,
+    let mut chip = ChipAction::None;
+    match center {
+        HeaderCenter::Title { title, subtitle } => {
+            let text_left = middle.left() + 4.0;
+            let width = (middle.right() - text_left).max(40.0);
+            paint_fit(
+                ui.painter(),
+                egui::pos2(text_left, rect.center().y - 9.0),
+                Align2::LEFT_CENTER,
+                title,
+                type_scale::font(type_scale::NAV_TITLE),
+                color::TEXT,
+                width,
+            );
+            paint_fit(
+                ui.painter(),
+                egui::pos2(text_left, rect.center().y + 12.0),
+                Align2::LEFT_CENTER,
+                subtitle,
+                type_scale::font(type_scale::CAPTION),
+                color::TEXT_MUTED,
+                width,
+            );
+        }
+        HeaderCenter::Chips(surfaces) => {
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(middle)
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                |ui| chip = chip_strip(ui, surfaces),
+            );
+        }
+    }
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom(),
+        Stroke::new(1.0, color::DIVIDER),
     );
     HeaderOutput {
         back: labelled(back, "Back", true).clicked(),
-        files,
         more: labelled(more, "More", true),
-    }
-}
-
-pub fn status_line(ui: &mut Ui, line: &ConnectionLine) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), Sense::hover());
-    let painter = ui.painter();
-    painter.hline(rect.x_range(), rect.top(), Stroke::new(1.0, color::DIVIDER));
-    let dot = match line.state {
-        SurfaceState::Connected => Dot::Connected,
-        SurfaceState::Connecting => Dot::Warning,
-        SurfaceState::Disconnected => Dot::Idle,
-    };
-    status_dot(
-        painter,
-        egui::pos2(rect.left() + 17.0, rect.center().y),
-        dot,
-    );
-    let label = paint_fit(
-        painter,
-        egui::pos2(rect.left() + 27.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        &line.label,
-        type_scale::font(type_scale::MICRO + 0.5),
-        color::TEXT_MUTED,
-        rect.width() * 0.6,
-    );
-    if let Some(context) = &line.context {
-        paint_fit(
-            painter,
-            egui::pos2(rect.right() - 14.0, rect.center().y),
-            Align2::RIGHT_CENTER,
-            context,
-            type_scale::font(type_scale::MICRO + 0.5),
-            color::TEXT_FAINT,
-            (rect.width() - label.width() - 50.0).max(30.0),
-        );
+        chip,
     }
 }
 
@@ -148,52 +125,69 @@ fn capped_margin(available: f32, max: f32, horizontal: i8, vertical: i8) -> Marg
 pub enum ChipAction {
     None,
     Select(u64),
+    /// Long-pressed: ask before closing this session.
+    Close(u64),
     All,
     New,
 }
 
-/// Session chip strip: open surfaces, "All N" and "+".
-pub fn chip_strip(ui: &mut Ui, surfaces: &[SurfaceSummary]) -> ChipAction {
+fn chip_dot(surface: &SurfaceSummary) -> Dot {
+    match (surface.kind, surface.state) {
+        (SurfaceKind::Local, _) => Dot::Idle,
+        (_, SurfaceState::Connected) => Dot::Connected,
+        (_, SurfaceState::Connecting) => Dot::Warning,
+        (_, SurfaceState::Disconnected) => Dot::Danger,
+    }
+}
+
+/// Header chip strip, laid out right to left: "+" and "All N" stay pinned while
+/// the open sessions scroll sideways in the remaining width.
+fn chip_strip(ui: &mut Ui, surfaces: &[SurfaceSummary]) -> ChipAction {
     let mut action = ChipAction::None;
-    let full_width = ui.available_width();
-    let margin = capped_margin(full_width, CHROME_MAX_WIDTH, 8, 8);
-    let inset = f32::from(margin.left) + f32::from(margin.right);
-    egui::Frame::new()
-        .fill(color::BAR)
-        .inner_margin(margin)
-        .show(ui, |ui| {
-            ui.set_min_width(full_width - inset);
-            ui.spacing_mut().item_spacing.x = 8.0;
-            ui.horizontal(|ui| {
-                let trailing = 58.0 + 36.0 + 40.0;
-                let width = (ui.available_width() - trailing).max(60.0);
-                egui::ScrollArea::horizontal()
-                    .id_salt("session-chips")
-                    .max_width(width)
-                    .auto_shrink([true, true])
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            for surface in surfaces {
-                                let response = chip(
-                                    ui,
-                                    Some(surface.kind.glyph()),
-                                    &surface.title,
-                                    surface.current,
-                                );
-                                if response.clicked() {
-                                    action = ChipAction::Select(surface.id);
-                                }
-                            }
-                        });
-                    });
-                if count_chip(ui, "All", surfaces.len()).clicked() {
-                    action = ChipAction::All;
-                }
-                if plus_chip(ui, "New").clicked() {
-                    action = ChipAction::New;
-                }
+    ui.spacing_mut().item_spacing.x = 6.0;
+    if plus_chip(ui, "New").clicked() {
+        action = ChipAction::New;
+    }
+    if count_chip(ui, "All", surfaces.len()).clicked() {
+        action = ChipAction::All;
+    }
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        let current_key = ui.id().with("current-chip");
+        let shown = ui
+            .data(|data| data.get_temp::<Option<u64>>(current_key))
+            .flatten();
+        let current = surfaces
+            .iter()
+            .find(|surface| surface.current)
+            .map(|s| s.id);
+        egui::ScrollArea::horizontal()
+            .id_salt("session-chips")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    for surface in surfaces {
+                        let response = session_chip(
+                            ui,
+                            &surface.title,
+                            chip_dot(surface),
+                            surface.unread,
+                            surface.current,
+                        );
+                        if surface.current && shown != current {
+                            response.scroll_to_me(Some(egui::Align::Center));
+                        }
+                        match long_press_or_click(ui, &response) {
+                            (true, _) => action = ChipAction::Close(surface.id),
+                            (_, true) => action = ChipAction::Select(surface.id),
+                            _ => {}
+                        }
+                    }
+                });
             });
-        });
+        ui.data_mut(|data| data.insert_temp(current_key, current));
+    });
     action
 }
 
@@ -208,6 +202,9 @@ pub enum KeyRowAction {
     Paste,
     TogglePanel,
     ToggleKeyboard,
+    SwitchKeyboard,
+    Key(Key),
+    SelectKeyboard(KeyboardKind),
 }
 
 pub struct KeyRowState {
@@ -222,157 +219,244 @@ pub struct KeyRowState {
 pub struct KeyRowOutput {
     pub action: KeyRowAction,
     pub control_rect: Rect,
+    pub click: bool,
 }
 
-fn paint_grid_icon(painter: &egui::Painter, rect: Rect, tint: egui::Color32) {
-    let cell = rect.width() * 0.42;
-    for (dx, dy) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
-        let min = rect.min + egui::vec2(dx * (rect.width() - cell), dy * (rect.height() - cell));
-        painter.rect_stroke(
-            Rect::from_min_size(min, egui::vec2(cell, cell)),
-            CornerRadius::same(2),
-            Stroke::new(1.6, tint),
-            StrokeKind::Inside,
-        );
+impl Default for KeyRowOutput {
+    fn default() -> Self {
+        Self {
+            action: KeyRowAction::None,
+            control_rect: Rect::NOTHING,
+            click: false,
+        }
     }
 }
 
 fn key_button(
     ui: &mut Ui,
     width: f32,
+    height: f32,
     label: &str,
     active: bool,
     paint: impl FnOnce(&egui::Painter, Rect, egui::Color32),
 ) -> Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width, space::KEY_HEIGHT), Sense::CLICK);
+    key_button_filled(
+        ui,
+        width,
+        height,
+        label,
+        active,
+        color::TERMINAL_KEY_MUTED,
+        paint,
+    )
+}
+
+/// Keys match the app-owned keyboards: utility keys use the muted fill,
+/// character-like keys the raised one, and a latched key the selected blue.
+fn key_button_filled(
+    ui: &mut Ui,
+    width: f32,
+    height: f32,
+    label: &str,
+    active: bool,
+    fill: egui::Color32,
+    paint: impl FnOnce(&egui::Painter, Rect, egui::Color32),
+) -> Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), Sense::CLICK);
     let painter = ui.painter();
-    let corner = CornerRadius::same(radius::CONTROL);
-    painter.rect_filled(
-        rect,
-        corner,
-        if active {
-            color::KEY_ACTIVE
-        } else {
-            color::KEY
-        },
-    );
-    if active {
-        painter.rect_stroke(
-            rect,
-            corner,
-            Stroke::new(1.0, color::ACCENT_TEXT),
-            StrokeKind::Inside,
-        );
-    }
-    paint(painter, rect, color::TEXT);
+    let (fill, ink) = if active {
+        (
+            color::TERMINAL_KEY_SELECTED,
+            color::TERMINAL_KEY_SELECTED_INK,
+        )
+    } else {
+        (fill, color::TEXT)
+    };
+    painter.rect_filled(rect, CornerRadius::same(radius::KEY), fill);
+    paint(painter, rect, ink);
     labelled(response, label, true)
 }
 
-fn text_key(ui: &mut Ui, width: f32, label: &str, active: bool) -> Response {
-    key_button(ui, width, label, active, |painter, rect, tint| {
-        paint_fit(
-            painter,
-            rect.center(),
-            Align2::CENTER_CENTER,
-            label,
-            type_scale::font(type_scale::BODY - 1.0),
-            tint,
-            rect.width() - 4.0,
-        );
+fn glyph_key(
+    ui: &mut Ui,
+    width: f32,
+    height: f32,
+    label: &str,
+    glyph: &Glyph,
+    active: bool,
+) -> Response {
+    key_button(ui, width, height, label, active, |painter, rect, tint| {
+        paint_glyph(painter, glyph, rect.center(), 1.0, tint);
     })
 }
 
-/// Esc Tab Ctrl Alt Shift, optional paste, extended-keys toggle, keyboard toggle.
-pub fn key_row(ui: &mut Ui, state: &KeyRowState) -> KeyRowOutput {
+fn text_key(ui: &mut Ui, width: f32, label: &str, active: bool) -> Response {
+    key_button(
+        ui,
+        width,
+        space::KEY_HEIGHT,
+        label,
+        active,
+        |painter, rect, tint| {
+            paint_fit(
+                painter,
+                rect.center(),
+                Align2::CENTER_CENTER,
+                label,
+                type_scale::font(type_scale::BODY - 1.0),
+                tint,
+                rect.width() - 4.0,
+            );
+        },
+    )
+}
+
+/// Esc Tab Ctrl Alt Shift, optional paste, extended keys, keyboard switch and
+/// keyboard toggle.
+pub fn key_row(ui: &mut Ui, state: &KeyRowState, keys: &mut KeyPress) -> KeyRowOutput {
     let mut action = KeyRowAction::None;
     let mut control_rect = Rect::NOTHING;
     let margin = capped_margin(ui.available_width(), CHROME_MAX_WIDTH, 8, 6);
     egui::Frame::new()
-        .fill(color::BAR)
+        .fill(color::TERMINAL_CHROME)
         .inner_margin(margin)
         .show(ui, |ui| {
+            keys.latch(state.control || state.alt || state.shift);
+            keys.begin(ui, false);
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.horizontal(|ui| {
-                let count = 7 + usize::from(state.paste);
+                let count = 8 + usize::from(state.paste);
                 let gap = ui.spacing().item_spacing.x;
                 let width =
                     ((ui.available_width() - gap * (count as f32 - 1.0)) / count as f32).max(24.0);
-                if text_key(ui, width, "Esc", false).clicked() {
-                    action = KeyRowAction::Escape;
+                for (label, key) in [("Esc", Key::Escape), ("Tab", Key::Tab)] {
+                    let response = text_key(ui, width, label, false);
+                    if keys
+                        .key(ui, &response, Glyph::text(label), Repeat::Auto)
+                        .is_some()
+                    {
+                        action = KeyRowAction::Key(key);
+                    }
                 }
-                if text_key(ui, width, "Tab", false).clicked() {
-                    action = KeyRowAction::Tab;
+                for (label, toggle, active) in [
+                    ("Ctrl", KeyRowAction::ToggleControl, state.control),
+                    ("Alt", KeyRowAction::ToggleAlt, state.alt),
+                    ("Shift", KeyRowAction::ToggleShift, state.shift),
+                ] {
+                    let response = text_key(ui, width, label, active);
+                    if label == "Ctrl" {
+                        control_rect = response.rect;
+                    }
+                    if keys.toggle(ui, &response, Glyph::text(label)) {
+                        action = toggle;
+                    }
                 }
-                let control = text_key(ui, width, "Ctrl", state.control);
-                control_rect = control.rect;
-                if control.clicked() {
-                    action = KeyRowAction::ToggleControl;
+                let height = space::KEY_HEIGHT;
+                let mut command = |ui: &mut Ui, label, glyph: Glyph, active, chosen| {
+                    let response = glyph_key(ui, width, height, label, &glyph, active);
+                    if keys.toggle(ui, &response, glyph) {
+                        action = chosen;
+                    }
+                };
+                if state.paste {
+                    command(
+                        ui,
+                        "Paste",
+                        Glyph::Icon(Icon::Paste),
+                        false,
+                        KeyRowAction::Paste,
+                    );
                 }
-                if text_key(ui, width, "Alt", state.alt).clicked() {
-                    action = KeyRowAction::ToggleAlt;
-                }
-                if text_key(ui, width, "Shift", state.shift).clicked() {
-                    action = KeyRowAction::ToggleShift;
-                }
-                if state.paste
-                    && key_button(ui, width, "Paste", false, |painter, rect, tint| {
-                        icon::paint(
-                            painter,
-                            Icon::Paste,
-                            Rect::from_center_size(rect.center(), egui::vec2(20.0, 20.0)),
-                            tint,
-                        );
-                    })
-                    .clicked()
-                {
-                    action = KeyRowAction::Paste;
-                }
-                if key_button(
+                command(
                     ui,
-                    width,
                     "Extended keys",
+                    Glyph::Grid,
                     state.panel_open,
-                    |painter, rect, tint| {
-                        paint_grid_icon(
-                            painter,
-                            Rect::from_center_size(rect.center(), egui::vec2(18.0, 18.0)),
-                            tint,
-                        );
-                    },
-                )
-                .clicked()
-                {
-                    action = KeyRowAction::TogglePanel;
-                }
-                if key_button(
+                    KeyRowAction::TogglePanel,
+                );
+                command(
                     ui,
-                    width,
+                    "Switch keyboard",
+                    Glyph::Icon(Icon::RemoteGlobe),
+                    false,
+                    KeyRowAction::SwitchKeyboard,
+                );
+                command(
+                    ui,
                     if state.keyboard_visible {
                         "Hide keyboard"
                     } else {
                         "Show keyboard"
                     },
+                    Glyph::Icon(Icon::KeyboardShortcuts),
                     false,
-                    |painter, rect, tint| {
-                        icon::paint(
-                            painter,
-                            Icon::KeyboardShortcuts,
-                            Rect::from_center_size(rect.center(), egui::vec2(22.0, 22.0)),
-                            tint,
-                        );
-                    },
-                )
-                .clicked()
-                {
-                    action = KeyRowAction::ToggleKeyboard;
-                }
+                    KeyRowAction::ToggleKeyboard,
+                );
             });
         });
     KeyRowOutput {
         action,
         control_rect,
+        click: false,
     }
+}
+
+/// Keyboard choices shown inline in the More menu: a nested submenu opens on
+/// hover, which touch screens never produce reliably.
+pub(super) fn keyboard_menu(ui: &mut Ui, kind: KeyboardKind) -> KeyRowAction {
+    let mut action = KeyRowAction::None;
+    ui.separator();
+    ui.label(
+        egui::RichText::new("Keyboard")
+            .size(type_scale::CAPTION)
+            .color(color::TEXT_MUTED),
+    );
+    for option in KeyboardKind::ALL {
+        let response = ui.selectable_label(kind == option, option.label());
+        if labelled(response, option.label(), true).clicked() {
+            action = KeyRowAction::SelectKeyboard(option);
+            ui.close();
+        }
+    }
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(
+                "The globe key switches keyboards. For voice, use the Built-in keyboard's microphone.",
+            )
+            .size(type_scale::MICRO)
+            .color(color::TEXT_FAINT),
+        )
+        .wrap(),
+    );
+    ui.separator();
+    action
+}
+
+pub(super) fn keyboard_visibility_button(
+    ui: &mut Ui,
+    width: f32,
+    height: f32,
+    visible: bool,
+) -> Response {
+    key_button(
+        ui,
+        width,
+        height,
+        if visible {
+            "Hide keyboard"
+        } else {
+            "Show keyboard"
+        },
+        false,
+        |painter, rect, tint| {
+            icon::paint(
+                painter,
+                Icon::KeyboardShortcuts,
+                Rect::from_center_size(rect.center(), egui::vec2(20.0, 20.0)),
+                tint,
+            );
+        },
+    )
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -388,22 +472,36 @@ pub struct KeysPanelOutput {
 }
 
 #[derive(Clone, Copy)]
-enum Glyph {
-    Text(&'static str),
-    Arrow(Key),
-}
-
-#[derive(Clone, Copy)]
 struct PanelKey {
-    glyph: Glyph,
+    arrow: bool,
     label: &'static str,
     key: Key,
     modifiers: Modifiers,
 }
 
+impl PanelKey {
+    fn glyph(&self) -> Glyph {
+        if self.arrow {
+            Glyph::Arrow(self.key)
+        } else {
+            Glyph::text(self.label)
+        }
+    }
+
+    /// Insert toggles a mode, so it acts once; everything else, including
+    /// Return, repeats like a hardware key.
+    fn repeat(&self) -> Repeat {
+        if self.key == Key::Insert {
+            Repeat::Release
+        } else {
+            Repeat::Auto
+        }
+    }
+}
+
 const fn plain(label: &'static str, key: Key) -> PanelKey {
     PanelKey {
-        glyph: Glyph::Text(label),
+        arrow: false,
         label,
         key,
         modifiers: Modifiers::NONE,
@@ -412,7 +510,7 @@ const fn plain(label: &'static str, key: Key) -> PanelKey {
 
 const fn arrow(label: &'static str, key: Key) -> PanelKey {
     PanelKey {
-        glyph: Glyph::Arrow(key),
+        arrow: true,
         label,
         key,
         modifiers: Modifiers::NONE,
@@ -435,7 +533,7 @@ const NAVIGATION: [PanelKey; 12] = [
     plain("Insert", Key::Insert),
     plain("Delete", Key::Delete),
     PanelKey {
-        glyph: Glyph::Text("Shift+Tab"),
+        arrow: false,
         label: "Shift+Tab",
         key: Key::Tab,
         modifiers: Modifiers::SHIFT,
@@ -473,28 +571,12 @@ const SYMBOLS: [PanelKey; 12] = [
     symbol("_", '_'),
 ];
 
-fn paint_arrow(painter: &egui::Painter, center: egui::Pos2, key: Key, tint: egui::Color32) {
-    let direction = match key {
-        Key::ArrowLeft => egui::vec2(-1.0, 0.0),
-        Key::ArrowRight => egui::vec2(1.0, 0.0),
-        Key::ArrowUp => egui::vec2(0.0, -1.0),
-        _ => egui::vec2(0.0, 1.0),
-    };
-    let side = egui::vec2(-direction.y, direction.x);
-    let stroke = Stroke::new(1.6, tint);
-    let tail = center - direction * 7.0;
-    let head = center + direction * 7.0;
-    painter.line_segment([tail, head], stroke);
-    painter.line_segment([head, head - direction * 5.0 + side * 4.5], stroke);
-    painter.line_segment([head, head - direction * 5.0 - side * 4.5], stroke);
-}
-
 /// Extended terminal keys (mock-up 03). Modifier latches stay with the caller.
-pub fn keys_panel(ui: &mut Ui, panel: &mut KeysPanel) -> KeysPanelOutput {
+pub fn keys_panel(ui: &mut Ui, panel: &mut KeysPanel, keys: &mut KeyPress) -> KeysPanelOutput {
     let mut output = KeysPanelOutput::default();
     egui::Frame::new()
-        .fill(color::SURFACE)
-        .stroke(Stroke::new(1.0, color::DIVIDER))
+        .fill(color::TERMINAL_CHROME)
+        .stroke(Stroke::new(1.0, color::TERMINAL_BORDER))
         .inner_margin(capped_margin(
             ui.available_width(),
             KEYS_PANEL_MAX_WIDTH,
@@ -502,6 +584,7 @@ pub fn keys_panel(ui: &mut Ui, panel: &mut KeysPanel) -> KeysPanelOutput {
             8,
         ))
         .show(ui, |ui| {
+            keys.begin(ui, false);
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
             let (title, _) =
                 ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), Sense::hover());
@@ -547,34 +630,29 @@ pub fn keys_panel(ui: &mut Ui, panel: &mut KeysPanel) -> KeysPanelOutput {
                 &mut panel.tab,
                 false,
             );
-            let keys: &[PanelKey] = match panel.tab {
+            let entries: &[PanelKey] = match panel.tab {
                 0 => &NAVIGATION,
                 1 => &FUNCTION_KEYS,
                 _ => &SYMBOLS,
             };
             let gap = ui.spacing().item_spacing.x;
             let width = (ui.available_width() - gap * 3.0) / 4.0;
-            for row in keys.chunks(4) {
+            for row in entries.chunks(4) {
                 ui.horizontal(|ui| {
                     for entry in row {
-                        let response =
-                            key_button(ui, width, entry.label, false, |painter, rect, tint| {
-                                match entry.glyph {
-                                    Glyph::Text(text) => {
-                                        painter.text(
-                                            rect.center(),
-                                            Align2::CENTER_CENTER,
-                                            text,
-                                            type_scale::font(type_scale::BODY - 1.0),
-                                            tint,
-                                        );
-                                    }
-                                    Glyph::Arrow(key) => {
-                                        paint_arrow(painter, rect.center(), key, tint)
-                                    }
-                                }
-                            });
-                        if response.clicked() {
+                        let glyph = entry.glyph();
+                        let response = key_button_filled(
+                            ui,
+                            width,
+                            space::KEY_HEIGHT,
+                            entry.label,
+                            false,
+                            color::TERMINAL_KEY,
+                            |painter, rect, tint| {
+                                paint_glyph(painter, &glyph, rect.center(), 1.0, tint);
+                            },
+                        );
+                        if keys.key(ui, &response, glyph, entry.repeat()).is_some() {
                             output.key = Some((entry.key, entry.modifiers));
                         }
                     }
@@ -657,10 +735,37 @@ pub fn reconnect_banner(ui: &mut Ui, banner: &ReconnectBanner, compact: bool) ->
     chosen
 }
 
+/// Confirmation raised by long-pressing a session chip. Returns `Some(true)`
+/// to close, `Some(false)` when cancelled or dismissed.
+pub fn close_session_sheet(ctx: &egui::Context, bounds: Rect, title: &str) -> Option<bool> {
+    let mut choice = None;
+    let outcome = bottom_sheet(ctx, "close-session", bounds, |ui| {
+        if sheet_title(ui, &format!("Close {title}?"), None) {
+            choice = Some(false);
+        }
+        ui.label(
+            egui::RichText::new("This closes the tab and ends its connection.")
+                .size(type_scale::BODY)
+                .color(color::TEXT_MUTED),
+        );
+        ui.add_space(space::SM);
+        if button(ui, ButtonKind::Destructive, "Close session", true).clicked() {
+            choice = Some(true);
+        }
+        if button(ui, ButtonKind::Secondary, "Cancel", true).clicked() {
+            choice = Some(false);
+        }
+    });
+    if outcome.dismissed && choice.is_none() {
+        choice = Some(false);
+    }
+    choice
+}
+
 /// Replaces the key row when the transport is gone but history stays usable.
 pub fn read_only_note(ui: &mut Ui) {
     egui::Frame::new()
-        .fill(color::BAR)
+        .fill(color::TERMINAL_CHROME)
         .inner_margin(Margin::symmetric(8, 14))
         .show(ui, |ui| {
             let (rect, _) =
@@ -700,7 +805,7 @@ mod keyboard_tests {
             .with_size(egui::vec2(390.0, 844.0))
             .build_ui_state(
                 |ui, state: &mut (KeysPanel, KeysPanelOutput)| {
-                    let output = keys_panel(ui, &mut state.0);
+                    let output = keys_panel(ui, &mut state.0, &mut KeyPress::default());
                     if output.key.is_some() {
                         state.1 = output;
                     }
@@ -752,6 +857,7 @@ mod keyboard_tests {
                                 keyboard_visible: true,
                                 paste: true,
                             },
+                            &mut KeyPress::default(),
                         );
                         if output.action != KeyRowAction::None {
                             *action = output.action;
@@ -768,6 +874,106 @@ mod keyboard_tests {
             harness.get_by_label("Shift").click();
             harness.run();
             assert_eq!(*harness.state(), KeyRowAction::ToggleShift);
+        }
+    }
+
+    fn pointer(pressed: bool, pos: egui::Pos2) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn accessory_and_extended_keys_preview_and_repeat_like_hardware_keys() {
+        use crate::key_press::{REPEAT_DELAY, REPEAT_INTERVAL};
+        type State = (KeysPanel, KeyPress, Vec<KeyRowAction>, bool);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(
+                |ui, (panel, keys, actions, control): &mut State| {
+                    if let Some((key, _)) = keys_panel(ui, panel, keys).key {
+                        actions.push(KeyRowAction::Key(key));
+                    }
+                    let state = KeyRowState {
+                        control: *control,
+                        alt: false,
+                        shift: false,
+                        panel_open: true,
+                        keyboard_visible: true,
+                        paste: true,
+                    };
+                    let output = key_row(ui, &state, keys);
+                    if output.action != KeyRowAction::None {
+                        actions.push(output.action);
+                    }
+                },
+                (
+                    KeysPanel { open: true, tab: 1 },
+                    KeyPress::default(),
+                    Vec::new(),
+                    false,
+                ),
+            );
+        harness.run();
+        for (label, glyph) in [
+            ("Shift", Glyph::text("Shift")),
+            ("Switch keyboard", Glyph::Icon(Icon::RemoteGlobe)),
+            ("F5", Glyph::text("F5")),
+        ] {
+            let center = harness.get_by_label(label).rect().center();
+            harness.event(egui::Event::PointerMoved(center));
+            harness.event(pointer(true, center));
+            harness.step();
+            assert_eq!(harness.state().1.preview_glyph(), Some(&glyph), "{label}");
+            harness.event(pointer(false, center));
+            harness.run();
+        }
+        assert_eq!(
+            harness.state().2,
+            [
+                KeyRowAction::ToggleShift,
+                KeyRowAction::SwitchKeyboard,
+                KeyRowAction::Key(Key::Function(5)),
+            ]
+        );
+        harness.state_mut().2.clear();
+        let tab = harness.get_by_label("Tab").rect().center();
+        let now = harness.ctx.input(|input| input.time);
+        harness.event(egui::Event::PointerMoved(tab));
+        harness.input_mut().time = Some(now + 0.01);
+        harness.event(pointer(true, tab));
+        harness.step();
+        harness.input_mut().time = Some(now + 0.01 + REPEAT_DELAY + REPEAT_INTERVAL);
+        harness.step();
+        harness.event(pointer(false, tab));
+        harness.step();
+        assert_eq!(harness.state().2, [KeyRowAction::Key(Key::Tab); 2]);
+        harness.state_mut().2.clear();
+        harness.run();
+        harness.state_mut().3 = true;
+        let now = harness.ctx.input(|input| input.time);
+        harness.input_mut().time = Some(now + 0.01);
+        harness.event(pointer(true, tab));
+        harness.step();
+        harness.input_mut().time = Some(now + 2.0);
+        harness.step();
+        harness.event(pointer(false, tab));
+        harness.step();
+        assert_eq!(
+            harness.state().2,
+            [KeyRowAction::Key(Key::Tab)],
+            "a press under a one-shot modifier never repeats without it"
+        );
+        for key in NAVIGATION {
+            let expected = if key.key == Key::Insert {
+                Repeat::Release
+            } else {
+                Repeat::Auto
+            };
+            assert_eq!(key.repeat(), expected, "{}", key.label);
         }
     }
 }

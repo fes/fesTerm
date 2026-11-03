@@ -11,12 +11,15 @@ mod files_shell;
 mod files_ui;
 mod forms;
 mod host_setup;
+mod key_press;
 #[cfg(feature = "live-ssh")]
 mod live_ssh;
 #[allow(dead_code)] // design-system surface used by the gallery before production wiring
 mod model;
 mod password_buffer;
 mod profiles;
+#[cfg(test)]
+mod session_close_tests;
 #[cfg(feature = "live-ssh")]
 mod sftp_link;
 mod shell;
@@ -24,6 +27,7 @@ mod tabs;
 #[allow(dead_code)] // design-system surface used by the gallery before production wiring
 mod terminal_chrome;
 mod terminal_gesture;
+mod terminal_keyboard;
 #[allow(dead_code)] // design-system surface used by the gallery before production wiring
 mod theme;
 #[cfg(feature = "live-ssh")]
@@ -40,7 +44,7 @@ mod workspaces;
 mod ui_gallery;
 
 use eframe::egui;
-use festerm_core::{Dimensions, InputEvent, Key, Modifiers, Terminal};
+use festerm_core::{Dimensions, InputEvent, InputEventOutcome, Key, Modifiers, Terminal};
 use festerm_ui_egui::{
     route_input, EncodedInputSink, InputRoute, InputSinkDiagnostics, TerminalView,
     TerminalViewOptions,
@@ -263,6 +267,8 @@ pub struct MobileApp {
     #[cfg(test)]
     control_rect: Option<egui::Rect>,
     menu_open: bool,
+    /// Tab whose chip was long-pressed, awaiting close confirmation.
+    confirm_close: Option<u64>,
     gestures: terminal_gesture::TerminalGesture,
     workspace: workspaces::Workspace,
     files: Option<Box<files::FilesSession>>,
@@ -273,6 +279,12 @@ pub struct MobileApp {
     profiles: Option<profiles::Profiles>,
     lock: Option<app_lock::LockHost>,
     text_size: shell::TextSize,
+    default_keyboard: terminal_keyboard::KeyboardKind,
+    keyboard_kind: terminal_keyboard::KeyboardKind,
+    /// Where the switch key goes from the built-in keyboard.
+    last_custom_keyboard: terminal_keyboard::KeyboardKind,
+    terminal_keyboard: terminal_keyboard::TerminalKeyboard,
+    terminal_keyboard_input: bool,
     #[cfg(feature = "live-ssh")]
     tunnel: tunnel_link::TunnelUi,
     caps: model::Capabilities,
@@ -325,6 +337,7 @@ impl MobileApp {
             #[cfg(test)]
             control_rect: None,
             menu_open: false,
+            confirm_close: None,
             gestures: terminal_gesture::TerminalGesture::default(),
             workspace: workspaces::Workspace::Terminal,
             files: None,
@@ -337,6 +350,11 @@ impl MobileApp {
             profiles: None,
             lock: None,
             text_size: shell::TextSize::default(),
+            default_keyboard: terminal_keyboard::KeyboardKind::Native,
+            keyboard_kind: terminal_keyboard::KeyboardKind::Native,
+            last_custom_keyboard: terminal_keyboard::KeyboardKind::HoldSymbols,
+            terminal_keyboard: terminal_keyboard::TerminalKeyboard::default(),
+            terminal_keyboard_input: false,
             caps: model::Capabilities::production(),
             tabs: Vec::new(),
             active_tab: None,
@@ -368,6 +386,16 @@ impl MobileApp {
     /// Plugs in the saved-profile store (Keychain-backed in production).
     pub fn with_profiles(mut self, profiles: profiles::Profiles) -> Self {
         let text_size = profiles.text_size();
+        match profiles.default_keyboard() {
+            Ok(kind) => {
+                self.default_keyboard = kind;
+                self.keyboard_kind = kind;
+                if kind != terminal_keyboard::KeyboardKind::Native {
+                    self.last_custom_keyboard = kind;
+                }
+            }
+            Err(error) => self.notice = Some(error),
+        }
         self.profiles = Some(profiles);
         self.apply_text_size(text_size);
         self
@@ -432,6 +460,7 @@ impl MobileApp {
     }
 
     fn show_with_occlusion(&mut self, ui: &mut egui::Ui, occlusion: f32) {
+        self.terminal_keyboard_input = false;
         // Accessory taps must not blur the terminal and restart UIKit's keyboard.
         let terminal_surface = self.terminal_surface();
         ui.ctx().options_mut(|options| {
@@ -456,6 +485,23 @@ impl MobileApp {
             self.show_content(ui);
         });
         self.keep_field_keyboard(ui.ctx());
+        if !ui.input(|input| input.focused) {
+            ui.ctx().output_mut(|output| output.ime = None);
+        }
+        if let Some(keyboard) = &self.keyboard {
+            let mode = if self.terminal_keyboard_input {
+                ui.ctx().output_mut(|output| output.ime = None);
+                festerm_ios_window::KeyboardMode::Terminal
+            } else if ui.ctx().output(|output| output.ime.is_some()) {
+                festerm_ios_window::KeyboardMode::System
+            } else {
+                festerm_ios_window::KeyboardMode::Hidden
+            };
+            if let Err(error) = keyboard.set_keyboard_mode(mode) {
+                log::error!("{error}");
+                self.input_notice = Some(error);
+            }
+        }
     }
 
     /// egui only requests the keyboard for a text field it painted. When the
@@ -495,6 +541,35 @@ impl MobileApp {
         self.input_notice = None;
     }
 
+    fn select_keyboard(&mut self, kind: terminal_keyboard::KeyboardKind) {
+        if kind != terminal_keyboard::KeyboardKind::Native {
+            self.last_custom_keyboard = kind;
+        }
+        self.keyboard_kind = kind;
+        self.keyboard_visible = true;
+        self.keys_panel.open = false;
+        self.terminal_keyboard.reset();
+        self.gestures.cancel();
+        self.clear_sticky_modifiers();
+    }
+
+    /// A live pick (More list or globe key) is sticky: it also becomes the
+    /// saved startup keyboard shown in Settings.
+    fn choose_keyboard(&mut self, kind: terminal_keyboard::KeyboardKind) {
+        self.select_keyboard(kind);
+        if self.default_keyboard == kind {
+            return;
+        }
+        match self
+            .profiles
+            .as_ref()
+            .map(|p| p.save_default_keyboard(kind))
+        {
+            Some(Err(error)) => self.notice = Some(error),
+            _ => self.default_keyboard = kind,
+        }
+    }
+
     /// Sticky modifiers apply to the next key whichever surface produced it.
     fn send_key_with(&mut self, key: Key, extra: Modifiers) {
         let mut modifiers = extra;
@@ -514,11 +589,23 @@ impl MobileApp {
             _ => key,
         };
         self.input_notice = None;
-        route_input(
+        let route = route_input(
             &mut self.terminal,
             InputEvent::ModifiedKey { key, modifiers },
             &mut self.sink,
         );
+        // A latched modifier the key cannot carry (e.g. Shift+Return) must not
+        // swallow the key: send it with only the explicit modifiers.
+        if route.outcome == InputEventOutcome::Rejected && modifiers != extra {
+            route_input(
+                &mut self.terminal,
+                InputEvent::ModifiedKey {
+                    key,
+                    modifiers: extra,
+                },
+                &mut self.sink,
+            );
+        }
         self.clear_sticky_modifiers();
     }
 
@@ -677,7 +764,7 @@ impl MobileApp {
             }
             return ChromeModel {
                 title: spec.name.clone(),
-                subtitle: spec.detail(),
+                subtitle: format!("Dev Tunnel · {}", spec.persistent_label()),
                 line: ConnectionLine {
                     state,
                     label,
@@ -741,10 +828,14 @@ impl MobileApp {
 
     fn show_content(&mut self, ui: &mut egui::Ui) {
         let lifecycle = self.lifecycle.get();
+        if !self.terminal_surface() || !lifecycle.active || !ui.input(|input| input.focused) {
+            self.terminal_keyboard.cancel();
+        }
         if lifecycle.suspensions != self.observed_suspensions {
             #[cfg(feature = "live-ssh")]
             self.suspend_sessions();
             self.gestures.cancel();
+            self.terminal_keyboard.cancel();
             self.clear_sticky_modifiers();
             self.observed_suspensions = lifecycle.suspensions;
         }
@@ -778,6 +869,7 @@ impl MobileApp {
             lock.frame_presented();
             if hidden {
                 self.gestures.cancel();
+                self.terminal_keyboard.cancel();
                 self.clear_sticky_modifiers();
                 return;
             }
@@ -847,6 +939,7 @@ impl MobileApp {
             notice,
             lock: self.lock.as_ref().map(app_lock::LockHost::view),
             text_size: self.text_size,
+            default_keyboard: self.default_keyboard,
         }
     }
 
@@ -899,6 +992,21 @@ impl MobileApp {
                         self.notice = Some(error);
                     }
                 }
+                ShellAction::SetDefaultKeyboard(kind) => {
+                    if let Some(Err(error)) = self
+                        .profiles
+                        .as_ref()
+                        .map(|p| p.save_default_keyboard(kind))
+                    {
+                        self.notice = Some(error);
+                    } else {
+                        self.default_keyboard = kind;
+                        self.select_keyboard(kind);
+                        self.notice = self.profiles.is_none().then(|| {
+                            "Default keyboard changed for this run; saved settings are unavailable".to_owned()
+                        });
+                    }
+                }
                 ShellAction::Lock(action) => {
                     if let Some(lock) = self.lock.as_mut() {
                         lock.apply(action);
@@ -915,6 +1023,7 @@ impl MobileApp {
                         }
                     }
                 }
+                ShellAction::CloseSurface(id) => self.close_tab(id),
                 ShellAction::OpenSurface(id) => {
                     self.shell.sessions_sheet = false;
                     self.activate_tab(id);
@@ -1052,6 +1161,7 @@ impl MobileApp {
     fn leave_terminal(&mut self) {
         if self.surface == Surface::Terminal {
             self.gestures.cancel();
+            self.terminal_keyboard.cancel();
             self.clear_sticky_modifiers();
             self.keys_panel.open = false;
             if self.workspace == workspaces::Workspace::Terminal {
@@ -1079,6 +1189,22 @@ impl MobileApp {
             );
             let actions = shell::sessions_sheet(ctx, bounds, &data);
             self.apply_shell_actions(ctx, actions);
+        }
+        if let Some(id) = self.confirm_close {
+            match self.tabs.iter().find(|tab| tab.id == id) {
+                Some(tab) => {
+                    let title = tab.title.clone();
+                    match terminal_chrome::close_session_sheet(ctx, bounds, &title) {
+                        Some(true) => {
+                            self.confirm_close = None;
+                            self.close_tab(id);
+                        }
+                        Some(false) => self.confirm_close = None,
+                        None => {}
+                    }
+                }
+                None => self.confirm_close = None,
+            }
         }
         #[cfg(feature = "live-ssh")]
         self.show_tunnel_sheets(ctx, bounds);
@@ -1402,23 +1528,63 @@ impl MobileApp {
         let session_active = false;
         let in_terminal = self.workspace == workspaces::Workspace::Terminal;
         let chrome = self.chrome();
-        let (title, subtitle) = if in_terminal {
-            (chrome.title.clone(), chrome.subtitle.clone())
+        let surfaces = if in_terminal {
+            self.surfaces()
         } else {
-            self.files_heading()
+            Vec::new()
         };
+        let heading = (!in_terminal).then(|| self.files_heading());
         let can_open_files = in_terminal && self.active_spec().is_some();
         let mut back = false;
         let mut files = false;
+        let mut chip_action = terminal_chrome::ChipAction::None;
         let mut close_tab = None;
+        let mut keyboard_action = terminal_chrome::KeyRowAction::None;
+        let input_ready = self.terminal_input_ready(lifecycle);
         egui::Panel::top("mobile-header")
-            .frame(egui::Frame::new().fill(theme::color::BG))
+            .frame(egui::Frame::new().fill(if in_terminal {
+                theme::color::TERMINAL_CHROME
+            } else {
+                theme::color::BAR
+            }))
             .show_separator_line(false)
             .show(ui, |ui| {
-                let header = terminal_chrome::header(ui, &title, &subtitle, can_open_files);
+                let center = match &heading {
+                    Some((title, subtitle)) => {
+                        terminal_chrome::HeaderCenter::Title { title, subtitle }
+                    }
+                    None => terminal_chrome::HeaderCenter::Chips(&surfaces),
+                };
+                let header = terminal_chrome::header(ui, center);
                 back = header.back;
-                files = header.files;
+                chip_action = header.chip;
                 let menu = egui::Popup::menu(&header.more).show(|ui| {
+                    if in_terminal && self.active_tab.is_some() {
+                        ui.weak(&chrome.line.label);
+                        ui.separator();
+                    }
+                    if can_open_files && ui.button("Files").clicked() {
+                        files = true;
+                        ui.close();
+                    }
+                    if in_terminal {
+                        keyboard_action = terminal_chrome::keyboard_menu(ui, self.keyboard_kind);
+                        if self.caps.paste
+                            && ui
+                                .add_enabled(input_ready, egui::Button::new("Paste"))
+                                .clicked()
+                        {
+                            keyboard_action = terminal_chrome::KeyRowAction::Paste;
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(input_ready, egui::Button::new("Extended keys"))
+                            .clicked()
+                        {
+                            keyboard_action = terminal_chrome::KeyRowAction::TogglePanel;
+                            ui.close();
+                        }
+                    }
                     if in_terminal
                         && ui
                             .add_enabled(lifecycle.active, egui::Button::new("Force redraw"))
@@ -1483,6 +1649,20 @@ impl MobileApp {
             self.open_files_for_active(&ctx);
             return;
         }
+        match chip_action {
+            terminal_chrome::ChipAction::None => {}
+            terminal_chrome::ChipAction::Select(id) => {
+                self.activate_tab(id);
+                return;
+            }
+            terminal_chrome::ChipAction::Close(id) => self.confirm_close = Some(id),
+            terminal_chrome::ChipAction::All => self.shell.sessions_sheet = true,
+            terminal_chrome::ChipAction::New => {
+                self.shell.tab = shell::Tab::Profiles;
+                self.leave_terminal();
+                return;
+            }
+        }
         if !in_terminal {
             egui::Panel::top("mobile-status")
                 .frame(egui::Frame::new().fill(theme::color::BG))
@@ -1498,22 +1678,14 @@ impl MobileApp {
             }
             return;
         }
-        // Short landscape space keeps only what typing needs.
-        let compact = ui.available_height() < 340.0;
-        if !compact {
-            egui::Panel::top("mobile-status")
-                .frame(egui::Frame::new().fill(theme::color::BG))
-                .show_separator_line(false)
-                .show(ui, |ui| terminal_chrome::status_line(ui, &chrome.line));
-        }
-        self.show_terminal(ui, lifecycle, compact);
+        self.apply_key_row(ui.ctx(), keyboard_action);
+        self.show_terminal(ui, lifecycle);
     }
 
-    fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle, compact: bool) {
+    fn terminal_input_ready(&self, lifecycle: Lifecycle) -> bool {
+        let ready = lifecycle.active && !self.shell.sessions_sheet && !self.editor.open;
         #[cfg(feature = "live-ssh")]
-        let input_ready = lifecycle.active
-            && !self.shell.sessions_sheet
-            && !self.editor.open
+        let ready = ready
             && self
                 .sink
                 .live
@@ -1521,8 +1693,11 @@ impl MobileApp {
                 .borrow()
                 .as_ref()
                 .is_none_or(|live| live.input_enabled());
-        #[cfg(not(feature = "live-ssh"))]
-        let input_ready = lifecycle.active && !self.editor.open && !self.shell.sessions_sheet;
+        ready
+    }
+
+    fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
+        let input_ready = self.terminal_input_ready(lifecycle);
         #[cfg(feature = "live-ssh")]
         let read_only = self
             .sink
@@ -1535,15 +1710,22 @@ impl MobileApp {
         let read_only = false;
         if !input_ready {
             self.clear_sticky_modifiers();
+            self.terminal_keyboard.cancel();
         }
-        let surfaces = self.surfaces();
         let panel_open = self.keys_panel.open && input_ready && !read_only;
+        self.terminal_keyboard
+            .keys
+            .latch(self.control || self.alt || self.shift);
         if panel_open {
             let output = egui::Panel::bottom("terminal-keys-panel")
-                .frame(egui::Frame::new().fill(theme::color::BAR))
+                .frame(egui::Frame::new().fill(theme::color::TERMINAL_CHROME))
                 .show_separator_line(false)
                 .show(ui, |ui| {
-                    terminal_chrome::keys_panel(ui, &mut self.keys_panel)
+                    terminal_chrome::keys_panel(
+                        ui,
+                        &mut self.keys_panel,
+                        &mut self.terminal_keyboard.keys,
+                    )
                 })
                 .inner;
             if let Some((key, modifiers)) = output.key {
@@ -1556,22 +1738,35 @@ impl MobileApp {
         }
         if !read_only {
             let mut row_action = terminal_chrome::KeyRowAction::None;
+            let keyboard_kind = self.keyboard_kind;
+            let custom_visible = keyboard_kind != terminal_keyboard::KeyboardKind::Native
+                && self.keyboard_visible
+                && !panel_open;
+            let keyboard_space = ui.available_height();
             let toolbar = egui::Panel::bottom("terminal-keys")
-                .frame(egui::Frame::new().fill(theme::color::BAR))
+                .frame(egui::Frame::new().fill(theme::color::TERMINAL_CHROME))
                 .show_separator_line(false)
                 .show(ui, |ui| {
                     ui.add_enabled_ui(input_ready && !self.menu_open, |ui| {
-                        let output = terminal_chrome::key_row(
-                            ui,
-                            &terminal_chrome::KeyRowState {
-                                control: self.control,
-                                alt: self.alt,
-                                shift: self.shift,
-                                panel_open,
-                                keyboard_visible: self.keyboard_visible,
-                                paste: self.caps.paste,
-                            },
-                        );
+                        let state = terminal_chrome::KeyRowState {
+                            control: self.control,
+                            alt: self.alt,
+                            shift: self.shift,
+                            panel_open,
+                            keyboard_visible: self.keyboard_visible,
+                            paste: self.caps.paste,
+                        };
+                        let output = if custom_visible {
+                            self.terminal_keyboard
+                                .show(ui, keyboard_kind, &state, keyboard_space)
+                        } else {
+                            terminal_chrome::key_row(ui, &state, &mut self.terminal_keyboard.keys)
+                        };
+                        if custom_visible && output.click {
+                            if let Some(keyboard) = &self.keyboard {
+                                keyboard.play_input_click();
+                            }
+                        }
                         #[cfg(test)]
                         {
                             self.control_rect = Some(output.control_rect);
@@ -1580,35 +1775,13 @@ impl MobileApp {
                     });
                 });
             self.toolbar_rect = Some(toolbar.response.rect);
-            self.apply_key_row(row_action);
+            self.apply_key_row(ui.ctx(), row_action);
         } else {
             self.toolbar_rect = None;
             egui::Panel::bottom("terminal-keys")
-                .frame(egui::Frame::new().fill(theme::color::BAR))
+                .frame(egui::Frame::new().fill(theme::color::TERMINAL_CHROME))
                 .show_separator_line(false)
                 .show(ui, terminal_chrome::read_only_note);
-        }
-        let mut chip_action = terminal_chrome::ChipAction::None;
-        if !compact {
-            egui::Panel::bottom("terminal-chips")
-                .frame(egui::Frame::new().fill(theme::color::BAR))
-                .show_separator_line(false)
-                .show(ui, |ui| {
-                    chip_action = terminal_chrome::chip_strip(ui, &surfaces);
-                });
-        }
-        match chip_action {
-            terminal_chrome::ChipAction::None => {}
-            terminal_chrome::ChipAction::Select(id) => {
-                self.activate_tab(id);
-                return;
-            }
-            terminal_chrome::ChipAction::All => self.shell.sessions_sheet = true,
-            terminal_chrome::ChipAction::New => {
-                self.shell.tab = shell::Tab::Profiles;
-                self.leave_terminal();
-                return;
-            }
         }
         #[cfg(feature = "live-ssh")]
         if read_only {
@@ -1634,6 +1807,9 @@ impl MobileApp {
             }
         }
         let history_ready = lifecycle.active && !self.editor.open && (input_ready || read_only);
+        if self.menu_open || !ui.input(|input| input.focused) {
+            self.terminal_keyboard.cancel();
+        }
         if input_ready && !self.menu_open {
             ui.input_mut(|input| {
                 self.consume_sticky_text(&mut input.events, festerm_ios_window::clipboard_text)
@@ -1642,7 +1818,7 @@ impl MobileApp {
         if let Some(notice) = self.input_notice {
             ui.label(egui::RichText::new(notice).color(theme::color::DANGER));
         }
-        let terminal_rect = ui.available_rect_before_wrap();
+        let terminal_rect = ui.available_rect_before_wrap().shrink(theme::space::SM);
         let gesture = ui.input_mut(|input| {
             let any_touches = input.any_touches();
             self.gestures.update(
@@ -1663,8 +1839,10 @@ impl MobileApp {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_secs_f64(delay));
         }
+        let mut terminal_ui = ui.new_child(egui::UiBuilder::new().max_rect(terminal_rect));
+        terminal_ui.set_clip_rect(terminal_rect);
         self.view.show_with_options(
-            ui,
+            &mut terminal_ui,
             &mut self.terminal,
             &mut self.sink,
             TerminalViewOptions {
@@ -1675,8 +1853,18 @@ impl MobileApp {
                 ..Default::default()
             },
         );
-        self.gestures.paint_helper(ui, terminal_rect);
-        if input_ready && self.keyboard_visible && !panel_open {
+        self.gestures.paint_helper(&terminal_ui, terminal_rect);
+        self.terminal_keyboard_input = input_ready
+            && ui.input(|input| input.focused)
+            && !self.menu_open
+            && !panel_open
+            && self.keyboard_kind != terminal_keyboard::KeyboardKind::Native;
+        if input_ready
+            && self.keyboard_visible
+            && !panel_open
+            && !self.menu_open
+            && self.keyboard_kind == terminal_keyboard::KeyboardKind::Native
+        {
             // Persistent request for the system keyboard, independent of egui
             // focus on the accessory buttons. UIKit owns keyboard presentation.
             let rect = self.view.diagnostics().grid_rect.unwrap_or(terminal_rect);
@@ -1699,10 +1887,23 @@ impl MobileApp {
         self.view.take_find_request();
     }
 
-    fn apply_key_row(&mut self, action: terminal_chrome::KeyRowAction) {
+    fn apply_key_row(&mut self, ctx: &egui::Context, action: terminal_chrome::KeyRowAction) {
         use terminal_chrome::KeyRowAction;
         match action {
             KeyRowAction::None => {}
+            KeyRowAction::Key(Key::Character(character)) => {
+                // Reuse sticky-modifier and local clipboard-shortcut arbitration.
+                ctx.input_mut(|input| input.events.push(egui::Event::Text(character.to_string())));
+            }
+            KeyRowAction::Key(key) => self.send_key(key),
+            KeyRowAction::SelectKeyboard(kind) => self.choose_keyboard(kind),
+            KeyRowAction::SwitchKeyboard => self.choose_keyboard(
+                if self.keyboard_kind == terminal_keyboard::KeyboardKind::Native {
+                    self.last_custom_keyboard
+                } else {
+                    terminal_keyboard::KeyboardKind::Native
+                },
+            ),
             KeyRowAction::Paste => {
                 self.clear_sticky_modifiers();
                 if let Some(text) =
@@ -1718,9 +1919,14 @@ impl MobileApp {
             KeyRowAction::ToggleControl => self.control = !self.control,
             KeyRowAction::ToggleAlt => self.alt = !self.alt,
             KeyRowAction::ToggleShift => self.shift = !self.shift,
-            KeyRowAction::TogglePanel => self.keys_panel.open = !self.keys_panel.open,
+            KeyRowAction::TogglePanel => {
+                self.keys_panel.open = !self.keys_panel.open;
+                self.terminal_keyboard.cancel();
+            }
             KeyRowAction::ToggleKeyboard => {
                 self.keyboard_visible = !self.keyboard_visible;
+                self.terminal_keyboard.cancel();
+                self.clear_sticky_modifiers();
                 if self.keyboard_visible {
                     self.keys_panel.open = false;
                 }
@@ -1805,6 +2011,206 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn latched_modifiers_never_swallow_return_backspace_or_escape() {
+        let ctx = egui::Context::default();
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        for toggle in [
+            terminal_chrome::KeyRowAction::ToggleShift,
+            terminal_chrome::KeyRowAction::ToggleControl,
+        ] {
+            for key in [Key::Enter, Key::Backspace, Key::Escape] {
+                app.apply_key_row(&ctx, toggle);
+                let before = app.sink.diagnostics.byte_count;
+                app.apply_key_row(&ctx, terminal_chrome::KeyRowAction::Key(key));
+                assert!(
+                    app.sink.diagnostics.byte_count > before,
+                    "{toggle:?} then {key:?} must still send the key"
+                );
+                assert!(!app.shift && !app.control);
+            }
+        }
+    }
+
+    #[test]
+    fn keyboard_live_picks_persist_as_the_default_but_hiding_does_not() {
+        use egui_kittest::{kittest::Queryable, Harness};
+        use terminal_chrome::KeyRowAction;
+        use terminal_keyboard::KeyboardKind;
+
+        let ctx = egui::Context::default();
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })))
+        .with_profiles(profiles::testing::profiles());
+        for default in KeyboardKind::ALL {
+            app.apply_shell_actions(&ctx, vec![shell::ShellAction::SetDefaultKeyboard(default)]);
+            assert_eq!(app.default_keyboard, default);
+            assert_eq!(app.keyboard_kind, default);
+            for kind in KeyboardKind::ALL {
+                app.apply_key_row(&ctx, KeyRowAction::SelectKeyboard(kind));
+                assert_eq!(app.keyboard_kind, kind);
+                app.apply_key_row(&ctx, KeyRowAction::ToggleKeyboard);
+                assert!(!app.keyboard_visible);
+                app.apply_key_row(&ctx, KeyRowAction::ToggleKeyboard);
+                assert!(app.keyboard_visible);
+                assert_eq!(app.default_keyboard, kind);
+                assert_eq!(
+                    app.profiles.as_ref().unwrap().default_keyboard().unwrap(),
+                    kind
+                );
+            }
+            app.apply_key_row(&ctx, KeyRowAction::SelectKeyboard(default));
+            let profiles = app.profiles.take().unwrap();
+            app = MobileApp::new_terminal(app.lifecycle.clone()).with_profiles(profiles);
+            assert_eq!(app.keyboard_kind, default);
+        }
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+        harness.run();
+        harness.get_by_label("Switch keyboard").click();
+        harness.run();
+        assert_eq!(harness.state().keyboard_kind, KeyboardKind::Native);
+        assert!(harness.output().platform_output.ime.is_some());
+        harness.get_by_label("Switch keyboard").click();
+        harness.run();
+        assert_eq!(harness.state().keyboard_kind, KeyboardKind::ShellRow);
+        harness.get_by_label("More").click();
+        harness.run();
+        assert_eq!(harness.state().default_keyboard, KeyboardKind::ShellRow);
+        harness.get_by_label("Built-in keyboard").click();
+        harness.run();
+        assert_eq!(harness.state().keyboard_kind, KeyboardKind::Native);
+        assert_eq!(harness.state().default_keyboard, KeyboardKind::Native);
+        assert!(harness.output().platform_output.ime.is_some());
+        harness.get_by_label("More").click();
+        harness.run();
+        harness.get_by_label("Terminal: Hold symbols").click();
+        harness.run();
+        assert!(harness.query_by_label("q").is_some());
+        assert!(harness.output().platform_output.ime.is_none());
+        assert!(harness.state().terminal_keyboard_input);
+        harness.get_by_label("Extended keys").click();
+        harness.run();
+        assert!(harness.query_by_label("q").is_none());
+        assert!(harness.query_by_label("F5").is_some() || harness.query_by_label("Home").is_some());
+        harness.get_by_label("Show keyboard").click();
+        harness.run();
+        assert!(harness.query_by_label("q").is_some());
+        harness.get_by_label("Hide keyboard").click();
+        harness.run();
+        assert!(harness.query_by_label("q").is_none());
+        harness.get_by_label("Show keyboard").click();
+        harness.run();
+        assert!(harness.query_by_label("q").is_some());
+        harness.get_by_label("More").click();
+        harness.run();
+        assert!(!harness.state().terminal_keyboard_input);
+        harness
+            .get_all_by_label("Extended keys")
+            .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+            .unwrap()
+            .click();
+        harness.run();
+        assert!(harness.query_by_label("q").is_none());
+        assert!(harness.output().platform_output.ime.is_none());
+        assert!(!harness.state().terminal_keyboard_input);
+        harness.get_by_label("Show keyboard").click();
+        harness.run();
+        assert!(harness.query_by_label("q").is_some());
+        assert!(harness.state().terminal_keyboard_input);
+        harness.state_mut().select_keyboard(KeyboardKind::Native);
+        harness.run();
+        assert!(harness.output().platform_output.ime.is_some());
+        harness.input_mut().focused = false;
+        harness.run();
+        assert!(harness.output().platform_output.ime.is_none());
+        assert!(!harness.state().terminal_keyboard_input);
+        harness.input_mut().focused = true;
+        harness.run();
+        assert!(harness.output().platform_output.ime.is_some());
+    }
+
+    #[test]
+    fn terminal_keyboards_fit_measured_space_and_yield_to_forms_and_lifecycle() {
+        use egui_kittest::{kittest::Queryable, Harness};
+        use terminal_keyboard::KeyboardKind;
+
+        for kind in [KeyboardKind::HoldSymbols, KeyboardKind::ShellRow] {
+            for size in [
+                egui::vec2(320.0, 568.0),
+                egui::vec2(390.0, 844.0),
+                egui::vec2(834.0, 1194.0),
+                egui::vec2(844.0, 390.0),
+                egui::vec2(390.0, 260.0),
+            ] {
+                let lifecycle = Rc::new(Cell::new(Lifecycle {
+                    active: true,
+                    ..Default::default()
+                }));
+                let mut app = MobileApp::new_terminal(lifecycle.clone());
+                app.select_keyboard(kind);
+                let mut harness = Harness::builder()
+                    .with_size(size)
+                    .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+                harness.run();
+                let grid = harness.state().view.diagnostics().grid_rect.unwrap();
+                let toolbar = harness.state().toolbar_rect.unwrap();
+                assert!(
+                    grid.height() >= 40.0 && grid.bottom() <= toolbar.top(),
+                    "{kind:?} {size:?}: {grid:?} {toolbar:?}"
+                );
+                let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                for label in [
+                    "Hide keyboard",
+                    "Switch keyboard",
+                    "Extended keys",
+                    "Return",
+                    "Ctrl",
+                    "Alt",
+                ] {
+                    let rect = harness.get_by_label(label).rect();
+                    assert!(
+                        bounds.contains_rect(rect),
+                        "{kind:?} {size:?}: {label} {rect:?}"
+                    );
+                }
+                let space = harness.get_by_label("Space").rect();
+                assert!((space.center().x - toolbar.center().x).abs() < 1.0);
+                assert!(space.width() > (toolbar.width() - 14.0).min(720.0) * 0.47);
+                assert!(harness.output().platform_output.ime.is_none());
+                lifecycle.set(Lifecycle {
+                    active: false,
+                    suspensions: 1,
+                    ..Default::default()
+                });
+                harness.run();
+                assert!(!harness.state().terminal_keyboard_input);
+                let before = harness.state().sink.diagnostics.byte_count;
+                harness.get_by_label("Return").click();
+                harness.run();
+                assert_eq!(harness.state().sink.diagnostics.byte_count, before);
+                lifecycle.set(Lifecycle {
+                    active: true,
+                    suspensions: 1,
+                    ..Default::default()
+                });
+                harness.run();
+                harness.state_mut().editor.open_new();
+                harness.run();
+                assert!(
+                    harness.query_by_label("q").is_none(),
+                    "forms must use the native keyboard"
+                );
+            }
+        }
+    }
 
     #[test]
     fn text_size_setting_resizes_open_and_parked_terminals_and_is_saved() {
@@ -2473,8 +2879,14 @@ mod tests {
             ..Default::default()
         }));
         let mut app = MobileApp::new_terminal(lifecycle);
-        app.apply_key_row(terminal_chrome::KeyRowAction::ToggleControl);
-        app.apply_key_row(terminal_chrome::KeyRowAction::ToggleShift);
+        app.apply_key_row(
+            &egui::Context::default(),
+            terminal_chrome::KeyRowAction::ToggleControl,
+        );
+        app.apply_key_row(
+            &egui::Context::default(),
+            terminal_chrome::KeyRowAction::ToggleShift,
+        );
         assert!(app.control);
         app.send_key_with(Key::Function(5), Modifiers::NONE);
         assert!(

@@ -26,11 +26,15 @@ fn git_fact(arguments: &[&str]) -> String {
         .to_owned()
 }
 
-const STATES: [&str; 28] = [
+const STATES: [&str; 32] = [
     "profiles",
     "profiles-empty",
     "terminal",
     "terminal-devtunnel",
+    "keyboard-hold",
+    "keyboard-shell",
+    "keyboard-symbols",
+    "keyboard-preview",
     "sessions-sheet",
     "keys-panel",
     "keys-fkeys",
@@ -114,6 +118,7 @@ fn fixture_sessions(current: u64) -> StaticSessions {
         state,
         status: status.to_owned(),
         current: id == current,
+        unread: id == 2 && current != 2,
     };
     StaticSessions {
         surfaces: vec![
@@ -225,7 +230,7 @@ fn configure(app: &mut MobileApp, state: &str) {
     app.chrome_override = Some(if devtunnel {
         ChromeModel {
             title: "build-box".to_owned(),
-            subtitle: "Dev Tunnel · build-tunnel".to_owned(),
+            subtitle: "Dev Tunnel · host session".to_owned(),
             line: ConnectionLine {
                 state: SurfaceState::Connected,
                 label: "Connected".to_owned(),
@@ -256,6 +261,14 @@ fn configure(app: &mut MobileApp, state: &str) {
         "\x1b[32mdeploy@prod-web\x1b[0m:\x1b[34m~/app\x1b[0m$ ",
     ]);
     match state {
+        "keyboard-hold" | "keyboard-shell" | "keyboard-symbols" | "keyboard-preview" => {
+            app.select_keyboard(if state == "keyboard-shell" {
+                terminal_keyboard::KeyboardKind::ShellRow
+            } else {
+                terminal_keyboard::KeyboardKind::HoldSymbols
+            });
+            app.terminal_keyboard.symbols = state == "keyboard-symbols";
+        }
         "profiles" => {
             app.surface = Surface::Tabs;
         }
@@ -374,7 +387,7 @@ fn configure(app: &mut MobileApp, state: &str) {
             *app.sink.live.connection.borrow_mut() = Some(live_ssh::taken_over_fixture());
             app.chrome_override = Some(ChromeModel {
                 title: "build-box".to_owned(),
-                subtitle: "Dev Tunnel · build-tunnel".to_owned(),
+                subtitle: "Dev Tunnel · host session".to_owned(),
                 line: ConnectionLine {
                     state: SurfaceState::Disconnected,
                     label: "Taken over by another device".to_owned(),
@@ -473,6 +486,10 @@ fn capture_mobile_ui_gallery() {
                     | "host-setup"
                     | "host-setup-linux"
                     | "host-script"
+                    | "keyboard-hold"
+                    | "keyboard-shell"
+                    | "keyboard-symbols"
+                    | "keyboard-preview"
             ) {
                 0.0
             } else {
@@ -502,7 +519,19 @@ fn capture_mobile_ui_gallery() {
             } else {
                 harness.run();
             }
-            if state == "arrow-helper" {
+            if state == "keyboard-preview" {
+                use egui_kittest::kittest::Queryable;
+                let position = harness.get_by_label("q").rect().center();
+                harness.event(egui::Event::PointerMoved(position));
+                harness.event(egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.step();
+                assert_eq!(harness.state().sink.diagnostics.byte_count, 0);
+            } else if state == "arrow-helper" {
                 let origin = harness
                     .state()
                     .view

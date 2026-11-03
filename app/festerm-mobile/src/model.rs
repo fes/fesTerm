@@ -89,6 +89,8 @@ pub struct SurfaceSummary {
     /// e.g. `Connected · tmux / work` or `Disconnected · history available`.
     pub status: String,
     pub current: bool,
+    /// A background tab received output since it was last shown.
+    pub unread: bool,
 }
 
 /// A remote session the user may reattach to.
@@ -132,7 +134,7 @@ pub struct ConnectionLine {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChromeModel {
     pub title: String,
-    /// Protocol and target.
+    /// Protocol and session/target context.
     pub subtitle: String,
     pub line: ConnectionLine,
 }

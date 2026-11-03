@@ -306,13 +306,16 @@ impl LiveSsh {
         }
     }
 
-    pub(super) fn poll(&mut self, terminal: &mut Terminal, context: &egui::Context) {
+    /// Pumps worker events into `terminal`; returns whether output arrived.
+    pub(super) fn poll(&mut self, terminal: &mut Terminal, context: &egui::Context) -> bool {
+        let mut output = false;
         let Some(session) = self.session.clone() else {
-            return;
+            return output;
         };
         for _ in 0..EVENT_BUDGET {
             match session.try_recv_event() {
                 Ok(SessionEvent::Output(bytes)) => {
+                    output |= !bytes.is_empty();
                     terminal.ingest(&bytes);
                     let replies = terminal.drain_replies();
                     // A tunnel host answers terminal queries itself.
@@ -322,7 +325,7 @@ impl LiveSsh {
                         && session.try_send_input(&replies).is_err()
                     {
                         self.stop("Terminal reply rejected; disconnected");
-                        return;
+                        return output;
                     }
                 }
                 Ok(SessionEvent::HostKeyVerification(prompt)) => {
@@ -351,17 +354,18 @@ impl LiveSsh {
                             "Session ended or connection lost. Connect again for a fresh shell.",
                         );
                     }
-                    return;
+                    return output;
                 }
                 Ok(SessionEvent::RecoverySync(bytes)) if self.tunnel.is_some() => {
                     if festerm_mobile_tunnels::apply_recovery_sync(terminal, &bytes).is_err() {
                         self.stop("Invalid host sync; disconnected");
-                        return;
+                        return output;
                     }
+                    output = true;
                 }
                 Ok(SessionEvent::RecoverySync(_)) => {
                     self.stop("Unsupported recovery event; disconnected");
-                    return;
+                    return output;
                 }
                 Ok(_) => {}
                 Err(SessionTryReceiveError::Empty) => break,
@@ -372,7 +376,7 @@ impl LiveSsh {
                         "SSH worker closed"
                     };
                     self.stop(status);
-                    return;
+                    return output;
                 }
             }
         }
@@ -401,7 +405,7 @@ impl LiveSsh {
                         PROBE_FAILED
                     };
                     self.stop(status);
-                    return;
+                    return output;
                 }
             }
         }
@@ -413,7 +417,7 @@ impl LiveSsh {
                 if changed.elapsed() >= Duration::from_millis(100) {
                     let Ok(size) = session_size(dimensions) else {
                         self.stop("Terminal size cannot be represented by SSH; disconnected");
-                        return;
+                        return output;
                     };
                     if session.try_resize(size).is_ok() {
                         self.pending_resize = None;
@@ -425,6 +429,7 @@ impl LiveSsh {
                 }
             }
         }
+        output
     }
 
     pub(super) fn host_verification(&self) -> Option<HostVerification> {
@@ -606,6 +611,69 @@ mod tests {
 
     fn terminal() -> Terminal {
         Terminal::with_scrollback_limit(Dimensions::new(80, 24).unwrap(), 4096).unwrap()
+    }
+
+    #[test]
+    fn terminal_keyboards_send_encoded_keys_and_local_shortcuts_without_replay() {
+        use crate::{terminal_keyboard::KeyboardKind, Lifecycle, MobileApp};
+        use egui_kittest::{kittest::Queryable, Harness};
+        use std::{cell::Cell, rc::Rc};
+
+        for kind in [KeyboardKind::HoldSymbols, KeyboardKind::ShellRow] {
+            let session = Arc::new(FakeSession::default());
+            let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            })));
+            *app.sink.live.connection.borrow_mut() = Some(connection(session.clone()));
+            app.select_keyboard(kind);
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(390.0, 844.0))
+                .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+            harness.run_steps(3);
+            for label in ["1", "q", "Space", "Tab", "Return", "Backspace", "Left"] {
+                harness.get_by_label(label).click();
+                harness.run_steps(3);
+            }
+            assert_eq!(session.input.lock().unwrap().concat(), b"1q \t\r\x7f\x1b[D");
+            session.input.lock().unwrap().clear();
+            harness.get_by_label("Ctrl").click();
+            harness.run_steps(3);
+            harness.get_by_label("c").click();
+            harness.run_steps(3);
+            assert_eq!(session.input.lock().unwrap().concat(), b"\x03");
+            assert!(!harness.state().control);
+            session.input.lock().unwrap().clear();
+            harness.state_mut().control = true;
+            harness.state_mut().shift = true;
+            harness.run_steps(3);
+            harness.get_by_label("C").click();
+            harness.run_steps(3);
+            assert!(
+                session.input.lock().unwrap().is_empty(),
+                "copy is local, even without a selection"
+            );
+            assert!(!harness.state().control && !harness.state().shift);
+            harness.state_mut().shift = true;
+            harness.run_steps(3);
+            harness.get_by_label("!").click();
+            harness.run_steps(3);
+            assert_eq!(session.input.lock().unwrap().concat(), b"!");
+            session.input.lock().unwrap().clear();
+            harness.get_by_label("#+=").click();
+            harness.run_steps(3);
+            harness.get_by_label("`").click();
+            harness.run_steps(3);
+            assert_eq!(session.input.lock().unwrap().concat(), b"`");
+            session.input.lock().unwrap().clear();
+            harness.get_by_label("Extended keys").click();
+            harness.run_steps(3);
+            harness.get_by_label("F-keys").click();
+            harness.run_steps(3);
+            harness.get_by_label("F1").click();
+            harness.run_steps(3);
+            assert_eq!(session.input.lock().unwrap().concat(), b"\x1bOP");
+        }
     }
 
     #[test]
@@ -830,6 +898,15 @@ mod tests {
             "switching must not disconnect"
         );
 
+        let unread = |app: &MobileApp| {
+            app.tab_surfaces()
+                .iter()
+                .find(|surface| surface.id == remote)
+                .is_some_and(|surface| surface.unread)
+        };
+        app.poll_background(&egui::Context::default());
+        assert!(!unread(&app), "a quiet background tab has no unread marker");
+
         // Output for the parked tab keeps flowing into its own terminal.
         session
             .events
@@ -842,8 +919,10 @@ mod tests {
             .row_text(0)
             .unwrap_or_default()
             .contains("while-away"));
+        assert!(unread(&app), "background output marks the tab's chip");
 
         app.activate_tab(remote);
+        assert!(!unread(&app), "showing the tab clears its marker");
         let rows = (0..app.terminal.dimensions().rows())
             .filter_map(|row| app.terminal.row_text(row))
             .collect::<Vec<_>>()
