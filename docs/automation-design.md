@@ -407,7 +407,9 @@ before approval. macOS and Linux also require qualified privacy monitoring.
 Startup and teardown run off the UI thread;
 admission stays closed until monitoring and the private endpoint are ready.
 Backend-owned attachment generations advance before transport loss, even if a
-bounded lifecycle-event queue drops notifications. Revocation and each
+bounded lifecycle-event queue drops notifications. Text-mode SFTP has no
+qualified transport/subsystem-loss signal and is excluded from automation
+observation even while its terminal remains usable. Revocation and each
 nonblocking reply write share an admission boundary; bytes already written to
 the private channel cannot be recalled. The stdio input reader buffers at most
 64 bounded frames independently of private-channel backpressure, so it can
@@ -506,6 +508,20 @@ Normal completion requires no outstanding host work and a budget-authorized
 result delivery. Runtime destruction follows the broker's transition, never
 drives it; late callbacks/results are epoch-rejected. This rule applies to
 direct invocations and nested runs as well as JavaScript.
+
+The standalone worker protocol pauses further JavaScript jobs while a forwarded
+host call has not crossed broker admission or been refused. The parent
+acknowledges only after the exact effect/operation is admitted; an immediate
+result also closes that admission phase. Admitted asynchronous calls can still
+await their results while JavaScript proceeds. The future application must
+prepare the exact broker request, cap its run deadline at the supervisor's,
+and consume a one-shot admission permit at the nonblocking broker/controller
+commit. The permit atomically orders the claim against watchdog closure; an
+already claimed effect may physically execute later. Explicit cancellation
+serializes the broker cut before signalling the worker, while the watchdog can
+still reap at deadline without waiting for a stalled admission gate. App
+integration must also serialize target, privacy and cross-run revocation; this
+component alone does not provide those lifecycle hooks.
 
 A `SessionRef` binds app-instance identity, logical tab/session identity and
 transport attachment generation; durable sessions also bind provider/host/

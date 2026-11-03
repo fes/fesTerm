@@ -273,6 +273,9 @@ pub enum ParentMessage {
         bytes: Vec<u8>,
     },
     Run {},
+    HostAdmitted {
+        id: u32,
+    },
     HostResult {
         id: u32,
         result: HostResult,

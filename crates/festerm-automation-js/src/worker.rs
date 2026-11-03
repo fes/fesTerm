@@ -137,6 +137,7 @@ impl<R: Read, W: Write> Transport for Pipe<R, W> {
 
     fn receive(&mut self) -> Result<Input, Error> {
         match self.decoder.read(&mut self.input)? {
+            Some(ParentMessage::HostAdmitted { id }) => Ok(Input::Admitted(id)),
             Some(ParentMessage::HostResult { id, result }) => Ok(Input::Result(id, result)),
             Some(ParentMessage::Cancel {}) => Ok(Input::Cancel),
             Some(_) => Err(Error::Protocol),
