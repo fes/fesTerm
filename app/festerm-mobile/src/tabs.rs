@@ -20,6 +20,8 @@ pub(super) struct SessionTab {
     /// becomes active again.
     #[cfg(feature = "live-ssh")]
     pub reconnect_armed: bool,
+    /// Output arrived while parked; cleared when the tab is shown again.
+    pub has_new_output: bool,
     parked: Option<(Terminal, TerminalView)>,
 }
 
@@ -65,6 +67,7 @@ impl MobileApp {
 
     fn release_focus(&mut self) {
         self.gestures.cancel();
+        self.terminal_keyboard.cancel();
         self.clear_sticky_modifiers();
         if let Some(focus) = self.view.relinquish_transient_input() {
             route_input(&mut self.terminal, InputEvent::Focus(focus), &mut self.sink);
@@ -114,6 +117,7 @@ impl MobileApp {
             }
         }
         self.active_tab = Some(id);
+        self.tabs[position].has_new_output = false;
         #[cfg(feature = "live-ssh")]
         {
             self.tabs[position].reconnect_armed = true;
@@ -134,6 +138,7 @@ impl MobileApp {
             tunnel_client: None,
             #[cfg(feature = "live-ssh")]
             reconnect_armed: false,
+            has_new_output: false,
             parked: None,
         });
         id
@@ -292,13 +297,13 @@ impl MobileApp {
     pub(super) fn poll_background(&mut self, ctx: &egui::Context) {
         let mut background = self.sink.live.background.borrow_mut();
         for (id, live) in background.iter_mut() {
-            let parked = self
-                .tabs
-                .iter_mut()
-                .find(|tab| tab.id == *id)
-                .and_then(|tab| tab.parked.as_mut());
-            if let Some((terminal, _)) = parked {
-                live.poll(terminal, ctx);
+            let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == *id) else {
+                continue;
+            };
+            if let Some((terminal, _)) = tab.parked.as_mut() {
+                if live.poll(terminal, ctx) {
+                    tab.has_new_output = true;
+                }
             }
         }
     }
@@ -342,6 +347,7 @@ impl MobileApp {
                     state,
                     status,
                     current: active && on_terminal,
+                    unread: !active && tab.has_new_output,
                 }
             })
             .collect()

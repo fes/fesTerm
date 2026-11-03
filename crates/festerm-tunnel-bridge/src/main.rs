@@ -3,7 +3,7 @@ use festerm_tunnel_bridge::{
     host_identity::HostIdentity,
     protocol::{invalid, Target},
     relay::{self, Destination},
-    transport,
+    transport, worker_log,
 };
 use std::{
     io,
@@ -16,8 +16,18 @@ use festerm_tunnel_bridge::setup_storage;
 #[cfg(test)]
 mod test_support;
 
+/// One structured stderr line the managed worker may record in its private
+/// log. Values must already be stage codes (see `worker_log::code`).
+fn event(text: &str) {
+    eprintln!("{}{text}", worker_log::BRIDGE_EVENT_PREFIX);
+}
+
 fn main() {
-    if run().is_err() {
+    if let Err(error) = run() {
+        event(&format!(
+            "bridge.exit reason={}",
+            worker_log::code(&error.to_string())
+        ));
         eprintln!("Experimental Dev Tunnel bridge stopped/refused. Verify the exact unattached protocol-3 session, dedicated host token, preprovisioned port and service access. No session was created or terminated.");
         std::process::exit(1);
     }
@@ -163,21 +173,33 @@ fn run() -> io::Result<()> {
         let files = festerm_tunnel_bridge::files::FileService::new(allow_file_read);
         // Connections are served concurrently (bounded by the relay host) so a
         // second client can request takeover; the session daemon arbitrates.
-        let mut clients = tokio::task::JoinSet::new();
+        let mut clients = tokio::task::JoinSet::<(u64, io::Result<()>)>::new();
         let holder = transport::Holder::default();
+        let mut connections = 0_u64;
+        event("bridge.ready");
         loop {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => break,
-                Some(_) = clients.join_next(), if !clients.is_empty() => {}
+                Some(joined) = clients.join_next(), if !clients.is_empty() => match joined {
+                    Ok((n, Ok(()))) => event(&format!("bridge.client_closed n={n} result=ok")),
+                    Ok((n, Err(error))) => event(&format!(
+                        "bridge.client_closed n={n} result=error reason={}",
+                        worker_log::code(&error.to_string())
+                    )),
+                    Err(_) => event("bridge.client_closed result=panic"),
+                },
                 incoming = host.connections.recv() => {
                     let Some(stream) = incoming else {
                         return Err(std::io::Error::other(
                             host.failure_category().unwrap_or("host.outer_task_closed"),
                         ));
                     };
+                    connections += 1;
+                    let n = connections;
+                    event(&format!("bridge.client_opened n={n}"));
                     let (identity, files, holder) = (identity.clone(), files.clone(), holder.clone());
                     clients.spawn(async move {
-                        transport::serve_with_reclaim(stream, identity, files, takeover, &holder).await
+                        (n, transport::serve_with_reclaim(stream, identity, files, takeover, &holder).await)
                     });
                 }
             }

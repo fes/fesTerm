@@ -193,6 +193,26 @@ through those paths, ordinary saves and buffer reuse. Replacement-parent
 identity is checked before opening a child, while legitimate regular-file
 replacement and dirty-buffer conflict handling remain supported.
 
+## v0.14.0: iOS terminal keyboards and self-healing Linux tunnel hosts
+
+iOS gains a header bar of session chips that scrolls sideways. Long-press a chip
+to close its session after a confirmation, or swipe a row left in Sessions.
+A switchable terminal keyboard (Hold symbols or Shell row) can replace the
+built-in keyboard. The choice persists, the globe key switches back, and the
+Extended keys panel adds function and navigation keys. Every app-owned key
+shows a press callout and repeats when held, and one bluer palette covers the
+keyboards, accessory row and header. Shift, local clipboard shortcuts and Force
+redraw arrive on iOS, and Dev Tunnel tabs keep their attachment and re-verify
+the host when the app resumes. A latched Shift or Ctrl no longer swallows
+Return, Backspace or Esc.
+
+Linux Dev Tunnel hosts now restart their worker after transient failures, but
+not after refusals that need the operator. Every host keeps a small private
+event log of starts, connections and exits. Rerunning setup migrates an older
+no-restart unit in place without stopping a running worker. The Windows host
+task XML now uses the correct encoding, and installer scripts are verified
+before they run.
+
 ## v0.13.3: Friendly Dev Tunnel names
 
 Host setup accepts an optional friendly name for a new Dev Tunnel. Desktop
