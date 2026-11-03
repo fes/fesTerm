@@ -390,8 +390,19 @@ before forwarding sensitive client data or granting terminal access. A
 model-controlled MCP tool call that copies the adapter's own public fingerprint
 is not evidence of human verification. The existing public pairing code is not
 this fingerprint. The primitive refuses low-order X25519 contributions and
-rejects tampering, replay and malformed bounded records, but it is not wired
-into the adapter and does not qualify bootstrap or executable provenance.
+rejects tampering, replay and malformed bounded records. An independent
+incremental framing component supports fragmented, full-duplex record I/O,
+prefixing each encrypted record with a big-endian 16-bit length. It closes on
+truncated input or failed partial output and bounds one pending frame per
+direction. It takes a freshly verified channel before any records have been
+sent or received, and distinguishes interrupted writes from backpressure so
+edge-triggered callers can retry. It does not own I/O deadlines, authorization
+or privacy:
+the caller must hold the live disclosure boundary for each physical write.
+On cancellation or a denied boundary, the caller must close the channel and
+discard pending output rather than retrying under a later grant.
+Neither component is wired into the adapter or qualifies bootstrap or
+executable provenance.
 An active relay can delay ciphertext or suppress disconnect; independently
 qualified liveness is required for strict caller-loss guarantees.
 

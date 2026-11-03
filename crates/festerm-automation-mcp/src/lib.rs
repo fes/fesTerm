@@ -74,6 +74,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 mod schema;
 pub mod secure_channel;
+pub mod secure_record_io;
 
 pub const PROTOCOL_VERSION: &str = "2025-11-25";
 pub const MAX_MESSAGE_BYTES: usize = 65_536;

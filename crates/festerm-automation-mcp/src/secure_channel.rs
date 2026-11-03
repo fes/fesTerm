@@ -24,6 +24,7 @@ const FIRST_HANDSHAKE_BYTES: usize = 32;
 const SECOND_HANDSHAKE_BYTES: usize = 48;
 const TAG_BYTES: usize = 16;
 pub const MAX_RECORD_BYTES: usize = 65_535;
+pub const MIN_RECORD_BYTES: usize = TAG_BYTES + 1;
 const MAX_RECORD_PLAINTEXT: usize = MAX_RECORD_BYTES - TAG_BYTES;
 const HEADER_BYTES: usize = 4;
 
@@ -243,6 +244,7 @@ impl UnverifiedChannel {
             transport: Some(self.transport),
             fingerprint: self.fingerprint,
             pending: None,
+            used: false,
         })
     }
 }
@@ -261,6 +263,7 @@ pub struct Channel {
     transport: Option<snow::TransportState>,
     fingerprint: Fingerprint,
     pending: Option<PendingFrame>,
+    used: bool,
 }
 
 impl Channel {
@@ -273,6 +276,16 @@ impl Channel {
         self.pending = None;
     }
 
+    pub(crate) fn require_fresh(&self) -> Result<(), ChannelError> {
+        if self.transport.is_none() {
+            Err(ChannelError::Closed)
+        } else if self.used {
+            Err(ChannelError::InvalidMessage)
+        } else {
+            Ok(())
+        }
+    }
+
     fn fail<T>(&mut self, error: ChannelError) -> Result<T, ChannelError> {
         self.close();
         Err(error)
@@ -283,6 +296,7 @@ impl Channel {
         if self.transport.is_none() {
             return Err(ChannelError::Closed);
         }
+        self.used = true;
         if frame.is_empty() || frame.len() > MAX_MESSAGE_BYTES {
             return self.fail(ChannelError::InvalidMessage);
         }
@@ -308,7 +322,8 @@ impl Channel {
         if self.transport.is_none() {
             return Err(ChannelError::Closed);
         }
-        if ciphertext.len() <= TAG_BYTES || ciphertext.len() > MAX_RECORD_BYTES {
+        self.used = true;
+        if !(MIN_RECORD_BYTES..=MAX_RECORD_BYTES).contains(&ciphertext.len()) {
             return self.fail(ChannelError::InvalidMessage);
         }
         let mut plaintext = vec![0; ciphertext.len()];

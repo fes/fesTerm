@@ -1,5 +1,13 @@
 # Milestone Progress Narrative
 
+## Framing verified channels without blocking on full messages
+
+The experimental Noise channel now has a bounded incremental record-framing
+component. It handles partial writes and fragmented input in both directions,
+authenticates complete frames before release, and closes on malformed records,
+truncation or failed partial output. It does not supply I/O deadlines, a
+disclosure guard or a transport, and it does not enable MCP.
+
 ## Exploring channel binding without trusting process names
 
 The observation prototype remains disabled because a same-user pipe and an
