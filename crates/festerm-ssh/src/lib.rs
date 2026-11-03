@@ -23,11 +23,11 @@ use std::{
 
 use festerm_secret_store::{SecretBytes, SecretReference, SecretStore, SecretStoreError};
 use festerm_session::{
-    noop_session_event_notifier, FlowDirection, Session, SessionError, SessionErrorKind,
-    SessionEvent, SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics,
-    SessionOperation, SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult,
-    SshPortForwardDirection, SshPortForwardSource, TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY,
-    DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
+    noop_session_event_notifier, AutomationEpoch, FlowDirection, Session, SessionError,
+    SessionErrorKind, SessionEvent, SessionEventNotifier, SessionId, SessionLifecycle,
+    SessionMetrics, SessionOperation, SessionSendError, SessionTryReceiveError, ShutdownError,
+    ShutdownResult, SshPortForwardDirection, SshPortForwardSource, TerminalSize,
+    DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
 use ssh_key::Certificate as OpenSshCertificate;
 use zeroize::Zeroize;
@@ -1804,6 +1804,8 @@ impl WorkerCommandReceiver {
 
 struct WorkerShared {
     id: SessionId,
+    automation_epoch: Arc<AutomationEpoch>,
+    lifecycle_transition: Mutex<()>,
     lifecycle: Mutex<SessionLifecycle>,
     desired_terminal_size: Mutex<TerminalSize>,
     pre_running_resize_pending: AtomicBool,
@@ -1821,6 +1823,11 @@ struct WorkerShared {
 
 impl WorkerShared {
     fn begin_transport(&self) {
+        let _transition = self
+            .lifecycle_transition
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.automation_epoch.transition(false);
         let generation = self
             .transport_generation
             .fetch_add(1, Ordering::AcqRel)
@@ -1882,11 +1889,29 @@ impl WorkerShared {
     }
 
     fn set_lifecycle(&self, lifecycle: SessionLifecycle) {
-        *self
-            .lifecycle
-            .lock()
-            .expect("SSH lifecycle lock is not poisoned") = lifecycle.clone();
+        {
+            let transition = self.lifecycle_transition.lock();
+            let healthy = transition.is_ok();
+            let _transition = transition.unwrap_or_else(|poisoned| poisoned.into_inner());
+            self.automation_epoch.transition(
+                healthy
+                    && matches!(&lifecycle, SessionLifecycle::Running)
+                    && !self.shutdown_requested(),
+            );
+            *self
+                .lifecycle
+                .lock()
+                .expect("SSH lifecycle lock is not poisoned") = lifecycle.clone();
+        }
         let _ = self.try_emit(SessionEvent::Lifecycle(lifecycle));
+    }
+
+    fn invalidate_automation_epoch(&self) {
+        let _transition = self
+            .lifecycle_transition
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.automation_epoch.transition(false);
     }
 
     fn set_reconnecting(&self, reconnecting: bool) {
@@ -1928,7 +1953,12 @@ impl WorkerShared {
     }
 
     fn request_shutdown(&self) {
+        let _transition = self
+            .lifecycle_transition
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.shutdown_requested.store(true, Ordering::Release);
+        self.automation_epoch.transition(false);
     }
 
     fn shutdown_requested(&self) -> bool {
@@ -2097,6 +2127,8 @@ impl SshWorkerFoundation {
         let password_gate = Arc::new(PasswordDecisionGate::new());
         let shared = Arc::new(WorkerShared {
             id: SessionId::next(),
+            automation_epoch: Arc::new(AutomationEpoch::new()),
+            lifecycle_transition: Mutex::new(()),
             lifecycle: Mutex::new(SessionLifecycle::Starting),
             desired_terminal_size: Mutex::new(initial_size),
             pre_running_resize_pending: AtomicBool::new(false),
@@ -3261,6 +3293,10 @@ impl Session for SshSession {
         self.foundation.lifecycle()
     }
 
+    fn automation_epoch(&self) -> Option<Arc<AutomationEpoch>> {
+        Some(Arc::clone(&self.foundation.shared.automation_epoch))
+    }
+
     fn metrics(&self) -> SessionMetrics {
         self.foundation.metrics()
     }
@@ -3306,6 +3342,10 @@ impl Session for SftpTerminalSession {
 
     fn lifecycle(&self) -> SessionLifecycle {
         self.foundation.lifecycle()
+    }
+
+    fn automation_epoch(&self) -> Option<Arc<AutomationEpoch>> {
+        Some(Arc::clone(&self.foundation.shared.automation_epoch))
     }
 
     fn metrics(&self) -> SessionMetrics {
@@ -3619,6 +3659,8 @@ pub async fn connect_gui_sftp_session(
     let (command_sender, receiver) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
     let shared = Arc::new(WorkerShared {
         id: SessionId::next(),
+        automation_epoch: Arc::new(AutomationEpoch::new()),
+        lifecycle_transition: Mutex::new(()),
         lifecycle: Mutex::new(SessionLifecycle::Starting),
         desired_terminal_size: Mutex::new(
             TerminalSize::new(80, 24).expect("default GUI SFTP terminal size is valid"),
@@ -3815,6 +3857,8 @@ pub async fn probe_remote_persistence_provider(
     // network.
     let shared = Arc::new(WorkerShared {
         id: SessionId::next(),
+        automation_epoch: Arc::new(AutomationEpoch::new()),
+        lifecycle_transition: Mutex::new(()),
         lifecycle: Mutex::new(SessionLifecycle::Starting),
         desired_terminal_size: Mutex::new(
             TerminalSize::new(80, 24).expect("default probe terminal size is valid"),
@@ -5863,6 +5907,7 @@ async fn run_authenticated_channel(
                     );
                 }
                 Ok(AuthenticatedCommandOutcome::Reconnect) => {
+                    shared.invalidate_automation_epoch();
                     teardown_port_forwards(
                         Some(handle.as_ref()),
                         &mut active_port_forwards,
@@ -5874,6 +5919,7 @@ async fn run_authenticated_channel(
                     return RunningOutcome::ReconnectRequested;
                 }
                 Err(_) => {
+                    shared.invalidate_automation_epoch();
                     teardown_port_forwards(
                         Some(handle.as_ref()),
                         &mut active_port_forwards,
@@ -5894,6 +5940,7 @@ async fn run_authenticated_channel(
         );
         if probe_due {
             if !probe_liveness(handle.as_ref()).await {
+                shared.invalidate_automation_epoch();
                 teardown_port_forwards(
                     Some(handle.as_ref()),
                     &mut active_port_forwards,
@@ -5914,6 +5961,7 @@ async fn run_authenticated_channel(
             message = channel.wait() => match message {
                 Some(russh::ChannelMsg::Data { data }) => emit_channel_output(shared, data.as_ref()),
                 Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                    shared.invalidate_automation_epoch();
                     teardown_port_forwards(
                         Some(handle.as_ref()),
                         &mut active_port_forwards,
@@ -5923,6 +5971,7 @@ async fn run_authenticated_channel(
                     return RunningOutcome::Exited(festerm_session::SessionExit::with_exit_code(exit_status));
                 }
                 Some(russh::ChannelMsg::ExitSignal { .. }) => {
+                    shared.invalidate_automation_epoch();
                     teardown_port_forwards(
                         Some(handle.as_ref()),
                         &mut active_port_forwards,
@@ -5932,6 +5981,7 @@ async fn run_authenticated_channel(
                     return RunningOutcome::Exited(festerm_session::SessionExit::with_signal(0, "remote signal"));
                 }
                 Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => {
+                    shared.invalidate_automation_epoch();
                     teardown_port_forwards(
                         Some(handle.as_ref()),
                         &mut active_port_forwards,
@@ -7863,6 +7913,88 @@ mod tests {
             })
         ));
         assert_eq!(worker.metrics().backpressure_count, 1);
+    }
+
+    #[test]
+    fn full_event_queue_cannot_preserve_ssh_epoch_across_reconnect() {
+        let (worker, commands, _, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            2,
+            1,
+            noop_session_event_notifier(),
+        );
+        assert!(matches!(
+            worker.try_recv_event(),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Starting))
+        ));
+        worker.shared.begin_transport();
+        worker.set_running();
+        assert!(matches!(
+            worker.try_recv_event(),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running))
+        ));
+        let epoch = Arc::clone(&worker.shared.automation_epoch);
+        let original = epoch.capture().unwrap();
+        assert!(worker.shared.record_output(b"old transport".to_vec()));
+
+        worker.try_reconnect().unwrap();
+        assert!(matches!(commands.try_recv(), Ok(WorkerCommand::Reconnect)));
+        worker.shared.invalidate_automation_epoch();
+        assert_eq!(epoch.capture(), None);
+        worker.shared.set_lifecycle(SessionLifecycle::Stopped);
+        worker.shared.set_lifecycle(SessionLifecycle::Starting);
+        worker.shared.begin_transport();
+        worker.set_running();
+        let replacement = epoch.capture().unwrap();
+        {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(original));
+            assert!(epoch.is_current(replacement));
+        }
+        assert!(matches!(
+            worker.try_recv_event(),
+            Ok(SessionEvent::Output(bytes)) if bytes == b"old transport"
+        ));
+        assert_eq!(worker.try_recv_event(), Err(SessionTryReceiveError::Empty));
+        assert!(worker.shared.record_output(b"replacement".to_vec()));
+        assert!(matches!(
+            worker.try_recv_event(),
+            Ok(SessionEvent::Output(bytes)) if bytes == b"replacement"
+        ));
+    }
+
+    #[test]
+    fn shutdown_during_ssh_startup_cannot_rearm_automation_epoch() {
+        let (worker, _commands, _, _) = SshWorkerFoundation::new(profile());
+        worker.shared.request_shutdown();
+        worker.set_running();
+        assert_eq!(worker.shared.automation_epoch.capture(), None);
+    }
+
+    #[test]
+    fn poisoned_ssh_lifecycle_serializer_cannot_rearm_automation_epoch() {
+        let (worker, _commands, _, _) = SshWorkerFoundation::new(profile());
+        worker.set_running();
+        let epoch = Arc::clone(&worker.shared.automation_epoch);
+        let original = epoch.capture().unwrap();
+        let shared = Arc::clone(&worker.shared);
+        assert!(thread::spawn(move || {
+            let _transition = shared.lifecycle_transition.lock().unwrap();
+            panic!("poison this backend's lifecycle serializer");
+        })
+        .join()
+        .is_err());
+
+        worker.set_running();
+        assert_eq!(epoch.capture(), None);
+        {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(original));
+        }
+        worker.shared.begin_transport();
+        worker.set_running();
+        assert_eq!(epoch.capture(), None);
+        worker.shared.request_shutdown();
     }
 
     #[test]

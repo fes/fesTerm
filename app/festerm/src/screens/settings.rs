@@ -1,6 +1,6 @@
 //! Settings application-surface presentation, split out of `screens.rs`.
 
-use std::path::PathBuf;
+use std::{collections::BTreeSet, path::PathBuf};
 
 use eframe::egui::{self, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
@@ -54,6 +54,9 @@ pub(crate) struct SettingsViewModel {
     pub show_resumable_sessions: bool,
     pub show_durable_session_in_status_bar: bool,
     pub automatic_update_checks: bool,
+    pub mcp_enabled: bool,
+    pub javascript_enabled: bool,
+    pub automation: crate::automation::SettingsSnapshot,
     pub default_sftp_local_directory: Option<String>,
     pub sftp_pane_order: SftpPaneOrderPreference,
 }
@@ -99,6 +102,9 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         show_resumable_sessions,
         show_durable_session_in_status_bar,
         automatic_update_checks,
+        mcp_enabled,
+        javascript_enabled,
+        automation,
         default_sftp_local_directory,
         sftp_pane_order,
     } = settings;
@@ -341,6 +347,39 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             ui.add_space(10.0);
                             if ui.button("Reset interface settings to defaults").clicked() {
                                 command = Some(AppCommand::ResetInterfaceSettings);
+                            }
+                        });
+
+                        ui.add_space(12.0);
+
+                        settings_card(ui, "Automation", |ui| {
+                            if settings_toggle_row(
+                                ui,
+                                "Enable local MCP",
+                                "Allow a local assistant adapter to request access. Each connection \
+                                 still needs a separate native grant for exact terminals. Terminal \
+                                 output can contain secrets. Off by default.",
+                                mcp_enabled,
+                            ) {
+                                command = Some(AppCommand::ToggleMcpEnabled);
+                            }
+                            ssh_paragraph(ui, "MCP activation is unavailable until private peer authentication is qualified; an enabled preference grants no terminal access.");
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Enable JavaScript workflows",
+                                "Allow explicitly approved workflows only where isolated execution \
+                                 is qualified. This does not grant terminal access or shell control. \
+                                 Off by default.",
+                                javascript_enabled,
+                            ) {
+                                command = Some(AppCommand::ToggleJavascriptEnabled);
+                            }
+                            ssh_paragraph(ui, "JavaScript execution is unavailable in this observation-only build. The preference grants no terminal access.");
+                            if let Some(action) = automation_settings(ui, &automation, mcp_enabled) {
+                                command = Some(AppCommand::Automation(action));
                             }
                         });
 
@@ -763,6 +802,87 @@ const fn terminal_font_label(font: TerminalFontPreference) -> &'static str {
 /// language (`ssh_section_heading` + a bordered, rounded surface), so
 /// Settings groups related controls the same way the rest of the app does
 /// instead of a flat, plain list of buttons.
+fn automation_settings(
+    ui: &mut Ui,
+    snapshot: &crate::automation::SettingsSnapshot,
+    enabled: bool,
+) -> Option<crate::automation::NativeCommand> {
+    use crate::automation::NativeCommand;
+    use festerm_automation::TargetRef;
+    ui.add_space(10.0);
+    ssh_paragraph(ui, snapshot.status);
+    if !enabled {
+        return None;
+    }
+    let mut command = None;
+    if ui
+        .button("Restart local MCP (revokes all access)")
+        .clicked()
+    {
+        command = Some(NativeCommand::RestartMcp);
+    }
+    ssh_paragraph(
+        ui,
+        "Connect your MCP client using this installed executable with --mcp. \
+         Compare the public verification code from festerm_pairing_status below. \
+         Connecting never opens an approval prompt or grants access.",
+    );
+    for channel in &snapshot.channels {
+        ui.push_id(("automation_channel", channel.channel), |ui| {
+            ui.separator();
+            ui.label(format!("Client verification code: {}", channel.verification_code));
+            if channel.approved {
+                ssh_paragraph(ui, "Observation granted for at most 5 minutes. No input or execution permission.");
+                for (target, label) in &snapshot.targets {
+                    if channel.approved_targets.contains(target) {
+                        ui.label(format!("Shared: {label}"));
+                    }
+                }
+                if ui.button("Revoke this MCP connection").clicked() {
+                    command = Some(NativeCommand::Revoke { channel: channel.channel });
+                }
+                return;
+            }
+            if ui.button("Disconnect this MCP connection").clicked() {
+                command = Some(NativeCommand::Revoke { channel: channel.channel });
+            }
+            ssh_paragraph(ui, "Choose exact attachments. This discloses their labels, live screen, retained history and selections, including any secrets they contain. \
+                At most 1 MiB and 256 operations per grant; no shell input. Lock, suspend, disconnect, replacement, expiry or disabling MCP revokes access.");
+            let id = ui.id().with("observation_approval");
+            let (mut verified, mut selected) = ui.data(|data| {
+                data.get_temp::<(bool, BTreeSet<TargetRef>)>(id).unwrap_or_default()
+            });
+            selected.retain(|reference| snapshot.targets.iter().any(|(target, _)| target == reference));
+            ui.checkbox(&mut verified, "I verified this exact code in my MCP client");
+            for (target, label) in &snapshot.targets {
+                ui.push_id((target.session(), target.generation()), |ui| {
+                    let mut checked = selected.contains(target);
+                    if ui.checkbox(&mut checked, label).changed() {
+                        if checked {
+                            selected.insert(*target);
+                        } else {
+                            selected.remove(target);
+                        }
+                    }
+                });
+            }
+            if selected.len() > 32 {
+                ssh_paragraph(ui, "Select at most 32 exact attachments.");
+            }
+            let allowed = verified && !selected.is_empty() && selected.len() <= 32;
+            if ui.add_enabled(allowed, egui::Button::new("Approve observation for 5 minutes")).clicked() {
+                command = Some(NativeCommand::ApproveObservation {
+                    channel: channel.channel, targets: selected.iter().copied().collect(),
+                });
+                verified = false;
+                selected.clear();
+            }
+            ui.data_mut(|data| data.insert_temp(id, (verified, selected)));
+        });
+    }
+    command
+}
+
 fn settings_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
     let _ = settings_card_response(ui, title, body);
 }
@@ -1159,6 +1279,9 @@ mod tests {
                             show_resumable_sessions: false,
                             show_durable_session_in_status_bar: false,
                             automatic_update_checks: false,
+                            mcp_enabled: false,
+                            javascript_enabled: false,
+                            automation: Default::default(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                         },
@@ -1178,6 +1301,53 @@ mod tests {
                     font_download_failed: false,
                 },
             )
+    }
+
+    #[test]
+    fn settings_exposes_independent_native_automation_toggles() {
+        let mut harness = settings_harness();
+        harness.run();
+        harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable local MCP")
+            .click();
+        harness.step();
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ToggleMcpEnabled)
+        ));
+        harness.state_mut().command = None;
+        harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable JavaScript workflows")
+            .click();
+        harness.step();
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ToggleJavascriptEnabled)
+        ));
+    }
+
+    #[test]
+    fn settings_can_disconnect_an_unapproved_mcp_channel() {
+        let snapshot = crate::automation::SettingsSnapshot::with_pending_channel_for_test(7);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 1000.0))
+            .build_ui_state(
+                move |ui, command: &mut Option<crate::automation::NativeCommand>| {
+                    if let Some(action) = automation_settings(ui, &snapshot, true) {
+                        *command = Some(action);
+                    }
+                },
+                None,
+            );
+        harness.run();
+        harness
+            .get_by_label("Disconnect this MCP connection")
+            .click();
+        harness.step();
+        assert!(matches!(
+            harness.state(),
+            Some(crate::automation::NativeCommand::Revoke { channel: 7 })
+        ));
     }
 
     #[test]
@@ -1849,6 +2019,9 @@ mod tests {
                             show_resumable_sessions: false,
                             show_durable_session_in_status_bar: false,
                             automatic_update_checks: false,
+                            mcp_enabled: false,
+                            javascript_enabled: false,
+                            automation: Default::default(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                         },

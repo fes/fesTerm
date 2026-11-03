@@ -1,3 +1,4 @@
+mod automation;
 mod confirmations;
 #[cfg(feature = "experimental-dev-tunnels")]
 #[path = "running_tunnels.rs"]
@@ -415,6 +416,8 @@ impl NativeMenuShortcutCache {
 /// driver.
 pub struct FesTermApp {
     state: AppState,
+    automation_settings: crate::automation::SettingsSnapshot,
+    automation_command: Option<crate::automation::NativeCommand>,
     image_budget: crate::markdown_images::ImageMemoryBudget,
     local_persistence_provider: PersistenceProviderKind,
     /// The deterministic local tab created only for native-window smoke. The
@@ -928,6 +931,8 @@ impl FesTermApp {
             native_menu_shortcut_cache: NativeMenuShortcutCache::default(),
             wake_monitor: None,
             wake_requested: Arc::new(AtomicBool::new(false)),
+            automation_settings: Default::default(),
+            automation_command: None,
             focus_mode: false,
             terminal_fonts_installed: true,
             effective_terminal_font,
@@ -1484,6 +1489,9 @@ impl FesTermApp {
     /// touches no tab, focus, scroll offset, selection, or in-progress text
     /// entry (ADR 0032).
     pub(crate) fn adopt_broadcast_configuration(&mut self, configuration: Configuration) {
+        if !configuration.interface_settings().mcp_enabled() {
+            self.automation_settings.disable();
+        }
         if configuration.interface_settings().image_memory_budget()
             != self
                 .state
@@ -1981,6 +1989,7 @@ impl FesTermApp {
         if self.current_interface_settings() == InterfaceSettings::DEFAULT {
             self.state
                 .dispatch(AppCommand::ResetInterfaceSettings, context);
+            self.automation_settings.disable();
             self.image_budget
                 .set_preference(InterfaceSettings::DEFAULT.image_memory_budget());
             return;
@@ -2504,6 +2513,7 @@ impl FesTermApp {
         let scrollback_limit = self.state.scrollback_limit();
         for (id, session) in self.state.session_tabs_with_id_mut() {
             if session.adopt_recovered_terminal() {
+                session.controller.record_local_observation_change();
                 session.apply_frontend_terminal_configuration(scrollback_limit);
                 needs_repaint = true;
             }
@@ -3611,6 +3621,7 @@ impl FesTermApp {
             return;
         } else if !authoritative {
             session.terminal.reset_to_initial_state();
+            session.controller.record_local_observation_change();
         }
         session.view.cancel_rectangle_copy();
         self.overlays.transient_notice = Some((
@@ -3642,6 +3653,7 @@ impl FesTermApp {
             return;
         } else if !authoritative {
             session.terminal.ingest(b"\x1b[2J\x1b[3J\x1b[H");
+            session.controller.record_local_observation_change();
         }
         session.view.cancel_rectangle_copy();
         self.overlays.transient_notice = Some((
@@ -6188,6 +6200,9 @@ impl FesTermApp {
                                 .state
                                 .show_durable_session_in_status_bar(),
                             automatic_update_checks: self.state.automatic_update_checks(),
+                            mcp_enabled: self.state.mcp_enabled(),
+                            javascript_enabled: self.state.javascript_enabled(),
+                            automation: self.automation_settings.clone(),
                             default_sftp_local_directory: self
                                 .state
                                 .default_sftp_local_directory()
@@ -6678,6 +6693,9 @@ impl FesTermApp {
                     let context = ui.ctx().clone();
                     self.set_image_memory_budget(budget, &context);
                 }
+                AppCommand::Automation(command) => {
+                    self.queue_automation_command(command);
+                }
                 command @ (AppCommand::ToggleChipLayout
                 | AppCommand::ToggleStatusBar
                 | AppCommand::ToggleShowSessionDetails
@@ -6691,6 +6709,8 @@ impl FesTermApp {
                 | AppCommand::ToggleShowResumableSessions
                 | AppCommand::ToggleDurableSessionInStatusBar
                 | AppCommand::ToggleCustomizeLocalShell
+                | AppCommand::ToggleMcpEnabled
+                | AppCommand::ToggleJavascriptEnabled
                 | AppCommand::SetScrollSpeed(_)
                 | AppCommand::ToggleRectangleCopyTrimTrailingSpaces
                 | AppCommand::SetEditorSettings(_)
@@ -6699,6 +6719,9 @@ impl FesTermApp {
                 | AppCommand::SetSftpPaneOrder(_)) => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
+                    if !self.state.mcp_enabled() {
+                        self.automation_settings.disable();
+                    }
                     self.persist_interface_settings();
                 }
                 command @ (AppCommand::ToggleTerminalLigatures
@@ -7312,6 +7335,8 @@ impl FesTermApp {
             native_menu_shortcut_cache: NativeMenuShortcutCache::default(),
             wake_monitor: None,
             wake_requested: Arc::new(AtomicBool::new(false)),
+            automation_settings: Default::default(),
+            automation_command: None,
             focus_mode: false,
             terminal_fonts_installed: false,
             window_was_focused: true,

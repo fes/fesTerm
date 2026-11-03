@@ -1,14 +1,17 @@
 # MCP and JavaScript Automation Design
 
-**Status: Staged implementation; no runtime enablement.** The owner selected
+**Status: Staged implementation; experimental observation only.** The owner selected
 JavaScript as the internal scripting language. [ADR 0065](adr/0065-mcp-and-javascript-automation.md)
 records the proposed authority and isolation decisions. This document defines
 their contracts and qualification gates. The owner authorized P1-P3 delivery in
 [#501](https://github.com/fes/fesTerm/issues/501). The memory-only
-`festerm-automation` authority kernel and independent default-off configuration
-fields are the first foundation; they do not expose a server, interpreter or
-terminal control. Adapter/engine APIs, manifests and platform policies below
-remain qualification contracts, not claims of shipping functionality.
+`festerm-automation` authority kernel, independent default-off settings and a
+local MCP observation adapter are implemented. The adapter can start on Windows
+only when private transport and the native privacy monitor initialize. macOS
+and Linux currently refuse activation because their screen-lock sources are not
+qualified. No JavaScript interpreter or terminal control is enabled. Native
+platform/client qualification remains open; later APIs, manifests and sandbox
+policies below are contracts, not claims of shipping functionality.
 
 ## Product intent and scope
 
@@ -49,11 +52,9 @@ flowchart LR
   B --> R[Immutable bounded terminal snapshots]
 ```
 
-Proposed modules/crates are `festerm-automation` (data types, authorization,
-quotas and run state), `festerm-automation-js` (engine integration),
-`festerm-automation-mcp` (protocol adapter), and an install-owned automation
-worker executable. Only the pure authority kernel exists at the initial
-foundation checkpoint; the other names are provisional.
+Modules/crates include `festerm-automation` (data types, authorization, quotas
+and run state) and `festerm-automation-mcp` (observation protocol adapter).
+`festerm-automation-js` and an install-owned worker remain future-stage names.
 The application composition root owns the broker and native approvals. Its
 coordinator remains the one owner of product actions and presented terminals.
 The terminal core remains UI/runtime/protocol-adapter independent.
@@ -68,8 +69,10 @@ Approval dialogs are native application-owned surfaces, never script HTML.
 
 Snapshotting runs at the app-owned terminal boundary. A logical observation
 revision changes when relevant rendered state changes; it is not a promise of
-raw transport history. No second terminal parser or terminal mutation owner is
-introduced. Waiters use notifications and bounded deadlines, not frame polling.
+raw transport history. The P1 revision does not track selection-only or viewport
+changes, so `wait_for_change` is not a selection notification. No second
+terminal parser or terminal mutation owner is introduced. Waiters use
+notifications and bounded deadlines, not frame polling.
 
 ## Authority model
 
@@ -370,22 +373,38 @@ The adapter never autostarts a missing GUI, opens a profile or executes an
 unreviewed script merely because a client connected. Stdout carries protocol
 messages only; stderr contains bounded content-free diagnostics.
 
-Bootstrap through a user-enabled native pairing/approval flow. The broker
-verifies the private endpoint's OS ownership/permissions and the launched
-adapter instance with a per-connection secret/handle exchanged through a
-private channel, never argv, a copied terminal command, a public socket name
-or script-visible data. The implementation must document how an externally
-launched adapter proves its paired identity without trusting `clientInfo` or
-leaving a reusable bearer credential in configuration. Failure to qualify this
-bootstrap blocks MCP enablement. An enabled process name or same OS UID alone
-does not grant terminal visibility. The native UI lists paired connections
-and supports disconnect/revoke independently.
+Bootstrap must use a user-enabled native pairing/approval flow and a
+per-connection secret or handle exchanged through a private channel. The
+Windows transport prototype uses a current-user-only local pipe and rejects
+remote clients, but this alone does not authenticate another process belonging
+to the same user. Resolving and reopening an OS-reported executable path also
+does not prove the identity of the image a process actually loaded if the path
+was replaced. The bootstrap is therefore unqualified and both listener and
+stdio adapter refuse activation on every platform.
 
-Pin a reviewed MCP SDK/protocol version and test the supported client matrix
-before implementation release. Support only explicitly negotiated versions;
+Once bootstrap is qualified, the application binds a distinct broker principal
+to the accepted handle; neither `clientInfo`, a wire ID nor a copied code owns
+the grant. The public random verification code shown by
+`festerm_pairing_status` lets the user match that exact stream in native
+Settings. It is not a secret or bearer credential. Connection, executable or
+OS user identity alone grants no visibility. A process that can control or
+relay the approved client remains outside the pairing's containment claim.
+The native UI lists channels and supports independent disconnect, including
+before approval. macOS and Linux also require qualified privacy monitoring.
+Startup and teardown run off the UI thread;
+admission stays closed until monitoring and the private endpoint are ready.
+Backend-owned attachment generations advance before transport loss, even if a
+bounded lifecycle-event queue drops notifications. Revocation and each
+nonblocking reply write share an admission boundary; bytes already written to
+the private channel cannot be recalled. The stdio input reader buffers at most
+64 bounded frames independently of private-channel backpressure, so it can
+observe EOF and revoke while forwarding is stalled; overflow closes the channel.
+
+The handwritten adapter implements the MCP `2025-11-25` protocol baseline;
+native client interoperability is not yet qualified. Support only negotiated versions;
 do not combine lifecycle/metadata rules from different spec generations.
 The cited transport documentation describes both current bindings and older
-compatibility, so implementation needs version-specific conformance tests.
+compatibility, so release needs version-specific conformance tests.
 Protocol cancellation maps to broker cancellation and bounded request state;
 MCP annotations and client approval UX are hints, never server authorization.
 
@@ -410,9 +429,11 @@ Tunnel/SSH credentials are not MCP credentials and must never be passed through.
 | `workflows.start` / `runs.get` / `runs.cancel` | Named digest/parameter validation, owned run ID, bounded status/result access and cancellation. No source-code eval parameter. | `workflows.invoke` plus child scopes; workflow phase |
 
 MCP names use protocol-valid identifiers; the dotted names here express domain
-operations. The adapter must publish an exact schema/name mapping before
-interoperability qualification, rather than assume every SDK accepts these
-illustrative names. All result schemas distinguish absent data, truncation,
+operations. The observation adapter publishes `festerm_pairing_status`,
+`festerm_sessions_list`, `festerm_sessions_get`, `festerm_terminal_read_screen`,
+`festerm_terminal_read_scrollback`, `festerm_terminal_get_selection` and
+`festerm_terminal_wait_for_change` with schemas through `tools/list`. All result
+schemas distinguish absent data, truncation,
 gaps, completion, refusal and unknown execution outcomes. Errors are stable
 codes with bounded safe text, never raw exceptions, tokens or shell output.
 
@@ -616,10 +637,26 @@ residual risks. This proposal does not label MCP or JavaScript inherently safe.
 
 ## Platform and staged delivery gates
 
-The initial configuration schema can be stored on every platform, but runtime
+The configuration schema can be stored on every platform, but runtime
 availability is independent. iOS has neither a qualified separate worker nor the
 desktop stdio/private-IPC hosting model. JavaScript and MCP server exposure stay
 unavailable there; a simulator build or enabled preference cannot change that.
+
+The P1 application integration refuses observation on every platform until its
+private peer bootstrap is qualified. macOS and Linux also lack qualified
+screen-lock monitoring. Neither an enabled preference nor a successful build
+overrides those failures. Native Windows lock/suspend, packaging and
+real-client interoperability remain unverified.
+
+After those gates are met, enable **local MCP** in Settings, configure the
+client to launch the installed `festerm` executable with `--mcp`, call
+`festerm_pairing_status`, and compare its public verification code with the
+matching Settings row. Explicitly select the exact terminal attachments to
+share and approve observation. Grants last at most five minutes and disclose
+the selected terminals' output, history, selection and labels, which may contain
+secrets. Disconnect, revoke, replacement, expiry or privacy loss ends access;
+no automatic regrant occurs. JavaScript's separate preference does not enable
+execution at this checkpoint.
 
 1. **P0 — design acceptance:** resolve the ADR, protocol/SDK scope, adversarial
    reviews and authority UX. No implementation enabled by merging documents.
@@ -650,11 +687,10 @@ semantics remain unchanged. No mobile feature is promised by this ADR.
 
 ## Validation plan
 
-All cases below are **planned**, with no passing feature evidence in this PR.
-Implementation must turn these into deterministic tests at the broker/worker/
-adapter boundary and map real test function names into traceability. Native
-evidence remains under `AUTO-01` through `AUTO-04`. Do not register placeholders
-as existing automated tests.
+The kernel and observation adapter have deterministic tests mapped in the
+traceability registry. The broader cases below remain acceptance requirements,
+not claims of complete coverage. Native evidence remains open under `AUTO-01`
+through `AUTO-04`; do not register placeholders as existing automated tests.
 
 | Case family | Required adversarial oracles |
 | --- | --- |

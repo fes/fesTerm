@@ -6,8 +6,8 @@
 use std::{
     fmt,
     sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, MutexGuard,
     },
     time::Duration,
 };
@@ -18,6 +18,96 @@ pub const DEFAULT_COMMAND_QUEUE_CAPACITY: usize = 64;
 pub const DEFAULT_EVENT_QUEUE_CAPACITY: usize = 128;
 /// Maximum bytes in one input command or output event.
 pub const MAX_IO_CHUNK_BYTES: usize = 64 * 1024;
+
+static AUTOMATION_ADMISSION: Mutex<()> = Mutex::new(());
+
+/// Serializes automation admission and disclosure with backend transitions.
+///
+/// Every session in this process shares the same lock.
+/// A poisoned lock is never recovered: automation must refuse admission and
+/// disclosure for the rest of the process. Do not call [`AutomationEpoch`]
+/// methods that acquire this lock, or backend operations that can transition
+/// an epoch, while holding the returned guard.
+pub fn automation_admission_lock() -> Option<MutexGuard<'static, ()>> {
+    AUTOMATION_ADMISSION.lock().ok()
+}
+
+/// A non-reusable automation identity for one backend transport attachment.
+///
+/// Backends transition this epoch before publishing lifecycle changes or
+/// replacing a transport. Observation must capture an epoch while the
+/// attachment is running and check it again under
+/// [`automation_admission_lock`] at each disclosure boundary. Generations
+/// are meaningful only with the same epoch, not across different backends.
+#[derive(Debug, Default)]
+pub struct AutomationEpoch {
+    generation: AtomicU64,
+    running: AtomicBool,
+    failed: AtomicBool,
+}
+
+impl AutomationEpoch {
+    /// Creates an epoch with no running attachment.
+    pub const fn new() -> Self {
+        Self {
+            generation: AtomicU64::new(0),
+            running: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
+        }
+    }
+
+    /// Invalidates the previous attachment and advances its generation.
+    ///
+    /// `running` may be true only once the transport is ready. Exhaustion or
+    /// a poisoned admission lock permanently disables this epoch. This
+    /// method acquires the admission lock and must not be called with it held.
+    pub fn transition(&self, running: bool) {
+        let Some(_guard) = automation_admission_lock() else {
+            self.fail_closed();
+            return;
+        };
+        self.running.store(false, Ordering::Release);
+        if self.failed.load(Ordering::Acquire) {
+            return;
+        }
+        let Some(next) = self.generation.load(Ordering::Acquire).checked_add(1) else {
+            self.fail_closed();
+            return;
+        };
+        self.generation.store(next, Ordering::Release);
+        self.running.store(running, Ordering::Release);
+    }
+
+    /// Captures the current generation only while the attachment is running.
+    ///
+    /// This method acquires the admission lock and must not be called with it
+    /// held. A returned generation must be rechecked at disclosure time.
+    pub fn capture(&self) -> Option<u64> {
+        let Some(_guard) = automation_admission_lock() else {
+            self.fail_closed();
+            return None;
+        };
+        if self.failed.load(Ordering::Acquire) || !self.running.load(Ordering::Acquire) {
+            return None;
+        }
+        Some(self.generation.load(Ordering::Acquire))
+    }
+
+    /// Checks a captured generation without taking the admission lock.
+    ///
+    /// The caller must hold a guard returned by [`automation_admission_lock`]
+    /// throughout this check and the admission or disclosure it protects.
+    pub fn is_current(&self, generation: u64) -> bool {
+        !self.failed.load(Ordering::Acquire)
+            && self.running.load(Ordering::Acquire)
+            && self.generation.load(Ordering::Acquire) == generation
+    }
+
+    fn fail_closed(&self) {
+        self.failed.store(true, Ordering::Release);
+        self.running.store(false, Ordering::Release);
+    }
+}
 
 /// Identifies one application-created session.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -590,8 +680,9 @@ impl std::error::Error for ShutdownError {}
 
 /// Runtime-independent session boundary used by local and future remote backends.
 ///
-/// All calls are nonblocking except [`Self::shutdown`], whose caller chooses a
-/// finite timeout. Events never mutate a terminal directly.
+/// Calls do not wait for transport I/O except [`Self::shutdown`], whose caller
+/// chooses a finite timeout. Lifecycle changes may wait for automation
+/// admission serialization. Events never mutate a terminal directly.
 pub trait Session: Send + Sync {
     fn id(&self) -> SessionId;
     fn lifecycle(&self) -> SessionLifecycle;
@@ -600,6 +691,13 @@ pub trait Session: Send + Sync {
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError>;
     fn try_shutdown(&self) -> Result<(), SessionSendError>;
     fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError>;
+
+    /// Returns the backend's live attachment identity, if it supports safe
+    /// automation observation. Implementations return the same shared epoch
+    /// for the backend's lifetime. `None` must not be treated as a grant.
+    fn automation_epoch(&self) -> Option<Arc<AutomationEpoch>> {
+        None
+    }
 
     /// Whether this backend, rather than the frontend terminal instance,
     /// answers terminal protocol replies generated while parsing output.
@@ -612,6 +710,138 @@ pub trait Session: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automation_epoch_invalidates_on_every_transition() {
+        let epoch = AutomationEpoch::default();
+        assert_eq!(epoch.capture(), None);
+        {
+            let _guard = automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(0));
+        }
+
+        epoch.transition(true);
+        let first = epoch.capture().unwrap();
+        {
+            let _guard = automation_admission_lock().unwrap();
+            assert!(epoch.is_current(first));
+        }
+
+        epoch.transition(false);
+        assert_eq!(epoch.capture(), None);
+        {
+            let _guard = automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(first));
+        }
+
+        epoch.transition(true);
+        let replacement = epoch.capture().unwrap();
+        assert!(replacement > first);
+        {
+            let _guard = automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(first));
+            assert!(epoch.is_current(replacement));
+        }
+
+        epoch.transition(true);
+        let next = epoch.capture().unwrap();
+        assert!(next > replacement);
+        let _guard = automation_admission_lock().unwrap();
+        assert!(!epoch.is_current(replacement));
+        assert!(epoch.is_current(next));
+    }
+
+    #[test]
+    fn automation_epoch_exhaustion_is_permanently_fail_closed() {
+        let epoch = AutomationEpoch::new();
+        {
+            let _guard = automation_admission_lock().unwrap();
+            epoch.generation.store(u64::MAX - 1, Ordering::Release);
+        }
+        epoch.transition(true);
+        assert_eq!(epoch.capture(), Some(u64::MAX));
+        {
+            let _guard = automation_admission_lock().unwrap();
+            assert!(epoch.is_current(u64::MAX));
+        }
+
+        epoch.transition(true);
+        assert_eq!(epoch.capture(), None);
+        {
+            let _guard = automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(u64::MAX));
+            epoch.generation.store(0, Ordering::Release);
+        }
+        epoch.transition(true);
+        assert_eq!(epoch.capture(), None);
+    }
+
+    #[test]
+    fn automation_epoch_transitions_serialize_with_admission() {
+        let epoch = Arc::new(AutomationEpoch::new());
+        epoch.transition(true);
+        let generation = epoch.capture().unwrap();
+        let guard = automation_admission_lock().unwrap();
+        let (started, start_receiver) = std::sync::mpsc::sync_channel(0);
+        let (finished, finish_receiver) = std::sync::mpsc::sync_channel(1);
+        let worker_epoch = Arc::clone(&epoch);
+        let worker = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            worker_epoch.transition(false);
+            finished.send(()).unwrap();
+        });
+        start_receiver.recv().unwrap();
+        assert!(finish_receiver.try_recv().is_err());
+        assert!(epoch.is_current(generation));
+        drop(guard);
+        finish_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        worker.join().unwrap();
+        assert_eq!(epoch.capture(), None);
+        let _guard = automation_admission_lock().unwrap();
+        assert!(!epoch.is_current(generation));
+    }
+
+    #[test]
+    fn automation_admission_poison_permanently_fails_closed() {
+        const CHILD: &str = "FESTERM_AUTOMATION_ADMISSION_POISON_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::automation_admission_poison_permanently_fails_closed",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated poison test failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let epoch = AutomationEpoch::new();
+        epoch.transition(true);
+        assert!(epoch.capture().is_some());
+        assert!(std::thread::spawn(|| {
+            let _guard = automation_admission_lock().unwrap();
+            panic!("poison the admission lock in this isolated test process");
+        })
+        .join()
+        .is_err());
+        assert!(automation_admission_lock().is_none());
+        assert_eq!(epoch.capture(), None);
+        epoch.transition(true);
+        assert_eq!(epoch.capture(), None);
+        let fresh = AutomationEpoch::new();
+        fresh.transition(true);
+        assert_eq!(fresh.capture(), None);
+    }
 
     #[test]
     fn terminal_size_requires_a_real_grid() {

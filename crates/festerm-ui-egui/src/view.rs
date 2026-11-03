@@ -27,8 +27,8 @@ use crate::{
         measure_input_to_paint_submission, paint_grid, FontSettings, GlyphCache, GridLayout,
         GridPaint,
     },
-    selection::selection_text,
     selection::Selection,
+    selection::{selection_text, selection_text_with_limit, SelectedTextError},
     TerminalSnapshot, DEFAULT_FOREGROUND,
 };
 
@@ -470,6 +470,29 @@ impl TerminalView {
         selection_text(
             TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows),
             &self.selection,
+        )
+    }
+
+    /// Returns the complete normal, smart, or frozen rectangle selection.
+    ///
+    /// `Ok(None)` means no valid selection. An output larger than `max_bytes`
+    /// UTF-8 bytes fails without truncation or allocating the selected text.
+    /// Retained-history coordinates and this view's viewport offset are honored.
+    /// A fixed 65,536-unit ceiling on visited cells, rows, and scanned text bytes
+    /// returns `WorkLimitExceeded` independently of the output byte limit.
+    /// Ordinary [`Self::selected_text`] has no traversal ceiling.
+    pub fn selected_text_with_limit(
+        &self,
+        terminal: &Terminal,
+        max_bytes: usize,
+    ) -> Result<Option<String>, SelectedTextError> {
+        if let Some(copy) = &self.rectangle_copy {
+            return copy.selected_text_with_limit(&self.cache, max_bytes);
+        }
+        selection_text_with_limit(
+            TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows),
+            &self.selection,
+            max_bytes,
         )
     }
 
@@ -2945,6 +2968,7 @@ mod history_overlay_tests {
         let view = TerminalView::default();
 
         assert_eq!(view.selected_text(&terminal), None);
+        assert_eq!(view.selected_text_with_limit(&terminal, 0), Ok(None));
     }
 
     #[test]
@@ -2960,6 +2984,68 @@ mod history_overlay_tests {
         view.selection.finish();
 
         assert_eq!(view.selected_text(&terminal), Some("sele".to_owned()));
+    }
+
+    #[test]
+    fn bounded_selection_text_routes_history_smart_and_frozen_rectangle_requests() {
+        let mut terminal = Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+        terminal.ingest("界e\u{301}.\r\nnew\r\nlive".as_bytes());
+        let mut view = TerminalView::default();
+        view.history.sync(&terminal);
+        view.history.offset_rows = terminal.scrollback_stats().physical_rows();
+        let snapshot =
+            TerminalSnapshot::from_terminal_viewport(&terminal, view.history.offset_rows);
+        let first = CellPosition { column: 0, row: 0 };
+        let last = CellPosition { column: 2, row: 0 };
+        view.selection
+            .begin_at(first, snapshot.content_position(first).unwrap());
+        view.selection
+            .extend_at(last, snapshot.content_position(last).unwrap());
+        view.selection.finish();
+        let expected = "界e\u{301}";
+        for offset in [0, view.history.offset_rows] {
+            view.history.offset_rows = offset;
+            assert_eq!(
+                view.selected_text_with_limit(&terminal, expected.len()),
+                Ok(Some(expected.to_owned()))
+            );
+            assert_eq!(
+                view.selected_text_with_limit(&terminal, expected.len() - 1),
+                Err(SelectedTextError::MaxBytesExceeded)
+            );
+        }
+
+        view.history.offset_rows = terminal.scrollback_stats().physical_rows();
+        view.smart_keyboard_hit = Some(first);
+        view.smart_select_at_target(&terminal, crate::SmartSelectionScope::Sentence);
+        assert_eq!(
+            view.selected_text_with_limit(&terminal, expected.len() + 1),
+            Ok(Some(format!("{expected}.")))
+        );
+        assert_eq!(
+            view.selected_text_with_limit(&terminal, expected.len()),
+            Err(SelectedTextError::MaxBytesExceeded)
+        );
+
+        view.begin_rectangle_copy(&terminal, true).unwrap();
+        assert_eq!(view.selected_text_with_limit(&terminal, 0), Ok(None));
+        let copy = view.rectangle_copy.as_mut().unwrap();
+        copy.primary_press(first);
+        copy.primary_move(last);
+        copy.primary_release();
+        terminal.ingest(b"\x1b[?1049hchanged");
+        terminal
+            .resize(festerm_core::Dimensions::new(4, 4).unwrap())
+            .unwrap();
+        assert_eq!(
+            view.selected_text_with_limit(&terminal, expected.len()),
+            Ok(Some(expected.to_owned()))
+        );
+        assert_eq!(
+            view.selected_text_with_limit(&terminal, expected.len() - 1),
+            Err(SelectedTextError::MaxBytesExceeded)
+        );
+        assert_eq!(view.selected_text(&terminal).as_deref(), Some(expected));
     }
 }
 

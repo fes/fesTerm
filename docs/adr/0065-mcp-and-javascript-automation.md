@@ -14,7 +14,7 @@ The owner selected **JavaScript** as fesTerm's future internal scripting
 language and requested a joint design with an MCP server. MCP would let an
 external assistant observe explicitly shared terminals and invoke authorized
 actions. JavaScript would express repeatable workflows using the same
-capabilities. Neither capability is currently implemented by this proposal.
+capabilities. The proposal itself did not implement either capability.
 REQ-EXT-004 requires a separate security model before implementing extensions.
 
 fesTerm already owns authenticated local/SSH/serial/tunnel sessions, retained
@@ -124,24 +124,30 @@ per-stage acceptance, independent reviews or platform evidence.
 - **Signed scripts are trusted:** signatures establish provenance, not benign
   behavior. Digests/signatures do not replace grants, confinement or review.
 - **Expose `eval_script(source)` through MCP:** makes external text executable
-  before a reviewed artifact/manifest exists. Initial MCP invokes named,
-  immutable workflows only.
+  before a reviewed artifact/manifest exists. P1 MCP is observation-only; named,
+  immutable workflow invocation follows P2 runtime qualification and the P3
+  authorization gates, and never accepts caller-supplied source.
 
 ## Consequences
 
-This adds a future security boundary without changing current crate ownership,
-terminal semantics, sessiond wire protocol, settings or shipping dependencies.
-Implementation would add worker packaging, capability/grant storage, broker
-queues, cancellation and protocol conformance obligations. The engine and
-platform containment remain substantial qualification work, not checklist
-claims. Desktop and mobile may qualify at different times.
+The staged implementation adds an application-owned security boundary,
+independent default-off settings, and automation crate/application dependencies.
+P1 is observation-only and preserves existing terminal semantics and the
+sessiond wire protocol. MCP activation is unavailable until private peer
+authentication is qualified; macOS and Linux also require qualified screen-lock
+monitoring. Windows requires its native privacy monitor and real-platform
+validation. iOS exposure remains deferred. Later
+stages would add worker packaging and workflow-specific grant, queuing,
+cancellation and protocol conformance obligations. The engine and platform
+containment remain substantial qualification work, not checklist claims.
+Desktop and mobile may qualify at different times.
 
-Users retain useful manual scripting and assistant-driven workflows, but
-grants can legitimately refuse a run that lacks a data-read or control scope.
-Revocation stops future broker effects; it cannot erase already disclosed data
-or undo accepted shell input. Existing local-user/remote account authority is
-not reduced by this feature. The residual-risk and failure sections in the
-design must be visible in implementation/release review.
+Once later stages qualify, users can have manual scripting and assistant-driven
+workflows, but grants can legitimately refuse a run that lacks a data-read or
+control scope. Revocation stops future broker effects; it cannot erase already
+disclosed data or undo accepted shell input. Existing local-user/remote account
+authority is not reduced by this feature. The residual-risk and failure sections
+in the design must be visible in implementation/release review.
 
 ## Validation impact
 
@@ -150,19 +156,23 @@ design must be visible in implementation/release review.
   explicit output disclosure, exact-target input leases and fail-closed
   lifecycle behavior. Existing single-writer, secret-store and trust/recovery
   boundaries remain in force.
-- **GUI/action edges affected:** `AUT-01` through `AUT-04`, all explicitly
-  deferred proposal edges. `AUT-05` covers default-off configuration and
-  `AUT-06` the implemented pure authority kernel; neither enables a runtime.
+- **GUI/action edges affected:** `AUT-01` through `AUT-04` remain deferred for
+  workflows/control. `AUT-05` covers independent default-off settings,
+  `AUT-06` the shared authority kernel, and `AUT-07` the partial local MCP
+  observation path and native pairing/revocation.
 - **Automated tests required:** The future acceptance matrix in
   [automation design](../automation-design.md#validation-plan) covers delegation,
   replay, disclosure, imports, resource bounds, confinement, cancellation,
   stale-target input and MCP transport behavior. The kernel's deterministic
   tests cover channel separation, exact targets, attenuation, quotas, lease
   epochs, completion cuts and idempotent starts. Configuration tests cover
-  independent default-off opt-ins. These do not prove an authenticated adapter,
-  a confined engine or native input ordering. Run the traceability gate and
-  documentation/reference checks.
-- **Native/manual evidence required:** `AUTO-01` through `AUTO-04`, deferred
-  behind broker, engine, platform sandbox, grant UI and lifecycle prerequisites.
+  independent default-off opt-ins. MCP protocol, private framing, bounded
+  observation, pairing and stale-target tests cover the P1 path. These do not
+  prove native lock behavior, client interoperability, a confined engine or
+  native input ordering. Run the traceability gate and documentation checks.
+- **Native/manual evidence required:** `AUTO-01` through `AUTO-04` remain open;
+  observation requires real platform/client/lock evidence, and later stages
+  additionally require engine, platform sandbox and input-ownership evidence.
 - **Coverage superseded:** None. All existing accepted requirements and evidence
-  retain their status. The registry maps the new proposal as `deferred`.
+  retain their status. Workflow/control edges remain deferred and the local MCP
+  observation edge is recorded as partial.

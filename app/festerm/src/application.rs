@@ -80,6 +80,7 @@ pub(crate) struct FesTermApplication {
     document_activation: ActivationQueue,
     native_documents: Option<festerm_macos_window::OpenDocumentBridge>,
     activation_errors: Arc<Mutex<VecDeque<String>>>,
+    automation: crate::automation::Coordinator,
 }
 
 impl FesTermApplication {
@@ -95,6 +96,7 @@ impl FesTermApplication {
             document_activation: ActivationQueue::default(),
             native_documents: None,
             activation_errors: Default::default(),
+            automation: Default::default(),
         }
     }
 
@@ -626,6 +628,25 @@ impl FesTermApplication {
             .app
             .set_application_live_session_counts(counts);
     }
+
+    fn drive_automation(&mut self, context: &egui::Context) {
+        let apps: Vec<_> = self.windows.iter().map(|window| &window.app).collect();
+        self.automation.tick(context, &apps);
+        for window in &mut self.windows {
+            if let Some(command) = window.app.take_automation_command() {
+                self.automation.command(command, context);
+            }
+        }
+        let apps: Vec<_> = self.windows.iter().map(|window| &window.app).collect();
+        let snapshot = self.automation.settings(&apps);
+        let mut changed = false;
+        for window in &mut self.windows {
+            changed |= window.app.set_automation_settings(snapshot.clone());
+        }
+        if changed {
+            context.request_repaint();
+        }
+    }
 }
 
 /// How far left of the pointer a detached window's origin is placed, so the
@@ -652,6 +673,7 @@ impl eframe::App for FesTermApplication {
         self.show_secondary_windows(&context);
         festerm_ui_egui::chrome::tab_drag::show_requested_drag_ghost(&context);
         self.settle_windows(&context);
+        self.drive_automation(&context);
         self.process_document_activation(&context);
         tracing::debug!(
             target: "festerm::rendering",
@@ -672,6 +694,22 @@ mod tests {
         let context = egui::Context::default();
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         (FesTermApplication::new(app), context)
+    }
+
+    #[test]
+    fn automation_channel_updates_schedule_a_followup_frame() {
+        let (mut application, context) = application();
+        application.window_mut(0).set_automation_settings(
+            crate::automation::SettingsSnapshot::with_pending_channel_for_test(7),
+        );
+        for _ in 0..4 {
+            context
+                .run_ui(egui::RawInput::default(), |_| {})
+                .drop_without_applying_deltas();
+        }
+        assert!(!context.has_requested_repaint());
+        application.drive_automation(&context);
+        assert!(context.has_requested_repaint());
     }
 
     #[test]

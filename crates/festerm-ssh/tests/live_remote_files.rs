@@ -247,13 +247,18 @@ impl russh::server::Handler for TestServer {
         session: &mut russh::server::Session,
     ) -> Result<(), Self::Error> {
         session.channel_success(channel)?;
+        let index = self
+            .channels
+            .iter()
+            .position(|item| item.id() == channel)
+            .unwrap();
+        let (mut shell_reader, shell_writer) = self.channels.remove(index).split();
+        // russh also delivers requests to the channel receiver; leaving it
+        // unread eventually blocks the whole fixture connection.
+        self.subsystems
+            .spawn(async move { while shell_reader.wait().await.is_some() {} });
         if matches!(self.shell_behavior, ShellBehavior::ContinuousOutput) {
-            let index = self
-                .channels
-                .iter()
-                .position(|item| item.id() == channel)
-                .unwrap();
-            let mut stream = self.channels.remove(index).into_stream();
+            let mut stream = shell_writer.make_writer();
             self.subsystems.spawn(async move {
                 let chunk = vec![b'x'; 16 * 1024];
                 while stream.write_all(&chunk).await.is_ok() {}
@@ -345,6 +350,15 @@ fn start_server(
     behavior: SubsystemBehavior,
     shell_behavior: ShellBehavior,
 ) -> (OwnedServer, u16, mpsc::Receiver<()>) {
+    let (server, port, subsystems, _) = start_server_with_shells(behavior, vec![shell_behavior]);
+    (server, port, subsystems)
+}
+
+fn start_server_with_shells(
+    behavior: SubsystemBehavior,
+    shell_behaviors: Vec<ShellBehavior>,
+) -> (OwnedServer, u16, mpsc::Receiver<()>, String) {
+    let server_deadline = Duration::from_secs(if shell_behaviors.len() > 1 { 45 } else { 15 });
     let (port_sender, port_receiver) = mpsc::channel();
     let (subsystem_started, subsystem_receiver) = mpsc::channel();
     let (connection_closed, closed_receiver) = mpsc::channel();
@@ -361,38 +375,57 @@ fn start_server(
             .build()
             .unwrap();
         runtime.block_on(async {
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-            port_sender.send(listener.local_addr().unwrap().port()).unwrap();
-            let config = russh::server::Config {
-                keys: vec![russh::keys::PrivateKey::random(
-                    &mut russh::keys::key::safe_rng(), russh::keys::Algorithm::Ed25519,
-                ).unwrap()],
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
+            let key = russh::keys::PrivateKey::random(
+                &mut russh::keys::key::safe_rng(),
+                russh::keys::Algorithm::Ed25519,
+            )
+            .unwrap();
+            let fingerprint = key
+                .public_key()
+                .fingerprint(russh::keys::HashAlg::Sha256)
+                .to_string();
+            port_sender
+                .send((listener.local_addr().unwrap().port(), fingerprint))
+                .unwrap();
+            let config = Arc::new(russh::server::Config {
+                keys: vec![key],
                 auth_rejection_time: Duration::ZERO,
                 ..Default::default()
-            };
+            });
             let serve = async {
-                let (stream, _) = listener.accept().await.unwrap();
-                let session = russh::server::run_stream(Arc::new(config), stream, TestServer {
-                    channels: Vec::new(),
-                    subsystem_started,
-                    behavior,
-                    shell_behavior,
-                    read_resume: server_read_resume,
-                    subsystems: tokio::task::JoinSet::new(),
-                    directories_created: server_directories_created,
-                    remote_forward_requests: server_forward_requests,
-                }).await.unwrap();
-                let _ = session.await;
-                let _ = connection_closed.send(());
+                for shell_behavior in shell_behaviors {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let session = russh::server::run_stream(
+                        Arc::clone(&config),
+                        stream,
+                        TestServer {
+                            channels: Vec::new(),
+                            subsystem_started: subsystem_started.clone(),
+                            behavior,
+                            shell_behavior,
+                            read_resume: Arc::clone(&server_read_resume),
+                            subsystems: tokio::task::JoinSet::new(),
+                            directories_created: Arc::clone(&server_directories_created),
+                            remote_forward_requests: Arc::clone(&server_forward_requests),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                    let _ = session.await;
+                    let _ = connection_closed.send(());
+                }
             };
             tokio::select! {
                 _ = serve => {}
                 _ = stop_receiver => {}
-                _ = tokio::time::sleep(Duration::from_secs(15)) => panic!("fixture server deadline"),
+                _ = tokio::time::sleep(server_deadline) => panic!("fixture server deadline"),
             }
         });
     });
-    let port = port_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (port, fingerprint) = port_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
     (
         OwnedServer {
             stop: Some(stop),
@@ -404,7 +437,50 @@ fn start_server(
         },
         port,
         subsystem_receiver,
+        fingerprint,
     )
+}
+
+#[test]
+fn text_sftp_automation_epoch_closes_synchronously_on_shutdown() {
+    let (_server, port, _activity) =
+        start_server(SubsystemBehavior::ServeFiles, ShellBehavior::Quiet);
+    let session = SftpTerminalSession::start(
+        fixture_profile(port),
+        SshAuthentication::password("fixture-password"),
+        None,
+        None,
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) => session
+                .host_key_decision_resolver()
+                .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                .unwrap(),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => break,
+            Ok(SessionEvent::Error(error)) => panic!("fixture startup failed: {error}"),
+            Ok(_) | Err(SessionTryReceiveError::Empty) => {
+                assert!(Instant::now() < deadline, "SFTP session never started");
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(SessionTryReceiveError::Closed) => panic!("SFTP fixture closed during startup"),
+        }
+    }
+
+    let epoch = session.automation_epoch().unwrap();
+    let generation = epoch.capture().unwrap();
+    session.try_shutdown().unwrap();
+    assert_eq!(epoch.capture(), None);
+    {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        assert!(!epoch.is_current(generation));
+    }
+    assert_eq!(
+        session.shutdown(Duration::from_secs(3)).unwrap(),
+        ShutdownResult::Stopped
+    );
 }
 
 #[test]
@@ -799,6 +875,107 @@ fn live_shell_control_and_shutdown_progress_with_busy_output_and_a_full_event_qu
             "busy output starved queued input or resize"
         );
         thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        session.shutdown(Duration::from_secs(3)).unwrap(),
+        ShutdownResult::Stopped
+    );
+}
+
+#[test]
+fn live_ssh_reconnect_invalidates_epoch_when_lifecycle_events_are_dropped() {
+    let (_server, port, _subsystems, fingerprint) = start_server_with_shells(
+        SubsystemBehavior::Reject,
+        vec![ShellBehavior::Quiet, ShellBehavior::Quiet],
+    );
+    let session = connect_session_with_options(
+        port,
+        SshSessionOptions::new().with_known_host_fingerprint(fingerprint),
+    );
+    let epoch = session.automation_epoch().unwrap();
+    let original = epoch.capture().unwrap();
+    session.try_send_input(b"shell-remains-responsive").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session.metrics().output_bytes < b"shell-remains-responsive".len() as u64 {
+        assert!(Instant::now() < deadline, "original shell did not reply");
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    let resize_start = session.metrics().resize_count;
+    let mut resize_requests = 0_u64;
+    let size = TerminalSize::new(100, 40).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session.metrics().event_queue_depth < session.metrics().event_queue_capacity {
+        match session.try_resize(size) {
+            Ok(()) => resize_requests += 1,
+            Err(festerm_session::SessionSendError::Full { .. }) => {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => panic!("could not fill the event queue: {error}"),
+        }
+        assert!(Instant::now() < deadline, "events did not fill the queue");
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session.metrics().resize_count < resize_start + resize_requests {
+        assert!(Instant::now() < deadline, "queued resizes did not complete");
+        thread::sleep(Duration::from_millis(5));
+    }
+    {
+        let metrics = session.metrics();
+        assert_eq!(metrics.event_queue_depth, metrics.event_queue_capacity);
+    }
+
+    session.try_reconnect().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let replacement = loop {
+        if let Some(generation) = epoch.capture().filter(|generation| {
+            *generation != original && session.lifecycle() == SessionLifecycle::Running
+        }) {
+            break generation;
+        }
+        assert!(Instant::now() < deadline, "SSH transport did not reconnect");
+        thread::sleep(Duration::from_millis(5));
+    };
+    let metrics = session.metrics();
+    assert_eq!(metrics.event_queue_depth, metrics.event_queue_capacity);
+    {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        assert!(!epoch.is_current(original));
+        assert!(epoch.is_current(replacement));
+    }
+
+    let mut drained_output = false;
+    while let Ok(event) = session.try_recv_event() {
+        match event {
+            SessionEvent::Output(_) => drained_output = true,
+            SessionEvent::Lifecycle(lifecycle) => {
+                panic!("unexpected lifecycle event after full queue: {lifecycle:?}");
+            }
+            _ => {}
+        }
+    }
+    assert!(drained_output);
+
+    session.try_send_input(b"shell-remains-responsive").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut output = Vec::new();
+    while !output
+        .windows(b"shell-remains-responsive".len())
+        .any(|window| window == b"shell-remains-responsive")
+    {
+        match session.try_recv_event() {
+            Ok(SessionEvent::Output(bytes)) => output.extend(bytes),
+            Ok(_) | Err(SessionTryReceiveError::Empty) => {
+                assert!(Instant::now() < deadline, "replacement shell did not reply");
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(SessionTryReceiveError::Closed) => panic!("replacement shell closed"),
+        }
+    }
+    {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        assert!(!epoch.is_current(original));
+        assert!(epoch.is_current(replacement));
     }
     assert_eq!(
         session.shutdown(Duration::from_secs(3)).unwrap(),

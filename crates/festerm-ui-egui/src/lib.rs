@@ -57,7 +57,10 @@ pub use native_painter::{
 };
 pub use rectangle_copy::RectangleCopyError;
 pub use renderer::{resolve_color, terminal_color_scheme, FontSettings};
-pub use selection::{normalize_selection_position, selection_text, Selection};
+pub use selection::{
+    normalize_selection_position, selection_text, selection_text_with_limit, SelectedTextError,
+    Selection,
+};
 pub use smart_selection::SmartSelectionScope;
 pub use view::{
     FrameDiagnostics, TerminalContextMenuAction, TerminalContextTarget, TerminalContextText,

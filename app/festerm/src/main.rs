@@ -6,6 +6,7 @@
 
 mod app;
 mod application;
+mod automation;
 mod configuration_startup;
 mod diagnostics;
 mod direct2d;
@@ -133,6 +134,24 @@ fn primary_viewport_builder(
 }
 
 fn main() -> eframe::Result<()> {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|argument| argument == "--mcp") {
+        if args.len() != 1 {
+            eprintln!("fesTerm --mcp accepts no additional arguments");
+            std::process::exit(2);
+        }
+        if let Err(error) = automation::run_stdio() {
+            if error.kind() == std::io::ErrorKind::Unsupported {
+                eprintln!("fesTerm MCP unavailable: private peer identity is not yet qualified.");
+            } else {
+                eprintln!(
+                    "fesTerm MCP unavailable or disconnected: check local MCP and client I/O."
+                );
+            }
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     let diagnostics = diagnostics::init();
     #[cfg(feature = "experimental-dev-tunnels")]
     let tunnel_launch = match tunnel_activation::parse_env() {

@@ -73,6 +73,7 @@ pub struct Broker {
     principals: BTreeMap<ConnectionId, Principal>,
     pending: BTreeMap<ApprovalId, PendingApproval>,
     targets: BTreeMap<u64, Target>,
+    forgotten_generation: Option<u64>,
     runs: BTreeMap<RunId, Run>,
     requests: BTreeMap<RequestId, Request>,
     starts: BTreeMap<(ConnectionId, StartKey), StartReceipt>,
@@ -105,6 +106,7 @@ impl Broker {
             principals: BTreeMap::new(),
             pending: BTreeMap::new(),
             targets: BTreeMap::new(),
+            forgotten_generation: None,
             runs: BTreeMap::new(),
             requests: BTreeMap::new(),
             starts: BTreeMap::new(),
@@ -143,13 +145,18 @@ impl Broker {
         self.starts.retain(|(owner, _), _| *owner != connection);
     }
 
-    /// Logical IDs remain tombstoned for this broker's lifetime. Attachment
-    /// generations must strictly increase, including after close/reconnect.
+    /// Attachment generations must strictly increase, including after
+    /// close/reconnect. Closed IDs remain tombstoned until explicitly forgotten.
     pub fn attach_target(&mut self, session: u64, generation: u64) -> Result<TargetRef> {
         if let Some(old) = self.targets.get(&session) {
             if generation <= old.reference.generation {
                 return Err(Error::StaleTarget);
             }
+        } else if self
+            .forgotten_generation
+            .is_some_and(|forgotten| generation <= forgotten)
+        {
+            return Err(Error::StaleTarget);
         } else if self.targets.len() >= self.limits.targets {
             return Err(Error::QuotaExceeded);
         }
@@ -191,6 +198,26 @@ impl Broker {
         Ok(())
     }
 
+    /// Frees a closed target's slot without allowing an old reference to recur.
+    ///
+    /// After this is used, every registration for an ID without a retained
+    /// tombstone must exceed the highest generation forgotten by this broker.
+    /// Applications must therefore use globally increasing generations.
+    pub fn forget_closed_target(&mut self, reference: TargetRef) -> Result<()> {
+        let target = self
+            .targets
+            .get(&reference.session)
+            .filter(|target| !target.active && target.reference == reference)
+            .ok_or(Error::StaleTarget)?;
+        let generation = target.reference.generation;
+        self.forgotten_generation = Some(
+            self.forgotten_generation
+                .map_or(generation, |forgotten| forgotten.max(generation)),
+        );
+        self.targets.remove(&reference.session);
+        Ok(())
+    }
+
     fn invalidate_target_grants(&mut self, target: TargetRef) {
         let connections: Vec<_> = self
             .principals
@@ -225,12 +252,16 @@ impl Broker {
     }
 
     fn validate_request(&self, request: &GrantRequest) -> Result<()> {
-        if request.bindings.is_empty()
+        if (request.bindings.is_empty() && request.direct_read_calls.is_empty())
             || request.bindings.len() > 16
             || request
                 .bindings
                 .iter()
                 .any(|binding| binding.api_version != 1)
+            || request
+                .direct_read_calls
+                .iter()
+                .any(|kind| !matches!(kind, DirectKind::Discovery | DirectKind::Observation))
         {
             return Err(Error::InvalidRequest);
         }
@@ -326,6 +357,10 @@ impl Broker {
                 .request
                 .bindings
                 .is_subset(&pending.request.bindings)
+            || !approval
+                .request
+                .direct_read_calls
+                .is_subset(&pending.request.direct_read_calls)
         {
             return Err(Error::Unauthorized);
         }
@@ -554,9 +589,13 @@ impl Broker {
             return Err(Error::InvalidRequest);
         }
         let grant = self.grant(connection, now)?;
-        if !spec.scope.subset_of(&grant.request.scope)
-            || !grant.request.bindings.contains(&spec.binding)
-        {
+        let binding_approved = grant.request.bindings.contains(&spec.binding)
+            || matches!(
+                spec.binding.invocation,
+                Invocation::Direct { operation }
+                    if grant.request.direct_read_calls.contains(&operation)
+            );
+        if !spec.scope.subset_of(&grant.request.scope) || !binding_approved {
             return Err(Error::Unauthorized);
         }
         if spec.deadline <= now

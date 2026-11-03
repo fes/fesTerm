@@ -44,10 +44,10 @@ use festerm_pty::{
 use festerm_secret_store::{SecretBytes, SecretStore};
 use festerm_serial::{LineSettings, SerialSession, SerialSessionError};
 use festerm_session::{
-    HostKeyPrompt, PasswordPrompt, Session, SessionErrorKind, SessionEvent, SessionEventNotifier,
-    SessionId, SessionLifecycle, SessionMetrics, SessionSendError, SessionTryReceiveError,
-    ShutdownError, ShutdownResult, SshPortForwardDirection, SshPortForwardRuntime,
-    SshPortForwardState, TerminalSize,
+    AutomationEpoch, HostKeyPrompt, PasswordPrompt, Session, SessionErrorKind, SessionEvent,
+    SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics, SessionSendError,
+    SessionTryReceiveError, ShutdownError, ShutdownResult, SshPortForwardDirection,
+    SshPortForwardRuntime, SshPortForwardState, TerminalSize,
 };
 use festerm_sessiond::{PersistentSession, PersistentSessionError};
 use festerm_ssh::{
@@ -524,6 +524,18 @@ impl Session for ApplicationSession {
             Self::Serial(session) => session.lifecycle(),
             #[cfg(test)]
             Self::TestSsh(session) => session.lifecycle(),
+        }
+    }
+
+    fn automation_epoch(&self) -> Option<Arc<AutomationEpoch>> {
+        match self {
+            Self::Local(session) => session.automation_epoch(),
+            Self::Persistent(session) | Self::DevTunnel(session) => session.automation_epoch(),
+            Self::Ssh(session) => session.automation_epoch(),
+            Self::Sftp(session) => session.automation_epoch(),
+            Self::Serial(session) => session.automation_epoch(),
+            #[cfg(test)]
+            Self::TestSsh(session) => session.automation_epoch(),
         }
     }
 
@@ -2549,6 +2561,9 @@ pub enum AppCommand {
     ToggleDurableSessionInStatusBar,
     /// Toggles the occasional background check for a newer fesTerm release.
     ToggleAutomaticUpdateChecks,
+    ToggleMcpEnabled,
+    ToggleJavascriptEnabled,
+    Automation(crate::automation::NativeCommand),
     /// Sets or clears the default starting local directory for new SFTP sessions.
     SetDefaultSftpLocalDirectory(Option<PathBuf>),
     /// Sets the visual left/right order for GUI SFTP panes.
@@ -2882,6 +2897,8 @@ pub struct AppState {
     show_durable_session_in_status_bar: bool,
     /// Whether fesTerm occasionally checks GitHub for a newer release.
     automatic_update_checks: bool,
+    mcp_enabled: bool,
+    javascript_enabled: bool,
     /// Visual left/right order for GUI SFTP panes.
     sftp_pane_order: SftpPaneOrderPreference,
     /// The default starting local directory for new SFTP sessions.
@@ -2997,6 +3014,8 @@ impl AppState {
             show_resumable_sessions: settings.show_resumable_sessions(),
             show_durable_session_in_status_bar: settings.show_durable_session_in_status_bar(),
             automatic_update_checks: settings.automatic_update_checks(),
+            mcp_enabled: settings.mcp_enabled(),
+            javascript_enabled: settings.javascript_enabled(),
             keyboard_bindings: settings.keyboard_bindings().clone(),
             #[cfg(test)]
             interface_settings_snapshot_count: std::cell::Cell::new(0),
@@ -3280,6 +3299,8 @@ impl AppState {
         self.show_resumable_sessions = settings.show_resumable_sessions();
         self.show_durable_session_in_status_bar = settings.show_durable_session_in_status_bar();
         self.automatic_update_checks = settings.automatic_update_checks();
+        self.mcp_enabled = settings.mcp_enabled();
+        self.javascript_enabled = settings.javascript_enabled();
         self.keyboard_bindings = settings.keyboard_bindings().clone();
         self.sftp_pane_order = settings.sftp_pane_order();
         self.default_sftp_local_directory = settings
@@ -3498,6 +3519,14 @@ impl AppState {
         self.automatic_update_checks
     }
 
+    pub const fn mcp_enabled(&self) -> bool {
+        self.mcp_enabled
+    }
+
+    pub const fn javascript_enabled(&self) -> bool {
+        self.javascript_enabled
+    }
+
     pub const fn prefer_powershell(&self) -> bool {
         self.prefer_powershell
     }
@@ -3562,6 +3591,8 @@ impl AppState {
         .with_show_resumable_sessions(self.show_resumable_sessions)
         .with_show_durable_session_in_status_bar(self.show_durable_session_in_status_bar)
         .with_automatic_update_checks(self.automatic_update_checks)
+        .with_mcp_enabled(self.mcp_enabled)
+        .with_javascript_enabled(self.javascript_enabled)
         .with_keyboard_bindings(self.keyboard_bindings.clone())
         .with_sftp_pane_order(self.sftp_pane_order)
         .with_default_sftp_local_directory(
@@ -4126,6 +4157,13 @@ impl AppState {
             AppCommand::ToggleAutomaticUpdateChecks => {
                 self.automatic_update_checks = !self.automatic_update_checks;
             }
+            AppCommand::ToggleMcpEnabled => {
+                self.mcp_enabled = !self.mcp_enabled;
+            }
+            AppCommand::ToggleJavascriptEnabled => {
+                self.javascript_enabled = !self.javascript_enabled;
+            }
+            AppCommand::Automation(_) => {}
             AppCommand::SetDefaultSftpLocalDirectory(path) => {
                 self.default_sftp_local_directory = path;
             }
@@ -4244,6 +4282,8 @@ impl AppState {
                 self.show_durable_session_in_status_bar =
                     InterfaceSettings::DEFAULT.show_durable_session_in_status_bar();
                 self.automatic_update_checks = InterfaceSettings::DEFAULT.automatic_update_checks();
+                self.mcp_enabled = InterfaceSettings::DEFAULT.mcp_enabled();
+                self.javascript_enabled = InterfaceSettings::DEFAULT.javascript_enabled();
                 self.keyboard_bindings = Default::default();
                 self.sftp_pane_order = InterfaceSettings::DEFAULT.sftp_pane_order();
                 self.default_sftp_local_directory = None;
@@ -9921,6 +9961,30 @@ mod tests {
             .and_then(|profile| local_profile_secondary(&profile));
 
         assert_eq!(session.launch_secondary, expected);
+    }
+
+    #[test]
+    fn automation_preferences_reset_and_replace_without_implicit_enablement() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(!state.mcp_enabled());
+        assert!(!state.javascript_enabled());
+        state.dispatch(AppCommand::ToggleMcpEnabled, &context);
+        assert!(state.mcp_enabled());
+        assert!(!state.javascript_enabled());
+        state.dispatch(AppCommand::ToggleJavascriptEnabled, &context);
+        let enabled = state.interface_settings();
+        assert!(enabled.mcp_enabled());
+        assert!(enabled.javascript_enabled());
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(!state.mcp_enabled());
+        assert!(!state.javascript_enabled());
+        let replacement = Configuration::empty()
+            .with_interface_settings(enabled)
+            .unwrap();
+        state.adopt_configuration(replacement);
+        assert!(state.mcp_enabled());
+        assert!(state.javascript_enabled());
     }
 
     #[test]

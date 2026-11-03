@@ -14,14 +14,20 @@ platforms and unqualified adapters disabled in the application.
    from `clientInfo`, JSON-RPC IDs, worker fields or IPC data.
 2. Register app-owned logical sessions with `attach_target(session, generation)`.
    Increase generation on attachment/account/host/provider/policy replacement.
-   Close targets explicitly. Logical IDs remain bounded tombstones, so neither
-   close nor reconnect can recycle an old binding. Human typing alone does not
-   change the attachment generation.
+   Close targets explicitly. Closed IDs remain bounded tombstones unless the
+   application calls `forget_closed_target`; after doing so it must assign
+   globally increasing generations for new registrations. Neither close nor
+   reconnect can recycle an old binding. Human typing alone does not change the
+   attachment generation.
 3. Decode bounded strict wire schemas **before allocating unbounded
    collections**. Serde derives do not impose an encoded-size/depth limit.
    `GrantRequest`/`Scope` are untrusted proposals. Only explicit paired-client
    requests or user-started invocations may reach `request_approval`; connection,
    terminal output and imported files must never trigger approval UI.
+   `direct_read_calls` is an explicit native-approved policy for schema-validated
+   discovery or observation within the exact granted scope. Each such run still
+   binds its own canonical operation/parameter digest. This policy cannot grant
+   workflow starts, control, or any other effect; their bindings remain exact.
 4. Native UI constructs `NativeApproval`, specifying exact targets and approved
    immutable `InvocationBinding`s. Show the real channel identity, observation
    disclosure, workflow/manifest/parameter digests and deadline. To authorize

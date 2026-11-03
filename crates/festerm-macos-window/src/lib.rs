@@ -1017,6 +1017,22 @@ impl WakeMonitor {
     }
 }
 
+/// Privacy monitoring is unavailable until a reliable screen-lock source is
+/// qualified. Installation synchronously revokes and returns an error.
+pub struct PrivacyMonitor {
+    _private: (),
+}
+
+impl PrivacyMonitor {
+    pub fn install(callback: std::sync::Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
+        callback();
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "macOS lock and suspend privacy monitoring is unavailable",
+        ))
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod menu {
     use std::sync::{mpsc, Arc};
@@ -1768,6 +1784,19 @@ mod tests {
         OpenDocumentCallbacks, OpenDocumentEnqueueResult, OpenDocumentError, OpenDocumentPending,
         OwnedNativeMenuState, OPEN_DOCUMENT_ERROR_CAPACITY, OPEN_DOCUMENT_REQUEST_CAPACITY,
     };
+
+    #[test]
+    fn unavailable_privacy_monitor_revokes_synchronously() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let caller = std::thread::current().id();
+        let result = super::PrivacyMonitor::install(Arc::new(move || {
+            assert_eq!(std::thread::current().id(), caller);
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(result, Err(error) if error.kind() == std::io::ErrorKind::Unsupported));
+    }
 
     #[test]
     fn native_menu_actions_map_to_shared_commands() {

@@ -62,6 +62,7 @@ impl Fixture {
         let request = GrantRequest {
             scope,
             bindings: bindings.iter().copied().collect(),
+            direct_read_calls: BTreeSet::new(),
         };
         let id = self
             .broker
@@ -154,10 +155,127 @@ fn connection_and_wire_ids_never_grant_authority() {
     let mut malicious = serde_json::to_value(GrantRequest {
         scope: f.scope(),
         bindings: BTreeSet::from([binding(1)]),
+        direct_read_calls: BTreeSet::new(),
     })
     .unwrap();
     malicious["approved"] = true.into();
     assert!(serde_json::from_value::<GrantRequest>(malicious).is_err());
+}
+
+#[test]
+fn closed_targets_can_be_forgotten_without_resurrecting_old_references() {
+    let mut broker = Broker::with_limits(
+        [7; 16],
+        Limits {
+            targets: 1,
+            ..Limits::default()
+        },
+    );
+    let first = broker.attach_target(1, 1).unwrap();
+    assert_eq!(broker.forget_closed_target(first), Err(Error::StaleTarget));
+    broker.close_target(first).unwrap();
+    broker.forget_closed_target(first).unwrap();
+    assert_eq!(broker.close_target(first), Err(Error::StaleTarget));
+    assert_eq!(broker.attach_target(1, 1), Err(Error::StaleTarget));
+    assert_eq!(broker.attach_target(2, 1), Err(Error::StaleTarget));
+
+    for generation in 2..=130 {
+        let target = broker.attach_target(generation, generation).unwrap();
+        assert_ne!(target, first);
+        broker.close_target(target).unwrap();
+        broker.forget_closed_target(target).unwrap();
+    }
+    let replacement = broker.attach_target(1, 131).unwrap();
+    assert_ne!(replacement, first);
+    assert_eq!(broker.close_target(first), Err(Error::StaleTarget));
+}
+
+#[test]
+fn flexible_direct_reads_require_native_approval_and_never_grant_effects() {
+    let mut f = Fixture::new();
+    let proposal = GrantRequest {
+        scope: f.scope(),
+        bindings: BTreeSet::new(),
+        direct_read_calls: BTreeSet::from([DirectKind::Observation]),
+    };
+    let pending = f
+        .broker
+        .request_approval(f.connection, proposal.clone(), f.now)
+        .unwrap();
+    let mut widened = proposal.clone();
+    widened.direct_read_calls.insert(DirectKind::Discovery);
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            pending,
+            NativeApproval::new(widened, MAX_GRANT_LIFETIME),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker
+        .approve(
+            f.connection,
+            pending,
+            NativeApproval::new(proposal, MAX_GRANT_LIFETIME),
+            f.now,
+        )
+        .unwrap();
+
+    let mut first = direct(DirectKind::Observation);
+    first.parameters = digest(1);
+    let mut second = first;
+    second.parameters = digest(2);
+    let run = f.run(f.scope(), first);
+    assert!(f
+        .broker
+        .admit_run(f.connection, None, f.spec(f.scope(), second), f.now)
+        .is_ok());
+    assert_eq!(
+        f.broker.prepare_request(
+            f.connection,
+            run,
+            Operation::Observe {
+                target: f.b,
+                max_bytes: 10,
+            },
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.admit_run(
+            f.connection,
+            None,
+            f.spec(f.scope(), direct(DirectKind::WorkflowStart)),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+
+    let invalid = GrantRequest {
+        scope: f.scope(),
+        bindings: BTreeSet::new(),
+        direct_read_calls: BTreeSet::from([DirectKind::WorkflowStart]),
+    };
+    assert_eq!(
+        f.broker.request_approval(f.connection, invalid, f.now),
+        Err(Error::InvalidRequest)
+    );
+}
+
+#[test]
+fn exact_direct_bindings_remain_parameter_specific() {
+    let mut f = Fixture::new();
+    let approved = direct(DirectKind::Observation);
+    f.approve(f.scope(), &[approved]);
+    let mut changed = approved;
+    changed.parameters = digest(1);
+    assert_eq!(
+        f.broker
+            .admit_run(f.connection, None, f.spec(f.scope(), changed), f.now),
+        Err(Error::Unauthorized)
+    );
 }
 
 #[test]
@@ -261,6 +379,7 @@ fn control_requires_native_remote_handoff_and_all_source_disclosure() {
     let proposal = GrantRequest {
         scope,
         bindings: BTreeSet::from([binding(1)]),
+        direct_read_calls: BTreeSet::new(),
     };
     let pending = f
         .broker
@@ -302,6 +421,7 @@ fn approvals_are_channel_bound_bounded_and_not_silently_renewed() {
     let proposal = GrantRequest {
         scope: f.scope(),
         bindings: BTreeSet::from([binding(1)]),
+        direct_read_calls: BTreeSet::new(),
     };
     let pending = f
         .broker
@@ -855,6 +975,7 @@ fn pending_native_control_approval_is_invalidated_by_an_ownership_change() {
     let proposal = GrantRequest {
         scope,
         bindings: BTreeSet::from([binding(1)]),
+        direct_read_calls: BTreeSet::new(),
     };
     let pending = f
         .broker

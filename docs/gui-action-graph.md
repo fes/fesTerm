@@ -313,13 +313,14 @@ session” is one semantic edge exercised from the chip close control, chip
 context menu, shortcut, command palette, native menu, and failure overlay. A
 route must not grow its own policy.
 
-## Proposed MCP and JavaScript automation (deferred)
+## Staged MCP and JavaScript automation
 
 [ADR 0065](adr/0065-mcp-and-javascript-automation.md) and the
-[automation design](automation-design.md) define proposed future routes only.
-No current GUI, MCP server or JavaScript runtime implements these edges.
-The fixture checkpoint `A0` is a future isolated app instance with a controlled
-session, a test workflow bundle and no grants; returning to A0 revokes all test
+[automation design](automation-design.md) define the staged authority contract.
+The observation-only `AUT-07` path is partial; workflows, control and their
+broader routes remain deferred. The fixture checkpoint `A0` is an isolated app
+instance with a controlled session and no grants; workflow fixtures remain
+future work. Returning to A0 revokes all test
 principals/leases, stops owned workers and closes only fixture-owned sessions.
 Do not construct it with personal profiles, output or credentials.
 
@@ -329,8 +330,9 @@ Do not construct it with personal profiles, output or credentials.
 | `AUT-02` | Scoped invocation → running/waiting → terminal run state | Qualified confined JavaScript worker and bounded broker operations; explicit writer lease for control | Direct/child effects and results obey caller intersection, recipient checks and quotas; a successful input call means admission only; failures/cancellation show unknown admitted outcomes honestly | Cancel; reap owned worker; revoke; return A0 | P, N; deferred |
 | `AUT-03` | Paired MCP caller → scoped observation or named workflow run | Authenticated private IPC, protocol-qualified adapter and caller grants; no raw eval | Tool/resource/list/subscription/result paths disclose only authorized data; forged/cross-client handles, replay and privileged workflow laundering refuse; lost responses cannot duplicate a run | Disconnect/revoke caller; cleanup to A0 | P, N; deferred |
 | `AUT-04` | Running/waiting → interrupted/revoked | Human input/take-control, lock/suspend, target replacement/disconnect, caller loss, expiry or worker fault | Admission closes and queued old-epoch effects/data reject; no retarget/replay/takeover/shell recreation after recovery; already admitted effects are not represented as rolled back | Explicit new invocation/grant or cleanup to A0 | P, H, N, U; deferred |
-| `AUT-05` | Default configuration → independent automation opt-in schema | Strict ordinary configuration parsing/persistence; runtime/UI integration remains staged | Legacy configuration starts with both features off; enabling either never enables the other or grants any session access; a saved preference does not qualify a platform | Restore default false values | P; UI/native integration pending |
-| `AUT-06` | No kernel authority → native-scoped run → revoked/completed | Trusted application registers exact targets and constructs native approvals; no transport/engine I/O | Channel/target separation, shared and ancestor budgets, source-to-control closure, minted leases, completion cuts and idempotent admission refuse stale/expanded authority; admitted execution outcomes remain unknown | Revoke/disconnect/expire; release leases | P; application/native integration pending |
+| `AUT-05` | Default configuration → independent automation opt-in | Strict ordinary configuration parsing/persistence and Settings controls | Legacy configuration starts with both features off; enabling either never enables the other or grants session access; a saved preference does not qualify a platform | Restore default false values | P, U; native usability pending |
+| `AUT-06` | No kernel authority → native-scoped run → revoked/completed | Trusted application registers exact targets and constructs native approvals | Channel/target separation, shared and ancestor budgets, source-to-control closure, minted leases, completion cuts and idempotent admission refuse stale/expanded authority; admitted execution outcomes remain unknown | Revoke/disconnect/expire; release leases | P; control/worker integration pending |
+| `AUT-07` | MCP off → local channel → exact-target observation → revoked | Enable MCP, match the channel's public code and explicitly approve selected live attachments; qualified private peer authentication and OS privacy monitor are required | Until qualified, activation refuses. Connection alone reveals no targets; reads/waits stay bounded and channel/target-specific; disconnect, privacy loss, expiry or replacement prevents queued data delivery; JavaScript and input stay unavailable | Revoke/disconnect or disable MCP | P, U; native/client evidence pending |
 
 ## Known-state checkpoints
 

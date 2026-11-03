@@ -117,6 +117,12 @@ impl Scope {
 pub struct GrantRequest {
     pub scope: Scope,
     pub bindings: BTreeSet<InvocationBinding>,
+    /// Explicitly allows schema-validated direct reads within `scope`, with
+    /// each invocation still bound to its own canonical parameter digest.
+    /// Only Discovery and Observation are supported; effects and workflows
+    /// always require exact bindings.
+    #[serde(default)]
+    pub direct_read_calls: BTreeSet<DirectKind>,
 }
 
 /// Native UI decision. Deliberately neither serializable nor deserializable.

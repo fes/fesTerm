@@ -1102,6 +1102,7 @@ impl FesTermApp {
             self.overlays.pending_settings_reset = None;
             self.state
                 .dispatch(AppCommand::ResetInterfaceSettings, context);
+            self.automation_settings.disable();
             self.image_budget
                 .set_preference(InterfaceSettings::DEFAULT.image_memory_budget());
             crate::markdown_images::wake_image_viewports(context);

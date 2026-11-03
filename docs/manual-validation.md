@@ -2664,26 +2664,28 @@ installed/upgrade/uninstall registration while preserving a sentinel default.
 This is not a claim about Finder menu presentation or Windows/Linux foreground
 behavior, and does not close CP-19.
 
-## Proposed MCP and JavaScript automation (AUTO-01 through AUTO-04)
+## Staged MCP and JavaScript automation (AUTO-01 through AUTO-04)
 
-All evidence below is **deferred and unperformed**. The planning contract is
+Native evidence below is **deferred and unperformed**. The planning contract is
 [ADR 0065](adr/0065-mcp-and-javascript-automation.md) and the
 [automation design](automation-design.md). A documentation PR does not prove
 confinement, protocol interoperability or native usability. Use only owned
 fixtures once the named prerequisite implementation exists.
 
-The first implementation foundation adds only the pure authority kernel and
-independent default-off configuration fields (`AUT-05`/`AUT-06`). Deterministic
-kernel/schema tests are not native pairing, settings usability, containment or
-input-ordering evidence. These manual scenarios remain open and no MCP server
-or JavaScript execution is enabled by that foundation.
+The P1 implementation adds native settings/pairing, private local transport
+and bounded observation (`AUT-05`–`AUT-07`), but refuses activation on every
+platform until private peer authentication is qualified. macOS and Linux also
+require reliable lock monitoring. Windows requires its native privacy guard to
+initialize; its real-platform behavior is not yet validated. Deterministic
+tests are not native pairing, settings usability, containment or input-ordering
+evidence. JavaScript and terminal control remain unavailable.
 
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
-| AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts. | Deferred native + usability | Prerequisites: accepted authority model, broker and native grant UI. Confirm observation disclosure, all-source/all-sink combinations and shell control authority are understandable; pairing/import alone has no effects. No evidence collected. |
+| AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts. | Deferred native + usability | Partial implementation: observation pairing and native grant UI. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. No native evidence collected. |
 | AUTO-02 | Run a malicious-worker fixture under the real installed sandbox on Windows x64/ARM64, macOS Apple Silicon and supported Linux distributions; attempt forbidden file/network/process/handle/debugger/IPC access and exceed CPU/memory budgets. | Deferred native security + packaging | Prerequisites: selected engine, reviewed OS containment policy and installed signed/owned helper. Demonstrate denial, setup failure before execution, responsive app and bounded teardown; unsupported platforms stay disabled. No evidence collected. |
-| AUTO-03 | Against controlled local/SSH/tunnel targets, race human input, lock/suspend, disconnect, close, reattach/replacement, caller loss and expiry with each broker admission/delivery boundary. | Deferred native lifecycle + usability | Prerequisites: broker epochs, input leases and worker cancellation. Validate acquisition against local pending input, explicit unknown remote-state handoff, no old-run reacquisition and parent completion with pending work/children. No stale writes/data, replay, takeover or exited-shell recreation; already admitted effects remain explicit. Re-unlock/recovery requires a new run/grant. No evidence collected. |
-| AUTO-04 | Exercise qualified local MCP clients with multiple principals, restricted workflow invocation, resource/status/result access, malformed requests, response loss, cancellation and result/backpressure quotas. | Deferred interoperability + native | Prerequisites: pinned SDK/protocol matrix, authenticated adapter IPC and attenuation tests. Distinguish the start RPC lifetime from its connection-owned asynchronous run, parent-owned script children, and their shared budgets/cancellation. No cross-client disclosure, scope amplification or duplicate run. HTTP, unattended triggers, command-job guarantees and iOS remain separately gated. No evidence collected. |
+| AUTO-03 | Against controlled local/SSH/tunnel targets, race human input, lock/suspend, disconnect, close, reattach/replacement, caller loss and expiry with each broker admission/delivery boundary. | Deferred native lifecycle + usability | Observation has deterministic epoch/revocation coverage; actual lock/suspend behavior needs platform qualification. Control additionally needs input leases and worker cancellation. No stale writes/data, replay, takeover or exited-shell recreation; already admitted effects remain explicit. Re-unlock/recovery requires a new run/grant. No native evidence collected. |
+| AUTO-04 | Exercise qualified local MCP clients with multiple principals, restricted workflow invocation, resource/status/result access, malformed requests, response loss, cancellation and result/backpressure quotas. | Deferred interoperability + native | The observation adapter implements MCP 2025-11-25 and has deterministic channel/attenuation tests; real clients remain unqualified. Future workflow tests must distinguish the start RPC lifetime from its connection-owned asynchronous run and parent-owned script children. No cross-client disclosure, scope amplification or duplicate run. HTTP, unattended triggers, command-job guarantees and iOS remain separately gated. No native evidence collected. |
 
 ## Intake rule for new work
 

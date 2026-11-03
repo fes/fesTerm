@@ -1321,6 +1321,9 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         show_resumable_sessions: true,
         show_durable_session_in_status_bar: false,
         automatic_update_checks: true,
+        mcp_enabled: false,
+        javascript_enabled: false,
+        automation: Default::default(),
         default_sftp_local_directory: Some("/home/devuser/sftp/example-drop".to_owned()),
         sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
     }

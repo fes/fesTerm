@@ -2188,6 +2188,8 @@ dependencies = [
  "eframe",
  "egui-winit",
  "egui_kittest",
+ "festerm-automation",
+ "festerm-automation-mcp",
  "festerm-config",
  "festerm-core",
  "festerm-document",
@@ -2235,6 +2237,14 @@ dependencies = [
 
 [[package]]
 name = "festerm-automation"
+version = "0.13.3"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "festerm-automation-mcp"
 version = "0.13.3"
 dependencies = [
  "serde",

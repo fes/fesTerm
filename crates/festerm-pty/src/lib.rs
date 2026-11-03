@@ -23,10 +23,11 @@ use std::{
 use std::time::Instant;
 
 use festerm_session::{
-    noop_session_event_notifier, FlowDirection, Session, SessionError, SessionErrorKind,
-    SessionEvent, SessionEventNotifier, SessionExit, SessionId, SessionLifecycle, SessionMetrics,
-    SessionOperation, SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult,
-    TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
+    noop_session_event_notifier, AutomationEpoch, FlowDirection, Session, SessionError,
+    SessionErrorKind, SessionEvent, SessionEventNotifier, SessionExit, SessionId, SessionLifecycle,
+    SessionMetrics, SessionOperation, SessionSendError, SessionTryReceiveError, ShutdownError,
+    ShutdownResult, TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY,
+    MAX_IO_CHUNK_BYTES,
 };
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
@@ -899,6 +900,8 @@ impl ProcessTree {
 
 struct Shared {
     id: SessionId,
+    automation_epoch: Arc<AutomationEpoch>,
+    lifecycle_transition: Mutex<()>,
     lifecycle: Mutex<SessionLifecycle>,
     metrics: Mutex<SessionMetrics>,
     event_sender: SyncSender<SessionEvent>,
@@ -919,11 +922,26 @@ impl Shared {
     }
 
     fn set_lifecycle(&self, lifecycle: SessionLifecycle) {
-        *self
-            .lifecycle
-            .lock()
-            .expect("session lifecycle lock is not poisoned") = lifecycle.clone();
+        {
+            let transition = self.lifecycle_transition.lock();
+            let healthy = transition.is_ok();
+            let _transition = transition.unwrap_or_else(|poisoned| poisoned.into_inner());
+            self.automation_epoch
+                .transition(healthy && matches!(&lifecycle, SessionLifecycle::Running));
+            *self
+                .lifecycle
+                .lock()
+                .expect("session lifecycle lock is not poisoned") = lifecycle.clone();
+        }
         let _ = self.try_emit(SessionEvent::Lifecycle(lifecycle));
+    }
+
+    fn invalidate_automation_epoch(&self) {
+        let _transition = self
+            .lifecycle_transition
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.automation_epoch.transition(false);
     }
 
     fn record_error(&self, error: SessionError) {
@@ -1151,6 +1169,8 @@ impl LocalPtySession {
         let (reader_done_sender, reader_done_receiver) = mpsc::sync_channel(1);
         let shared = Arc::new(Shared {
             id: SessionId::next(),
+            automation_epoch: Arc::new(AutomationEpoch::new()),
+            lifecycle_transition: Mutex::new(()),
             lifecycle: Mutex::new(SessionLifecycle::Starting),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: DEFAULT_EVENT_QUEUE_CAPACITY,
@@ -1264,6 +1284,10 @@ impl Session for LocalPtySession {
 
     fn lifecycle(&self) -> SessionLifecycle {
         self.shared.lifecycle()
+    }
+
+    fn automation_epoch(&self) -> Option<Arc<AutomationEpoch>> {
+        Some(Arc::clone(&self.shared.automation_epoch))
     }
 
     fn metrics(&self) -> SessionMetrics {
@@ -1474,6 +1498,7 @@ fn reader_worker(
     loop {
         match reader.read(&mut buffer) {
             Ok(0) => {
+                shared.invalidate_automation_epoch();
                 let _ = done_sender.send(Ok(()));
                 return;
             }
@@ -1500,6 +1525,7 @@ fn reader_worker(
                     SessionErrorKind::Output,
                     format!("local PTY read failed: {error}"),
                 );
+                shared.invalidate_automation_epoch();
                 shared.record_error(error.clone());
                 shared.cancel.store(true, Ordering::Release);
                 let _ = done_sender.send(Err(error));
@@ -1574,6 +1600,7 @@ fn control_worker(
             Ok(_) | Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 stopping = true;
+                shared.invalidate_automation_epoch();
                 shared.cancel.store(true, Ordering::Release);
                 shared.terminate_process_tree();
             }
@@ -2155,6 +2182,8 @@ mod tests {
         let notifier = Arc::new(CountingNotifier::default());
         let shared = Arc::new(Shared {
             id: SessionId::next(),
+            automation_epoch: Arc::new(AutomationEpoch::new()),
+            lifecycle_transition: Mutex::new(()),
             lifecycle: Mutex::new(SessionLifecycle::Running),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: 1,
@@ -2200,6 +2229,86 @@ mod tests {
     }
 
     #[test]
+    fn automation_epoch_closes_when_local_stop_event_is_lost() {
+        let (event_sender, event_receiver) = mpsc::sync_channel(1);
+        let (command_sender, _command_receiver) = mpsc::sync_channel(1);
+        let (_completion_sender, completion_receiver) = mpsc::sync_channel(1);
+        let shared = Arc::new(Shared {
+            id: SessionId::next(),
+            automation_epoch: Arc::new(AutomationEpoch::new()),
+            lifecycle_transition: Mutex::new(()),
+            lifecycle: Mutex::new(SessionLifecycle::Starting),
+            metrics: Mutex::new(SessionMetrics {
+                event_queue_capacity: 1,
+                ..SessionMetrics::default()
+            }),
+            event_sender,
+            event_notifier: noop_session_event_notifier(),
+            cancel: AtomicBool::new(false),
+            termination_requested: AtomicBool::new(false),
+            process_tree: None,
+            completion_receiver: Mutex::new(completion_receiver),
+            completion: Mutex::new(None),
+        });
+        let session = LocalPtySession {
+            process_id: None,
+            terminal_device: None,
+            shared: Arc::clone(&shared),
+            command_sender,
+            event_receiver: Mutex::new(event_receiver),
+        };
+        shared.set_lifecycle(SessionLifecycle::Running);
+        let epoch = session.automation_epoch().unwrap();
+        let generation = epoch.capture().unwrap();
+
+        session.try_shutdown().unwrap();
+        assert_eq!(session.lifecycle(), SessionLifecycle::Stopping);
+        assert_eq!(epoch.capture(), None);
+        {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(generation));
+        }
+        assert!(matches!(
+            session.try_recv_event(),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running))
+        ));
+        assert_eq!(session.try_recv_event(), Err(SessionTryReceiveError::Empty));
+    }
+
+    #[test]
+    fn pty_reader_eof_invalidates_epoch_before_exit_is_reported() {
+        let (event_sender, _event_receiver) = mpsc::sync_channel(1);
+        let (_completion_sender, completion_receiver) = mpsc::sync_channel(1);
+        let (reader_done, reader_completion) = mpsc::sync_channel(1);
+        let shared = Arc::new(Shared {
+            id: SessionId::next(),
+            automation_epoch: Arc::new(AutomationEpoch::new()),
+            lifecycle_transition: Mutex::new(()),
+            lifecycle: Mutex::new(SessionLifecycle::Starting),
+            metrics: Mutex::new(SessionMetrics {
+                event_queue_capacity: 1,
+                ..SessionMetrics::default()
+            }),
+            event_sender,
+            event_notifier: noop_session_event_notifier(),
+            cancel: AtomicBool::new(false),
+            termination_requested: AtomicBool::new(false),
+            process_tree: None,
+            completion_receiver: Mutex::new(completion_receiver),
+            completion: Mutex::new(None),
+        });
+        shared.set_lifecycle(SessionLifecycle::Running);
+        let generation = shared.automation_epoch.capture().unwrap();
+
+        reader_worker(Arc::clone(&shared), Box::new(std::io::empty()), reader_done);
+        assert_eq!(reader_completion.try_recv(), Ok(Ok(())));
+        assert_eq!(shared.lifecycle(), SessionLifecycle::Running);
+        assert_eq!(shared.automation_epoch.capture(), None);
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        assert!(!shared.automation_epoch.is_current(generation));
+    }
+
+    #[test]
     fn output_never_resumes_ahead_of_the_pressure_that_stalled_it() {
         // The ordering above is only interesting when the consumer drains at
         // the worst possible moment: while the producer is between failing to
@@ -2211,6 +2320,8 @@ mod tests {
             let (_completion_sender, completion_receiver) = mpsc::sync_channel(1);
             let shared = Arc::new(Shared {
                 id: SessionId::next(),
+                automation_epoch: Arc::new(AutomationEpoch::new()),
+                lifecycle_transition: Mutex::new(()),
                 lifecycle: Mutex::new(SessionLifecycle::Running),
                 metrics: Mutex::new(SessionMetrics {
                     event_queue_capacity: 1,

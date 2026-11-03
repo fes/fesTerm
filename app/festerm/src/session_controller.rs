@@ -1,4 +1,6 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use festerm_core::{Dimensions, Terminal};
@@ -16,6 +18,23 @@ use festerm_session::SessionMetrics;
 
 /// Maximum session events drained per frame before yielding for repaint.
 pub const MAX_SESSION_EVENTS_PER_FRAME: usize = 64;
+
+fn next_automation_instance(counter: &AtomicU64) -> Option<u64> {
+    counter
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            value.checked_add(1)
+        })
+        .ok()
+}
+
+fn automation_instance() -> Option<u64> {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let instance = next_automation_instance(&NEXT);
+    if instance.is_none() {
+        tracing::error!("automation session identities exhausted; new sessions cannot be shared");
+    }
+    instance
+}
 
 /// Maximum cumulative bytes synchronously handed to
 /// [`Terminal::ingest`](festerm_core::Terminal::ingest) in a single
@@ -421,6 +440,9 @@ pub struct SessionController<S: Session> {
     /// reconnect request. Lifecycle events may be observed out of order with
     /// a backend's initial state and are therefore not a safe generation seam.
     lifecycle_generation: u64,
+    automation_instance: Option<u64>,
+    automation_liveness: Arc<AtomicBool>,
+    observation_revision: u64,
     last_error: Option<String>,
     last_backpressure: Option<FlowDirection>,
     host_key_prompt: Option<HostKeyPrompt>,
@@ -478,6 +500,9 @@ impl<S: Session> SessionController<S> {
             debounced_resize: None,
             last_lifecycle: Some(lifecycle),
             lifecycle_generation: 1,
+            automation_instance: automation_instance(),
+            automation_liveness: Arc::new(AtomicBool::new(true)),
+            observation_revision: 1,
             last_error: None,
             last_backpressure: None,
             host_key_prompt: None,
@@ -514,6 +539,9 @@ impl<S: Session> SessionController<S> {
             debounced_resize: None,
             last_lifecycle: None,
             lifecycle_generation: 0,
+            automation_instance: automation_instance(),
+            automation_liveness: Arc::new(AtomicBool::new(true)),
+            observation_revision: 1,
             last_error: None,
             last_backpressure: None,
             host_key_prompt: None,
@@ -552,6 +580,7 @@ impl<S: Session> SessionController<S> {
 
     #[cfg(test)]
     pub fn set_lifecycle_for_test(&mut self, lifecycle: SessionLifecycle) {
+        self.update_automation_liveness(&lifecycle);
         self.last_lifecycle = Some(lifecycle);
     }
 
@@ -559,7 +588,48 @@ impl<S: Session> SessionController<S> {
         self.lifecycle_generation
     }
 
+    pub(crate) const fn observation_revision(&self) -> u64 {
+        self.observation_revision
+    }
+
+    pub(crate) const fn automation_instance(&self) -> Option<u64> {
+        self.automation_instance
+    }
+
+    pub(crate) fn automation_liveness(&self) -> Arc<AtomicBool> {
+        self.automation_liveness.clone()
+    }
+
+    pub(crate) fn automation_attachment_epoch(
+        &self,
+    ) -> Option<Arc<festerm_session::AutomationEpoch>> {
+        self.session.as_ref()?.automation_epoch()
+    }
+
+    fn update_automation_liveness(&mut self, lifecycle: &SessionLifecycle) {
+        if matches!(lifecycle, SessionLifecycle::Running) {
+            if !self.automation_liveness.load(Ordering::Acquire) {
+                let guard = festerm_session::automation_admission_lock();
+                self.automation_liveness = Arc::new(AtomicBool::new(guard.is_some()));
+            }
+        } else {
+            crate::automation::set_admission_flag(&self.automation_liveness, false);
+        }
+    }
+
+    pub(crate) fn record_local_observation_change(&mut self) {
+        self.observation_revision = self.observation_revision.saturating_add(1);
+        if self.observation_revision == u64::MAX {
+            crate::automation::set_admission_flag(&self.automation_liveness, false);
+            tracing::warn!("terminal observation revision exhausted; automation must refuse");
+        }
+    }
+
     pub fn advance_lifecycle_generation(&mut self) {
+        let guard = festerm_session::automation_admission_lock();
+        self.automation_liveness.store(false, Ordering::Release);
+        self.automation_liveness = Arc::new(AtomicBool::new(guard.is_some()));
+        drop(guard);
         self.lifecycle_generation = self.lifecycle_generation.saturating_add(1);
         if let Some(token) = self
             .pending_writes
@@ -710,6 +780,7 @@ impl<S: Session> SessionController<S> {
                 if !matches!(lifecycle, SessionLifecycle::Running) {
                     self.port_forwards = Vec::new();
                 }
+                self.update_automation_liveness(&lifecycle);
                 self.last_lifecycle = Some(lifecycle);
             }
             SessionEvent::ResizeApplied(size) => {
@@ -740,7 +811,7 @@ impl<S: Session> SessionController<S> {
                 self.port_forwards = forwards;
             }
             SessionEvent::Error(error) => self.record_session_error(error),
-            SessionEvent::RecoverySync(_) => {}
+            SessionEvent::RecoverySync(_) => self.record_local_observation_change(),
             SessionEvent::Output(_) => {}
         }
     }
@@ -1251,6 +1322,7 @@ impl<S: Session> SessionController<S> {
     /// and application teardown, where waiting would stall the native close
     /// animation.
     pub fn shutdown(&self) {
+        crate::automation::set_admission_flag(&self.automation_liveness, false);
         if let Some(session) = &self.session {
             match session.try_shutdown() {
                 Ok(()) => tracing::debug!(
@@ -1443,9 +1515,11 @@ fn pump_session_events_with_resize(
                     }
                 }
                 SessionEvent::RecoverySync(payload) => {
-                    observe(PumpedSessionEvent::Event(&event));
                     match festerm_sessiond::decode_recovery_sync_command(payload) {
-                        Ok(command) => apply_recovery_sync(terminal, &command),
+                        Ok(command) => {
+                            apply_recovery_sync(terminal, &command);
+                            observe(PumpedSessionEvent::Event(&event));
+                        }
                         Err(error) => {
                             observe(PumpedSessionEvent::Event(&SessionEvent::Error(
                                 SessionError::new(
@@ -1668,6 +1742,7 @@ pub(crate) mod fake {
         sent: Mutex<Vec<Vec<u8>>>,
         id: festerm_session::SessionId,
         lifecycle: Mutex<SessionLifecycle>,
+        automation_epoch: Arc<festerm_session::AutomationEpoch>,
         events: Mutex<VecDeque<SessionEvent>>,
         operations: Mutex<Vec<FakeSshOperation>>,
         add_port_forward_error: Mutex<Option<SshPortForwardRequestError>>,
@@ -1683,11 +1758,14 @@ pub(crate) mod fake {
 
     impl FakeSshSession {
         pub fn new(events: impl IntoIterator<Item = SessionEvent>) -> Self {
+            let automation_epoch = Arc::new(festerm_session::AutomationEpoch::new());
+            automation_epoch.transition(true);
             Self {
                 inner: Arc::new(FakeSshSessionInner {
                     sent: Mutex::new(Vec::new()),
                     id: festerm_session::SessionId::next(),
                     lifecycle: Mutex::new(SessionLifecycle::Running),
+                    automation_epoch,
                     events: Mutex::new(events.into_iter().collect()),
                     operations: Mutex::new(Vec::new()),
                     add_port_forward_error: Mutex::new(None),
@@ -1746,11 +1824,17 @@ pub(crate) mod fake {
 
         pub fn push_event(&self, event: SessionEvent) {
             if let SessionEvent::Lifecycle(lifecycle) = &event {
-                *self
+                let mut current = self
                     .inner
                     .lifecycle
                     .lock()
-                    .expect("fake ssh lifecycle lock") = lifecycle.clone();
+                    .expect("fake ssh lifecycle lock");
+                if *current != *lifecycle {
+                    self.inner
+                        .automation_epoch
+                        .transition(matches!(lifecycle, SessionLifecycle::Running));
+                    *current = lifecycle.clone();
+                }
             }
             self.inner
                 .events
@@ -1767,6 +1851,11 @@ pub(crate) mod fake {
             {
                 notifier.notify();
             }
+        }
+
+        pub fn replace_attachment_without_event(&self) {
+            self.inner.automation_epoch.transition(false);
+            self.inner.automation_epoch.transition(true);
         }
 
         pub fn reconnect_available(&self) -> bool {
@@ -1856,6 +1945,10 @@ pub(crate) mod fake {
                 .clone()
         }
 
+        fn automation_epoch(&self) -> Option<Arc<festerm_session::AutomationEpoch>> {
+            Some(self.inner.automation_epoch.clone())
+        }
+
         fn metrics(&self) -> SessionMetrics {
             SessionMetrics::default()
         }
@@ -1914,6 +2007,14 @@ mod tests {
 
     #[cfg(any(unix, windows))]
     use festerm_pty::{LocalProfile, LocalPtySession};
+
+    #[test]
+    fn automation_controller_identity_exhaustion_refuses_new_identities() {
+        let counter = AtomicU64::new(u64::MAX - 1);
+        assert_eq!(next_automation_instance(&counter), Some(u64::MAX - 1));
+        assert_eq!(next_automation_instance(&counter), None);
+        assert_eq!(next_automation_instance(&counter), None);
+    }
 
     #[test]
     fn keyboard_clipboard_barrier_preserves_prefix_suffix_and_accepted_byte_oracle() {

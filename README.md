@@ -184,8 +184,9 @@ for the supported subset and limits.
 - [Product positioning](PRODUCT_POSITIONING.md) — terminal landscape notes and
   the selected middle-ground product posture.
 - [MCP + JavaScript automation](docs/automation-design.md) — owner-authorized
-  staged campaign; pure authority/default-off configuration foundations only,
-  no enabled server or interpreter at the initial checkpoint.
+  staged campaign; default-off observation infrastructure is present, but MCP
+  activation, JavaScript and terminal control remain unavailable until their
+  platform security gates are qualified.
 - [Architecture decision records](docs/adr/) — accepted decisions and their
   rationale.
 - [Golden fixture format](tests/fixtures/README.md) — terminal-core fixture

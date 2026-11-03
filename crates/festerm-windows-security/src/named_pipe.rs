@@ -19,6 +19,7 @@ use windows_sys::Win32::{
         ERROR_PIPE_LISTENING, ERROR_PIPE_NOT_CONNECTED, GENERIC_READ, GENERIC_WRITE,
         INVALID_HANDLE_VALUE,
     },
+    Security::SECURITY_ATTRIBUTES,
     Storage::FileSystem::{
         CreateFileW, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, OPEN_EXISTING,
         PIPE_ACCESS_DUPLEX,
@@ -105,6 +106,14 @@ impl Pipe {
 
     pub fn set_write_timeout(&mut self, timeout: Duration) {
         self.write_timeout = timeout;
+    }
+
+    pub fn try_clone(&self) -> io::Result<Self> {
+        Ok(Self {
+            handle: self.handle.try_clone()?,
+            read_timeout: self.read_timeout,
+            write_timeout: self.write_timeout,
+        })
     }
 
     /// The server identity comes from the connected kernel pipe, not a PID
@@ -220,12 +229,44 @@ pub struct PipeListener {
 }
 
 impl PipeListener {
-    /// Uses the process token's default DACL. Callers needing an owner-only
-    /// DACL must hold the crate's `DefaultDaclGuard` during this operation.
+    /// Uses the default named-pipe security descriptor. Private endpoints
+    /// should use [`Self::bind_current_user`] instead.
     pub fn bind(name: &str, first: bool) -> io::Result<Self> {
         let name = local_pipe_name(name)?;
-        // SAFETY: the name is terminated and null security attributes select
-        // the token DACL. Nonblocking synchronous I/O needs no OVERLAPPED.
+        Self::bind_with_security(&name, first, None)
+    }
+
+    /// Creates a non-inheritable local pipe with an explicit protected DACL
+    /// granting only the current process user full access, without changing
+    /// the token's DACL. This instance also rejects remote clients.
+    ///
+    /// Pass `first = true` for the first instance to reject a pre-existing
+    /// name, and keep an instance alive when creating later instances. Windows
+    /// can retain an existing pipe's descriptor, so the returned handle is
+    /// verified and binding fails if its owner or DACL is not current-user-only.
+    /// This does not authenticate or exclude other processes of the same user.
+    pub fn bind_current_user(name: &str, first: bool) -> io::Result<Self> {
+        let name = local_pipe_name(name)?;
+        let listener = super::imp::with_current_user_only_security(|security| {
+            Self::bind_with_security(&name, first, Some(security))
+        })?;
+        if !super::imp::is_handle_current_user_only(&listener.pipe.handle)? {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the named pipe is not protected current-user-only access",
+            ));
+        }
+        Ok(listener)
+    }
+
+    fn bind_with_security(
+        name: &[u16],
+        first: bool,
+        security: Option<&SECURITY_ATTRIBUTES>,
+    ) -> io::Result<Self> {
+        // SAFETY: the name is terminated, and supplied security attributes and
+        // their descriptor remain valid for this synchronous creation. A null
+        // pointer selects the default descriptor. No OVERLAPPED is needed.
         let raw = unsafe {
             CreateNamedPipeW(
                 name.as_ptr(),
@@ -240,7 +281,7 @@ impl PipeListener {
                 65536,
                 65536,
                 0,
-                ptr::null(),
+                security.map_or(ptr::null(), ptr::from_ref),
             )
         };
         if raw == INVALID_HANDLE_VALUE {
@@ -313,6 +354,13 @@ fn wait_again(started: Instant, timeout: Duration) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::sync::{atomic::AtomicUsize, mpsc, Arc};
+    use windows_sys::Win32::{
+        Foundation::{GetHandleInformation, HANDLE_FLAG_INHERIT},
+        Security::{
+            InitializeSecurityDescriptor, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
+            SECURITY_DESCRIPTOR, SE_DACL_PROTECTED,
+        },
+    };
 
     fn pipe_name() -> String {
         static NEXT_PIPE: AtomicUsize = AtomicUsize::new(0);
@@ -328,6 +376,91 @@ mod tests {
         let client = Pipe::connect(name, Duration::from_secs(1), &AtomicBool::new(false)).unwrap();
         let server = listener.accept(&AtomicBool::new(false)).unwrap();
         (server, client)
+    }
+
+    #[test]
+    fn current_user_pipe_is_protected_and_supports_successive_instances() {
+        let name = pipe_name();
+        let first = PipeListener::bind_current_user(&name, true).unwrap();
+        assert!(super::super::imp::is_handle_current_user_only(&first.pipe.handle).unwrap());
+        let mut flags = 0;
+        // SAFETY: the live listener handle and output word are valid.
+        assert_ne!(
+            unsafe { GetHandleInformation(first.pipe.handle.as_raw_handle(), &mut flags) },
+            0
+        );
+        assert_eq!(flags & HANDLE_FLAG_INHERIT, 0);
+
+        let _first_client =
+            Pipe::connect(&name, Duration::from_secs(1), &AtomicBool::new(false)).unwrap();
+        let _first_server = first.accept(&AtomicBool::new(false)).unwrap();
+        assert_eq!(
+            PipeListener::bind_current_user(&name, true)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+
+        let second = PipeListener::bind_current_user(&name, false).unwrap();
+        assert!(super::super::imp::is_handle_current_user_only(&second.pipe.handle).unwrap());
+        let mut client =
+            Pipe::connect(&name, Duration::from_secs(1), &AtomicBool::new(false)).unwrap();
+        let mut server = second.accept(&AtomicBool::new(false)).unwrap();
+        client.write_all(b"request").unwrap();
+        let mut request = [0; 7];
+        server.read_exact(&mut request).unwrap();
+        assert_eq!(&request, b"request");
+        server.write_all(b"response").unwrap();
+        let mut response = [0; 8];
+        client.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"response");
+    }
+
+    #[test]
+    fn current_user_bind_rejects_an_existing_pipe_with_a_null_dacl() {
+        let name = pipe_name();
+        let mut descriptor = SECURITY_DESCRIPTOR::default();
+        // SAFETY: the descriptor is live, and a present null DACL deliberately
+        // makes only this test pipe unrestricted; it changes no token setting.
+        assert_ne!(
+            unsafe { InitializeSecurityDescriptor((&raw mut descriptor).cast(), 1) },
+            0
+        );
+        assert_ne!(
+            unsafe {
+                SetSecurityDescriptorDacl((&raw mut descriptor).cast(), 1, ptr::null_mut(), 0)
+            },
+            0
+        );
+        assert_ne!(
+            unsafe {
+                SetSecurityDescriptorControl(
+                    (&raw mut descriptor).cast(),
+                    SE_DACL_PROTECTED,
+                    SE_DACL_PROTECTED,
+                )
+            },
+            0
+        );
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: (&raw mut descriptor).cast(),
+            bInheritHandle: 0,
+        };
+        let existing = PipeListener::bind_with_security(
+            &local_pipe_name(&name).unwrap(),
+            true,
+            Some(&attributes),
+        )
+        .unwrap();
+        assert!(!super::super::imp::is_handle_current_user_only(&existing.pipe.handle).unwrap());
+        assert_eq!(
+            PipeListener::bind_current_user(&name, false)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert!(!super::super::imp::is_handle_current_user_only(&existing.pipe.handle).unwrap());
     }
 
     #[test]
@@ -452,10 +585,44 @@ mod tests {
     }
 
     #[test]
+    fn current_user_listener_wait_is_cancelled_without_a_wakeup_connection() {
+        let listener = PipeListener::bind_current_user(&pipe_name(), true).unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        let (started, entered) = mpsc::sync_channel(1);
+        let (done, finished) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            started.send(()).unwrap();
+            done.send(listener.accept(&worker_cancelled)).unwrap();
+        });
+        entered.recv_timeout(Duration::from_secs(1)).unwrap();
+        thread::sleep(2 * POLL_INTERVAL);
+        assert!(finished.try_recv().is_err());
+        cancelled.store(true, Ordering::Release);
+        let error = finished
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn only_local_pipe_paths_are_accepted() {
-        for invalid in [r"\\remote\pipe\name", r"C:\file", "\\\\.\\pipe\\bad\0name"] {
+        for invalid in [
+            r"\\remote\pipe\name",
+            r"\\.\pipe\",
+            r"C:\file",
+            "\\\\.\\pipe\\bad\0name",
+        ] {
             assert_eq!(
                 local_pipe_name(invalid).unwrap_err().kind(),
+                io::ErrorKind::InvalidInput
+            );
+            assert_eq!(
+                PipeListener::bind_current_user(invalid, true)
+                    .unwrap_err()
+                    .kind(),
                 io::ErrorKind::InvalidInput
             );
         }
