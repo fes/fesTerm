@@ -3,11 +3,12 @@
 
 use super::model::{Profile, Reattachable, SurfaceState, SurfaceSummary};
 use super::profiles::TrustedHostRow;
+use super::terminal_keyboard::KeyboardKind;
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
-    self, bottom_sheet, button, card, edit_zone_clicked, footnote, labelled, list_row, paint_fit,
-    screen_title, search_field, section_header, sheet_title, ButtonKind, Dot, RowSpec, TabItem,
-    Trailing,
+    self, bottom_sheet, button, card, edit_zone_clicked, footnote, labelled, list_row,
+    list_row_height, paint_fit, screen_title, search_field, section_header, sheet_title, swipe_row,
+    ButtonKind, Dot, RowSpec, TabItem, Trailing,
 };
 use eframe::egui::{self, Align2, CornerRadius, Margin, Rect, Sense, Stroke, StrokeKind, Ui};
 use festerm_ui_egui::icon::Icon;
@@ -48,6 +49,7 @@ pub struct ShellData<'a> {
     /// App-lock settings, when the host has a lock.
     pub lock: Option<super::app_lock::LockView>,
     pub text_size: TextSize,
+    pub default_keyboard: KeyboardKind,
 }
 
 /// Terminal text size preset. Pinch-zoom still adjusts a session freely; this
@@ -99,6 +101,7 @@ pub enum ShellAction {
     EditProfile(String),
     ForgetHost(usize),
     OpenSurface(u64),
+    CloseSurface(u64),
     Reattach(usize),
     OpenDemo,
     OpenHostSetup,
@@ -107,6 +110,7 @@ pub enum ShellAction {
     OpenProfilesTab,
     Lock(super::app_lock::LockAction),
     SetTextSize(TextSize),
+    SetDefaultKeyboard(KeyboardKind),
 }
 
 fn state_dot(state: SurfaceState) -> Dot {
@@ -132,7 +136,16 @@ fn surface_rows(ui: &mut Ui, surfaces: &[SurfaceSummary], actions: &mut Vec<Shel
             };
             row.selected = surface.current;
             row.divider = index > 0;
-            if list_row(ui, &row).clicked() {
+            let swipe = swipe_row(
+                ui,
+                ui.id().with(("surface-row", surface.id)),
+                "Close",
+                list_row_height(&row),
+                |ui| list_row(ui, &row),
+            );
+            if swipe.action {
+                actions.push(ShellAction::CloseSurface(surface.id));
+            } else if swipe.opened {
                 actions.push(ShellAction::OpenSurface(surface.id));
             }
         }
@@ -376,7 +389,10 @@ fn sessions_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAct
         }
     } else {
         surface_rows(ui, data.surfaces, actions);
-        footnote(ui, "Tap an open surface to switch without reconnecting.");
+        footnote(
+            ui,
+            "Tap an open surface to switch without reconnecting. Swipe left to close it.",
+        );
     }
     if !data.reattachable.is_empty() {
         section_header(ui, "Available to reattach", None, false);
@@ -410,6 +426,26 @@ fn settings_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAct
     footnote(
         ui,
         "Text size for terminals. Pinch to zoom a single session.",
+    );
+    section_header(ui, "Default keyboard", None, false);
+    card(ui, |ui| {
+        for (index, kind) in KeyboardKind::ALL.into_iter().enumerate() {
+            let mut row = RowSpec::new(kind.label());
+            row.selected = data.default_keyboard == kind;
+            row.trailing = if row.selected {
+                Trailing::Check
+            } else {
+                Trailing::None
+            };
+            row.divider = index > 0;
+            if list_row(ui, &row).clicked() {
+                actions.push(ShellAction::SetDefaultKeyboard(kind));
+            }
+        }
+    });
+    footnote(
+        ui,
+        "Used when fesTerm starts. Switching from More > Keyboard or the globe key also changes this default.",
     );
     section_header(ui, "Dev Tunnel hosts", None, false);
     card(ui, |ui| {
@@ -538,7 +574,10 @@ pub fn sessions_sheet(ctx: &egui::Context, bounds: Rect, data: &ShellData<'_>) -
             section_header(ui, "Available to reattach", host.as_deref(), false);
             reattach_rows(ui, data.reattachable, &mut actions);
         }
-        footnote(ui, "Tap an open surface to switch without reconnecting.");
+        footnote(
+            ui,
+            "Tap an open surface to switch without reconnecting. Swipe left to close it.",
+        );
         if button(ui, ButtonKind::Primary, "+  Open a profile", true).clicked() {
             actions.push(ShellAction::OpenProfilesTab);
         }

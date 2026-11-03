@@ -3,6 +3,7 @@ use festerm_tunnel_bridge::{
     host_identity::HostIdentity,
     relay::{host_fingerprint, Destination},
     setup_storage,
+    worker_log::{self, WorkerLog},
 };
 use fs2::FileExt;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -490,13 +491,18 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                 &directory,
                 &state,
                 &record,
-                executable,
+                executable.clone(),
                 cli_path,
                 no_takeover,
             )
             .await?
         }
     };
+    if record.executable == executable
+        && super::service_install::migrate_legacy_definition(&service(&record, &state))?
+    {
+        println!("Enabled automatic worker restart for this host.");
+    }
     if let Some(ready) = healthy_record(&directory, &record)? {
         print_profile(&state, &record, &ready)?;
         return Ok(());
@@ -754,9 +760,62 @@ async fn upgrade_installation(
     Ok(next)
 }
 
+/// Refusals a restart cannot fix; the operator must rerun setup. Everything
+/// else (relay drops, bridge crashes, token/network failures) is retried.
+const PERMANENT_REFUSALS: &[&str] = &[
+    "service.user_context",
+    "setup.incomplete_installation",
+    "setup.target_missing",
+    "setup.target_identity",
+    "setup.daemon_identity",
+    "setup.exact_daemon_gone_no_replacement_created",
+    "setup.changed_cli_account",
+    "setup.changed_cli_account_after_token",
+    "setup.changed_host_identity",
+    "setup.tunnel_missing",
+    "setup.tunnel_identity",
+];
+
+pub(super) fn is_permanent_refusal(error: &io::Error) -> bool {
+    PERMANENT_REFUSALS.contains(&error.to_string().as_str())
+}
+
 pub(super) async fn serve(args: &[OsString]) -> io::Result<()> {
     super::service_install::ensure_unprivileged_user()?;
     let state = state_path(args)?;
+    let log = WorkerLog::new(&state);
+    {
+        let log = log.clone();
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            log.event("worker.panic", &[]);
+            previous(info);
+        }));
+    }
+    log.event("worker.start", &[("version", env!("CARGO_PKG_VERSION"))]);
+    let result = run_worker(&state, &log).await;
+    match &result {
+        Ok(()) => log.event("worker.exit", &[("reason", "bridge_stopped_cleanly")]),
+        Err(error) => log.event(
+            "worker.exit",
+            &[
+                ("reason", worker_log::code(&error.to_string())),
+                (
+                    "permanent",
+                    if is_permanent_refusal(error) {
+                        "yes"
+                    } else {
+                        "no"
+                    },
+                ),
+            ],
+        ),
+    }
+    result
+}
+
+async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
+    let state = state.to_path_buf();
     let directory = setup_storage::private_directory(&state, false)?;
     let health = lock(&directory, "health.lock")?;
     health
@@ -842,9 +901,29 @@ pub(super) async fn serve(args: &[OsString]) -> io::Result<()> {
             Some("--takeover")
         })
         .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .map_err(|_| refused("setup.start_bridge"))?;
+    let events = child.stderr.take().map(|stderr| {
+        let log = log.clone();
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            // Drain to EOF regardless of content: a stopped reader would make
+            // the bridge's next stderr write fail.
+            let mut reader = tokio::io::BufReader::new(stderr);
+            let mut line = Vec::new();
+            while matches!(reader.read_until(b'\n', &mut line).await, Ok(read) if read > 0) {
+                if let Some(text) = std::str::from_utf8(&line)
+                    .ok()
+                    .and_then(|line| worker_log::bridge_event(line.trim_end()))
+                {
+                    log.raw_event(&text);
+                }
+                line.clear();
+            }
+        })
+    });
     let mut input = child
         .stdin
         .take()
@@ -892,11 +971,16 @@ pub(super) async fn serve(args: &[OsString]) -> io::Result<()> {
     )?;
     ready_record(&directory, &record)?;
     FileExt::unlock(&health)?;
+    log.event("worker.bridge_ready", &[]);
     eprintln!("Managed experimental bridge ready; exact generation, no file capability. Reauthentication or a stale daemon requires explicit operator action.");
     let status = child
         .wait()
         .await
         .map_err(|_| refused("setup.bridge_wait"))?;
+    if let Some(events) = events {
+        let _ = timeout(Duration::from_secs(2), events).await;
+    }
+    log.event("worker.bridge_exit", &[("status", &exit_status(&status))]);
     health.try_lock_exclusive()?;
     if destination.exists() {
         fs::remove_file(&destination)?;
@@ -907,6 +991,16 @@ pub(super) async fn serve(args: &[OsString]) -> io::Result<()> {
         return Err(refused("setup.bridge_stopped"));
     }
     Ok(())
+}
+
+fn exit_status(status: &std::process::ExitStatus) -> String {
+    #[cfg(unix)]
+    if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(status) {
+        return format!("signal-{signal}");
+    }
+    status
+        .code()
+        .map_or_else(|| "unknown".into(), |code| code.to_string())
 }
 
 fn refuse_orphaned_state(state: &Path) -> io::Result<()> {
@@ -923,6 +1017,26 @@ fn refuse_orphaned_state(state: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_worker_retries_transient_failures_but_not_operator_refusals() {
+        for stage in [
+            "setup.exact_daemon_gone_no_replacement_created",
+            "setup.changed_cli_account",
+            "setup.changed_host_identity",
+        ] {
+            assert!(is_permanent_refusal(&refused(stage)), "{stage}");
+        }
+        for stage in [
+            "host.outer_task_closed",
+            "setup.bridge_stopped",
+            "setup.bridge_exited_before_ready",
+            "setup.host_token",
+            "setup.verify_account",
+        ] {
+            assert!(!is_permanent_refusal(&refused(stage)), "{stage}");
+        }
+    }
     #[test]
     fn managed_state_refuses_foreign_tunnel_account_and_generation() {
         let id = uuid::Uuid::new_v4();

@@ -1,5 +1,12 @@
 //! UIKit keyboard geometry, isolated from terminal semantics and rendering.
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KeyboardMode {
+    Hidden,
+    System,
+    Terminal,
+}
+
 #[cfg(target_os = "ios")]
 mod ios;
 #[cfg(target_os = "ios")]
@@ -23,6 +30,12 @@ impl KeyboardBridge {
     pub fn occluded_height_fraction(&self) -> f32 {
         0.0
     }
+
+    pub fn set_keyboard_mode(&self, _mode: KeyboardMode) -> Result<(), &'static str> {
+        Ok(())
+    }
+
+    pub fn play_input_click(&self) {}
 }
 
 /// No UIScene exists off iOS.

@@ -124,6 +124,7 @@ pub enum KeyImportFailure {
 }
 
 const TEXT_SIZE_FILE: &str = "terminal-text-size";
+const KEYBOARD_FILE: &str = "default-keyboard";
 
 pub struct Profiles {
     store: Arc<Mutex<ProfileStore>>,
@@ -173,6 +174,27 @@ impl Profiles {
     pub fn save_text_size(&self, size: super::shell::TextSize) -> Result<(), String> {
         std::fs::write(self.directory.join(TEXT_SIZE_FILE), size.key())
             .map_err(|_| "The text size could not be saved".to_owned())
+    }
+
+    pub fn default_keyboard(&self) -> Result<super::terminal_keyboard::KeyboardKind, String> {
+        use super::terminal_keyboard::KeyboardKind;
+        match std::fs::read_to_string(self.directory.join(KEYBOARD_FILE)) {
+            Ok(key) => KeyboardKind::from_key(&key).ok_or_else(|| {
+                "The saved default keyboard is invalid; using the built-in keyboard".to_owned()
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(KeyboardKind::Native),
+            Err(_) => Err(
+                "The default keyboard could not be read; using the built-in keyboard".to_owned(),
+            ),
+        }
+    }
+
+    pub fn save_default_keyboard(
+        &self,
+        kind: super::terminal_keyboard::KeyboardKind,
+    ) -> Result<(), String> {
+        std::fs::write(self.directory.join(KEYBOARD_FILE), kind.key())
+            .map_err(|_| "The default keyboard could not be saved".to_owned())
     }
 
     fn store(&self) -> MutexGuard<'_, ProfileStore> {
@@ -604,6 +626,21 @@ pub(crate) mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_keyboard_errors_are_reported_instead_of_overwriting_the_preference() {
+        use crate::terminal_keyboard::KeyboardKind;
+        let profiles = testing::profiles();
+        let path = profiles.directory.join(KEYBOARD_FILE);
+        std::fs::write(&path, "unknown-keyboard").unwrap();
+        assert!(profiles.default_keyboard().unwrap_err().contains("invalid"));
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(profiles.default_keyboard().is_err());
+        assert!(profiles
+            .save_default_keyboard(KeyboardKind::ShellRow)
+            .is_err());
+    }
 
     fn ssh(auth: SshAuth, remote_session: RemoteSession) -> SshProfile {
         SshProfile {

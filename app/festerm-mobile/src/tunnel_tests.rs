@@ -251,7 +251,7 @@ fn pump(rig: &mut Rig) {
 }
 
 #[test]
-fn trusted_tunnel_attaches_into_a_tab_with_the_hosts_screen() {
+fn tunnel_chrome_uses_friendly_name_and_inline_connection_status() {
     let mut rig = rig(None, true, true);
     let id = rig.profile.clone();
     let before = rig.app.tabs.len();
@@ -267,7 +267,10 @@ fn trusted_tunnel_attaches_into_a_tab_with_the_hosts_screen() {
     let surface = surfaces.last().unwrap();
     assert_eq!(surface.kind, model::SurfaceKind::DevTunnel);
     assert_eq!(surface.state, model::SurfaceState::Connected);
-    assert!(rig.app.chrome().subtitle.starts_with("Dev Tunnel"));
+    let chrome = rig.app.chrome();
+    assert_eq!(chrome.title, "devbox");
+    assert_eq!(chrome.subtitle, "Dev Tunnel · host session");
+    assert_eq!(chrome.line.state, model::SurfaceState::Connected);
     assert!(
         rig.app.active_spec().is_none(),
         "tunnel tabs have no SSH spec, so Files stays hidden"
@@ -327,6 +330,10 @@ fn being_taken_over_ends_the_session_without_reattaching() {
     assert!(
         status.starts_with("Taken over by another device"),
         "{status}"
+    );
+    assert_eq!(
+        rig.app.chrome().line.state,
+        model::SurfaceState::Disconnected
     );
     let banner = rig.app.reconnect_banner();
     let custom = banner.custom.expect("tunnel wording");
@@ -454,7 +461,9 @@ fn healthy_resume_retains_active_and_parked_tunnels_and_coalesces_notifications(
     rig.app.suspend_sessions();
     rig.app.suspend_sessions();
     assert!(!rig.app.live_view().unwrap().input_enabled);
+    assert_eq!(rig.app.chrome().line.state, model::SurfaceState::Connecting);
     wait_probe(&mut rig, |app| app.live_view().unwrap().input_enabled);
+    assert_eq!(rig.app.chrome().line.state, model::SurfaceState::Connected);
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         rig.app.poll_background(&rig.ctx);

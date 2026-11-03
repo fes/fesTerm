@@ -108,6 +108,24 @@ request repaint without polling. It unregisters observers on drop. Native
 unsafe calls live only in that adapter, following the AppKit crate precedent.
 Hardware/floating keyboard geometry is owned by UIKit; no guessed heights.
 
+The owner-requested optional terminal keyboards (2026-11-02) remain app-owned
+widgets over the same encoder. Built-in, Hold symbols and Shell row have a
+persisted startup default and an independent runtime switch. While a custom
+keyboard owns eligible terminal input, the UIKit adapter uses a main-thread
+UIKeyInput responder with an empty input view, forwarding hardware text and
+deletion to winit's existing receiver without storing text. Forms, native IME,
+lock and session readiness retain their existing ownership/gates; no upstream
+fork, new terminal writer, parser or transport queue is introduced.
+The custom input view adopts `UIInputViewAudioFeedback`; key-click requests use
+`UIDevice.playInputClick` so iOS enforces the user's keyboard-sound preference.
+No private keyboard-haptics settings, forced vibration, speech permissions or
+remote microphone routing are added. Dictation uses the existing native keyboard.
+The native adapter distinguishes System, Terminal and Hidden presentation:
+resign the other receiver before acquiring the requested one, reload the custom
+input view only on acquisition, and explicitly dismiss both for extended keys
+or other no-IME states. This prevents a cached host IME flag from keeping the
+native keyboard underneath an app-owned input panel.
+
 `InputEvent::ModifiedKey` adds explicit Ctrl/Alt/arrow chord encoding to the
 shared core; byte semantics stay out of mobile widgets. It uses the ordinary
 bounded atomic input queue and KAM gate. The mobile adapter applies one-shot
@@ -264,6 +282,17 @@ temporary device was removed. Files/README interaction, rotation, multitasking,
 accessibility and physical-device acceptance remain open on iPad.
 
 ## Validation impact
+
+The optional keyboard slice updates `MOB-02` in the GUI action graph,
+traceability and manual inventory. Actual-widget regressions cover saved
+defaults versus runtime switching/hiding, responsive pinned controls, forms
+and lifecycle gating, real core/backend byte admission and local shortcuts,
+hold alternates and cancelled/bounded repeat scheduling. The gallery captures
+both layouts and their symbols layer on phone/tablet; preview tests cover press,
+alternate and release/cancellation behavior, and measured layouts assert centered
+Space-bar width. Native responder handoff, sound settings,
+hardware input, keyboard animations, IME, touch comfort and accessibility remain
+manual gates; cross-compilation is not native runtime acceptance.
 
 Campaign #424 adds test-only mobile composition coverage over an owned SSH
 loopback peer. The real form, host-key resolver, interactive password retry,
