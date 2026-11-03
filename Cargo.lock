@@ -2266,6 +2266,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "festerm-automation-workflow"
+version = "0.14.0"
+dependencies = [
+ "festerm-automation",
+ "festerm-automation-js",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "festerm-config"
 version = "0.14.0"
 dependencies = [

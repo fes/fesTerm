@@ -37,7 +37,6 @@
     {
       "id": "mcp-javascript-automation-proposal",
       "edges": [
-        "AUT-01",
         "AUT-03",
         "AUT-04"
       ],
@@ -62,6 +61,25 @@
         "P1 authenticated broker/adapter and observation gates; P2 engine plus per-platform OS confinement qualification",
         "P3 writer-lease/lifecycle/unknown-outcome and native grant UI qualification before control",
         "P4 separate review for command jobs, HTTP, file APIs, unattended grants/triggers and iOS execution"
+      ]
+    },
+    {
+      "id": "automation-frozen-workflow-bindings",
+      "edges": ["AUT-01"],
+      "requirements": [
+        "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
+        "docs/automation-design.md#immutable-workflow-bundles"
+      ],
+      "decisions": ["ADR-0065"],
+      "automated_tests": [
+        "frozen_bindings_include_code_parameters_and_exact_target_mapping",
+        "manifest_and_frozen_target_scopes_attenuate_host_calls",
+        "projection_does_not_replace_broker_approval_or_completion_cut"
+      ],
+      "manual_scenarios": ["AUTO-01"],
+      "status": "partial",
+      "prerequisites": [
+        "Native workflow selection, exact approval UI, worker/broker integration and platform qualification remain open"
       ]
     },
     {

@@ -325,6 +325,15 @@ user-modifiable global library directory. Never accept foreign bytecode or
 serialized engine snapshots; QuickJS itself warns its bytecode is not a safe
 untrusted interchange format. Recompile approved source in the worker.
 
+The standalone workflow binding component freezes the snapshot, validated
+parameters, requested scopes and the complete one-to-one mapping from opaque
+target names to application-instance/session/generation references. Its
+parameter digest includes that mapping, so swapping two approved targets cannot
+silently retarget an unchanged parameter. It rejects host calls outside the
+manifest and frozen scopes; profile opening and child workflow calls remain
+unavailable there. This is only an intake projection, not a native grant,
+worker launch or substitute for live broker and controller checks.
+
 Code, parameter schema, permissions, dependency or API version changes produce
 a new digest and require a new grant. Filename, display version, publisher
 signature and an assistant's description are provenance/context only. In the

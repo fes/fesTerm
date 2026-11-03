@@ -1,5 +1,16 @@
 # Milestone Progress Narrative
 
+## Freezing workflow targets before consent
+
+The workflow intake component now binds validated parameters to the complete,
+one-to-one mapping of opaque names to application-instance and attachment
+generations, in addition to the immutable source and manifest. Swapping two
+targets therefore changes the invocation binding even if both remain in scope.
+Manifest capabilities and requested target scopes are checked again when host
+calls are projected. These checks do not grant access: native approval,
+single-broker dispatch, worker lifecycle, session creation and child workflows
+remain separate, disabled integration work.
+
 ## Isolated JavaScript worker without authority
 
 The P2 worker snapshots and hashes a bounded static JavaScript module graph
