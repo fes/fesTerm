@@ -286,6 +286,14 @@ embeds complete notices for bundled JetBrains Mono and Noto Emoji as well as
 all three optional families, including in packaged/offline applications.
 
 The optional `[settings]` table includes these interface preferences:
+`mcp_enabled` and `javascript_enabled` (independent booleans, both default
+`false`). They record explicit feature opt-in, not caller/session permissions:
+pairing and exact native grants are still required, and an unqualified platform
+must refuse execution even if its preference was enabled. Resetting interface
+settings disables both. Neither approval nor a reusable bearer token is stored
+in configuration. See [the automation contract](automation-design.md).
+
+Other interface preferences are
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
 `"single-row-scroll"`), `status_bar_visible` (default `true`),
 `show_session_details` (default `false`), `confirm_session_close` (default

@@ -3,7 +3,8 @@
 - **Status:** Proposed
 - **Date:** 2026-11-02
 - **Supersedes:** None
-- **Scope classification:** Deferred product capability; design and security review only
+- **Scope classification:** Owner-authorized P1-P3 implementation campaign;
+  staged qualification, disabled by default
 - **Related:** REQ-EXT-002/004; ADRs 0014, 0016, 0018, 0025, 0031, 0057, 0058;
   [application command model](../application-command-model.md)
 
@@ -66,8 +67,9 @@ to bypass another's restrictions.
    ambient credentials, file handles, shell/network APIs or application state.
 6. **Start locally and deliberately.** The first MCP binding is an opt-in local
    stdio adapter connected to the application through authenticated private IPC.
-   Connection alone grants no session access. Initial calls expose bounded
-   observation and named, reviewed workflow invocation; no tool evaluates
+   Connection alone grants no session access. The P1 checkpoint exposes bounded
+   observation only. Named, reviewed workflow invocation follows P2 runtime
+   qualification and the P3 control/authorization gates; no tool evaluates
    caller-supplied JavaScript. HTTP/network service, MCP client behavior,
    unattended schedules/output triggers and automatic repository script loading
    are deferred behind separate gates. HTTP would require a new transport threat
@@ -95,10 +97,17 @@ to bypass another's restrictions.
    resolved; no indefinite background execution or App Store acceptance is
    promised.
 
-The owner has settled the language choice. The ADR remains Proposed because
+The owner has settled the language choice and separately authorized the P1-P3
+implementation campaign in [issue #501](https://github.com/fes/fesTerm/issues/501).
+MCP and JavaScript have independent settings, both disabled by default.
+The observation-only MCP checkpoint is a distinct PR before JavaScript/control;
+subsequent work continues through P3. P4 remains deferred. Unsupported platform
+capabilities stay unavailable, with no in-process or weaker-confinement fallback.
+The ADR remains Proposed because
 the broker/security design, runtime implementation, permission UI and platform
 qualification have not been accepted. Merging these documents does not accept
-the ADR, enable a runtime, or authorize downstream implementation/release.
+the ADR or enable a runtime. Implementation authorization does not waive
+per-stage acceptance, independent reviews or platform evidence.
 
 ## Alternatives considered
 
@@ -142,13 +151,17 @@ design must be visible in implementation/release review.
   lifecycle behavior. Existing single-writer, secret-store and trust/recovery
   boundaries remain in force.
 - **GUI/action edges affected:** `AUT-01` through `AUT-04`, all explicitly
-  deferred proposal edges; no current interaction changes.
+  deferred proposal edges. `AUT-05` covers default-off configuration and
+  `AUT-06` the implemented pure authority kernel; neither enables a runtime.
 - **Automated tests required:** The future acceptance matrix in
   [automation design](../automation-design.md#validation-plan) covers delegation,
   replay, disclosure, imports, resource bounds, confinement, cancellation,
-  stale-target input and MCP transport behavior. No executable feature tests
-  exist or are claimed by this documentation PR. Run the existing traceability
-  gate and documentation/reference checks for this change.
+  stale-target input and MCP transport behavior. The kernel's deterministic
+  tests cover channel separation, exact targets, attenuation, quotas, lease
+  epochs, completion cuts and idempotent starts. Configuration tests cover
+  independent default-off opt-ins. These do not prove an authenticated adapter,
+  a confined engine or native input ordering. Run the traceability gate and
+  documentation/reference checks.
 - **Native/manual evidence required:** `AUTO-01` through `AUTO-04`, deferred
   behind broker, engine, platform sandbox, grant UI and lifecycle prerequisites.
 - **Coverage superseded:** None. All existing accepted requirements and evidence

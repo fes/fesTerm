@@ -355,7 +355,12 @@ The owner selected JavaScript for future internal scripting.
 [ADR 0065](docs/adr/0065-mcp-and-javascript-automation.md) and the
 [automation design](docs/automation-design.md) propose the joint MCP authority
 model; this records the design direction without accepting or enabling the
-feature. REQ-EXT-004 remains the implementation gate.
+feature. The owner separately authorized P1-P3 implementation in
+[#501](https://github.com/fes/fesTerm/issues/501), with an observation-only MCP
+PR checkpoint followed by confined JavaScript and authorized control.
+Independent `mcp_enabled` and `javascript_enabled` settings default to false;
+neither is a terminal-access grant. REQ-EXT-004 and the per-platform
+qualification gates still apply. P4 remains deferred.
 
 ### REQ-EXT-003 — Future multiplexing compatibility
 

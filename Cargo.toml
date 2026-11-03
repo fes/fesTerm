@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/festerm-automation",
     "app/festerm",
     "app/festerm-mobile",
     "crates/festerm-core",

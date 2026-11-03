@@ -1,10 +1,14 @@
 # MCP and JavaScript Automation Design
 
-**Status: Proposed; no implementation or enablement.** The owner selected
+**Status: Staged implementation; no runtime enablement.** The owner selected
 JavaScript as the internal scripting language. [ADR 0065](adr/0065-mcp-and-javascript-automation.md)
 records the proposed authority and isolation decisions. This document defines
-their contracts and qualification gates. API names, manifests and limits below
-are a proposed version-one contract, not existing fesTerm functions.
+their contracts and qualification gates. The owner authorized P1-P3 delivery in
+[#501](https://github.com/fes/fesTerm/issues/501). The memory-only
+`festerm-automation` authority kernel and independent default-off configuration
+fields are the first foundation; they do not expose a server, interpreter or
+terminal control. Adapter/engine APIs, manifests and platform policies below
+remain qualification contracts, not claims of shipping functionality.
 
 ## Product intent and scope
 
@@ -14,11 +18,17 @@ build tab, collecting selected diagnostics, creating a development workspace
 from approved profiles, and running an explicitly authorized task in a dedicated
 session. An assistant can help author a workflow; importing it never runs it.
 
-This is the deferred scripting/automation track under REQ-EXT-002 and
-REQ-EXT-004, outside the current milestone acceptance path. This document does
+This is the separately authorized scripting/automation track under REQ-EXT-002
+and REQ-EXT-004, outside the current milestone acceptance path. This document does
 not introduce plugins, an in-app AI model, an MCP client, cloud synchronization,
 a package marketplace, persistent terminal transcripts or a general shell daemon.
-It does not authorize implementation by itself.
+Its merge alone does not authorize implementation or bypass stage acceptance.
+
+MCP and JavaScript have independent settings, both disabled by default.
+Configuration opt-in never grants terminal visibility or control. Delivery has a
+distinct observation-only MCP PR checkpoint before JavaScript/control, then
+continues through P3. PRs remain incomplete until tests, independent limited-context
+security/reliability/scope reviews and required CI pass. P4 remains deferred.
 
 Initial qualification targets desktop local stdio MCP and manually started,
 reviewed JavaScript workflows. Network MCP, unattended runs, timer/output/login
@@ -42,7 +52,8 @@ flowchart LR
 Proposed modules/crates are `festerm-automation` (data types, authorization,
 quotas and run state), `festerm-automation-js` (engine integration),
 `festerm-automation-mcp` (protocol adapter), and an install-owned automation
-worker executable. Names are provisional; no Cargo changes accompany this PR.
+worker executable. Only the pure authority kernel exists at the initial
+foundation checkpoint; the other names are provisional.
 The application composition root owns the broker and native approvals. Its
 coordinator remains the one owner of product actions and presented terminals.
 The terminal core remains UI/runtime/protocol-adapter independent.
@@ -63,6 +74,12 @@ introduced. Waiters use notifications and bounded deadlines, not frame polling.
 ## Authority model
 
 ### Principals and grants
+
+The kernel's [integration contract](../crates/festerm-automation/README.md)
+defines the actual prepare/commit boundaries. Its IDs are references, never
+grants. Native application code alone approves scopes and remote-state handoff;
+wire requests cannot deserialize an approval. Kernel unit tests prove state
+transitions, not transport authentication, native input ordering or confinement.
 
 The broker tracks an application instance nonce, adapter connection identity,
 run identity, immutable workflow digest and parent run (if any). MCP `clientInfo`,
@@ -598,6 +615,11 @@ platform sandbox gaps and authorized workflows making harmful choices remain
 residual risks. This proposal does not label MCP or JavaScript inherently safe.
 
 ## Platform and staged delivery gates
+
+The initial configuration schema can be stored on every platform, but runtime
+availability is independent. iOS has neither a qualified separate worker nor the
+desktop stdio/private-IPC hosting model. JavaScript and MCP server exposure stay
+unavailable there; a simulator build or enabled preference cannot change that.
 
 1. **P0 — design acceptance:** resolve the ADR, protocol/SDK scope, adversarial
    reviews and authority UX. No implementation enabled by merging documents.

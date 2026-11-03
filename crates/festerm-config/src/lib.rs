@@ -1303,6 +1303,28 @@ port = 47461
     }
 
     #[test]
+    fn automation_settings_are_independent_explicit_opt_ins() {
+        let legacy: InterfaceSettings = toml::from_str("status_bar_visible = true").unwrap();
+        assert!(!legacy.mcp_enabled());
+        assert!(!legacy.javascript_enabled());
+        let defaults = toml::to_string(&InterfaceSettings::DEFAULT).unwrap();
+        assert!(!defaults.contains("mcp_enabled"));
+        assert!(!defaults.contains("javascript_enabled"));
+
+        for (mcp, javascript) in [(true, false), (false, true), (true, true)] {
+            let settings = legacy
+                .clone()
+                .with_mcp_enabled(mcp)
+                .with_javascript_enabled(javascript);
+            let document = Configuration::empty()
+                .with_interface_settings(settings.clone())
+                .unwrap();
+            let restored = Configuration::parse(&document.to_toml().unwrap()).unwrap();
+            assert_eq!(restored.interface_settings(), &settings);
+        }
+    }
+
+    #[test]
     fn automatic_update_checks_are_on_until_the_user_says_otherwise() {
         assert!(InterfaceSettings::DEFAULT.automatic_update_checks());
         let document = Configuration::empty();

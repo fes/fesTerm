@@ -1,5 +1,22 @@
 # Milestone Progress Narrative
 
+## Shared automation authority before external access
+
+The owner authorized the P1-P3 MCP/JavaScript campaign in
+[#501](https://github.com/fes/fesTerm/issues/501), with an observation-only MCP PR
+checkpoint before isolated JavaScript and terminal control. The first foundation
+is a memory-only application-owned authority kernel plus independent default-off
+configuration fields. Channels, targets, grants, nested runs, budgets and input
+lease epochs have typed state and explicit refusal/completion boundaries.
+Cancellation never claims to roll back admitted shell input.
+
+Deterministic tests cover hostile delegation, replacement/revocation races,
+disclosure, shared quotas, unsettled work and idempotent starts. They do not
+qualify transport authentication, worker confinement or native UI/controller
+integration. No server/interpreter is enabled. iOS and unsupported desktop
+execution remain unavailable until their separate platform gates can be proved;
+P4 is not pulled into this campaign.
+
 ## Verify the Dev Tunnel installer before execution
 
 The setup panel could display the exact embedded installer for review, but its

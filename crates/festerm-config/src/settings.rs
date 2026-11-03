@@ -161,6 +161,10 @@ pub struct InterfaceSettings {
         skip_serializing_if = "is_true"
     )]
     automatic_update_checks: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    mcp_enabled: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    javascript_enabled: bool,
     /// How a text editor view starts out. These are per-view settings while
     /// the view is open (ADR 0034 §9), but the way a reader likes to work does
     /// not change between one file and the next, so the last answer is the
@@ -201,6 +205,8 @@ impl InterfaceSettings {
         sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
         default_sftp_local_directory: None,
         automatic_update_checks: true,
+        mcp_enabled: false,
+        javascript_enabled: false,
         editor: EditorSettings::DEFAULT,
     };
 
@@ -440,6 +446,24 @@ impl InterfaceSettings {
 
     pub const fn with_automatic_update_checks(mut self, automatic_update_checks: bool) -> Self {
         self.automatic_update_checks = automatic_update_checks;
+        self
+    }
+
+    pub const fn mcp_enabled(&self) -> bool {
+        self.mcp_enabled
+    }
+
+    pub const fn with_mcp_enabled(mut self, enabled: bool) -> Self {
+        self.mcp_enabled = enabled;
+        self
+    }
+
+    pub const fn javascript_enabled(&self) -> bool {
+        self.javascript_enabled
+    }
+
+    pub const fn with_javascript_enabled(mut self, enabled: bool) -> Self {
+        self.javascript_enabled = enabled;
         self
     }
 

@@ -6,6 +6,11 @@ fesTerm measures compatibility in terms of observable application behavior. Reco
 
 ## Compatibility Baseline
 
+The [automation campaign](docs/automation-design.md) currently has a pure
+authority kernel and independent default-off configuration schema, not an
+enabled MCP server or JavaScript interpreter. Kernel tests are not terminal,
+native lifecycle, sandbox or mobile qualification evidence.
+
 The [Dev Tunnels subset](docs/dev-tunnels-experiment.md), included in default desktop builds, implements
 peer profiles, independently bound scoped credentials, exact-generation
 daemon attach/detach and optional bounded remote file snapshots. It is

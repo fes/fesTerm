@@ -2672,6 +2672,12 @@ All evidence below is **deferred and unperformed**. The planning contract is
 confinement, protocol interoperability or native usability. Use only owned
 fixtures once the named prerequisite implementation exists.
 
+The first implementation foundation adds only the pure authority kernel and
+independent default-off configuration fields (`AUT-05`/`AUT-06`). Deterministic
+kernel/schema tests are not native pairing, settings usability, containment or
+input-ordering evidence. These manual scenarios remain open and no MCP server
+or JavaScript execution is enabled by that foundation.
+
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
 | AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts. | Deferred native + usability | Prerequisites: accepted authority model, broker and native grant UI. Confirm observation disclosure, all-source/all-sink combinations and shell control authority are understandable; pairing/import alone has no effects. No evidence collected. |

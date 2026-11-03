@@ -551,7 +551,12 @@ The following tracks remain intentionally outside the initial critical path. Arc
 - Scripting and automation: the owner selected JavaScript; the joint
   [MCP/automation design](docs/automation-design.md) and
   [ADR 0065](docs/adr/0065-mcp-and-javascript-automation.md) are Proposed.
-  Implementation, engine/platform qualification and enablement remain deferred.
+  The owner authorized staged P1-P3 implementation in
+  [#501](https://github.com/fes/fesTerm/issues/501): a distinct observation-only
+  MCP PR checkpoint, then confined JavaScript and explicit control. Both settings
+  default off; qualification and independent reviews gate each stage.
+  P4 and unsupported platform execution remain deferred. This campaign does not
+  change M6/M10 acceptance criteria.
 - A stable plugin or extension API.
 - Detachable sessions and built-in multiplexing, especially where useful on Windows.
 - Further serial refinement. The first-class UI, profile, lifecycle, worker

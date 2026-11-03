@@ -183,8 +183,9 @@ for the supported subset and limits.
   and lessons from other terminal implementations.
 - [Product positioning](PRODUCT_POSITIONING.md) — terminal landscape notes and
   the selected middle-ground product posture.
-- [Proposed MCP + JavaScript automation](docs/automation-design.md) — future
-  controlled scripting and assistant access; design only, not implemented or enabled.
+- [MCP + JavaScript automation](docs/automation-design.md) — owner-authorized
+  staged campaign; pure authority/default-off configuration foundations only,
+  no enabled server or interpreter at the initial checkpoint.
 - [Architecture decision records](docs/adr/) — accepted decisions and their
   rationale.
 - [Golden fixture format](tests/fixtures/README.md) — terminal-core fixture

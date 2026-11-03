@@ -37,7 +37,7 @@
     {
       "id": "mcp-javascript-automation-proposal",
       "edges": [
-        "AUT-*"
+        "AUT-0[1-4]"
       ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
@@ -60,6 +60,50 @@
         "P1 authenticated broker/adapter and observation gates; P2 engine plus per-platform OS confinement qualification",
         "P3 writer-lease/lifecycle/unknown-outcome and native grant UI qualification before control",
         "P4 separate review for command jobs, HTTP, file APIs, unattended grants/triggers and iOS execution"
+      ]
+    },
+    {
+      "id": "automation-default-off-preferences",
+      "edges": ["AUT-05"],
+      "requirements": [
+        "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
+        "docs/configuration.md#interface-settings"
+      ],
+      "decisions": ["ADR-0065"],
+      "automated_tests": [
+        "automation_settings_are_independent_explicit_opt_ins"
+      ],
+      "manual_scenarios": ["AUTO-01"],
+      "status": "partial",
+      "prerequisites": [
+        "Native settings commands, persistence/broadcast and grant usability remain staged under AUTO-01; configuration opt-in is not runtime or platform qualification"
+      ]
+    },
+    {
+      "id": "automation-pure-authority-kernel",
+      "edges": ["AUT-06"],
+      "requirements": [
+        "REQUIREMENTS.md#req-ext-004-separate-design-for-extensions",
+        "docs/automation-design.md#authority-model"
+      ],
+      "decisions": ["ADR-0065"],
+      "automated_tests": [
+        "connection_and_wire_ids_never_grant_authority",
+        "replacement_and_revocation_win_over_pending_disclosure",
+        "control_requires_native_remote_handoff_and_all_source_disclosure",
+        "child_inherits_sources_even_when_its_observe_scope_is_empty",
+        "shared_budget_does_not_reset_with_many_short_requests_or_runs",
+        "expiry_at_the_exact_deadline_prevents_late_delivery_and_completion",
+        "takeover_invalidates_queued_writes_and_permanently_disqualifies_old_runs",
+        "pending_host_calls_and_late_callbacks_cannot_cross_the_completion_cut",
+        "normal_start_response_does_not_orphan_or_cancel_its_distinct_workflow",
+        "successful_and_exceptional_completion_release_the_invocations_own_lease"
+      ],
+      "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04"],
+      "status": "partial",
+      "prerequisites": [
+        "Trusted application/controller integration, authenticated IPC, native approval and input ownership validation",
+        "Bounded snapshot/result delivery, worker confinement and native lifecycle evidence remain unimplemented at the kernel foundation checkpoint"
       ]
     },
     {
