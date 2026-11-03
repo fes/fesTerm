@@ -280,11 +280,11 @@ mod tests {
         let mut state = HostSetupState::default();
         assert!(state
             .command()
-            .ends_with(&format!("bash -s -- {}", festerm_host_setup::VERSION)));
+            .ends_with(&format!("bash \"$p\" {})", festerm_host_setup::VERSION)));
         state.takeover = false;
-        assert!(state.command().ends_with("--no-takeover"));
+        assert!(state.command().ends_with("--no-takeover)"));
         state.platform_index = 2;
-        assert!(state.command().ends_with("-NoTakeover"));
+        assert!(state.command().ends_with("-NoTakeover }"));
     }
 
     #[test]
@@ -292,9 +292,9 @@ mod tests {
         let mut state = HostSetupState::default();
         assert!(!state.command().contains("--upgrade"));
         state.upgrade = true;
-        assert!(state.command().ends_with(" --upgrade"));
+        assert!(state.command().ends_with(" --upgrade)"));
         state.platform_index = 2;
-        assert!(state.command().ends_with(" -Upgrade"));
+        assert!(state.command().ends_with(" -Upgrade }"));
     }
 
     #[test]

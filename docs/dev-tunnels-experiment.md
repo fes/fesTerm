@@ -196,28 +196,34 @@ In the app, choose **Dev Tunnel: Set up a host…** from the command palette (or
 **Set up a host…** in the Dev Tunnel profile editor) to pick the host platform,
 decide whether a remote device may take over a session, copy the version-pinned
 command and **View script** to read the exact installer shipped with your
-version in a read-only editor tab before running anything.
+version in a read-only editor tab before running anything. The copied command
+pins the installer's SHA-256 from the app's embedded bytes, downloads the script
+and refuses execution unless the exact bytes match. It does not trust a
+checksum downloaded alongside the script. This protection is shared by the
+desktop and iOS setup surfaces.
 
 The source now defines standalone helper bundles for Linux x86_64/ARM64
 (glibc 2.39+), macOS Intel/Apple Silicon, and Windows x64/ARM64.
 v0.13.0 publishes these assets; native clean-machine/service qualification remains
 open in #432. The preflight/diagnostic corrections below are unreleased.
-The one-liners need no version
-(they use the newest published release; pass the exact numeric `VERSION` as the
-first argument or `-Version` to pin one):
+Prefer **Copy command** for a verified download, rather than piping an
+unverified download into a shell. Alternatively, save the reviewed embedded
+script locally and run it as your normal user. The examples below use `VERSION`
+for the exact numeric version shown in the app; omitting it selects the newest
+published helper release:
 
 ```sh
 # Linux: no elevation when runtime prerequisites are already installed.
-curl -fsSL https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.sh | bash
+bash ./install-dev-tunnel.sh VERSION
 # Optional Linux dependency installation: explicitly authorizes sudo apt/dnf.
-curl -fsSL https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.sh | bash -s -- --install-dependencies
+bash ./install-dev-tunnel.sh VERSION --install-dependencies
 # macOS: uses the system curl, tar, unzip and codesign.
-curl -fsSL https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.sh | bash
+bash ./install-dev-tunnel.sh VERSION
 ```
 
 ```powershell
 # Windows 11 / Windows Server 2025, unelevated PowerShell; inbox curl required.
-& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.ps1).Content))
+.\install-dev-tunnel.ps1 -Version VERSION
 ```
 
 By default a remote connection may take over a session that a local window (or
@@ -228,14 +234,15 @@ existing installation keeps its recorded choice.
 
 To move an existing host to a newer release's helpers (for example to pick up
 bridge fixes), rerun the installer with `--upgrade` (bash) or `-Upgrade`
-(PowerShell):
+(PowerShell). Select **Upgrade an existing host** before copying the verified
+command, or run the reviewed script saved locally:
 
 ```sh
-curl -fsSL https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.sh | bash -s -- --upgrade
+bash ./install-dev-tunnel.sh VERSION --upgrade
 ```
 
 ```powershell
-& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/fes/fesTerm/releases/latest/download/install-dev-tunnel.ps1).Content)) -Upgrade
+.\install-dev-tunnel.ps1 -Version VERSION -Upgrade
 ```
 
 The upgrade keeps the tunnel, host key/fingerprint, account binding, recorded

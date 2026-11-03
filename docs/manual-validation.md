@@ -17,6 +17,14 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
 ## Experimental direct Dev Tunnels bridge (DT-01 through DT-07)
 
+Installer command integrity is automated: shell subprocess regressions exercise
+matching, modified and empty responses, download failures, argument quoting and
+Unix temporary-file cleanup. PowerShell additionally rejects newline-rewritten
+bytes. These use local download fixtures and never provision a tunnel; real
+release downloads and clean-machine setup remain native DT-01/#432 evidence.
+The expected SHA-256 is derived from the app's embedded installer, not fetched
+with the download.
+
 The standard Dev Tunnel cards, shared code/action buttons and distinct tunnel
 mark have structural/geometry regressions. Native dark/light and 1x/2x visual
 comparison, including selected/disabled rows, keyboard focus and accessibility,

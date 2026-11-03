@@ -1,5 +1,19 @@
 # Milestone Progress Narrative
 
+## Verify the Dev Tunnel installer before execution
+
+The setup panel could display the exact embedded installer for review, but its
+copied command downloaded a release script straight into an interpreter.
+Checks inside that script protected later helper downloads, not the installer
+itself. The shared desktop/iOS command generator now pins a SHA-256 from its
+embedded script and refuses different bytes before execution. Unix downloads
+use a temporary file with cleanup; PowerShell hashes and interprets the same
+in-memory bytes. No remotely supplied checksum can change the expected hash.
+
+Local shell regressions cover matching, modified and empty downloads, download
+failure and preservation of quoted options without provisioning a tunnel.
+Clean-machine release/service qualification remains separate.
+
 The 2026-10-30 isolated macOS-to-Debian-ARM64 Pi Dev Tunnel test now passes
 actual GUI shell input/output, including the integrated native service-app flow.
 Relay WebSockets explicitly

@@ -2022,7 +2022,12 @@ mod tests {
                 .click();
             harness.run();
             let command = host_setup_draft(&harness).command();
-            assert!(command.ends_with(&format!(" {flag}")), "{command}");
+            let suffix = if platform == HostPlatform::Windows {
+                " }"
+            } else {
+                ")"
+            };
+            assert!(command.ends_with(&format!(" {flag}{suffix}")), "{command}");
         }
     }
 
@@ -2042,7 +2047,7 @@ mod tests {
         harness.run();
         assert!(host_setup_draft(&harness)
             .command()
-            .ends_with(" -NoTakeover"));
+            .ends_with(" -NoTakeover }"));
     }
 
     #[test]
