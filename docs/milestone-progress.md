@@ -1,5 +1,19 @@
 # Milestone Progress Narrative
 
+## 0.14.1: Windows Dev Tunnel startup correction
+
+This patch packages #515's Windows host-shell correction. Managed and foreground
+setup now share the daemon's existing PowerShell-preferring discovery instead
+of supplying a CMD override; the default shell retains its arguments while
+accepting the user's home working directory. Unix login-shell behavior and
+explicit-shell argument restrictions are unchanged.
+
+The change passed its hosted Windows, macOS and Linux checks before merge,
+and its isolated native Windows regression verified interactive output and the
+requested directory. This does not migrate an already-dead installation
+generation or qualify shell survival after a containing Windows job closes.
+Those lifecycle and clean-machine gates remain under #432.
+
 ## Windows Dev Tunnel shell exited before its worker started
 
 After task registration was repaired, a Windows install reached
