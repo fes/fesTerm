@@ -1,12 +1,12 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use festerm_core::{Dimensions, Terminal};
 use festerm_session::{
-    FlowDirection, HostKeyPrompt, PasswordPrompt, Session, SessionError, SessionErrorKind,
-    SessionEvent, SessionLifecycle, SessionSendError, SessionTryReceiveError,
+    AutomationEpoch, FlowDirection, HostKeyPrompt, PasswordPrompt, Session, SessionError,
+    SessionErrorKind, SessionEvent, SessionLifecycle, SessionSendError, SessionTryReceiveError,
     SshPortForwardRuntime, TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
 use festerm_ui_egui::{
@@ -411,6 +411,26 @@ pub(crate) enum PendingFlush {
     },
 }
 
+/// Exact input, IME, and backend attachment generations for one admission.
+pub struct AutomationInputFence {
+    input: Arc<AutomationEpoch>,
+    input_generation: u64,
+    ime: Arc<AutomationEpoch>,
+    ime_generation: u64,
+    attachment: Arc<AutomationEpoch>,
+    attachment_generation: u64,
+}
+
+impl AutomationInputFence {
+    /// The caller must hold the shared admission lock through this check and
+    /// the effect or disclosure it protects.
+    pub fn is_current(&self) -> bool {
+        self.input.is_current(self.input_generation)
+            && self.ime.is_current(self.ime_generation)
+            && self.attachment.is_current(self.attachment_generation)
+    }
+}
+
 // ─── Session Controller ──────────────────────────────────────────────────────
 
 /// Application-level controller that owns session event pumping, ordered pending
@@ -422,6 +442,11 @@ pub struct SessionController<S: Session> {
     pub input_recorder: festerm_ui_egui::routing_trace::SharedRecorder,
     last_input_delivery: &'static str,
     input_event_is_keyboard: bool,
+    input_event_human_noted: bool,
+    automation_input_epoch: Option<Arc<AutomationEpoch>>,
+    automation_ime_epoch: Option<Arc<AutomationEpoch>>,
+    automation_input_armed: bool,
+    pending_human_inputs: Vec<Weak<()>>,
     last_pending_input_index: Option<usize>,
     clipboard_discarded_bytes: usize,
     native_input_expectation: Option<(&'static [u8], usize, bool)>,
@@ -494,6 +519,11 @@ impl<S: Session> SessionController<S> {
             input_recorder: Default::default(),
             last_input_delivery: "no-delivery",
             input_event_is_keyboard: true,
+            input_event_human_noted: false,
+            automation_input_epoch: None,
+            automation_ime_epoch: None,
+            automation_input_armed: false,
+            pending_human_inputs: Vec::new(),
             last_pending_input_index: None,
             clipboard_discarded_bytes: 0,
             pending_resize: None,
@@ -533,6 +563,11 @@ impl<S: Session> SessionController<S> {
             input_recorder: Default::default(),
             last_input_delivery: "no-delivery",
             input_event_is_keyboard: true,
+            input_event_human_noted: false,
+            automation_input_epoch: None,
+            automation_ime_epoch: None,
+            automation_input_armed: false,
+            pending_human_inputs: Vec::new(),
             last_pending_input_index: None,
             clipboard_discarded_bytes: 0,
             pending_resize: None,
@@ -606,6 +641,88 @@ impl<S: Session> SessionController<S> {
         self.session.as_ref()?.automation_epoch()
     }
 
+    pub(crate) fn set_automation_ime_epoch(&mut self, epoch: &Arc<AutomationEpoch>) {
+        if self
+            .automation_ime_epoch
+            .as_ref()
+            .is_none_or(|current| !Arc::ptr_eq(current, epoch))
+        {
+            self.invalidate_automation_input();
+            self.automation_ime_epoch = Some(epoch.clone());
+        }
+    }
+
+    /// Keeps capture blocked while a user-confirmed input can still be sent.
+    pub(crate) fn begin_pending_human_input(&mut self) -> Arc<()> {
+        self.human_input_takeover();
+        self.pending_human_inputs
+            .retain(|intent| intent.strong_count() != 0);
+        let intent = Arc::new(());
+        self.pending_human_inputs.push(Arc::downgrade(&intent));
+        intent
+    }
+
+    /// Captures a human-input and attachment fence, not a writer lease.
+    ///
+    /// A caller must separately obtain native handoff, validate the target and
+    /// broker lease, and retain the shared admission lock while checking this
+    /// exact fence and publishing any effect or worker disclosure. An empty
+    /// local queue does not prove a safe remote editing or TUI state.
+    pub fn capture_automation_input_fence(&mut self) -> Option<AutomationInputFence> {
+        self.pending_human_inputs
+            .retain(|intent| intent.strong_count() != 0);
+        if !matches!(self.last_lifecycle, Some(SessionLifecycle::Running))
+            || !self.automation_liveness.load(Ordering::Acquire)
+            || !self.pending_human_inputs.is_empty()
+            || self.pending_writes.clipboard.is_some()
+            || !self.pending_writes.writes.is_empty()
+        {
+            return None;
+        }
+        let attachment = self.session.as_ref()?.automation_epoch()?;
+        let attachment_generation = attachment.capture()?;
+        let ime = self.automation_ime_epoch.as_ref()?.clone();
+        let ime_generation = ime.capture()?;
+        let epoch = self
+            .automation_input_epoch
+            .get_or_insert_with(|| Arc::new(AutomationEpoch::new()))
+            .clone();
+        if epoch.capture().is_none() {
+            epoch.transition(true);
+        }
+        let generation = epoch.capture()?;
+        let fence = AutomationInputFence {
+            input: epoch,
+            input_generation: generation,
+            ime,
+            ime_generation,
+            attachment,
+            attachment_generation,
+        };
+        let _guard = festerm_session::automation_admission_lock()?;
+        if !fence.is_current() {
+            return None;
+        }
+        self.automation_input_armed = true;
+        Some(fence)
+    }
+
+    fn human_input_takeover(&mut self) {
+        if self.automation_input_armed {
+            if let Some(epoch) = &self.automation_input_epoch {
+                epoch.transition(true);
+            }
+            self.automation_input_armed = false;
+        }
+    }
+
+    fn invalidate_automation_input(&mut self) {
+        if let Some(epoch) = &self.automation_input_epoch {
+            epoch.transition(false);
+        }
+        self.automation_input_armed = false;
+    }
+
     fn update_automation_liveness(&mut self, lifecycle: &SessionLifecycle) {
         if matches!(lifecycle, SessionLifecycle::Running) {
             if !self.automation_liveness.load(Ordering::Acquire) {
@@ -614,6 +731,7 @@ impl<S: Session> SessionController<S> {
             }
         } else {
             crate::automation::set_admission_flag(&self.automation_liveness, false);
+            self.invalidate_automation_input();
         }
     }
 
@@ -630,6 +748,7 @@ impl<S: Session> SessionController<S> {
         self.automation_liveness.store(false, Ordering::Release);
         self.automation_liveness = Arc::new(AtomicBool::new(guard.is_some()));
         drop(guard);
+        self.invalidate_automation_input();
         self.lifecycle_generation = self.lifecycle_generation.saturating_add(1);
         if let Some(token) = self
             .pending_writes
@@ -842,6 +961,7 @@ impl<S: Session> SessionController<S> {
     /// A metadata-only position in the existing bounded ordered byte queue.
     /// Normal input continues to be encoded, but cannot pass this position.
     pub fn begin_clipboard_input(&mut self, token: u64) -> bool {
+        self.human_input_takeover();
         self.finish_failed_clipboard_input();
         if self.pending_writes.clipboard.is_some() {
             return false;
@@ -1323,6 +1443,9 @@ impl<S: Session> SessionController<S> {
     /// animation.
     pub fn shutdown(&self) {
         crate::automation::set_admission_flag(&self.automation_liveness, false);
+        if let Some(epoch) = &self.automation_input_epoch {
+            epoch.transition(false);
+        }
         if let Some(session) = &self.session {
             match session.try_shutdown() {
                 Ok(()) => tracing::debug!(
@@ -1348,9 +1471,19 @@ impl<S: Session> EncodedInputSink for SessionController<S> {
 
     fn begin_input_event(&mut self, keyboard_input: bool) {
         self.input_event_is_keyboard = keyboard_input;
+        self.input_event_human_noted = false;
+    }
+
+    fn begin_human_input(&mut self) {
+        self.human_input_takeover();
+        self.input_event_human_noted = true;
     }
 
     fn record_encoded_input(&mut self, bytes: &[u8]) {
+        if self.input_event_is_keyboard && !self.input_event_human_noted {
+            self.human_input_takeover();
+        }
+        self.input_event_human_noted = false;
         self.force_flush_pending_resize();
         self.diagnostics.byte_count = self
             .diagnostics
@@ -1402,6 +1535,7 @@ impl<S: Session> EncodedInputSink for SessionController<S> {
         route: InputRoute,
     ) {
         self.input_event_is_keyboard = true;
+        self.input_event_human_noted = false;
         self.observe_input_route(route);
         let observation = self
             .input_recorder
@@ -1632,6 +1766,7 @@ pub(crate) mod fake {
         input_results: Mutex<VecDeque<Result<(), SessionSendError>>>,
         sent: Mutex<Vec<Vec<u8>>>,
         backend_owned_terminal: bool,
+        automation_epoch: Arc<AutomationEpoch>,
     }
 
     impl FakeSession {
@@ -1643,11 +1778,14 @@ pub(crate) mod fake {
             events: impl IntoIterator<Item = SessionEvent>,
             input_results: impl IntoIterator<Item = Result<(), SessionSendError>>,
         ) -> Self {
+            let automation_epoch = Arc::new(AutomationEpoch::new());
+            automation_epoch.transition(true);
             Self {
                 events: Mutex::new(events.into_iter().collect()),
                 input_results: Mutex::new(input_results.into_iter().collect()),
                 sent: Mutex::new(Vec::new()),
                 backend_owned_terminal: false,
+                automation_epoch,
             }
         }
 
@@ -1676,6 +1814,10 @@ pub(crate) mod fake {
 
         fn lifecycle(&self) -> SessionLifecycle {
             SessionLifecycle::Running
+        }
+
+        fn automation_epoch(&self) -> Option<Arc<AutomationEpoch>> {
+            Some(self.automation_epoch.clone())
         }
 
         fn metrics(&self) -> SessionMetrics {
@@ -2008,12 +2150,174 @@ mod tests {
     #[cfg(any(unix, windows))]
     use festerm_pty::{LocalProfile, LocalPtySession};
 
+    fn install_ime_epoch<S: Session>(
+        controller: &mut SessionController<S>,
+    ) -> Arc<AutomationEpoch> {
+        let epoch = Arc::new(AutomationEpoch::new());
+        epoch.transition(true);
+        controller.set_automation_ime_epoch(&epoch);
+        epoch
+    }
+
+    fn fence_is_current(fence: &AutomationInputFence) -> bool {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        fence.is_current()
+    }
+
     #[test]
     fn automation_controller_identity_exhaustion_refuses_new_identities() {
         let counter = AtomicU64::new(u64::MAX - 1);
         assert_eq!(next_automation_instance(&counter), Some(u64::MAX - 1));
         assert_eq!(next_automation_instance(&counter), None);
         assert_eq!(next_automation_instance(&counter), None);
+    }
+
+    #[test]
+    fn controller_human_input_invalidates_handoff_without_revoking_focus_reports() {
+        let mut controller = SessionController::with_session(FakeSession::new([]));
+        install_ime_epoch(&mut controller);
+        let mut terminal = Terminal::new(Dimensions::new(20, 5).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[?1004h");
+        let fence = controller.capture_automation_input_fence().unwrap();
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Focus(festerm_core::FocusEvent::Out),
+            &mut controller,
+        );
+        assert!(fence_is_current(&fence));
+
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Key(festerm_core::Key::Enter),
+            &mut controller,
+        );
+        assert!(!fence_is_current(&fence));
+        assert!(controller
+            .session
+            .as_ref()
+            .unwrap()
+            .sent()
+            .concat()
+            .ends_with(b"\r"));
+
+        let fence = controller.capture_automation_input_fence().unwrap();
+        assert!(controller.begin_clipboard_input(31));
+        assert!(!fence_is_current(&fence));
+        assert!(controller.capture_automation_input_fence().is_none());
+        controller.cancel_clipboard_input(31, "test-cancel");
+        assert!(controller.capture_automation_input_fence().is_some());
+    }
+
+    #[test]
+    fn controller_handoff_waits_for_ime_and_queued_input() {
+        let mut controller = SessionController::with_session(FakeSession::with_input_results(
+            [],
+            [
+                Err(SessionSendError::Full {
+                    operation: festerm_session::SessionOperation::Input,
+                    capacity: 1,
+                }),
+                Ok(()),
+            ],
+        ));
+        let ime = install_ime_epoch(&mut controller);
+        let fence = controller.capture_automation_input_fence().unwrap();
+        ime.transition(false);
+        assert!(!fence_is_current(&fence));
+        assert!(controller.capture_automation_input_fence().is_none());
+        ime.transition(true);
+        assert!(controller.capture_automation_input_fence().is_some());
+
+        controller.record_encoded_input(b"human");
+        assert!(controller.capture_automation_input_fence().is_none());
+        controller.flush_pending_writes();
+        let fence = controller.capture_automation_input_fence().unwrap();
+        controller.shutdown();
+        assert!(!fence_is_current(&fence));
+        assert!(controller.capture_automation_input_fence().is_none());
+    }
+
+    #[test]
+    fn pending_human_input_invalidates_and_blocks_until_its_last_owner_drops() {
+        let mut controller = SessionController::with_session(FakeSession::new([]));
+        install_ime_epoch(&mut controller);
+        let fence = controller.capture_automation_input_fence().unwrap();
+        let pending = controller.begin_pending_human_input();
+        let preview = pending.clone();
+        assert!(!fence_is_current(&fence));
+        assert!(controller.capture_automation_input_fence().is_none());
+        drop(pending);
+        assert!(controller.capture_automation_input_fence().is_none());
+        drop(preview);
+        assert!(controller.capture_automation_input_fence().is_some());
+        assert!(!fence_is_current(&fence));
+    }
+
+    #[test]
+    fn closed_backend_blocks_capture_before_lifecycle_delivery() {
+        let session = FakeSession::new([]);
+        let attachment = session.automation_epoch().unwrap();
+        let mut controller = SessionController::with_session(session);
+        install_ime_epoch(&mut controller);
+        let fence = controller.capture_automation_input_fence().unwrap();
+        attachment.transition(false);
+        assert!(matches!(
+            controller.lifecycle(),
+            Some(SessionLifecycle::Running)
+        ));
+        assert!(!fence_is_current(&fence));
+        assert!(controller.capture_automation_input_fence().is_none());
+    }
+
+    #[test]
+    fn terminal_human_input_fence_closes_before_keyboard_and_mouse_delivery() {
+        struct CheckedSink<'a> {
+            controller: &'a mut SessionController<FakeSession>,
+            fence: AutomationInputFence,
+            delivered: bool,
+        }
+
+        impl EncodedInputSink for CheckedSink<'_> {
+            fn begin_input_event(&mut self, keyboard_input: bool) {
+                self.controller.begin_input_event(keyboard_input);
+            }
+
+            fn begin_human_input(&mut self) {
+                self.controller.begin_human_input();
+            }
+
+            fn record_encoded_input(&mut self, bytes: &[u8]) {
+                {
+                    let _guard = festerm_session::automation_admission_lock().unwrap();
+                    assert!(!self.fence.is_current());
+                }
+                self.delivered = true;
+                self.controller.record_encoded_input(bytes);
+            }
+        }
+
+        let mut controller = SessionController::with_session(FakeSession::new([]));
+        install_ime_epoch(&mut controller);
+        let mut terminal = Terminal::new(Dimensions::new(20, 5).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[?1000h\x1b[?1006h");
+        for event in [
+            festerm_core::InputEvent::Key(festerm_core::Key::Enter),
+            festerm_core::InputEvent::Mouse(festerm_core::MouseEvent {
+                kind: festerm_core::MouseEventKind::Release(festerm_core::MouseButton::Left),
+                column: 0,
+                row: 0,
+                modifiers: festerm_core::Modifiers::NONE,
+            }),
+        ] {
+            let fence = controller.capture_automation_input_fence().unwrap();
+            let mut sink = CheckedSink {
+                controller: &mut controller,
+                fence,
+                delivered: false,
+            };
+            festerm_ui_egui::route_input(&mut terminal, event, &mut sink);
+            assert!(sink.delivered);
+        }
     }
 
     #[test]

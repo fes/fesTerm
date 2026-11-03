@@ -1268,6 +1268,7 @@ impl FesTermApp {
             return;
         }
         self.overlays.pending_paste = Some(PendingPasteConfirmation {
+            _human_input_intent: session.controller.begin_pending_human_input(),
             clipboard_token,
             opened_frame: context.cumulative_frame_nr(),
             tab,
@@ -1330,7 +1331,9 @@ impl FesTermApp {
         let identity = session.label.clone();
         let lifecycle_generation = session.controller.lifecycle_generation();
         let path_count = paths.len();
+        let human_input_intent = session.controller.begin_pending_human_input();
         self.overlays.pending_file_drop = Some(PendingFileDropConfirmation {
+            _human_input_intent: human_input_intent,
             tab: active,
             identity,
             text: paths.join(" "),
@@ -5821,6 +5824,15 @@ impl FesTermApp {
             detail,
         });
         self.overlays.open_refusal_focused = false;
+    }
+
+    pub(crate) fn set_automation_ime_epoch(
+        &mut self,
+        epoch: &Arc<festerm_session::AutomationEpoch>,
+    ) {
+        for (_, session) in self.state.session_tabs_with_id_mut() {
+            session.controller.set_automation_ime_epoch(epoch);
+        }
     }
 
     pub(crate) fn frame_logic(&mut self, context: &egui::Context) {
@@ -11702,6 +11714,62 @@ mod tests {
                     .push(std::sync::Arc::new(FakeDroppedFile(path.into())));
             }
         });
+    }
+
+    #[test]
+    fn pending_paste_and_file_drop_hold_the_automation_fence_until_cancelled() {
+        let context = egui::Context::default();
+        let (mut app, tab, _) = FesTermApp::for_test_with_fake_ssh_session([]);
+        let ime = Arc::new(festerm_session::AutomationEpoch::new());
+        ime.transition(true);
+        app.set_automation_ime_epoch(&ime);
+
+        let fence = app
+            .state
+            .session_tab_mut(tab)
+            .unwrap()
+            .controller
+            .capture_automation_input_fence()
+            .unwrap();
+        app.handle_paste_request(tab, "one\ntwo".to_owned(), None, &context);
+        assert!(app.overlays.pending_paste.is_some());
+        {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            assert!(!fence.is_current());
+        }
+        assert!(app
+            .state
+            .session_tab_mut(tab)
+            .unwrap()
+            .controller
+            .capture_automation_input_fence()
+            .is_none());
+        app.cancel_paste_confirmation();
+
+        let session = app.state.session_tab_mut(tab).unwrap();
+        assert!(session
+            .controller
+            .capture_automation_input_fence()
+            .is_some());
+        session.inspector_transport = InspectorTransport::Local { persistence: None };
+        simulate_file_drop(&context, &["/tmp/file.txt"]);
+        app.handle_dropped_files(&context);
+        assert!(app.overlays.pending_file_drop.is_some());
+        assert!(app
+            .state
+            .session_tab_mut(tab)
+            .unwrap()
+            .controller
+            .capture_automation_input_fence()
+            .is_none());
+        app.cancel_file_drop_confirmation();
+        assert!(app
+            .state
+            .session_tab_mut(tab)
+            .unwrap()
+            .controller
+            .capture_automation_input_fence()
+            .is_some());
     }
 
     #[test]

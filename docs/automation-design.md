@@ -610,10 +610,23 @@ read after the claim; a timely published reservation remains admitted even if
 the transport consumes it later. If the callback succeeds but publication loses
 the slot, the caller must report an unknown outcome and must not retry
 automatically.
-Reservation alone is not authority: the application must still serialize
-human takeover, clipboard/IME state, writer leases and every broker/target
-check. Other session backends currently refuse this reservation, and no
-application control adapter uses it yet.
+The controller can capture a composite human-input, application-wide IME and
+authoritative backend-attachment fence only with no buffered input, clipboard
+reservation or pending paste/file-drop confirmation. Human keyboard, paste,
+terminal-reported mouse input and clipboard initiation invalidate an armed
+fence before delivery. IME events are observed before input filtering or tab
+switching, and composition remains blocked across windows until every observed
+composition receives a commit or native disabled event, processed through the
+UI pass. Empty preedit, ordinary text and focus loss do not prove cancellation.
+When the platform omits a cancellation event, including for a closed window,
+the gate can remain blocked until application restart; any future adapter must
+surface that refusal rather than silently bypassing it. This metadata fence is
+not a lease or native handoff. The future adapter must check it under the shared admission lock
+through every effect and disclosure, and synchronously cut the controlling
+invocation and descendants through the broker on takeover. An empty local
+queue is not evidence that the remote editing state is safe. Other session
+backends currently refuse reservations, and no application control adapter
+uses either primitive yet.
 
 Lock, native suspension, explicit disconnect, tab close, attachment replacement,
 caller disconnect, expiry and worker crash close new-effect/data admission,

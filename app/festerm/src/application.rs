@@ -8,7 +8,7 @@
 //! each committed write to its siblings.
 
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -62,6 +62,57 @@ struct Window {
     placement: Option<WindowPlacement>,
 }
 
+struct ImeAdmission {
+    epoch: Arc<festerm_session::AutomationEpoch>,
+    composing: HashSet<WindowId>,
+    observed_this_pass: bool,
+}
+
+impl ImeAdmission {
+    fn new() -> Self {
+        let epoch = Arc::new(festerm_session::AutomationEpoch::new());
+        epoch.transition(true);
+        Self {
+            epoch,
+            composing: HashSet::new(),
+            observed_this_pass: false,
+        }
+    }
+
+    #[allow(deprecated)]
+    fn observe(&mut self, window: WindowId, events: &[egui::Event]) {
+        for event in events {
+            let active = match event {
+                egui::Event::Ime(egui::ImeEvent::Preedit { .. }) => true,
+                egui::Event::Ime(egui::ImeEvent::Commit(_) | egui::ImeEvent::Disabled) => false,
+                _ => continue,
+            };
+            if !self.observed_this_pass {
+                self.epoch.transition(false);
+                self.observed_this_pass = true;
+            }
+            if active {
+                self.composing.insert(window);
+            } else {
+                self.composing.remove(&window);
+            }
+        }
+    }
+
+    fn finish_pass(&mut self) -> bool {
+        if !self.observed_this_pass {
+            return false;
+        }
+        self.observed_this_pass = false;
+        if self.composing.is_empty() {
+            self.epoch.transition(true);
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// A window's requested screen position and size, in logical points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct WindowPlacement {
@@ -81,6 +132,7 @@ pub(crate) struct FesTermApplication {
     native_documents: Option<festerm_macos_window::OpenDocumentBridge>,
     activation_errors: Arc<Mutex<VecDeque<String>>>,
     automation: crate::automation::Coordinator,
+    ime_admission: ImeAdmission,
 }
 
 impl FesTermApplication {
@@ -97,6 +149,7 @@ impl FesTermApplication {
             native_documents: None,
             activation_errors: Default::default(),
             automation: Default::default(),
+            ime_admission: ImeAdmission::new(),
         }
     }
 
@@ -258,11 +311,14 @@ impl FesTermApplication {
         for window in self.windows.iter_mut().skip(1) {
             let builder = Self::viewport_builder(window);
             let app = &mut window.app;
+            let ime_admission = &mut self.ime_admission;
             // The `Ui` egui hands back is the child viewport's root, already
             // free of margin and background - the same contract
             // `eframe::App::ui` gives the primary window - so the window's
             // content goes straight into it.
             context.show_viewport_immediate(window.id.viewport_id(), builder, |ui, _class| {
+                ui.ctx()
+                    .input(|input| ime_admission.observe(window.id, &input.events));
                 if ui.ctx().input(|input| input.viewport().focused) == Some(true) {
                     self.last_active_window = window.id;
                 }
@@ -630,6 +686,11 @@ impl FesTermApplication {
     }
 
     fn drive_automation(&mut self, context: &egui::Context) {
+        for window in &mut self.windows {
+            window
+                .app
+                .set_automation_ime_epoch(&self.ime_admission.epoch);
+        }
         let apps: Vec<_> = self.windows.iter().map(|window| &window.app).collect();
         self.automation.tick(context, &apps);
         for window in &mut self.windows {
@@ -656,6 +717,7 @@ const DETACH_POINTER_INSET: f32 = 60.0;
 
 impl eframe::App for FesTermApplication {
     fn raw_input_hook(&mut self, context: &egui::Context, input: &mut egui::RawInput) {
+        self.ime_admission.observe(WindowId::PRIMARY, &input.events);
         eframe::App::raw_input_hook(self.primary_mut(), context, input);
     }
 
@@ -665,6 +727,8 @@ impl eframe::App for FesTermApplication {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        ui.ctx()
+            .input(|input| self.ime_admission.observe(WindowId::PRIMARY, &input.events));
         if ui.ctx().input(|input| input.viewport().focused) == Some(true) {
             self.last_active_window = WindowId::PRIMARY;
         }
@@ -675,6 +739,9 @@ impl eframe::App for FesTermApplication {
         self.settle_windows(&context);
         self.drive_automation(&context);
         self.process_document_activation(&context);
+        if !context.will_discard() && self.ime_admission.finish_pass() {
+            context.request_repaint();
+        }
         tracing::debug!(
             target: "festerm::rendering",
             gui_frame_number = context.cumulative_frame_nr(),
@@ -694,6 +761,78 @@ mod tests {
         let context = egui::Context::default();
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         (FesTermApplication::new(app), context)
+    }
+
+    #[test]
+    fn ime_admission_observes_raw_input_before_same_frame_shortcuts() {
+        let (mut application, context) = application();
+        let captured = application.ime_admission.epoch.capture().unwrap();
+        let mut input = egui::RawInput {
+            events: vec![
+                egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "pending".to_owned(),
+                    active_range_chars: None,
+                }),
+                egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::CTRL,
+                },
+            ],
+            ..Default::default()
+        };
+        eframe::App::raw_input_hook(&mut application, &context, &mut input);
+        {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            assert!(!application.ime_admission.epoch.is_current(captured));
+        }
+        assert_eq!(input.events.len(), 2);
+        assert!(!application.ime_admission.finish_pass());
+        assert!(application.ime_admission.epoch.capture().is_none());
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn ime_admission_waits_for_each_window_and_processes_commit_before_reopening() {
+        let mut admission = ImeAdmission::new();
+        let original = admission.epoch.capture().unwrap();
+        let first = WindowId::PRIMARY;
+        let second = WindowId(1);
+        let preedit = egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "pending".to_owned(),
+            active_range_chars: None,
+        });
+        admission.observe(first, std::slice::from_ref(&preedit));
+        admission.observe(second, &[preedit]);
+        assert!(!admission.finish_pass());
+
+        admission.observe(
+            first,
+            &[
+                egui::Event::Text("ordinary".to_owned()),
+                egui::Event::WindowFocused(false),
+                egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: String::new(),
+                    active_range_chars: None,
+                }),
+            ],
+        );
+        assert!(!admission.finish_pass());
+        assert!(admission.epoch.capture().is_none());
+
+        admission.observe(
+            first,
+            &[egui::Event::Ime(egui::ImeEvent::Commit("x".into()))],
+        );
+        assert!(!admission.finish_pass());
+        admission.observe(second, &[egui::Event::Ime(egui::ImeEvent::Disabled)]);
+        assert!(admission.epoch.capture().is_none());
+        assert!(admission.finish_pass());
+        assert!(admission.epoch.capture().is_some());
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        assert!(!admission.epoch.is_current(original));
     }
 
     #[test]

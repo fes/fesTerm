@@ -48,7 +48,16 @@
       "decisions": [
         "ADR-0065"
       ],
-      "automated_tests": [],
+      "automated_tests": [
+        "controller_human_input_invalidates_handoff_without_revoking_focus_reports",
+        "controller_handoff_waits_for_ime_and_queued_input",
+        "pending_human_input_invalidates_and_blocks_until_its_last_owner_drops",
+        "closed_backend_blocks_capture_before_lifecycle_delivery",
+        "terminal_human_input_fence_closes_before_keyboard_and_mouse_delivery",
+        "ime_admission_observes_raw_input_before_same_frame_shortcuts",
+        "ime_admission_waits_for_each_window_and_processes_commit_before_reopening",
+        "pending_paste_and_file_drop_hold_the_automation_fence_until_cancelled"
+      ],
       "manual_scenarios": [
         "AUTO-01",
         "AUTO-02",
@@ -60,6 +69,7 @@
         "Acceptance of ADR 0065 and the shared authority/recipient model before implementation",
         "P1 authenticated broker/adapter and observation gates; P2 engine plus per-platform OS confinement qualification",
         "P3 writer-lease/lifecycle/unknown-outcome and native grant UI qualification before control",
+        "Controller input-epoch integration with broker cut and worker disclosure remains unavailable",
         "P4 separate review for command jobs, HTTP, file APIs, unattended grants/triggers and iOS execution"
       ]
     },

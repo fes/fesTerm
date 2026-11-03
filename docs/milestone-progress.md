@@ -1,5 +1,18 @@
 # Milestone Progress Narrative
 
+## Fencing controller-known human input
+
+The session controller can capture a composite input, IME and backend
+attachment fence only while queued input and pending confirmations are clear.
+Terminal-bound human input invalidates an armed fence before delivery.
+Application-wide IME tracking sees events before filtering without retaining
+their text; focus reports do not count as human takeover. Missing native IME
+cancellation can conservatively block capture until application restart.
+
+This is not a writer lease, remote-state proof or native approval. An adapter
+must still hold the shared admission fence, cut the broker grant and worker,
+and validate every target and recipient. No automation execution is enabled.
+
 ## Reserving ordered local input without granting authority
 
 The local PTY's existing bounded command queue can now hold an inert,

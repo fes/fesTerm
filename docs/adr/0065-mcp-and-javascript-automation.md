@@ -96,6 +96,12 @@ to bypass another's restrictions.
    commands retain their order. A lost slot after the broker callback succeeds
    requires conservative unknown-outcome handling, not replay. This primitive
    is not authority, and other backends refuse reservations until implemented.
+   The controller can also capture a composite human-input, application IME
+   and live backend-attachment fence. Pending input confirmations, clipboard
+   reservations and buffered input refuse capture; terminal-bound human input
+   invalidates the fence before delivery. This is not a lease: integration must
+   still cut the broker grant and worker, check the exact fence at every effect
+   and disclosure boundary, and obtain native handoff.
 8. **Gate execution and platform claims in stages.** The full contract,
    capability matrix, limits, threat model, outcomes and validation plan live
    in [the companion design](../automation-design.md), which is part of this
