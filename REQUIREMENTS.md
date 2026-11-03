@@ -351,6 +351,11 @@ A plugin system is not required for the initial release, but major architectural
 ### REQ-EXT-002 — Future scripting compatibility
 
 Scripting and automation are deferred capabilities. Application commands and session ownership should not be designed in a way that makes a future controlled automation surface impractical.
+The owner selected JavaScript for future internal scripting.
+[ADR 0065](docs/adr/0065-mcp-and-javascript-automation.md) and the
+[automation design](docs/automation-design.md) propose the joint MCP authority
+model; this records the design direction without accepting or enabling the
+feature. REQ-EXT-004 remains the implementation gate.
 
 ### REQ-EXT-003 — Future multiplexing compatibility
 

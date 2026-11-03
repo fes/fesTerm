@@ -548,7 +548,10 @@ packages remain the baseline, including Developer ID/notarized macOS.
 
 The following tracks remain intentionally outside the initial critical path. Architecture should avoid precluding them, but milestone work should not depend on them.
 
-- Scripting and automation.
+- Scripting and automation: the owner selected JavaScript; the joint
+  [MCP/automation design](docs/automation-design.md) and
+  [ADR 0065](docs/adr/0065-mcp-and-javascript-automation.md) are Proposed.
+  Implementation, engine/platform qualification and enablement remain deferred.
 - A stable plugin or extension API.
 - Detachable sessions and built-in multiplexing, especially where useful on Windows.
 - Further serial refinement. The first-class UI, profile, lifecycle, worker

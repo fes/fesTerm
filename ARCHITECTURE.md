@@ -654,7 +654,11 @@ integration remain gated by [#429](https://github.com/fes/fesTerm/issues/429).
 - Configuration migration policy before a stable release.
 - Platform serial-device discovery, permissions, and reconnect policy for the
   later first-class serial transport.
-- Boundaries and trust model for future scripting or plugins.
+- Future scripting/MCP boundaries are proposed in
+  [ADR 0065](docs/adr/0065-mcp-and-javascript-automation.md) and the
+  [automation design](docs/automation-design.md): JavaScript, an application-owned
+  authority broker, and platform-qualified isolated execution. These are design
+  proposals, not implemented crate boundaries. Plugin trust remains separate.
 
 
 ## Opt-in mobile SSH composition (experimental)
