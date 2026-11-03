@@ -442,8 +442,8 @@ fn start_server_with_shells(
 }
 
 #[test]
-fn text_sftp_automation_epoch_closes_synchronously_on_shutdown() {
-    let (_server, port, _activity) =
+fn text_sftp_automation_is_unavailable_without_transport_loss_detection() {
+    let (server, port, _activity) =
         start_server(SubsystemBehavior::ServeFiles, ShellBehavior::Quiet);
     let session = SftpTerminalSession::start(
         fixture_profile(port),
@@ -453,13 +453,20 @@ fn text_sftp_automation_epoch_closes_synchronously_on_shutdown() {
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
+    let mut running = false;
+    let mut banner = false;
+    while !running || !banner {
         match session.try_recv_event() {
             Ok(SessionEvent::HostKeyVerification(prompt)) => session
                 .host_key_decision_resolver()
                 .resolve(&prompt, HostTrustDecision::AcceptOnce)
                 .unwrap(),
-            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => break,
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => running = true,
+            Ok(SessionEvent::Output(bytes))
+                if String::from_utf8_lossy(&bytes).contains("Connected SFTP session to") =>
+            {
+                banner = true;
+            }
             Ok(SessionEvent::Error(error)) => panic!("fixture startup failed: {error}"),
             Ok(_) | Err(SessionTryReceiveError::Empty) => {
                 assert!(Instant::now() < deadline, "SFTP session never started");
@@ -469,14 +476,26 @@ fn text_sftp_automation_epoch_closes_synchronously_on_shutdown() {
         }
     }
 
-    let epoch = session.automation_epoch().unwrap();
-    let generation = epoch.capture().unwrap();
-    session.try_shutdown().unwrap();
-    assert_eq!(epoch.capture(), None);
-    {
-        let _guard = festerm_session::automation_admission_lock().unwrap();
-        assert!(!epoch.is_current(generation));
+    assert!(session.automation_epoch().is_none());
+    drop(server);
+    session.try_send_input(b"lpwd\r").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match session.try_recv_event() {
+            Ok(SessionEvent::Output(bytes)) if bytes.starts_with(b"Local working directory:") => {
+                break;
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "local SFTP command did not finish"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(SessionTryReceiveError::Closed) => panic!("SFTP worker unexpectedly stopped"),
+        }
     }
+    assert!(session.automation_epoch().is_none());
     assert_eq!(
         session.shutdown(Duration::from_secs(3)).unwrap(),
         ShutdownResult::Stopped
