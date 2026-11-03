@@ -548,7 +548,7 @@ impl Coordinator {
                             true
                         }
                     });
-                    drop(privacy);
+                    let _privacy = privacy;
                     startup_ok
                 },
             );
