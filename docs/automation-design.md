@@ -338,6 +338,10 @@ QuickJS documents memory/stack limits and interrupt callbacks; Rust bindings
 document Promise integration. Boa offers an embedded Rust implementation.
 These are selection inputs, not evidence that either engine is a security
 sandbox or ready on every fesTerm target. No engine is selected by this ADR.
+The isolated worker component currently pins `rquickjs` 0.14.0 with QuickJS-NG;
+its [language profile and native probes](../crates/festerm-automation-js/README.md)
+are component evidence, not application integration or platform acceptance.
+The JavaScript preference still grants no execution.
 
 Desktop execution uses an install-owned worker process with no inherited
 secrets/environment, GUI/SSH/file descriptors or filesystem/network access
