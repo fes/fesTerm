@@ -137,7 +137,7 @@ fn terminal_keyboard_previews_track_taps_and_alternates_without_early_input() {
 }
 
 #[test]
-fn terminal_keyboard_previews_utility_keys_and_holds_return_without_repeat() {
+fn terminal_keyboard_previews_utility_keys_and_repeats_held_return() {
     let mut harness = harness();
     harness.run();
     for (label, glyph) in [
@@ -165,14 +165,22 @@ fn terminal_keyboard_previews_utility_keys_and_holds_return_without_repeat() {
     let enter = harness.get_by_label("Return").rect().center();
     let now = harness.ctx.input(|input| input.time);
     harness.event(egui::Event::PointerMoved(enter));
+    harness.input_mut().time = Some(now + 0.01);
     harness.event(pointer(true, enter));
     harness.step();
-    harness.input_mut().time = Some(now + 2.0);
+    assert_eq!(
+        harness.state().1,
+        [KeyRowAction::Key(Key::Enter)],
+        "Return emits on press"
+    );
+    harness.input_mut().time = Some(now + 0.01 + REPEAT_DELAY - 0.05);
     harness.step();
-    assert!(harness.state().1.is_empty(), "Return waits for release");
+    assert_eq!(harness.state().1.len(), 1, "no repeat before the delay");
+    harness.input_mut().time = Some(now + 0.01 + REPEAT_DELAY + REPEAT_INTERVAL);
+    harness.step();
     harness.event(pointer(false, enter));
     harness.step();
-    assert_eq!(harness.state().1, [KeyRowAction::Key(Key::Enter)]);
+    assert_eq!(harness.state().1, [KeyRowAction::Key(Key::Enter); 2]);
 }
 
 #[test]

@@ -125,9 +125,9 @@ native typing comfort, VoiceOver and Dynamic Type remain acceptance gates.
 
 Held keys repeat like a hardware keyboard: input keys emit once on press, then
 repeat after 500 ms every 80 ms, with at most one repeat per frame. This covers
-characters without a hold alternate, Space, Backspace, Esc, Tab, arrows and the
-Extended keys (navigation, F-keys, symbols). Exceptions: Return and Insert act
-once on release so a long press never reruns a command; Hold-symbols letters
+characters without a hold alternate, Space, Backspace, Return, Esc, Tab, arrows
+and the Extended keys (navigation, F-keys, symbols). Exceptions: Insert toggles
+a mode, so it acts once on release; Hold-symbols letters
 keep hold-for-alternate; Ctrl/Alt/Shift, globe, hide, Paste and Extended act
 once on tap. A key pressed while a one-shot Ctrl/Alt/Shift is latched
 fires once without repeating, so repeats never arrive without that modifier. Leaving a held key, cancelling a

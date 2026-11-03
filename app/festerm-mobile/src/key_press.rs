@@ -30,7 +30,7 @@ impl Glyph {
 /// How a held key behaves.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Repeat {
-    /// Fires once on release, never repeats (Return, Insert).
+    /// Fires once on release, never repeats (Insert, a mode toggle).
     Release,
     /// Fires on release, or its alternate once after [`HOLD_DELAY`].
     Hold(char),

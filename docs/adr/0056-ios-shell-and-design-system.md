@@ -35,7 +35,8 @@ sheets.
   Following device feedback, switching uses a globe key (and an inline More
   list) rather than an underlined ABC key; the bottom row has a centered,
   expanded Space bar. Every app-owned key shows an enlarged press callout and
-  input keys repeat like a hardware keyboard (Return excepted). Hide/show uses
+  input keys, including Return, repeat like a hardware keyboard (only the
+  Insert mode toggle acts once). Hide/show uses
   a plain keyboard icon in the utility strip. Native dictation remains available by switching
   to the built-in keyboard; no remote microphone forwarding is implied.
 

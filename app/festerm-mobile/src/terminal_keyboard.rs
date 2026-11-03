@@ -318,12 +318,9 @@ impl TerminalKeyboard {
                         false,
                         matches!(key, Key::Enter | Key::Character(' ')),
                     );
-                    let repeat = if key == Key::Enter {
-                        Repeat::Release
-                    } else {
-                        Repeat::Auto
-                    };
-                    if let Some(key) = self.key(ui, &response, key, Glyph::text(label), repeat) {
+                    if let Some(key) =
+                        self.key(ui, &response, key, Glyph::text(label), Repeat::Auto)
+                    {
                         output.action = KeyRowAction::Key(key);
                     }
                 }

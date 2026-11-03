@@ -483,9 +483,10 @@ impl PanelKey {
         }
     }
 
-    /// Return and Insert act once; everything else repeats like a hardware key.
+    /// Insert toggles a mode, so it acts once; everything else, including
+    /// Return, repeats like a hardware key.
     fn repeat(&self) -> Repeat {
-        if matches!(self.key, Key::Enter | Key::Insert) {
+        if self.key == Key::Insert {
             Repeat::Release
         } else {
             Repeat::Auto
@@ -925,5 +926,13 @@ mod keyboard_tests {
             [KeyRowAction::Key(Key::Tab)],
             "a press under a one-shot modifier never repeats without it"
         );
+        for key in NAVIGATION {
+            let expected = if key.key == Key::Insert {
+                Repeat::Release
+            } else {
+                Repeat::Auto
+            };
+            assert_eq!(key.repeat(), expected, "{}", key.label);
+        }
     }
 }
