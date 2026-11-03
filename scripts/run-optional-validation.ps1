@@ -200,6 +200,26 @@ if ($LASTEXITCODE -eq 0) {
     $status = 'fail'
 }
 
+if ($env:OS -eq 'Windows_NT') {
+    $previousTunnelSmoke = $env:FESTERM_TUNNEL_SERVICE_NATIVE_SMOKE
+    try {
+        $env:FESTERM_TUNNEL_SERVICE_NATIVE_SMOKE = '1'
+        Invoke-NativeCommand {
+            cargo test -p festerm-tunnel-bridge --bin festerm-tunnel-setup service_install::tests::service_native_manager_preflight_smoke -- --ignored --exact
+        }
+    } finally {
+        $env:FESTERM_TUNNEL_SERVICE_NATIVE_SMOKE = $previousTunnelSmoke
+    }
+    if ($LASTEXITCODE -eq 0) {
+        Write-OptionalResult "`nsuite=windows-tunnel-task-xml status=pass"
+    } else {
+        Write-OptionalResult "`nsuite=windows-tunnel-task-xml status=fail"
+        $status = 'fail'
+    }
+} else {
+    Write-OptionalResult "`nsuite=windows-tunnel-task-xml status=skipped reason=windows-required"
+}
+
 if ($env:OS -eq 'Windows_NT' -and
     (Test-Path -LiteralPath $vcvarsallPath) -and
     (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
