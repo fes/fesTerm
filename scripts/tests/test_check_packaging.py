@@ -451,7 +451,7 @@ class PackagingMetadataTests(unittest.TestCase):
                 "worker_pid = None\n"
                 "descendant_guard = None\n"
                 "descendant_pid = None\n"
-                "def exhausted(pid):\n"
+                "def exhausted(pid, flags=0):\n"
                 "    global calls, guard, worker_pid, descendant_guard, descendant_pid\n"
                 "    calls += 1\n"
                 "    if calls == 1:\n"
