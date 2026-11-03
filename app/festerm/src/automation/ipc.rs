@@ -480,13 +480,13 @@ fn read_stdio_input(
 }
 
 fn forward_stdio_input(
-    staged: Receiver<Vec<u8>>,
+    mut receive: impl FnMut(Duration) -> Result<Vec<u8>, mpsc::RecvTimeoutError>,
     output: SyncSender<StdioInput>,
     errors: SyncSender<io::Error>,
     closed: Arc<AtomicBool>,
 ) {
     while !closed.load(Ordering::Acquire) {
-        match staged.recv_timeout(IO_SLICE) {
+        match receive(IO_SLICE) {
             Ok(bytes) => {
                 if let Err(error) = send_until(
                     &output,
@@ -736,7 +736,7 @@ fn proxy_stdio(
         .name("festerm-mcp-input-forwarder".into())
         .spawn(move || {
             forward_stdio_input(
-                receive_staged,
+                |timeout| receive_staged.recv_timeout(timeout),
                 forward_output,
                 forward_error,
                 forward_closed,
@@ -1145,25 +1145,31 @@ mod tests {
         }
         let (staged, incoming) = mpsc::sync_channel(1);
         staged.send(b"pending".to_vec()).unwrap();
-        let (errors, _receive_errors) = mpsc::sync_channel(3);
+        let (errors, receive_errors) = mpsc::sync_channel(3);
+        let (dequeued, dequeued_receiver) = mpsc::sync_channel(1);
         let forward_closed = closed.clone();
         let forward_output = output.clone();
         let forward_errors = errors.clone();
         let forwarder = thread::spawn(move || {
-            forward_stdio_input(incoming, forward_output, forward_errors, forward_closed)
+            forward_stdio_input(
+                |timeout| {
+                    let result = incoming.recv_timeout(timeout);
+                    if result.is_ok() {
+                        dequeued.send(()).unwrap();
+                    }
+                    result
+                },
+                forward_output,
+                forward_errors,
+                forward_closed,
+            )
         });
-        send_until(
-            &staged,
-            b"also pending".to_vec(),
-            Instant::now() + FRAME_DEADLINE,
-            &closed,
-        )
-        .unwrap();
+        dequeued_receiver.recv_timeout(FRAME_DEADLINE).unwrap();
         let read_closed = closed.clone();
         let (finished, result) = mpsc::sync_channel(1);
         let reader = thread::spawn(move || {
             read_stdio_input(
-                Cursor::new(Vec::<u8>::new()),
+                Cursor::new(b"{}\n".to_vec()),
                 staged,
                 output,
                 errors,
@@ -1175,6 +1181,7 @@ mod tests {
         assert!(closed.load(Ordering::Acquire));
         reader.join().unwrap();
         forwarder.join().unwrap();
+        assert!(receive_errors.try_recv().is_err());
     }
 
     #[test]
