@@ -1664,7 +1664,9 @@ mod tests {
             .is_some());
         assert!(harness.query_by_label("Run workflow").is_none());
 
-        harness.get_by_label("main.js").click();
+        harness
+            .get_by_role_and_label(accesskit::Role::ComboBox, "Source module")
+            .click();
         harness.run();
         harness.get_by_label("helper.js").click();
         harness.run();
