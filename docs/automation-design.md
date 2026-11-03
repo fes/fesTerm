@@ -394,7 +394,9 @@ before approval. macOS and Linux also require qualified privacy monitoring.
 Startup and teardown run off the UI thread;
 admission stays closed until monitoring and the private endpoint are ready.
 Backend-owned attachment generations advance before transport loss, even if a
-bounded lifecycle-event queue drops notifications. Revocation and each
+bounded lifecycle-event queue drops notifications. Text-mode SFTP has no
+qualified transport/subsystem-loss signal and is excluded from automation
+observation even while its terminal remains usable. Revocation and each
 nonblocking reply write share an admission boundary; bytes already written to
 the private channel cannot be recalled. The stdio input reader buffers at most
 64 bounded frames independently of private-channel backpressure, so it can

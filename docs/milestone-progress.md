@@ -17,6 +17,12 @@ integration. No server/interpreter is enabled. iOS and unsupported desktop
 execution remain unavailable until their separate platform gates can be proved;
 P4 is not pulled into this campaign.
 
+The observation prototype excludes text-mode SFTP: its worker can continue
+producing local output after the SSH transport or SFTP subsystem is lost, and
+its backend cannot yet invalidate automation authority at that boundary. Other
+session types retain their own attachment-generation checks. All MCP bootstrap
+paths remain fail-closed pending authenticated native pairing.
+
 ## Verify the Dev Tunnel installer before execution
 
 The setup panel could display the exact embedded installer for review, but its
