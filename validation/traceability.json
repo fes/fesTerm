@@ -9,6 +9,7 @@
     "REQUIREMENTS.md",
     "ROADMAP.md",
     "docs/application-command-model.md",
+    "docs/automation-design.md",
     "docs/development-governance.md",
     "docs/gui-design.md",
     "docs/markdown-viewer-design.md",
@@ -33,6 +34,34 @@
     "ADR-0016"
   ],
   "coverage": [
+    {
+      "id": "mcp-javascript-automation-proposal",
+      "edges": [
+        "AUT-*"
+      ],
+      "requirements": [
+        "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
+        "REQUIREMENTS.md#req-ext-004-separate-design-for-extensions",
+        "docs/automation-design.md"
+      ],
+      "decisions": [
+        "ADR-0065"
+      ],
+      "automated_tests": [],
+      "manual_scenarios": [
+        "AUTO-01",
+        "AUTO-02",
+        "AUTO-03",
+        "AUTO-04"
+      ],
+      "status": "deferred",
+      "prerequisites": [
+        "Acceptance of ADR 0065 and the shared authority/recipient model before implementation",
+        "P1 authenticated broker/adapter and observation gates; P2 engine plus per-platform OS confinement qualification",
+        "P3 writer-lease/lifecycle/unknown-outcome and native grant UI qualification before control",
+        "P4 separate review for command jobs, HTTP, file APIs, unattended grants/triggers and iOS execution"
+      ]
+    },
     {
       "id": "experimental-dev-tunnels-bridge",
       "edges": [

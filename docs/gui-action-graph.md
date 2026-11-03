@@ -313,6 +313,23 @@ session” is one semantic edge exercised from the chip close control, chip
 context menu, shortcut, command palette, native menu, and failure overlay. A
 route must not grow its own policy.
 
+## Proposed MCP and JavaScript automation (deferred)
+
+[ADR 0065](adr/0065-mcp-and-javascript-automation.md) and the
+[automation design](automation-design.md) define proposed future routes only.
+No current GUI, MCP server or JavaScript runtime implements these edges.
+The fixture checkpoint `A0` is a future isolated app instance with a controlled
+session, a test workflow bundle and no grants; returning to A0 revokes all test
+principals/leases, stops owned workers and closes only fixture-owned sessions.
+Do not construct it with personal profiles, output or credentials.
+
+| ID | From → To | Action / guard | Oracle | Return | Layer |
+| --- | --- | --- | --- | --- | --- |
+| `AUT-01` | A0 no authority → explicitly scoped invocation | Native user starts a reviewed immutable workflow or enables a paired local MCP caller; broker/grant UI prerequisite | Exact caller, bundle/parameter digests, target generations, disclosure/control scopes and expiry are shown; refusal or cancellation releases no data and admits no effects; connection/import alone grants nothing | Cancel/revoke to A0 | P, H, N, U; deferred |
+| `AUT-02` | Scoped invocation → running/waiting → terminal run state | Qualified confined JavaScript worker and bounded broker operations; explicit writer lease for control | Direct/child effects and results obey caller intersection, recipient checks and quotas; a successful input call means admission only; failures/cancellation show unknown admitted outcomes honestly | Cancel; reap owned worker; revoke; return A0 | P, N; deferred |
+| `AUT-03` | Paired MCP caller → scoped observation or named workflow run | Authenticated private IPC, protocol-qualified adapter and caller grants; no raw eval | Tool/resource/list/subscription/result paths disclose only authorized data; forged/cross-client handles, replay and privileged workflow laundering refuse; lost responses cannot duplicate a run | Disconnect/revoke caller; cleanup to A0 | P, N; deferred |
+| `AUT-04` | Running/waiting → interrupted/revoked | Human input/take-control, lock/suspend, target replacement/disconnect, caller loss, expiry or worker fault | Admission closes and queued old-epoch effects/data reject; no retarget/replay/takeover/shell recreation after recovery; already admitted effects are not represented as rolled back | Explicit new invocation/grant or cleanup to A0 | P, H, N, U; deferred |
+
 ## Known-state checkpoints
 
 Fixtures use repository-owned identities and content. They contain no personal

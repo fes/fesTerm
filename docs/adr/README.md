@@ -79,6 +79,8 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0034: Shared Mutable Documents for Native Text Editing](0034-shared-mutable-text-documents.md) — amends ADR 0030's read-only snapshot boundary; see issue #166
 - [ADR 0056: iOS Shell, Design Tokens and Extended Key Encoding](0056-ios-shell-and-design-system.md) - tab shell, theme/widgets, capability-gated screens, new core navigation/function keys
 
+- [ADR 0065: MCP and JavaScript Automation Through One Authority Broker](0065-mcp-and-javascript-automation.md) — Proposed; selected language, deferred broker/runtime/security design, no implementation or enablement
+
 ## Status Values
 
 - **Proposed:** under discussion and not yet binding.

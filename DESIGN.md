@@ -278,5 +278,9 @@ finished. Current work proceeds from that foundation:
 - `TERM` value and terminfo distribution strategy.
 - Profile, workspace, and configuration migration policy before stability.
 - Account provider and synchronization protocol.
-- Scripting, plugin, and multiplexing use cases and trust models.
+- Scripting: JavaScript is the selected future language;
+  [MCP + JavaScript automation](docs/automation-design.md) and
+  [ADR 0065](docs/adr/0065-mcp-and-javascript-automation.md) propose the shared
+  security boundary. Implementation and acceptance remain deferred.
+- Plugin and multiplexing use cases and trust models remain open.
 - Whether persistent or disk-backed scrollback is ever desirable.
