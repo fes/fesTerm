@@ -47,6 +47,19 @@ recovery remains unqualified. Also exercise setup from a constrained terminal
 job: a daemon breakaway warning is a separate lifetime limitation, not fixed
 by successful task registration; do not claim shell survival without testing it.
 
+Windows host setup now uses the daemon's shared PowerShell-preferring shell
+discovery instead of a separate CMD override. Deterministic coverage verifies
+PowerShell discovery, fallback, and default-shell working-directory parsing.
+The opt-in `native_windows_default_shell_stays_interactive_in_the_requested_directory`
+test runs through the optional Windows runner and verifies actual interactive
+output and the requested working directory in an isolated registry. The local
+native regression passed with installed PowerShell 7. Isolated 0.14.0
+helper probes reproduced immediate clean shell/daemon exit with
+`System32/cmd.exe`, while `System32\cmd.exe` stayed interactive under the same
+constrained job. These local probes create no cloud tunnels or tasks and do not
+qualify survival after a containing job closes; full native setup remains
+DT-01/#432 evidence.
+
 Publication and broader qualification remain gated on clarification of
 standalone fesTerm usage rights, as recorded in ADR 0053. The owner subsequently
 authorized the bounded service-application tests and integration below; the current service terms

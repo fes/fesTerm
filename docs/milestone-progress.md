@@ -57,6 +57,46 @@ between staged results, and a result that wins an acknowledgement race does not
 fail the run. This is a component protocol, not yet proof of application-level
 lifecycle integration.
 
+## 0.14.1: Windows Dev Tunnel startup correction
+
+This patch packages #515's Windows host-shell correction. Managed and foreground
+setup now share the daemon's existing PowerShell-preferring discovery instead
+of supplying a CMD override; the default shell retains its arguments while
+accepting the user's home working directory. Unix login-shell behavior and
+explicit-shell argument restrictions are unchanged.
+
+The change passed its hosted Windows, macOS and Linux checks before merge,
+and its isolated native Windows regression verified interactive output and the
+requested directory. This does not migrate an already-dead installation
+generation or qualify shell survival after a containing Windows job closes.
+Those lifecycle and clean-machine gates remain under #432.
+
+## Windows Dev Tunnel shell exited before its worker started
+
+After task registration was repaired, a Windows install reached
+`service.worker_not_running`. The task had launched correctly: its private log
+showed a permanent refusal because the exact daemon generation was already
+gone. The daemon had cleaned up its registry and lease, pointing to an orderly
+exit rather than proving the nearby job-breakaway warning was responsible.
+
+Isolated launches with the published helper reproduced the actual difference:
+the managed installer built `System32/cmd.exe`, and CMD immediately exited.
+The native `System32\cmd.exe` spelling stayed interactive under the same job
+restriction. Rather than retaining a separate CMD default, both Windows setup
+paths now leave shell selection to the daemon's existing local-shell discovery:
+prefer `pwsh.exe` from the user's Store alias, PATH or standard installation
+directories, then fall back to COMSPEC or Windows PowerShell. No PowerShell
+installation is required and shell profiles remain enabled.
+
+The daemon now accepts a working directory with its default shell, preserving
+home-directory startup and the discovered shell's arguments; shell-specific
+arguments still require an explicit shell. Deterministic regressions cover
+both launch subcommands and existing PowerShell discovery/fallback policy.
+An opt-in native regression starts the default shell in an isolated registry
+and verifies actual interactive output and the requested working directory.
+No failed installation is silently replaced or retargeted, and survival after
+the containing job closes remains a separate Windows lifetime limitation.
+
 ## Shared automation authority before external access
 
 The owner authorized the P1-P3 MCP/JavaScript campaign in
