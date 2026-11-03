@@ -74,7 +74,7 @@ struct PrivacyListenerPermit<'a>(&'a std::sync::atomic::AtomicUsize);
 impl<'a> PrivacyListenerPermit<'a> {
     fn acquire(count: &'a std::sync::atomic::AtomicUsize) -> Option<Self> {
         count
-            .fetch_update(
+            .try_update(
                 std::sync::atomic::Ordering::AcqRel,
                 std::sync::atomic::Ordering::Acquire,
                 |current| {

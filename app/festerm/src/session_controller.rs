@@ -21,7 +21,7 @@ pub const MAX_SESSION_EVENTS_PER_FRAME: usize = 64;
 
 fn next_automation_instance(counter: &AtomicU64) -> Option<u64> {
     counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             value.checked_add(1)
         })
         .ok()

@@ -458,7 +458,7 @@ impl Machine {
                     return self.error(Some(&id), ProtocolError::Busy);
                 }
                 let Ok(generation) =
-                    NEXT_GENERATION.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                    NEXT_GENERATION.try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                         value.checked_add(1)
                     })
                 else {

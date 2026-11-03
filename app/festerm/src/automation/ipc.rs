@@ -21,7 +21,7 @@ type Connections = BTreeMap<u64, (Connection, JoinHandle<()>)>;
 
 fn next_connection_key(counter: &AtomicU64) -> Option<u64> {
     counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             value.checked_add(1)
         })
         .ok()
