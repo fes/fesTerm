@@ -101,6 +101,7 @@
         "managed_healthy_reuse_preserves_metadata_and_refuses_a_dead_generation",
         "service_definitions_are_deterministic_scoped_and_have_no_secrets",
         "service_linux_legacy_definition_is_byte_exact_for_migration",
+        "service_rerun_keeps_a_legacy_linux_definition_until_helpers_are_current",
         "managed_worker_retries_transient_failures_but_not_operator_refusals",
         "worker_log_values_are_stage_codes_only",
         "worker_log_forwards_only_well_formed_bridge_events",

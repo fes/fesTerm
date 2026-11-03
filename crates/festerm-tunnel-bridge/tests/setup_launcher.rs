@@ -109,7 +109,7 @@ impl Drop for Fixture {
 #[tokio::test]
 async fn setup_help_distinguishes_managed_service_from_foreground_mode() {
     let output = output(
-        &mut Command::new(env!("CARGO_BIN_EXE_festerm-tunnel-setup"))
+        Command::new(env!("CARGO_BIN_EXE_festerm-tunnel-setup"))
             .arg("--help")
             .kill_on_drop(true),
     )
@@ -197,9 +197,8 @@ while :; do sleep 1; done"#
     assert!(commands.contains("--scopes host --json"));
     assert!(!commands.contains("--allow-anonymous"));
     assert!(!commands.contains("synthetic-host-token"));
-    let status = Command::new("kill")
-        .args(["-INT", &child.id().unwrap().to_string()])
-        .status()
+    let status = spawn(Command::new("kill").args(["-INT", &child.id().unwrap().to_string()]))
+        .wait()
         .await
         .unwrap();
     assert!(status.success());
@@ -279,7 +278,7 @@ async fn managed_setup_refuses_service_prerequisites_before_authentication_or_pr
         fs::set_permissions(&config, fs::Permissions::from_mode(mode)).unwrap();
         let state = fixture.root.join("state");
         let output = output(
-            &mut Command::new(env!("CARGO_BIN_EXE_festerm-tunnel-setup"))
+            Command::new(env!("CARGO_BIN_EXE_festerm-tunnel-setup"))
                 .arg("--managed")
                 .arg("--devtunnel")
                 .arg(fixture.root.join("devtunnel"))

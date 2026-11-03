@@ -491,13 +491,18 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                 &directory,
                 &state,
                 &record,
-                executable,
+                executable.clone(),
                 cli_path,
                 no_takeover,
             )
             .await?
         }
     };
+    if record.executable == executable
+        && super::service_install::migrate_legacy_definition(&service(&record, &state))?
+    {
+        println!("Enabled automatic worker restart for this host.");
+    }
     if let Some(ready) = healthy_record(&directory, &record)? {
         print_profile(&state, &record, &ready)?;
         return Ok(());

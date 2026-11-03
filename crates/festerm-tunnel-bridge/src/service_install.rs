@@ -214,6 +214,21 @@ fn legacy_linux_definition(spec: &ServiceSpec) -> io::Result<String> {
     linux_unit(spec, "", "Restart=no\n")
 }
 
+/// The definition `install` requires: the current one, except that an existing
+/// legacy definition is kept for a rerun that keeps older helpers;
+/// [`migrate_legacy_definition`] switches it once the helpers are current.
+#[cfg(all(unix, any(target_os = "linux", test)))]
+fn kept_linux_definition(directory: &File, name: &Path, spec: &ServiceSpec) -> io::Result<String> {
+    let current = linux_definition(spec)?;
+    let legacy = legacy_linux_definition(spec)?;
+    Ok(
+        match owned_definition(directory, name, &[current.clone(), legacy.clone()]) {
+            Ok(Some(existing)) if existing == legacy.as_bytes() => legacy,
+            _ => current,
+        },
+    )
+}
+
 #[cfg(any(target_os = "linux", test))]
 fn linux_loaded_matches(bytes: &[u8], path: &Path, allow_absent: bool) -> io::Result<()> {
     let text = std::str::from_utf8(bytes).map_err(|_| refused("service.systemd_inspect"))?;
@@ -623,6 +638,58 @@ pub fn stop_and_replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Res
     replace(previous, spec)
 }
 
+/// Rewrites this UUID's pre-restart Linux definition and reloads systemd when
+/// `spec`'s helpers are this release's, which implement
+/// [`PERMANENT_REFUSAL_EXIT`]. A running worker keeps running; the reload
+/// applies the restart policy to it. Returns whether a definition changed. Any
+/// other definition, including a foreign one, is left for `install` to judge.
+#[cfg(target_os = "linux")]
+pub fn migrate_legacy_definition(spec: &ServiceSpec) -> io::Result<bool> {
+    let _state = spec.validate()?;
+    let directory_path = registration_directory_path()?;
+    let Ok(directory) = trusted_directory(&directory_path, false) else {
+        return Ok(false);
+    };
+    let name = format!("festerm-tunnel-{}.service", spec.id);
+    let legacy = legacy_linux_definition(spec)?;
+    if !matches!(
+        owned_definition(&directory, Path::new(&name), std::slice::from_ref(&legacy)),
+        Ok(Some(_))
+    ) {
+        return Ok(false);
+    }
+    let tool = Path::new("/usr/bin/systemctl");
+    let shown = native(
+        tool,
+        &args(&[
+            "--user",
+            "--no-pager",
+            "show",
+            &name,
+            "--property=LoadState,FragmentPath,DropInPaths",
+        ]),
+        "service.systemd_inspect",
+    )?
+    .bytes;
+    linux_loaded_matches(&shown, &directory_path.join(&name), true)?;
+    publish_definition(
+        &directory,
+        Path::new(&name),
+        linux_definition(spec)?.as_bytes(),
+    )?;
+    run(
+        tool,
+        &args(&["--user", "daemon-reload"]),
+        "service.systemd_reload",
+    )?;
+    Ok(true)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn migrate_legacy_definition(_spec: &ServiceSpec) -> io::Result<bool> {
+    Ok(false)
+}
+
 /// Reads this UUID's current definition and requires it to be one we own.
 /// Returns `None` only when no definition exists.
 #[cfg(unix)]
@@ -928,7 +995,6 @@ fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
     let directory = trusted_directory(&directory_path, create)?;
     let name = format!("festerm-tunnel-{}.service", spec.id);
     let path = directory_path.join(&name);
-    let expected = linux_definition(spec)?;
     let tool = Path::new("/usr/bin/systemctl");
     let show = || {
         // Some systemd releases return a nonzero status while still reporting
@@ -947,7 +1013,8 @@ fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
         .map(|result| result.bytes)
     };
     linux_loaded_matches(&show()?, &path, create)?;
-    definition_file(&directory, Path::new(&name), expected.as_bytes(), create)?;
+    let definition = kept_linux_definition(&directory, Path::new(&name), spec)?;
+    definition_file(&directory, Path::new(&name), definition.as_bytes(), create)?;
     if create {
         run(
             tool,
@@ -1455,6 +1522,33 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(entries, [std::ffi::OsString::from("owned.service")]);
+        std::fs::remove_file(root.join(name)).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn service_rerun_keeps_a_legacy_linux_definition_until_helpers_are_current() {
+        let root = std::env::current_dir().unwrap().join(format!(
+            ".service-legacy-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let directory = setup_storage::private_directory(&root, true).unwrap();
+        let name = Path::new("owned.service");
+        let spec = spec();
+        let current = linux_definition(&spec).unwrap();
+        let legacy = legacy_linux_definition(&spec).unwrap();
+        let kept = || kept_linux_definition(&directory, name, &spec).unwrap();
+        assert_eq!(kept(), current);
+        definition_file(&directory, name, legacy.as_bytes(), true).unwrap();
+        assert_eq!(kept(), legacy);
+        definition_file(&directory, name, kept().as_bytes(), true).unwrap();
+        publish_definition(&directory, name, current.as_bytes()).unwrap();
+        assert_eq!(kept(), current);
+        std::fs::write(root.join(name), b"foreign definition").unwrap();
+        assert_eq!(kept(), current);
+        assert!(definition_file(&directory, name, kept().as_bytes(), true).is_err());
         std::fs::remove_file(root.join(name)).unwrap();
         std::fs::remove_dir(root).unwrap();
     }

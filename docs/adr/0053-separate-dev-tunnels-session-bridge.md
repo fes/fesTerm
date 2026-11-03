@@ -816,10 +816,12 @@ A Linux host went offline overnight when its bridge exited. `Restart=no` and
 - Refusals that need operator action exit `78` (`PERMANENT_REFUSAL_EXIT`) and
   are excluded through `RestartPreventExitStatus`. Other failures, including
   `setup.verify_account` and `setup.host_token` (sign-in/network), retry.
-- Only `--upgrade`, which also switches `ExecStart` to helpers that implement
-  exit 78, accepts and atomically migrates the exact earlier `Restart=no`
-  definition. A plain rerun keeps the old helpers and their legacy unit. Any
-  other content still refuses.
+- The exact earlier `Restart=no` definition is migrated atomically (rewritten
+  and reloaded; a running worker keeps running) only once the recorded helpers implement exit 78:
+  by `--upgrade`, which switches `ExecStart` to them, or by any rerun whose
+  installer already is the recorded helper (for example, updated in place).
+  A rerun that keeps older helpers keeps, and can still restart, their legacy
+  unit. Any other content still refuses.
 - On all platforms the worker appends to a bounded private `worker.log`
   (256 KiB plus one rotation): start, ready, bridge exit status, worker exit
   stage code and permanence, panics, and bridge `client_opened`/
@@ -831,6 +833,7 @@ A Linux host went offline overnight when its bridge exited. `Restart=no` and
 
 Automated tests: `service_definitions_are_deterministic_scoped_and_have_no_secrets`,
 `service_linux_legacy_definition_is_byte_exact_for_migration`,
+`service_rerun_keeps_a_legacy_linux_definition_until_helpers_are_current`,
 `managed_worker_retries_transient_failures_but_not_operator_refusals`,
 `worker_log_values_are_stage_codes_only`,
 `worker_log_forwards_only_well_formed_bridge_events` and
