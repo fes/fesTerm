@@ -6,10 +6,10 @@ records the proposed authority and isolation decisions. This document defines
 their contracts and qualification gates. The owner authorized P1-P3 delivery in
 [#501](https://github.com/fes/fesTerm/issues/501). The memory-only
 `festerm-automation` authority kernel, independent default-off settings and a
-local MCP observation adapter are implemented. The adapter can start on Windows
-only when private transport and the native privacy monitor initialize. macOS
-and Linux currently refuse activation because their screen-lock sources are not
-qualified. No JavaScript interpreter or terminal control is enabled. Native
+local MCP observation adapter are implemented. The adapter refuses activation
+on every platform until private peer authentication is qualified; macOS and
+Linux also require qualified screen-lock monitoring. No JavaScript interpreter
+or terminal control is enabled. Native
 platform/client qualification remains open; later APIs, manifests and sandbox
 policies below are contracts, not claims of shipping functionality.
 
