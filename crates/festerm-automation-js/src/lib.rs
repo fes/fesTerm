@@ -11,7 +11,7 @@ mod supervisor;
 mod worker;
 
 pub use supervisor::{cleanup_failed, AdmissionPermit, Event, Supervisor, WorkerProgram};
-pub use worker::worker_entry;
+pub use worker::{worker_entry, worker_stdio};
 
 pub const HEAP_BYTES: usize = 64 * 1024 * 1024;
 pub const STACK_BYTES: usize = 1024 * 1024;

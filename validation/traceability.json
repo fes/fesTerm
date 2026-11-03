@@ -91,7 +91,9 @@
         "host_admission_acknowledgement_unblocks_concurrent_calls",
         "result_before_separate_acknowledgement_does_not_fail_the_run",
         "watchdog_is_independent_of_application_polling",
-        "unsupported_platform_never_launches_or_executes_script"
+        "unsupported_platform_never_launches_or_executes_script",
+        "worker_argument_with_extra_arguments_refuses_before_gui_startup",
+        "application_worker_reports_qualification_before_receiving_source"
       ],
       "manual_scenarios": ["AUTO-02", "AUTO-03"],
       "status": "partial",

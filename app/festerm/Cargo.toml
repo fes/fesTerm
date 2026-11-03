@@ -21,6 +21,7 @@ eframe = "0"
 egui-winit = "=0.36.1"
 festerm-config = { path = "../../crates/festerm-config" }
 festerm-automation = { path = "../../crates/festerm-automation" }
+festerm-automation-js = { path = "../../crates/festerm-automation-js" }
 festerm-automation-mcp = { path = "../../crates/festerm-automation-mcp" }
 festerm-core = { path = "../../crates/festerm-core" }
 festerm-document = { path = "../../crates/festerm-document" }

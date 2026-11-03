@@ -170,6 +170,10 @@ in the design must be visible in implementation/release review.
   observation, pairing and stale-target tests cover the P1 path. These do not
   prove native lock behavior, client interoperability, a confined engine or
   native input ordering. Run the traceability gate and documentation checks.
+- **Worker process entry:** The desktop executable has a private
+  `--automation-worker` entry before application initialization, exercised by
+  subprocess tests. This is not a launcher or an approval, and does not qualify
+  executable provenance, its 128 MiB memory baseline or a platform sandbox.
 - **Native/manual evidence required:** `AUTO-01` through `AUTO-04` remain open;
   observation requires real platform/client/lock evidence, and later stages
   additionally require engine, platform sandbox and input-ownership evidence.

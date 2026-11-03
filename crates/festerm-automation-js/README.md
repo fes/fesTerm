@@ -22,29 +22,25 @@ Supervisor::host_result(&self, id: u32, HostResult) -> Result<(), Error>
 Supervisor::cancel(&self)
 Supervisor::shutdown(self) -> Result<(), Error>
 worker_entry(input: impl Read, output: impl Write) -> Result<(), Error>
+worker_stdio() -> Result<(), Error>
 platform::availability() -> Result<&'static str, Error>
 cleanup_failed() -> bool
 ```
 
-The composition root must branch on **exactly** `--automation-worker` before
-initializing GUI, threads, credentials, networking, or other application state:
-
-```rust,ignore
-let mut args = std::env::args_os().skip(1);
-if args.next().as_deref() == Some(std::ffi::OsStr::new("--automation-worker"))
-    && args.next().is_none() {
-    let result = festerm_automation_js::worker_entry(
-        std::io::stdin().lock(), std::io::stdout().lock());
-    std::process::exit(if result.is_ok() { 0 } else { 70 });
-}
-```
+The desktop application and the standalone worker branch on **exactly**
+`--automation-worker` before initializing GUI, threads, credentials,
+networking, or other application state. Additional arguments are refused.
+`worker_stdio()` calls the confined entry and emits only a content-free failure
+frame when possible; the process exits unsuccessfully even if the pipe is
+unavailable. The application does not yet launch this branch itself.
 
 Use the install-owned absolute application executable (or the provided
 `festerm-automation-js-worker` binary) as `WorkerProgram`. The caller verifies
 install/signature provenance and protects every parent directory; this crate
 rejects relative/noncanonical paths, nonfiles and group/world-writable Unix
 executables. It never uses a shell or PATH lookup. Linux additionally refuses
-an executable whose initial process mappings already exceed 128 MiB.
+an executable whose initial process mappings already exceed 128 MiB; in that
+case a separately packaged and qualified helper is still required.
 
 Events are `HostCall { id, request }`, `Finished { outcome }`, and `Failed(Error)`.
 For **every** host call, authorize the live run, exact target generation,

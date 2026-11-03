@@ -2189,6 +2189,7 @@ dependencies = [
  "egui-winit",
  "egui_kittest",
  "festerm-automation",
+ "festerm-automation-js",
  "festerm-automation-mcp",
  "festerm-config",
  "festerm-core",

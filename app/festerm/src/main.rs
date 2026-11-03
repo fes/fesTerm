@@ -135,6 +135,18 @@ fn primary_viewport_builder(
 
 fn main() -> eframe::Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args
+        .first()
+        .is_some_and(|argument| argument == "--automation-worker")
+    {
+        if args.len() != 1 {
+            std::process::exit(64);
+        }
+        if festerm_automation_js::worker_stdio().is_err() {
+            std::process::exit(70);
+        }
+        return Ok(());
+    }
     if args.first().is_some_and(|argument| argument == "--mcp") {
         if args.len() != 1 {
             eprintln!("fesTerm --mcp accepts no additional arguments");

@@ -1,5 +1,19 @@
 # Milestone Progress Narrative
 
+## Early application worker entry without authority
+
+The desktop executable now recognizes the private worker argument before any
+GUI or application initialization, using the same confined stdio entry and
+content-free failure frames as the standalone helper. Extra arguments are
+refused. Subprocess tests exercise the real application binary, including
+explicit unavailability or the qualified worker's loading deadline and a
+supervised, authority-free script.
+
+This does not launch a workflow or establish install provenance. Linux rejects
+an application executable whose initial mappings exceed the hard process limit,
+so a separate packaged helper may still be necessary. Native confinement,
+privacy monitoring, approval and broker integration remain separate gates.
+
 ## Isolated JavaScript worker without authority
 
 The P2 worker snapshots and hashes a bounded static JavaScript module graph
