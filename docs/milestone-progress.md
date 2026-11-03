@@ -1,5 +1,23 @@
 # Milestone Progress Narrative
 
+## Windows Dev Tunnel task XML encoding
+
+A native Windows host install reached authenticated provisioning and session
+startup, then stopped at `service.task_create`. The generated UTF-8 XML failed
+Scheduler import with `0x8004131A` ("unable to switch the encoding"). Removing
+the declaration imported but corrupted non-ASCII text, so task files now use
+UTF-16LE with a BOM and matching declaration. Explicit upgrades recognize both
+the old exact owned definition and the corrected encoding without relaxing
+task ownership or overwriting foreign definitions.
+
+Deterministic coverage preserves accented and supplementary Unicode through
+the task-file boundary. The opt-in native prerequisite smoke validates the
+generated file through Scheduler without registering a task, and is included
+in the optional Windows runner. A controlled disabled-task import reproduced
+the old failure and verified Unicode preservation with UTF-16LE; no task was
+run and all probe tasks were removed. This is task-registration evidence, not
+clean-machine/service-lifecycle acceptance.
+
 The 2026-10-30 isolated macOS-to-Debian-ARM64 Pi Dev Tunnel test now passes
 actual GUI shell input/output, including the integrated native service-app flow.
 Relay WebSockets explicitly
