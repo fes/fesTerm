@@ -132,6 +132,7 @@
         "closed_targets_can_be_forgotten_without_resurrecting_old_references",
         "automation_revision_exhaustion_invalidates_queued_responses",
         "full_event_queue_cannot_preserve_ssh_epoch_across_reconnect",
+        "text_sftp_automation_is_unavailable_without_transport_loss_detection",
         "displaced_tunnel_invalidates_epoch_before_a_full_queue_can_delay_lifecycle",
         "queued_reply_is_dropped_when_target_is_replaced_before_dispatch",
         "backpressured_reply_cannot_write_after_revocation",
