@@ -1,5 +1,14 @@
 # Milestone Progress Narrative
 
+## Selecting a workflow without granting access
+
+When JavaScript workflows are enabled, desktop Settings can select a local JSON
+bundle and preview its captured digest, requested capabilities, parameter
+schema and module names. Capture runs off the UI thread, retains its single
+slot until I/O finishes, and discards cancelled or superseded results. This is
+not approval: source review, parameter/target selection, worker execution, iOS
+selection and native platform qualification remain open.
+
 ## Capturing a selected workflow before consent
 
 The P2 composition crate can now ingest one explicitly user-selected JSON
@@ -8,9 +17,9 @@ links or reparse points, bounds the file read, and hands the captured source to
 the existing strict graph validator and canonical digest. Changing the file
 afterward cannot change the frozen invocation; execution must use the frozen
 source without reopening the file. This is not an approval, provenance
-guarantee, MCP eval path or application integration; native selection,
-pending-approval invalidation, platform evidence and worker authorization
-remain open. Other platforms and unsupported path shapes refuse.
+guarantee, MCP eval path or executable integration; pending-approval
+invalidation, platform evidence and worker authorization remain open. Other
+platforms and unsupported path shapes refuse.
 The iOS build excludes the unqualified interpreter and refuses worker startup;
 compilation does not establish native document access or execution support.
 

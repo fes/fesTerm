@@ -327,8 +327,8 @@ untrusted interchange format. Recompile approved source in the worker.
 
 #### User-selected single-file intake
 
-The unintegrated `festerm_automation_workflow::intake::load_user_selected_bundle`
-API accepts one absolute, locally user-selected JSON file containing a
+The `festerm_automation_workflow::intake::load_user_selected_bundle` API
+accepts one absolute, locally user-selected JSON file containing a
 `SourceSnapshot`. For example:
 
 ```json
@@ -392,8 +392,14 @@ off the UI thread, and never expose it as an MCP-supplied source/eval path.
 Filesystem/provider I/O can stall even for a regular file. The application must
 bound concurrent intake tasks, retain each slot until the underlying I/O exits
 even after cancellation, and discard results from cancelled or superseded
-selections. There is no file watcher, approval UI, worker launch or execution
-here.
+selections. Desktop Settings now offers an opt-in, local-file picker and a
+non-authorizing metadata preview of the captured snapshot. It retains one
+background intake slot until the read exits, discards cancelled results, and
+holds at most the latest superseding selection until that slot is free. It
+displays the canonical digest and requested capabilities. It does not display
+the source or provide approval, execution, or publisher verification; those
+remain separate requirements. There is no iOS picker integration, file watcher,
+worker launch or execution here.
 
 The standalone workflow binding component freezes the snapshot, validated
 parameters, requested scopes and the complete one-to-one mapping from opaque

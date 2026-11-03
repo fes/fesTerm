@@ -377,7 +377,11 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             ) {
                                 command = Some(AppCommand::ToggleJavascriptEnabled);
                             }
-                            ssh_paragraph(ui, "JavaScript execution is unavailable in this observation-only build. The preference grants no terminal access.");
+                            if let Some(action) =
+                                workflow_settings(ui, &automation, javascript_enabled)
+                            {
+                                command = Some(action);
+                            }
                             if let Some(action) = automation_settings(ui, &automation, mcp_enabled) {
                                 command = Some(AppCommand::Automation(action));
                             }
@@ -796,6 +800,115 @@ const fn terminal_font_label(font: TerminalFontPreference) -> &'static str {
         TerminalFontPreference::JuliaMono => "JuliaMono",
         TerminalFontPreference::MapleMono => "Maple Mono",
     }
+}
+
+fn workflow_settings(
+    ui: &mut Ui,
+    snapshot: &crate::automation::SettingsSnapshot,
+    enabled: bool,
+) -> Option<AppCommand> {
+    use crate::automation::{NativeCommand, WorkflowStatus};
+    use festerm_automation_js::snapshot::{Capability, ParameterType};
+
+    ssh_paragraph(
+        ui,
+        "JavaScript execution is not yet available. Selecting a workflow captures a \
+         preview only; it grants no access and cannot run the workflow.",
+    );
+    if !enabled {
+        return None;
+    }
+
+    let mut command = None;
+    if ui
+        .add_enabled(
+            !snapshot.workflow.busy(),
+            egui::Button::new("Select workflow JSON"),
+        )
+        .clicked()
+    {
+        command = Some(AppCommand::OpenWorkflowPicker);
+    }
+    match &snapshot.workflow.status {
+        WorkflowStatus::Empty => {}
+        WorkflowStatus::Capturing => {
+            ssh_paragraph(ui, "Capturing the selected workflow in the background.");
+        }
+        WorkflowStatus::Waiting => {
+            ssh_paragraph(
+                ui,
+                "The newer selection will be captured after the previous file read exits.",
+            );
+        }
+        WorkflowStatus::Cancelling => {
+            ssh_paragraph(
+                ui,
+                "The cancelled file read is still finishing. Select another workflow after it exits.",
+            );
+        }
+        WorkflowStatus::Failed(error) => {
+            ui.colored_label(theme::STATUS_ERROR, error);
+        }
+        WorkflowStatus::Captured => {
+            if let Some(bundle) = &snapshot.workflow.bundle {
+                let manifest = bundle.manifest();
+                ui.label(format!("Workflow: {}", manifest.name));
+                ui.label(format!("Captured snapshot SHA-256: {}", bundle.digest()));
+                ssh_paragraph(
+                    ui,
+                    "This snapshot has not been approved. Its source is not displayed here, \
+                     and the selected file is not proof of publisher identity.",
+                );
+                ui.collapsing("Requested capabilities (not granted)", |ui| {
+                    if manifest.capabilities.is_empty() {
+                        ui.label("None");
+                    }
+                    for capability in &manifest.capabilities {
+                        ui.label(match capability {
+                            Capability::Observe => "Discover approved terminal attachments",
+                            Capability::ReadScreen => "Read terminal screens",
+                            Capability::ReadScrollback => "Read retained terminal history",
+                            Capability::GetSelection => "Read terminal selections",
+                            Capability::WaitForChange => "Wait for terminal changes",
+                            Capability::SendText => "Send terminal text",
+                            Capability::SendKeys => "Send terminal keys",
+                            Capability::Open => "Open terminal sessions",
+                            Capability::InvokeWorkflow => "Invoke other workflows",
+                        });
+                    }
+                });
+                ui.collapsing("Parameters and modules", |ui| {
+                    for (name, kind) in &manifest.parameters {
+                        let description = match kind {
+                            ParameterType::Text { max_bytes } => {
+                                format!("text, at most {max_bytes} bytes")
+                            }
+                            ParameterType::Integer { min, max } => {
+                                format!("integer from {min} to {max}")
+                            }
+                            ParameterType::Boolean {} => "boolean".to_owned(),
+                            ParameterType::Target {} => "terminal attachment".to_owned(),
+                        };
+                        ui.label(format!("{name}: {description}"));
+                    }
+                    for module in &manifest.modules {
+                        let suffix = if module == &manifest.entry {
+                            " (entry)"
+                        } else {
+                            ""
+                        };
+                        ui.label(format!("{module}{suffix}"));
+                    }
+                });
+            }
+        }
+    }
+    if (snapshot.workflow.busy() || snapshot.workflow.bundle.is_some())
+        && ui.button("Clear workflow preview").clicked()
+    {
+        command = Some(AppCommand::Automation(NativeCommand::ClearWorkflow));
+    }
+    command
 }
 
 /// A titled card matching the launcher/profile-editor "quiet section" visual
@@ -1324,6 +1437,34 @@ mod tests {
             harness.state().command,
             Some(AppCommand::ToggleJavascriptEnabled)
         ));
+    }
+
+    #[test]
+    fn workflow_selection_is_available_only_when_javascript_is_enabled() {
+        for enabled in [false, true] {
+            let snapshot = crate::automation::SettingsSnapshot::default();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(800.0, 500.0))
+                .build_ui_state(
+                    move |ui, command: &mut Option<AppCommand>| {
+                        if let Some(action) = workflow_settings(ui, &snapshot, enabled) {
+                            *command = Some(action);
+                        }
+                    },
+                    None,
+                );
+            harness.run();
+            if enabled {
+                harness.get_by_label("Select workflow JSON").click();
+                harness.step();
+                assert!(matches!(
+                    harness.state(),
+                    Some(AppCommand::OpenWorkflowPicker)
+                ));
+            } else {
+                assert!(harness.query_by_label("Select workflow JSON").is_none());
+            }
+        }
     }
 
     #[test]

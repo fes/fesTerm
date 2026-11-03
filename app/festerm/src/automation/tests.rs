@@ -198,6 +198,80 @@ fn automation_settings_presentation_changes_need_a_followup_frame() {
 }
 
 #[test]
+fn automation_selected_workflow_preview_requires_opt_in_and_grants_no_access() {
+    use festerm_automation_js::snapshot::{Manifest, SourceSnapshot};
+
+    let directory = tempfile::tempdir().unwrap();
+    #[cfg(windows)]
+    let root = directory.path().to_path_buf();
+    #[cfg(not(windows))]
+    let root = directory.path().canonicalize().unwrap();
+    let path = root.join("workflow.json");
+    let snapshot = SourceSnapshot {
+        manifest: Manifest {
+            version: 1,
+            api_version: 1,
+            name: "test".into(),
+            entry: "main.js".into(),
+            modules: vec!["main.js".into()],
+            parameters: BTreeMap::new(),
+            capabilities: BTreeSet::new(),
+        },
+        modules: BTreeMap::from([("main.js".into(), "export default 1;".into())]),
+    };
+    std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+
+    let context = egui::Context::default();
+    let mut coordinator = Coordinator::default();
+    coordinator.command(
+        NativeCommand::CaptureWorkflow(SelectedWorkflow(path.clone())),
+        &context,
+    );
+    assert!(matches!(
+        coordinator.workflow.view().status,
+        WorkflowStatus::Failed(_)
+    ));
+
+    let configuration = festerm_config::Configuration::empty()
+        .with_interface_settings(
+            festerm_config::InterfaceSettings::DEFAULT.with_javascript_enabled(true),
+        )
+        .unwrap();
+    let enabled = FesTermApp::for_test_with_configuration(configuration);
+    let disabled = FesTermApp::for_test_with_configuration(festerm_config::Configuration::empty());
+    coordinator.tick(&context, &[&enabled, &disabled]);
+    coordinator.command(
+        NativeCommand::CaptureWorkflow(SelectedWorkflow(path.clone())),
+        &context,
+    );
+    assert!(matches!(
+        coordinator.workflow.view().status,
+        WorkflowStatus::Failed(_)
+    ));
+    coordinator.tick(&context, &[&enabled]);
+    coordinator.command(
+        NativeCommand::CaptureWorkflow(SelectedWorkflow(path)),
+        &context,
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while coordinator.workflow.view().busy() {
+        coordinator.tick(&context, &[&enabled]);
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    let preview = coordinator.settings(&[&enabled]).workflow;
+    assert_eq!(preview.status, WorkflowStatus::Captured);
+    assert_eq!(preview.bundle.unwrap().manifest().name, "test");
+    assert!(coordinator.broker.is_none());
+    assert!(coordinator.server.is_none());
+
+    coordinator.workflow.view().disable();
+    coordinator.tick(&context, &[&disabled]);
+    assert_eq!(coordinator.workflow.view().status, WorkflowStatus::Empty);
+    assert!(coordinator.workflow.view().bundle.is_none());
+}
+
+#[test]
 fn automation_restart_stops_existing_channels_before_coordinator_dispatch() {
     let (mut app, _) = FesTermApp::automation_fixture();
     let stop = Arc::new(AtomicBool::new(false));

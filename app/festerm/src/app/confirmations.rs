@@ -1103,6 +1103,7 @@ impl FesTermApp {
             self.state
                 .dispatch(AppCommand::ResetInterfaceSettings, context);
             self.automation_settings.disable();
+            self.automation_settings.workflow.disable();
             self.image_budget
                 .set_preference(InterfaceSettings::DEFAULT.image_memory_budget());
             crate::markdown_images::wake_image_viewports(context);

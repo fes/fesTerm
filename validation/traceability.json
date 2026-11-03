@@ -72,6 +72,13 @@
       ],
       "decisions": ["ADR-0065"],
       "automated_tests": [
+        "automation_selected_workflow_preview_requires_opt_in_and_grants_no_access",
+        "workflow_selection_is_available_only_when_javascript_is_enabled",
+        "workflow_picker_requires_opt_in_and_does_not_retarget_the_file_picker",
+        "cancelled_workflow_capture_keeps_its_slot_and_discards_late_result",
+        "newer_workflow_selection_waits_for_io_and_discards_superseded_results",
+        "cancelling_a_waiting_selection_never_starts_its_capture",
+        "workflow_capture_failure_is_visible_and_never_approves_a_bundle",
         "selected_bundle_and_invocation_remain_frozen_after_file_changes",
         "selected_file_handle_survives_path_replacement",
         "bundle_intake_hashes_exact_decoded_source_not_json_spelling",
@@ -91,7 +98,7 @@
       "manual_scenarios": ["AUTO-01"],
       "status": "partial",
       "prerequisites": [
-        "Native workflow selection, security-scoped access, pending-approval invalidation, exact approval UI, worker/broker integration and platform qualification remain open"
+        "iOS security-scoped selection, pending-approval invalidation, exact approval UI, worker/broker integration and platform qualification remain open; the desktop metadata preview is not an approval"
       ]
     },
     {
