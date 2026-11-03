@@ -84,7 +84,10 @@ impl ImeAdmission {
         for event in events {
             let active = match event {
                 egui::Event::Ime(egui::ImeEvent::Preedit { .. }) => true,
-                egui::Event::Ime(egui::ImeEvent::Commit(_) | egui::ImeEvent::Disabled) => false,
+                egui::Event::Ime(egui::ImeEvent::Commit(_)) => false,
+                egui::Event::Ime(egui::ImeEvent::Disabled) if self.composing.contains(&window) => {
+                    false
+                }
                 _ => continue,
             };
             if !self.observed_this_pass {
@@ -800,6 +803,12 @@ mod tests {
         let original = admission.epoch.capture().unwrap();
         let first = WindowId::PRIMARY;
         let second = WindowId(1);
+        admission.observe(first, &[egui::Event::Ime(egui::ImeEvent::Disabled)]);
+        assert!(!admission.finish_pass());
+        {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            assert!(admission.epoch.is_current(original));
+        }
         let preedit = egui::Event::Ime(egui::ImeEvent::Preedit {
             text: "pending".to_owned(),
             active_range_chars: None,

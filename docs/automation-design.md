@@ -613,16 +613,24 @@ automatically.
 The controller can capture a composite human-input, application-wide IME and
 authoritative backend-attachment fence only with no buffered input, clipboard
 reservation or pending paste/file-drop confirmation. Human keyboard, paste,
-mouse input while terminal mouse reporting is enabled, and clipboard initiation invalidate an armed
-fence before delivery. IME events are observed before input filtering or tab
-switching, and composition remains blocked across windows until every observed
-composition receives a commit or native disabled event, processed through the
-UI pass. Empty preedit, ordinary text and focus loss do not prove cancellation.
+mouse input while terminal mouse reporting is enabled, and clipboard initiation
+invalidate an armed fence before delivery. IME events are observed before
+input filtering or tab switching, and composition remains blocked across
+windows until every observed composition receives a commit or native disabled
+event, processed through the UI pass. Empty preedit, ordinary text and focus
+loss do not prove cancellation.
 When the platform omits a cancellation event, including for a closed window,
-the gate can remain blocked until application restart; any future adapter must
-surface that refusal rather than silently bypassing it. This metadata fence is
-not a lease or native handoff. The future adapter must check it under the shared admission lock
-through every effect and disclosure, and synchronously cut the controlling
+the gate can remain blocked until application restart. Duplicate empty
+preedits after a commit can also block it: without a qualified native signal,
+they cannot safely be distinguished from an empty preedit preceding another
+commit. Any future adapter must surface that refusal and must not bypass it.
+A native-qualified reset must establish that all relevant IME contexts have
+resolved pending callbacks through the UI pass and must prevent new unobserved
+input from racing rearm or admission; issuing a reset request alone is not
+proof. If quiescence cannot be established, the gate stays closed. This
+metadata fence is not a lease or native handoff. The future adapter must check
+it under the shared admission lock through every effect and disclosure, and
+synchronously cut the controlling
 invocation and descendants through the broker on takeover. An empty local
 queue is not evidence that the remote editing state is safe. Other session
 backends currently refuse reservations, and no application control adapter
