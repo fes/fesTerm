@@ -10,5 +10,11 @@ festerm-automation-js = { path = "../festerm-automation-js" }
 serde_json = "1"
 sha2 = "0.10"
 
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))'.dependencies]
+festerm-unix-security = { path = "../festerm-unix-security" }
+
+[target.'cfg(windows)'.dependencies]
+festerm-windows-security = { path = "../festerm-windows-security" }
+
 [lints]
 workspace = true

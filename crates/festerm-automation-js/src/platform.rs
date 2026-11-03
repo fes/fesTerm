@@ -54,6 +54,7 @@ pub(crate) fn nonblocking(fd: i32) -> Result<(), Error> {
     Ok(())
 }
 
+#[cfg(not(target_os = "ios"))]
 pub(crate) fn cpu_time() -> Option<std::time::Duration> {
     #[cfg(unix)]
     {
