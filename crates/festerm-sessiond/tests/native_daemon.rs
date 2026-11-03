@@ -58,6 +58,67 @@ fn native_start_reports_socket_depth_without_starting_a_shell() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+#[ignore = "native daemon smoke; run through native-smoke.yml or the VM optional-validation mode"]
+fn native_windows_default_shell_stays_interactive_in_the_requested_directory() {
+    use festerm_session::{noop_session_event_notifier, Session, SessionLifecycle};
+    use festerm_sessiond::{list_unattached_sessions_in, PersistentSession};
+
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("default-shell");
+    let name = "default-shell";
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime.clone(),
+        name: name.into(),
+    };
+    let mut command = daemon_command(&executable, &runtime);
+    command
+        .args(["start", "--name", name, "--cols", "512", "--cwd"])
+        .arg(&runtime);
+    assert_success("default-shell start", &run_start_command(command));
+
+    let registry = runtime.join("fesTerm").join("sessiond");
+    let selected = list_unattached_sessions_in(&registry)
+        .unwrap()
+        .into_iter()
+        .find(|session| session.name == name)
+        .expect("the default shell must remain alive");
+    let session = PersistentSession::resume_discovered_in(
+        &selected,
+        &registry,
+        noop_session_event_notifier(),
+    )
+    .unwrap();
+    bounded_poll(
+        || session.lifecycle() == SessionLifecycle::Running,
+        "default-shell attachment",
+    );
+    session.acknowledge_recovery_adoption();
+    eprintln!("sessiond-native default shell={}", selected.shell);
+    let shell = Path::new(&selected.shell)
+        .file_name()
+        .unwrap()
+        .to_string_lossy();
+    let input = if shell.eq_ignore_ascii_case("cmd.exe") {
+        assert_eq!(selected.arguments, ["/Q"]);
+        "set probe=TUNNEL_\r\necho %probe%DEFAULT_OK:%CD%\r\n"
+    } else {
+        assert!(
+            shell.eq_ignore_ascii_case("pwsh.exe") || shell.eq_ignore_ascii_case("powershell.exe"),
+            "unexpected default Windows shell: {shell}"
+        );
+        assert_eq!(selected.arguments, ["-NoLogo"]);
+        "[Console]::WriteLine('TUNNEL_' + 'DEFAULT_OK:' + (Get-Location).Path)\r\n"
+    };
+    session.try_send_input(input.as_bytes()).unwrap();
+    read_session_until(
+        &session,
+        &format!("TUNNEL_DEFAULT_OK:{}", runtime.display()),
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn native_start_failure_removes_generation_artifacts_before_root_cleanup() {
@@ -1576,7 +1637,6 @@ fn launch_session_with_scrollback(
     assert_success("start", &output);
 }
 
-#[cfg(unix)]
 fn run_start_command(mut command: Command) -> Output {
     let mut child = command
         .stdin(std::process::Stdio::null())
