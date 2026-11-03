@@ -341,8 +341,7 @@ impl MobileApp {
         *self.sink.live.connection.borrow_mut() = Some(live);
         self.workspace = workspaces::Workspace::Terminal;
         self.surface = Surface::Terminal;
-        self.control = false;
-        self.alt = false;
+        self.clear_sticky_modifiers();
     }
 
     /// Advances sign-in, tunnel listing and connect flows once per frame.

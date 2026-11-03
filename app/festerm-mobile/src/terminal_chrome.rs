@@ -204,6 +204,7 @@ pub enum KeyRowAction {
     Tab,
     ToggleControl,
     ToggleAlt,
+    ToggleShift,
     Paste,
     TogglePanel,
     ToggleKeyboard,
@@ -212,6 +213,7 @@ pub enum KeyRowAction {
 pub struct KeyRowState {
     pub control: bool,
     pub alt: bool,
+    pub shift: bool,
     pub panel_open: bool,
     pub keyboard_visible: bool,
     pub paste: bool,
@@ -269,17 +271,19 @@ fn key_button(
 
 fn text_key(ui: &mut Ui, width: f32, label: &str, active: bool) -> Response {
     key_button(ui, width, label, active, |painter, rect, tint| {
-        painter.text(
+        paint_fit(
+            painter,
             rect.center(),
             Align2::CENTER_CENTER,
             label,
             type_scale::font(type_scale::BODY - 1.0),
             tint,
+            rect.width() - 4.0,
         );
     })
 }
 
-/// Esc Tab Ctrl Alt, optional paste, extended-keys toggle, keyboard toggle.
+/// Esc Tab Ctrl Alt Shift, optional paste, extended-keys toggle, keyboard toggle.
 pub fn key_row(ui: &mut Ui, state: &KeyRowState) -> KeyRowOutput {
     let mut action = KeyRowAction::None;
     let mut control_rect = Rect::NOTHING;
@@ -290,10 +294,10 @@ pub fn key_row(ui: &mut Ui, state: &KeyRowState) -> KeyRowOutput {
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.horizontal(|ui| {
-                let count = 6 + usize::from(state.paste);
+                let count = 7 + usize::from(state.paste);
                 let gap = ui.spacing().item_spacing.x;
                 let width =
-                    ((ui.available_width() - gap * (count as f32 - 1.0)) / count as f32).max(32.0);
+                    ((ui.available_width() - gap * (count as f32 - 1.0)) / count as f32).max(24.0);
                 if text_key(ui, width, "Esc", false).clicked() {
                     action = KeyRowAction::Escape;
                 }
@@ -307,6 +311,9 @@ pub fn key_row(ui: &mut Ui, state: &KeyRowState) -> KeyRowOutput {
                 }
                 if text_key(ui, width, "Alt", state.alt).clicked() {
                     action = KeyRowAction::ToggleAlt;
+                }
+                if text_key(ui, width, "Shift", state.shift).clicked() {
+                    action = KeyRowAction::ToggleShift;
                 }
                 if state.paste
                     && key_button(ui, width, "Paste", false, |painter, rect, tint| {
@@ -418,13 +425,13 @@ const fn symbol(label: &'static str, character: char) -> PanelKey {
 
 const NAVIGATION: [PanelKey; 12] = [
     plain("Home", Key::Home),
+    arrow("Up", Key::ArrowUp),
     plain("End", Key::End),
     plain("PgUp", Key::PageUp),
-    plain("PgDn", Key::PageDown),
     arrow("Left", Key::ArrowLeft),
-    arrow("Up", Key::ArrowUp),
     arrow("Down", Key::ArrowDown),
     arrow("Right", Key::ArrowRight),
+    plain("PgDn", Key::PageDown),
     plain("Insert", Key::Insert),
     plain("Delete", Key::Delete),
     PanelKey {
@@ -482,7 +489,7 @@ fn paint_arrow(painter: &egui::Painter, center: egui::Pos2, key: Key, tint: egui
     painter.line_segment([head, head - direction * 5.0 - side * 4.5], stroke);
 }
 
-/// Extended terminal keys (mock-up 03). Ctrl/Alt latches stay with the caller.
+/// Extended terminal keys (mock-up 03). Modifier latches stay with the caller.
 pub fn keys_panel(ui: &mut Ui, panel: &mut KeysPanel) -> KeysPanelOutput {
     let mut output = KeysPanelOutput::default();
     egui::Frame::new()
@@ -574,7 +581,7 @@ pub fn keys_panel(ui: &mut Ui, panel: &mut KeysPanel) -> KeysPanelOutput {
                 });
             }
             ui.label(
-                egui::RichText::new("Ctrl / Alt apply to the next key")
+                egui::RichText::new("Ctrl / Alt / Shift apply to the next key")
                     .size(type_scale::MICRO)
                     .color(color::TEXT_FAINT),
             );
@@ -680,4 +687,87 @@ pub fn read_only_note(ui: &mut Ui) {
                 color::TEXT_MUTED,
             );
         });
+}
+
+#[cfg(test)]
+mod keyboard_tests {
+    use super::*;
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    #[test]
+    fn terminal_keys_follow_the_requested_navigation_rows() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(
+                |ui, state: &mut (KeysPanel, KeysPanelOutput)| {
+                    let output = keys_panel(ui, &mut state.0);
+                    if output.key.is_some() {
+                        state.1 = output;
+                    }
+                },
+                (KeysPanel { open: true, tab: 0 }, KeysPanelOutput::default()),
+            );
+        harness.run();
+        let rows = [
+            ["Home", "Up", "End", "PgUp"],
+            ["Left", "Down", "Right", "PgDn"],
+            ["Insert", "Delete", "Shift+Tab", "Return"],
+        ];
+        let mut previous_row = None;
+        for row in rows {
+            let first = harness.get_by_label(row[0]).rect();
+            if let Some(previous) = previous_row {
+                assert!(first.top() > previous);
+            }
+            previous_row = Some(first.bottom());
+            let mut previous_right = None;
+            for label in row {
+                let rect = harness.get_by_label(label).rect();
+                assert_eq!(rect.top(), first.top());
+                if let Some(right) = previous_right {
+                    assert!(rect.left() > right);
+                }
+                previous_right = Some(rect.right());
+            }
+        }
+        harness.get_by_label("Up").click();
+        harness.run();
+        assert_eq!(harness.state().1.key, Some((Key::ArrowUp, Modifiers::NONE)));
+    }
+
+    #[test]
+    fn default_extra_keys_include_shift_without_overflowing_phone_widths() {
+        for width in [320.0, 390.0, 844.0] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, 300.0))
+                .build_ui_state(
+                    |ui, action: &mut KeyRowAction| {
+                        let output = key_row(
+                            ui,
+                            &KeyRowState {
+                                control: false,
+                                alt: false,
+                                shift: false,
+                                panel_open: false,
+                                keyboard_visible: true,
+                                paste: true,
+                            },
+                        );
+                        if output.action != KeyRowAction::None {
+                            *action = output.action;
+                        }
+                    },
+                    KeyRowAction::None,
+                );
+            harness.run();
+            let alt = harness.get_by_label("Alt").rect();
+            let shift = harness.get_by_label("Shift").rect();
+            let paste = harness.get_by_label("Paste").rect();
+            assert!(alt.right() < shift.left() && shift.right() < paste.left());
+            assert!(harness.get_by_label("Hide keyboard").rect().right() <= width);
+            harness.get_by_label("Shift").click();
+            harness.run();
+            assert_eq!(*harness.state(), KeyRowAction::ToggleShift);
+        }
+    }
 }

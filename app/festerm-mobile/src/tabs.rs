@@ -65,8 +65,7 @@ impl MobileApp {
 
     fn release_focus(&mut self) {
         self.gestures.cancel();
-        self.control = false;
-        self.alt = false;
+        self.clear_sticky_modifiers();
         if let Some(focus) = self.view.relinquish_transient_input() {
             route_input(&mut self.terminal, InputEvent::Focus(focus), &mut self.sink);
         }
@@ -208,8 +207,7 @@ impl MobileApp {
         *self.sink.live.connection.borrow_mut() = Some(live);
         self.active_tab = Some(id);
         self.workspace = workspaces::Workspace::Terminal;
-        self.control = false;
-        self.alt = false;
+        self.clear_sticky_modifiers();
         Ok(())
     }
 
@@ -246,8 +244,7 @@ impl MobileApp {
             profiles.mark_used(id.as_str());
         }
         *self.sink.live.connection.borrow_mut() = Some(live);
-        self.control = false;
-        self.alt = false;
+        self.clear_sticky_modifiers();
         Ok(())
     }
 

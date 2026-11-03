@@ -54,8 +54,10 @@ Terminal is active. Files and Markdown open from the terminal's Files button and
 - The terminal view fills all remaining space above the input region.
 - The native system keyboard is requested persistently while the terminal
   surface is active, including after touching the extra-keys row or scrolling.
-  The terminal sits above the docked Esc/Tab/Ctrl/Alt row and keyboard.
-  Ctrl and Alt are one-shot latches. This replaces the earlier focus-only
+  The terminal sits above the docked Esc/Tab/Ctrl/Alt/Shift row and keyboard.
+  Ctrl, Alt and Shift are one-shot latches. Ctrl+Shift+C copies the selection
+  locally; Ctrl+Shift+P pastes from the iOS clipboard, not a remote control chord.
+  This replaces the earlier focus-only
   dismissal design at the owner's explicit request.
 - The same vertical arrangement applies to iPad portrait, landscape and
   Split View; measured keyboard occlusion determines the terminal grid height.
@@ -108,7 +110,12 @@ record native rendering, Dynamic Type, VoiceOver and touch checks separately.
 Mock-ups 01-06, 10-12 and 16 are implemented as a bottom-tab shell with a
 design-token theme (see ADR 0056 and the mobile README); 07-09 and 13-15 remain
 future work. The extended-keys panel sends Home/End/Insert/Delete/F1-F12 through
-the core key encoder, and Ctrl/Alt apply to the next key.
+the core key encoder, and Ctrl/Alt/Shift apply to the next key.
+The owner's updated navigation order is Home / Up / End / PgUp, then
+Left / Down / Right / PgDn, then Insert / Delete / Shift+Tab / Return.
+More → Force redraw reuses the shared view-local redraw operation without
+terminal input or state reset. Native keyboard symbol-page controls remain
+owned by UIKit; the app's separate Symbols tab is not a replacement for them.
 
 ## Touch navigation and Termius conventions
 
