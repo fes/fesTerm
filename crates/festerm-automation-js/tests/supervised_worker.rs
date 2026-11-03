@@ -4,13 +4,41 @@ use festerm_automation_js::{
     snapshot::{
         ApprovedBundle, Manifest, ParameterType, ParameterValue, Parameters, SourceSnapshot,
     },
-    Error, Event, Supervisor, WorkerProgram,
+    DisclosureGuard, DisclosurePermit, Error, Event, Supervisor, WorkerProgram,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
+    sync::{mpsc, Arc, Mutex, TryLockError},
     time::{Duration, Instant},
 };
+
+struct TestDisclosure {
+    state: Arc<Mutex<bool>>,
+    attempted: Option<mpsc::SyncSender<()>>,
+}
+
+impl DisclosureGuard for TestDisclosure {
+    fn try_enter(&self) -> Result<Option<Box<dyn DisclosurePermit + '_>>, Error> {
+        match self.state.try_lock() {
+            Ok(guard) if *guard => Ok(Some(Box::new(guard))),
+            Ok(_) | Err(TryLockError::Poisoned(_)) => Err(Error::DisclosureRevoked),
+            Err(TryLockError::WouldBlock) => {
+                if let Some(attempted) = &self.attempted {
+                    let _ = attempted.try_send(());
+                }
+                Ok(None)
+            }
+        }
+    }
+}
+
+fn disclosure() -> Arc<dyn DisclosureGuard> {
+    Arc::new(TestDisclosure {
+        state: Arc::new(Mutex::new(true)),
+        attempted: None,
+    })
+}
 
 fn program() -> WorkerProgram {
     let path = Path::new(env!("CARGO_BIN_EXE_festerm-automation-js-worker"))
@@ -48,7 +76,11 @@ fn terminal(worker: &Supervisor, broker: bool) -> Event {
                     assert!(broker, "no host call should have been dispatched");
                     assert_eq!(request, HostRequest::Observe {});
                     worker
-                        .host_result(id, HostResult::Observation { targets: vec![] })
+                        .host_result(
+                            id,
+                            HostResult::Observation { targets: vec![] },
+                            disclosure(),
+                        )
                         .unwrap();
                 }
                 event => return event,
@@ -106,6 +138,7 @@ fn target_parameter_reaches_worker_as_exact_bound_handle() {
                             revision: 1,
                             truncated: false,
                         },
+                        disclosure(),
                     )
                     .unwrap();
                 break;
@@ -244,11 +277,81 @@ fn cancellation_closes_admission_and_reaps_within_bounds() {
         .with_admission(|_| panic!("cancelled admission ran"))
         .is_err());
     assert!(worker
-        .host_result(1, HostResult::Observation { targets: vec![] })
+        .host_result(1, HostResult::Observation { targets: vec![] }, disclosure())
         .is_err());
     let started = Instant::now();
     worker.shutdown().unwrap();
     assert!(started.elapsed() < Duration::from_millis(2_500));
+}
+
+#[test]
+fn independently_revoked_result_never_reaches_the_worker() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let worker = Supervisor::spawn(
+        &program(),
+        &bundle(
+            "export async function main({fesTerm}) { \
+             return (await fesTerm.observe()).targets[0].target.id; }",
+        ),
+        Parameters::new(),
+        Limits::default(),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let id = loop {
+        assert!(Instant::now() < deadline);
+        match worker.try_event().unwrap() {
+            Some(Event::HostCall { id, request }) => {
+                assert_eq!(request, HostRequest::Observe {});
+                break id;
+            }
+            Some(event) => panic!("worker ended before the host call: {event:?}"),
+            None => std::thread::sleep(Duration::from_millis(1)),
+        }
+    };
+    let state = Arc::new(Mutex::new(true));
+    let (locked, observed_lock) = mpsc::sync_channel(0);
+    let (revoke, await_revocation) = mpsc::sync_channel(0);
+    let target_state = state.clone();
+    let transition = std::thread::spawn(move || {
+        let mut held = target_state.lock().unwrap();
+        locked.send(()).unwrap();
+        await_revocation.recv().unwrap();
+        *held = false;
+    });
+    observed_lock.recv_timeout(Duration::from_secs(2)).unwrap();
+    let (attempted, observed_attempt) = mpsc::sync_channel(1);
+    let guard = Arc::new(TestDisclosure {
+        state: state.clone(),
+        attempted: Some(attempted),
+    });
+    worker
+        .host_result(
+            id,
+            HostResult::Observation {
+                targets: vec![festerm_automation_js::protocol::TargetInfo {
+                    target: festerm_automation_js::protocol::Target {
+                        id: "private".into(),
+                        generation: 1,
+                    },
+                    revision: 1,
+                }],
+            },
+            guard,
+        )
+        .unwrap();
+    observed_attempt
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap();
+    revoke.send(()).unwrap();
+    transition.join().unwrap();
+    assert!(matches!(
+        terminal(&worker, false),
+        Event::Failed(Error::DisclosureRevoked)
+    ));
+    worker.shutdown().unwrap();
 }
 
 #[test]
@@ -281,7 +384,7 @@ fn host_admission_acknowledgement_unblocks_concurrent_calls() {
     }
     assert_eq!(ids, [1, 2]);
     worker
-        .host_result(2, HostResult::Observation { targets: vec![] })
+        .host_result(2, HostResult::Observation { targets: vec![] }, disclosure())
         .unwrap();
     worker.host_admitted(1).unwrap();
     assert!(matches!(
@@ -324,11 +427,11 @@ fn result_before_separate_acknowledgement_does_not_fail_the_run() {
     }
     assert_eq!(ids, [1, 2]);
     worker
-        .host_result(1, HostResult::Observation { targets: vec![] })
+        .host_result(1, HostResult::Observation { targets: vec![] }, disclosure())
         .unwrap();
     worker.host_admitted(1).unwrap();
     worker
-        .host_result(2, HostResult::Observation { targets: vec![] })
+        .host_result(2, HostResult::Observation { targets: vec![] }, disclosure())
         .unwrap();
     assert!(matches!(
         terminal(&worker, false),

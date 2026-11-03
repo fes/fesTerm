@@ -526,6 +526,14 @@ still reap at deadline without waiting for a stalled admission gate. App
 integration must also serialize target, privacy and cross-run revocation; this
 component alone does not provide those lifecycle hooks.
 
+Each worker host-result frame additionally requires an application-provided
+disclosure guard. The watchdog attempts that guard for every nonblocking
+pipe write, retaining its permit through the write; contention defers output
+without stalling the watchdog. The application must bind it to the exact run,
+recipient, privacy state, deadline and all source attachment generations, using
+the same serialization boundary as revocation. A guard is not itself a broker
+grant, and bytes already written to the worker cannot be recalled.
+
 A `SessionRef` binds app-instance identity, logical tab/session identity and
 transport attachment generation; durable sessions also bind provider/host/
 generation. Control additionally requires a broker-issued `InputLeaseRef`

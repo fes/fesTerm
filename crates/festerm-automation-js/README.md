@@ -17,8 +17,11 @@ ApprovedBundle::{digest() -> &str, manifest() -> &Manifest,
 WorkerProgram::from_install_owned_absolute(&Path) -> Result<WorkerProgram, Error>
 Supervisor::spawn(&WorkerProgram, &ApprovedBundle, Parameters, Limits)
     -> Result<Supervisor, Error>
+Supervisor::spawn_bound(&WorkerProgram, &ApprovedBundle, &BoundParameters, Limits)
+    -> Result<Supervisor, Error>
 Supervisor::try_event(&self) -> Result<Option<Event>, Error>
-Supervisor::host_result(&self, id: u32, HostResult) -> Result<(), Error>
+Supervisor::host_result(&self, id: u32, HostResult, Arc<dyn DisclosureGuard>)
+    -> Result<(), Error>
 Supervisor::cancel(&self)
 Supervisor::shutdown(self) -> Result<(), Error>
 worker_entry(input: impl Read, output: impl Write) -> Result<(), Error>
@@ -53,6 +56,17 @@ Only then dispatch through existing application/controller APIs and deliver a
 typed `HostResult`. Method/schema validity is **not** authorization. Manifest
 capabilities are only declared maxima and are never interpreted as grants here.
 P2 observation-only callers should deny all write/open/invocation variants.
+
+Every host result requires an application-owned `DisclosureGuard`. Its
+nonblocking `try_enter` must check the exact run, recipient, privacy state,
+deadline and all source attachments while holding the same boundary their
+revocation uses, returning that held boundary as its `DisclosurePermit`. The
+watchdog repeats this check for each nonblocking pipe write; a busy boundary
+defers the write, and a revoked or poisoned boundary closes the worker. The
+application must implement and qualify this guard; no permissive guard is
+provided. `festerm_session::try_automation_admission_lock` exposes the shared
+backend transition boundary without blocking the watchdog. Do not call
+supervisor methods while holding the guard's lock.
 
 Use `cancel_with` to close broker admission synchronously before cancellation
 on revocation, lock/suspension, caller disconnect, human takeover, or parent

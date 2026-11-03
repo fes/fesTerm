@@ -39,6 +39,12 @@ between staged results, and a result that wins an acknowledgement race does not
 fail the run. This is a component protocol, not yet proof of application-level
 lifecycle integration.
 
+An independently changing target or privacy epoch can invalidate a result after
+the broker queues it but before the worker receives it. Host-result frames now
+require an application-supplied, nonblocking disclosure guard for every pipe
+write. The application must still supply and qualify the guard against its live
+broker, recipients and source generations; this change does not enable runs.
+
 ## Shared automation authority before external access
 
 The owner authorized the P1-P3 MCP/JavaScript campaign in

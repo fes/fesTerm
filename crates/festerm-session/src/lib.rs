@@ -7,7 +7,7 @@ use std::{
     fmt,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex, MutexGuard, TryLockError,
     },
     time::Duration,
 };
@@ -30,6 +30,24 @@ static AUTOMATION_ADMISSION: Mutex<()> = Mutex::new(());
 /// an epoch, while holding the returned guard.
 pub fn automation_admission_lock() -> Option<MutexGuard<'static, ()>> {
     AUTOMATION_ADMISSION.lock().ok()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AutomationAdmissionTryError {
+    Busy,
+    Poisoned,
+}
+
+/// Attempts the same disclosure boundary without delaying an independent
+/// watchdog. Poison is permanent; contention may be retried.
+pub fn try_automation_admission_lock(
+) -> Result<MutexGuard<'static, ()>, AutomationAdmissionTryError> {
+    AUTOMATION_ADMISSION
+        .try_lock()
+        .map_err(|error| match error {
+            TryLockError::WouldBlock => AutomationAdmissionTryError::Busy,
+            TryLockError::Poisoned(_) => AutomationAdmissionTryError::Poisoned,
+        })
 }
 
 /// A non-reusable automation identity for one backend transport attachment.
@@ -804,6 +822,19 @@ mod tests {
     }
 
     #[test]
+    fn automation_try_admission_reports_contention_without_waiting() {
+        let held = automation_admission_lock().unwrap();
+        let worker = std::thread::spawn(|| {
+            matches!(
+                try_automation_admission_lock(),
+                Err(AutomationAdmissionTryError::Busy)
+            )
+        });
+        assert!(worker.join().unwrap());
+        drop(held);
+    }
+
+    #[test]
     fn automation_admission_poison_permanently_fails_closed() {
         const CHILD: &str = "FESTERM_AUTOMATION_ADMISSION_POISON_TEST_CHILD";
         if std::env::var_os(CHILD).is_none() {
@@ -835,6 +866,10 @@ mod tests {
         .join()
         .is_err());
         assert!(automation_admission_lock().is_none());
+        assert!(matches!(
+            try_automation_admission_lock(),
+            Err(AutomationAdmissionTryError::Poisoned)
+        ));
         assert_eq!(epoch.capture(), None);
         epoch.transition(true);
         assert_eq!(epoch.capture(), None);

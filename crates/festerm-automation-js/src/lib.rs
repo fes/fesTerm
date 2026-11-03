@@ -10,7 +10,10 @@ pub mod snapshot;
 mod supervisor;
 mod worker;
 
-pub use supervisor::{cleanup_failed, AdmissionPermit, Event, Supervisor, WorkerProgram};
+pub use supervisor::{
+    cleanup_failed, AdmissionPermit, DisclosureGuard, DisclosurePermit, Event, Supervisor,
+    WorkerProgram,
+};
 pub use worker::worker_entry;
 
 pub const HEAP_BYTES: usize = 64 * 1024 * 1024;
@@ -32,6 +35,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("automation worker deadline exceeded")]
     Deadline,
+    #[error("automation disclosure is no longer authorized")]
+    DisclosureRevoked,
     #[error("automation worker cleanup failed")]
     Cleanup,
     #[error("automation worker failed: {0}")]
