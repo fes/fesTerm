@@ -613,7 +613,7 @@ automatically.
 The controller can capture a composite human-input, application-wide IME and
 authoritative backend-attachment fence only with no buffered input, clipboard
 reservation or pending paste/file-drop confirmation. Human keyboard, paste,
-terminal-reported mouse input and clipboard initiation invalidate an armed
+mouse input while terminal mouse reporting is enabled, and clipboard initiation invalidate an armed
 fence before delivery. IME events are observed before input filtering or tab
 switching, and composition remains blocked across windows until every observed
 composition receives a commit or native disabled event, processed through the

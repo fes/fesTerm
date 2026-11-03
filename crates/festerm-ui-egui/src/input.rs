@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use egui::{Pos2, Response, Ui};
 use festerm_core::{
     Dimensions, FocusEvent, InputEvent, InputEventOutcome, Key, Modifiers, MouseButton, MouseEvent,
-    MouseEventKind, MouseWheel, Terminal,
+    MouseEventKind, MouseTrackingMode, MouseWheel, Terminal,
 };
 
 use crate::{
@@ -119,9 +119,10 @@ fn route_input_with_metadata(
         &event,
         InputEvent::Key(_) | InputEvent::ModifiedKey { .. } | InputEvent::Paste(_)
     );
-    let mouse_input = matches!(&event, InputEvent::Mouse(_));
+    let mouse_input = matches!(&event, InputEvent::Mouse(_))
+        && terminal.modes().mouse_tracking() != MouseTrackingMode::None;
     sink.begin_input_event(keyboard_input);
-    if keyboard_input {
+    if keyboard_input || mouse_input {
         sink.begin_human_input();
     }
     let outcome = terminal.handle_input(event);
@@ -129,9 +130,6 @@ fn route_input_with_metadata(
     let bytes = terminal.drain_input();
     let delivered_bytes = bytes.len();
     if !bytes.is_empty() {
-        if mouse_input {
-            sink.begin_human_input();
-        }
         sink.record_encoded_input(&bytes);
     }
     let route = InputRoute {

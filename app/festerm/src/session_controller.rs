@@ -2318,6 +2318,20 @@ mod tests {
             festerm_ui_egui::route_input(&mut terminal, event, &mut sink);
             assert!(sink.delivered);
         }
+        let fence = controller.capture_automation_input_fence().unwrap();
+        let sent = controller.session.as_ref().unwrap().sent();
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Mouse(festerm_core::MouseEvent {
+                kind: festerm_core::MouseEventKind::Move { button: None },
+                column: 0,
+                row: 0,
+                modifiers: festerm_core::Modifiers::NONE,
+            }),
+            &mut controller,
+        );
+        assert!(!fence_is_current(&fence));
+        assert_eq!(controller.session.as_ref().unwrap().sent(), sent);
     }
 
     #[test]
