@@ -6,8 +6,11 @@ Peer cancellation now retains a bounded, already-consumed cancellation on
 admission contention, suppresses the affected wait, and retries its broker
 cut before processing further peer events. `Broker::cancel_run` requires the
 shared guard; poison follows the existing global privacy-stop path. Regression
-execution is tracked with the PR. This does not guard other cuts or broker
-Drop, or qualify enqueue, metadata output or physical delivery.
+execution is tracked with the PR. Cleanup now disconnects under admission but
+defers bounded error logging until after releasing it, so a tracing subscriber
+cannot reenter the non-reentrant guard from those logs. This does not guard
+other cuts or broker Drop, or qualify enqueue, metadata output or physical
+delivery.
 
 ## Outbound queue ownership extraction
 

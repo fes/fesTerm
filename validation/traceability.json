@@ -521,6 +521,7 @@
         "automation_cancelled_wait_poison_closes_privacy_without_output",
         "automation_cancelled_wait_with_missing_run_closes_peer_without_output",
         "automation_cancelled_wait_with_retained_child_closes_peer",
+        "automation_cancelled_wait_logs_after_releasing_admission",
         "automation_dormant_shutdown_does_not_wait_for_admission",
         "automation_approval_after_reconciliation_refuses_busy_and_stale_targets",
         "automation_shared_start_defers_without_replacing_privacy_gate",
