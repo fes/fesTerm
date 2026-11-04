@@ -2574,6 +2574,7 @@ pub enum AppCommand {
     ToggleAutomaticUpdateChecks,
     ToggleMcpEnabled,
     ToggleJavascriptEnabled,
+    OpenWorkflowPicker,
     Automation(crate::automation::NativeCommand),
     /// Sets or clears the default starting local directory for new SFTP sessions.
     SetDefaultSftpLocalDirectory(Option<PathBuf>),
@@ -4174,6 +4175,7 @@ impl AppState {
             AppCommand::ToggleJavascriptEnabled => {
                 self.javascript_enabled = !self.javascript_enabled;
             }
+            AppCommand::OpenWorkflowPicker => {}
             AppCommand::Automation(_) => {}
             AppCommand::SetDefaultSftpLocalDirectory(path) => {
                 self.default_sftp_local_directory = path;

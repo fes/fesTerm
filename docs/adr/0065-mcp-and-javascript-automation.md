@@ -187,8 +187,12 @@ in the design must be visible in implementation/release review.
   MCP-only cleanup from global privacy revocation; they do not prove an
   integrated JavaScript adapter. Local PTY reservation tests exercise ordered
   commitment, cancellation and expiration, including a stalled callback; they
-  do not prove application writer-lease or human-takeover integration. Run the
-  traceability gate and documentation checks.
+  do not prove application writer-lease or human-takeover integration. P2 intake
+  tests cover bounded single-file capture,
+  strict decoding, path/link refusal and frozen invocation identity. Desktop
+  selection provides a non-authorizing metadata and captured-source preview;
+  approval, execution, iOS selection and platform qualification remain open.
+  Run the traceability gate and documentation checks.
 - **Native/manual evidence required:** `AUTO-01` through `AUTO-04` remain open;
   observation requires real platform/client/lock evidence, and later stages
   additionally require engine, platform sandbox and input-ownership evidence.

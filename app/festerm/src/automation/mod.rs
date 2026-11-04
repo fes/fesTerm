@@ -2,6 +2,7 @@ mod ipc;
 mod observation;
 #[cfg(test)]
 mod tests;
+mod workflow_selection;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -39,6 +40,16 @@ type PrivacyMonitor = festerm_windows_power::PrivacyMonitor;
 type PrivacyMonitor = festerm_linux_power::PrivacyMonitor;
 
 pub(crate) use ipc::run_stdio;
+pub(crate) use workflow_selection::{Status as WorkflowStatus, View as WorkflowView};
+
+#[derive(Clone)]
+pub(crate) struct SelectedWorkflow(pub(crate) std::path::PathBuf);
+
+impl std::fmt::Debug for SelectedWorkflow {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SelectedWorkflow(<private path>)")
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) enum NativeCommand {
@@ -50,6 +61,8 @@ pub(crate) enum NativeCommand {
     Revoke {
         channel: u64,
     },
+    CaptureWorkflow(SelectedWorkflow),
+    ClearWorkflow,
 }
 
 #[derive(Clone)]
@@ -66,6 +79,7 @@ pub(crate) struct SettingsSnapshot {
     pub status: &'static str,
     pub channels: Vec<ChannelRow>,
     pub targets: Vec<(TargetRef, String)>,
+    pub workflow: WorkflowView,
     stop: Arc<AtomicBool>,
 }
 
@@ -75,6 +89,7 @@ impl Default for SettingsSnapshot {
             status: "MCP is off. No local adapter is listening.",
             channels: Vec::new(),
             targets: Vec::new(),
+            workflow: WorkflowView::default(),
             stop: Arc::new(AtomicBool::new(true)),
         }
     }
@@ -84,6 +99,7 @@ impl SettingsSnapshot {
     pub(crate) fn same_presentation(&self, other: &Self) -> bool {
         self.status == other.status
             && self.targets == other.targets
+            && self.workflow.same_presentation(&other.workflow)
             && self.channels.len() == other.channels.len()
             && self
                 .channels
@@ -299,6 +315,8 @@ fn prepare_shared<P>(
 }
 
 pub(crate) struct Coordinator {
+    workflow: workflow_selection::Selection,
+    javascript_enabled: bool,
     broker: Option<Broker>,
     server: Option<ipc::Server>,
     privacy: Option<PrivacyMonitor>,
@@ -321,6 +339,8 @@ pub(crate) struct Coordinator {
 impl Default for Coordinator {
     fn default() -> Self {
         Self {
+            workflow: workflow_selection::Selection::default(),
+            javascript_enabled: false,
             broker: None,
             server: None,
             privacy: None,
@@ -840,6 +860,13 @@ impl Coordinator {
 
     pub(crate) fn tick(&mut self, context: &egui::Context, apps: &[&FesTermApp]) {
         self.privacy_lost_this_tick = false;
+        let javascript_enabled =
+            !apps.is_empty() && apps.iter().all(|app| app.automation_javascript_enabled());
+        if self.javascript_enabled && !javascript_enabled {
+            self.workflow.cancel();
+        }
+        self.javascript_enabled = javascript_enabled;
+        self.workflow.poll(context);
         let enabled = apps.first().is_some_and(|app| app.automation_mcp_enabled());
         if enabled != self.enabled {
             self.enabled = enabled;
@@ -1100,6 +1127,16 @@ impl Coordinator {
                     tracing::warn!("automation native observation approval refused");
                 }
             }
+            NativeCommand::CaptureWorkflow(SelectedWorkflow(path)) => {
+                if self.javascript_enabled {
+                    self.workflow.capture(path, context);
+                } else {
+                    tracing::warn!("workflow selection refused while JavaScript is disabled");
+                    self.workflow
+                        .refuse("Enable JavaScript workflows in all windows before selecting.");
+                }
+            }
+            NativeCommand::ClearWorkflow => self.workflow.cancel(),
         }
         context.request_repaint();
     }
@@ -1248,6 +1285,7 @@ impl Coordinator {
             status,
             channels,
             targets,
+            workflow: self.workflow.view(),
             stop: self.stop.clone(),
         }
     }

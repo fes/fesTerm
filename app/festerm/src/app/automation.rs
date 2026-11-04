@@ -10,6 +10,10 @@ impl FesTermApp {
         self.state.mcp_enabled()
     }
 
+    pub(crate) fn automation_javascript_enabled(&self) -> bool {
+        self.state.javascript_enabled()
+    }
+
     pub(crate) fn automation_session(&self, id: TabId) -> Option<&SessionTab> {
         self.state.session_tab(id)
     }
@@ -38,7 +42,8 @@ impl FesTermApp {
         match &command {
             NativeCommand::RestartMcp => self.automation_settings.disable(),
             NativeCommand::Revoke { channel } => self.automation_settings.revoke(*channel),
-            NativeCommand::ApproveObservation { .. } => {}
+            NativeCommand::ClearWorkflow => self.automation_settings.workflow.disable(),
+            NativeCommand::ApproveObservation { .. } | NativeCommand::CaptureWorkflow(_) => {}
         }
         self.automation_command = Some(command);
     }

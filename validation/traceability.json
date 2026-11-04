@@ -85,6 +85,29 @@
       ],
       "decisions": ["ADR-0065"],
       "automated_tests": [
+        "automation_selected_workflow_preview_requires_opt_in_and_grants_no_access",
+        "workflow_selection_is_available_only_when_javascript_is_enabled",
+        "workflow_preview_disappears_when_another_window_disables_it",
+        "workflow_source_pages_cover_utf8_without_splitting_characters",
+        "workflow_source_display_escapes_spoofing_and_literal_backslashes",
+        "workflow_source_review_pages_the_captured_snapshot_and_revokes_display",
+        "workflow_picker_requires_opt_in_and_does_not_retarget_the_file_picker",
+        "cancelled_workflow_capture_keeps_its_slot_and_discards_late_result",
+        "newer_workflow_selection_waits_for_io_and_discards_superseded_results",
+        "cancelling_a_waiting_selection_never_starts_its_capture",
+        "workflow_capture_failure_is_visible_and_never_approves_a_bundle",
+        "selected_bundle_and_invocation_remain_frozen_after_file_changes",
+        "selected_file_handle_survives_path_replacement",
+        "bundle_intake_hashes_exact_decoded_source_not_json_spelling",
+        "bundle_intake_never_reads_more_than_the_limit_plus_one",
+        "bundle_intake_enforces_the_encoded_size_limit",
+        "bundle_intake_rejects_malformed_duplicate_and_invalid_snapshots",
+        "bundle_intake_rejects_traversal_aliases_and_nonregular_files",
+        "bundle_intake_rejects_file_and_ancestor_links",
+        "bundle_intake_keeps_ios_private_storage_checks_closed",
+        "ios_worker_refuses_before_reading_source_or_writing",
+        "bundle_intake_rejects_windows_device_network_and_stream_paths",
+        "bundle_intake_fails_closed_on_unsupported_platforms",
         "frozen_bindings_include_code_parameters_and_exact_target_mapping",
         "manifest_and_frozen_target_scopes_attenuate_host_calls",
         "target_parameters_require_exact_safe_generation_bindings",
@@ -95,7 +118,7 @@
       "manual_scenarios": ["AUTO-01"],
       "status": "partial",
       "prerequisites": [
-        "Native workflow selection, exact approval UI, worker/broker integration and platform qualification remain open"
+        "iOS security-scoped selection, pending-approval invalidation, exact approval UI, worker/broker integration and platform qualification remain open; the desktop metadata and source previews are not an approval"
       ]
     },
     {

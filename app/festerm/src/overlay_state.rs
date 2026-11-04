@@ -276,6 +276,7 @@ pub(crate) struct OverlayState {
     /// manager's local-pane browsing widget instead of an OS-native file
     /// dialog.
     pub(crate) markdown_file_picker: Option<MarkdownFilePicker>,
+    pub(crate) workflow_file_picker: bool,
     /// The editor's "Save As" destination sheet (ADR 0034 §3).
     pub(crate) save_as_picker: Option<crate::save_as::SaveAsPicker>,
     /// The directory the last Save As sheet was browsing when it closed, so

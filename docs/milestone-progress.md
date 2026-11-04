@@ -48,6 +48,37 @@ application shutdown still close admission and revoke everything. The
 unqualified MCP bootstrap remains closed, and the JavaScript preference alone
 starts no adapter. Worker integration and native platform evidence remain open.
 
+## Reviewing the captured workflow source
+
+The desktop workflow preview now lets the user browse every captured module
+without reopening the selected file. Bounded pages preserve UTF-8 boundaries;
+an escaped representation exposes controls and non-ASCII characters rather
+than allowing them to change the surrounding UI. Browsing is not
+consent, and exact approval, execution and native usability remain open.
+
+## Selecting a workflow without granting access
+
+When JavaScript workflows are enabled, desktop Settings can select a local JSON
+bundle and preview its captured digest, requested capabilities, parameter
+schema and module names. Capture runs off the UI thread, retains its single
+slot until I/O finishes, and discards cancelled or superseded results. This is
+not approval: source review within approval, parameter/target selection,
+worker execution, iOS selection and native platform qualification remain open.
+
+## Capturing a selected workflow before consent
+
+The P2 composition crate can now ingest one explicitly user-selected JSON
+snapshot into a frozen bundle. It walks retained directories without following
+links or reparse points, bounds the file read, and hands the captured source to
+the existing strict graph validator and canonical digest. Changing the file
+afterward cannot change the frozen invocation; execution must use the frozen
+source without reopening the file. This is not an approval, provenance
+guarantee, MCP eval path or executable integration; pending-approval
+invalidation, platform evidence and worker authorization remain open. Other
+platforms and unsupported path shapes refuse.
+The iOS build excludes the unqualified interpreter and refuses worker startup;
+compilation does not establish native document access or execution support.
+
 ## Freezing workflow targets before consent
 
 The workflow intake component now binds validated parameters to the complete,

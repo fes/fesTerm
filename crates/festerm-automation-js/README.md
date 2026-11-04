@@ -110,9 +110,12 @@ an exported `main({ fesTerm, params })` (sync or async).
 
 Bundles are constructed **only from owned UTF-8 strings**: `SourceSnapshot`
 contains a strict `Manifest` and `BTreeMap<canonical_path, source>`. There is no
-filesystem loader, symlink dereference, bytecode, native loader or cwd lookup.
-The importing caller must reject symlinks before constructing a snapshot if
-it imports local files. Module names are ASCII, case-distinct, sorted, root-
+filesystem loader in this worker crate, bytecode, native loader or cwd lookup.
+The separate workflow composition crate has a
+[single-file local intake](../../docs/automation-design.md#user-selected-single-file-intake)
+which opens every path component without following links and constructs a
+frozen snapshot before approval. Desktop Settings can preview that snapshot,
+but does not approve or run it. Module names are ASCII, case-distinct, sorted, root-
 relative bundle names ending `.js`, e.g. `helpers/read.js`; imports use exactly
 those names, not `./`, `..`, URLs or package aliases. The manifest module list
 must exactly equal the reachable static graph, including re-exports/cycles.

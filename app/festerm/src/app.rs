@@ -1495,6 +1495,9 @@ impl FesTermApp {
         if !configuration.interface_settings().mcp_enabled() {
             self.automation_settings.disable();
         }
+        if !configuration.interface_settings().javascript_enabled() {
+            self.automation_settings.workflow.disable();
+        }
         if configuration.interface_settings().image_memory_budget()
             != self
                 .state
@@ -1993,6 +1996,7 @@ impl FesTermApp {
             self.state
                 .dispatch(AppCommand::ResetInterfaceSettings, context);
             self.automation_settings.disable();
+            self.automation_settings.workflow.disable();
             self.image_budget
                 .set_preference(InterfaceSettings::DEFAULT.image_memory_budget());
             return;
@@ -4390,12 +4394,27 @@ impl FesTermApp {
     /// file replaces *that* document instead of opening another tab, so
     /// `Ctrl+O` behaves the way it does in every other document viewer.
     fn open_markdown_file_picker(&mut self, context: &egui::Context) {
+        self.overlays.workflow_file_picker = false;
         let active = self.state.active();
         self.overlays.markdown_file_picker_replaces = matches!(
             self.state.active_tab().content,
             TabContent::MarkdownViewer(_)
         )
         .then_some(active);
+        self.overlays.markdown_file_picker = Some(MarkdownFilePicker::new(
+            self.markdown_file_picker_start_directory(),
+            context.clone(),
+        ));
+        context.request_repaint();
+    }
+
+    fn open_workflow_file_picker(&mut self, context: &egui::Context) {
+        if !self.state.javascript_enabled() {
+            tracing::warn!("workflow selection refused while JavaScript is disabled");
+            return;
+        }
+        self.overlays.workflow_file_picker = true;
+        self.overlays.markdown_file_picker_replaces = None;
         self.overlays.markdown_file_picker = Some(MarkdownFilePicker::new(
             self.markdown_file_picker_start_directory(),
             context.clone(),
@@ -4434,6 +4453,7 @@ impl FesTermApp {
         self.remember_markdown_file_picker_directory();
         if self.overlays.markdown_file_picker.take().is_some() {
             self.overlays.markdown_file_picker_replaces = None;
+            self.overlays.workflow_file_picker = false;
             self.restore_active_terminal_focus();
             context.request_repaint();
         }
@@ -4560,6 +4580,11 @@ impl FesTermApp {
     }
 
     fn show_markdown_file_picker(&mut self, ctx: &egui::Context, _content_rect: egui::Rect) {
+        let selecting_workflow = self.overlays.workflow_file_picker;
+        if selecting_workflow && !self.state.javascript_enabled() {
+            self.close_markdown_file_picker(ctx);
+            return;
+        }
         let Some(picker) = self.overlays.markdown_file_picker.as_mut() else {
             return;
         };
@@ -4584,7 +4609,11 @@ impl FesTermApp {
                 ui.set_width(size.x);
                 ui.set_height(size.y);
                 ui.spacing_mut().interact_size.y = 28.0;
-                ui.heading("Open File");
+                ui.heading(if selecting_workflow {
+                    "Select JavaScript Workflow"
+                } else {
+                    "Open File"
+                });
                 ui.add_space(6.0);
                 outcome = Some(picker.ui(ui));
             },
@@ -4594,9 +4623,22 @@ impl FesTermApp {
                 self.remember_markdown_file_picker_directory();
                 let replacing = self.overlays.markdown_file_picker_replaces.take();
                 self.overlays.markdown_file_picker = None;
+                self.overlays.workflow_file_picker = false;
                 self.restore_active_terminal_focus();
-                self.state
-                    .dispatch(picked_file_command(path, replacing), ctx);
+                if selecting_workflow {
+                    if self.state.javascript_enabled() {
+                        self.queue_automation_command(
+                            crate::automation::NativeCommand::CaptureWorkflow(
+                                crate::automation::SelectedWorkflow(path),
+                            ),
+                        );
+                    } else {
+                        tracing::warn!("workflow selection refused while JavaScript is disabled");
+                    }
+                } else {
+                    self.state
+                        .dispatch(picked_file_command(path, replacing), ctx);
+                }
             }
             Some(MarkdownPickerOutcome::Cancelled) => {
                 self.close_markdown_file_picker(ctx);
@@ -6611,6 +6653,9 @@ impl FesTermApp {
                 AppCommand::OpenMarkdownWorkspace => {
                     self.open_markdown_file_picker(&ui.ctx().clone());
                 }
+                AppCommand::OpenWorkflowPicker => {
+                    self.open_workflow_file_picker(&ui.ctx().clone());
+                }
                 AppCommand::OpenLocalMarkdownFile { path, replacing } => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(
@@ -6733,6 +6778,12 @@ impl FesTermApp {
                     self.state.dispatch(command, &context);
                     if !self.state.mcp_enabled() {
                         self.automation_settings.disable();
+                    }
+                    if !self.state.javascript_enabled() {
+                        self.automation_settings.workflow.disable();
+                        if self.overlays.workflow_file_picker {
+                            self.close_markdown_file_picker(&context);
+                        }
                     }
                     self.persist_interface_settings();
                 }
@@ -13713,6 +13764,28 @@ mod tests {
         // (possibly unrelated) open.
         app.close_markdown_file_picker(&context);
         assert_eq!(app.overlays.markdown_file_picker_replaces, None);
+    }
+
+    #[test]
+    fn workflow_picker_requires_opt_in_and_does_not_retarget_the_file_picker() {
+        let context = egui::Context::default();
+        let mut disabled = FesTermApp::for_test_with_configuration(Configuration::empty());
+        disabled.open_workflow_file_picker(&context);
+        assert!(disabled.overlays.markdown_file_picker.is_none());
+
+        let configuration = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::DEFAULT.with_javascript_enabled(true))
+            .unwrap();
+        let mut enabled = FesTermApp::for_test_with_configuration(configuration);
+        enabled.open_workflow_file_picker(&context);
+        assert!(enabled.overlays.workflow_file_picker);
+        assert!(enabled.overlays.markdown_file_picker.is_some());
+        enabled.adopt_broadcast_configuration(Configuration::empty());
+        enabled.show_markdown_file_picker(&context, egui::Rect::NOTHING);
+        assert!(enabled.overlays.markdown_file_picker.is_none());
+        assert!(!enabled.overlays.workflow_file_picker);
+        enabled.open_markdown_file_picker(&context);
+        assert!(!enabled.overlays.workflow_file_picker);
     }
 
     #[test]

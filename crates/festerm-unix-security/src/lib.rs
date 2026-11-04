@@ -9,6 +9,19 @@ mod imp {
 
     const MAX_SECURITY_ATTRIBUTE_BYTES: usize = 8 * 1024 * 1024;
 
+    fn require_private_security_support() -> io::Result<()> {
+        // iOS intake only needs no-follow opens; its ACL/xattr privacy checks
+        // have not been implemented.
+        if cfg!(target_os = "ios") {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "private security metadata is unavailable on iOS",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Returns an ordinary user's OS identity, refusing elevated/setuid setup.
     pub fn current_user_id() -> io::Result<u32> {
         let effective = nix::unistd::Uid::effective();
@@ -62,6 +75,7 @@ mod imp {
     }
 
     pub fn security_metadata(file: &File) -> io::Result<SecurityMetadata> {
+        require_private_security_support()?;
         let metadata = file.metadata()?;
         let mut total = 0usize;
         let mut attributes = file
@@ -98,12 +112,13 @@ mod imp {
     /// Captures the exact parent security state after refusing directories
     /// where another account can rename a newly created staging entry.
     pub fn secure_staging_parent(directory: &File) -> io::Result<StagingParentSecurity> {
+        require_private_security_support()?;
         let metadata = directory.metadata()?;
         let mode = metadata.mode();
         let shared_writable = mode & 0o022 != 0;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
         let sticky = mode & u32::from(nix::libc::S_ISVTX) != 0;
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
         let sticky = mode & nix::libc::S_ISVTX != 0;
         #[cfg(target_os = "macos")]
         let permissive_acl = macos_acl_has_allow_entry(directory)?;
@@ -148,6 +163,7 @@ mod imp {
     pub fn make_private(file: &File) -> io::Result<()> {
         use nix::sys::stat::{fchmod, Mode};
 
+        require_private_security_support()?;
         #[cfg(target_os = "linux")]
         if file
             .list_xattr()
@@ -182,6 +198,7 @@ mod imp {
     pub fn make_private_directory(directory: &File) -> io::Result<()> {
         use nix::sys::stat::{fchmod, Mode};
 
+        require_private_security_support()?;
         #[cfg(target_os = "linux")]
         for attribute in ["system.posix_acl_access", "system.posix_acl_default"] {
             if directory
@@ -254,6 +271,7 @@ mod imp {
     }
 
     /// Verifies an owner-only object without changing an existing access policy.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub fn is_current_user_only(file: &File, directory: bool) -> io::Result<bool> {
         let metadata = file.metadata()?;
         let security = security_metadata(file)?;
@@ -268,10 +286,6 @@ mod imp {
                     name == "system.posix_acl_access" || name == "system.posix_acl_default"
                 })
             }
-            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-            {
-                return Err(io::Error::from(io::ErrorKind::Unsupported));
-            }
         };
         Ok(private_storage_owner_and_mode(
             metadata.uid(),
@@ -283,6 +297,12 @@ mod imp {
             && !acl)
     }
 
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    pub fn is_current_user_only(_file: &File, _directory: bool) -> io::Result<bool> {
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
     pub(crate) const fn private_storage_owner_and_mode(
         actual_uid: u32,
         current_uid: u32,
@@ -306,6 +326,7 @@ mod imp {
 
     /// Creates only one directory relative to a retained safe parent.
     pub fn create_private_directory(directory: &File, name: &Path) -> io::Result<File> {
+        require_private_security_support()?;
         one_component(name)?;
         nix::sys::stat::mkdirat(directory, name, nix::sys::stat::Mode::S_IRWXU)
             .map_err(io::Error::from)?;
@@ -321,6 +342,7 @@ mod imp {
             fcntl::{openat, OFlag},
             sys::stat::Mode,
         };
+        require_private_security_support()?;
         one_component(name)?;
         let flags = OFlag::O_RDWR
             | OFlag::O_CLOEXEC
@@ -347,6 +369,7 @@ mod imp {
     /// Atomically replaces one entry inside an already verified private
     /// directory. Callers must validate the existing target before replacement.
     pub fn replace_private_file(directory: &File, source: &Path, target: &Path) -> io::Result<()> {
+        require_private_security_support()?;
         one_component(source)?;
         one_component(target)?;
         nix::fcntl::renameat(directory, source, directory, target).map_err(io::Error::from)
@@ -354,6 +377,7 @@ mod imp {
 
     /// Removes one caller-owned staging entry relative to its retained parent.
     pub fn remove_private_staging_file(directory: &File, name: &Path) -> io::Result<()> {
+        require_private_security_support()?;
         one_component(name)?;
         nix::unistd::unlinkat(directory, name, nix::unistd::UnlinkatFlags::NoRemoveDir)
             .map_err(io::Error::from)
@@ -385,7 +409,11 @@ mod imp {
     pub fn open_file_nofollow(directory: &File, name: &Path) -> io::Result<File> {
         use nix::fcntl::OFlag;
 
-        let file = open_nofollow(directory, name, OFlag::O_RDONLY | OFlag::O_NONBLOCK)?;
+        // A rejected FIFO must not block, and a terminal must not become controlling.
+        let flags = OFlag::O_RDONLY | OFlag::O_NONBLOCK;
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
+        let flags = flags | OFlag::O_NOCTTY;
+        let file = open_nofollow(directory, name, flags)?;
         if file.metadata()?.is_file() {
             Ok(file)
         } else {
@@ -423,11 +451,11 @@ mod imp {
             flags |= OFlag::O_PATH;
         }
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
         {
             flags |= OFlag::from_bits_retain(nix::libc::O_SEARCH);
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "ios")))]
         {
             flags |= OFlag::O_RDONLY;
         }
@@ -874,6 +902,7 @@ mod imp {
         ))
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
     fn rename_error(error: nix::errno::Errno) -> io::Error {
         if [
             nix::errno::Errno::EINVAL,

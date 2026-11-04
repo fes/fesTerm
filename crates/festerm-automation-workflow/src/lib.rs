@@ -5,6 +5,8 @@
 //! broker; the broker's coarser scopes do not enforce individual manifest
 //! capabilities. Recheck lifecycle and recipients at the admission boundary.
 
+pub mod intake;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     time::Instant,
