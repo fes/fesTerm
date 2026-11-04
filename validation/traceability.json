@@ -351,7 +351,7 @@
         "disabled_controller_ui_does_not_wait_for_admission",
         "controller_wire_path_uses_exact_native_choice_without_authority_or_javascript",
         "controller_busy_review_defers_and_stale_target_is_retired_on_retry",
-        "controller_explicit_retry_replaces_busy_status_after_approval",
+        "controller_explicit_retry_replaces_contention_status_after_approval",
         "controller_cancel_clears_review_while_admission_is_busy",
         "controller_review_refuses_stale_attachment_context_and_newer_choice",
         "controller_close_recreate_and_backend_reconnect_never_retarget",
