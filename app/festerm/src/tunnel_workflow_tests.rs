@@ -585,3 +585,22 @@ fn an_automatic_tunnel_reconnect_reclaims_only_and_gives_up_quietly() {
     app.drive_tunnel_reconnects(&context);
     assert!(app.native_tunnel.is_none());
 }
+
+#[test]
+fn a_saved_profile_connects_without_keeping_its_sign_in_when_secure_storage_is_unavailable() {
+    let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+    let mut app =
+        FesTermApp::for_test_with_configuration(Configuration::new(vec![profile]).unwrap());
+    app.secret_store = Err(festerm_secret_store::SecretStoreError::LockedOrUnavailable);
+    let context = egui::Context::default();
+    app.begin_native_tunnel("owned".into(), false, true, true, &context);
+    let workflow = app
+        .native_tunnel
+        .as_ref()
+        .expect("the saved profile still connects");
+    assert!(workflow.connect && !workflow.remember && !workflow.ephemeral);
+    assert_eq!(
+        app.secure_storage_feedback,
+        Some("Secure storage unavailable. Connecting without keeping the sign-in.")
+    );
+}
