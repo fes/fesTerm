@@ -664,6 +664,7 @@ pub fn text_field_with_limit(
         if response.has_focus() && !ui.clip_rect().contains_rect(response.rect) {
             response.scroll_to_me(Some(egui::Align::Center));
         }
+        field_edit_menu(ui, &response, !text.as_str().is_empty(), false);
         response
     })
     .inner
@@ -1213,4 +1214,222 @@ pub fn paint_plus(painter: &egui::Painter, center: egui::Pos2, half: f32, tint: 
         ],
         stroke,
     );
+}
+
+/// Hold time before a form field offers its edit menu (UIKit uses ~0.5 s).
+pub const FIELD_LONG_PRESS_SECS: f64 = 0.5;
+/// Finger travel that turns a hold into a scroll or selection drag instead.
+const FIELD_LONG_PRESS_SLOP: f32 = 10.0;
+
+/// An edit the field menu asked for, applied to the focused field next pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FieldEdit {
+    Paste,
+    SelectAll,
+    Copy,
+    Cut,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FieldMenu {
+    field: Id,
+    opened_at: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingFieldEdit {
+    field: Id,
+    edit: FieldEdit,
+}
+
+fn field_menu_id() -> Id {
+    Id::new("festerm-field-edit-menu")
+}
+
+fn pending_field_edit_id() -> Id {
+    Id::new("festerm-field-pending-edit")
+}
+
+/// The field whose edit menu is showing, if any.
+pub fn field_menu_owner(ctx: &egui::Context) -> Option<Id> {
+    ctx.data(|data| data.get_temp::<FieldMenu>(field_menu_id()))
+        .map(|menu| menu.field)
+}
+
+/// Removes the edit queued by the field menu if its field still has focus.
+pub fn take_field_edit(ctx: &egui::Context) -> Option<FieldEdit> {
+    let pending = ctx.data_mut(|data| {
+        let pending = data.get_temp::<PendingFieldEdit>(pending_field_edit_id());
+        data.remove::<PendingFieldEdit>(pending_field_edit_id());
+        pending
+    })?;
+    (ctx.memory(|memory| memory.focused()) == Some(pending.field)).then_some(pending.edit)
+}
+
+/// egui draws form fields itself, so UIKit has no text view to attach its
+/// Paste menu to. A press-and-hold on a field opens an equivalent menu; its
+/// edits are replayed as ordinary egui clipboard events into that field.
+pub fn field_edit_menu(ui: &mut Ui, response: &Response, has_text: bool, secret: bool) {
+    let ctx = ui.ctx().clone();
+    let field = response.id;
+    let now = ui.input(|input| input.time);
+    if response.is_pointer_button_down_on() && ui.input(|input| input.any_touches()) {
+        let (start, origin, latest) = ui.input(|input| {
+            (
+                input.pointer.press_start_time(),
+                input.pointer.press_origin(),
+                input.pointer.latest_pos(),
+            )
+        });
+        let still = matches!((origin, latest), (Some(a), Some(b)) if a.distance(b) <= FIELD_LONG_PRESS_SLOP);
+        if let (Some(start), true) = (start, still) {
+            let held = now - start;
+            if held >= FIELD_LONG_PRESS_SECS {
+                if field_menu_owner(&ctx) != Some(field) {
+                    ctx.data_mut(|data| {
+                        data.insert_temp(
+                            field_menu_id(),
+                            FieldMenu {
+                                field,
+                                opened_at: now,
+                            },
+                        );
+                    });
+                    ctx.memory_mut(|memory| memory.request_focus(field));
+                }
+            } else {
+                // A stationary finger delivers no events; wake to notice the hold.
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(
+                    FIELD_LONG_PRESS_SECS - held + 0.01,
+                ));
+            }
+        }
+    }
+    let Some(menu) = ctx
+        .data(|data| data.get_temp::<FieldMenu>(field_menu_id()))
+        .filter(|menu| menu.field == field)
+    else {
+        return;
+    };
+    let area_id = field.with("edit-menu");
+    let pressing_menu = ui.input(|input| input.pointer.any_down() || input.pointer.any_released())
+        && ui
+            .input(|input| input.pointer.interact_pos())
+            .zip(ctx.memory(|memory| memory.area_rect(area_id)))
+            .is_some_and(|(origin, rect)| rect.contains(origin));
+    if pressing_menu {
+        // The field surrenders focus to a press outside it; hold on to it so
+        // UIKit's keyboard stays up while the finger rests on the menu.
+        ctx.memory_mut(|memory| memory.request_focus(field));
+    }
+    if ctx.memory(|memory| memory.focused()) != Some(field) && now > menu.opened_at {
+        close_field_menu(&ctx);
+        return;
+    }
+    let selected = egui::TextEdit::load_state(&ctx, field)
+        .and_then(|state| state.cursor.char_range())
+        .is_some_and(|range| !range.is_empty());
+    let mut items = Vec::with_capacity(4);
+    if selected && !secret {
+        items.push(("Cut", FieldEdit::Cut));
+        items.push(("Copy", FieldEdit::Copy));
+    }
+    items.push(("Paste", FieldEdit::Paste));
+    if has_text {
+        items.push(("Select All", FieldEdit::SelectAll));
+    }
+    let bounds = ctx.content_rect();
+    let item_width = 92.0;
+    let size = egui::vec2(item_width * items.len() as f32, space::TOUCH);
+    let mut pos = egui::pos2(
+        response.rect.left() + space::SM,
+        response.rect.top() - size.y - space::SM,
+    );
+    if pos.y < bounds.top() {
+        pos.y = response.rect.bottom() + space::SM;
+    }
+    pos.x = pos
+        .x
+        .min(bounds.right() - size.x - space::SM)
+        .max(bounds.left() + space::SM);
+    let mut chosen = None;
+    let area = egui::Area::new(area_id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos)
+        .show(&ctx, |ui| {
+            egui::Frame::new()
+                .fill(color::SURFACE_RAISED)
+                .stroke(Stroke::new(1.0, color::BORDER))
+                .corner_radius(CornerRadius::same(radius::CONTROL))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.horizontal(|ui| {
+                        for (index, (label, edit)) in items.iter().enumerate() {
+                            if index > 0 {
+                                let x = ui.cursor().left();
+                                ui.painter().vline(
+                                    x,
+                                    ui.max_rect().y_range().shrink(space::SM),
+                                    Stroke::new(1.0, color::DIVIDER),
+                                );
+                            }
+                            let (rect, item) = ui.allocate_exact_size(
+                                egui::vec2(item_width, space::TOUCH),
+                                Sense::CLICK,
+                            );
+                            if item.is_pointer_button_down_on() {
+                                ui.painter().rect_filled(
+                                    rect,
+                                    CornerRadius::same(radius::CONTROL),
+                                    color::SELECTED,
+                                );
+                            }
+                            ui.painter().text(
+                                rect.center(),
+                                Align2::CENTER_CENTER,
+                                *label,
+                                FontId::proportional(type_scale::BODY),
+                                color::TEXT,
+                            );
+                            let item = labelled(item, label, true);
+                            if item.clicked() {
+                                chosen = Some(*edit);
+                            }
+                        }
+                    });
+                });
+        });
+    if let Some(edit) = chosen {
+        if edit == FieldEdit::SelectAll {
+            // Like UIKit, keep the menu up so the selection can be copied.
+            ctx.data_mut(|data| {
+                data.insert_temp(
+                    field_menu_id(),
+                    FieldMenu {
+                        field,
+                        opened_at: now,
+                    },
+                );
+            });
+        } else {
+            close_field_menu(&ctx);
+        }
+        ctx.data_mut(|data| {
+            data.insert_temp(pending_field_edit_id(), PendingFieldEdit { field, edit });
+        });
+        // Tapping the menu is a click outside the field; keep its keyboard.
+        ctx.memory_mut(|memory| memory.request_focus(field));
+        ctx.request_repaint();
+    } else if now > menu.opened_at
+        && ui.input(|input| input.pointer.any_pressed())
+        && !ui
+            .input(|input| input.pointer.interact_pos())
+            .is_some_and(|pos| area.response.rect.contains(pos))
+    {
+        close_field_menu(&ctx);
+    }
+}
+
+fn close_field_menu(ctx: &egui::Context) {
+    ctx.data_mut(|data| data.remove::<FieldMenu>(field_menu_id()));
 }
