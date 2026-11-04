@@ -952,8 +952,11 @@ The later-stage MCP catalog offers the content-free
 `festerm_workspace_present` tools. The former currently returns
 `presentation: {available: false, reason: "NATIVE_EVIDENCE_UNQUALIFIED"}`,
 `backends.local_pty: "NATIVE_EVIDENCE_UNQUALIFIED"`,
-`backends.other: "UNSUPPORTED_BACKEND"`, `enrollment_available: false` and
-`input_available: false`.
+`backends.other: "UNSUPPORTED_BACKEND"` and `input_available: false`.
+The presentation-only catalog reports `enrollment_available: false`. When the
+controller and presentation catalogs are explicitly combined, the same
+qualified backend that answers controller capabilities supplies current
+enrollment availability for each presentation capability request.
 The backend policy describes the slice, not any enrolled session. The latter
 tool strictly validates its opaque `enrollment_ref` and 1–5000 ms `timeout_ms`,
 then returns `UNAVAILABLE` without starting work, changing a tab or prompting. The schema
@@ -975,11 +978,13 @@ controller catalog for *new* connections only when a separately qualified
 native controller path is available; that qualification is currently
 unconditionally false in production, and private bootstrap remains closed.
 The disabled control cannot start a listener. Restart or disabling MCP clears
-the ephemeral opt-in and all connection-owned records. The controller and
-presentation catalogs remain separate; opting in does not add the presentation
-tools to that connection. Controlled tests inject qualification and deterministic
-IDs for synthetic peers to exercise the real protocol dispatch and application
-broker; they do not establish native qualification.
+the ephemeral opt-in and all connection-owned records. Those new controller
+connections use the combined controller and refusal-only presentation catalog.
+The standalone controller and presentation catalog constructors remain
+independently selectable, and `Machine::new()` is unchanged. Controlled tests
+inject qualification and deterministic IDs for synthetic peers to exercise
+the real protocol dispatch and application broker; they do not establish
+native qualification.
 
 | Later-stage tool | Bounded, non-authorizing contract |
 | --- | --- |
@@ -1046,12 +1051,13 @@ independent metadata-publication test or qualification. No name, position or
 current-association fallback is permitted. Registration and status must never
 return terminal metadata or other clients' records.
 
-The controller and refusal-only presentation catalogs are separate
-opt-ins, not a combined client protocol. Before exposing both together, a
-qualified backend must reconcile their availability reporting: the
-presentation catalog currently fixes `enrollment_available` to false, while the
-controller catalog accepts independently established enrollment availability.
-Neither catalog supplies the missing association-handle metadata consumer.
+The combined catalog reports enrollment availability through the same bounded
+backend path as controller capability requests. A changed opt-in, qualification,
+workspace revision source or privacy/connection state therefore cannot be
+inferred from the catalog selected at connection creation. Capability results
+are snapshots, not grants; every registration still checks live authority.
+Presentation stays unavailable and the combined catalog supplies no
+association-handle metadata consumer.
 
 The remaining #524 contract is deliberately open:
 

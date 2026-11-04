@@ -248,6 +248,7 @@ pub(super) fn is_operation(operation: &Operation) -> bool {
     matches!(
         operation,
         Operation::ControllerCapabilities
+            | Operation::PresentationCapabilities
             | Operation::ControllerRegister { .. }
             | Operation::ControllerStatus { .. }
             | Operation::ControllerUnregister { .. }
@@ -284,7 +285,7 @@ pub(super) fn execute(
         let open =
             !privacy.is_closed() && !stop.load(Ordering::Acquire) && !peer.connection.is_closed();
         match request.operation {
-            Operation::ControllerCapabilities => {
+            Operation::ControllerCapabilities | Operation::PresentationCapabilities => {
                 Ok(Reply::plain(BackendResult::ControllerCapabilities {
                     enrollment_available: qualified && open,
                 }))
@@ -1494,13 +1495,67 @@ pub(super) mod tests {
             NativeCommand::EnableControllerEnrollment,
         );
         assert!(coordinator.controller_opted_in);
+        let mut machine = ready_controller_machine(coordinator.machine_for_new_peer());
+        let Event::Reply(tools) = machine.process_value(json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/list"
+        })) else {
+            panic!("expected combined tool catalog");
+        };
+        let catalog: Value = serde_json::from_slice(tools.as_bytes()).unwrap();
+        let names = catalog["result"]["tools"].as_array().unwrap();
+        assert!(names
+            .iter()
+            .any(|tool| tool["name"] == "festerm_controller_register"));
+        assert!(names
+            .iter()
+            .any(|tool| tool["name"] == "festerm_presentation_capabilities"));
+        assert!(names
+            .iter()
+            .any(|tool| tool["name"] == "festerm_workspace_present"));
+
         let receive = add_peer(&mut coordinator, 1);
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_presentation_capabilities",
+            json!({}),
+        );
+        let capabilities = response(&receive);
+        let data = &capabilities["result"]["structuredContent"]["data"];
+        assert_eq!(data["enrollment_available"], true);
+        assert_eq!(data["presentation"]["available"], false);
+        assert_eq!(data["input_available"], false);
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_workspace_present",
+            json!({"enrollment_ref": "untrusted"}),
+        );
+        assert_eq!(
+            response(&receive)["result"]["structuredContent"]["code"],
+            "UNAVAILABLE"
+        );
+        assert!(coordinator.peers[&1].controller.registrations.is_empty());
+
         coordinator.synthetic_controller_qualified = false;
         call(
             &mut coordinator,
             1,
             &[&app],
             "festerm_controller_capabilities",
+            json!({}),
+        );
+        assert_eq!(
+            response(&receive)["result"]["structuredContent"]["data"]["enrollment_available"],
+            false
+        );
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_presentation_capabilities",
             json!({}),
         );
         assert_eq!(
@@ -1536,6 +1591,17 @@ pub(super) mod tests {
             &mut coordinator,
             1,
             &[&app],
+            "festerm_presentation_capabilities",
+            json!({}),
+        );
+        assert_eq!(
+            response(&receive)["result"]["structuredContent"]["data"]["enrollment_available"],
+            false
+        );
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
             "festerm_controller_register",
             json!({"local_id": "untrusted"}),
         );
@@ -1550,6 +1616,17 @@ pub(super) mod tests {
             1,
             &[&app],
             "festerm_controller_capabilities",
+            json!({}),
+        );
+        assert_eq!(
+            response(&receive)["result"]["structuredContent"]["data"]["enrollment_available"],
+            false
+        );
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_presentation_capabilities",
             json!({}),
         );
         assert_eq!(

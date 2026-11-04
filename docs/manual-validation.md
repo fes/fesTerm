@@ -2739,8 +2739,8 @@ IME/preedit/paste, replacement and the first fresh proposal after takeover.
 Tests also freeze all approved readable-source guards before consent and
 exercise unreconciled source disconnect, attachment/lifecycle/registration
 changes, publication ordering and unrelated-principal survival after retirement.
-The later-stage MCP tools advertise unavailability and refuse presentation
-without prompting. Native selection of identically labelled
+The combined opt-in MCP catalog has synthetic tests for current enrollment
+capability and still refuses presentation without prompting. Native selection of identically labelled
 local sessions, actual metadata delivery, real attachment/disconnect races,
 actual activation confirmation (including Windows refusal), response/input
 ordering and explicit human handoff/disarm remain deferred under AUTO-01,

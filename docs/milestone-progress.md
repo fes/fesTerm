@@ -7345,3 +7345,13 @@ complete supplied configuration for later saves without restoring the primary
 window's tabs. When restore is off, stale workspace metadata remains scrubbed.
 Focused regressions cover both cases; cross-window save ordering and
 configuration-generation ownership remain unresolved.
+
+## Consistent controller and presentation discovery
+
+The opt-in controller and refusal-only presentation catalogs were mutually
+exclusive, so one controller connection could not discover both contracts.
+The combined catalog now asks the same bounded backend path for enrollment
+availability in either capability response and continues to refuse presentation.
+Synthetic tests cover qualification changes, cancellation and pending limits;
+the default observation-only catalog is unchanged. This adds neither native
+qualification nor metadata delivery, presentation or input.
