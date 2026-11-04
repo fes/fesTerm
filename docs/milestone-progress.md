@@ -1,5 +1,13 @@
 # Milestone Progress Narrative
 
+## Closing record channels on unknown write outcomes
+
+A physical record write can panic after the operating system accepts bytes,
+leaving its actual progress unknown. The output guard now closes and discards
+the channel during unwinding instead of permitting the same ciphertext to be
+retried. The transport owner must also discard the underlying stream; this
+does not enable MCP or replace its disclosure and privacy gates.
+
 ## Framing verified channels without blocking on full messages
 
 The experimental Noise channel now has a bounded incremental record-framing

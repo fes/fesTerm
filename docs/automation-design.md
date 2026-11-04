@@ -394,11 +394,13 @@ rejects tampering, replay and malformed bounded records. An independent
 incremental framing component supports fragmented, full-duplex record I/O,
 prefixing each encrypted record with a big-endian 16-bit length. It closes on
 truncated input or failed partial output and bounds one pending frame per
-direction. It takes a freshly verified channel before any records have been
-sent or received, and distinguishes interrupted writes from backpressure so
-edge-triggered callers can retry. It does not own I/O deadlines, authorization
-or privacy:
-the caller must hold the live disclosure boundary for each physical write.
+direction. A panicking physical writer also closes the channel during
+unwinding because it may already have accepted an unknown prefix; the caller
+must discard the underlying stream and must not replay that frame. It takes a
+freshly verified channel before any records have been sent or received, and
+distinguishes interrupted writes from backpressure so edge-triggered callers
+can retry. It does not own I/O deadlines, authorization or privacy: the caller
+must hold the live disclosure boundary for each physical write.
 On cancellation or a denied boundary, the caller must close the channel and
 discard pending output rather than retrying under a later grant.
 Neither component is wired into the adapter or qualifies bootstrap or
