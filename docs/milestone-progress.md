@@ -1,5 +1,25 @@
 # Milestone Progress Narrative
 
+## Windows tunnel recovery after a relay disconnect
+
+A Windows host reached READY and worked, then its relay transport disconnected.
+The bridge recorded a transient error, but the one-shot Windows logon task left
+hosting stopped indefinitely. The daemon shell had not crashed: starting the
+existing worker restored iOS discovery and attachment with the same tunnel,
+host key and shell generation. The old stage-only log cannot identify which
+network or relay condition caused that particular disconnect.
+
+Windows managed workers now retry transient failures after 15 seconds, following
+the existing Linux policy. Each attempt repeats the original identity checks
+and obtains a fresh scoped token; permanent refusals and clean shutdown still
+stop. Retries live inside the setup worker so an explicit upgrade can stop it
+without the windowless launcher respawning an old helper. Attempt cleanup also
+covers pre-ready failures, preventing unattended retries from accumulating
+temporary directories or bridge processes. Deterministic regressions cover
+recovery, refusal, cancellation and cleanup. The restored live host was not
+upgraded or interrupted; signed-helper automatic-recovery qualification remains
+separate.
+
 ## Windows tunnel hosting without a desktop console
 
 The corrected Windows installer reached READY, but Task Scheduler started the

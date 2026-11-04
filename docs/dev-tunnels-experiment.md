@@ -325,14 +325,20 @@ Auto-start is at sign-in (Linux can start at boot when lingering was already
 enabled). Neither daemon-shell reboot survival nor automatic replacement of a
 dead/stale generation is promised.
 
-On Linux the service restarts the worker 15 seconds after a transient failure
+Linux services and Windows workers retry 15 seconds after a transient failure
 (relay drop, bridge exit/crash, token or network error), indefinitely, keeping
 the same tunnel, host key and daemon session. Refusals a restart cannot fix
 (the recorded daemon generation is gone, or the account, host identity or
 tunnel changed) exit with status 78 and stay stopped until setup is rerun.
-macOS and Windows services are unchanged: they start at sign-in and are not
-restarted. On every platform the
-worker appends start, ready, bridge-exit, worker-exit and client open/close
+Windows retries within the existing worker process, without changing its
+owned task or restarting the windowless launcher. Every attempt rechecks the
+recorded account, host key and exact daemon generation and obtains a fresh
+scoped token. Clean bridge shutdown stops the worker. Failed attempts terminate
+their bridge and remove temporary readiness data before retrying; failure to
+clean up refuses rather than accumulating children or files. Existing Windows
+installations gain this behavior only after an explicit helper upgrade.
+macOS services still start only at sign-in and do not retry. On every platform the
+worker appends start, ready, retry, bridge-exit, worker-exit and client open/close
 events to `worker.log` in its private state directory (one 256 KiB file plus
 one rotated `worker.log.1`). Lines hold timestamps, PIDs and stage codes only:
 no tokens, paths, addresses or terminal data. Only `--upgrade` migrates a

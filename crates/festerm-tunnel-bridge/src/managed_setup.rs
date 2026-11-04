@@ -768,10 +768,33 @@ const PERMANENT_REFUSALS: &[&str] = &[
     "setup.changed_host_identity",
     "setup.tunnel_missing",
     "setup.tunnel_identity",
+    "setup.worker_state",
+    "setup.worker_cleanup",
+    "setup.bridge_cleanup",
 ];
 
 pub(super) fn is_permanent_refusal(error: &io::Error) -> bool {
     PERMANENT_REFUSALS.contains(&error.to_string().as_str())
+}
+
+#[cfg(any(windows, test))]
+async fn retry_worker<F, R>(log: &WorkerLog, delay: Duration, mut attempt: F) -> io::Result<()>
+where
+    F: FnMut() -> R,
+    R: std::future::Future<Output = io::Result<()>>,
+{
+    loop {
+        match attempt().await {
+            Err(error) if !is_permanent_refusal(&error) => {
+                log.event(
+                    "worker.retry",
+                    &[("reason", worker_log::code(&error.to_string()))],
+                );
+                tokio::time::sleep(delay).await;
+            }
+            result => return result,
+        }
+    }
 }
 
 pub(super) async fn serve(args: &[OsString]) -> io::Result<()> {
@@ -787,6 +810,9 @@ pub(super) async fn serve(args: &[OsString]) -> io::Result<()> {
         }));
     }
     log.event("worker.start", &[("version", env!("CARGO_PKG_VERSION"))]);
+    #[cfg(windows)]
+    let result = retry_worker(&log, Duration::from_secs(15), || run_worker(&state, &log)).await;
+    #[cfg(not(windows))]
     let result = run_worker(&state, &log).await;
     match &result {
         Ok(()) => log.event("worker.exit", &[("reason", "bridge_stopped_cleanly")]),
@@ -854,9 +880,6 @@ async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
     if verify_account(&record.cli).await? != record.account {
         return Err(refused("setup.changed_cli_account_after_token"));
     }
-    let run = state.join(format!("run-{}", uuid::Uuid::new_v4()));
-    let _run_directory = setup_storage::private_directory(&run, true)?;
-    let destination = run.join("destination.json");
     let bridge = record
         .executable
         .parent()
@@ -866,7 +889,11 @@ async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
             std::env::consts::EXE_SUFFIX
         ));
     let (variable, base) = daemon_namespace(&record.runtime_root)?;
-    let mut child = super::background_command(&bridge)
+    let run = state.join(format!("run-{}", uuid::Uuid::new_v4()));
+    let _run_directory =
+        setup_storage::private_directory(&run, true).map_err(|_| refused("setup.worker_state"))?;
+    let destination = run.join("destination.json");
+    let spawned = super::background_command(&bridge)
         .env(variable, base)
         .args([
             "--experimental",
@@ -897,94 +924,153 @@ async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
         .stdin(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()
-        .map_err(|_| refused("setup.start_bridge"))?;
-    let events = child.stderr.take().map(|stderr| {
-        let log = log.clone();
-        tokio::spawn(async move {
-            use tokio::io::AsyncBufReadExt;
-            // Drain to EOF regardless of content: a stopped reader would make
-            // the bridge's next stderr write fail.
-            let mut reader = tokio::io::BufReader::new(stderr);
-            let mut line = Vec::new();
-            while matches!(reader.read_until(b'\n', &mut line).await, Ok(read) if read > 0) {
-                if let Some(text) = std::str::from_utf8(&line)
-                    .ok()
-                    .and_then(|line| worker_log::bridge_event(line.trim_end()))
-                {
-                    log.raw_event(&text);
+        .spawn();
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(_) => {
+            cleanup_worker_run(&state, &run)?;
+            return Err(refused("setup.start_bridge"));
+        }
+    };
+    let mut published = false;
+    let result = async {
+        let events = child.stderr.take().map(|stderr| {
+            let log = log.clone();
+            tokio::spawn(async move {
+                use tokio::io::AsyncBufReadExt;
+                // Drain to EOF regardless of content: a stopped reader would make
+                // the bridge's next stderr write fail.
+                let mut reader = tokio::io::BufReader::new(stderr);
+                let mut line = Vec::new();
+                while matches!(reader.read_until(b'\n', &mut line).await, Ok(read) if read > 0) {
+                    if let Some(text) = std::str::from_utf8(&line)
+                        .ok()
+                        .and_then(|line| worker_log::bridge_event(line.trim_end()))
+                    {
+                        log.raw_event(&text);
+                    }
+                    line.clear();
                 }
-                line.clear();
+            })
+        });
+        let mut input = child
+            .stdin
+            .take()
+            .ok_or_else(|| refused("setup.bridge_input"))?;
+        timeout(Duration::from_secs(5), async {
+            input.write_all(token.as_bytes()).await?;
+            input.write_all(b"\n").await
+        })
+        .await
+        .map_err(|_| refused("setup.bridge_input_timeout"))??;
+        drop(input);
+        drop(token);
+        let ready = timeout(Duration::from_secs(40), async {
+            loop {
+                if child.try_wait()?.is_some() {
+                    return Err(refused("setup.bridge_exited_before_ready"));
+                }
+                match fs::File::open(&destination) {
+                    Ok(file) => {
+                        use std::io::Read;
+                        let mut bytes = Vec::new();
+                        file.take(64 * 1024 + 1).read_to_end(&mut bytes)?;
+                        if bytes.len() > 64 * 1024 {
+                            return Err(refused("setup.destination_size"));
+                        }
+                        if let Ok(destination) = serde_json::from_slice::<Destination>(&bytes) {
+                            return Ok(Ready {
+                                installation: record.id.clone(),
+                                destination,
+                            });
+                        }
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         })
-    });
-    let mut input = child
-        .stdin
-        .take()
-        .ok_or_else(|| refused("setup.bridge_input"))?;
-    timeout(Duration::from_secs(5), async {
-        input.write_all(token.as_bytes()).await?;
-        input.write_all(b"\n").await
-    })
-    .await
-    .map_err(|_| refused("setup.bridge_input_timeout"))??;
-    drop(input);
-    drop(token);
-    let ready = timeout(Duration::from_secs(40), async {
-        loop {
-            if child.try_wait()?.is_some() {
-                return Err(refused("setup.bridge_exited_before_ready"));
-            }
-            match fs::File::open(&destination) {
-                Ok(file) => {
-                    use std::io::Read;
-                    let mut bytes = Vec::new();
-                    file.take(64 * 1024 + 1).read_to_end(&mut bytes)?;
-                    if bytes.len() > 64 * 1024 {
-                        return Err(refused("setup.destination_size"));
-                    }
-                    if let Ok(destination) = serde_json::from_slice::<Destination>(&bytes) {
-                        return Ok(Ready {
-                            installation: record.id.clone(),
-                            destination,
-                        });
-                    }
-                }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .map_err(|_| refused("setup.bridge_ready_timeout"))??;
-    setup_storage::replace_private(
-        &directory,
-        Path::new(READY),
-        &serde_json::to_vec(&ready).map_err(|_| refused("setup.ready_encode"))?,
-    )?;
-    ready_record(&directory, &record)?;
-    FileExt::unlock(&health)?;
-    log.event("worker.bridge_ready", &[]);
-    eprintln!("Managed experimental bridge ready; exact generation, no file capability. Reauthentication or a stale daemon requires explicit operator action.");
-    let status = child
-        .wait()
         .await
-        .map_err(|_| refused("setup.bridge_wait"))?;
-    if let Some(events) = events {
-        let _ = timeout(Duration::from_secs(2), events).await;
+        .map_err(|_| refused("setup.bridge_ready_timeout"))??;
+        setup_storage::replace_private(
+            &directory,
+            Path::new(READY),
+            &serde_json::to_vec(&ready).map_err(|_| refused("setup.ready_encode"))?,
+        )?;
+        ready_record(&directory, &record)?;
+        FileExt::unlock(&health)?;
+        published = true;
+        log.event("worker.bridge_ready", &[]);
+        eprintln!(
+            "Managed experimental bridge ready; exact generation, no file capability. \
+         Reauthentication or a stale daemon requires explicit operator action."
+        );
+        let status = child
+            .wait()
+            .await
+            .map_err(|_| refused("setup.bridge_wait"))?;
+        if let Some(events) = events {
+            let _ = timeout(Duration::from_secs(2), events).await;
+        }
+        log.event("worker.bridge_exit", &[("status", &exit_status(&status))]);
+        if !status.success() {
+            return Err(refused("setup.bridge_stopped"));
+        }
+        Ok(())
     }
-    log.event("worker.bridge_exit", &[("status", &exit_status(&status))]);
-    health.try_lock_exclusive()?;
-    if destination.exists() {
-        fs::remove_file(&destination)?;
+    .await;
+    if child
+        .try_wait()
+        .map_err(|_| refused("setup.bridge_cleanup"))?
+        .is_none()
+    {
+        child
+            .kill()
+            .await
+            .map_err(|_| refused("setup.bridge_cleanup"))?;
     }
-    fs::remove_dir(&run)?;
-    fs::remove_file(state.join(READY))?;
-    if !status.success() {
-        return Err(refused("setup.bridge_stopped"));
+    if published && !reacquire_health(&health).await? {
+        // A setup rerun is still reading the published record; leave ready.json
+        // (it is ignored without a live worker) and let the next attempt retry.
+        cleanup_worker_destination(&run)?;
+        return Err(refused("setup.health_publication_busy"));
     }
-    Ok(())
+    cleanup_worker_run(&state, &run)?;
+    result
+}
+
+/// Readers (`healthy_record`) hold the shared health lock only briefly, so
+/// contention after the bridge exits is transient rather than a refusal.
+async fn reacquire_health(health: &File) -> io::Result<bool> {
+    for _ in 0..50 {
+        match health.try_lock_exclusive() {
+            Ok(()) => return Ok(true),
+            Err(error) if festerm_sessiond::lock_is_contended(&error) => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(_) => return Err(refused("setup.worker_cleanup")),
+        }
+    }
+    Ok(false)
+}
+
+fn cleanup_worker_destination(run: &Path) -> io::Result<()> {
+    match fs::remove_file(run.join("destination.json")) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(_) => return Err(refused("setup.worker_cleanup")),
+    }
+    fs::remove_dir(run).map_err(|_| refused("setup.worker_cleanup"))
+}
+
+fn cleanup_worker_run(state: &Path, run: &Path) -> io::Result<()> {
+    cleanup_worker_destination(run)?;
+    match fs::remove_file(state.join(READY)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(refused("setup.worker_cleanup")),
+    }
 }
 
 fn exit_status(status: &std::process::ExitStatus) -> String {
@@ -1011,6 +1097,130 @@ fn refuse_orphaned_state(state: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn managed_worker_waits_out_a_setup_rerun_reading_health_instead_of_refusing() {
+        let state = crate::test_support::private_directory("festerm-worker-health-contention");
+        let path = state.join("health.lock");
+        let worker = File::create(&path).unwrap();
+        let reader = File::open(&path).unwrap();
+        FileExt::lock_shared(&reader).unwrap();
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            FileExt::unlock(&reader).unwrap();
+        });
+        assert!(reacquire_health(&worker).await.unwrap());
+        release.await.unwrap();
+        FileExt::unlock(&worker).unwrap();
+
+        let reader = File::open(&path).unwrap();
+        FileExt::lock_shared(&reader).unwrap();
+        assert!(!reacquire_health(&worker).await.unwrap());
+        assert!(!is_permanent_refusal(&refused(
+            "setup.health_publication_busy"
+        )));
+        let run = state.join("run-test");
+        fs::create_dir(&run).unwrap();
+        fs::write(run.join("destination.json"), b"{}").unwrap();
+        cleanup_worker_destination(&run).unwrap();
+        assert!(!run.exists());
+        drop(reader);
+        drop(worker);
+        fs::remove_dir_all(state).unwrap();
+    }
+
+    #[tokio::test]
+    async fn managed_windows_worker_retries_until_recovery_and_stops_on_refusal() {
+        let state = crate::test_support::private_directory("festerm-worker-retry");
+        let log = WorkerLog::new(&state);
+        let mut outcomes = [
+            Err(refused("setup.bridge_stopped")),
+            Err(refused("setup.host_token")),
+            Ok(()),
+        ]
+        .into_iter();
+        retry_worker(&log, Duration::ZERO, || {
+            std::future::ready(outcomes.next().expect("clean shutdown must stop retries"))
+        })
+        .await
+        .unwrap();
+        assert!(outcomes.next().is_none());
+        for stage in PERMANENT_REFUSALS {
+            let mut attempts = 0;
+            let error = retry_worker(&log, Duration::ZERO, || {
+                attempts += 1;
+                assert_eq!(attempts, 1, "operator refusals must not retry");
+                std::future::ready(Err(refused(stage)))
+            })
+            .await
+            .unwrap_err();
+            assert_eq!(error.to_string(), *stage);
+        }
+        let mut outcomes = [
+            Err(refused("setup.bridge_exited_before_ready")),
+            Err(refused("setup.changed_host_identity")),
+        ]
+        .into_iter();
+        let error = retry_worker(&log, Duration::ZERO, || {
+            std::future::ready(outcomes.next().expect("a new refusal must stop retries"))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "setup.changed_host_identity");
+        assert!(outcomes.next().is_none());
+        let text = fs::read_to_string(state.join("worker.log")).unwrap();
+        assert_eq!(text.matches("worker.retry").count(), 3);
+        fs::remove_dir_all(state).unwrap();
+    }
+
+    #[tokio::test]
+    async fn managed_worker_retry_waits_and_can_be_cancelled_before_another_attempt() {
+        let state = crate::test_support::private_directory("festerm-worker-retry-wait");
+        let log = WorkerLog::new(&state);
+        let mut attempts = 0;
+        let result = timeout(
+            Duration::from_millis(20),
+            retry_worker(&log, Duration::from_secs(60), || {
+                attempts += 1;
+                std::future::ready(Err(refused("setup.bridge_stopped")))
+            }),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(
+            attempts, 1,
+            "do not retry immediately or after cancellation"
+        );
+        fs::remove_dir_all(state).unwrap();
+    }
+
+    #[test]
+    fn managed_worker_cleans_ready_and_pre_ready_runs_without_touching_installation() {
+        let state = crate::test_support::private_directory("festerm-worker-cleanup");
+        fs::write(state.join(CONFIG), b"unchanged installation").unwrap();
+        for published in [false, true] {
+            let run = state.join("run-fixture");
+            fs::create_dir(&run).unwrap();
+            if published {
+                fs::write(run.join("destination.json"), b"destination").unwrap();
+                fs::write(state.join(READY), b"ready").unwrap();
+            }
+            cleanup_worker_run(&state, &run).unwrap();
+            assert!(!run.exists());
+            assert!(!state.join(READY).exists());
+            assert_eq!(
+                fs::read(state.join(CONFIG)).unwrap(),
+                b"unchanged installation"
+            );
+        }
+        let run = state.join("run-refuse-unknown");
+        fs::create_dir(&run).unwrap();
+        fs::write(run.join("foreign"), b"do not recursively delete").unwrap();
+        let error = cleanup_worker_run(&state, &run).unwrap_err();
+        assert!(is_permanent_refusal(&error));
+        assert!(run.join("foreign").exists());
+        fs::remove_dir_all(state).unwrap();
+    }
 
     #[test]
     fn managed_worker_retries_transient_failures_but_not_operator_refusals() {
