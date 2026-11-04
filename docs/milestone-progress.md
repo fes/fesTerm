@@ -1,5 +1,34 @@
 # Milestone Progress Narrative
 
+## Wiring non-authorizing controller enrollment
+
+The local integration work adds an application adapter from an explicitly
+opted-in controller catalog to the existing principal-owned broker, and a
+native Settings flow that requires a separate choose, exact current-window
+local-PTY selection and confirmation. Untrusted identifiers and labels preserve
+readable Unicode while bounded and escaped for quoted display; registration
+alone opens no prompt or grants access.
+Status exposes only connection-owned opaque correlation IDs. Moves, close,
+disconnect, privacy loss, newer decisions, conflicting actions and bounded
+queue exhaustion invalidate or refuse stale work; queued stale replies close
+the connection. JavaScript is not involved.
+
+Production private bootstrap and controller qualification remain
+unconditionally closed: synthetic peers and injected qualification are not
+platform or client evidence. Metadata association-handle consumption,
+separate metadata grant UI/publication fencing, presentation, input, and native
+handoff remain unimplemented or unqualified. The controller and presentation
+catalogs are separate and `Machine::new()` remains observation-only. New
+regressions have been added but their execution and independent review remain
+pending; #506 is untouched.
+
+The assembly's preference-disable regression observes metadata liveness only
+after a direct-input commit triggers coordinator revocation, not at an
+independent metadata-publication boundary. Future metadata publication must
+check the shared stop/privacy/recipient and discovery-grant fences itself.
+The existing preference owner still cannot promise a durable off bit after an
+arbitrary failed or indeterminate save.
+
 ## Freezing direct input through backend reservation
 
 The host-only seam prepares bounded text or keys with the exact tab's core
@@ -154,16 +183,18 @@ No current platform supplies the required complete native event history and
 ordering barrier through admission, and secondary eframe viewports lack a
 uniform raw-handle path. The later-stage MCP capability advertises
 unavailability and its presentation call refuses without prompting or focusing.
-Injected event tests are not native proof; enrollment UI, real activation,
-response delivery, direct input and Windows qualification remain open.
+Injected event tests are not native proof; enrollment usability/qualification,
+real activation, response delivery, direct input and Windows qualification
+remain open.
 ## Specifying a dormant controller protocol
 
 The MCP protocol crate now has an explicitly selected catalog for bounded,
 typed controller registration and status requests. The default observation
-catalog is unchanged, and the application refuses controller operations even
-if given the optional catalog. Requests cannot open a native prompt or grant
-authority. This is a protocol seam, not a controller service: no listener or
-native selection is enabled, and association IDs have no metadata consumer.
+catalog is unchanged. At that checkpoint the application refused controller
+operations even with the optional catalog; the later local adapter above
+routes them only behind native opt-in and qualification. Requests cannot open
+a native prompt or grant authority. No listener is enabled, production
+qualification remains closed, and association IDs have no metadata consumer.
 The metadata feature is reported unavailable regardless of enrollment or grant
 status. Private bootstrap, privacy qualification and client integration remain
 open.
@@ -179,9 +210,9 @@ older pending decisions without disturbing the current binding. Disconnect,
 privacy revocation, closure, replacement and broker restart discard affected
 associations. Identical session labels play no role.
 
-This is a non-authorizing foundation for [#524](https://github.com/fes/fesTerm/issues/524),
-not a client feature: there is no native enrollment UI or integrated controller
-MCP operation.
+This was a non-authorizing foundation for [#524](https://github.com/fes/fesTerm/issues/524),
+not a client feature; the later local adapter above remains unqualified for
+production.
 Separately approved metadata, native-confirmed presentation and end-to-end
 admission-time revalidation, native handoff/disarm, uncertain-outcome/no-replay
 handling, JavaScript-independent controller operation and platform/backend

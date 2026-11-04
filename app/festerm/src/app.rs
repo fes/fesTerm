@@ -416,6 +416,7 @@ impl NativeMenuShortcutCache {
 /// driver.
 pub struct FesTermApp {
     state: AppState,
+    automation_window: crate::application::WindowId,
     automation_settings: crate::automation::SettingsSnapshot,
     automation_commands: Vec<crate::automation::NativeCommand>,
     automation_command_overflow: bool,
@@ -937,6 +938,7 @@ impl FesTermApp {
             native_menu_shortcut_cache: NativeMenuShortcutCache::default(),
             wake_monitor: None,
             wake_requested: Arc::new(AtomicBool::new(false)),
+            automation_window: crate::application::WindowId::PRIMARY,
             automation_settings: Default::default(),
             automation_commands: Vec::new(),
             automation_command_overflow: false,
@@ -6295,6 +6297,7 @@ impl FesTermApp {
                             automation_preference_feedback: self.automation_preference_feedback(),
                             automation_preference_retry_available: self
                                 .automation_preference_retry_available(),
+                            automation_window: self.automation_window,
                             automation: self.automation_settings.clone(),
                             default_sftp_local_directory: self
                                 .state
@@ -7447,6 +7450,7 @@ impl FesTermApp {
             native_menu_shortcut_cache: NativeMenuShortcutCache::default(),
             wake_monitor: None,
             wake_requested: Arc::new(AtomicBool::new(false)),
+            automation_window: crate::application::WindowId::PRIMARY,
             automation_settings: Default::default(),
             automation_commands: Vec::new(),
             automation_command_overflow: false,

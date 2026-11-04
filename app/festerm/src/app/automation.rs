@@ -10,6 +10,14 @@ use eframe::egui;
 use super::FesTermApp;
 
 impl FesTermApp {
+    pub(crate) fn set_automation_window(&mut self, window: crate::application::WindowId) {
+        self.automation_window = window;
+    }
+
+    pub(crate) fn automation_window(&self) -> crate::application::WindowId {
+        self.automation_window
+    }
+
     pub(crate) fn set_presentation_workspace(
         &mut self,
         revision: &crate::automation::WorkspaceRevision,
@@ -243,6 +251,11 @@ impl FesTermApp {
             })
     }
 
+    pub(crate) fn automation_session_context(&self, id: TabId) -> Option<(usize, bool)> {
+        let position = self.state.tabs().iter().position(|tab| tab.id == id)?;
+        Some((position + 1, self.state.active() == id))
+    }
+
     pub(crate) fn set_automation_settings(&mut self, snapshot: SettingsSnapshot) -> bool {
         let changed = !self.automation_settings.same_presentation(&snapshot);
         self.automation_settings = snapshot;
@@ -296,8 +309,20 @@ impl FesTermApp {
                 }
             }
             NativeCommand::Revoke { channel } => self.automation_settings.revoke(*channel),
+            NativeCommand::UnregisterController {
+                channel,
+                registration,
+            } => self
+                .automation_settings
+                .unregister_controller(*channel, *registration),
             NativeCommand::ClearWorkflow => self.automation_settings.workflow.disable(),
-            NativeCommand::ApproveObservation { .. } | NativeCommand::CaptureWorkflow(_) => {}
+            NativeCommand::ApproveObservation { .. }
+            | NativeCommand::EnableControllerEnrollment
+            | NativeCommand::ChooseController { .. }
+            | NativeCommand::SelectControllerTarget { .. }
+            | NativeCommand::ConfirmController { .. }
+            | NativeCommand::CancelController { .. }
+            | NativeCommand::CaptureWorkflow(_) => {}
         }
         if self.automation_command_overflow {
             return;
@@ -327,6 +352,21 @@ impl FesTermApp {
             .unwrap()
             .terminal
             .ingest(b"approved source");
+        (app, id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn automation_local_fixture() -> (Self, TabId) {
+        let (mut app, id) = Self::automation_fixture();
+        let session = app.state.session_tab_mut(id).unwrap();
+        session.controller = crate::session_controller::SessionController::for_test(
+            crate::tabs::ApplicationSession::TestLocal(
+                crate::session_controller::fake::FakeSshSession::new([]),
+            ),
+        );
+        session
+            .controller
+            .set_lifecycle_for_test(festerm_session::SessionLifecycle::Running);
         (app, id)
     }
 

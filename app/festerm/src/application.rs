@@ -26,7 +26,12 @@ use crate::tabs::{Tab, TabMoveRequest};
 pub(crate) struct WindowId(u64);
 
 impl WindowId {
-    const PRIMARY: Self = Self(0);
+    pub(crate) const PRIMARY: Self = Self(0);
+
+    #[cfg(test)]
+    pub(crate) const fn for_test(value: u64) -> Self {
+        Self(value)
+    }
 
     fn viewport_id(self) -> egui::ViewportId {
         // The first window *is* eframe's root viewport; anything else here
@@ -136,13 +141,14 @@ pub(crate) struct FesTermApplication {
     activation_errors: Arc<Mutex<VecDeque<String>>>,
     automation: crate::automation::Coordinator,
     presentation_workspace: crate::automation::WorkspaceRevision,
-    deferred_automation_commands: Vec<crate::automation::NativeCommand>,
+    deferred_automation_commands: Vec<crate::automation::NativeWindowCommand>,
     deferred_automation_overflow: bool,
     ime_admission: ImeAdmission,
 }
 
 impl FesTermApplication {
     pub(crate) fn new(mut primary: FesTermApp) -> Self {
+        primary.set_automation_window(WindowId::PRIMARY);
         primary.initialize_automation_preferences();
         let presentation_workspace = crate::automation::WorkspaceRevision::default();
         primary.set_presentation_workspace(&presentation_workspace);
@@ -574,6 +580,7 @@ impl FesTermApplication {
                 if target == source {
                     return;
                 }
+                self.automation.controller_target_moving(request.moved);
                 self.presentation_workspace.changed();
                 let Some(tab) = self.windows[source_index].app.detach_tab(request.moved) else {
                     return;
@@ -608,6 +615,7 @@ impl FesTermApplication {
         if source != WindowId::PRIMARY && self.windows[source_index].app.tab_count() <= 1 {
             return;
         }
+        self.automation.controller_target_moving(request.moved);
         self.presentation_workspace.changed();
         let Some(tab) = self.windows[source_index].app.detach_tab(request.moved) else {
             return;
@@ -640,6 +648,7 @@ impl FesTermApplication {
         if id == WindowId::PRIMARY {
             self.windows[index].app.open_launcher_if_empty(context);
         } else {
+            self.automation.controller_window_closing(id);
             self.presentation_workspace.changed();
             self.windows.remove(index);
             context.request_repaint();
@@ -775,6 +784,7 @@ impl FesTermApplication {
             secret_store,
             documents,
         );
+        app.set_automation_window(id);
         app.set_presentation_workspace(&self.presentation_workspace);
         if let Some(tab) = detached {
             app.adopt_detached_tab(tab);
@@ -794,6 +804,15 @@ impl FesTermApplication {
     /// viewport with nothing to render.
     fn close_finished_windows(&mut self, context: &egui::Context) {
         let before = self.windows.len();
+        let closing: Vec<_> = self
+            .windows
+            .iter()
+            .filter(|window| window.id != WindowId::PRIMARY && window.app.window_close_accepted())
+            .map(|window| window.id)
+            .collect();
+        for id in closing {
+            self.automation.controller_window_closing(id);
+        }
         if self
             .windows
             .iter()
@@ -826,7 +845,7 @@ impl FesTermApplication {
 
     fn collect_automation_commands(
         &mut self,
-        commands: &mut Vec<crate::automation::NativeCommand>,
+        commands: &mut Vec<crate::automation::NativeWindowCommand>,
         overflow: &mut bool,
     ) {
         for window in &mut self.windows {
@@ -841,17 +860,26 @@ impl FesTermApplication {
                 *overflow = true;
                 commands.clear();
             } else if !*overflow {
-                commands.extend(pending);
+                commands.extend(pending.into_iter().map(|command| {
+                    crate::automation::NativeWindowCommand {
+                        window: window.id,
+                        command,
+                    }
+                }));
             }
         }
-        if !*overflow && crate::automation::NativeCommand::batch_requires_safety_stop(commands) {
+        if !*overflow
+            && crate::automation::NativeCommand::batch_requires_safety_stop(
+                commands.iter().map(|item| &item.command),
+            )
+        {
             self.automation.close_conflicting_admission();
             *overflow = true;
             commands.clear();
         } else if !*overflow
-            && commands.iter().any(|command| {
+            && commands.iter().any(|item| {
                 matches!(
-                    command,
+                    &item.command,
                     crate::automation::NativeCommand::PreferenceChanged { .. }
                 )
             })
@@ -888,14 +916,14 @@ impl FesTermApplication {
     fn drive_automation(
         &mut self,
         context: &egui::Context,
-        mut commands: Vec<crate::automation::NativeCommand>,
+        mut commands: Vec<crate::automation::NativeWindowCommand>,
         mut overflow: bool,
     ) {
         self.collect_automation_commands(&mut commands, &mut overflow);
         if overflow
-            || commands.iter().any(|command| {
+            || commands.iter().any(|item| {
                 matches!(
-                    command,
+                    &item.command,
                     crate::automation::NativeCommand::ClearWorkflow
                         | crate::automation::NativeCommand::SafetyStop
                         | crate::automation::NativeCommand::PreferenceChanged {
@@ -984,7 +1012,7 @@ mod tests {
     use crate::configuration_startup::{
         ConfigurationReloader, SessionNameConfigurationFixture, TestSaveFailure,
     };
-    use crate::tabs::AppCommand;
+    use crate::tabs::{AppCommand, TabId};
     use festerm_config::{Configuration, InterfaceSettings, Profile, TerminalFontPreference};
     use festerm_ui_egui::TerminalFontFamily;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1089,6 +1117,274 @@ mod tests {
             stop,
             _receive: Box::new(receive),
         }
+    }
+
+    fn reviewed_controller_application() -> (
+        FesTermApplication,
+        egui::Context,
+        SessionNameConfigurationFixture,
+        festerm_automation::ControllerRegistrationId,
+        u64,
+        impl Fn() -> Option<Vec<u8>>,
+    ) {
+        let (mut primary, tab) = FesTermApp::automation_local_fixture();
+        let file = SessionNameConfigurationFixture::new();
+        let configuration = automation_configuration(Values {
+            mcp: true,
+            javascript: false,
+        });
+        configuration.save_to_path(&file.path).unwrap();
+        primary.adopt_broadcast_configuration(configuration);
+        primary.set_reloader_for_test(ConfigurationReloader::from_path_for_test(file.path.clone()));
+        let context = egui::Context::default();
+        let mut application = FesTermApplication::new(primary);
+        application.open_window(&context, None);
+        let (coordinator, registration, token, receive) =
+            crate::automation::reviewed_controller_for_application(
+                &application.windows[0].app,
+                tab,
+                &application.presentation_workspace,
+            );
+        application.automation = coordinator;
+        let apps: Vec<_> = application
+            .windows
+            .iter()
+            .map(|window| &window.app)
+            .collect();
+        let snapshot = application.automation.settings(&apps);
+        for window in &mut application.windows {
+            window.app.set_automation_settings(snapshot.clone());
+        }
+        (application, context, file, registration, token, receive)
+    }
+
+    #[test]
+    fn cross_window_disable_or_cancel_precedes_controller_confirmation() {
+        use crate::automation::NativeCommand;
+
+        for disable in [false, true] {
+            for reverse in [false, true] {
+                let (mut application, context, file, registration, token, _receive) =
+                    reviewed_controller_application();
+                let queue_confirmation = |application: &mut FesTermApplication| {
+                    application.window_mut(0).queue_automation_command(
+                        NativeCommand::ConfirmController {
+                            channel: 1,
+                            registration,
+                            selection: token,
+                        },
+                    );
+                };
+                let cancel_or_disable = |application: &mut FesTermApplication| {
+                    if disable {
+                        application
+                            .window_mut(1)
+                            .toggle_automation_preference_for_test(Feature::Mcp, &context);
+                    } else {
+                        application.window_mut(1).queue_automation_command(
+                            NativeCommand::CancelController {
+                                channel: 1,
+                                registration,
+                            },
+                        );
+                        application.window_mut(1).accept_window_close_for_test();
+                    }
+                };
+                if reverse {
+                    cancel_or_disable(&mut application);
+                    queue_confirmation(&mut application);
+                } else {
+                    queue_confirmation(&mut application);
+                    cancel_or_disable(&mut application);
+                }
+                application.settle_windows_and_drive_automation(&context);
+                let apps: Vec<_> = application
+                    .windows
+                    .iter()
+                    .map(|window| &window.app)
+                    .collect();
+                let snapshot = application.automation.settings(&apps);
+                assert!(snapshot.controllers.is_empty());
+                assert!(snapshot.status.contains("conflicted"));
+                assert!(application.windows[0]
+                    .app
+                    .automation_preference_feedback_for_test()
+                    .unwrap()
+                    .contains("may not have been applied"));
+                if disable {
+                    assert_saved_automation_preferences(
+                        &file.path,
+                        Values {
+                            mcp: false,
+                            javascript: false,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn controller_review_rejects_away_and_back_tab_selection() {
+        use crate::automation::{ControllerSelectionView, NativeCommand};
+
+        let (mut application, context, _file, registration, token, _receive) =
+            reviewed_controller_application();
+        let candidate = {
+            let apps: Vec<_> = application
+                .windows
+                .iter()
+                .map(|window| &window.app)
+                .collect();
+            application.automation.settings(&apps).controller_targets[0].clone()
+        };
+        let active = application.window_mut(0).active_tab_id_for_test();
+        let revision = application.presentation_workspace.current().unwrap();
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenSettings, &context);
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::ActivateTab(active), &context);
+        assert!(application.presentation_workspace.current().unwrap() >= revision + 2);
+        let current_candidate = {
+            let apps: Vec<_> = application
+                .windows
+                .iter()
+                .map(|window| &window.app)
+                .collect();
+            application.automation.settings(&apps).controller_targets[0].clone()
+        };
+        assert!(candidate == current_candidate);
+
+        application
+            .window_mut(0)
+            .queue_automation_command(NativeCommand::ConfirmController {
+                channel: 1,
+                registration,
+                selection: token,
+            });
+        application.settle_windows_and_drive_automation(&context);
+        let apps: Vec<_> = application
+            .windows
+            .iter()
+            .map(|window| &window.app)
+            .collect();
+        let snapshot = application.automation.settings(&apps);
+        assert!(snapshot.controllers[0].associated_target.is_none());
+        assert!(matches!(
+            snapshot.controllers[0].selection,
+            ControllerSelectionView::Idle
+        ));
+        assert!(snapshot.status.contains("refused"));
+    }
+
+    #[test]
+    fn controller_chooser_tracks_surviving_window_identity_without_hidden_titles() {
+        use crate::automation::{ControllerSelectionView, NativeCommand};
+
+        let (mut application, context, _file, registration, _review, _receive) =
+            reviewed_controller_application();
+        let third_index = application.open_window(&context, None);
+        let (mut donor, third_tab) = FesTermApp::automation_local_fixture();
+        application.windows[third_index]
+            .app
+            .adopt_detached_tab(donor.detach_tab(third_tab).unwrap());
+        application.window_mut(1).accept_window_close_for_test();
+        application.settle_windows_and_drive_automation(&context);
+        assert_eq!(application.windows.len(), 2);
+        let third = application.windows[1].id;
+        assert_eq!(third, WindowId::for_test(2));
+        assert_eq!(application.windows[1].app.automation_window(), third);
+
+        let apps: Vec<_> = application
+            .windows
+            .iter()
+            .map(|window| &window.app)
+            .collect();
+        let snapshot = application.automation.settings(&apps);
+        let target = snapshot
+            .controller_targets
+            .iter()
+            .find(|candidate| candidate.reference.session() == third_tab.chip_id())
+            .unwrap();
+        assert_eq!(target.window, third);
+        assert!(!target.label.contains("Window 2"));
+        let primary_target = snapshot
+            .controller_targets
+            .iter()
+            .find(|candidate| candidate.window == WindowId::PRIMARY)
+            .unwrap();
+        assert_eq!(
+            application.windows[1]
+                .app
+                .automation_session(third_tab)
+                .unwrap()
+                .label,
+            application.windows[0]
+                .app
+                .automation_session(TabId::from_chip_id(primary_target.reference.session()))
+                .unwrap()
+                .label
+        );
+        assert_ne!(target.reference, primary_target.reference);
+        let reference = target.reference;
+        application
+            .window_mut(1)
+            .queue_automation_command(NativeCommand::ChooseController {
+                channel: 1,
+                registration,
+            });
+        application.settle_windows_and_drive_automation(&context);
+        let apps: Vec<_> = application
+            .windows
+            .iter()
+            .map(|window| &window.app)
+            .collect();
+        let snapshot = application.automation.settings(&apps);
+        let ControllerSelectionView::Choosing { token, window } = snapshot.controllers[0].selection
+        else {
+            panic!("expected native chooser");
+        };
+        assert_eq!(window, third);
+        application
+            .window_mut(1)
+            .queue_automation_command(NativeCommand::SelectControllerTarget {
+                channel: 1,
+                registration,
+                selection: token,
+                target: reference,
+            });
+        application.settle_windows_and_drive_automation(&context);
+        let apps: Vec<_> = application
+            .windows
+            .iter()
+            .map(|window| &window.app)
+            .collect();
+        let snapshot = application.automation.settings(&apps);
+        let ControllerSelectionView::Reviewing { token, window, .. } =
+            snapshot.controllers[0].selection
+        else {
+            panic!("expected native review");
+        };
+        assert_eq!(window, third);
+        application
+            .window_mut(1)
+            .queue_automation_command(NativeCommand::ConfirmController {
+                channel: 1,
+                registration,
+                selection: token,
+            });
+        application.settle_windows_and_drive_automation(&context);
+        let apps: Vec<_> = application
+            .windows
+            .iter()
+            .map(|window| &window.app)
+            .collect();
+        assert_eq!(
+            application.automation.settings(&apps).controllers[0].associated_target,
+            Some(reference)
+        );
     }
 
     #[test]

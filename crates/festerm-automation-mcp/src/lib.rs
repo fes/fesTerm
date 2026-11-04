@@ -438,7 +438,7 @@ impl Machine {
         }
     }
 
-    /// Selects the dormant controller schema for a later application adapter.
+    /// Selects the controller schema for an explicitly opted-in host.
     /// This does not register clients, open prompts, qualify private bootstrap,
     /// implement a consumer for association handles, or enable presentation.
     pub fn with_controller_enrollment() -> Self {

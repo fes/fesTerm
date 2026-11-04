@@ -1329,6 +1329,7 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         automation_javascript_ui_revision: 0,
         automation_preference_feedback: None,
         automation_preference_retry_available: false,
+        automation_window: crate::application::WindowId::PRIMARY,
         automation: Default::default(),
         default_sftp_local_directory: Some("/home/devuser/sftp/example-drop".to_owned()),
         sftp_pane_order: SftpPaneOrderPreference::LocalLeft,

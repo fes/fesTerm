@@ -1177,6 +1177,7 @@ impl Coordinator {
                 code: VerificationCode::new("0123456789abcdef").unwrap(),
                 grant: None,
                 waits: Vec::new(),
+                controller: controller::PeerState::default(),
             },
         );
         self.broker = Some(broker);

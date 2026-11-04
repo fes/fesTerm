@@ -182,12 +182,17 @@ to bypass another's restrictions.
    All production presentation remains unavailable; native UI and delivery for
    independently authorized metadata and end-to-end input remain open under
    [#524](https://github.com/fes/fesTerm/issues/524).
-   A separately opted-in protocol catalog describes bounded, non-authorizing
-   controller registration and status, but the application does not select
-   that catalog or implement those operations. No association-handle metadata
-   consumer exists, so its feature availability remains false regardless of
-   enrollment availability or grants; the schema alone enables no listener,
-   approval or effect.
+   The application now connects a separately opted-in controller catalog to
+   that same broker and provides a native, current-window-only chooser and
+   confirmation. The opt-in is ephemeral and only applies to new connections;
+   production qualification is unconditionally false, and private bootstrap
+   remains closed. Controlled synthetic peers exercise the route, not a
+   supported client. Registration and associations remain non-authorizing.
+   Pending reviews capture the application's tracked tab/window revision,
+   rejecting away-and-back changes; this is not native presentation evidence.
+   No association-handle metadata consumer exists, so metadata feature
+   availability remains false regardless of enrollment or grants. No new
+   listener, observation, presentation, input or worker effect is enabled.
 8. **Gate execution and platform claims in stages.** The full contract,
    capability matrix, limits, threat model, outcomes and validation plan live
    in [the companion design](../automation-design.md), which is part of this
@@ -270,8 +275,9 @@ in the design must be visible in implementation/release review.
   workflows/control. `AUT-05` covers independent default-off settings,
   `AUT-06` the shared authority kernel, and `AUT-07` the partial local MCP
   observation path and native pairing/revocation. `AUT-08` covers the
-  non-authorizing controller-enrollment kernel and dormant protocol schema;
-  native selection and an application MCP adapter remain deferred. `AUT-09`
+  non-authorizing controller-enrollment kernel and dormant application/native
+  selection route; authenticated bootstrap and native qualification remain
+  deferred. `AUT-09`
   covers the bounded presentation/revalidation seam and its unavailable client
   contract.
 - **Automated tests required:** The future acceptance matrix in
@@ -315,10 +321,12 @@ in the design must be visible in implementation/release review.
   selection provides a non-authorizing metadata and captured-source preview;
   approval, execution, iOS selection and platform qualification remain open.
   Controller-enrollment tests cover exact selections, principal isolation,
-  registration bounds, stale decisions and lifecycle invalidation; they do not
-  prove a native selector or metadata authorization. Opt-in protocol tests cover
-  bounded inputs, typed non-authorizing results, default-catalog compatibility
-  and host refusal, not an integrated client or association-handle consumer.
+  registration bounds, stale decisions and lifecycle invalidation. Synthetic
+  application and Settings tests exercise explicit opt-in, current-window
+  selection, confirmation and cancellation, and guarded non-authorizing status;
+  they do not establish native usability or metadata authorization. Protocol
+  tests cover bounded inputs, typed results and default-catalog compatibility,
+  not authenticated clients or an association-handle consumer.
   Presentation tests inject
   a continuous event source and freshness barrier, check exact app-command tab
   routing, loss/regain and selection ABA, and exercise the modeled reserved-input

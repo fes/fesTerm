@@ -340,15 +340,32 @@
         "controller_results_are_typed_and_expose_only_correlation_ids",
         "controller_metadata_capability_is_unavailable_even_with_enrollment",
         "controller_requests_share_pending_limits_and_cancellation",
-        "dormant_controller_operations_are_refused_without_host_effects"
+        "controller_operations_never_enter_observation_grant_path",
+        "controller_quoted_labels_preserve_unicode_escape_spoofing_and_bound_length",
+        "controller_label_display_respects_utf8_registration_and_terminal_limits",
+        "controller_catalog_requires_qualified_native_opt_in_and_resets_on_stop",
+        "controller_wire_path_uses_exact_native_choice_without_authority_or_javascript",
+        "controller_review_refuses_stale_attachment_context_and_newer_choice",
+        "controller_close_recreate_and_backend_reconnect_never_retarget",
+        "controller_disconnect_privacy_and_unregister_retire_pending_decisions",
+        "controller_window_ownership_move_and_unregistration_are_fenced",
+        "controller_identifier_collisions_and_exhaustion_fail_closed",
+        "controller_cancellation_and_queue_limits_never_approve_a_stale_review",
+        "controller_rejects_nonlocal_backend_and_closes_on_exhaustion",
+        "cross_window_disable_or_cancel_precedes_controller_confirmation",
+        "controller_review_rejects_away_and_back_tab_selection",
+        "controller_chooser_tracks_surviving_window_identity_without_hidden_titles",
+        "controller_settings_require_explicit_current_window_choice_and_confirmation",
+        "controller_confirmation_ignores_stale_accessibility_and_pointer_actions",
+        "queued_controller_reply_closes_when_registration_is_invalidated"
       ],
-      "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04"],
+      "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04", "AUTO-05"],
       "status": "partial",
       "prerequisites": [
-        "Native selection, local-backend eligibility, authenticated client integration and separately authorized metadata-only disclosure remain unavailable; the opt-in controller schema has no application adapter",
-        "Association-handle resolution by sessions.get is not implemented and requires separate metadata authorization and disclosure fences",
+        "The native current-window chooser and opt-in protocol adapter have synthetic tests only; private bootstrap, native authentication, privacy and controller qualification remain closed in production",
+        "Association-handle resolution by sessions.get is not implemented and requires separately reviewed discovery grants and shared stop/privacy/recipient and liveness fences at actual publication, not just broker liveness",
         "Confirmed presentation, admission-time presentation revalidation, native handoff and explicit disarm require independent implementation and native lifecycle evidence",
-        "No-replay uncertainty handling, JavaScript-independent client operation and platform/backend capability reporting remain unqualified"
+        "No-replay uncertainty handling, real JavaScript-independent client operation, native usability and platform/backend capability reporting remain unqualified"
       ]
     },
     {

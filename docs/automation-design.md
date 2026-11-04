@@ -768,7 +768,7 @@ registration, bounded to 16 per connection and 128 globally. The same bytes on
 another connection are independent; repeating them on the same connection does
 not select or change a target. Registration does not trigger a native prompt.
 
-For a future native selection flow, trusted application code freezes the
+For native selection, trusted application code freezes the
 registration, the real `ConnectionId`, the user's explicitly selected live
 `TargetRef` and the registration revision. A non-serializable
 `NativeControllerEnrollment` represents that native decision; trusted code must
@@ -777,9 +777,9 @@ target generation and mints a fresh broker-owned enrollment ID. A later binding
 requires another native decision, invalidates the old ID and rejects older
 in-flight review decisions. Attempting a newer native selection supersedes an
 earlier pending decision even if the new target is stale, without changing an
-existing association. The kernel does not queue proposals; future native UI
-must serialize selection changes and cancellation before queued decisions,
-bound its pending reviews and sanitize displayed registration bytes. Identical
+existing association. The kernel does not queue proposals; the application
+serializes native selection changes and cancellation before decisions, bounds
+its pending reviews and sanitizes displayed registration bytes. Identical
 labels and changes in display ordering never retarget an association. Unregister,
 disconnect and global privacy revocation remove registrations; close or
 attachment replacement removes registrations bound to that target and invalidates
@@ -789,9 +789,11 @@ or decision is required; matching bytes do not restore an association.
 Per-connection grant revocation alone leaves these non-authorizing registrations
 intact; unpairing must unregister them or disconnect.
 
-This is an internal kernel prerequisite, not a supported controller workflow.
-There is no enrollment UI or application controller MCP adapter. The returned
-reference identifies an association; it does not authorize disclosure of even
+This is not yet a supported controller workflow. A dormant application
+adapter and native Settings chooser now connect this kernel to controlled
+synthetic protocol peers, but private bootstrap and native qualification remain
+unconditionally closed in production. The returned reference identifies an
+association; it does not authorize disclosure of even
 target metadata, or screen, scrollback, selection, input, presentation or
 workflow invocation. It starts no listener or worker and enables neither MCP
 nor JavaScript. The application must deliver target/connection lifecycle
@@ -800,8 +802,16 @@ real attachment liveness under its admission boundary; the kernel cannot
 observe backend transitions on its own. Queued work must capture its original
 enrollment ID and resolve that
 same ID again at admission, never resolve the then-current association in its
-place. It is backend-neutral, not an implementation of #524's local-session
-eligibility policy.
+place. The kernel is backend-neutral; the adapter separately enforces #524's
+local-PTY eligibility policy.
+
+The local adapter's synthetic regressions explicitly cover two live identically
+labelled terminals and the user's exact selected generation, as well as close
+and recreation or a simulated backend disconnect/reconnect under the same tab.
+Reusing a label or local registration string never restores or retargets the
+old association; a replacement needs a new registration and native decision.
+The synthetic reconnect models lifecycle/attachment ABA and does not claim that
+the production local PTY supports reconnect.
 
 ### Bounded confirmed-presentation seam
 
@@ -948,32 +958,71 @@ qualified backend; it would not itself grant authority. The ordinary P1
 `Machine::new()` catalog stays observation-only. The later-stage opt-in cannot
 mint a native decision and does not enable JavaScript or input.
 
-### Dormant controller protocol
+### Dormant controller protocol and native adapter
 
 The protocol crate separately offers `Machine::with_controller_enrollment()`
-for a **dormant, opt-in schema and state machine**. `Machine::new()` retains
-the observation-only catalog. The desktop host selects the separate
-refusal-only presentation catalog, not the controller catalog, and private
-bootstrap remains closed. Even if the controller catalog is fed to the host,
-all four controller
-operations receive `UNAVAILABLE` before grant admission, registration, native
-prompting or any broker effect. The opt-in machine only validates a request
-and emits a typed backend event; it does not implement a registration service.
+for an **explicitly selected controller catalog**. `Machine::new()` retains the
+observation-only catalog. The desktop host normally selects the separate
+refusal-only presentation catalog. A native Settings action can select the
+controller catalog for *new* connections only when a separately qualified
+native controller path is available; that qualification is currently
+unconditionally false in production, and private bootstrap remains closed.
+The disabled control cannot start a listener. Restart or disabling MCP clears
+the ephemeral opt-in and all connection-owned records. The controller and
+presentation catalogs remain separate; opting in does not add the presentation
+tools to that connection. Controlled tests inject qualification and deterministic
+IDs for synthetic peers to exercise the real protocol dispatch and application
+broker; they do not establish native qualification.
 
 | Later-stage tool | Bounded, non-authorizing contract |
 | --- | --- |
 | `festerm_controller_capabilities` | No arguments; reports backend-qualified enrollment feature availability, not grant status. Association-handle metadata, presentation and input are unavailable. |
 | `festerm_controller_register` | Untrusted `local_id`, 1–128 encoded UTF-8 bytes; returns an opaque registration ID and optional association ID, without selecting a target or triggering a prompt. |
 | `festerm_controller_status` | A connection-local registration ID; returns only that registration and its optional association ID. |
-| `festerm_controller_unregister` | A connection-local registration ID; a future backend removes only that registration and association. |
+| `festerm_controller_unregister` | A connection-local registration ID; the adapter removes only that registration and association. |
 
 Unknown fields, including claimed gestures, PIDs, targets or approvals, are
 rejected. IDs are 128-bit values encoded as 32 lowercase hexadecimal characters.
-The type checks their encoding; a future host must generate unpredictable,
-unique IDs, bind them to the submitting connection, enforce lifecycle and
-capacity limits, and never log or persist the registration bytes. Neither ID is
-a credential, target reference or grant. Protocol-supplied backend results are
-not proof that any platform, privacy gate or native flow is qualified.
+The type checks their encoding; the adapter generates unpredictable IDs
+unique over each connection's lifetime and resolves them only within that
+connection. It never logs or persists client registration bytes. Broker limits
+bound registrations to 16 per connection and 128 globally; per-connection
+issued-ID and controller-request limits are 256, and ID collisions and
+exhaustion fail closed. Neither ID is a credential, target reference or grant.
+Protocol-supplied backend results are not proof that any platform, privacy gate
+or native flow is qualified.
+
+Registration itself only creates an inline row; it neither opens a chooser nor
+selects a target. The human explicitly chooses a registration, then one
+currently live local PTY in the Settings view's own window, then confirms the
+frozen choice. `This window` is based on the Settings view's owning `WindowId`,
+not inferred focus or an OS title that may be hidden. A tab position and escaped
+untrusted label help distinguish identical names, but are never target
+authority. Another window cannot select or confirm the first window's target;
+it can cancel, unregister, or initiate a new choice in its own view. The
+decision rechecks the exact connection, registration, target generation,
+backend type, controller instance/lifecycle, attachment epoch and privacy
+under admission. Changes to the displayed candidate context invalidate a
+review. A review also captures the app-owned workspace revision: tracked tab
+activation and window-topology changes, including away-and-back changes before
+settlement, invalidate it. A missing or exhausted revision source makes
+enrollment unavailable. This is application UI-state evidence, not proof of
+native foreground or presentation. An interwindow tab move cancels pending
+choosers/reviews, even if a tab moves away and back before settlement;
+associations to the moved tab are retired. Closing its window, unregistering,
+disconnecting or losing privacy also invalidates the affected decision/record.
+Same-frame competing controller actions and queue overflow stop rather than
+choosing a winner; a concurrent cancellation or preference change cannot be
+followed by approval. Client identifiers and terminal labels preserve readable
+Unicode while escaping controls, bidirectional formatting, quotes and
+backslashes for native display. Display covers at most 128 input Unicode
+scalars plus a truncation marker; registration remains limited to 128 UTF-8
+bytes. The adapter never logs or persists these values.
+
+The reply worker retains registration and target guards through every
+nonblocking write. A queued status invalidated before or during a frame closes
+the connection rather than substituting a reply or extending the frame
+deadline. Any previously delivered status is only a snapshot, not authority.
 
 **No association-handle metadata consumer is implemented.** In particular,
 `festerm_sessions_get` does not resolve an association ID in this slice.
@@ -982,12 +1031,15 @@ separate metadata grant exists; it reports feature availability, not grant
 status. A separate grant alone does not make the handle usable here. Future
 integration must capture the exact connection,
 registration and enrollment, resolve that same enrollment at preparation and
-disclosure, and enforce the separately reviewed grant and physical-write
-privacy/liveness fences. No name, position or current-association fallback is
-permitted. Registration and status must never return terminal metadata or
-other clients' records.
+disclosure, and enforce the separately reviewed grant, shared stop/privacy,
+recipient and physical-write liveness fences at **actual publication**, not
+merely broker liveness. The assembly's preference-disable regression checks
+metadata liveness after a direct-input commit triggers revocation; it is not an
+independent metadata-publication test or qualification. No name, position or
+current-association fallback is permitted. Registration and status must never
+return terminal metadata or other clients' records.
 
-The dormant controller and refusal-only presentation catalogs are separate
+The controller and refusal-only presentation catalogs are separate
 opt-ins, not a combined client protocol. Before exposing both together, a
 qualified backend must reconcile their availability reporting: the
 presentation catalog currently fixes `enrollment_available` to false, while the
@@ -996,8 +1048,9 @@ Neither catalog supplies the missing association-handle metadata consumer.
 
 The remaining #524 contract is deliberately open:
 
-- Native pairing/selection and **separately authorized metadata-only**
-  disclosure and bounded lifecycle refresh, without granting terminal contents.
+- Authenticated native pairing, platform-qualified selection and **separately
+  authorized metadata-only** disclosure and bounded lifecycle refresh, without
+  granting terminal contents.
 - A qualified native event source and response-admission barrier, native
   enrollment/presentation-grant UI, and end-to-end presentation/input adapter.
   Windows foreground refusal and away-and-back races require real native
@@ -1009,8 +1062,9 @@ The remaining #524 contract is deliberately open:
 - Honest not-admitted, admitted and unknown outcomes; queue admission is not
   command completion, and lost responses do not authorize replay. The external
   client owns its durable uncertain-action interlock.
-- Independent operation with JavaScript disabled, real capability/unavailability
-  reporting for each backend/platform, and native Windows qualification before
+- Native/client proof of operation with JavaScript disabled, real
+  capability/unavailability reporting for each backend/platform, and native
+  Windows qualification before
   claiming Windows controller support. Authenticated private bootstrap and
   qualified privacy monitoring remain prerequisites; unsupported combinations
   must remain unavailable.

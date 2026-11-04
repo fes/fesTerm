@@ -48,6 +48,14 @@ struct Outbound {
     bytes: Vec<u8>,
     expires: Instant,
     targets: Vec<TargetGuard>,
+    flags: Vec<Arc<AtomicBool>>,
+}
+
+impl Outbound {
+    fn is_valid(&self) -> bool {
+        self.targets.iter().all(TargetGuard::is_valid)
+            && self.flags.iter().all(|flag| flag.load(Ordering::Acquire))
+    }
 }
 
 #[derive(Clone)]
@@ -76,11 +84,22 @@ impl Connection {
         expires: Instant,
         targets: &[TargetGuard],
     ) -> io::Result<()> {
+        self.send_guarded(bytes, expires, targets, &[])
+    }
+
+    pub fn send_guarded(
+        &self,
+        bytes: Vec<u8>,
+        expires: Instant,
+        targets: &[TargetGuard],
+        flags: &[Arc<AtomicBool>],
+    ) -> io::Result<()> {
         let allowed = festerm_session::automation_admission_lock().is_some_and(|_guard| {
             bytes.len() <= MAX_FRAME
                 && !self.is_closed()
                 && Instant::now() < expires
                 && targets.iter().all(TargetGuard::is_valid)
+                && flags.iter().all(|flag| flag.load(Ordering::Acquire))
         });
         if !allowed {
             self.close();
@@ -91,6 +110,7 @@ impl Connection {
                 bytes,
                 expires,
                 targets: targets.to_vec(),
+                flags: flags.to_vec(),
             })
             .map_err(|_| {
                 self.close();
@@ -245,7 +265,7 @@ fn serve_peer(
                             let allowed = || {
                                 !writer_connection.is_closed()
                                     && !writer_stop.load(Ordering::Acquire)
-                                    && frame.targets.iter().all(TargetGuard::is_valid)
+                                    && frame.is_valid()
                             };
                             if write_frame_until(&mut writer, &frame.bytes, frame.expires, allowed)
                                 .is_err()
@@ -1631,6 +1651,45 @@ mod tests {
         worker.join().unwrap();
         let mut bytes = [0; 16];
         assert_eq!(client.read(&mut bytes).unwrap(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn queued_controller_reply_closes_when_registration_is_invalidated() {
+        let (server, mut client) = std::os::unix::net::UnixStream::pair().unwrap();
+        server.set_read_timeout(Some(IO_SLICE)).unwrap();
+        let (output, replies) = mpsc::sync_channel(4);
+        let connection = Connection {
+            key: 9,
+            closed: Arc::new(AtomicBool::new(false)),
+            output,
+        };
+        let valid = Arc::new(AtomicBool::new(true));
+        connection
+            .send_guarded(
+                b"non-authorizing correlation".to_vec(),
+                Instant::now() + FRAME_DEADLINE,
+                &[],
+                std::slice::from_ref(&valid),
+            )
+            .unwrap();
+        super::super::set_admission_flag(&valid, false);
+        let (events, _incoming) = mpsc::sync_channel(4);
+        let observed = connection.clone();
+        let worker = thread::spawn(move || {
+            serve_peer(
+                server,
+                connection,
+                replies,
+                events,
+                Arc::new(|| {}),
+                Arc::new(AtomicBool::new(false)),
+            )
+        });
+        worker.join().unwrap();
+        let mut bytes = [0; 16];
+        assert_eq!(client.read(&mut bytes).unwrap(), 0);
+        assert!(observed.is_closed());
     }
 
     #[test]

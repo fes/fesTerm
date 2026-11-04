@@ -161,6 +161,8 @@ pub enum ApplicationSession {
     Serial(SerialSession),
     #[cfg(test)]
     TestSsh(crate::session_controller::fake::FakeSshSession),
+    #[cfg(test)]
+    TestLocal(crate::session_controller::fake::FakeSshSession),
 }
 
 /// The host-key decisions exposed by the application (ADR 0020).
@@ -288,7 +290,7 @@ impl ApplicationSession {
             }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => None,
             #[cfg(test)]
-            Self::TestSsh(_) => None,
+            Self::TestSsh(_) | Self::TestLocal(_) => None,
         }
     }
 
@@ -299,7 +301,7 @@ impl ApplicationSession {
             }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => false,
             #[cfg(test)]
-            Self::TestSsh(_) => false,
+            Self::TestSsh(_) | Self::TestLocal(_) => false,
         }
     }
 
@@ -317,7 +319,9 @@ impl ApplicationSession {
                 return Err(HostKeyTrustResolutionError::NotRemoteSession)
             }
             #[cfg(test)]
-            Self::TestSsh(_) => return Err(HostKeyTrustResolutionError::NotRemoteSession),
+            Self::TestSsh(_) | Self::TestLocal(_) => {
+                return Err(HostKeyTrustResolutionError::NotRemoteSession)
+            }
         };
         resolver
             .resolve(prompt, decision.into())
@@ -339,7 +343,9 @@ impl ApplicationSession {
                 return Err(PasswordResolutionError::NotRemoteSession)
             }
             #[cfg(test)]
-            Self::TestSsh(_) => return Err(PasswordResolutionError::NotRemoteSession),
+            Self::TestSsh(_) | Self::TestLocal(_) => {
+                return Err(PasswordResolutionError::NotRemoteSession)
+            }
         };
         resolver
             .resolve(prompt, password)
@@ -389,7 +395,7 @@ impl ApplicationSession {
             | Self::Sftp(_)
             | Self::Serial(_) => Ok(()),
             #[cfg(test)]
-            Self::TestSsh(_) => Ok(()),
+            Self::TestSsh(_) | Self::TestLocal(_) => Ok(()),
         }
     }
 
@@ -399,6 +405,8 @@ impl ApplicationSession {
             Self::Ssh(session) => session.lifecycle() == SessionLifecycle::Running,
             #[cfg(test)]
             Self::TestSsh(session) => session.lifecycle() == SessionLifecycle::Running,
+            #[cfg(test)]
+            Self::TestLocal(_) => false,
             Self::Local(_)
             | Self::Persistent(_)
             | Self::DevTunnel(_)
@@ -416,6 +424,8 @@ impl ApplicationSession {
             Self::Ssh(session) => session.try_add_port_forward(forward),
             #[cfg(test)]
             Self::TestSsh(session) => session.try_add_port_forward(forward),
+            #[cfg(test)]
+            Self::TestLocal(_) => Err(SshPortForwardRequestError::NotRunning),
             Self::Local(_)
             | Self::Persistent(_)
             | Self::DevTunnel(_)
@@ -438,6 +448,8 @@ impl ApplicationSession {
             Self::TestSsh(session) => {
                 session.try_remove_port_forward(direction, bind_host, bind_port)
             }
+            #[cfg(test)]
+            Self::TestLocal(_) => Err(SshPortForwardRequestError::NotRunning),
             Self::Local(_)
             | Self::Persistent(_)
             | Self::DevTunnel(_)
@@ -452,6 +464,8 @@ impl ApplicationSession {
             Self::Ssh(session) => session.try_query_port_forwards(),
             #[cfg(test)]
             Self::TestSsh(session) => session.try_query_port_forwards(),
+            #[cfg(test)]
+            Self::TestLocal(_) => Err(SshPortForwardRequestError::NotRunning),
             Self::Local(_)
             | Self::Persistent(_)
             | Self::DevTunnel(_)
@@ -475,6 +489,8 @@ impl ApplicationSession {
             | Self::Serial(_) => None,
             #[cfg(test)]
             Self::TestSsh(session) => session.terminal_file_cwd().map(|cwd| (cwd, PathBuf::new())),
+            #[cfg(test)]
+            Self::TestLocal(_) => None,
         }
     }
 
@@ -485,6 +501,8 @@ impl ApplicationSession {
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => None,
             #[cfg(test)]
             Self::TestSsh(session) => session.terminal_file_fingerprint(),
+            #[cfg(test)]
+            Self::TestLocal(_) => None,
         }
     }
 
@@ -494,7 +512,7 @@ impl ApplicationSession {
             Self::Sftp(session) => Some(session.remote_file_requestor()),
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => None,
             #[cfg(test)]
-            Self::TestSsh(_) => None,
+            Self::TestSsh(_) | Self::TestLocal(_) => None,
         }
     }
 }
@@ -512,7 +530,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.id(),
             Self::Serial(session) => session.id(),
             #[cfg(test)]
-            Self::TestSsh(session) => session.id(),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.id(),
         }
     }
 
@@ -524,7 +542,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.lifecycle(),
             Self::Serial(session) => session.lifecycle(),
             #[cfg(test)]
-            Self::TestSsh(session) => session.lifecycle(),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.lifecycle(),
         }
     }
 
@@ -536,7 +554,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.automation_epoch(),
             Self::Serial(session) => session.automation_epoch(),
             #[cfg(test)]
-            Self::TestSsh(session) => session.automation_epoch(),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.automation_epoch(),
         }
     }
 
@@ -548,7 +566,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.metrics(),
             Self::Serial(session) => session.metrics(),
             #[cfg(test)]
-            Self::TestSsh(session) => session.metrics(),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.metrics(),
         }
     }
 
@@ -560,7 +578,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.try_send_input(bytes),
             Self::Serial(session) => session.try_send_input(bytes),
             #[cfg(test)]
-            Self::TestSsh(session) => session.try_send_input(bytes),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.try_send_input(bytes),
         }
     }
 
@@ -585,7 +603,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.try_resize(size),
             Self::Serial(session) => session.try_resize(size),
             #[cfg(test)]
-            Self::TestSsh(session) => session.try_resize(size),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.try_resize(size),
         }
     }
 
@@ -597,7 +615,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.try_shutdown(),
             Self::Serial(session) => session.try_shutdown(),
             #[cfg(test)]
-            Self::TestSsh(session) => session.try_shutdown(),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.try_shutdown(),
         }
     }
 
@@ -609,7 +627,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.try_recv_event(),
             Self::Serial(session) => session.try_recv_event(),
             #[cfg(test)]
-            Self::TestSsh(session) => session.try_recv_event(),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.try_recv_event(),
         }
     }
 
@@ -621,7 +639,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.shutdown(timeout),
             Self::Serial(session) => session.shutdown(timeout),
             #[cfg(test)]
-            Self::TestSsh(session) => session.shutdown(timeout),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.shutdown(timeout),
         }
     }
 }
@@ -1921,6 +1939,8 @@ impl SessionTab {
             Some(ApplicationSession::Ssh(_)) => true,
             #[cfg(test)]
             Some(ApplicationSession::TestSsh(_)) => true,
+            #[cfg(test)]
+            Some(ApplicationSession::TestLocal(_)) => false,
             Some(ApplicationSession::Local(_))
             | Some(ApplicationSession::Persistent(_))
             | Some(ApplicationSession::DevTunnel(_))

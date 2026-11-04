@@ -62,6 +62,7 @@ pub(crate) struct SettingsViewModel {
     pub automation_javascript_ui_revision: u64,
     pub automation_preference_feedback: Option<&'static str>,
     pub automation_preference_retry_available: bool,
+    pub automation_window: crate::application::WindowId,
     pub automation: crate::automation::SettingsSnapshot,
     pub default_sftp_local_directory: Option<String>,
     pub sftp_pane_order: SftpPaneOrderPreference,
@@ -116,6 +117,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         automation_javascript_ui_revision,
         automation_preference_feedback,
         automation_preference_retry_available,
+        automation_window,
         automation,
         default_sftp_local_directory,
         sftp_pane_order,
@@ -412,7 +414,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                 }
                                 automation_command.record(action);
                             }
-                            if let Some(action) = automation_settings(ui, &automation, automation_mcp_enabled) {
+                            if let Some(action) = automation_settings(ui, &automation, automation_mcp_enabled, automation_window) {
                                 automation_command.record(AppCommand::Automation(action));
                             }
                         });
@@ -1087,8 +1089,9 @@ fn automation_settings(
     ui: &mut Ui,
     snapshot: &crate::automation::SettingsSnapshot,
     enabled: bool,
+    window: crate::application::WindowId,
 ) -> Option<crate::automation::NativeCommand> {
-    use crate::automation::NativeCommand;
+    use crate::automation::{ControllerSelectionView, NativeCommand};
     use festerm_automation::TargetRef;
     ui.add_space(10.0);
     ssh_paragraph(ui, snapshot.status);
@@ -1160,6 +1163,174 @@ fn automation_settings(
             }
             ui.data_mut(|data| data.insert_temp(id, (verified, selected)));
         });
+    }
+    ui.separator();
+    ui.label("Controller registrations");
+    ssh_paragraph(
+        ui,
+        "Controller enrollment is unavailable until private bootstrap and native privacy are qualified. \
+         Client identifiers and terminal names are untrusted. Registration does not choose a terminal, \
+         open a prompt or grant access. Choose and confirm a local terminal in this window. \
+         Metadata, presentation and input through an association are unavailable.",
+    );
+    if snapshot.controller_opted_in {
+        ssh_paragraph(
+            ui,
+            "Controller registration is opted in for new connections. Restart or disable MCP to end the opt-in.",
+        );
+    } else if ui
+        .add_enabled(
+            snapshot.controller_opt_in_available,
+            egui::Button::new("Enable controller registration for new connections"),
+        )
+        .clicked()
+    {
+        record_automation_action(&mut command, NativeCommand::EnableControllerEnrollment);
+    }
+    if snapshot.controllers.is_empty() {
+        ssh_paragraph(ui, "No controller registrations on active connections.");
+    }
+    for row in &snapshot.controllers {
+        ui.push_id(
+            ("controller_registration", row.channel, row.public_id.to_wire()),
+            |ui| {
+                ui.separator();
+                let code = snapshot
+                    .channels
+                    .iter()
+                    .find(|channel| channel.channel == row.channel)
+                    .map_or("unavailable", |channel| channel.verification_code.as_str());
+                ui.label(format!(
+                    "Client {code}; untrusted identifier: \"{}\"",
+                    row.label
+                ));
+                if let Some(target) = row.associated_target {
+                    if let Some(candidate) = snapshot
+                        .controller_targets
+                        .iter()
+                        .find(|candidate| candidate.reference == target && candidate.window == window)
+                    {
+                        ui.label(format!("Associated in this window: {}", candidate.label));
+                    } else {
+                        ssh_paragraph(ui, "Associated with a local terminal outside this view.");
+                    }
+                    ssh_paragraph(ui, "This association grants no terminal access.");
+                } else {
+                    ssh_paragraph(ui, "No terminal associated.");
+                }
+                if ui.button("Choose local terminal").clicked() {
+                    record_automation_action(
+                        &mut command,
+                        NativeCommand::ChooseController {
+                            channel: row.channel,
+                            registration: row.registration,
+                        },
+                    );
+                }
+                if ui.button("Unregister controller").clicked() {
+                    record_automation_action(
+                        &mut command,
+                        NativeCommand::UnregisterController {
+                            channel: row.channel,
+                            registration: row.registration,
+                        },
+                    );
+                }
+                match row.selection {
+                    ControllerSelectionView::Idle => {}
+                    ControllerSelectionView::Choosing {
+                        token,
+                        window: chooser_window,
+                    } => {
+                        if chooser_window != window {
+                            ssh_paragraph(ui, "Continue this selection in its originating window, or cancel it.");
+                        } else if snapshot.controller_targets_incomplete {
+                            ssh_paragraph(ui, "The local terminal list is incomplete or over its limit. Close terminals and try again.");
+                        } else if !snapshot.controller_targets.iter().any(|target| target.window == window) {
+                            ssh_paragraph(ui, "No live local terminal is available in this window.");
+                        } else {
+                            ssh_paragraph(
+                                ui,
+                                "Select one exact local terminal in this window. Positions count all chips from the start of this window's tab row. Nothing is selected by default.",
+                            );
+                            for candidate in snapshot.controller_targets.iter().filter(|target| target.window == window) {
+                                ui.push_id(
+                                    (token, candidate.reference.session(), candidate.reference.generation()),
+                                    |ui| {
+                                        if ui.button(format!("This window — {}", candidate.label)).clicked() {
+                                            record_automation_action(
+                                                &mut command,
+                                                NativeCommand::SelectControllerTarget {
+                                                    channel: row.channel,
+                                                    registration: row.registration,
+                                                    selection: token,
+                                                    target: candidate.reference,
+                                                },
+                                            );
+                                        }
+                                    },
+                                );
+                            }
+                        }
+                        if ui.button("Cancel controller selection").clicked() {
+                            record_automation_action(
+                                &mut command,
+                                NativeCommand::CancelController {
+                                    channel: row.channel,
+                                    registration: row.registration,
+                                },
+                            );
+                        }
+                    }
+                    ControllerSelectionView::Reviewing {
+                        token,
+                        target,
+                        window: review_window,
+                    } => {
+                        let candidate = snapshot.controller_targets.iter().find(|candidate| {
+                            candidate.reference == target && candidate.window == window
+                        });
+                        if review_window != window {
+                            ssh_paragraph(ui, "Confirm in the originating window, or cancel.");
+                        } else if let Some(candidate) = candidate {
+                            ui.label(format!("Review this window — {}", candidate.label));
+                            ui.push_id(
+                                (token, target.session(), target.generation()),
+                                |ui| {
+                                    if ui
+                                        .add_enabled(
+                                            !snapshot.controller_targets_incomplete,
+                                            egui::Button::new("Confirm association (no access granted)"),
+                                        )
+                                        .clicked()
+                                    {
+                                        record_automation_action(
+                                            &mut command,
+                                            NativeCommand::ConfirmController {
+                                                channel: row.channel,
+                                                registration: row.registration,
+                                                selection: token,
+                                            },
+                                        );
+                                    }
+                                },
+                            );
+                        } else {
+                            ssh_paragraph(ui, "The selected local terminal is no longer available.");
+                        }
+                        if ui.button("Cancel controller selection").clicked() {
+                            record_automation_action(
+                                &mut command,
+                                NativeCommand::CancelController {
+                                    channel: row.channel,
+                                    registration: row.registration,
+                                },
+                            );
+                        }
+                    }
+                }
+            },
+        );
     }
     command
 }
@@ -1577,6 +1748,7 @@ mod tests {
                             automation_preference_feedback: state.automation_preference_feedback,
                             automation_preference_retry_available: state
                                 .automation_preference_retry_available,
+                            automation_window: crate::application::WindowId::PRIMARY,
                             automation: Default::default(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
@@ -1817,7 +1989,12 @@ mod tests {
             .with_size(egui::vec2(800.0, 1000.0))
             .build_ui_state(
                 move |ui, command: &mut Option<crate::automation::NativeCommand>| {
-                    if let Some(action) = automation_settings(ui, &snapshot, true) {
+                    if let Some(action) = automation_settings(
+                        ui,
+                        &snapshot,
+                        true,
+                        crate::application::WindowId::PRIMARY,
+                    ) {
                         *command = Some(action);
                     }
                 },
@@ -1832,6 +2009,196 @@ mod tests {
             harness.state(),
             Some(crate::automation::NativeCommand::Revoke { channel: 7 })
         ));
+    }
+
+    #[test]
+    fn controller_settings_require_explicit_current_window_choice_and_confirmation() {
+        use crate::application::WindowId;
+        use crate::automation::{ControllerSelectionView, NativeCommand, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            window: WindowId,
+            command: Option<NativeCommand>,
+        }
+        let (snapshot, registration, first, second, _) =
+            SettingsSnapshot::with_controller_for_test();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 1800.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    if let Some(command) =
+                        automation_settings(ui, &state.snapshot, true, state.window)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                State {
+                    snapshot,
+                    window: WindowId::PRIMARY,
+                    command: None,
+                },
+            );
+        harness.run();
+        assert!(harness
+            .query_by_label("Confirm association (no access granted)")
+            .is_none());
+        assert!(harness
+            .query_by_label("This window — tab position 2 — untrusted name \"Same\"")
+            .is_none());
+        harness.get_by_label("Choose local terminal").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::ChooseController {
+                channel: 7,
+                registration: actual,
+            }) if *actual == registration
+        ));
+
+        harness.state_mut().command = None;
+        harness.state_mut().snapshot.controllers[0].selection = ControllerSelectionView::Choosing {
+            token: 17,
+            window: WindowId::PRIMARY,
+        };
+        harness.run();
+        assert!(harness
+            .query_by_label("This window — tab position 3 — untrusted name \"Same\"")
+            .is_none());
+        harness
+            .get_by_label("This window — tab position 2 — untrusted name \"Same\"")
+            .click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::SelectControllerTarget {
+                channel: 7,
+                registration: actual,
+                selection: 17,
+                target,
+            }) if *actual == registration && *target == second && *target != first
+        ));
+
+        harness.state_mut().command = None;
+        harness.state_mut().snapshot.controllers[0].selection =
+            ControllerSelectionView::Reviewing {
+                token: 18,
+                target: second,
+                window: WindowId::PRIMARY,
+            };
+        harness.state_mut().window = WindowId::for_test(2);
+        harness.run();
+        assert!(harness
+            .query_by_label("Confirm association (no access granted)")
+            .is_none());
+        harness.state_mut().window = WindowId::PRIMARY;
+        harness.run();
+        harness
+            .get_by_label("Confirm association (no access granted)")
+            .click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::ConfirmController {
+                channel: 7,
+                registration: actual,
+                selection: 18,
+            }) if *actual == registration
+        ));
+        harness.state_mut().command = None;
+        harness.get_by_label("Cancel controller selection").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::CancelController {
+                channel: 7,
+                registration: actual,
+            }) if *actual == registration
+        ));
+    }
+
+    #[test]
+    fn controller_confirmation_ignores_stale_accessibility_and_pointer_actions() {
+        use crate::application::WindowId;
+        use crate::automation::{ControllerSelectionView, NativeCommand, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            command: Option<NativeCommand>,
+        }
+
+        for accessibility in [false, true] {
+            for same_target in [false, true] {
+                let (mut snapshot, registration, first, second, _) =
+                    SettingsSnapshot::with_controller_for_test();
+                snapshot.controllers[0].selection = ControllerSelectionView::Reviewing {
+                    token: 18,
+                    target: first,
+                    window: WindowId::PRIMARY,
+                };
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(900.0, 1800.0))
+                    .build_ui_state(
+                        |ui, state: &mut State| {
+                            if let Some(command) =
+                                automation_settings(ui, &state.snapshot, true, WindowId::PRIMARY)
+                            {
+                                state.command = Some(command);
+                            }
+                        },
+                        State {
+                            snapshot,
+                            command: None,
+                        },
+                    );
+                harness.run();
+                let label = "Confirm association (no access granted)";
+                let position = harness.get_by_label(label).rect().center();
+                if accessibility {
+                    harness.get_by_label(label).click_accesskit();
+                } else {
+                    harness.event(egui::Event::PointerMoved(position));
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                    harness.step();
+                }
+
+                harness.state_mut().snapshot.controllers[0].selection =
+                    ControllerSelectionView::Reviewing {
+                        token: 20,
+                        target: if same_target { first } else { second },
+                        window: WindowId::PRIMARY,
+                    };
+                if !accessibility {
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+                harness.step();
+                assert!(
+                    harness.state().command.is_none(),
+                    "a stale action confirmed the replacement review"
+                );
+
+                harness.get_by_label(label).click_accesskit();
+                harness.step();
+                assert!(matches!(
+                    &harness.state().command,
+                    Some(NativeCommand::ConfirmController {
+                        channel: 7,
+                        registration: actual,
+                        selection: 20,
+                    }) if *actual == registration
+                ));
+            }
+        }
     }
 
     #[test]
@@ -1954,7 +2321,11 @@ mod tests {
             Retry,
             Approve,
             Revoke,
+            ConfirmController,
+            CancelController,
         }
+        let (_, registration, _, _, _) =
+            crate::automation::SettingsSnapshot::with_controller_for_test();
         let make = |action| match action {
             Action::Javascript => AppCommand::ToggleJavascriptEnabled,
             Action::Mcp => AppCommand::ToggleMcpEnabled,
@@ -1967,6 +2338,15 @@ mod tests {
                 targets: Vec::new(),
             }),
             Action::Revoke => AppCommand::Automation(NativeCommand::Revoke { channel: 7 }),
+            Action::ConfirmController => AppCommand::Automation(NativeCommand::ConfirmController {
+                channel: 7,
+                registration,
+                selection: 9,
+            }),
+            Action::CancelController => AppCommand::Automation(NativeCommand::CancelController {
+                channel: 7,
+                registration,
+            }),
         };
         for (first, second) in [
             (Action::Javascript, Action::Approve),
@@ -1977,6 +2357,9 @@ mod tests {
             (Action::ResetSettings, Action::Approve),
             (Action::Retry, Action::Approve),
             (Action::Revoke, Action::Approve),
+            (Action::Javascript, Action::ConfirmController),
+            (Action::Mcp, Action::ConfirmController),
+            (Action::CancelController, Action::ConfirmController),
         ] {
             for (first, second) in [(first, second), (second, first)] {
                 let mut commands = SettingsAutomationCommands::default();
@@ -2761,6 +3144,7 @@ mod tests {
                             automation_javascript_ui_revision: 0,
                             automation_preference_feedback: None,
                             automation_preference_retry_available: false,
+                            automation_window: crate::application::WindowId::PRIMARY,
                             automation: Default::default(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,

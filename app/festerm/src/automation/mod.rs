@@ -1,3 +1,4 @@
+mod controller;
 mod ipc;
 mod observation;
 pub(crate) mod preferences;
@@ -6,6 +7,8 @@ pub(crate) mod presentation;
 mod tests;
 mod workflow_selection;
 
+#[cfg(test)]
+pub(crate) use controller::tests::reviewed_controller_for_application;
 #[cfg(test)]
 pub(crate) use tests::preference_application_fixture;
 
@@ -21,19 +24,21 @@ use std::{
 
 use eframe::egui;
 use festerm_automation::{
-    Broker, Budget, Completion, ConnectionId, Digest, DirectKind, GrantRequest, Invocation,
-    InvocationBinding, NativeApproval, Operation as AuthorityOperation, RequestId, RunId, RunSpec,
-    Scope, TargetRef,
+    Broker, Budget, Completion, ConnectionId, ControllerEnrollmentId, ControllerEnrollmentProposal,
+    ControllerRegistrationId, Digest, DirectKind, GrantRequest, Invocation, InvocationBinding,
+    NativeApproval, NativeControllerEnrollment, Operation as AuthorityOperation, RequestId, RunId,
+    RunSpec, Scope, TargetRef,
 };
 use festerm_automation_mcp::{
-    BackendRequest, BackendResult, Event, Machine, Operation, PairingStatus, Refusal, RequestKey,
-    Response, VerificationCode,
+    BackendRequest, BackendResult, ControllerId, Event, Machine, Operation, PairingStatus, Refusal,
+    RequestKey, Response, VerificationCode,
 };
 use festerm_core::ScrollbackStats;
 use sha2::{Digest as _, Sha256};
 
 use crate::{
     app::FesTermApp,
+    application::WindowId,
     tabs::{SessionTab, TabId},
 };
 
@@ -59,7 +64,7 @@ impl std::fmt::Debug for SelectedWorkflow {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) enum NativeCommand {
     RestartMcp,
     SafetyStop,
@@ -73,31 +78,71 @@ pub(crate) enum NativeCommand {
     Revoke {
         channel: u64,
     },
+    EnableControllerEnrollment,
+    ChooseController {
+        channel: u64,
+        registration: ControllerRegistrationId,
+    },
+    SelectControllerTarget {
+        channel: u64,
+        registration: ControllerRegistrationId,
+        selection: u64,
+        target: TargetRef,
+    },
+    ConfirmController {
+        channel: u64,
+        registration: ControllerRegistrationId,
+        selection: u64,
+    },
+    CancelController {
+        channel: u64,
+        registration: ControllerRegistrationId,
+    },
+    UnregisterController {
+        channel: u64,
+        registration: ControllerRegistrationId,
+    },
     CaptureWorkflow(SelectedWorkflow),
     ClearWorkflow,
 }
 
+impl std::fmt::Debug for NativeCommand {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("NativeCommand(<redacted>)")
+    }
+}
+
 impl NativeCommand {
-    pub(crate) fn batch_requires_safety_stop(commands: &[Self]) -> bool {
-        commands.len() > MAX_NATIVE_COMMANDS
-            || commands
-                .iter()
-                .any(|command| matches!(command, Self::SafetyStop))
-            || (commands.len() > 1
+    pub(crate) fn batch_requires_safety_stop<'a>(
+        commands: impl Iterator<Item = &'a Self> + Clone,
+    ) -> bool {
+        let count = commands.clone().count();
+        count > MAX_NATIVE_COMMANDS
+            || commands.clone().any(|command| matches!(command, Self::SafetyStop))
+            || (count > 1
                 && commands
-                    .iter()
+                    .clone()
                     .any(|command| matches!(command, Self::PreferenceChanged { .. })))
             // Equal paths do not prove the same selection or frozen snapshot.
             || commands
-                .iter()
+                .clone()
                 .filter(|command| matches!(command, Self::CaptureWorkflow(_)))
                 .take(2)
                 .count()
                 == 2
+            // Collection order must never choose between native enrollment actions.
+            || commands.filter(|command| command.is_controller()).take(2).count() == 2
     }
 
     fn is_confirmation(&self) -> bool {
-        matches!(self, Self::ApproveObservation { .. })
+        matches!(
+            self,
+            Self::ApproveObservation { .. }
+                | Self::EnableControllerEnrollment
+                | Self::ChooseController { .. }
+                | Self::SelectControllerTarget { .. }
+                | Self::ConfirmController { .. }
+        )
     }
 
     fn is_cancellation(&self) -> bool {
@@ -106,9 +151,28 @@ impl NativeCommand {
             Self::RestartMcp
                 | Self::PreferenceChanged { .. }
                 | Self::Revoke { .. }
+                | Self::CancelController { .. }
+                | Self::UnregisterController { .. }
                 | Self::ClearWorkflow
         )
     }
+
+    fn is_controller(&self) -> bool {
+        matches!(
+            self,
+            Self::EnableControllerEnrollment
+                | Self::ChooseController { .. }
+                | Self::SelectControllerTarget { .. }
+                | Self::ConfirmController { .. }
+                | Self::CancelController { .. }
+                | Self::UnregisterController { .. }
+        )
+    }
+}
+
+pub(crate) struct NativeWindowCommand {
+    pub window: WindowId,
+    pub command: NativeCommand,
 }
 
 #[derive(Clone)]
@@ -120,11 +184,48 @@ pub(crate) struct ChannelRow {
     closed: Arc<AtomicBool>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ControllerSelectionView {
+    Idle,
+    Choosing {
+        token: u64,
+        window: WindowId,
+    },
+    Reviewing {
+        token: u64,
+        window: WindowId,
+        target: TargetRef,
+    },
+}
+
+#[derive(Clone)]
+pub(crate) struct ControllerRow {
+    pub channel: u64,
+    pub registration: ControllerRegistrationId,
+    pub public_id: ControllerId,
+    pub label: String,
+    pub associated_target: Option<TargetRef>,
+    pub selection: ControllerSelectionView,
+    valid: Arc<AtomicBool>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct ControllerTargetRow {
+    pub reference: TargetRef,
+    pub window: WindowId,
+    pub label: String,
+}
+
 #[derive(Clone)]
 pub(crate) struct SettingsSnapshot {
     pub status: &'static str,
     pub channels: Vec<ChannelRow>,
     pub targets: Vec<(TargetRef, String)>,
+    pub controllers: Vec<ControllerRow>,
+    pub controller_targets: Vec<ControllerTargetRow>,
+    pub controller_targets_incomplete: bool,
+    pub controller_opt_in_available: bool,
+    pub controller_opted_in: bool,
     pub workflow: WorkflowView,
     stop: Arc<AtomicBool>,
 }
@@ -135,6 +236,11 @@ impl Default for SettingsSnapshot {
             status: "MCP is off. No local adapter is listening.",
             channels: Vec::new(),
             targets: Vec::new(),
+            controllers: Vec::new(),
+            controller_targets: Vec::new(),
+            controller_targets_incomplete: false,
+            controller_opt_in_available: false,
+            controller_opted_in: false,
             workflow: WorkflowView::default(),
             stop: Arc::new(AtomicBool::new(true)),
         }
@@ -145,6 +251,23 @@ impl SettingsSnapshot {
     pub(crate) fn same_presentation(&self, other: &Self) -> bool {
         self.status == other.status
             && self.targets == other.targets
+            && self.controller_targets == other.controller_targets
+            && self.controller_targets_incomplete == other.controller_targets_incomplete
+            && self.controller_opt_in_available == other.controller_opt_in_available
+            && self.controller_opted_in == other.controller_opted_in
+            && self.controllers.len() == other.controllers.len()
+            && self
+                .controllers
+                .iter()
+                .zip(&other.controllers)
+                .all(|(left, right)| {
+                    left.channel == right.channel
+                        && left.registration == right.registration
+                        && left.public_id == right.public_id
+                        && left.label == right.label
+                        && left.associated_target == right.associated_target
+                        && left.selection == right.selection
+                })
             && self.workflow.same_presentation(&other.workflow)
             && self.channels.len() == other.channels.len()
             && self
@@ -169,6 +292,20 @@ impl SettingsSnapshot {
         }
     }
 
+    pub(crate) fn unregister_controller(
+        &self,
+        channel: u64,
+        registration: ControllerRegistrationId,
+    ) {
+        if let Some(row) = self
+            .controllers
+            .iter()
+            .find(|row| row.channel == channel && row.registration == registration)
+        {
+            set_admission_flag(&row.valid, false);
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn with_pending_channel_for_test(channel: u64) -> Self {
         Self {
@@ -181,6 +318,69 @@ impl SettingsSnapshot {
             }],
             ..Self::default()
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_controller_for_test() -> (
+        Self,
+        ControllerRegistrationId,
+        TargetRef,
+        TargetRef,
+        TargetRef,
+    ) {
+        let mut broker = Broker::new([7; 16]);
+        let principal = broker.accept_connection().unwrap();
+        let registration = broker
+            .register_controller_session(principal, b"untrusted")
+            .unwrap();
+        let first = broker.attach_target(101, 1).unwrap();
+        let second = broker.attach_target(102, 1).unwrap();
+        let other_window = broker.attach_target(103, 1).unwrap();
+        (
+            Self {
+                channels: vec![ChannelRow {
+                    channel: 7,
+                    verification_code: "0123456789abcdef".into(),
+                    approved: false,
+                    approved_targets: Vec::new(),
+                    closed: Arc::new(AtomicBool::new(false)),
+                }],
+                controllers: vec![ControllerRow {
+                    channel: 7,
+                    registration,
+                    public_id: ControllerId::from_random_bytes([9; 16]),
+                    label: "untrusted".into(),
+                    associated_target: None,
+                    selection: ControllerSelectionView::Idle,
+                    valid: Arc::new(AtomicBool::new(true)),
+                }],
+                controller_targets: vec![
+                    ControllerTargetRow {
+                        reference: first,
+                        window: WindowId::PRIMARY,
+                        label: "tab position 1 — untrusted name \"Same\"".into(),
+                    },
+                    ControllerTargetRow {
+                        reference: second,
+                        window: WindowId::PRIMARY,
+                        label: "tab position 2 — untrusted name \"Same\"".into(),
+                    },
+                    ControllerTargetRow {
+                        reference: other_window,
+                        window: WindowId::for_test(2),
+                        label: "tab position 3 — untrusted name \"Same\"".into(),
+                    },
+                ],
+                controller_opt_in_available: true,
+                controller_opted_in: true,
+                stop: Arc::new(AtomicBool::new(false)),
+                ..Self::default()
+            },
+            registration,
+            first,
+            second,
+            other_window,
+        )
     }
 }
 
@@ -214,6 +414,7 @@ struct Peer {
     code: VerificationCode,
     grant: Option<Grant>,
     waits: Vec<Wait>,
+    controller: controller::PeerState,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -399,6 +600,10 @@ pub(crate) struct Coordinator {
     peers: BTreeMap<u64, Peer>,
     targets: BTreeMap<u64, Target>,
     generation: u64,
+    controller_selection_revision: u64,
+    controller_opted_in: bool,
+    #[cfg(test)]
+    synthetic_controller_qualified: bool,
 }
 
 impl Default for Coordinator {
@@ -428,6 +633,10 @@ impl Default for Coordinator {
             peers: BTreeMap::new(),
             targets: BTreeMap::new(),
             generation: 0,
+            controller_selection_revision: 0,
+            controller_opted_in: false,
+            #[cfg(test)]
+            synthetic_controller_qualified: false,
         }
     }
 }
@@ -458,16 +667,26 @@ fn session<'a>(apps: &[&'a FesTermApp], target: TargetRef) -> Option<&'a Session
 }
 
 fn approval_label(value: &str) -> String {
+    bounded_approval_label(value, false)
+}
+
+fn quoted_approval_label(value: &str) -> String {
+    bounded_approval_label(value, true)
+}
+
+fn bounded_approval_label(value: &str, quoted: bool) -> String {
     let mut characters = value.chars();
     let mut label = String::new();
     for character in characters.by_ref().take(128) {
-        if character.is_control()
+        let spoofing_control = character.is_control()
             || matches!(
                 character,
                 '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}'
                     | '\u{2060}'..='\u{206f}' | '\u{feff}'
-            )
-        {
+            );
+        if quoted && (spoofing_control || matches!(character, '"' | '\'' | '\\')) {
+            label.extend(character.escape_default());
+        } else if spoofing_control {
             label.extend(character.escape_unicode());
         } else {
             label.push(character);
@@ -591,8 +810,30 @@ fn start_failure_status(failure: StartFailure) -> &'static str {
 }
 
 impl Coordinator {
+    fn controller_qualified(&self) -> bool {
+        #[cfg(test)]
+        let native_qualified = self.synthetic_controller_qualified;
+        #[cfg(not(test))]
+        let native_qualified = false;
+        native_qualified
+            && self
+                .presentation_workspace
+                .as_ref()
+                .and_then(WorkspaceRevision::current)
+                .is_some()
+    }
+
+    fn machine_for_new_peer(&self) -> Machine {
+        if self.controller_opted_in && self.controller_qualified() {
+            Machine::with_controller_enrollment()
+        } else {
+            Machine::with_unavailable_presentation()
+        }
+    }
+
     fn stop_mcp(&mut self) {
         self.want_start = false;
+        self.controller_opted_in = false;
         set_admission_flag(&self.stop, true);
         self.control_handoffs.clear();
         self.pending_control_reviews.clear();
@@ -979,6 +1220,15 @@ impl Coordinator {
         let now = Instant::now();
         broker.poll_expiry(now);
         self.reconcile(&mut broker, apps);
+        controller::reconcile(
+            &mut broker,
+            &self.targets,
+            &mut self.peers,
+            apps,
+            self.presentation_workspace
+                .as_ref()
+                .and_then(WorkspaceRevision::current),
+        );
         self.metadata_grants.retain(|principal, bound| {
             broker.native_metadata_grant(*principal, now) == Ok(bound.grant)
         });
@@ -1039,15 +1289,17 @@ impl Coordinator {
                         (Ok(principal), Ok(code))
                             if !self.peers.values().any(|peer| peer.code == code) =>
                         {
+                            let machine = self.machine_for_new_peer();
                             self.peers.insert(
                                 connection.key,
                                 Peer {
                                     connection,
                                     principal,
-                                    machine: Machine::with_unavailable_presentation(),
+                                    machine,
                                     code,
                                     grant: None,
                                     waits: Vec::new(),
+                                    controller: controller::PeerState::default(),
                                 },
                             );
                         }
@@ -1060,18 +1312,20 @@ impl Coordinator {
                     }
                 }
                 ipc::Event::Message { key, bytes } => {
+                    let controller_qualified =
+                        self.controller_qualified() && self.controller_opted_in;
                     if let Some(peer) = self.peers.get_mut(&key) {
-                        if peer.connection.is_closed() || self.stop.load(Ordering::Acquire) {
-                            continue;
-                        }
-                        match peer.machine.process_bytes(&bytes) {
-                            Event::Reply(response) => send(peer, response, now, false),
-                            Event::Backend(request) => {
-                                execute(&mut broker, &self.targets, peer, request, apps, now);
-                            }
-                            Event::Cancelled(key) => cancel_wait(&mut broker, peer, &key, now),
-                            Event::NoReply => {}
-                        }
+                        process_peer_message(
+                            &mut broker,
+                            &self.targets,
+                            peer,
+                            &bytes,
+                            apps,
+                            &self.privacy_gate,
+                            &self.stop,
+                            controller_qualified,
+                            now,
+                        );
                     }
                 }
             }
@@ -1145,10 +1399,7 @@ impl Coordinator {
         {
             let stamp = stamp(session);
             let generation = session.controller.lifecycle_generation();
-            let local_pty = matches!(
-                session.controller.session(),
-                Some(crate::tabs::ApplicationSession::Local(_))
-            );
+            let local_pty = controller::is_local_backend(session);
             let unchanged = self.targets.get(&id).is_some_and(|target| {
                 target.controller_instance == controller_instance
                     && target.controller_generation == generation
@@ -1252,6 +1503,14 @@ impl Coordinator {
                 }
             }
             NativeCommand::ClearWorkflow => self.workflow.cancel(),
+            NativeCommand::EnableControllerEnrollment
+            | NativeCommand::ChooseController { .. }
+            | NativeCommand::SelectControllerTarget { .. }
+            | NativeCommand::ConfirmController { .. }
+            | NativeCommand::CancelController { .. }
+            | NativeCommand::UnregisterController { .. } => {
+                self.status = "Controller action refused without its originating native window.";
+            }
         }
         context.request_repaint();
     }
@@ -1285,23 +1544,28 @@ impl Coordinator {
 
     pub(crate) fn commands(
         &mut self,
-        mut commands: Vec<NativeCommand>,
+        mut commands: Vec<NativeWindowCommand>,
         context: &egui::Context,
         apps: &[&FesTermApp],
     ) -> bool {
-        if NativeCommand::batch_requires_safety_stop(&commands) {
+        if NativeCommand::batch_requires_safety_stop(commands.iter().map(|item| &item.command)) {
             self.command_overflow_for_apps(apps);
             return true;
         }
-        let cancellation = commands.iter().any(NativeCommand::is_cancellation);
+        let cancellation = commands.iter().any(|item| item.command.is_cancellation());
         let workflow_clear = commands
             .iter()
-            .any(|command| matches!(command, NativeCommand::ClearWorkflow));
-        let suppressed = commands.iter().any(|command| {
+            .any(|item| matches!(item.command, NativeCommand::ClearWorkflow));
+        let suppressed = commands.iter().any(|item| {
+            let command = &item.command;
             (cancellation && command.is_confirmation())
                 || (workflow_clear && matches!(command, NativeCommand::CaptureWorkflow(_)))
         });
-        commands.sort_by_key(|command| {
+        if suppressed {
+            controller::cancel_selections(&mut self.peers);
+        }
+        commands.sort_by_key(|item| {
+            let command = &item.command;
             if command.is_confirmation() {
                 2
             } else if command.is_cancellation() {
@@ -1310,19 +1574,67 @@ impl Coordinator {
                 0
             }
         });
-        for command in commands {
+        for NativeWindowCommand { window, command } in commands {
             if (cancellation && command.is_confirmation())
                 || (workflow_clear && matches!(&command, NativeCommand::CaptureWorkflow(_)))
             {
                 continue;
             }
-            self.command(command, context);
+            if command.is_controller() {
+                if self.privacy_lost_this_tick {
+                    continue;
+                }
+                if controller::command(self, window, command, apps).is_err() {
+                    self.status = "Controller selection refused: the connection, registration, window or local terminal changed. No association was approved.";
+                }
+                context.request_repaint();
+            } else {
+                self.command(command, context);
+            }
         }
         if suppressed && !self.privacy_lost_this_tick && !self.privacy_gate.is_closed() {
-            self.status = "Automation cancellation blocked a same-frame workflow capture or grant approval. Review and retry the blocked action explicitly when available.";
+            self.status = "Automation cancellation blocked a same-frame workflow capture, controller selection or grant approval. Review and retry the blocked action explicitly when available.";
             context.request_repaint();
         }
         suppressed
+    }
+
+    #[cfg(test)]
+    fn commands_for_test(
+        &mut self,
+        commands: Vec<NativeCommand>,
+        context: &egui::Context,
+        apps: &[&FesTermApp],
+    ) -> bool {
+        self.commands(
+            commands
+                .into_iter()
+                .map(|command| NativeWindowCommand {
+                    window: WindowId::PRIMARY,
+                    command,
+                })
+                .collect(),
+            context,
+            apps,
+        )
+    }
+
+    pub(crate) fn controller_target_moving(&mut self, tab: TabId) {
+        if !controller::invalidate_location(self.broker.as_mut(), &mut self.peers, Some(tab), None)
+        {
+            self.close_overflow_admission();
+        }
+    }
+
+    pub(crate) fn controller_window_closing(&mut self, window: WindowId) {
+        if !controller::invalidate_location(
+            self.broker.as_mut(),
+            &mut self.peers,
+            None,
+            Some(window),
+        ) {
+            self.close_overflow_admission();
+        }
     }
 
     fn approve(&mut self, channel: u64, targets: Vec<TargetRef>) -> Result<(), Refusal> {
@@ -1464,10 +1776,19 @@ impl Coordinator {
                 })
             })
             .collect();
+        let (controllers, controller_targets, controller_targets_incomplete) =
+            controller::settings(self, apps, mcp_open);
         SettingsSnapshot {
             status,
             channels,
             targets,
+            controllers,
+            controller_targets,
+            controller_targets_incomplete,
+            controller_opt_in_available: mcp_open
+                && self.broker.is_some()
+                && self.controller_qualified(),
+            controller_opted_in: mcp_open && self.controller_opted_in,
             workflow: self.workflow.view(),
             stop: self.stop.clone(),
         }
@@ -1534,6 +1855,42 @@ fn cancel_wait(broker: &mut Broker, peer: &mut Peer, key: &RequestKey, now: Inst
         let wait = peer.waits.remove(index);
         let _ = broker.cancel_run(peer.principal, wait.run, now);
         let _ = broker.forget_run(peer.principal, wait.run);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_peer_message(
+    broker: &mut Broker,
+    targets: &BTreeMap<u64, Target>,
+    peer: &mut Peer,
+    bytes: &[u8],
+    apps: &[&FesTermApp],
+    privacy: &PrivacyGate,
+    stop: &AtomicBool,
+    controller_qualified: bool,
+    now: Instant,
+) {
+    if peer.connection.is_closed() || stop.load(Ordering::Acquire) || privacy.is_closed() {
+        return;
+    }
+    match peer.machine.process_bytes(bytes) {
+        Event::Reply(response) => send(peer, response, now, false),
+        Event::Backend(request) if controller::is_operation(&request.operation) => {
+            controller::execute(
+                broker,
+                targets,
+                peer,
+                request,
+                apps,
+                privacy,
+                stop,
+                controller_qualified,
+                now,
+            );
+        }
+        Event::Backend(request) => execute(broker, targets, peer, request, apps, now),
+        Event::Cancelled(key) => cancel_wait(broker, peer, &key, now),
+        Event::NoReply => {}
     }
 }
 

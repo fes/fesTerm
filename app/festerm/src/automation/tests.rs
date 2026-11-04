@@ -52,6 +52,7 @@ fn fixture() -> (Coordinator, FesTermApp, TabId, impl Fn() -> Option<Vec<u8>>) {
             code: VerificationCode::new("0123456789abcdef").unwrap(),
             grant: None,
             waits: Vec::new(),
+            controller: controller::PeerState::default(),
         },
     );
     coordinator.broker = Some(broker);
@@ -343,6 +344,7 @@ fn add_metadata_peer(coordinator: &mut Coordinator, channel: u64) -> ConnectionI
             code: VerificationCode::new("0123456789abcdef").unwrap(),
             grant: None,
             waits: Vec::new(),
+            controller: controller::PeerState::default(),
         },
     );
     principal
@@ -2511,6 +2513,7 @@ fn presentation_source_loss_preserves_other_controller_without_that_source() {
             code: VerificationCode::new("0123456789abcdef").unwrap(),
             grant: None,
             waits: Vec::new(),
+            controller: controller::PeerState::default(),
         },
     );
     let (request, scope, binding) = presentation_control_request(target);
@@ -3107,6 +3110,7 @@ fn presentation_control_review_is_channel_bound_and_disconnect_is_isolated() {
             code: VerificationCode::new("0123456789abcdef").unwrap(),
             grant: None,
             waits: Vec::new(),
+            controller: controller::PeerState::default(),
         },
     );
     let (request, _, _) = presentation_control_request(target);
@@ -4237,6 +4241,7 @@ fn presentation_input_admission_is_principal_bound_and_takeover_cuts_all_control
             code: VerificationCode::new("0123456789abcdef").unwrap(),
             grant: None,
             waits: Vec::new(),
+            controller: controller::PeerState::default(),
         },
     );
     let now = Instant::now();
@@ -4617,7 +4622,7 @@ fn response(receive: &impl Fn() -> Option<Vec<u8>>) -> Value {
 }
 
 #[test]
-fn dormant_controller_operations_are_refused_without_host_effects() {
+fn controller_operations_never_enter_observation_grant_path() {
     let (mut coordinator, mut app, id, receive) = fixture();
     coordinator.peers.get_mut(&1).unwrap().machine =
         ready_with(Machine::with_controller_enrollment());
@@ -4718,6 +4723,10 @@ fn dormant_controller_operations_are_refused_without_host_effects() {
 
 #[test]
 fn automation_approval_labels_escape_spoofing_controls_and_mark_truncation() {
+    assert_eq!(
+        approval_label("café 日本語 \"terminal\" \\path"),
+        "café 日本語 \"terminal\" \\path"
+    );
     assert_eq!(
         approval_label("production\n\u{202e}client\u{2069}"),
         "production\\u{a}\\u{202e}client\\u{2069}"
@@ -5262,7 +5271,7 @@ fn automation_selected_workflow_preview_requires_opt_in_and_grants_no_access() {
         WorkflowStatus::Failed(_)
     ));
     coordinator.tick(&context, &[&enabled]);
-    assert!(coordinator.commands(
+    assert!(coordinator.commands_for_test(
         vec![
             NativeCommand::CaptureWorkflow(SelectedWorkflow(path.clone())),
             NativeCommand::CaptureWorkflow(SelectedWorkflow(path.clone())),
@@ -5272,7 +5281,7 @@ fn automation_selected_workflow_preview_requires_opt_in_and_grants_no_access() {
     ));
     assert_eq!(coordinator.workflow.view().status, WorkflowStatus::Empty);
     coordinator.tick(&context, &[&enabled]);
-    assert!(!coordinator.commands(
+    assert!(!coordinator.commands_for_test(
         vec![NativeCommand::CaptureWorkflow(SelectedWorkflow(path))],
         &context,
         &[&enabled],
@@ -5332,7 +5341,7 @@ fn automation_same_pass_cancellation_suppresses_approval_and_capture() {
             } else {
                 vec![approval, cancellation]
             };
-            assert!(coordinator.commands(commands, &context, &[&app]));
+            assert!(coordinator.commands_for_test(commands, &context, &[&app]));
             assert!(coordinator.peers[&1].grant.is_none());
             assert_eq!(coordinator.peers[&1].connection.is_closed(), revoke);
             assert!(coordinator.status.contains("blocked"));
@@ -5347,7 +5356,7 @@ fn automation_same_pass_cancellation_suppresses_approval_and_capture() {
         } else {
             vec![capture, NativeCommand::ClearWorkflow]
         };
-        assert!(coordinator.commands(commands, &context, &[&app]));
+        assert!(coordinator.commands_for_test(commands, &context, &[&app]));
         assert!(matches!(
             coordinator.workflow.view().status,
             WorkflowStatus::Empty
@@ -5382,7 +5391,7 @@ fn automation_competing_workflow_captures_cancel_pending_without_winner() {
             {
                 let (mut coordinator, app, _, _receive) = fixture();
                 coordinator.javascript_enabled = true;
-                assert!(coordinator.commands(commands(), &context, &[&app]));
+                assert!(coordinator.commands_for_test(commands(), &context, &[&app]));
                 let snapshot = coordinator.settings(&[&app]);
                 assert_eq!(snapshot.workflow.status, WorkflowStatus::Empty);
                 assert!(snapshot.workflow.current_bundle().is_none());
@@ -5410,7 +5419,7 @@ fn automation_competing_workflow_captures_cancel_pending_without_winner() {
                 WorkflowStatus::Capturing
             );
 
-            assert!(coordinator.commands(commands(), &context, &[&app]));
+            assert!(coordinator.commands_for_test(commands(), &context, &[&app]));
             let snapshot = coordinator.settings(&[&app]);
             assert_eq!(snapshot.workflow.status, WorkflowStatus::Cancelling);
             assert!(snapshot.workflow.current_bundle().is_none());
