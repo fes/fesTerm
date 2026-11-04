@@ -50,14 +50,15 @@ use festerm_ui_egui::{
 };
 
 use crate::configuration_startup::{
-    ConfigurationReloader, ConfigurationStartupStatus, StartupConfiguration,
+    ConfigurationReloader, ConfigurationStartupStatus, SecretCleanupNotice, StartupConfiguration,
 };
 use crate::inspector::{InspectorAction, InspectorContent, TransportFacts};
 use crate::markdown_viewer::take_viewer_commands;
 use crate::native_smoke::NativeWindowSmoke;
 use crate::overlay_state::{
     LivePortForwardManager, OverlayState, PendingFileDropConfirmation, PendingPasswordStore,
-    PendingPasteConfirmation, PendingSettingsResetConfirmation, StoredCredentialLaunch,
+    PendingPasteConfirmation, PendingSecret, PendingSettingsResetConfirmation,
+    SessionNameNoticeKind, StoredCredentialLaunch,
 };
 use crate::screens;
 use crate::sftp_file_manager::{
@@ -607,13 +608,13 @@ fn load_application_icon(context: &egui::Context) -> egui::TextureHandle {
 fn secret_store_message(error: SecretStoreError) -> &'static str {
     match error {
         SecretStoreError::LockedOrUnavailable | SecretStoreError::Unsupported => {
-            "Native secure storage is unavailable or locked. Unlock or enable it to use saved SSH passwords."
+            "Native secure storage is unavailable or locked. Unlock or enable it to use saved credentials."
         }
         SecretStoreError::BackendFailure | SecretStoreError::TooLarge => {
-            "Native secure storage failed. Saved SSH passwords are unavailable; try again after checking the platform service."
+            "Native secure storage failed. Saved credentials are unavailable; try again after checking the platform service."
         }
         SecretStoreError::Missing | SecretStoreError::InvalidReference => {
-            "Native secure storage could not use the requested saved SSH password."
+            "Native secure storage could not use the requested saved credential."
         }
     }
 }
@@ -759,6 +760,9 @@ impl FesTermApp {
         );
         window.state.replace_configuration(configuration);
         window.configuration_reloader = configuration_reloader;
+        if let Some(message) = window.configuration_reloader.save_gate_warning() {
+            window.report_configuration_notice(message);
+        }
         // The registry is application-scoped: a second window joins the one
         // that already exists rather than starting its own.
         window.state.adopt_documents(documents);
@@ -1496,16 +1500,92 @@ impl FesTermApp {
         let status = save(&self.configuration_reloader, &replacement);
         let was_saved = status.was_saved();
         if was_saved {
-            // The single choke point every configuration write passes
-            // through, and therefore the only place sibling windows need to
-            // learn about (ADR 0032). Broadcasting the committed document
-            // rather than the attempted one preserves
-            // commit-only-on-success: a failed save reaches no sibling.
+            // Broadcast only this successfully persisted replacement.
+            // Other save paths and sibling-window ordering are not fenced.
             self.pending_configuration_broadcast = Some(replacement.clone());
             self.state.replace_configuration(replacement);
+        } else if status.save_reconciliation_required() {
+            if status.save_outcome_unknown() {
+                self.report_unknown_configuration_save(false);
+            } else {
+                self.report_blocked_configuration_save();
+            }
+        } else if status.save_was_busy() {
+            self.report_configuration_notice(crate::configuration_startup::SAVE_BUSY_MESSAGE);
         }
         self.configuration_status = status;
         was_saved
+    }
+
+    pub(crate) fn report_unknown_configuration_save(&mut self, resources_retained: bool) {
+        let notice = if resources_retained {
+            SecretCleanupNotice::ConfigurationResourceUnknown
+        } else {
+            SecretCleanupNotice::ConfigurationUnknown
+        };
+        self.publish_shared_notice(notice);
+    }
+
+    fn report_blocked_configuration_save(&mut self) {
+        self.publish_shared_notice(SecretCleanupNotice::ConfigurationBlocked);
+    }
+
+    fn publish_shared_notice(&mut self, notice: SecretCleanupNotice) {
+        self.report_configuration_notice(notice.message());
+        self.configuration_reloader
+            .secret_cleanup_failure()
+            .fetch_or(notice.bit(), Ordering::Release);
+    }
+
+    pub(crate) fn report_configuration_notice(&mut self, message: &'static str) {
+        self.report_configuration_notice_at(message, Instant::now());
+    }
+
+    fn report_configuration_notice_at(&mut self, message: &'static str, now: Instant) {
+        self.secure_storage_feedback = Some(message);
+        let notice = &mut self.overlays.configuration_notice;
+        if let Some((text, deadline)) = notice {
+            if (!self.overlays.configuration_notice_rendered || *deadline > now)
+                && !text.contains(message)
+            {
+                if text.len() + message.len() < 4096 {
+                    text.push(' ');
+                    text.push_str(message);
+                    *deadline = now + Duration::from_secs(12);
+                    self.overlays.configuration_notice_rendered = false;
+                    return;
+                }
+            } else if !self.overlays.configuration_notice_rendered || *deadline > now {
+                *deadline = now + Duration::from_secs(12);
+                self.overlays.configuration_notice_rendered = false;
+                return;
+            }
+        }
+        *notice = Some((message.to_owned(), now + Duration::from_secs(12)));
+        self.overlays.configuration_notice_rendered = false;
+    }
+
+    fn report_secret_cleanup_failure(
+        &mut self,
+        notice: SecretCleanupNotice,
+        context: &egui::Context,
+    ) {
+        self.publish_shared_notice(notice);
+        context.request_repaint_of(egui::ViewportId::ROOT);
+    }
+
+    pub(crate) fn report_shared_cleanup_failures(&mut self, notices: u16) {
+        for notice in SecretCleanupNotice::ALL {
+            if notices & notice.bit() != 0 {
+                self.report_configuration_notice(notice.message());
+            }
+        }
+    }
+
+    pub(crate) fn take_shared_cleanup_failures(&self) -> u16 {
+        self.configuration_reloader
+            .secret_cleanup_failure()
+            .swap(0, Ordering::AcqRel)
     }
 
     /// The configuration source, secret-store handle and last configuration
@@ -1702,16 +1782,21 @@ impl FesTermApp {
         &mut self,
         context: &egui::Context,
         persistence_unavailable: bool,
+        failure: Option<crate::configuration_startup::ConfigurationLoadFailure>,
     ) {
-        let message = if persistence_unavailable {
-            "This naming change applies to this open tab only. To retain it after restart, enable Restore workspace and use a saved profile, or reattach the same verified native session."
+        use crate::configuration_startup::ConfigurationLoadFailure;
+        let kind = if failure == Some(ConfigurationLoadFailure::OutcomeUnknown) {
+            SessionNameNoticeKind::OutcomeUnknown
+        } else if failure == Some(ConfigurationLoadFailure::ReconciliationRequired) {
+            SessionNameNoticeKind::ReconciliationRequired
+        } else if failure == Some(ConfigurationLoadFailure::SaveBusy) {
+            SessionNameNoticeKind::SaveBusy
+        } else if persistence_unavailable {
+            SessionNameNoticeKind::LiveOnly
         } else {
-            ConfigurationStartupStatus::SessionNamesSaveFailure(
-                crate::configuration_startup::ConfigurationLoadFailure::Unreadable,
-            )
-            .settings_message()
+            SessionNameNoticeKind::SaveFailed
         };
-        self.show_session_name_notice(context, message);
+        self.show_session_name_notice(context, kind);
     }
 
     pub(crate) fn show_session_name_validation_notice(
@@ -1719,22 +1804,17 @@ impl FesTermApp {
         context: &egui::Context,
         failure: festerm_config::ConfigError,
     ) {
-        let message = match failure.kind() {
+        let kind = match failure.kind() {
             festerm_config::ConfigErrorKind::ForbiddenSecretValue => {
-                "Session name was not changed because it contains secret-like values. Choose a different display name."
+                SessionNameNoticeKind::SecretLike
             }
-            _ => {
-                "Session name was not changed because it is invalid. Choose a different display name."
-            }
+            _ => SessionNameNoticeKind::Invalid,
         };
-        self.show_session_name_notice(context, message);
+        self.show_session_name_notice(context, kind);
     }
 
-    fn show_session_name_notice(&mut self, context: &egui::Context, message: &str) {
-        self.overlays.transient_notice = Some((
-            message.to_owned(),
-            std::time::Instant::now() + Duration::from_secs(8),
-        ));
+    fn show_session_name_notice(&mut self, context: &egui::Context, kind: SessionNameNoticeKind) {
+        self.overlays.queue_session_name_notice(kind);
         context.request_repaint();
     }
 
@@ -1836,13 +1916,9 @@ impl FesTermApp {
     /// launcher's "Last Used" column and its recently-used ordering survive a
     /// restart.
     ///
-    /// Unlike every other configuration write this one is silent in both
-    /// directions: the user did not ask for it, so neither success nor
-    /// failure belongs in the status line, and a failed write costs only an
-    /// ordering hint. The in-memory configuration still changes only after
-    /// the atomic file replacement succeeds, matching
-    /// [`Self::save_workspace`]'s commit-only-on-success rule.
-    fn record_profile_launch(&mut self, profile_id: &str) {
+    /// Routine failures are silent, but unknown or blocked saves require a
+    /// reconciliation notice. This runs after notice rendering in the frame.
+    fn record_profile_launch(&mut self, profile_id: &str, context: &egui::Context) {
         let Some(now) = crate::screens::unix_now_seconds() else {
             return;
         };
@@ -1853,8 +1929,21 @@ impl FesTermApp {
         else {
             return;
         };
-        if let Ok(configuration) = self.configuration_reloader.save_configuration(&replacement) {
-            self.state.replace_configuration(configuration);
+        match self.configuration_reloader.save_configuration(&replacement) {
+            Ok(configuration) => self.state.replace_configuration(configuration),
+            Err(crate::configuration_startup::ConfigurationLoadFailure::OutcomeUnknown) => {
+                self.report_unknown_configuration_save(false);
+                context.request_repaint();
+            }
+            Err(crate::configuration_startup::ConfigurationLoadFailure::ReconciliationRequired) => {
+                self.report_blocked_configuration_save();
+                context.request_repaint();
+            }
+            Err(crate::configuration_startup::ConfigurationLoadFailure::SaveBusy) => {
+                self.report_configuration_notice(crate::configuration_startup::SAVE_BUSY_MESSAGE);
+                context.request_repaint();
+            }
+            Err(_) => {}
         }
     }
 
@@ -1883,8 +1972,18 @@ impl FesTermApp {
         ) else {
             return;
         };
-        if let Ok(configuration) = self.configuration_reloader.save_configuration(&replacement) {
-            self.state.replace_configuration(configuration);
+        match self.configuration_reloader.save_configuration(&replacement) {
+            Ok(configuration) => self.state.replace_configuration(configuration),
+            Err(crate::configuration_startup::ConfigurationLoadFailure::OutcomeUnknown) => {
+                self.report_unknown_configuration_save(false);
+            }
+            Err(crate::configuration_startup::ConfigurationLoadFailure::ReconciliationRequired) => {
+                self.report_blocked_configuration_save();
+            }
+            Err(crate::configuration_startup::ConfigurationLoadFailure::SaveBusy) => {
+                self.report_configuration_notice(crate::configuration_startup::SAVE_BUSY_MESSAGE);
+            }
+            Err(_) => {}
         }
     }
 
@@ -2005,35 +2104,67 @@ impl FesTermApp {
     }
 
     #[cfg(feature = "experimental-dev-tunnels")]
-    fn import_public_tunnel_profile(
+    pub(crate) fn import_public_tunnel_profile(
         &mut self,
         import: crate::tunnel_profile_import::PublicProfileImport,
     ) {
         let result = self
             .configuration_reloader
             .automation_configuration(self.state.configuration())
-            .map_err(|_| "The imported profile could not be saved. Configuration is invalid.")
+            .map_err(|_| {
+                crate::tunnel_profile_import::ImportSaveError::Failed(
+                    "The imported profile could not be saved. Configuration is invalid.",
+                )
+            })
             .and_then(|configuration| {
                 self.configuration_reloader
                     .tunnel_import_directory()
                     .map_err(|_| {
-                        "The imported profile could not be saved. Configuration location unavailable."
+                        crate::tunnel_profile_import::ImportSaveError::Failed(
+                            "The imported profile could not be saved. Configuration location unavailable.",
+                        )
                     })
                     .and_then(|directory| {
                         import.save(&configuration, &directory, |replacement| {
                             self.configuration_reloader
                                 .save_configuration(replacement)
-                                .is_ok()
+                                .map(|_| ())
                         })
                     })
             });
+        self.finish_public_tunnel_import(result);
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    pub(crate) fn finish_public_tunnel_import(
+        &mut self,
+        result: Result<Configuration, crate::tunnel_profile_import::ImportSaveError>,
+    ) {
         match result {
             Ok(configuration) => {
                 self.state.replace_configuration(configuration);
                 self.configuration_status = ConfigurationStartupStatus::ProfileSaved;
                 self.secure_storage_feedback = Some("Public profile saved. Authenticate separately in Advanced with a scoped connect token; import did not connect or sign in.");
             }
-            Err(message) => self.secure_storage_feedback = Some(message),
+            Err(crate::tunnel_profile_import::ImportSaveError::OutcomeUnknown) => {
+                self.configuration_status = ConfigurationStartupStatus::ProfileSaveFailure(
+                    crate::configuration_startup::ConfigurationLoadFailure::OutcomeUnknown,
+                );
+                self.report_unknown_configuration_save(true);
+            }
+            Err(crate::tunnel_profile_import::ImportSaveError::Blocked(failure)) => {
+                self.configuration_status = ConfigurationStartupStatus::ProfileSaveFailure(failure);
+                if failure == crate::configuration_startup::ConfigurationLoadFailure::ReconciliationRequired {
+                    self.report_blocked_configuration_save();
+                }
+                self.publish_shared_notice(SecretCleanupNotice::ImportRetained);
+            }
+            Err(crate::tunnel_profile_import::ImportSaveError::CleanupFailed) => {
+                self.publish_shared_notice(SecretCleanupNotice::ImportCleanupFailed);
+            }
+            Err(crate::tunnel_profile_import::ImportSaveError::Failed(message)) => {
+                self.secure_storage_feedback = Some(message);
+            }
         }
     }
 
@@ -2403,8 +2534,8 @@ impl FesTermApp {
         );
     }
 
-    /// Shared background-worker storage path for both password and
-    /// private-key profile credentials: the secret is converted to
+    /// Shared background-worker storage path for profile passwords,
+    /// private keys, and Dev Tunnel connect tokens: the secret is converted to
     /// [`SecretBytes`] only inside the spawned worker thread and never
     /// touches the UI thread, mirroring the existing password-only
     /// implementation this replaces.
@@ -2436,12 +2567,24 @@ impl FesTermApp {
         }
         let store = Arc::clone(store);
         let worker_store = Arc::clone(&store);
+        let cleanup_failure = self.configuration_reloader.secret_cleanup_failure();
+        let worker_context = context.clone();
         let (sender, receiver) = mpsc::sync_channel(1);
         match thread::Builder::new()
             .name("festerm-store-profile-credential".to_owned())
             .spawn(move || {
                 let secret = make_secret();
-                let _ = sender.send(worker_store.put(&secret));
+                let result = worker_store.put(&secret).map(|reference| {
+                    PendingSecret::new(
+                        reference,
+                        worker_store,
+                        cleanup_failure,
+                        SecretCleanupNotice::ProfilePending,
+                        worker_context.clone(),
+                    )
+                });
+                let _ = sender.send(result);
+                worker_context.request_repaint_of(egui::ViewportId::ROOT);
             }) {
             Ok(_) => {
                 self.overlays.pending_password_store = Some(PendingPasswordStore {
@@ -2469,12 +2612,15 @@ impl FesTermApp {
             return;
         };
         match pending.receiver.try_recv() {
-            Ok(Ok(reference)) => {
+            Ok(Ok(secret)) => {
+                let reference = secret.release();
                 if self.state.configuration().profile(&pending.profile_id)
                     != Some(&pending.expected_profile)
                 {
-                    let _ = pending.store.delete(&reference);
-                    self.secure_storage_feedback = Some("Profile changed while its credential was being saved. No binding was changed; retry explicitly.");
+                    match pending.store.delete(&reference) {
+                        Ok(_) => self.secure_storage_feedback = Some("Profile changed while its credential was being saved. No binding was changed; retry explicitly."),
+                        Err(_) => self.report_secret_cleanup_failure(SecretCleanupNotice::ProfileChanged, context),
+                    }
                     return;
                 }
                 let previous_reference = self
@@ -2495,20 +2641,25 @@ impl FesTermApp {
                         pending.credential_kind,
                     )
                 };
-                let saved = replacement.as_ref().ok().and_then(|configuration| {
-                    self.configuration_reloader
-                        .save_configuration(configuration)
-                        .ok()
-                });
-                if let Some(configuration) = saved {
+                let saved = replacement
+                    .map_err(|_| crate::configuration_startup::ConfigurationLoadFailure::Invalid)
+                    .and_then(|configuration| {
+                        self.configuration_reloader
+                            .save_configuration(&configuration)
+                    });
+                if let Ok(configuration) = saved {
                     self.state.replace_configuration(configuration);
                     self.configuration_status = ConfigurationStartupStatus::PasswordCredentialSaved;
                     self.secure_storage_feedback = match previous_reference {
                         Some(previous) => match pending.store.delete(&previous) {
                             Ok(_) => Some("Profile credential saved in native secure storage."),
-                            Err(_) => Some(
-                                "Profile credential saved, but the previous native secret could not be removed.",
-                            ),
+                            Err(_) => {
+                                self.report_secret_cleanup_failure(
+                                    SecretCleanupNotice::ProfilePrevious,
+                                    context,
+                                );
+                                Some(SecretCleanupNotice::ProfilePrevious.message())
+                            }
                         },
                         None => Some("Profile credential saved in native secure storage."),
                     };
@@ -2526,19 +2677,35 @@ impl FesTermApp {
                             }
                         }
                     }
-                } else {
-                    let cleanup = pending.store.delete(&reference);
+                } else if let Err(failure) = saved {
                     self.configuration_status =
-                        ConfigurationStartupStatus::PasswordCredentialSaveFailure(
-                            crate::configuration_startup::ConfigurationLoadFailure::Unreadable,
-                        );
-                    self.secure_storage_feedback = match cleanup {
-                        Ok(_) => Some(
-                            "SSH credential was not linked because configuration could not be saved; the new native secret was removed.",
-                        ),
-                        Err(_) => Some(
-                            "SSH credential was not linked because configuration could not be saved; native-secret cleanup also failed.",
-                        ),
+                        ConfigurationStartupStatus::PasswordCredentialSaveFailure(failure);
+                    self.secure_storage_feedback = if failure
+                        == crate::configuration_startup::ConfigurationLoadFailure::OutcomeUnknown
+                    {
+                        self.report_unknown_configuration_save(true);
+                        Some(crate::configuration_startup::UNKNOWN_RESOURCE_SAVE_MESSAGE)
+                    } else if matches!(
+                        failure,
+                        crate::configuration_startup::ConfigurationLoadFailure::ReconciliationRequired
+                            | crate::configuration_startup::ConfigurationLoadFailure::SaveBusy
+                    ) {
+                        if failure == crate::configuration_startup::ConfigurationLoadFailure::ReconciliationRequired {
+                            self.report_blocked_configuration_save();
+                        }
+                        self.publish_shared_notice(SecretCleanupNotice::ProfileRetained);
+                        Some(SecretCleanupNotice::ProfileRetained.message())
+                    } else {
+                        let cleanup = pending.store.delete(&reference);
+                        match cleanup {
+                                Ok(_) => Some(
+                                    "Profile credential was not linked because configuration could not be saved; the new native secret was removed.",
+                                ),
+                                Err(_) => {
+                                    self.report_secret_cleanup_failure(SecretCleanupNotice::ProfileSaveFailed, context);
+                                    Some(SecretCleanupNotice::ProfileSaveFailed.message())
+                                }
+                        }
                     };
                 }
             }
@@ -2551,7 +2718,7 @@ impl FesTermApp {
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.secure_storage_feedback =
-                    Some("Native secure storage did not complete the password save. Try again.");
+                    Some("Native secure storage did not complete the profile credential save. Try again.");
             }
         }
     }
@@ -4004,25 +4171,79 @@ impl FesTermApp {
         context.request_repaint();
     }
 
-    fn show_transient_notice(&mut self, context: &egui::Context) {
-        let Some((text, deadline)) = self.overlays.transient_notice.as_ref() else {
-            return;
-        };
-        if Instant::now() >= *deadline {
+    pub(crate) fn show_transient_notice(&mut self, context: &egui::Context) {
+        self.show_transient_notice_at(context, Instant::now());
+    }
+
+    fn show_transient_notice_at(&mut self, context: &egui::Context, now: Instant) {
+        if let Some((_, deadline)) = &mut self.overlays.configuration_notice {
+            if !self.overlays.configuration_notice_rendered {
+                *deadline = now + Duration::from_secs(12);
+                self.overlays.configuration_notice_rendered = true;
+            } else if now >= *deadline {
+                self.overlays.configuration_notice = None;
+            }
+        }
+        if self
+            .overlays
+            .session_name_notices
+            .front()
+            .is_some_and(|notice| notice.visible_until.is_some_and(|deadline| now >= deadline))
+        {
+            self.overlays.session_name_notices.pop_front();
+        }
+        if let Some(notice) = self.overlays.session_name_notices.front_mut() {
+            notice
+                .visible_until
+                .get_or_insert(now + Duration::from_secs(8));
+        }
+        if self
+            .overlays
+            .transient_notice
+            .as_ref()
+            .is_some_and(|(_, deadline)| now >= *deadline)
+        {
             self.overlays.transient_notice = None;
+        }
+        let mut texts: Vec<_> = [
+            &self.overlays.configuration_notice,
+            &self.overlays.transient_notice,
+        ]
+        .into_iter()
+        .filter_map(|notice| notice.as_ref().map(|(text, _)| text.clone()))
+        .collect();
+        if let Some(notice) = self.overlays.session_name_notices.front() {
+            let mut text = notice.kind.message().to_owned();
+            if matches!(
+                notice.kind,
+                SessionNameNoticeKind::SaveFailed
+                    | SessionNameNoticeKind::SaveBusy
+                    | SessionNameNoticeKind::LiveOnly
+            ) {
+                text.push(' ');
+                text.push_str(
+                    self.configuration_reloader
+                        .save_gate_warning()
+                        .unwrap_or(crate::configuration_startup::SAVE_GATE_HEALTHY_MESSAGE),
+                );
+            }
+            texts.push(text);
+        }
+        if texts.is_empty() {
             return;
         }
-        let text = text.clone();
         egui::Area::new(egui::Id::new("fesTerm transient mode notice"))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 16.0))
             .interactable(false)
             .show(context, |ui| {
-                egui::Frame::popup(ui.style())
-                    .inner_margin(egui::Margin::symmetric(10, 6))
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new(text).color(theme::TEXT_SECONDARY));
-                    });
+                for text in texts {
+                    egui::Frame::popup(ui.style())
+                        .inner_margin(egui::Margin::symmetric(10, 6))
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new(text).color(theme::TEXT_SECONDARY));
+                        });
+                }
             });
         context.request_repaint_after(Duration::from_millis(100));
     }
@@ -5969,6 +6190,13 @@ impl FesTermApp {
             self.poll_local_hosts(context);
             self.drive_tunnel_reconnects(context);
         }
+        if self.role == WindowRole::Primary {
+            let notices = self
+                .configuration_reloader
+                .secret_cleanup_failure()
+                .load(Ordering::Acquire);
+            self.report_shared_cleanup_failures(notices);
+        }
         if context.input(|i| i.viewport().close_requested()) {
             let accepted = self.evaluate_close_request(context);
             // Nothing cancelled the close, so this window really is going
@@ -7134,7 +7362,7 @@ impl FesTermApp {
             self.workspace_save_requested = true;
         }
         if let Some(profile_id) = self.state.take_pending_profile_usage() {
-            self.record_profile_launch(&profile_id);
+            self.record_profile_launch(&profile_id, ui.ctx());
         }
 
         if self.native_smoke.is_some() {
@@ -7190,9 +7418,18 @@ impl FesTermApp {
 
     pub(crate) fn session_name_notice_for_test(&self) -> Option<&str> {
         self.overlays
-            .transient_notice
-            .as_ref()
-            .map(|(text, _)| text.as_str())
+            .session_name_notices
+            .back()
+            .map(|notice| notice.kind.message())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn show_transient_notice_at_for_test(
+        &mut self,
+        context: &egui::Context,
+        now: Instant,
+    ) {
+        self.show_transient_notice_at(context, now);
     }
 
     pub(crate) fn chip_primary_for_test(&self, tab: TabId) -> String {
@@ -7611,6 +7848,1309 @@ mod tests {
     use std::{fs, path::PathBuf, thread, time::Duration};
 
     use super::*;
+
+    struct FailingDeleteStore(MemorySecretStore);
+
+    impl SecretStore for FailingDeleteStore {
+        fn put(
+            &self,
+            secret: &festerm_secret_store::SecretBytes,
+        ) -> Result<festerm_secret_store::SecretReference, SecretStoreError> {
+            self.0.put(secret)
+        }
+        fn get(
+            &self,
+            reference: &festerm_secret_store::SecretReference,
+        ) -> Result<festerm_secret_store::SecretBytes, SecretStoreError> {
+            self.0.get(reference)
+        }
+        fn update(
+            &self,
+            reference: &festerm_secret_store::SecretReference,
+            secret: &festerm_secret_store::SecretBytes,
+        ) -> Result<(), SecretStoreError> {
+            self.0.update(reference, secret)
+        }
+        fn delete(
+            &self,
+            _: &festerm_secret_store::SecretReference,
+        ) -> Result<bool, SecretStoreError> {
+            Err(SecretStoreError::BackendFailure)
+        }
+    }
+
+    #[test]
+    fn configuration_notice_does_not_expire_before_its_first_render() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.report_configuration_notice("Configuration may have changed.");
+        app.overlays.configuration_notice.as_mut().unwrap().1 =
+            Instant::now() - Duration::from_secs(30);
+        let context = egui::Context::default();
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            app.show_transient_notice(ui.ctx());
+        });
+        output.textures_delta.clear();
+        assert!(app.overlays.configuration_notice.as_ref().unwrap().1 > Instant::now());
+        assert!(app.overlays.configuration_notice_rendered);
+    }
+
+    #[test]
+    fn delayed_secondary_session_name_notice_gets_full_visible_lifetime() {
+        use crate::configuration_startup::ConfigurationLoadFailure;
+
+        let context = egui::Context::default();
+        let primary = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let (configuration, status, reloader, secret_store, documents) =
+            primary.shared_application_services();
+        let mut secondary = FesTermApp::secondary_window(
+            &context,
+            configuration,
+            status,
+            reloader,
+            secret_store,
+            documents,
+        );
+        secondary.show_session_name_persistence_notice(
+            &context,
+            false,
+            Some(ConfigurationLoadFailure::SaveBusy),
+        );
+        assert!(secondary.overlays.configuration_notice.is_none());
+        let first_render = Instant::now() + Duration::from_secs(17);
+        assert!(secondary
+            .overlays
+            .session_name_notices
+            .front()
+            .unwrap()
+            .visible_until
+            .is_none());
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(900.0, 700.0),
+            )),
+            ..Default::default()
+        };
+        let mut output = egui::FullOutput::default();
+        for _ in 0..3 {
+            output = context.run_ui(input.clone(), |ui| {
+                secondary.show_transient_notice_at(ui.ctx(), first_render);
+            });
+            output.textures_delta.clear();
+        }
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape, egui::Shape::Text(text)
+                if text.galley.job.text.contains("blocked before writing")
+                    && text.galley.job.text.contains("no in-process save was unresolved")
+                    && !text.galley.job.text.contains("Retry")
+        )));
+        assert_eq!(
+            secondary
+                .overlays
+                .session_name_notices
+                .front()
+                .unwrap()
+                .visible_until,
+            Some(first_render + Duration::from_secs(8))
+        );
+
+        secondary.report_configuration_notice("Separate configuration warning.");
+        let mut output = context.run_ui(input.clone(), |ui| {
+            secondary.show_transient_notice_at(ui.ctx(), first_render + Duration::from_secs(7));
+        });
+        output.textures_delta.clear();
+        assert!(!secondary.overlays.session_name_notices.is_empty());
+        let mut output = egui::FullOutput::default();
+        for _ in 0..3 {
+            output = context.run_ui(input.clone(), |ui| {
+                secondary.show_transient_notice_at(ui.ctx(), first_render + Duration::from_secs(8));
+            });
+            output.textures_delta.clear();
+        }
+        assert!(secondary.overlays.session_name_notices.is_empty());
+        assert!(secondary.overlays.configuration_notice.is_some());
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape, egui::Shape::Text(text)
+                if text.galley.job.text.contains("Separate configuration warning")
+        )));
+        assert!(!output.shapes.iter().any(|shape| matches!(
+            &shape.shape, egui::Shape::Text(text)
+                if text.galley.job.text.contains("blocked before writing")
+        )));
+    }
+
+    #[test]
+    fn queued_prewrite_and_busy_notices_remain_truthful_after_unknown_save() {
+        use crate::configuration_startup::{
+            ConfigurationLoadFailure, ConfigurationReloader, SessionNameConfigurationFixture,
+            SAVE_BUSY_MESSAGE, UNKNOWN_SAVE_MESSAGE,
+        };
+
+        for earlier_failure in [
+            ConfigurationLoadFailure::Unreadable,
+            ConfigurationLoadFailure::SaveBusy,
+        ] {
+            let fixture = SessionNameConfigurationFixture::new();
+            let reloader = ConfigurationReloader::from_path_for_test(fixture.path.clone());
+            let configuration = Configuration::empty();
+            let earlier = reloader.clone().with_save_failure_for_test(earlier_failure);
+            assert_eq!(
+                earlier.save_configuration(&configuration),
+                Err(earlier_failure)
+            );
+            assert!(!fixture.path.exists());
+            let context = egui::Context::default();
+            let mut app = FesTermApp::for_test_with_configuration(configuration.clone());
+            app.configuration_reloader = reloader.clone();
+            app.show_session_name_persistence_notice(&context, false, Some(earlier_failure));
+
+            let later = reloader
+                .clone()
+                .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+            assert_eq!(
+                later.save_configuration(&configuration),
+                Err(ConfigurationLoadFailure::OutcomeUnknown)
+            );
+            assert_eq!(
+                Configuration::load_from_path(&fixture.path).unwrap(),
+                configuration
+            );
+            assert_eq!(
+                reloader.save_configuration(&configuration),
+                Err(ConfigurationLoadFailure::ReconciliationRequired)
+            );
+            app.show_session_name_persistence_notice(
+                &context,
+                false,
+                Some(ConfigurationLoadFailure::OutcomeUnknown),
+            );
+            if earlier_failure == ConfigurationLoadFailure::SaveBusy {
+                app.report_configuration_notice(SAVE_BUSY_MESSAGE);
+                app.report_configuration_notice(UNKNOWN_SAVE_MESSAGE);
+            }
+
+            let first_render = Instant::now() + Duration::from_secs(30);
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 700.0),
+                )),
+                ..Default::default()
+            };
+            for (elapsed, expected) in [
+                (0, "This session naming change applied locally"),
+                (8, "whether it was saved is unknown"),
+            ] {
+                let mut output = egui::FullOutput::default();
+                for _ in 0..3 {
+                    output = context.run_ui(input.clone(), |ui| {
+                        app.show_transient_notice_at(
+                            ui.ctx(),
+                            first_render + Duration::from_secs(elapsed),
+                        )
+                    });
+                    output.textures_delta.clear();
+                }
+                let text = output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text.contains(expected) => {
+                        Some(text.galley.job.text.as_str())
+                    }
+                    _ => None,
+                });
+                let text = text.expect("the queued notice is rendered");
+                assert!(!text.contains("will not survive restart"));
+                assert!(!text.contains("Retry after it completes"));
+                assert_eq!(
+                    app.overlays
+                        .session_name_notices
+                        .front()
+                        .unwrap()
+                        .visible_until,
+                    Some(first_render + Duration::from_secs(elapsed + 8))
+                );
+                if elapsed == 0 {
+                    assert!(text.contains("reconcile manually"));
+                    assert!(!text.contains("Retry"));
+                    if earlier_failure == ConfigurationLoadFailure::SaveBusy {
+                        assert!(text.contains("blocked before writing"));
+                    } else {
+                        assert!(text.contains("this save did not write its candidate"));
+                    }
+                } else {
+                    assert!(text.contains("reconcile manually"));
+                    assert!(!text.contains("Retry"));
+                }
+                if earlier_failure == ConfigurationLoadFailure::SaveBusy {
+                    let shared = output.shapes.iter().find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text)
+                            if text
+                                .galley
+                                .job
+                                .text
+                                .contains("This save was blocked before writing") =>
+                        {
+                            Some(text.galley.job.text.as_str())
+                        }
+                        _ => None,
+                    });
+                    let shared = shared.expect("the shared busy notice is rendered");
+                    assert!(!shared.contains("Retry"));
+                    assert!(shared.contains("save outcome is unknown"));
+                }
+            }
+            context
+                .run_ui(input, |ui| {
+                    app.show_transient_notice_at(ui.ctx(), first_render + Duration::from_secs(16))
+                })
+                .drop_without_applying_deltas();
+            assert!(app.overlays.session_name_notices.is_empty());
+        }
+    }
+
+    #[test]
+    fn delayed_session_save_notices_track_unrelated_gate_changes_after_banner_expiry() {
+        use crate::configuration_startup::{
+            ConfigurationLoadFailure, ConfigurationReloader, SessionNameConfigurationFixture,
+            UNKNOWN_SAVE_MESSAGE,
+        };
+
+        fn render(app: &mut FesTermApp, context: &egui::Context, now: Instant) -> Vec<String> {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 700.0),
+                )),
+                ..Default::default()
+            };
+            let mut output = egui::FullOutput::default();
+            for _ in 0..3 {
+                output = context.run_ui(input.clone(), |ui| {
+                    app.show_transient_notice_at(ui.ctx(), now);
+                });
+                output.textures_delta.clear();
+            }
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        for earlier_failure in [
+            ConfigurationLoadFailure::Unreadable,
+            ConfigurationLoadFailure::SaveBusy,
+        ] {
+            for transition in ["already-unknown", "later-unknown", "later-poisoned"] {
+                let fixture = SessionNameConfigurationFixture::new();
+                let reloader = ConfigurationReloader::from_path_for_test(fixture.path.clone());
+                let original = Configuration::empty();
+                let unrelated =
+                    Configuration::new(vec![
+                        Profile::local("unrelated", "sh", vec![], None).unwrap()
+                    ])
+                    .unwrap();
+                let first = reloader.clone().with_save_failure_for_test(earlier_failure);
+                assert_eq!(first.save_configuration(&original), Err(earlier_failure));
+                let context = egui::Context::default();
+                let mut app = FesTermApp::for_test_with_configuration(original);
+                app.configuration_reloader = reloader.clone();
+                app.show_session_name_notice(&context, SessionNameNoticeKind::LiveOnly);
+                app.show_session_name_notice(&context, SessionNameNoticeKind::SecretLike);
+                app.show_session_name_persistence_notice(&context, false, Some(earlier_failure));
+
+                if transition == "already-unknown" {
+                    let later = reloader
+                        .clone()
+                        .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+                    assert_eq!(
+                        later.save_configuration(&unrelated),
+                        Err(ConfigurationLoadFailure::OutcomeUnknown)
+                    );
+                    app.report_configuration_notice(UNKNOWN_SAVE_MESSAGE);
+                }
+
+                let first_render = Instant::now() + Duration::from_secs(30);
+                let texts = render(&mut app, &context, first_render);
+                let live_only = texts
+                    .iter()
+                    .find(|text| text.contains("open tab only"))
+                    .unwrap();
+                if transition == "already-unknown" {
+                    assert!(live_only.contains("reconcile manually"));
+                } else {
+                    assert!(live_only.contains("no in-process save was unresolved"));
+                }
+                assert!(
+                    render(&mut app, &context, first_render + Duration::from_secs(8))
+                        .iter()
+                        .any(|text| text.contains("secret-like"))
+                );
+                let texts = render(&mut app, &context, first_render + Duration::from_secs(16));
+                assert!(app.overlays.configuration_notice.is_none());
+                let notice = texts
+                    .iter()
+                    .find(|text| text.contains("This session naming change applied locally"))
+                    .unwrap();
+                assert!(!notice.contains("Retry"));
+                assert!(!notice.contains("will not survive restart"));
+                if earlier_failure == ConfigurationLoadFailure::SaveBusy {
+                    assert!(notice.contains("blocked before writing"));
+                } else {
+                    assert!(notice.contains("this save did not write its candidate"));
+                }
+                if transition == "already-unknown" {
+                    assert!(notice.contains("reconcile manually"));
+                    assert_eq!(
+                        Configuration::load_from_path(&fixture.path).unwrap(),
+                        unrelated
+                    );
+                } else {
+                    assert!(notice.contains("no in-process save was unresolved"));
+                    let guard = reloader.hold_save_gate_for_test();
+                    let texts = render(&mut app, &context, first_render + Duration::from_secs(17));
+                    let notice = texts
+                        .iter()
+                        .find(|text| text.contains("This session naming change applied locally"))
+                        .unwrap();
+                    assert!(notice.contains("save is in progress"));
+                    assert!(!notice.contains("Retry"));
+                    drop(guard);
+
+                    if transition == "later-poisoned" {
+                        let later = reloader.clone().with_panic_after_installation_for_test();
+                        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let _ = later.save_configuration(&unrelated);
+                        }))
+                        .is_err());
+                    } else {
+                        let later = reloader
+                            .clone()
+                            .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+                        assert_eq!(
+                            later.save_configuration(&unrelated),
+                            Err(ConfigurationLoadFailure::OutcomeUnknown)
+                        );
+                    }
+                    let texts = render(&mut app, &context, first_render + Duration::from_secs(18));
+                    let notice = texts
+                        .iter()
+                        .find(|text| text.contains("This session naming change applied locally"))
+                        .unwrap();
+                    assert!(notice.contains("reconcile manually"));
+                    assert!(!notice.contains("Retry"));
+                }
+                assert_eq!(
+                    app.overlays
+                        .session_name_notices
+                        .front()
+                        .unwrap()
+                        .visible_until,
+                    Some(first_render + Duration::from_secs(24))
+                );
+                render(&mut app, &context, first_render + Duration::from_secs(24));
+                assert!(app.overlays.session_name_notices.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_configuration_notice_renews_visible_lifetime_without_duplication() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let first = SecretCleanupNotice::ProfileRetained.message();
+        let other = SecretCleanupNotice::ImportCleanupFailed.message();
+        let start = Instant::now();
+        app.report_configuration_notice_at(first, start);
+        app.report_configuration_notice_at(other, start);
+        app.overlays.configuration_notice_rendered = true;
+        app.report_configuration_notice_at(first, start + Duration::from_secs(11));
+        let (text, deadline) = app.overlays.configuration_notice.as_ref().unwrap();
+        assert_eq!(*deadline, start + Duration::from_secs(23));
+        assert_eq!(text.matches(first).count(), 1);
+        assert_eq!(text.matches(other).count(), 1);
+        assert!(text.len() < 4096);
+        assert!(!app.overlays.configuration_notice_rendered);
+    }
+
+    #[test]
+    fn repeated_shared_notice_renews_after_originating_window_closes() {
+        let context = egui::Context::default();
+        let mut primary = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let message = SecretCleanupNotice::ProfileRetained.message();
+        primary.report_configuration_notice(message);
+        let previous_deadline = Instant::now() + Duration::from_secs(2);
+        primary.overlays.configuration_notice.as_mut().unwrap().1 = previous_deadline;
+        primary.overlays.configuration_notice_rendered = true;
+        let (configuration, status, reloader, secret_store, documents) =
+            primary.shared_application_services();
+        let mut secondary = FesTermApp::secondary_window(
+            &context,
+            configuration,
+            status,
+            reloader,
+            secret_store,
+            documents,
+        );
+        secondary.publish_shared_notice(SecretCleanupNotice::ProfileRetained);
+        drop(secondary);
+        primary.frame_logic(&context);
+        let (text, deadline) = primary.overlays.configuration_notice.as_ref().unwrap();
+        assert!(deadline.duration_since(previous_deadline) >= Duration::from_secs(9));
+        assert_eq!(text.matches(message).count(), 1);
+        assert!(!primary.overlays.configuration_notice_rendered);
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            primary.show_transient_notice(ui.ctx());
+        });
+        output.textures_delta.clear();
+        assert!(primary.overlays.configuration_notice_rendered);
+    }
+
+    #[test]
+    fn postpass_profile_usage_unknown_and_blocked_wake_idle_viewport() {
+        use crate::configuration_startup::{
+            ConfigurationLoadFailure, ConfigurationReloader, SessionNameConfigurationFixture,
+        };
+        for blocked in [false, true] {
+            for secondary in [false, true] {
+                let fixture = SessionNameConfigurationFixture::new();
+                let configuration =
+                    Configuration::new(vec![Profile::local("saved", "sh", vec![], None).unwrap()])
+                        .unwrap();
+                configuration.save_to_path(&fixture.path).unwrap();
+                let reloader = ConfigurationReloader::from_path_for_test(fixture.path.clone());
+                if blocked {
+                    let first = reloader
+                        .clone()
+                        .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+                    assert_eq!(
+                        first.save_configuration(&configuration),
+                        Err(ConfigurationLoadFailure::OutcomeUnknown)
+                    );
+                }
+                let mut app = FesTermApp::for_test_with_configuration(configuration);
+                app.configuration_reloader = if blocked {
+                    reloader
+                } else {
+                    reloader.with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown)
+                };
+                let context = egui::Context::default();
+                let viewport = if secondary {
+                    egui::ViewportId::from_hash_of("usage-secondary")
+                } else {
+                    egui::ViewportId::ROOT
+                };
+                let mut input = egui::RawInput {
+                    viewport_id: viewport,
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 700.0),
+                    )),
+                    ..Default::default()
+                };
+                input.viewports.entry(viewport).or_default();
+                for _ in 0..4 {
+                    context
+                        .run_ui(input.clone(), |_| {})
+                        .drop_without_applying_deltas();
+                }
+                assert!(!context.has_requested_repaint_for(&viewport));
+                let mut output = context.run_ui(input.clone(), |ui| {
+                    app.show_transient_notice(ui.ctx());
+                    app.record_profile_launch("saved", ui.ctx());
+                    assert!(ui.ctx().has_requested_repaint_for(&viewport));
+                });
+                output.textures_delta.clear();
+                for _ in 0..3 {
+                    output =
+                        context.run_ui(input.clone(), |ui| app.show_transient_notice(ui.ctx()));
+                    output.textures_delta.clear();
+                }
+                let expected = if blocked {
+                    "blocked"
+                } else {
+                    "outcome is unknown"
+                };
+                assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains(expected))), "blocked={blocked} secondary={secondary}");
+            }
+        }
+    }
+
+    #[test]
+    fn ssh_credential_cleanup_failure_is_visible_on_terminal() {
+        use crate::configuration_startup::{
+            ConfigurationLoadFailure, ConfigurationReloader, SessionNameConfigurationFixture,
+        };
+        use festerm_secret_store::SecretBytes;
+        for mode in ["profile-change", "save-failure", "previous-secret"] {
+            let fixture = SessionNameConfigurationFixture::new();
+            let store = Arc::new(FailingDeleteStore(MemorySecretStore::new()));
+            let old = store.put(&SecretBytes::copy_from_slice(b"old")).unwrap();
+            let new = store.put(&SecretBytes::copy_from_slice(b"new")).unwrap();
+            let profile = Profile::ssh("saved", "example.test", 22, "user", "xterm", 80, 24)
+                .unwrap()
+                .with_credential_reference(old.duplicate_for_transport())
+                .unwrap();
+            let configuration = Configuration::new(vec![profile.clone()]).unwrap();
+            configuration.save_to_path(&fixture.path).unwrap();
+            let (mut app, _, _) = FesTermApp::for_test_with_fake_ssh_session([]);
+            app.state
+                .replace_configuration(if mode == "profile-change" {
+                    Configuration::empty()
+                } else {
+                    configuration
+                });
+            let reloader = ConfigurationReloader::from_path_for_test(fixture.path.clone());
+            app.configuration_reloader = if mode == "save-failure" {
+                reloader.with_save_failure_for_test(ConfigurationLoadFailure::Unreadable)
+            } else {
+                reloader
+            };
+            let (sender, receiver) = mpsc::sync_channel(1);
+            assert!(sender
+                .send(Ok(PendingSecret::new(
+                    new.duplicate_for_transport(),
+                    store.clone(),
+                    app.configuration_reloader.secret_cleanup_failure(),
+                    SecretCleanupNotice::ProfilePending,
+                    egui::Context::default(),
+                )))
+                .is_ok());
+            app.overlays.pending_password_store = Some(PendingPasswordStore {
+                expected_profile: profile,
+                receiver,
+                profile_id: "saved".into(),
+                store: store.clone(),
+                launch_after_store: None,
+                credential_kind: festerm_config::CredentialKind::Password,
+            });
+            let context = egui::Context::default();
+            app.process_pending_password_store(&context);
+            assert!(store.get(&old).is_ok() && store.get(&new).is_ok());
+            let notice = &app.overlays.configuration_notice.as_ref().unwrap().0;
+            assert!(
+                notice.contains("cleanup") || notice.contains("could not be removed"),
+                "{mode}: {notice}"
+            );
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 700.0),
+                )),
+                ..Default::default()
+            };
+            let mut output = egui::FullOutput::default();
+            for _ in 0..3 {
+                output = context.run_ui(input.clone(), |ui| app.show_transient_notice(ui.ctx()));
+                output.textures_delta.clear();
+            }
+            assert!(output.shapes.iter().any(|shape| matches!(
+                &shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains("Reconcile secure storage manually")
+            )), "{mode}");
+        }
+    }
+
+    #[test]
+    fn ssh_queued_and_late_credential_cleanup_failures_reach_primary() {
+        for late in [false, true] {
+            let context = egui::Context::default();
+            let profile =
+                Profile::ssh("saved", "example.test", 22, "user", "xterm", 80, 24).unwrap();
+            let mut primary = FesTermApp::for_test_with_configuration(
+                Configuration::new(vec![profile.clone()]).unwrap(),
+            );
+            let (configuration, status, reloader, secret_store, documents) =
+                primary.shared_application_services();
+            let mut secondary = FesTermApp::secondary_window(
+                &context,
+                configuration,
+                status,
+                reloader,
+                secret_store,
+                documents,
+            );
+            let store = Arc::new(FailingDeleteStore(MemorySecretStore::new()));
+            let reference = store
+                .put(&festerm_secret_store::SecretBytes::copy_from_slice(
+                    b"fixture",
+                ))
+                .unwrap();
+            let secret = PendingSecret::new(
+                reference.duplicate_for_transport(),
+                store.clone(),
+                secondary.configuration_reloader.secret_cleanup_failure(),
+                SecretCleanupNotice::ProfilePending,
+                context.clone(),
+            );
+            let (sender, receiver) = mpsc::sync_channel(1);
+            secondary.overlays.pending_password_store = Some(PendingPasswordStore {
+                expected_profile: profile,
+                receiver,
+                profile_id: "saved".into(),
+                store: store.clone(),
+                launch_after_store: None,
+                credential_kind: festerm_config::CredentialKind::Password,
+            });
+            if late {
+                drop(secondary);
+                assert!(sender.send(Ok(secret)).is_err());
+            } else {
+                assert!(sender.send(Ok(secret)).is_ok());
+                drop(secondary);
+            }
+            primary.frame_logic(&context);
+            assert!(store.get(&reference).is_ok());
+            assert!(primary
+                .overlays
+                .configuration_notice
+                .as_ref()
+                .unwrap()
+                .0
+                .contains("could not be removed"));
+        }
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn tunnel_connect_token_cancel_cleanup_notice_is_type_neutral() {
+        use festerm_secret_store::SecretBytes;
+        let context = egui::Context::default();
+        let profile = Profile::named_dev_tunnel("private-profile", "owned.usw3").unwrap();
+        let mut primary =
+            FesTermApp::for_test_with_configuration(Configuration::new(vec![profile]).unwrap());
+        let (configuration, status, reloader, _, documents) = primary.shared_application_services();
+        let store: Arc<dyn SecretStore> = Arc::new(FailingDeleteStore(MemorySecretStore::new()));
+        let mut secondary = FesTermApp::secondary_window(
+            &context,
+            configuration,
+            status,
+            reloader,
+            Ok(Arc::clone(&store)),
+            documents,
+        );
+        secondary.store_credential_for_profile(
+            "private-profile".to_owned(),
+            festerm_config::CredentialKind::Password,
+            || SecretBytes::copy_from_slice(b"private-secret-canary"),
+            None,
+            &context,
+        );
+        let pending = secondary.overlays.pending_password_store.take().unwrap();
+        let secret = pending
+            .receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        drop(pending);
+        drop(secondary);
+        drop(secret);
+        primary.frame_logic(&context);
+        let text = &primary.overlays.configuration_notice.as_ref().unwrap().0;
+        assert!(text.contains("profile credential") && text.contains("could not be removed"));
+        assert!(!text.contains("SSH"));
+        assert!(!text.contains("private-profile"));
+        assert!(!text.contains("private-secret-canary"));
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn tunnel_connect_token_cleanup_failure_notices_are_type_neutral() {
+        use crate::configuration_startup::{
+            ConfigurationLoadFailure, ConfigurationReloader, SessionNameConfigurationFixture,
+        };
+        use festerm_secret_store::SecretBytes;
+
+        for mode in ["profile-change", "save-failure", "previous-secret"] {
+            let fixture = SessionNameConfigurationFixture::new();
+            let store = Arc::new(FailingDeleteStore(MemorySecretStore::new()));
+            let old = store.put(&SecretBytes::copy_from_slice(b"old")).unwrap();
+            let new = store
+                .put(&SecretBytes::copy_from_slice(b"private-secret-canary"))
+                .unwrap();
+            let profile = Profile::named_dev_tunnel("private-profile", "owned.usw3")
+                .unwrap()
+                .with_tunnel_connect_credential(old.duplicate_for_transport())
+                .unwrap();
+            let configuration = Configuration::new(vec![profile.clone()]).unwrap();
+            configuration.save_to_path(&fixture.path).unwrap();
+            let initial = if mode == "profile-change" {
+                Configuration::empty()
+            } else {
+                configuration
+            };
+            let mut app = FesTermApp::for_test_with_configuration(initial);
+            let reloader = ConfigurationReloader::from_path_for_test(fixture.path.clone());
+            app.configuration_reloader = if mode == "save-failure" {
+                reloader.with_save_failure_for_test(ConfigurationLoadFailure::Unreadable)
+            } else {
+                reloader
+            };
+            let context = egui::Context::default();
+            let (sender, receiver) = mpsc::sync_channel(1);
+            assert!(sender
+                .send(Ok(PendingSecret::new(
+                    new.duplicate_for_transport(),
+                    store.clone(),
+                    app.configuration_reloader.secret_cleanup_failure(),
+                    SecretCleanupNotice::ProfilePending,
+                    context.clone(),
+                )))
+                .is_ok());
+            app.overlays.pending_password_store = Some(PendingPasswordStore {
+                expected_profile: profile,
+                receiver,
+                profile_id: "private-profile".to_owned(),
+                store: store.clone(),
+                launch_after_store: None,
+                credential_kind: festerm_config::CredentialKind::Password,
+            });
+            app.process_pending_password_store(&context);
+            let text = &app.overlays.configuration_notice.as_ref().unwrap().0;
+            assert!(
+                text.contains("credential") && text.contains("Reconcile"),
+                "{mode}"
+            );
+            assert!(
+                !text.contains("SSH") && !text.contains("private-profile"),
+                "{mode}"
+            );
+            assert!(!text.contains("private-secret-canary"), "{mode}");
+            assert!(store.get(&old).is_ok() && store.get(&new).is_ok(), "{mode}");
+        }
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn blocked_tunnel_connect_token_retention_notice_is_type_neutral() {
+        use crate::configuration_startup::{
+            ConfigurationLoadFailure, ConfigurationReloader, SessionNameConfigurationFixture,
+        };
+        use festerm_secret_store::SecretBytes;
+
+        for busy in [false, true] {
+            let fixture = SessionNameConfigurationFixture::new();
+            let store = Arc::new(MemorySecretStore::new());
+            let old = store.put(&SecretBytes::copy_from_slice(b"old")).unwrap();
+            let new = store
+                .put(&SecretBytes::copy_from_slice(b"private-secret-canary"))
+                .unwrap();
+            let profile = Profile::named_dev_tunnel("private-profile", "owned.usw3")
+                .unwrap()
+                .with_tunnel_connect_credential(old.duplicate_for_transport())
+                .unwrap();
+            let configuration = Configuration::new(vec![profile.clone()]).unwrap();
+            configuration.save_to_path(&fixture.path).unwrap();
+            let reloader = ConfigurationReloader::from_path_for_test(fixture.path.clone());
+            let reloader = if busy {
+                reloader.with_save_failure_for_test(ConfigurationLoadFailure::SaveBusy)
+            } else {
+                let first = reloader
+                    .clone()
+                    .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+                assert_eq!(
+                    first.save_configuration(&configuration),
+                    Err(ConfigurationLoadFailure::OutcomeUnknown)
+                );
+                reloader
+            };
+            let context = egui::Context::default();
+            let mut primary = FesTermApp::for_test_with_configuration(configuration.clone());
+            primary.configuration_reloader = reloader;
+            let (config, status, reloader, secret_store, documents) =
+                primary.shared_application_services();
+            let mut secondary = FesTermApp::secondary_window(
+                &context,
+                config,
+                status,
+                reloader,
+                secret_store,
+                documents,
+            );
+            let (sender, receiver) = mpsc::sync_channel(1);
+            assert!(sender
+                .send(Ok(PendingSecret::new(
+                    new.duplicate_for_transport(),
+                    store.clone(),
+                    secondary.configuration_reloader.secret_cleanup_failure(),
+                    SecretCleanupNotice::ProfilePending,
+                    context.clone(),
+                )))
+                .is_ok());
+            secondary.overlays.pending_password_store = Some(PendingPasswordStore {
+                expected_profile: profile,
+                receiver,
+                profile_id: "private-profile".to_owned(),
+                store: store.clone(),
+                launch_after_store: None,
+                credential_kind: festerm_config::CredentialKind::Password,
+            });
+            secondary.process_pending_password_store(&context);
+            drop(secondary);
+            primary.frame_logic(&context);
+            let text = &primary.overlays.configuration_notice.as_ref().unwrap().0;
+            assert!(text.contains("candidate profile credential") && text.contains("retained"));
+            assert!(!text.contains("SSH"));
+            assert!(!text.contains("private-profile"));
+            assert!(!text.contains("private-secret-canary"));
+            assert!(store.get(&old).is_ok() && store.get(&new).is_ok());
+            assert_eq!(
+                Configuration::load_from_path(&fixture.path).unwrap(),
+                configuration
+            );
+        }
+    }
+
+    #[test]
+    fn ssh_panic_after_install_retains_candidate_and_poison_blocks_saves() {
+        use crate::configuration_startup::{
+            ConfigurationLoadFailure, ConfigurationReloader, SessionNameConfigurationFixture,
+        };
+        let fixture = SessionNameConfigurationFixture::new();
+        let profile = Profile::ssh("saved", "example.test", 22, "user", "xterm", 80, 24).unwrap();
+        let configuration = Configuration::new(vec![profile.clone()]).unwrap();
+        configuration.save_to_path(&fixture.path).unwrap();
+        let reloader = ConfigurationReloader::from_path_for_test(fixture.path.clone());
+        let mut app = FesTermApp::for_test_with_configuration(configuration.clone());
+        app.configuration_reloader = reloader.clone().with_panic_after_installation_for_test();
+        let store = Arc::new(MemorySecretStore::new());
+        let reference = store
+            .put(&festerm_secret_store::SecretBytes::copy_from_slice(
+                b"fixture",
+            ))
+            .unwrap();
+        let secret = PendingSecret::new(
+            reference.duplicate_for_transport(),
+            store.clone(),
+            reloader.secret_cleanup_failure(),
+            SecretCleanupNotice::ProfilePending,
+            egui::Context::default(),
+        );
+        let (sender, receiver) = mpsc::sync_channel(1);
+        assert!(sender.send(Ok(secret)).is_ok());
+        app.overlays.pending_password_store = Some(PendingPasswordStore {
+            expected_profile: profile,
+            receiver,
+            profile_id: "saved".into(),
+            store: store.clone(),
+            launch_after_store: None,
+            credential_kind: festerm_config::CredentialKind::Password,
+        });
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || app.process_pending_password_store(&egui::Context::default())
+        ))
+        .is_err());
+        let installed = Configuration::load_from_path(&fixture.path).unwrap();
+        assert!(installed.profile("saved").unwrap().credential_reference() == Some(&reference));
+        assert!(store.get(&reference).is_ok());
+        assert_eq!(
+            reloader.save_configuration(&configuration),
+            Err(ConfigurationLoadFailure::ReconciliationRequired)
+        );
+        assert_eq!(
+            Configuration::load_from_path(&fixture.path).unwrap(),
+            installed
+        );
+    }
+
+    #[test]
+    fn unresolved_save_blocks_same_frame_update_and_retains_later_credentials() {
+        use crate::configuration_startup::{ConfigurationLoadFailure, ConfigurationReloader};
+        use festerm_secret_store::{MemorySecretStore, SecretBytes, SecretStore};
+
+        let directory = tempfile::Builder::new()
+            .prefix("credential-latch-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let path = directory.path().join("config.toml");
+        let store = Arc::new(MemorySecretStore::new());
+        let old = store.put(&SecretBytes::copy_from_slice(b"old")).unwrap();
+        let first = store.put(&SecretBytes::copy_from_slice(b"first")).unwrap();
+        let later = store.put(&SecretBytes::copy_from_slice(b"later")).unwrap();
+        let profile =
+            festerm_config::Profile::ssh("saved", "example.test", 22, "user", "xterm", 80, 24)
+                .unwrap()
+                .with_credential_reference(old.duplicate_for_transport())
+                .unwrap();
+        let config = Configuration::new(vec![profile.clone()]).unwrap();
+        config.save_to_path(&path).unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(config.clone());
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone())
+            .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+        let cleanup_failure = app.configuration_reloader.secret_cleanup_failure();
+        let pending = |reference: &festerm_secret_store::SecretReference| {
+            let (sender, receiver) = mpsc::sync_channel(1);
+            assert!(sender
+                .send(Ok(PendingSecret::new(
+                    reference.duplicate_for_transport(),
+                    store.clone(),
+                    cleanup_failure.clone(),
+                    SecretCleanupNotice::ProfilePending,
+                    egui::Context::default(),
+                )))
+                .is_ok());
+            PendingPasswordStore {
+                expected_profile: profile.clone(),
+                receiver,
+                profile_id: "saved".into(),
+                store: store.clone(),
+                launch_after_store: Some(StoredCredentialLaunch::Sftp),
+                credential_kind: festerm_config::CredentialKind::Password,
+            }
+        };
+        let tab_count = app.state.tabs().len();
+        app.overlays.pending_password_store = Some(pending(&first));
+        app.process_pending_password_store(&egui::Context::default());
+        let installed = Configuration::load_from_path(&path).unwrap();
+        assert!(installed.profile("saved").unwrap().credential_reference() == Some(&first));
+        assert!(store.get(&first).is_ok());
+        assert!(store.get(&old).is_ok());
+
+        let (shared, status, reloader, secret_store, documents) = app.shared_application_services();
+        let mut sibling = FesTermApp::secondary_window(
+            &egui::Context::default(),
+            shared,
+            status,
+            reloader,
+            secret_store,
+            documents,
+        );
+        sibling.updates = UpdateController::inert_for_test();
+        sibling.updates.restore_schedule(true, Some(1_000), None);
+        assert!(sibling.updates.poll_schedule(9_999_998));
+        sibling.persist_update_check();
+        assert_eq!(Configuration::load_from_path(&path).unwrap(), installed);
+        assert!(sibling
+            .overlays
+            .configuration_notice
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("blocked"));
+
+        app.updates = UpdateController::inert_for_test();
+        app.updates.restore_schedule(true, Some(1_000), None);
+        assert!(app.updates.poll_schedule(9_999_999));
+        app.persist_update_check();
+        assert_eq!(Configuration::load_from_path(&path).unwrap(), installed);
+        assert_eq!(app.state.configuration(), &config);
+        assert!(app
+            .overlays
+            .configuration_notice
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("blocked"));
+
+        app.overlays.pending_password_store = Some(pending(&first));
+        app.process_pending_password_store(&egui::Context::default());
+        assert!(store.get(&first).is_ok());
+        app.overlays.pending_password_store = Some(pending(&later));
+        app.process_pending_password_store(&egui::Context::default());
+        assert_eq!(Configuration::load_from_path(&path).unwrap(), installed);
+        assert!(store.get(&first).is_ok());
+        assert!(store.get(&old).is_ok());
+        assert!(store.get(&later).is_ok());
+        assert_eq!(app.state.tabs().len(), tab_count);
+        assert_eq!(
+            app.configuration_status,
+            ConfigurationStartupStatus::PasswordCredentialSaveFailure(
+                ConfigurationLoadFailure::ReconciliationRequired
+            )
+        );
+        let notice = &app.overlays.configuration_notice.as_ref().unwrap().0;
+        assert!(notice.contains("retained") && notice.contains("restart"));
+
+        app.take_shared_cleanup_failures();
+        app.overlays.configuration_notice = None;
+        sibling.overlays.pending_password_store = Some(pending(&later));
+        sibling.process_pending_password_store(&egui::Context::default());
+        drop(sibling);
+        let context = egui::Context::default();
+        app.frame_logic(&context);
+        assert!(app
+            .overlays
+            .configuration_notice
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("candidate profile credential"));
+        assert!(store.get(&later).is_ok());
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(900.0, 700.0),
+            )),
+            ..Default::default()
+        };
+        let mut output = egui::FullOutput::default();
+        for _ in 0..3 {
+            output = context.run_ui(input.clone(), |ui| app.show_transient_notice(ui.ctx()));
+            output.textures_delta.clear();
+        }
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains("candidate profile credential")
+        )));
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn unresolved_save_blocks_import_and_retains_later_destination() {
+        use crate::configuration_startup::{ConfigurationLoadFailure, ConfigurationReloader};
+        let directory = tempfile::Builder::new()
+            .prefix("import-latch-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let path = directory.path().join("config.toml");
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone())
+            .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+        let import = crate::tunnel_profile_import::PublicProfileImport::parse(
+            &crate::tunnel_profile_import::fixture_json().to_string(),
+        )
+        .unwrap();
+        app.import_public_tunnel_profile(import.clone());
+        let installed = Configuration::load_from_path(&path).unwrap();
+        let destination = installed
+            .profile("server-one")
+            .unwrap()
+            .as_dev_tunnel()
+            .unwrap()
+            .destination_file();
+        assert!(std::path::Path::new(destination).is_file());
+        app.import_public_tunnel_profile(import);
+        assert_eq!(Configuration::load_from_path(&path).unwrap(), installed);
+        assert!(std::path::Path::new(destination).is_file());
+        assert_eq!(
+            fs::read_dir(directory.path().join("tunnel-profiles"))
+                .unwrap()
+                .count(),
+            2
+        );
+        assert_eq!(
+            app.configuration_status,
+            ConfigurationStartupStatus::ProfileSaveFailure(
+                ConfigurationLoadFailure::ReconciliationRequired
+            )
+        );
+        assert!(app
+            .overlays
+            .configuration_notice
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("retained"));
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn busy_save_retains_import_destination_and_reports_reconciliation() {
+        use crate::configuration_startup::{ConfigurationLoadFailure, ConfigurationReloader};
+        let directory = tempfile::Builder::new()
+            .prefix("import-busy-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let path = directory.path().join("config.toml");
+        let original = Configuration::empty();
+        original.save_to_path(&path).unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(original.clone());
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone())
+            .with_save_failure_for_test(ConfigurationLoadFailure::SaveBusy);
+        let import = crate::tunnel_profile_import::PublicProfileImport::parse(
+            &crate::tunnel_profile_import::fixture_json().to_string(),
+        )
+        .unwrap();
+        app.import_public_tunnel_profile(import);
+        assert_eq!(Configuration::load_from_path(&path).unwrap(), original);
+        assert_eq!(
+            fs::read_dir(directory.path().join("tunnel-profiles"))
+                .unwrap()
+                .count(),
+            1
+        );
+        assert_eq!(
+            app.configuration_status,
+            ConfigurationStartupStatus::ProfileSaveFailure(ConfigurationLoadFailure::SaveBusy)
+        );
+        let notice = &app.overlays.configuration_notice.as_ref().unwrap().0;
+        assert!(notice.contains("retained") && notice.contains("reconcile"));
+    }
+
+    #[test]
+    fn persistence_outcome_credential_save_retains_or_cleans_new_secret() {
+        use crate::configuration_startup::{ConfigurationLoadFailure, ConfigurationReloader};
+        use festerm_secret_store::{MemorySecretStore, SecretBytes, SecretStore};
+
+        for failure in [
+            ConfigurationLoadFailure::Unreadable,
+            ConfigurationLoadFailure::OutcomeUnknown,
+            ConfigurationLoadFailure::SaveBusy,
+        ] {
+            let directory = tempfile::Builder::new()
+                .prefix("credential-outcome-")
+                .tempdir_in(std::env::current_dir().unwrap())
+                .unwrap();
+            let path = directory.path().join("config.toml");
+            let store = Arc::new(MemorySecretStore::new());
+            let old = store
+                .put(&SecretBytes::copy_from_slice(b"old fixture"))
+                .unwrap();
+            let new = store
+                .put(&SecretBytes::copy_from_slice(b"new fixture"))
+                .unwrap();
+            let profile =
+                festerm_config::Profile::ssh("saved", "example.test", 22, "user", "xterm", 80, 24)
+                    .unwrap()
+                    .with_credential_reference(old.duplicate_for_transport())
+                    .unwrap();
+            let config = Configuration::new(vec![profile.clone()]).unwrap();
+            config.save_to_path(&path).unwrap();
+            let mut primary = FesTermApp::for_test_with_configuration(config.clone());
+            primary.configuration_reloader =
+                ConfigurationReloader::from_path_for_test(path.clone())
+                    .with_save_failure_for_test(failure);
+            let context = egui::Context::default();
+            let (configuration, status, reloader, secret_store, documents) =
+                primary.shared_application_services();
+            let mut app = FesTermApp::secondary_window(
+                &context,
+                configuration,
+                status,
+                reloader,
+                secret_store,
+                documents,
+            );
+            let (sender, receiver) = mpsc::sync_channel(1);
+            assert!(sender
+                .send(Ok(PendingSecret::new(
+                    new.duplicate_for_transport(),
+                    store.clone(),
+                    app.configuration_reloader.secret_cleanup_failure(),
+                    SecretCleanupNotice::ProfilePending,
+                    egui::Context::default(),
+                )))
+                .is_ok());
+            app.overlays.pending_password_store = Some(PendingPasswordStore {
+                expected_profile: profile,
+                receiver,
+                profile_id: "saved".into(),
+                store: store.clone(),
+                launch_after_store: Some(StoredCredentialLaunch::Sftp),
+                credential_kind: festerm_config::CredentialKind::Password,
+            });
+            let tabs_before = app.state.tabs().len();
+            app.process_pending_password_store(&egui::Context::default());
+            assert_eq!(app.state.tabs().len(), tabs_before);
+            assert_eq!(app.state.configuration(), &config);
+            assert!(store.get(&old).is_ok());
+            if failure == ConfigurationLoadFailure::OutcomeUnknown {
+                assert!(store.get(&new).is_ok());
+                assert!(
+                    Configuration::load_from_path(&path)
+                        .unwrap()
+                        .profile("saved")
+                        .unwrap()
+                        .credential_reference()
+                        == Some(&new)
+                );
+                assert_eq!(
+                    app.secure_storage_feedback,
+                    Some(crate::configuration_startup::UNKNOWN_RESOURCE_SAVE_MESSAGE)
+                );
+                assert!(app.overlays.configuration_notice.is_some());
+            } else if failure == ConfigurationLoadFailure::SaveBusy {
+                assert!(store.get(&new).is_ok());
+                assert_eq!(Configuration::load_from_path(&path).unwrap(), config);
+                assert!(
+                    app.configuration_reloader
+                        .secret_cleanup_failure()
+                        .load(Ordering::Acquire)
+                        & SecretCleanupNotice::ProfileRetained.bit()
+                        != 0
+                );
+            } else {
+                assert!(store.get(&new).is_err());
+                assert_eq!(Configuration::load_from_path(&path).unwrap(), config);
+                assert!(app.secure_storage_feedback.unwrap().contains("removed"));
+            }
+
+            assert!(!app.configuration_status.was_saved());
+            if failure == ConfigurationLoadFailure::SaveBusy {
+                drop(app);
+                primary.frame_logic(&context);
+                assert!(primary
+                    .overlays
+                    .configuration_notice
+                    .as_ref()
+                    .unwrap()
+                    .0
+                    .contains("candidate profile credential"));
+            }
+        }
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn persistence_outcome_tunnel_import_retains_and_reports_reconciliation() {
+        use crate::configuration_startup::{ConfigurationLoadFailure, ConfigurationReloader};
+        let directory = tempfile::Builder::new()
+            .prefix("import-outcome-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let path = directory.path().join("config.toml");
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone())
+            .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+        let import = crate::tunnel_profile_import::PublicProfileImport::parse(
+            &crate::tunnel_profile_import::fixture_json().to_string(),
+        )
+        .unwrap();
+        app.import_public_tunnel_profile(import);
+        assert!(app.state.configuration().profiles().is_empty());
+        assert!(app.configuration_status.save_outcome_unknown());
+        assert_eq!(
+            app.secure_storage_feedback,
+            Some(crate::configuration_startup::UNKNOWN_RESOURCE_SAVE_MESSAGE)
+        );
+        assert!(app.overlays.configuration_notice.is_some());
+        let saved = Configuration::load_from_path(&path).unwrap();
+        let destination = saved
+            .profile("server-one")
+            .unwrap()
+            .as_dev_tunnel()
+            .unwrap()
+            .destination_file();
+        assert!(std::path::Path::new(destination).is_file());
+    }
+
+    #[test]
+    fn persistence_outcome_session_name_notice_does_not_suggest_blind_retry() {
+        use crate::configuration_startup::ConfigurationLoadFailure;
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let context = egui::Context::default();
+        for failure in [
+            ConfigurationLoadFailure::OutcomeUnknown,
+            ConfigurationLoadFailure::ReconciliationRequired,
+        ] {
+            app.show_session_name_persistence_notice(&context, false, Some(failure));
+            let message = app.session_name_notice_for_test().unwrap();
+            assert!(message.contains("reconcile"));
+            assert!(!message.contains("Retry"));
+            if failure == ConfigurationLoadFailure::OutcomeUnknown {
+                assert!(message.contains("whether it was saved is unknown"));
+            } else {
+                assert!(message.contains("blocked before writing"));
+            }
+        }
+        app.show_session_name_persistence_notice(
+            &context,
+            false,
+            Some(ConfigurationLoadFailure::SaveBusy),
+        );
+        let message = app.session_name_notice_for_test().unwrap();
+        assert!(message.contains("blocked before writing"));
+        assert!(!message.contains("Retry"));
+    }
     use crate::overlay_state::{CloseConsequence, QuitConfirmationPurpose};
     use egui_kittest::{
         kittest::{NodeT, Queryable},

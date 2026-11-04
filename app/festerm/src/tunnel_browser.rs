@@ -3,7 +3,7 @@
 //! Dev Tunnel profile from the one the user picks. Nothing from the sign-in is
 //! retained; the profile still signs in on its own the first time it connects.
 
-use std::sync::{mpsc, Arc};
+use std::sync::{atomic::AtomicU16, mpsc, Arc};
 use std::time::Duration;
 
 use eframe::egui;
@@ -19,11 +19,17 @@ use festerm_ui_egui::theme;
 use tokio_util::sync::CancellationToken;
 
 use super::FesTermApp;
+use crate::overlay_state::PendingSecret;
+
+struct SignedAccount {
+    account: DevTunnelAccount,
+    secret: PendingSecret,
+}
 
 enum Event {
     Device(DevicePrompt),
     /// A new sign-in finished and its credential is in the store.
-    Signed(DevTunnelAccount),
+    Signed(SignedAccount),
     Listed(Result<(String, Vec<TunnelSummary>), Error>),
     LocalRemoval(Result<festerm_config::LocalTunnelHosting, &'static str>),
 }
@@ -64,6 +70,7 @@ impl Browser {
     fn start(
         account: Option<DevTunnelAccount>,
         store: Arc<dyn SecretStore>,
+        cleanup_failure: Arc<AtomicU16>,
         context: &egui::Context,
         delete: Option<String>,
         rename: Option<(String, String)>,
@@ -125,7 +132,7 @@ impl Browser {
                             tokio::select! {
                                 _ = cancel.cancelled() => Err(Error::Cancelled),
                                 _ = tokio::time::sleep(Duration::from_secs(1800)) => Err(Error::Expired),
-                                value = run(account, &store, client_id, &cancel, &notify, delete.as_deref(), rename.as_ref()) => value,
+                                value = run(account, &store, client_id, &cancel, &notify, delete.as_deref(), rename.as_ref(), Some((cleanup_failure, context.clone()))) => value,
                             }
                         })
                     });
@@ -158,6 +165,7 @@ pub(super) async fn list_for_account(
         &|_| true,
         None,
         None,
+        None,
     )
     .await?
     {
@@ -168,9 +176,10 @@ pub(super) async fn list_for_account(
 
 enum Outcome {
     Listed(String, Vec<TunnelSummary>),
-    Signed(DevTunnelAccount),
+    Signed(SignedAccount),
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run(
     account: Option<DevTunnelAccount>,
     store: &Arc<dyn SecretStore>,
@@ -179,9 +188,11 @@ async fn run(
     notify: &impl Fn(Event) -> bool,
     delete: Option<&str>,
     rename: Option<&(String, String)>,
+    cleanup: Option<(Arc<AtomicU16>, egui::Context)>,
 ) -> Result<Outcome, Error> {
     let http = Https::new()?;
     let Some(account) = account else {
+        let (cleanup_failure, context) = cleanup.ok_or(Error::Store)?;
         let identity = identity::sign_in(&http, client_id, None, cancel, |prompt| {
             if !notify(Event::Device(prompt)) {
                 cancel.cancel();
@@ -191,6 +202,13 @@ async fn run(
         let reference = store
             .put(&SecretBytes::copy_from_slice(&identity.encode_private()?))
             .map_err(|_| Error::Store)?;
+        let secret = PendingSecret::new(
+            reference.duplicate_for_transport(),
+            Arc::clone(store),
+            cleanup_failure,
+            crate::configuration_startup::SecretCleanupNotice::BrowserPending,
+            context,
+        );
         return DevTunnelAccount::new(
             format!("github-{}", identity.account.login.to_ascii_lowercase()),
             AccountProvider::Github,
@@ -198,7 +216,7 @@ async fn run(
             identity.account.login.clone(),
             reference,
         )
-        .map(Outcome::Signed)
+        .map(|account| Outcome::Signed(SignedAccount { account, secret }))
         .map_err(|_| Error::Response);
     };
     let secret = store
@@ -259,7 +277,14 @@ impl FesTermApp {
             },
             None => None,
         };
-        self.tunnel_browser = Some(Browser::start(account, store, context, None, None));
+        self.tunnel_browser = Some(Browser::start(
+            account,
+            store,
+            self.configuration_reloader.secret_cleanup_failure(),
+            context,
+            None,
+            None,
+        ));
         self.overlays.native_tunnel = true;
         context.request_repaint();
     }
@@ -300,12 +325,14 @@ impl FesTermApp {
             }
             return;
         }
-        if let Some(account) = signed {
+        if let Some(signed) = signed {
             let store = self
                 .tunnel_browser
                 .take()
                 .map(|browser| Arc::clone(&browser.store));
             self.overlays.native_tunnel = false;
+            let SignedAccount { account, secret } = signed;
+            let _reference = secret.release();
             self.save_signed_in_account(account, store, context);
         }
     }
@@ -336,11 +363,31 @@ impl FesTermApp {
             super::ConfigurationStartupStatus::ProfileSaveFailure,
             crate::configuration_startup::ConfigurationReloader::save_profile,
         );
-        if let Some(store) = store {
-            let discarded = if saved { previous } else { Some(new_reference) };
-            if let Some(reference) = discarded {
-                let _ = store.delete(&reference);
-            }
+        let unknown = self.configuration_status.save_outcome_unknown();
+        let blocked = self.configuration_status.save_reconciliation_required() && !unknown
+            || self.configuration_status
+                == super::ConfigurationStartupStatus::ProfileSaveFailure(
+                    crate::configuration_startup::ConfigurationLoadFailure::SaveBusy,
+                );
+        if unknown {
+            self.report_unknown_configuration_save(true);
+        }
+        let discarded = if unknown || blocked {
+            None
+        } else if saved {
+            previous
+        } else {
+            Some(new_reference)
+        };
+        let cleanup_failed = discarded.is_some_and(|reference| {
+            store
+                .as_ref()
+                .is_none_or(|store| store.delete(&reference).is_err())
+        });
+        if blocked {
+            self.publish_shared_notice(
+                crate::configuration_startup::SecretCleanupNotice::BrowserRetained,
+            );
         }
         if let Some(key) = key.filter(|_| saved) {
             context.data_mut(|data| {
@@ -348,7 +395,26 @@ impl FesTermApp {
             });
             context.request_repaint();
         }
-        self.secure_storage_feedback = Some(if saved {
+        if cleanup_failed {
+            self.report_secret_cleanup_failure(
+                if saved {
+                    crate::configuration_startup::SecretCleanupNotice::BrowserPrevious
+                } else {
+                    crate::configuration_startup::SecretCleanupNotice::BrowserSaveFailed
+                },
+                context,
+            );
+        }
+        self.secure_storage_feedback = Some(if unknown {
+            crate::configuration_startup::UNKNOWN_RESOURCE_SAVE_MESSAGE
+        } else if blocked {
+            self.secure_storage_feedback
+                .expect("blocked save was reported")
+        } else if cleanup_failed && saved {
+            "The account was saved, but the previous native credential could not be removed. Reconcile secure storage manually."
+        } else if cleanup_failed {
+            "The account could not be saved, and the new native credential could not be removed. Reconcile secure storage manually."
+        } else if saved {
             let _ = login;
             "Signed in. The account is available to every Dev Tunnel profile."
         } else {
@@ -620,6 +686,7 @@ impl FesTermApp {
                 self.tunnel_browser = Some(Browser::start(
                     Some(account),
                     store,
+                    self.configuration_reloader.secret_cleanup_failure(),
                     context,
                     Some(locator),
                     None,
@@ -635,6 +702,7 @@ impl FesTermApp {
                 self.tunnel_browser = Some(Browser::start(
                     Some(account),
                     store,
+                    self.configuration_reloader.secret_cleanup_failure(),
                     context,
                     None,
                     Some(rename),
@@ -726,6 +794,234 @@ pub(crate) fn take_picked_tunnel(context: &egui::Context) -> Option<PickedTunnel
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FailingDeleteStore(festerm_secret_store::MemorySecretStore);
+    impl SecretStore for FailingDeleteStore {
+        fn put(
+            &self,
+            secret: &SecretBytes,
+        ) -> Result<festerm_secret_store::SecretReference, festerm_secret_store::SecretStoreError>
+        {
+            self.0.put(secret)
+        }
+        fn get(
+            &self,
+            reference: &festerm_secret_store::SecretReference,
+        ) -> Result<SecretBytes, festerm_secret_store::SecretStoreError> {
+            self.0.get(reference)
+        }
+        fn update(
+            &self,
+            reference: &festerm_secret_store::SecretReference,
+            secret: &SecretBytes,
+        ) -> Result<(), festerm_secret_store::SecretStoreError> {
+            self.0.update(reference, secret)
+        }
+        fn delete(
+            &self,
+            _: &festerm_secret_store::SecretReference,
+        ) -> Result<bool, festerm_secret_store::SecretStoreError> {
+            Err(festerm_secret_store::SecretStoreError::BackendFailure)
+        }
+    }
+
+    #[test]
+    fn browser_cancelled_queued_and_late_signin_reports_cleanup_failure() {
+        for late in [false, true] {
+            let context = egui::Context::default();
+            let mut app =
+                FesTermApp::for_test_with_configuration(festerm_config::Configuration::empty());
+            let store: Arc<dyn SecretStore> = Arc::new(FailingDeleteStore(
+                festerm_secret_store::MemorySecretStore::new(),
+            ));
+            let reference = store
+                .put(&SecretBytes::copy_from_slice(b"fixture"))
+                .unwrap();
+            let account = DevTunnelAccount::new(
+                "account",
+                AccountProvider::Github,
+                42,
+                "user",
+                reference.duplicate_for_transport(),
+            )
+            .unwrap();
+            let secret = PendingSecret::new(
+                reference.duplicate_for_transport(),
+                Arc::clone(&store),
+                app.configuration_reloader.secret_cleanup_failure(),
+                crate::configuration_startup::SecretCleanupNotice::BrowserPending,
+                context.clone(),
+            );
+            let event = Event::Signed(SignedAccount { account, secret });
+            let (sender, receiver) = mpsc::sync_channel(1);
+            let browser = Browser {
+                cancel: CancellationToken::new(),
+                receiver,
+                stage: Stage::Working,
+                focus_cancel: false,
+                store: Arc::clone(&store),
+                account: None,
+                _lease: None,
+            };
+            if late {
+                drop(browser);
+                assert!(sender.try_send(event).is_err());
+            } else {
+                assert!(sender.try_send(event).is_ok());
+                drop(browser);
+            }
+            app.frame_logic(&context);
+            assert!(store.get(&reference).is_ok());
+            assert!(app
+                .overlays
+                .configuration_notice
+                .as_ref()
+                .unwrap()
+                .0
+                .contains("could not be removed"));
+        }
+    }
+
+    #[test]
+    fn blocked_account_save_retains_a_shared_reference() {
+        use crate::configuration_startup::{
+            ConfigurationLoadFailure, ConfigurationReloader, SessionNameConfigurationFixture,
+        };
+        use festerm_config::Configuration;
+        use festerm_secret_store::MemorySecretStore;
+        for busy in [false, true] {
+            let fixture = SessionNameConfigurationFixture::new();
+            let store = Arc::new(MemorySecretStore::new());
+            let shared = store
+                .put(&SecretBytes::copy_from_slice(b"fixture"))
+                .unwrap();
+            let account = DevTunnelAccount::new(
+                "account",
+                AccountProvider::Github,
+                42,
+                "user",
+                shared.duplicate_for_transport(),
+            )
+            .unwrap();
+            let configuration = Configuration::empty()
+                .with_account(account.clone())
+                .unwrap()
+                .0;
+            configuration.save_to_path(&fixture.path).unwrap();
+            let reloader = ConfigurationReloader::from_path_for_test(fixture.path.clone());
+            let reloader = if busy {
+                reloader.with_save_failure_for_test(ConfigurationLoadFailure::SaveBusy)
+            } else {
+                let first = reloader
+                    .clone()
+                    .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+                assert_eq!(
+                    first.save_configuration(&configuration),
+                    Err(ConfigurationLoadFailure::OutcomeUnknown)
+                );
+                reloader
+            };
+            let context = egui::Context::default();
+            let mut primary = FesTermApp::for_test_with_configuration(configuration.clone());
+            primary.configuration_reloader = reloader;
+            let (config, status, reloader, secret_store, documents) =
+                primary.shared_application_services();
+            let mut app = FesTermApp::secondary_window(
+                &context,
+                config,
+                status,
+                reloader,
+                secret_store,
+                documents,
+            );
+            app.save_signed_in_account(account, Some(store.clone()), &context);
+            assert!(store.get(&shared).is_ok());
+            assert_eq!(
+                Configuration::load_from_path(&fixture.path).unwrap(),
+                configuration
+            );
+            assert!(app
+                .overlays
+                .configuration_notice
+                .as_ref()
+                .unwrap()
+                .0
+                .contains("retained"));
+            drop(app);
+            primary.frame_logic(&context);
+            assert!(primary
+                .overlays
+                .configuration_notice
+                .as_ref()
+                .unwrap()
+                .0
+                .contains("candidate Dev Tunnel account credential"));
+        }
+    }
+
+    #[test]
+    fn persistence_outcome_account_save_retains_both_secrets_only_when_unknown() {
+        use crate::configuration_startup::{ConfigurationLoadFailure, ConfigurationReloader};
+        use festerm_config::Configuration;
+        use festerm_secret_store::MemorySecretStore;
+
+        for failure in [
+            ConfigurationLoadFailure::Unreadable,
+            ConfigurationLoadFailure::OutcomeUnknown,
+        ] {
+            let directory = tempfile::Builder::new()
+                .prefix("account-outcome-")
+                .tempdir_in(std::env::current_dir().unwrap())
+                .unwrap();
+            let path = directory.path().join("config.toml");
+            let store = Arc::new(MemorySecretStore::new());
+            let old = store
+                .put(&SecretBytes::copy_from_slice(b"old fixture"))
+                .unwrap();
+            let new = store
+                .put(&SecretBytes::copy_from_slice(b"new fixture"))
+                .unwrap();
+            let account = |reference| {
+                DevTunnelAccount::new("account", AccountProvider::Github, 42, "user", reference)
+                    .unwrap()
+            };
+            let config = Configuration::empty()
+                .with_account(account(old.duplicate_for_transport()))
+                .unwrap()
+                .0;
+            config.save_to_path(&path).unwrap();
+            let mut app = FesTermApp::for_test_with_configuration(config.clone());
+            app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone())
+                .with_save_failure_for_test(failure);
+            app.save_signed_in_account(
+                account(new.duplicate_for_transport()),
+                Some(store.clone()),
+                &egui::Context::default(),
+            );
+            assert!(store.get(&old).is_ok());
+            assert_eq!(app.state.configuration(), &config);
+            assert!(!app.configuration_status.was_saved());
+            if failure == ConfigurationLoadFailure::OutcomeUnknown {
+                assert!(store.get(&new).is_ok());
+                assert!(
+                    Configuration::load_from_path(&path)
+                        .unwrap()
+                        .account("account")
+                        .unwrap()
+                        .credential_reference()
+                        == &new
+                );
+                assert_eq!(
+                    app.secure_storage_feedback,
+                    Some(crate::configuration_startup::UNKNOWN_RESOURCE_SAVE_MESSAGE)
+                );
+                assert!(app.overlays.configuration_notice.is_some());
+            } else {
+                assert!(store.get(&new).is_err());
+                assert_eq!(Configuration::load_from_path(&path).unwrap(), config);
+            }
+        }
+    }
 
     #[test]
     fn listed_tunnel_description_is_its_friendly_name() {

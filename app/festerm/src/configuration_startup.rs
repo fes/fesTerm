@@ -1,4 +1,9 @@
-use std::{ffi::OsString, fs, path::PathBuf};
+use std::{
+    ffi::OsString,
+    fs,
+    path::PathBuf,
+    sync::{Arc, Mutex, OnceLock, TryLockError},
+};
 
 use directories::ProjectDirs;
 use festerm_config::{Configuration, ConfigurationFileErrorKind};
@@ -13,6 +18,86 @@ pub(crate) enum ConfigurationLoadFailure {
     Unreadable,
     OverrideUnavailable,
     NativeLocationUnavailable,
+    OutcomeUnknown,
+    ReconciliationRequired,
+    SaveBusy,
+}
+
+pub(crate) const UNKNOWN_SAVE_MESSAGE: &str = "Configuration may have changed on disk, but the save outcome is unknown. Further saves are disabled; reconcile manually and restart all windows to reload.";
+pub(crate) const UNKNOWN_RESOURCE_SAVE_MESSAGE: &str = "Configuration may have changed on disk, but the save outcome is unknown. Potentially referenced resources from this attempt were retained. Further saves are disabled; reconcile manually and restart all windows to reload.";
+pub(crate) const BLOCKED_SAVE_MESSAGE: &str = "This save was blocked before writing because an earlier configuration save may have an unknown outcome; reconcile manually and restart all windows to reload.";
+pub(crate) const RECONCILE_SAVE_MESSAGE: &str = "A configuration save may have changed the disk. Further saves are disabled; reconcile manually and restart all windows to reload.";
+pub(crate) const SAVE_BUSY_MESSAGE: &str =
+    "This save was blocked before writing because another configuration save was in progress.";
+pub(crate) const SESSION_NAMES_PRE_WRITE_FAILURE_MESSAGE: &str = "This session naming change applied locally, but this save did not write its candidate. Check configuration access.";
+const SAVE_IN_PROGRESS_MESSAGE: &str = "A configuration save is in progress; its outcome is not yet known. If its outcome is unknown or further saves are disabled, reconcile manually and restart all windows.";
+pub(crate) const SAVE_GATE_HEALTHY_MESSAGE: &str =
+    "At the last check, no in-process save was unresolved or in progress.";
+
+#[derive(Clone, Copy)]
+pub(crate) enum SecretCleanupNotice {
+    ProfilePending,
+    ProfileChanged,
+    ProfilePrevious,
+    ProfileSaveFailed,
+    Tunnel,
+    BrowserPending,
+    BrowserPrevious,
+    BrowserSaveFailed,
+    ConfigurationUnknown,
+    ConfigurationResourceUnknown,
+    ConfigurationBlocked,
+    ProfileRetained,
+    TunnelRetained,
+    BrowserRetained,
+    ImportRetained,
+    ImportCleanupFailed,
+}
+
+impl SecretCleanupNotice {
+    pub(crate) const ALL: [Self; 16] = [
+        Self::ProfilePending,
+        Self::ProfileChanged,
+        Self::ProfilePrevious,
+        Self::ProfileSaveFailed,
+        Self::Tunnel,
+        Self::BrowserPending,
+        Self::BrowserPrevious,
+        Self::BrowserSaveFailed,
+        Self::ConfigurationUnknown,
+        Self::ConfigurationResourceUnknown,
+        Self::ConfigurationBlocked,
+        Self::ProfileRetained,
+        Self::TunnelRetained,
+        Self::BrowserRetained,
+        Self::ImportRetained,
+        Self::ImportCleanupFailed,
+    ];
+
+    pub(crate) const fn bit(self) -> u16 {
+        1 << (self as u16)
+    }
+
+    pub(crate) const fn message(self) -> &'static str {
+        match self {
+            Self::ProfilePending => "A profile credential could not be removed after cancellation or window closure. Reconcile secure storage manually.",
+            Self::ProfileChanged => "Profile changed while its credential was being saved, and the new native secret could not be removed. Reconcile secure storage manually.",
+            Self::ProfilePrevious => "Profile credential saved, but the previous native secret could not be removed. Reconcile secure storage manually.",
+            Self::ProfileSaveFailed => "A profile credential was not linked because configuration could not be saved; native-secret cleanup also failed. Reconcile secure storage manually.",
+            Self::Tunnel => "A Dev Tunnel workflow credential could not be removed after cancellation or failure. Reconcile secure storage manually.",
+            Self::BrowserPending => "A Dev Tunnel account credential could not be removed after cancellation or window closure. Reconcile secure storage manually.",
+            Self::BrowserPrevious => "The account was saved, but the previous native credential could not be removed. Reconcile secure storage manually.",
+            Self::BrowserSaveFailed => "The account could not be saved, and the new native credential could not be removed. Reconcile secure storage manually.",
+            Self::ConfigurationUnknown => UNKNOWN_SAVE_MESSAGE,
+            Self::ConfigurationResourceUnknown => UNKNOWN_RESOURCE_SAVE_MESSAGE,
+            Self::ConfigurationBlocked => BLOCKED_SAVE_MESSAGE,
+            Self::ProfileRetained => "The blocked save retained a candidate profile credential because exclusive ownership is uncertain. Reconcile secure storage manually; if saves remain disabled, also reconcile configuration and restart all windows.",
+            Self::TunnelRetained => "The blocked save retained candidate Dev Tunnel workflow credentials because exclusive ownership is uncertain. Reconcile secure storage manually; if saves remain disabled, also reconcile configuration and restart all windows.",
+            Self::BrowserRetained => "The blocked save retained a candidate Dev Tunnel account credential because exclusive ownership is uncertain. Reconcile secure storage manually; if saves remain disabled, also reconcile configuration and restart all windows.",
+            Self::ImportRetained => "The blocked import retained a candidate destination file because exclusive ownership is uncertain; reconcile the managed tunnel profiles and configuration manually. If saves remain disabled, restart all windows.",
+            Self::ImportCleanupFailed => "A new public tunnel destination file could not be removed after import failed. Inspect managed tunnel profiles and reconcile manually; do not remove files still referenced by any configuration.",
+        }
+    }
 }
 
 /// Content-free outcome of selecting, loading, or automatically saving
@@ -44,6 +129,59 @@ pub(crate) enum ConfigurationStartupStatus {
 }
 
 impl ConfigurationStartupStatus {
+    pub(crate) const fn save_outcome_unknown(self) -> bool {
+        matches!(
+            self,
+            Self::WorkspaceSaveFailure(ConfigurationLoadFailure::OutcomeUnknown)
+                | Self::SessionNamesSaveFailure(ConfigurationLoadFailure::OutcomeUnknown)
+                | Self::PasswordCredentialSaveFailure(ConfigurationLoadFailure::OutcomeUnknown)
+                | Self::InterfaceSettingsSaveFailure(ConfigurationLoadFailure::OutcomeUnknown)
+                | Self::KnownHostTrustSaveFailure(ConfigurationLoadFailure::OutcomeUnknown)
+                | Self::ProfileSaveFailure(ConfigurationLoadFailure::OutcomeUnknown)
+                | Self::ProfileDeleteFailure(ConfigurationLoadFailure::OutcomeUnknown)
+                | Self::ProfilesReorderFailure(ConfigurationLoadFailure::OutcomeUnknown)
+        )
+    }
+
+    pub(crate) const fn save_reconciliation_required(self) -> bool {
+        self.save_outcome_unknown()
+            || matches!(
+                self,
+                Self::WorkspaceSaveFailure(ConfigurationLoadFailure::ReconciliationRequired)
+                    | Self::SessionNamesSaveFailure(
+                        ConfigurationLoadFailure::ReconciliationRequired
+                    )
+                    | Self::PasswordCredentialSaveFailure(
+                        ConfigurationLoadFailure::ReconciliationRequired
+                    )
+                    | Self::InterfaceSettingsSaveFailure(
+                        ConfigurationLoadFailure::ReconciliationRequired
+                    )
+                    | Self::KnownHostTrustSaveFailure(
+                        ConfigurationLoadFailure::ReconciliationRequired
+                    )
+                    | Self::ProfileSaveFailure(ConfigurationLoadFailure::ReconciliationRequired)
+                    | Self::ProfileDeleteFailure(ConfigurationLoadFailure::ReconciliationRequired)
+                    | Self::ProfilesReorderFailure(
+                        ConfigurationLoadFailure::ReconciliationRequired
+                    )
+            )
+    }
+
+    pub(crate) const fn save_was_busy(self) -> bool {
+        matches!(
+            self,
+            Self::WorkspaceSaveFailure(ConfigurationLoadFailure::SaveBusy)
+                | Self::SessionNamesSaveFailure(ConfigurationLoadFailure::SaveBusy)
+                | Self::PasswordCredentialSaveFailure(ConfigurationLoadFailure::SaveBusy)
+                | Self::InterfaceSettingsSaveFailure(ConfigurationLoadFailure::SaveBusy)
+                | Self::KnownHostTrustSaveFailure(ConfigurationLoadFailure::SaveBusy)
+                | Self::ProfileSaveFailure(ConfigurationLoadFailure::SaveBusy)
+                | Self::ProfileDeleteFailure(ConfigurationLoadFailure::SaveBusy)
+                | Self::ProfilesReorderFailure(ConfigurationLoadFailure::SaveBusy)
+        )
+    }
+
     /// True for exactly the variants that mean an automatic-save call
     /// actually wrote the replacement configuration to disk, i.e. the
     /// in-memory `AppState` may now safely commit to that replacement too.
@@ -76,6 +214,15 @@ impl ConfigurationStartupStatus {
     /// content.
     #[allow(dead_code)]
     pub(crate) const fn settings_message(self) -> &'static str {
+        if self.save_outcome_unknown() {
+            return UNKNOWN_SAVE_MESSAGE;
+        }
+        if self.save_reconciliation_required() {
+            return BLOCKED_SAVE_MESSAGE;
+        }
+        if self.save_was_busy() {
+            return SAVE_BUSY_MESSAGE;
+        }
         match self {
             Self::Loaded => {
                 "Configuration was loaded at startup. Changes made in fesTerm save automatically; edit the file directly and restart fesTerm to pick up external changes."
@@ -95,6 +242,9 @@ impl ConfigurationStartupStatus {
             Self::InitialFailure(ConfigurationLoadFailure::NativeLocationUnavailable) => {
                 "The native configuration location is unavailable. Set FESTERM_CONFIG_PATH to a Unicode file path, then restart fesTerm."
             }
+            Self::InitialFailure(ConfigurationLoadFailure::OutcomeUnknown) => UNKNOWN_SAVE_MESSAGE,
+            Self::InitialFailure(ConfigurationLoadFailure::ReconciliationRequired) => BLOCKED_SAVE_MESSAGE,
+            Self::InitialFailure(ConfigurationLoadFailure::SaveBusy) => SAVE_BUSY_MESSAGE,
             Self::WorkspaceSaved => {
                 "Workspace metadata was saved. Only restorable tab order, focus, configured profile references, and explicit display aliases were written."
             }
@@ -110,16 +260,19 @@ impl ConfigurationStartupStatus {
             Self::WorkspaceSaveFailure(ConfigurationLoadFailure::NativeLocationUnavailable) => {
                 "Workspace metadata was not saved because its location is unavailable. The active configuration remains unchanged."
             }
+            Self::WorkspaceSaveFailure(ConfigurationLoadFailure::OutcomeUnknown) => UNKNOWN_SAVE_MESSAGE,
+            Self::WorkspaceSaveFailure(ConfigurationLoadFailure::ReconciliationRequired) => BLOCKED_SAVE_MESSAGE,
+            Self::WorkspaceSaveFailure(ConfigurationLoadFailure::SaveBusy) => SAVE_BUSY_MESSAGE,
             Self::SessionNamesSaved => "Session display names were saved without changing profiles or provider attachment identities.",
-            Self::SessionNamesSaveFailure(_) => "Session name changes apply now but could not be saved. They will not survive restart; check configuration access and rename or use the default name again to retry.",
+            Self::SessionNamesSaveFailure(_) => SESSION_NAMES_PRE_WRITE_FAILURE_MESSAGE,
             Self::PasswordCredentialSaved => {
-                "The saved SSH password reference was updated. The password remains only in native secure storage."
+                "The saved profile credential reference was updated. The credential remains only in native secure storage."
             }
             Self::PasswordCredentialSaveFailure(ConfigurationLoadFailure::Invalid) => {
-                "The saved SSH password was not linked because the configuration is invalid. The prior credential remains active."
+                "The saved profile credential was not linked because the configuration is invalid. The prior credential remains active."
             }
             Self::PasswordCredentialSaveFailure(_) => {
-                "The saved SSH password was not linked because configuration could not be written. The prior credential remains active."
+                "The saved profile credential was not linked because configuration could not be written. The prior credential remains active."
             }
             Self::InterfaceSettingsSaved => {
                 "Interface settings were saved and will be restored the next time fesTerm starts."
@@ -208,15 +361,20 @@ struct SelectedConfigurationPath {
 /// fesTerm itself changes something worth persisting, via
 /// [`Self::save_workspace`] and its sibling `save_*` methods.
 ///
-/// Cloned once per additional window (ADR 0032). Every clone addresses the
-/// same file, which is safe because all windows live in one process and their
-/// writes are serialized on the main thread; no clone watches or polls.
+/// Clones share a save gate. An uncertain save latches it until process
+/// restart; a contending save fails without waiting or touching the file.
 #[derive(Clone)]
 pub(crate) struct ConfigurationReloader {
     selected_path: Result<SelectedConfigurationPath, ConfigurationLoadFailure>,
     automation_preferences: Option<crate::automation::preferences::Shared>,
     #[cfg(test)]
     next_save_failure: std::rc::Rc<std::cell::Cell<Option<TestSaveFailure>>>,
+    save_gate: Arc<Mutex<bool>>,
+    secret_cleanup_failure: Arc<std::sync::atomic::AtomicU16>,
+    #[cfg(test)]
+    injected_save_failure: Option<ConfigurationLoadFailure>,
+    #[cfg(test)]
+    panic_after_installation: bool,
 }
 
 #[cfg(test)]
@@ -280,6 +438,23 @@ impl ConfigurationReloader {
         Self::from_selection(Ok(path))
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_save_failure_for_test(mut self, failure: ConfigurationLoadFailure) -> Self {
+        self.injected_save_failure = Some(failure);
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_panic_after_installation_for_test(mut self) -> Self {
+        self.panic_after_installation = true;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hold_save_gate_for_test(&self) -> std::sync::MutexGuard<'_, bool> {
+        self.save_gate.lock().unwrap()
+    }
+
     fn from_source_selection(
         selected_path: Result<SelectedConfigurationPath, ConfigurationLoadFailure>,
     ) -> Self {
@@ -288,6 +463,12 @@ impl ConfigurationReloader {
             automation_preferences: None,
             #[cfg(test)]
             next_save_failure: Default::default(),
+            save_gate: Arc::new(Mutex::new(false)),
+            secret_cleanup_failure: Arc::default(),
+            #[cfg(test)]
+            injected_save_failure: None,
+            #[cfg(test)]
+            panic_after_installation: false,
         }
     }
 
@@ -319,6 +500,19 @@ impl ConfigurationReloader {
     #[cfg(test)]
     pub(crate) fn fail_next_save_for_test(&self, failure: TestSaveFailure) {
         self.next_save_failure.set(Some(failure));
+    }
+
+    pub(crate) fn secret_cleanup_failure(&self) -> Arc<std::sync::atomic::AtomicU16> {
+        Arc::clone(&self.secret_cleanup_failure)
+    }
+
+    pub(crate) fn save_gate_warning(&self) -> Option<&'static str> {
+        match self.save_gate.try_lock() {
+            Ok(unresolved) if *unresolved => Some(RECONCILE_SAVE_MESSAGE),
+            Ok(_) => None,
+            Err(TryLockError::Poisoned(_)) => Some(RECONCILE_SAVE_MESSAGE),
+            Err(TryLockError::WouldBlock) => Some(SAVE_IN_PROGRESS_MESSAGE),
+        }
     }
 
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -461,6 +655,23 @@ impl ConfigurationReloader {
         &self,
         configuration: &Configuration,
     ) -> Result<Configuration, ConfigurationLoadFailure> {
+        let mut unresolved = match self.save_gate.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::WouldBlock) => return Err(ConfigurationLoadFailure::SaveBusy),
+            Err(TryLockError::Poisoned(_)) => {
+                return Err(ConfigurationLoadFailure::ReconciliationRequired);
+            }
+        };
+        if *unresolved {
+            return Err(ConfigurationLoadFailure::ReconciliationRequired);
+        }
+        #[cfg(test)]
+        if self
+            .injected_save_failure
+            .is_some_and(|failure| failure != ConfigurationLoadFailure::OutcomeUnknown)
+        {
+            return Err(self.injected_save_failure.expect("checked above"));
+        }
         #[cfg(test)]
         let failure = self.next_save_failure.take();
         #[cfg(test)]
@@ -481,14 +692,28 @@ impl ConfigurationReloader {
                 return Err(ConfigurationLoadFailure::Unreadable);
             }
         }
-        configuration
-            .save_to_path(&selected.path)
-            .map_err(|error| failure_from_file_error(error.kind()))?;
-        #[cfg(test)]
-        if matches!(failure, Some(TestSaveFailure::AfterWrite)) {
-            return Err(ConfigurationLoadFailure::Unreadable);
+        match configuration.save_to_path(&selected.path) {
+            Ok(()) => {
+                #[cfg(test)]
+                if self.panic_after_installation {
+                    panic!("injected panic after configuration installation");
+                }
+                #[cfg(test)]
+                if self.injected_save_failure == Some(ConfigurationLoadFailure::OutcomeUnknown) {
+                    *unresolved = true;
+                    return Err(ConfigurationLoadFailure::OutcomeUnknown);
+                }
+                #[cfg(test)]
+                if matches!(failure, Some(TestSaveFailure::AfterWrite)) {
+                    return Err(ConfigurationLoadFailure::Unreadable);
+                }
+                Ok(configuration)
+            }
+            Err(_) => {
+                *unresolved = true;
+                Err(ConfigurationLoadFailure::OutcomeUnknown)
+            }
         }
-        Ok(configuration)
     }
 }
 
@@ -527,10 +752,12 @@ fn create_native_configuration_directory(directory: &std::path::Path) -> std::io
 }
 
 pub(crate) fn load() -> StartupConfiguration {
-    let reloader = ConfigurationReloader::from_source_selection(select_configuration_source(
+    static SAVE_GATE: OnceLock<Arc<Mutex<bool>>> = OnceLock::new();
+    let mut reloader = ConfigurationReloader::from_source_selection(select_configuration_source(
         std::env::var_os(CONFIG_PATH_ENV),
         native_configuration_directory(),
     ));
+    reloader.save_gate = Arc::clone(SAVE_GATE.get_or_init(|| Arc::new(Mutex::new(false))));
     let (configuration, status) = reloader.initial_load();
     StartupConfiguration {
         configuration,
@@ -600,11 +827,11 @@ fn failure_from_file_error(kind: ConfigurationFileErrorKind) -> ConfigurationLoa
         | ConfigurationFileErrorKind::CreateTemporary
         | ConfigurationFileErrorKind::WriteTemporary
         | ConfigurationFileErrorKind::SyncTemporary
+        | ConfigurationFileErrorKind::Serialization
         | ConfigurationFileErrorKind::Replace
         | ConfigurationFileErrorKind::RestorePrevious
         | ConfigurationFileErrorKind::CleanupPrevious
-        | ConfigurationFileErrorKind::SyncParentDirectory
-        | ConfigurationFileErrorKind::Serialization => ConfigurationLoadFailure::Unreadable,
+        | ConfigurationFileErrorKind::SyncParentDirectory => ConfigurationLoadFailure::Unreadable,
     }
 }
 
@@ -618,6 +845,87 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn new_window_save_gate_probe_is_nonblocking_and_truthful() {
+        let reloader = ConfigurationReloader::unavailable();
+        assert_eq!(reloader.save_gate_warning(), None);
+        let _inflight = reloader.save_gate.lock().unwrap();
+        assert_eq!(reloader.save_gate_warning(), Some(SAVE_IN_PROGRESS_MESSAGE));
+    }
+
+    #[test]
+    fn unresolved_save_blocks_sibling_and_inflight_save_without_writing() {
+        let directory = TestDirectory::new();
+        let path = directory.file("configuration.toml");
+        let original = Configuration::empty();
+        let installed = Configuration::new(vec![festerm_config::Profile::local(
+            "installed",
+            "sh",
+            vec![],
+            None,
+        )
+        .unwrap()])
+        .unwrap();
+        let later = Configuration::new(vec![festerm_config::Profile::local(
+            "later",
+            "sh",
+            vec![],
+            None,
+        )
+        .unwrap()])
+        .unwrap();
+        original.save_to_path(&path).unwrap();
+        let sibling = ConfigurationReloader::from_path_for_test(path.clone());
+        let first = sibling
+            .clone()
+            .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+        {
+            let _inflight = sibling.save_gate.lock().unwrap();
+            assert_eq!(
+                sibling.save_configuration(&later),
+                Err(ConfigurationLoadFailure::SaveBusy)
+            );
+            assert_eq!(Configuration::load_from_path(&path).unwrap(), original);
+        }
+        assert_eq!(
+            first.save_configuration(&installed),
+            Err(ConfigurationLoadFailure::OutcomeUnknown)
+        );
+        assert_eq!(Configuration::load_from_path(&path).unwrap(), installed);
+        assert_eq!(
+            sibling.save_configuration(&later),
+            Err(ConfigurationLoadFailure::ReconciliationRequired)
+        );
+        assert_eq!(Configuration::load_from_path(&path).unwrap(), installed);
+        assert_eq!(
+            first.save_configuration(&later),
+            Err(ConfigurationLoadFailure::ReconciliationRequired)
+        );
+        assert_eq!(Configuration::load_from_path(&path).unwrap(), installed);
+    }
+
+    #[test]
+    fn any_filesystem_save_error_latches_even_before_replacement() {
+        let directory = TestDirectory::new();
+        let path = directory.file("target-directory");
+        fs::create_dir(&path).unwrap();
+        let first = ConfigurationReloader::from_path_for_test(path.clone());
+        let sibling = first.clone();
+        let failure = first
+            .save_configuration(&Configuration::empty())
+            .unwrap_err();
+        assert_eq!(failure, ConfigurationLoadFailure::OutcomeUnknown);
+        assert!(path.is_dir());
+        assert_eq!(
+            sibling.save_configuration(&Configuration::empty()),
+            Err(ConfigurationLoadFailure::ReconciliationRequired)
+        );
+        let status = ConfigurationStartupStatus::PasswordCredentialSaveFailure(failure);
+        assert!(status.save_outcome_unknown());
+        assert!(!status.was_saved());
+        assert!(status.settings_message().contains("reconcile"));
+    }
 
     static NEXT_TEST_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -896,7 +1204,9 @@ mod tests {
 
         assert!(matches!(
             status,
-            ConfigurationStartupStatus::WorkspaceSaveFailure(ConfigurationLoadFailure::Unreadable)
+            ConfigurationStartupStatus::WorkspaceSaveFailure(
+                ConfigurationLoadFailure::OutcomeUnknown
+            )
         ));
         assert!(!diagnostic.contains(source_path.to_string_lossy().as_ref()));
         assert!(!diagnostic.contains("schema_version"));

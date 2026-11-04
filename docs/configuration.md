@@ -33,6 +33,34 @@ the next startup. It also never edits, renames, or repairs a file that is
 unavailable or invalid - it starts from safe defaults for that run instead and
 leaves the on-disk file untouched.
 
+If `Configuration::save_to_path` returns an error during an automatic save,
+the application cannot determine whether the candidate reached the selected
+file. It disables
+further in-process saves, retains potentially referenced resources from that
+attempt, and warns all live windows. A subsequent save is rejected before the
+write and reported separately; candidate credentials and tunnel destinations
+whose exclusive ownership is not established are retained for manual
+reconciliation. Missing configuration paths, failure to create a parent
+directory, session-name validation failures, and busy refusals occur before that
+call and do not themselves latch the gate. Validation errors returned by
+`save_to_path` are still indeterminate for this app-side policy. A busy request
+may be retried after the other
+save completes only if the gate is not latched. Reconcile
+the configuration and affected resources manually, then restart the entire
+application; an individual window cannot clear the latch. A poisoned save gate
+also requires reconciliation and restart. Windows opened later consult the
+shared gate and receive the unresolved warning; while a save is in progress
+they receive a provisional, conditional notice instead. Blocked-resource and
+failed destination-cleanup warnings are broadcast even if the initiating
+window closes; inspect references before removing any retained destination.
+Repeated warnings renew their visibility period without duplicating text.
+
+This is an incomplete in-memory safety layer, not a proof of filesystem
+installation, path/alias safety, durable recovery, or safe retirement of old
+credentials. It does not coordinate external writers or stale documents and
+live preferences across windows. Restart clears the latch without proving that
+manual reconciliation occurred.
+
 ## Schema version 1
 
 Every document begins with `schema_version = 1`. Unknown fields are rejected.
@@ -517,9 +545,11 @@ does not change the active configuration.
 Saves serialize and validate before writing a new file in the target's parent
 directory, sync it, then rename it into place. On Unix the parent directory is
 also synced after replacement. On Windows, where a rename cannot overwrite an
-existing target, the prior target is moved aside and restored if the final
-rename fails; no partially written target is exposed. Temporary files are
-cleaned up on failures where possible.
+existing target, the prior target is moved aside and restoration is attempted
+if the final rename fails. Temporary files are cleaned up on failures where
+possible. Errors can occur after installation, and filesystem namespace and
+alias races remain unresolved; the app treats every error returned by
+`save_to_path` as indeterminate rather than inferring disk state from it.
 
 `ConfigurationFileError` reports stable, content-free categories for missing
 files, reads, parse/validation, serialization, temporary-file writes, and
@@ -538,15 +568,22 @@ the complete document supplied by the primary window, including the workspace,
 when preparing later saves. With restore disabled, stale workspace metadata is
 discarded. This does not resolve stale cross-window saves or ambiguous
 filesystem outcomes.
-A failed rename/reset save leaves the saved configuration and sibling documents
-unchanged while the local display edit remains usable. Every open window gets
-a visible bounded notice that the changes are not saved; repeating Rename or
-Use default name retries through the same atomic path.
-After a failed reset, Use default name remains available until removal actually
-commits. The next naming transaction also includes other still-live unsaved
-native seed edits; failures do not cause frame-by-frame write retries.
-An ensuing workspace save also includes those pending seed edits, so a failed
-reset cannot appear committed while leaving its old native seed behind.
+A rename/reset save failure leaves the in-memory committed configuration and
+sibling documents unchanged while the local display edit remains usable. If
+`save_to_path` returned an error, the disk outcome is unknown: every open window
+receives a bounded reconciliation notice and subsequent saves are blocked.
+Missing paths, directory-creation failures, session-name validation failures,
+and busy refusals occur before that call and do not themselves latch the gate.
+Validation errors returned by `save_to_path` still latch. A later
+rename/reset request refused by a previously latched gate did not install its
+own candidate; it does not clear the earlier uncertainty or retry the write.
+After a failed reset, Use default name remains available in the live session
+until removal actually commits. An admitted naming transaction also includes
+other still-live unsaved native seed edits; failures do not cause
+frame-by-frame write retries. An admitted workspace save likewise includes
+those pending seed edits, so a failed reset cannot appear committed while
+leaving its old native seed behind. Pending in-memory edits are not guaranteed
+to survive the restart required after an unresolved outcome.
 Successful document broadcasts do not rename other current logical views.
 
 `extend_dev_tunnel_lifetime = true` makes each native Dev Tunnel sign-in or

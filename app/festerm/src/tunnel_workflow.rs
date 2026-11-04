@@ -105,12 +105,39 @@ impl Drop for WorkerSlot {
 struct Stored {
     store: Arc<dyn SecretStore>,
     references: Vec<SecretReference>,
+    cleanup_reporter: CleanupReporter,
+}
+
+#[derive(Clone)]
+struct CleanupReporter {
+    failed: Arc<std::sync::atomic::AtomicU16>,
+    context: egui::Context,
+}
+
+impl CleanupReporter {
+    fn report(&self) {
+        self.failed.fetch_or(
+            crate::configuration_startup::SecretCleanupNotice::Tunnel.bit(),
+            Ordering::Release,
+        );
+        self.context.request_repaint_of(egui::ViewportId::ROOT);
+    }
+}
+impl Stored {
+    fn cleanup(&mut self) -> bool {
+        let mut failed = false;
+        for reference in self.references.drain(..) {
+            failed |= self.store.delete(&reference).is_err();
+        }
+        if failed {
+            self.cleanup_reporter.report();
+        }
+        !failed
+    }
 }
 impl Drop for Stored {
     fn drop(&mut self) {
-        for reference in &self.references {
-            let _ = self.store.delete(reference);
-        }
+        self.cleanup();
     }
 }
 
@@ -217,6 +244,7 @@ impl Workflow {
         ephemeral: bool,
         takeover: bool,
         extend_days: Option<u32>,
+        cleanup_reporter: CleanupReporter,
         context: &egui::Context,
     ) -> Self {
         let cancel = CancellationToken::new();
@@ -272,7 +300,7 @@ impl Workflow {
                         tokio::select! {
                             _ = cancel.cancelled() => Err(Error::Cancelled),
                             _ = tokio::time::sleep(Duration::from_secs(1800)) => Err(Error::Expired),
-                            value = prepare(expected, account, store, client_id, sign_in, remember, ephemeral, extend_days, &cancel, &notify) => value.map(Box::new),
+                            value = prepare(expected, account, store, client_id, sign_in, remember, ephemeral, extend_days, &cancel, &notify, cleanup_reporter) => value.map(Box::new),
                         }
                     }));
                 notify(Event::Complete(result));
@@ -297,6 +325,7 @@ async fn prepare(
     extend_days: Option<u32>,
     cancel: &CancellationToken,
     notify: &impl Fn(Event) -> bool,
+    cleanup_reporter: CleanupReporter,
 ) -> Result<Prepared, Error> {
     let profile = expected.as_dev_tunnel().ok_or(Error::Tunnel)?;
     let name = profile.tunnel_name().ok_or(Error::Tunnel)?;
@@ -394,6 +423,7 @@ async fn prepare(
     let mut stored = Stored {
         store,
         references: Vec::new(),
+        cleanup_reporter,
     };
     let updated = if remember {
         if cancel.is_cancelled() {
@@ -449,6 +479,11 @@ async fn prepare(
 }
 
 impl FesTermApp {
+    fn cancel_native_tunnel(&mut self) {
+        self.native_tunnel = None;
+        self.overlays.native_tunnel = false;
+    }
+
     /// Commits a remembered sign-in: the account (new or re-authenticated) and
     /// the profile bound to it are written in one configuration replacement.
     fn save_tunnel_binding(
@@ -466,6 +501,9 @@ impl FesTermApp {
             .map(|account| account.identifier().to_owned())
             .or_else(|| account.as_ref().map(|_| String::new()))
         else {
+            self.configuration_status = ConfigurationStartupStatus::ProfileSaveFailure(
+                crate::configuration_startup::ConfigurationLoadFailure::Invalid,
+            );
             return false;
         };
         let configuration = self.state.configuration().clone();
@@ -650,6 +688,10 @@ impl FesTermApp {
             ephemeral,
             takeover,
             extend_days,
+            CleanupReporter {
+                failed: self.configuration_reloader.secret_cleanup_failure(),
+                context: context.clone(),
+            },
             context,
         ));
         self.overlays.native_tunnel = true;
@@ -766,7 +808,13 @@ impl FesTermApp {
                 .profile(workflow.expected.identifier())
                 != Some(&workflow.expected)
         {
-            if workflow.automatic.is_none() {
+            let cleanup_failed = workflow
+                .ready
+                .as_mut()
+                .is_some_and(|ready| !ready.stored.cleanup());
+            if cleanup_failed {
+                self.report_configuration_notice("Profile changed, and a new native credential could not be removed. Reconcile secure storage manually.");
+            } else if workflow.automatic.is_none() {
                 self.secure_storage_feedback = Some("Profile changed. Sign-in cancelled.");
             }
             self.overlays.native_tunnel = false;
@@ -851,7 +899,13 @@ impl FesTermApp {
                 .profile(workflow.expected.identifier())
                 != Some(&workflow.expected)
         {
-            if workflow.automatic.is_none() {
+            let cleanup_failed = workflow
+                .ready
+                .as_mut()
+                .is_some_and(|ready| !ready.stored.cleanup());
+            if cleanup_failed {
+                self.report_configuration_notice("Profile changed, and a new native credential could not be removed. Reconcile secure storage manually.");
+            } else if workflow.automatic.is_none() {
                 self.secure_storage_feedback = Some("Profile changed. Sign-in cancelled.");
             }
             self.overlays.native_tunnel = false;
@@ -859,16 +913,45 @@ impl FesTermApp {
         }
         if let Some(mut ready) = workflow.ready.take() {
             if let Some(binding) = ready.binding.take() {
+                // Once saving begins, unwinding must retain the candidate secrets:
+                // the replacement may already have been installed.
+                let new_references = std::mem::take(&mut ready.stored.references);
                 if !self.save_tunnel_binding(&workflow.expected, workflow.account.as_ref(), binding)
                 {
-                    if workflow.automatic.is_none() {
+                    if self.configuration_status.save_outcome_unknown() {
+                        self.report_unknown_configuration_save(true);
+                        self.overlays.native_tunnel = false;
+                        return;
+                    }
+                    if self.configuration_status.save_reconciliation_required() {
+                        self.publish_shared_notice(
+                            crate::configuration_startup::SecretCleanupNotice::TunnelRetained,
+                        );
+                        self.overlays.native_tunnel = false;
+                        return;
+                    }
+                    if self.configuration_status
+                        == ConfigurationStartupStatus::ProfileSaveFailure(
+                            crate::configuration_startup::ConfigurationLoadFailure::SaveBusy,
+                        )
+                    {
+                        self.publish_shared_notice(
+                            crate::configuration_startup::SecretCleanupNotice::TunnelRetained,
+                        );
+                        self.overlays.native_tunnel = false;
+                        return;
+                    }
+                    ready.stored.references = new_references;
+                    let cleaned = ready.stored.cleanup();
+                    if !cleaned {
+                        self.report_configuration_notice("Account could not be saved, and a new native credential could not be removed. Reconcile secure storage manually.");
+                    } else if workflow.automatic.is_none() {
                         self.secure_storage_feedback =
                             Some("Account could not be saved. Sign in again.");
                     }
                     self.overlays.native_tunnel = false;
                     return;
                 }
-                ready.stored.references.clear();
             }
             if workflow.connect {
                 let ready = *ready;
@@ -1014,8 +1097,7 @@ impl FesTermApp {
             });
         });
         if dismiss {
-            self.native_tunnel = None;
-            self.overlays.native_tunnel = false;
+            self.cancel_native_tunnel();
         } else if self
             .native_tunnel
             .as_ref()
