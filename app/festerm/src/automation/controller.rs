@@ -1817,7 +1817,7 @@ pub(super) mod tests {
             "NOT_AUTHORIZED"
         );
 
-        coordinator.approve(1, vec![second]).unwrap();
+        super::super::tests::approve_for_test(&mut coordinator, 1, vec![second]).unwrap();
         call(
             &mut coordinator,
             1,
