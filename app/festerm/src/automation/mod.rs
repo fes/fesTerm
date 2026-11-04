@@ -2095,32 +2095,40 @@ fn retry_cancelled_waits(
     if !peer.waits.iter().any(|wait| wait.cancel_pending) {
         return Ok(());
     }
+    let mut cancellation_errors = Vec::with_capacity(peer.waits.len());
+    let mut cleanup_error = None;
     let guard = festerm_session::try_automation_admission_lock()?;
     while let Some(index) = peer.waits.iter().position(|wait| wait.cancel_pending) {
         let wait = peer.waits.remove(index);
         if let Err(error) = broker.cancel_run(peer.principal, wait.run, now, &guard) {
-            match error {
-                festerm_automation::Error::Expired
-                | festerm_automation::Error::Revoked
-                | festerm_automation::Error::Closed
-                | festerm_automation::Error::StaleTarget => {
-                    tracing::debug!(?error, "automation wait was already closed");
-                }
-                _ => tracing::warn!(?error, "automation wait cancellation failed"),
-            }
+            cancellation_errors.push(error);
         }
         if let Err(error) = broker.forget_run(peer.principal, wait.run) {
-            tracing::warn!(
-                ?error,
-                "automation cancelled wait cleanup failed; closing peer"
-            );
             peer.connection.close_under_admission(&guard);
             broker.disconnect(peer.principal, &guard);
-            drop(guard);
-            peer.machine.close();
-            peer.waits.clear();
-            return Ok(());
+            cleanup_error = Some(error);
+            break;
         }
+    }
+    drop(guard);
+    for error in cancellation_errors {
+        match error {
+            festerm_automation::Error::Expired
+            | festerm_automation::Error::Revoked
+            | festerm_automation::Error::Closed
+            | festerm_automation::Error::StaleTarget => {
+                tracing::debug!(?error, "automation wait was already closed");
+            }
+            _ => tracing::warn!(?error, "automation wait cancellation failed"),
+        }
+    }
+    if let Some(error) = cleanup_error {
+        tracing::warn!(
+            ?error,
+            "automation cancelled wait cleanup failed; closing peer"
+        );
+        peer.machine.close();
+        peer.waits.clear();
     }
     Ok(())
 }

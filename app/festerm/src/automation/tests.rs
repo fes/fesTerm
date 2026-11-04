@@ -6307,6 +6307,115 @@ fn automation_cancelled_wait_poison_closes_privacy_without_output() {
 }
 
 #[test]
+fn automation_cancelled_wait_logs_after_releasing_admission() {
+    use std::sync::atomic::AtomicUsize;
+    use tracing_subscriber::prelude::*;
+
+    const CHILD: &str = "FESTERM_CANCEL_WAIT_LOG_ADMISSION_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "automation::tests::automation_cancelled_wait_logs_after_releasing_admission",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated logging test failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("running 1 test"));
+        return;
+    }
+
+    struct Probe {
+        debug: Arc<AtomicUsize>,
+        warn: Arc<AtomicUsize>,
+        failed: Arc<AtomicBool>,
+    }
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Probe {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let count = match *event.metadata().level() {
+                tracing::Level::DEBUG => &self.debug,
+                tracing::Level::WARN => &self.warn,
+                _ => return,
+            };
+            count.fetch_add(1, Ordering::SeqCst);
+            if festerm_session::try_automation_admission_lock().is_err() {
+                self.failed.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+
+    let debug = Arc::new(AtomicUsize::new(0));
+    let warn = Arc::new(AtomicUsize::new(0));
+    let failed = Arc::new(AtomicBool::new(false));
+    let (mut coordinator, app, id, receive) = fixture();
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    for forget in [false, true] {
+        let key = call(
+            &mut coordinator,
+            &[&app],
+            "festerm_terminal_wait_for_change",
+            json!({
+                "session_ref": serde_json::to_string(&target).unwrap(),
+                "after_revision": 1,
+                "timeout_ms": 30_000,
+            }),
+        );
+        let peer = &coordinator.peers[&1];
+        let (principal, run) = (peer.principal, peer.waits[0].run);
+        {
+            let guard = festerm_session::automation_admission_lock().unwrap();
+            let broker = coordinator.broker.as_mut().unwrap();
+            broker
+                .cancel_run(principal, run, Instant::now(), &guard)
+                .unwrap();
+            if forget {
+                broker.forget_run(principal, run).unwrap();
+            }
+        }
+        let peer = coordinator.peers.get_mut(&1).unwrap();
+        assert!(matches!(
+            peer.machine.process_value(json!({
+                "jsonrpc": "2.0", "method": "notifications/cancelled",
+                "params": {"requestId": 1},
+            })),
+            Event::Cancelled(cancelled) if cancelled == key
+        ));
+        peer.waits[0].cancel_pending = true;
+        let subscriber = tracing_subscriber::registry().with(Probe {
+            debug: debug.clone(),
+            warn: warn.clone(),
+            failed: failed.clone(),
+        });
+        tracing::subscriber::with_default(subscriber, || {
+            retry_cancelled_waits(
+                coordinator.broker.as_mut().unwrap(),
+                coordinator.peers.get_mut(&1).unwrap(),
+                Instant::now(),
+            )
+            .unwrap();
+        });
+        assert!(coordinator.peers[&1].waits.is_empty());
+        assert_eq!(coordinator.peers[&1].connection.is_closed(), forget);
+        assert!(receive().is_none());
+    }
+    assert_eq!(debug.load(Ordering::SeqCst), 1);
+    assert_eq!(warn.load(Ordering::SeqCst), 2);
+    assert!(!failed.load(Ordering::SeqCst));
+}
+
+#[test]
 fn automation_cancelled_wait_with_missing_run_closes_peer_without_output() {
     let (mut coordinator, app, id, receive) = fixture();
     let target = coordinator.targets[&id.chip_id()].reference;
