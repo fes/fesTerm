@@ -593,19 +593,11 @@ mod privacy {
             lifecycle: Arc<Lifecycle>,
             revocation: Arc<PrivacyRevocation>,
         ) -> io::Result<Self> {
-            let mut class_id = NEXT_CLASS.load(Ordering::Relaxed);
-            loop {
-                let next = class_id.checked_add(1).ok_or_else(unavailable)?;
-                match NEXT_CLASS.compare_exchange_weak(
-                    class_id,
-                    next,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => break,
-                    Err(current) => class_id = current,
-                }
-            }
+            let class_id = NEXT_CLASS
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    current.checked_add(1)
+                })
+                .map_err(|_| unavailable())?;
             let class: Vec<u16> = format!(
                 "fesTermPrivacyMonitor-{}-{}\0",
                 std::process::id(),
