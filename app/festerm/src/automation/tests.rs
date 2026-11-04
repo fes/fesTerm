@@ -58,6 +58,21 @@ fn fixture() -> (Coordinator, FesTermApp, TabId, impl Fn() -> Option<Vec<u8>>) {
     (coordinator, app, id, receive)
 }
 
+fn approve_for_test(
+    coordinator: &mut Coordinator,
+    channel: u64,
+    targets: Vec<TargetRef>,
+) -> Result<(), Refusal> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let result = coordinator.approve(channel, targets.clone());
+        if !matches!(result, Err(Refusal::Unavailable)) || Instant::now() >= deadline {
+            return result;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 struct SimulatedPresentationBarrier {
     monitor: festerm_automation::PresentationMonitorId,
     window: festerm_automation::PresentationWindowId,
@@ -593,15 +608,17 @@ fn presented_input_fixture_with_options(
     let lease =
         retry_automation_busy(|| coordinator.acquire_control_lease(1, run, target)).unwrap();
     let broker = coordinator.broker.as_mut().unwrap();
+    let guard = festerm_session::automation_admission_lock().unwrap();
     let registration = broker
-        .register_controller_session(principal, b"controller")
+        .register_controller_session(principal, b"controller", &guard)
         .unwrap();
     let proposal = broker
-        .prepare_controller_enrollment(principal, registration, target)
+        .prepare_controller_enrollment(principal, registration, target, &guard)
         .unwrap();
     let enrollment = broker
-        .approve_controller_enrollment(principal, NativeControllerEnrollment::new(proposal))
+        .approve_controller_enrollment(principal, NativeControllerEnrollment::new(proposal), &guard)
         .unwrap();
+    drop(guard);
     let proposal = broker
         .prepare_controller_presentation_approval(principal, registration, enrollment, now)
         .unwrap();
@@ -2243,7 +2260,7 @@ fn presentation_metadata_does_not_compose_with_legacy_observation_delivery() {
 
     let _serial = presentation_admission_test_guard();
     let (mut coordinator, mut app, tab, _ime, target) = control_review_fixture();
-    coordinator.approve(1, vec![target]).unwrap();
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
     assert_eq!(
         retry_automation_busy(|| coordinator.revoke_control_handoff(1)),
         Err(Error::Unavailable)
@@ -2277,7 +2294,7 @@ fn presentation_metadata_does_not_compose_with_legacy_observation_delivery() {
     approve_metadata_review(&mut coordinator, 1, &review).unwrap();
     let (_, _, liveness) = metadata_disclosure(&mut coordinator, 1, &[target]);
     assert_eq!(
-        coordinator.approve(1, vec![target]),
+        approve_for_test(&mut coordinator, 1, vec![target]),
         Err(Refusal::NotAuthorized)
     );
     assert!(liveness.is_live(principal, Instant::now()));
@@ -4490,12 +4507,14 @@ fn dormant_controller_operations_are_refused_without_host_effects() {
     coordinator.peers.get_mut(&1).unwrap().machine =
         ready_with(Machine::with_controller_enrollment());
     let principal = coordinator.peers[&1].principal;
+    let guard = festerm_session::automation_admission_lock().unwrap();
     let retained = coordinator
         .broker
         .as_mut()
         .unwrap()
-        .register_controller_session(principal, b"existing-registration")
+        .register_controller_session(principal, b"existing-registration", &guard)
         .unwrap();
+    drop(guard);
     let target = coordinator.targets[&id.chip_id()].reference;
     let registration = festerm_automation_mcp::ControllerId::from_random_bytes([0x12; 16]);
     let registration_id = registration.to_wire();
@@ -4519,7 +4538,7 @@ fn dormant_controller_operations_are_refused_without_host_effects() {
 
     for approved in [false, true] {
         if approved {
-            coordinator.approve(1, vec![target]).unwrap();
+            approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
         }
         for (tool, arguments) in [
             ("festerm_controller_capabilities", json!({})),
@@ -4575,11 +4594,16 @@ fn dormant_controller_operations_are_refused_without_host_effects() {
     }
 
     let broker = coordinator.broker.as_mut().unwrap();
+    let guard = festerm_session::automation_admission_lock().unwrap();
     for index in
         0..festerm_automation::Limits::default().controller_registrations_per_connection - 1
     {
         broker
-            .register_controller_session(principal, format!("capacity-probe-{index}").as_bytes())
+            .register_controller_session(
+                principal,
+                format!("capacity-probe-{index}").as_bytes(),
+                &guard,
+            )
             .unwrap();
     }
 }
@@ -4614,7 +4638,7 @@ fn automation_encoded_limits_count_actual_json_escaping() {
 fn automation_absent_selection_fits_a_small_actual_response_limit() {
     let (mut coordinator, app, id, receive) = fixture();
     let target = coordinator.targets[&id.chip_id()].reference;
-    coordinator.approve(1, vec![target]).unwrap();
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
     call(
         &mut coordinator,
         &[&app],
@@ -4635,7 +4659,7 @@ fn automation_absent_selection_fits_a_small_actual_response_limit() {
 fn automation_ascii_selection_uses_its_actual_encoded_size() {
     let (mut coordinator, mut app, id, receive) = fixture();
     let target = coordinator.targets[&id.chip_id()].reference;
-    coordinator.approve(1, vec![target]).unwrap();
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
     let session = app.automation_session_mut(id);
     session.terminal.ingest(b"\x1b[2J\x1b[H");
     session.terminal.ingest(&vec![b'a'; 1200]);
@@ -4823,7 +4847,7 @@ fn automation_mcp_loss_preserves_independent_broker_state() {
     for transport_failure in [false, true] {
         let (mut coordinator, app, id, _) = fixture();
         let target = coordinator.targets[&id.chip_id()].reference;
-        coordinator.approve(1, vec![target]).unwrap();
+        approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
         let peer = coordinator.peers[&1].connection.clone();
         let mcp_principal = coordinator.peers[&1].principal;
         let (independent, run, now) = independent_run(&mut coordinator, target);
@@ -4882,7 +4906,7 @@ fn automation_mcp_loss_preserves_independent_broker_state() {
 fn automation_privacy_loss_revokes_every_principal_and_invalidates_targets() {
     let (mut coordinator, app, id, _) = fixture();
     let target = coordinator.targets[&id.chip_id()].reference;
-    coordinator.approve(1, vec![target]).unwrap();
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
     let (independent, run, now) = independent_run(&mut coordinator, target);
     let registration = coordinator.targets[&id.chip_id()].registration.clone();
     let mcp_principal = coordinator.peers[&1].principal;
@@ -5169,10 +5193,278 @@ fn automation_restart_stops_existing_channels_before_coordinator_dispatch() {
 }
 
 #[test]
+fn automation_approval_after_reconciliation_refuses_busy_and_stale_targets() {
+    for invalidate in [false, true] {
+        let (mut coordinator, app, id, _) = fixture();
+        let mut broker = coordinator.broker.take().unwrap();
+        coordinator.reconcile(&mut broker, &[&app]);
+        coordinator.broker = Some(broker);
+        let target = coordinator.targets[&id.chip_id()].reference;
+        let attachment = coordinator.targets[&id.chip_id()].attachment.clone();
+        let (held_tx, held_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+        let worker = std::thread::spawn(move || {
+            let guard = festerm_session::automation_admission_lock().unwrap();
+            if invalidate {
+                attachment.transition_under_admission(&guard, false);
+            }
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv_timeout(Duration::from_secs(3));
+        });
+        held_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let before = Instant::now();
+        let result = coordinator.approve(1, vec![target]);
+        let elapsed = before.elapsed();
+        let granted = coordinator.peers[&1].grant.is_some();
+        let _ = release_tx.send(());
+        worker.join().unwrap();
+
+        assert!(elapsed < Duration::from_secs(1));
+        assert_eq!(result, Err(Refusal::Unavailable));
+        assert!(!granted);
+        if invalidate {
+            assert_eq!(
+                approve_for_test(&mut coordinator, 1, vec![target]),
+                Err(Refusal::StaleTarget)
+            );
+            assert!(coordinator.peers[&1].grant.is_none());
+        } else {
+            approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+            assert!(coordinator.peers[&1].grant.is_some());
+        }
+    }
+}
+
+#[test]
+fn automation_shared_start_defers_without_replacing_privacy_gate() {
+    let mut coordinator = Coordinator::default();
+    coordinator.want_shared_start = true;
+    let gate = coordinator.privacy_gate.clone();
+    let (held_tx, held_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+    let worker = std::thread::spawn(move || {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        held_tx.send(()).unwrap();
+        let _ = release_rx.recv_timeout(Duration::from_secs(3));
+    });
+    held_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    let before = Instant::now();
+    coordinator.advance_start(&egui::Context::default());
+    let elapsed = before.elapsed();
+    let retained = coordinator.reconciliation_deferred
+        && coordinator.want_shared_start
+        && coordinator.starting.is_none()
+        && coordinator.broker.is_none()
+        && Arc::ptr_eq(&gate, &coordinator.privacy_gate);
+    let _ = release_tx.send(());
+    worker.join().unwrap();
+    assert!(elapsed < Duration::from_secs(1));
+    assert!(retained);
+    coordinator.want_shared_start = false;
+}
+
+#[test]
+fn automation_startup_defers_without_losing_state_or_prepared_server() {
+    let (mut coordinator, mut app, _, _) = fixture();
+    let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+    app.adopt_broadcast_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap(),
+    );
+    coordinator.want_start = true;
+    let gate = coordinator.privacy_gate.clone();
+    let context = egui::Context::default();
+    let (held_tx, held_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+    let worker = std::thread::spawn(move || {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        held_tx.send(()).unwrap();
+        let _ = release_rx.recv_timeout(Duration::from_secs(3));
+    });
+    held_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    let before = Instant::now();
+    coordinator.tick(&context, &[&app]);
+    let elapsed = before.elapsed();
+    let deferred = coordinator.reconciliation_deferred;
+    let retained = coordinator.want_start
+        && coordinator.broker.is_some()
+        && coordinator.mcp_starting.is_none()
+        && coordinator.server.is_none()
+        && !coordinator.stop.load(Ordering::Acquire)
+        && Arc::ptr_eq(&gate, &coordinator.privacy_gate);
+    let _ = release_tx.send(());
+    worker.join().unwrap();
+    assert!(elapsed < Duration::from_secs(1));
+    assert!(deferred && retained);
+
+    let (server, _events) = ipc::test_server(coordinator.stop.clone());
+    let (prepared_tx, prepared_rx) = mpsc::sync_channel(1);
+    assert!(prepared_tx.send(Ok(server)).is_ok());
+    coordinator.mcp_starting = Some(Starting {
+        result: prepared_rx,
+        thread: std::thread::spawn(|| {}),
+    });
+    let (held_tx, held_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+    let worker = std::thread::spawn(move || {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        held_tx.send(()).unwrap();
+        let _ = release_rx.recv_timeout(Duration::from_secs(3));
+    });
+    held_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    let before = Instant::now();
+    coordinator.tick(&context, &[&app]);
+    let elapsed = before.elapsed();
+    let retained = coordinator.server.is_some()
+        && coordinator.mcp_starting.is_none()
+        && coordinator.broker.is_some()
+        && coordinator.reconciliation_deferred
+        && !coordinator.stop.load(Ordering::Acquire);
+    let _ = release_tx.send(());
+    worker.join().unwrap();
+    assert!(elapsed < Duration::from_secs(1));
+    assert!(retained);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while coordinator.reconciliation_deferred {
+        coordinator.tick(&context, &[&app]);
+        assert!(Instant::now() < deadline, "startup did not retry");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(coordinator.server.is_some());
+}
+
+#[test]
+fn automation_busy_reconciliation_defers_stale_waits_and_retries() {
+    let (mut coordinator, mut app, id, receive) = fixture();
+    let (other_app, other_id) = FesTermApp::automation_fixture();
+    let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+    app.adopt_broadcast_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap(),
+    );
+    let mut broker = coordinator.broker.take().unwrap();
+    coordinator.reconcile(&mut broker, &[&app, &other_app]);
+    let other_principal = broker.accept_connection().unwrap();
+    let (other_connection, _) = ipc::test_connection(2);
+    coordinator.peers.insert(
+        2,
+        Peer {
+            connection: other_connection,
+            principal: other_principal,
+            machine: ready(),
+            code: VerificationCode::new("fedcba9876543210").unwrap(),
+            grant: None,
+            waits: Vec::new(),
+        },
+    );
+    coordinator.broker = Some(broker);
+    let other_target = coordinator.targets[&other_id.chip_id()].reference;
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    call(
+        &mut coordinator,
+        &[&app],
+        "festerm_terminal_wait_for_change",
+        json!({
+            "session_ref": serde_json::to_string(&target).unwrap(),
+            "after_revision": 1,
+            "timeout_ms": 30_000,
+        }),
+    );
+    assert_eq!(coordinator.peers[&1].waits.len(), 1);
+    coordinator.peers.get_mut(&1).unwrap().waits[0].deadline =
+        Instant::now() - Duration::from_secs(1);
+    set_admission_flag(&coordinator.targets[&id.chip_id()].registration, false);
+    app.automation_session_mut(id)
+        .controller
+        .advance_lifecycle_generation();
+
+    let context = egui::Context::default();
+    for _ in 0..4 {
+        let mut output = context.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+    }
+    let repaints = Arc::new(Mutex::new(Vec::new()));
+    let observed = repaints.clone();
+    context.set_request_repaint_callback(move |info| {
+        observed.lock().unwrap().push(info.delay);
+    });
+    let (held_tx, held_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+    let worker = std::thread::spawn(move || {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        held_tx.send(()).unwrap();
+        let _ = release_rx.recv_timeout(Duration::from_secs(3));
+    });
+    held_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    let before = Instant::now();
+    coordinator.tick(&context, &[&app, &other_app]);
+    let scheduled = repaints.lock().unwrap().clone();
+    coordinator.command(
+        NativeCommand::ApproveObservation {
+            channel: 2,
+            targets: vec![other_target],
+        },
+        &context,
+    );
+    let elapsed = before.elapsed();
+    let broker_retained = coordinator.broker.is_some();
+    let target_retained = coordinator.targets.get(&id.chip_id()).map(|t| t.reference);
+    let wait_retained = coordinator.peers.get(&1).map(|p| p.waits.len());
+    let other_granted = coordinator.peers.get(&2).is_some_and(|p| p.grant.is_some());
+    let response_while_busy = receive();
+    let _ = release_tx.send(());
+    worker.join().unwrap();
+
+    assert!(elapsed < Duration::from_secs(1));
+    assert!(broker_retained);
+    assert_eq!(target_retained, Some(target));
+    assert_eq!(wait_retained, Some(1));
+    assert!(!other_granted);
+    assert!(response_while_busy.is_none());
+    assert!(scheduled
+        .iter()
+        .any(|delay| *delay <= Duration::from_millis(50)));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while coordinator.peers.contains_key(&1) {
+        coordinator.tick(&context, &[&app, &other_app]);
+        assert!(Instant::now() < deadline, "reconciliation did not retry");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_ne!(coordinator.targets[&id.chip_id()].reference, target);
+    assert!(receive().is_none());
+}
+
+#[test]
+fn automation_dormant_shutdown_does_not_wait_for_admission() {
+    let (held_tx, held_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+    let worker = std::thread::spawn(move || {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        held_tx.send(()).unwrap();
+        let _ = release_rx.recv_timeout(Duration::from_secs(3));
+    });
+    held_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    let before = Instant::now();
+    let mut coordinator = Coordinator::default();
+    coordinator.stop_mcp();
+    coordinator.close_shared_admission();
+    drop(coordinator);
+    let elapsed = before.elapsed();
+    let _ = release_tx.send(());
+    worker.join().unwrap();
+    assert!(elapsed < Duration::from_secs(1));
+}
+
+#[test]
 fn automation_target_replacement_invalidates_queued_responses_immediately() {
     let (mut coordinator, mut app, id, _) = fixture();
     let target = coordinator.targets[&id.chip_id()].reference;
-    coordinator.approve(1, vec![target]).unwrap();
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
     let guard = coordinator.peers[&1]
         .grant
         .as_ref()
@@ -5194,7 +5486,7 @@ fn automation_target_replacement_invalidates_queued_responses_immediately() {
 fn automation_backend_replacement_revokes_even_without_lifecycle_events() {
     let (mut coordinator, app, id, receive) = fixture();
     let target = coordinator.targets[&id.chip_id()].reference;
-    coordinator.approve(1, vec![target]).unwrap();
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
     let session = app.automation_session(id).unwrap();
     let Some(crate::tabs::ApplicationSession::TestSsh(fake)) = session.controller.session() else {
         panic!("expected fake SSH attachment");
@@ -5215,7 +5507,7 @@ fn automation_backend_replacement_revokes_even_without_lifecycle_events() {
 fn automation_revision_exhaustion_invalidates_queued_responses() {
     let (mut coordinator, mut app, id, _) = fixture();
     let target = coordinator.targets[&id.chip_id()].reference;
-    coordinator.approve(1, vec![target]).unwrap();
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
     let guard = coordinator.peers[&1]
         .grant
         .as_ref()
@@ -5260,7 +5552,9 @@ fn automation_direct_invocations_bind_exact_validated_parameters() {
         binding.parameters,
         direct_binding(&selection, Some(target)).unwrap().parameters
     );
-    let other_target = Broker::new([2; 16]).attach_target(99, 1).unwrap();
+    let guard = festerm_session::automation_admission_lock().unwrap();
+    let other_target = Broker::new([2; 16]).attach_target(99, 1, &guard).unwrap();
+    drop(guard);
     assert_ne!(
         binding.parameters,
         direct_binding(&read, Some(other_target))
@@ -5344,7 +5638,7 @@ fn automation_native_observation_approval_is_exact_and_channel_owned() {
     coordinator.reconcile(&mut broker, &[&app, &other]);
     coordinator.broker = Some(broker);
     let target = coordinator.targets[&id.chip_id()].reference;
-    coordinator.approve(1, vec![target]).unwrap();
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
     let settings = coordinator.settings(&[&app, &other]);
     assert_eq!(settings.channels[0].approved_targets, [target]);
     assert!(settings
@@ -5417,7 +5711,7 @@ fn automation_native_observation_approval_is_exact_and_channel_owned() {
 fn automation_waits_are_notified_cancelled_and_cannot_cross_replacement() {
     let (mut coordinator, mut app, id, receive) = fixture();
     let target = coordinator.targets[&id.chip_id()].reference;
-    coordinator.approve(1, vec![target]).unwrap();
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
     let reference = serde_json::to_string(&target).unwrap();
     let key = call(
         &mut coordinator,
@@ -5484,7 +5778,7 @@ fn automation_waits_are_notified_cancelled_and_cannot_cross_replacement() {
 fn automation_wait_observes_applied_persistent_recovery_sync() {
     let (mut coordinator, mut app, id, receive) = fixture();
     let target = coordinator.targets[&id.chip_id()].reference;
-    coordinator.approve(1, vec![target]).unwrap();
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
     let reference = serde_json::to_string(&target).unwrap();
     call(
         &mut coordinator,
@@ -5531,7 +5825,7 @@ fn automation_grant_does_not_follow_replaced_controller_with_same_tab_and_genera
         .unwrap()
         .controller
         .lifecycle_generation();
-    coordinator.approve(1, vec![old_target]).unwrap();
+    approve_for_test(&mut coordinator, 1, vec![old_target]).unwrap();
 
     assert_eq!(app.automation_replace_fixture_session(), id);
     assert_eq!(
@@ -5574,8 +5868,9 @@ fn automation_closed_tabs_do_not_exhaust_target_registrations() {
         assert_eq!(coordinator.targets.len(), 1);
         if let Some(first) = first {
             assert_ne!(target, first);
+            let guard = festerm_session::automation_admission_lock().unwrap();
             assert_eq!(
-                broker.close_target(first),
+                broker.close_target(first, &guard),
                 Err(festerm_automation::Error::StaleTarget)
             );
         } else {
@@ -5589,7 +5884,7 @@ fn automation_closed_tabs_do_not_exhaust_target_registrations() {
 fn automation_disclosure_and_authority_exhaustion_are_explicit_refusals() {
     let (mut coordinator, app, id, receive) = fixture();
     let target = coordinator.targets[&id.chip_id()].reference;
-    coordinator.approve(1, vec![target]).unwrap();
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
     let reference = serde_json::to_string(&target).unwrap();
     for _ in 0..32 {
         call(

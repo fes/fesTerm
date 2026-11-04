@@ -1,5 +1,26 @@
 # Milestone Progress Narrative
 
+## Guarding enrollment identity mutation
+
+The broker now requires the existing shared opaque admission guard for
+registration membership, enrollment identity and proposal-revision changes,
+including target and connection retirement and global revocation. Host
+lifecycle cuts keep related flags and registry changes together; reconciliation
+captures current attachment epochs under that guard. Reconciliation try-locks:
+a busy tick retains the broker, defers peer/disclosure processing and schedules
+a retry, refusing transient approval rather than replaying it. Observation
+approval checks and installs its grant under one try-guard, and startup defers
+admission-dependent binding without losing pending state. Completely dormant
+shutdown skips the new guard acquisition. Presentation-only updates and
+ordinary grant APIs remain separate. Focused contention, lifecycle, startup
+and retry tests cover these in-memory boundaries.
+
+This is only a prerequisite: there is no enrollment witness or metadata-grant
+binding, no final-recipient/write fence or native consent, and no production
+qualification change. Mandatory lifecycle cuts and existing response sends can
+still wait for the guard. Nonblocking response delivery needs bounded retained
+responses, not a lossy shortcut.
+
 ## Sharing the existing automation admission boundary
 
 The existing process-wide admission mutex, opaque guard and attachment epoch
