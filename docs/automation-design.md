@@ -607,7 +607,7 @@ Per-connection grant revocation alone leaves these non-authorizing registrations
 intact; unpairing must unregister them or disconnect.
 
 This is only an internal kernel prerequisite. There is no enrollment UI, wire
-operation or supported controller workflow. The returned reference identifies
+enrollment operation or supported controller workflow. The returned reference identifies
 an association; it does not authorize disclosure of even target metadata, or
 screen, scrollback, selection, input, presentation or workflow invocation.
 It starts no listener or worker and enables neither MCP nor JavaScript. The
@@ -619,18 +619,163 @@ same ID again at admission, never resolve the then-current association in its
 place. It is backend-neutral, not an implementation of #524's local-session
 eligibility policy.
 
+### Bounded confirmed-presentation seam
+
+The kernel has a **separate native presentation decision** for one exact
+connection, registration, enrollment and live target generation. Enrollment,
+an observation grant, a label, a client token or a claimed gesture cannot
+create this decision. The decision grants neither discovery/observation nor
+input, and expires within five minutes. A newer native review supersedes older
+reviews and withdraws the previous presentation grant. Rebinding, unpairing,
+revocation, disconnect, privacy loss, target close or replacement invalidates
+the affected grant/evidence.
+
+An application-owned monitor identity represents one *qualified and continuous*
+native event source. Presentation attempts are limited to one application-wide,
+five seconds, 16 per native grant and 4096 per broker lifetime. A prepared
+attempt selects the exact session through `AppCommand::ActivateTab` and queues
+the existing window focus command only after resolving the enrollment and
+checking the local-PTY target, connection, attachment and privacy gates. It is
+still pending after those commands. A later fresh native barrier must establish
+the actual foreground/key window and selected target before the kernel can
+mint a unique opaque revision. A different window/target stays pending or
+refuses; an explicitly refused foreground request is `FOREGROUND_REFUSED`.
+Cancellation and absolute expiry discard the attempt; the application schedules
+the deadline in both UI and logic-only passes. Nothing polls or blocks the UI.
+The host must also revalidate the evidence, recipient and all live guards at
+actual response admission; a confirmation prepared earlier is not permission
+to release a later response.
+
+At input preparation, a requested presentation condition is frozen with the
+exact lease, enrollment and revision. Ordinary control commit refuses that
+condition rather than dropping it. The modeled application handoff captures
+the exact controller, human-input, IME and backend-attachment generations
+**before presenting a pending native control review** for one target. Under
+the admission boundary it first cuts stale handoffs/reviews, then captures the
+fence, freezes guards for **every** discovered or observed source in the
+requested grant, and creates the broker's ownership snapshot. These guards
+bind each exact target and controller instance/lifecycle generation to the
+original liveness and registration identities and backend attachment
+identity/generation. The exact request and bounded grant lifetime are frozen
+for display. The host-only decision is bound to that specific review and its
+entire displayed readable-source closure; it cannot be paired with a newer
+proposal. Human input invalidates the captured epoch before delivery, even if
+no grant, lease or previous handoff exists. IME loss/regain, pending
+clipboard/IME input, source disconnect or attachment replacement also
+invalidate the review. The old broker proposal is rejected rather than
+repaired by a fresh capture. Only a genuine new native review can authorize a
+new handoff, and its first proposal snapshots ownership after the cut.
+
+The original review fence and all source guards stay bound to the principal's
+opaque grant and acquired lease/run; a caller cannot substitute newly captured
+guards for an old grant. Every approved source is revalidated at decision,
+lease acquisition and input admission, including sources omitted from a narrower
+run. The admission lock remains held through publication, so a backend
+transition is ordered either before the checks or after the publication. A
+stale source retires its exact old target and cuts only grants and proposals
+whose scopes contain it. Already-retired targets have already been cut by
+broker close/replacement and must not globally revoke unrelated principals.
+At most 16 pending reviews globally, two per principal, and one handoff per
+principal are retained. Cancellation, expiry, revocation, disconnect and
+privacy loss reject pending decisions; inactive host records are pruned on
+the next boundary, and any future UI must independently dismiss expired or
+cancelled prompts. Before proposal creation, handoff, lease acquisition or
+presented-input admission, a stale human/IME control fence synchronously cuts
+every control grant for that target, including old requests and pending
+approvals. Worker disclosure and other future input paths must implement the
+same ordering; this modeled seam is not an exposed direct-input adapter.
+
+The presented-input seam resolves the request's exact lease, grant and target
+again and, under the shared admission lock, checks the connection/stop and
+privacy flags, concrete local PTY, registration and original attachment
+generations. Each backend reservation is created with the host controller ID
+and the backend's own attachment identity and running generation; the seam
+compares all three to the prepared target under the same lock. Equal bytes or
+equal generation numbers on a different PTY are insufficient. The seam then
+requires a **new** native barrier, rehashes the immutable reserved bytes and
+retains both boundaries through publication. If the reservation or barrier
+fails after broker admission has succeeded, the outcome is unknown, never a
+not-admitted refusal or permission to replay. UI admission, handoff and
+activation use a nonblocking try-lock; contention refuses before effects.
+Any future native barrier must itself be nonblocking and bounded, with pending
+activation resumed by events/deadline instead of waiting on the UI thread.
+The existing controller's human-input invalidation acquires the same mutex
+blocking; before enabling native review in production, its UI responsiveness
+must be qualified or human delivery deferred without weakening ordering.
+These fences order human/IME transitions already recorded by the application;
+they do not prove that the OS has no undelivered human input. A real input
+adapter must also establish that ordering or conservatively refuse.
+
+**Loss and regain between observations:** two identical current window/tab
+samples do not prove uninterrupted presentation. The native source must record
+every intervening activation transition, including loss and regain before the
+next sample, with a non-reused monotonically advancing event generation, detect
+any gap/overflow, and establish an ordering/freshness barrier at confirmation,
+response release and every input admission. The application separately advances
+a shared non-wrapping workspace revision on tab selection and window topology
+changes, including away-and-back changes. The shared revision is bound to the
+UI thread and once to its coordinator, so admission cannot substitute a
+different workspace. The synchronous input callback rechecks it after the native
+barrier and before publication; that callback must not re-enter UI mutation.
+A future response adapter needs the same ordering. An old revision never becomes
+valid again: a transition, mismatch, unknown state, source restart or gap
+closes the evidence; a new explicit request is necessary.
+
+The OS can change foreground independently of the application's admission
+mutex. Merely draining delayed events, comparing `NSWindow.isKeyWindow`,
+`window.has_focus()`, egui's cached `viewport().focused`, or seeing a queued
+`ViewportCommand::Focus` does **not** prove that no transition was missed or
+serialize an OS change against admission. eframe exposes a root frame/raw
+handle but not a frame for every immediate secondary viewport, and its normal
+UI/event delivery is not a proven native admission barrier. A platform source
+must prove the complete event history and the ordering through publication, or
+invalidate/refuse. Synthetic event/barrier tests prove only the state machine,
+not AppKit, Win32, compositor or human-attention behavior. No production native
+source is installed; **all platforms and viewports remain unavailable**,
+including Windows foreground refusal and macOS root/secondary windows. Local
+PTY eligibility does not qualify a platform, and SSH, persistent, tunnel and
+serial sessions are not enabled for this slice.
+
+There are concrete obstacles beyond an absent adapter. On macOS, the vendored
+`egui-winit` focus handler substitutes `window.has_focus()` for the delivered
+event value, so a delayed loss after regain can be collapsed into a current
+snapshot; AppKit/run-loop notifications are not a proven publication barrier.
+On Windows, the pinned winit 0.30.13 `Window::focus_window` can call
+`force_window_active`, which synthesizes Alt with `SendInput` and ignores the
+`SetForegroundWindow` result. That path cannot report OS refusal and must not
+be used as the qualified presentation request. The refusal-only client tool
+does not reach this queue. Existing ordinary window focus behavior is unchanged.
+
+The later-stage MCP catalog offers the content-free
+`festerm_presentation_capabilities` and refusal-only
+`festerm_workspace_present` tools. The former currently returns
+`presentation: {available: false, reason: "NATIVE_EVIDENCE_UNQUALIFIED"}`,
+`backends.local_pty: "NATIVE_EVIDENCE_UNQUALIFIED"`,
+`backends.other: "UNSUPPORTED_BACKEND"`, `enrollment_available: false` and
+`input_available: false`.
+The backend policy describes the slice, not any enrolled session. The latter
+tool strictly validates its opaque `enrollment_ref` and 1–5000 ms `timeout_ms`,
+then returns `UNAVAILABLE` without starting work, changing a tab or prompting. The schema
+reserves a supported success containing the exact opaque `target_ref` and a
+48-character host-owned `presentation_revision`, and a distinct
+`FOREGROUND_REFUSED` result; neither is emitted by this unqualified adapter.
+`available: true` would require the corresponding real tool, native grant and
+qualified backend; it would not itself grant authority. The ordinary P1
+`Machine::new()` catalog stays observation-only. The later-stage opt-in cannot
+mint a native decision and does not enable JavaScript or input.
+
 The remaining #524 contract is deliberately open:
 
 - Native pairing/selection and **separately authorized metadata-only**
   disclosure and bounded lifecycle refresh, without granting terminal contents.
-- Confirmed presentation of the exact target with a host-owned freshness
-  revision. A queued focus request is not confirmation; refused Windows
-  foreground activation must be reported as refusal, not success. No physical
-  visibility or human-attention claim is implied.
-- Revalidation of required presentation at input admission together with the
-  target, privacy and writer-lease fences. Human input, pending IME/paste,
-  lock, revocation, expiry and disconnect require explicit disarm and fresh
-  native handoff/reapproval, never silent lease reacquisition.
+- A qualified native event source and response-admission barrier, native
+  enrollment/presentation-grant UI, and end-to-end presentation/input adapter.
+  Windows foreground refusal and away-and-back races require real native
+  evidence; no physical visibility or human-attention claim is implied.
+- Integration of the presented-input seam with direct MCP input, writer lease
+  and explicit handoff/disarm UI. Human input, pending IME/paste, lock,
+  revocation, expiry and disconnect require fresh native handoff/reapproval,
+  never silent lease reacquisition.
 - Honest not-admitted, admitted and unknown outcomes; queue admission is not
   command completion, and lost responses do not authorize replay. The external
   client owns its durable uncertain-action interlock.

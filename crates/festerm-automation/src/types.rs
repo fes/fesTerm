@@ -8,6 +8,7 @@ pub const MAX_OBSERVATION_BYTES: u32 = 32_768;
 pub const MAX_INPUT_BYTES: u32 = 16_384;
 pub const MAX_SCOPE_TARGETS: usize = 32;
 pub const MAX_CONTROLLER_REGISTRATION_BYTES: usize = 128;
+pub const MAX_PENDING_APPROVALS: usize = 16;
 
 macro_rules! reference_id {
     ($name:ident) => {
@@ -99,8 +100,8 @@ pub struct InvocationBinding {
     pub parameters: Digest,
 }
 
-/// Requested scopes are data, not authority. No wildcard or presentation sink
-/// exists in this kernel. All results are returned only to the same connection.
+/// Requested scopes are data, not authority. Presentation uses its own native
+/// decision, not these scopes. Results return only to the same connection.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scope {
@@ -170,6 +171,14 @@ impl NativeApproval {
     ) -> Self {
         self.handoffs.insert(target, all_readable_sources);
         self
+    }
+
+    /// Whether this native decision contains exactly one accepted control
+    /// target. The host still has to validate the entire pending proposal.
+    pub fn is_single_control_handoff(&self, target: TargetRef) -> bool {
+        self.request.scope.control.len() == 1
+            && self.request.scope.control.contains(&target)
+            && self.handoffs.contains_key(&target)
     }
 }
 
@@ -292,6 +301,9 @@ pub enum Operation {
         lease: LeaseRef,
         input: Digest,
         bytes: u32,
+        /// A frozen requirement, if the caller requires confirmed presentation.
+        /// It cannot be removed between preparation and admission.
+        presentation: Option<crate::PresentationRequirement>,
     },
     Result {
         max_bytes: u32,
@@ -321,6 +333,8 @@ pub enum Error {
     Busy,
     Closed,
     BindingMismatch,
+    Unavailable,
+    ForegroundRefused,
     UnsettledHostCalls,
     UnsettledChildRuns,
 }

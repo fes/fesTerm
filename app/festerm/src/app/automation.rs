@@ -1,11 +1,30 @@
 use crate::{
     automation::{NativeCommand, SettingsSnapshot},
-    tabs::{SessionTab, TabContent, TabId},
+    tabs::{AppCommand, SessionTab, TabContent, TabId},
 };
 
 use super::FesTermApp;
 
 impl FesTermApp {
+    pub(crate) fn set_presentation_workspace(
+        &mut self,
+        revision: &crate::automation::WorkspaceRevision,
+    ) {
+        self.state.set_presentation_workspace(revision);
+    }
+
+    pub(crate) fn activate_presentation_target(
+        &mut self,
+        id: TabId,
+        context: &eframe::egui::Context,
+    ) -> bool {
+        if self.state.session_tab(id).is_none() {
+            return false;
+        }
+        self.state.dispatch(AppCommand::ActivateTab(id), context);
+        self.state.active() == id
+    }
+
     pub(crate) fn automation_mcp_enabled(&self) -> bool {
         self.state.mcp_enabled()
     }

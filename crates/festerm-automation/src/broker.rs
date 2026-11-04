@@ -2,6 +2,16 @@ use crate::types::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
+#[path = "presentation.rs"]
+mod presentation;
+pub use presentation::{
+    ConfirmedPresentation, NativeControllerPresentationApproval, NativePresentationObservation,
+    NativePresentationState, PresentationApprovalProposal, PresentationAttempt,
+    PresentationMonitorId, PresentationRequirement, PresentationRevision, PresentationWindowId,
+    MAX_PRESENTATION_ATTEMPTS_PER_GRANT, MAX_PRESENTATION_WAIT,
+};
+use presentation::{PresentationGrant, PresentationState};
+
 #[derive(Clone, Copy, Default)]
 struct Usage {
     operations: u32,
@@ -18,6 +28,8 @@ struct ControllerRegistration {
     local_id: Box<[u8]>,
     revision: u64,
     enrollment: Option<ControllerEnrollment>,
+    presentation_review: Option<u64>,
+    presentation_grant: Option<PresentationGrant>,
 }
 
 #[derive(Clone, Copy)]
@@ -32,6 +44,14 @@ struct Grant {
     handoffs: BTreeMap<TargetRef, BTreeSet<TargetRef>>,
     expires: Instant,
     usage: Usage,
+}
+
+/// Opaque host-only identity of one approved control grant. It is not a wire
+/// credential and is not serializable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeControlGrant {
+    instance: [u8; 16],
+    epoch: u64,
 }
 
 struct PendingApproval {
@@ -90,6 +110,7 @@ pub struct Broker {
     runs: BTreeMap<RunId, Run>,
     requests: BTreeMap<RequestId, Request>,
     starts: BTreeMap<(ConnectionId, StartKey), StartReceipt>,
+    presentation: PresentationState,
 }
 
 impl Broker {
@@ -130,6 +151,7 @@ impl Broker {
             runs: BTreeMap::new(),
             requests: BTreeMap::new(),
             starts: BTreeMap::new(),
+            presentation: PresentationState::default(),
         }
     }
 
@@ -213,6 +235,8 @@ impl Broker {
                 local_id: local_id.into(),
                 revision: id.sequence,
                 enrollment: None,
+                presentation_review: None,
+                presentation_grant: None,
             },
         );
         Ok(id)
@@ -305,6 +329,9 @@ impl Broker {
             id,
             target: proposal.target,
         });
+        record.presentation_review = None;
+        record.presentation_grant = None;
+        self.cancel_presentation_for_registration(connection, proposal.registration);
         Ok(id)
     }
 
@@ -338,6 +365,7 @@ impl Broker {
             .get_mut(&connection)
             .and_then(|principal| principal.controller_registrations.remove(&registration))
             .ok_or(Error::Unauthorized)?;
+        self.cancel_presentation_for_registration(connection, registration);
         Ok(())
     }
 
@@ -415,6 +443,7 @@ impl Broker {
     }
 
     fn invalidate_target(&mut self, target: TargetRef) {
+        self.cancel_presentation_for_target(target);
         for principal in self.principals.values_mut() {
             principal
                 .controller_registrations
@@ -487,7 +516,7 @@ impl Broker {
             .principals
             .get(&connection)
             .ok_or(Error::Unauthorized)?;
-        if self.pending.len() >= 16
+        if self.pending.len() >= MAX_PENDING_APPROVALS
             || self
                 .pending
                 .values()
@@ -530,6 +559,19 @@ impl Broker {
             .approvals_requested += 1;
         self.approvals_requested += 1;
         Ok(id)
+    }
+
+    /// Whether this connection's proposal is still recorded and unexpired.
+    /// Ownership and scope must still be checked when a native decision is applied.
+    pub fn pending_approval_is_active(
+        &self,
+        connection: ConnectionId,
+        id: ApprovalId,
+        now: Instant,
+    ) -> bool {
+        self.pending
+            .get(&id)
+            .is_some_and(|pending| pending.connection == connection && now < pending.expires)
     }
 
     pub fn reject_approval(&mut self, connection: ConnectionId, id: ApprovalId) -> Result<()> {
@@ -631,10 +673,34 @@ impl Broker {
         Ok(grant)
     }
 
+    /// Identifies the current accepted native handoff for this principal and
+    /// exact target. This identifies a grant; it does not authorize an effect.
+    pub fn native_control_grant(
+        &self,
+        connection: ConnectionId,
+        target: TargetRef,
+        now: Instant,
+    ) -> Result<NativeControlGrant> {
+        self.target(target)?;
+        let grant = self.grant(connection, now)?;
+        if !grant.request.scope.control.contains(&target) || !grant.handoffs.contains_key(&target) {
+            return Err(Error::Unauthorized);
+        }
+        Ok(NativeControlGrant {
+            instance: self.instance,
+            epoch: grant.epoch,
+        })
+    }
+
     pub fn revoke(&mut self, connection: ConnectionId) {
         if let Some(principal) = self.principals.get_mut(&connection) {
             principal.grant = None;
+            for registration in principal.controller_registrations.values_mut() {
+                registration.presentation_review = None;
+                registration.presentation_grant = None;
+            }
         }
+        self.cancel_presentation_for_connection(connection);
         self.pending
             .retain(|_, pending| pending.connection != connection);
         let runs: Vec<_> = self
@@ -659,11 +725,13 @@ impl Broker {
         for principal in self.principals.values_mut() {
             principal.controller_registrations.clear();
         }
+        self.stop_all_presentation_monitoring();
     }
 
     /// Call from the application's deadline timer to wake/reap external waiters
     /// and workers. Every admission/delivery also checks time independently.
     pub fn poll_expiry(&mut self, now: Instant) {
+        self.expire_presentations(now);
         self.pending.retain(|_, pending| now < pending.expires);
         let expired: Vec<_> = self
             .runs
@@ -1084,6 +1152,7 @@ impl Broker {
     /// even if its prepared acquisition has not committed yet.
     pub fn human_takeover(&mut self, reference: TargetRef) -> Result<()> {
         self.target(reference)?;
+        self.cancel_presentation_for_target(reference);
         let epoch = self.mint()?;
         let connections: Vec<_> = self
             .principals
@@ -1108,7 +1177,13 @@ impl Broker {
         Ok(())
     }
 
-    fn check_operation(&self, id: RunId, run: &Run, operation: Operation) -> Result<()> {
+    fn check_operation(
+        &self,
+        id: RunId,
+        run: &Run,
+        operation: Operation,
+        now: Instant,
+    ) -> Result<()> {
         let kind_allowed = match run.spec.binding.invocation {
             Invocation::Workflow { .. } => true,
             Invocation::Direct { operation: kind } => matches!(
@@ -1139,6 +1214,7 @@ impl Broker {
                 lease,
                 input: _,
                 bytes,
+                presentation,
             } => {
                 if lease.run != id || !run.spec.scope.control.contains(&lease.target) {
                     return Err(Error::Unauthorized);
@@ -1149,6 +1225,9 @@ impl Broker {
                 let target = self.target(lease.target)?;
                 if target.writer != Some(lease) || target.ownership_epoch != lease.epoch {
                     return Err(Error::Revoked);
+                }
+                if let Some(requirement) = presentation {
+                    self.check_presentation(run.connection, requirement, lease.target, now)?;
                 }
             }
             Operation::Result { max_bytes } => {
@@ -1174,7 +1253,7 @@ impl Broker {
     ) -> Result<RequestId> {
         self.poll_expiry(now);
         let run = self.check_run(connection, id, now)?;
-        self.check_operation(id, run, operation)?;
+        self.check_operation(id, run, operation, now)?;
         if self
             .requests
             .values()
@@ -1214,7 +1293,7 @@ impl Broker {
     ) -> Result<(&Request, &Run)> {
         let request = self.requests.get(&id).ok_or(Error::Closed)?;
         let run = self.check_run(connection, request.run, now)?;
-        self.check_operation(request.run, run, request.operation)?;
+        self.check_operation(request.run, run, request.operation, now)?;
         Ok((request, run))
     }
 
@@ -1266,17 +1345,109 @@ impl Broker {
         exact_bytes: u32,
         now: Instant,
     ) -> Result<()> {
+        self.commit_control_inner(connection, id, exact_input, exact_bytes, None, now)
+    }
+
+    /// Resolve a prepared control request for host-side attachment and human
+    /// input fencing. This is not a disclosure or an admission decision.
+    pub fn prepared_control_target(
+        &self,
+        connection: ConnectionId,
+        id: RequestId,
+        now: Instant,
+    ) -> Result<TargetRef> {
+        let request = self.requests.get(&id).ok_or(Error::Closed)?;
+        self.check_run(connection, request.run, now)?;
+        match request.operation {
+            Operation::Control { lease, .. } if !request.committed => Ok(lease.target),
+            _ => Err(Error::InvalidRequest),
+        }
+    }
+
+    /// Resolves the frozen lease and grant epoch of one prepared request for
+    /// host-side handoff binding. Final admission must still revalidate both.
+    pub fn prepared_control_binding(
+        &self,
+        connection: ConnectionId,
+        id: RequestId,
+        now: Instant,
+    ) -> Result<(LeaseRef, NativeControlGrant)> {
+        let request = self.requests.get(&id).ok_or(Error::Closed)?;
+        let run = self.check_run(connection, request.run, now)?;
+        let Operation::Control { lease, .. } = request.operation else {
+            return Err(Error::InvalidRequest);
+        };
+        if request.committed || lease.run != request.run {
+            return Err(Error::InvalidRequest);
+        }
+        let grant = self.native_control_grant(connection, lease.target, now)?;
+        if grant.epoch != run.grant_epoch {
+            return Err(Error::Revoked);
+        }
+        Ok((lease, grant))
+    }
+
+    /// Commits a request that froze a presentation requirement. The observation
+    /// must come from a fresh qualified native barrier, under the same host
+    /// admission boundary as the attachment, privacy and human-input fences.
+    pub fn commit_presented_control(
+        &mut self,
+        connection: ConnectionId,
+        id: RequestId,
+        exact_input: Digest,
+        exact_bytes: u32,
+        observation: NativePresentationObservation,
+        now: Instant,
+    ) -> Result<()> {
+        self.commit_control_inner(
+            connection,
+            id,
+            exact_input,
+            exact_bytes,
+            Some(observation),
+            now,
+        )
+    }
+
+    fn commit_control_inner(
+        &mut self,
+        connection: ConnectionId,
+        id: RequestId,
+        exact_input: Digest,
+        exact_bytes: u32,
+        observation: Option<NativePresentationObservation>,
+        now: Instant,
+    ) -> Result<()> {
         let (request, _) = self.check_request(connection, id, now)?;
         if request.committed {
             return Err(Error::Closed);
         }
-        let Operation::Control { input, bytes, .. } = request.operation else {
+        let Operation::Control {
+            lease,
+            input,
+            bytes,
+            presentation,
+        } = request.operation
+        else {
             return Err(Error::InvalidRequest);
         };
         if exact_input != input || exact_bytes != bytes {
             return Err(Error::BindingMismatch);
         }
         let run = request.run;
+        match (presentation, observation) {
+            (None, None) => {}
+            (Some(requirement), Some(observation)) => {
+                self.revalidate_presentation(
+                    connection,
+                    requirement,
+                    lease.target,
+                    observation,
+                    now,
+                )?;
+            }
+            _ => return Err(Error::BindingMismatch),
+        }
         self.requests.get_mut(&id).ok_or(Error::Closed)?.committed = true;
         for id in self.lineage(run) {
             let run = self.runs.get_mut(&id).ok_or(Error::Closed)?;

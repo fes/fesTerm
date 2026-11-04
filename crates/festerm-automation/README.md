@@ -28,6 +28,11 @@ platforms and unqualified adapters disabled in the application.
    discovery or observation within the exact granted scope. Each such run still
    binds its own canonical operation/parameter digest. This policy cannot grant
    workflow starts, control, or any other effect; their bindings remain exact.
+   The kernel's ownership snapshot alone is insufficient for a control review:
+   before showing consent, the host must cut stale handoffs/reviews and bind
+   this proposal to the exact controller, human-input, IME and attachment
+   fence under its admission boundary. Never pair an older native decision
+   with a fresh proposal or replace its original fence after input.
 4. Native UI constructs `NativeApproval`, specifying exact targets and approved
    immutable `InvocationBinding`s. Show the real channel identity, observation
    disclosure, workflow/manifest/parameter digests and deadline. To authorize
@@ -67,10 +72,20 @@ platforms and unqualified adapters disabled in the application.
    Only then call `commit_lease`; dropping the transition aborts. Install the
    returned `ownership_epoch` in the same controller. This does **not** prove
    clean remote state. `prepare_request(Control)` binds this exact lease and
-   encoded input digest/byte count. Reserve an infallible bounded queue slot,
-   independently hash/count the actual encoded bytes, call `commit_control`
-   with those values, and immediately fill the slot. There must be no intervening
-   controller event. Backpressure aborts before commit; never replay input.
+   encoded input digest/byte count and any required `PresentationRequirement`.
+   Reserve an infallible bounded queue slot, independently hash/count the actual
+   encoded bytes, and commit inside the reservation. Bind the original
+   human-input/IME/attachment fence captured before native review to that exact
+   decision and grant epoch, and bind the lease/run to that handoff. A fresh
+   capture must never revive a stale review or grant: propagate the cut before
+   the next proposal or admission.
+   Recheck the reservation's host controller and backend-owned attachment
+   identity/generation against the prepared target under the same lock. A presentation-required
+   request must use `commit_presented_control` with a fresh qualified native
+   barrier; `commit_control` cannot drop its frozen condition. Retain all host
+   barriers through publication. A barrier error after a successful callback is
+   an unknown outcome, not a refusal or replay permission. Backpressure aborts
+   before commit; never replay input.
    Every actual downstream dispatch must also honor the controller ownership
    epoch; takeover/revoke discards stale **not-yet-admitted** items.
 9. `settle_request` acknowledges or aborts a host call; neither refunds quotas nor
@@ -136,6 +151,50 @@ control, workflow invocation, native pairing and per-write privacy checks
 remain mandatory. This primitive does not enforce a local-backend policy,
 create a listener/worker, enable either setting, or qualify any platform.
 
+### Separately granted presentation
+
+Only a native user action may create `PresentationApprovalProposal` and
+`NativeControllerPresentationApproval` for one current connection, registration,
+enrollment and exact target. Neither type is a wire decision. A new review
+withdraws the old presentation grant; an expired or superseded decision cannot
+grant. This grant does not confer discovery, observation, input or workflow
+authority. Revocation, disconnection, rebinding, target lifecycle changes and
+global privacy loss invalidate it or its evidence. A native presentation-only
+revocation also withdraws pending reviews without revoking enrollment or other
+authority.
+
+The host may install `start_qualified_presentation_monitor` **only** after a
+native implementation proves an uninterrupted event source and an ordering
+barrier that remains effective through response or input admission. The kernel
+does not qualify a platform. Deliver every native focus transition, including
+away-and-back changes, with `note_presentation_transition`; any missing,
+unordered or unknown event must close the monitor. Samples of the same active
+window are not proof that focus was continuous. The application supplies a
+non-wrapping revision for all tab and window changes as well as actual selected
+target/window identity. All source transitions, sampling, broker checks,
+privacy/attachment/human fences and publication must be serialized. A local
+mutex alone cannot prevent an OS foreground change. No current production source
+meets this contract.
+
+One global attempt at a time may wait up to five seconds, with 16 attempts per
+grant and 4096 per broker lifetime. `prepare_presentation` is inert;
+`presentation_requested` means only that the application dispatched its tab
+command and queued activation. `finish_presentation` remains pending until a
+later barrier proves actual activation and selection. Its success identifies
+the exact target and an opaque revision. Before releasing that success or
+admitting each conditioned input, obtain another fresh barrier and call
+`revalidate_presentation` or `commit_presented_control`, while retaining all
+other required admission fences. A transition, changed workspace revision,
+unknown source, stale sample, different principal/target, revocation or expiry
+cannot silently restore old evidence. Timeout/cancel never implies that an
+already queued OS focus request can be undone.
+
+Production leaves the monitor uninstalled and the client presentation tool
+refuses; the separate injected-source tests do not establish native OS behavior.
+Native grant/enrollment UI, response-admission wiring and direct input remain
+unimplemented. See the [design](../../docs/automation-design.md#bounded-confirmed-presentation-seam)
+for the client contract and qualification blockers.
+
 ## Accounting and boundaries
 
 - At most 16 connections, 128 logical targets, 128 retained runs/receipts,
@@ -157,8 +216,9 @@ create a listener/worker, enable either setting, or qualify any platform.
   It does not represent a reusable content/result resource permission.
 - Source/sink closure is inherited even when child scopes shrink. All metadata
   and observation sources must be authorized to every controlled target. The
-  only result recipient is the original authenticated connection. No
-  presentation/notification/clipboard/open-session sinks or declassifier exist.
+  only result recipient is the original authenticated connection. The separate
+  presentation grant does not add a workflow sink or a declassifier;
+  notification/clipboard/open-session sinks remain absent.
 - Every admitted input has unknown execution outcome. Completion/cancellation
   never promises rollback, shell exit status, clean remote state or command
   success. Status aggregates admitted descendant effects.

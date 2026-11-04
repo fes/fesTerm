@@ -114,6 +114,7 @@ impl Fixture {
                     lease,
                     input: digest(3),
                     bytes: 10,
+                    presentation: None,
                 },
                 self.now,
             )
@@ -133,6 +134,827 @@ fn enroll_controller(
     broker
         .approve_controller_enrollment(connection, NativeControllerEnrollment::new(proposal))
         .unwrap()
+}
+
+fn presentation_registration(
+    broker: &mut Broker,
+    connection: ConnectionId,
+    target: TargetRef,
+) -> (ControllerRegistrationId, ControllerEnrollmentId) {
+    let registration = broker
+        .register_controller_session(connection, b"identical local label")
+        .unwrap();
+    let enrollment = enroll_controller(broker, connection, registration, target);
+    (registration, enrollment)
+}
+
+fn grant_presentation(
+    broker: &mut Broker,
+    connection: ConnectionId,
+    registration: ControllerRegistrationId,
+    enrollment: ControllerEnrollmentId,
+    now: Instant,
+) {
+    let proposal = broker
+        .prepare_controller_presentation_approval(connection, registration, enrollment, now)
+        .unwrap();
+    broker
+        .approve_controller_presentation(
+            connection,
+            NativeControllerPresentationApproval::new(proposal, Duration::from_secs(60)),
+            now,
+        )
+        .unwrap();
+}
+
+fn foreground(
+    broker: &mut Broker,
+    monitor: PresentationMonitorId,
+    window: PresentationWindowId,
+    target: TargetRef,
+) -> NativePresentationObservation {
+    broker
+        .observe_presentation(
+            monitor,
+            NativePresentationState::Foreground {
+                window,
+                selected: Some(target),
+                workspace_revision: 0,
+            },
+        )
+        .unwrap()
+        .unwrap()
+}
+
+fn presented(
+    broker: &mut Broker,
+    connection: ConnectionId,
+    registration: ControllerRegistrationId,
+    enrollment: ControllerEnrollmentId,
+    monitor: PresentationMonitorId,
+    window: PresentationWindowId,
+    now: Instant,
+) -> (PresentationAttempt, PresentationRequirement) {
+    let attempt = broker
+        .prepare_presentation(
+            connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(2),
+            now,
+        )
+        .unwrap();
+    broker
+        .presentation_requested(connection, attempt, now)
+        .unwrap();
+    let observation = foreground(broker, monitor, window, attempt.target());
+    let confirmed = broker
+        .finish_presentation(connection, attempt, Some(observation), now)
+        .unwrap()
+        .unwrap();
+    assert_eq!(confirmed.target, attempt.target());
+    (
+        attempt,
+        PresentationRequirement::new(registration, enrollment, confirmed.revision),
+    )
+}
+
+#[test]
+fn presentation_needs_a_separate_native_grant_for_the_exact_principal_and_target() {
+    let mut f = Fixture::new();
+    let other = f.broker.accept_connection().unwrap();
+    let (first, first_enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    let (second, second_enrollment) = presentation_registration(&mut f.broker, other, f.b);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(42);
+    assert_eq!(
+        f.broker.prepare_presentation(
+            f.connection,
+            first,
+            first_enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        ),
+        Err(Error::Revoked)
+    );
+    grant_presentation(&mut f.broker, f.connection, first, first_enrollment, f.now);
+    assert_eq!(
+        f.broker.prepare_presentation(
+            other,
+            second,
+            second_enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        ),
+        Err(Error::Revoked)
+    );
+    assert_eq!(
+        f.broker.prepare_presentation(
+            other,
+            first,
+            first_enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    let attempt = f
+        .broker
+        .prepare_presentation(
+            f.connection,
+            first,
+            first_enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(attempt.target(), f.a);
+    f.broker
+        .presentation_requested(f.connection, attempt, f.now)
+        .unwrap();
+    let other_target = foreground(&mut f.broker, monitor, window, f.b);
+    assert_eq!(
+        f.broker
+            .finish_presentation(f.connection, attempt, Some(other_target), f.now),
+        Ok(None)
+    );
+    let exact = foreground(&mut f.broker, monitor, window, f.a);
+    let confirmation = f
+        .broker
+        .finish_presentation(f.connection, attempt, Some(exact), f.now)
+        .unwrap()
+        .unwrap();
+    assert_eq!(confirmation.target, f.a);
+
+    let spec = f.spec(f.scope(), binding(1));
+    assert_eq!(
+        f.broker.admit_run(f.connection, None, spec, f.now),
+        Err(Error::Revoked)
+    );
+    let copied = PresentationRequirement::new(second, second_enrollment, confirmation.revision);
+    let live = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(other, copied, f.a, live, f.now),
+        Err(Error::Revoked)
+    );
+}
+
+#[test]
+fn presentation_revocation_is_scoped_and_invalidates_pending_reviews() {
+    let mut f = Fixture::new();
+    let scope = f.scope();
+    f.approve(scope.clone(), &[binding(1)]);
+    let other = f.broker.accept_connection().unwrap();
+    let (first, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    let (second, other_enrollment) = presentation_registration(&mut f.broker, other, f.b);
+    grant_presentation(&mut f.broker, f.connection, first, enrollment, f.now);
+    grant_presentation(&mut f.broker, other, second, other_enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(42);
+    let (_, requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        first,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    assert_eq!(
+        f.broker.revoke_controller_presentation(other, first),
+        Err(Error::Unauthorized)
+    );
+    let observation = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, requirement, f.a, observation, f.now),
+        Ok(())
+    );
+    f.broker
+        .revoke_controller_presentation(f.connection, first)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, first, enrollment),
+        Ok(f.a)
+    );
+    let observation = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, requirement, f.a, observation, f.now),
+        Err(Error::Revoked)
+    );
+    let spec = f.spec(scope, binding(1));
+    assert!(f.broker.admit_run(f.connection, None, spec, f.now).is_ok());
+    let other_attempt = f
+        .broker
+        .prepare_presentation(
+            other,
+            second,
+            other_enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        )
+        .unwrap();
+    f.broker.cancel_presentation(other, other_attempt).unwrap();
+    let pending = f
+        .broker
+        .prepare_controller_presentation_approval(f.connection, first, enrollment, f.now)
+        .unwrap();
+    f.broker
+        .revoke_controller_presentation(f.connection, first)
+        .unwrap();
+    assert_eq!(
+        f.broker.approve_controller_presentation(
+            f.connection,
+            NativeControllerPresentationApproval::new(pending, Duration::from_secs(60)),
+            f.now,
+        ),
+        Err(Error::BindingMismatch)
+    );
+}
+
+#[test]
+fn presentation_waits_for_a_fresh_barrier_and_explicitly_refuses_native_failures() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(3);
+    let before_queue = foreground(&mut f.broker, monitor, window, f.a);
+    let attempt = f
+        .broker
+        .prepare_presentation(
+            f.connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .finish_presentation(f.connection, attempt, None, f.now),
+        Err(Error::InvalidRequest)
+    );
+    f.broker
+        .presentation_requested(f.connection, attempt, f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .finish_presentation(f.connection, attempt, None, f.now),
+        Ok(None)
+    );
+    assert_eq!(
+        f.broker
+            .finish_presentation(f.connection, attempt, Some(before_queue), f.now),
+        Err(Error::Revoked)
+    );
+    let attempt = f
+        .broker
+        .prepare_presentation(
+            f.connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        )
+        .unwrap();
+    f.broker
+        .presentation_requested(f.connection, attempt, f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .observe_presentation(monitor, NativePresentationState::ForegroundRefused),
+        Err(Error::ForegroundRefused)
+    );
+    assert_eq!(
+        f.broker
+            .finish_presentation(f.connection, attempt, None, f.now),
+        Err(Error::Closed)
+    );
+    assert_eq!(
+        f.broker
+            .observe_presentation(monitor, NativePresentationState::Unknown),
+        Err(Error::Unavailable)
+    );
+    assert_eq!(
+        f.broker.prepare_presentation(
+            f.connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        ),
+        Err(Error::Unavailable)
+    );
+    assert_eq!(
+        f.broker
+            .observe_presentation(monitor, NativePresentationState::Inactive),
+        Err(Error::Unavailable)
+    );
+}
+
+#[test]
+fn presentation_inactive_or_unselected_samples_make_previous_observations_stale() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    for intervening in [
+        NativePresentationState::Inactive,
+        NativePresentationState::Foreground {
+            window,
+            selected: None,
+            workspace_revision: 0,
+        },
+    ] {
+        let attempt = f
+            .broker
+            .prepare_presentation(
+                f.connection,
+                registration,
+                enrollment,
+                window,
+                Duration::from_secs(1),
+                f.now,
+            )
+            .unwrap();
+        f.broker
+            .presentation_requested(f.connection, attempt, f.now)
+            .unwrap();
+        let stale = foreground(&mut f.broker, monitor, window, f.a);
+        assert_eq!(
+            f.broker.observe_presentation(monitor, intervening),
+            Ok(None)
+        );
+        assert_eq!(
+            f.broker
+                .finish_presentation(f.connection, attempt, Some(stale), f.now),
+            Err(Error::Revoked)
+        );
+    }
+}
+
+#[test]
+fn presentation_attempts_are_bounded_cancellable_and_expire_without_a_ui_poll() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    for timeout in [
+        Duration::ZERO,
+        MAX_PRESENTATION_WAIT + Duration::from_secs(1),
+    ] {
+        assert_eq!(
+            f.broker.prepare_presentation(
+                f.connection,
+                registration,
+                enrollment,
+                window,
+                timeout,
+                f.now,
+            ),
+            Err(Error::InvalidRequest)
+        );
+    }
+    let attempt = f
+        .broker
+        .prepare_presentation(
+            f.connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(
+        f.broker.next_presentation_deadline(),
+        Some(attempt.deadline())
+    );
+    assert_eq!(
+        f.broker.prepare_presentation(
+            f.connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        ),
+        Err(Error::Busy)
+    );
+    f.broker.poll_expiry(attempt.deadline());
+    assert_eq!(f.broker.next_presentation_deadline(), None);
+    assert_eq!(
+        f.broker
+            .finish_presentation(f.connection, attempt, None, attempt.deadline()),
+        Err(Error::Expired)
+    );
+    let later = attempt.deadline();
+    for _ in 1..MAX_PRESENTATION_ATTEMPTS_PER_GRANT {
+        let attempt = f
+            .broker
+            .prepare_presentation(
+                f.connection,
+                registration,
+                enrollment,
+                window,
+                Duration::from_secs(1),
+                later,
+            )
+            .unwrap();
+        f.broker.cancel_presentation(f.connection, attempt).unwrap();
+        assert_eq!(
+            f.broker.cancel_presentation(f.connection, attempt),
+            Err(Error::Closed)
+        );
+    }
+    assert_eq!(
+        f.broker.prepare_presentation(
+            f.connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(1),
+            later,
+        ),
+        Err(Error::QuotaExceeded)
+    );
+}
+
+#[test]
+fn presentation_native_reviews_are_exact_superseded_and_expire() {
+    let mut f = Fixture::new();
+    let (first, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    let second = f
+        .broker
+        .register_controller_session(f.connection, b"other")
+        .unwrap();
+    let other_enrollment = enroll_controller(&mut f.broker, f.connection, second, f.b);
+    let stale = f
+        .broker
+        .prepare_controller_presentation_approval(f.connection, first, enrollment, f.now)
+        .unwrap();
+    assert!(matches!(
+        f.broker.prepare_controller_presentation_approval(
+            f.connection,
+            first,
+            other_enrollment,
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    ));
+    assert_eq!(
+        f.broker.approve_controller_presentation(
+            f.connection,
+            NativeControllerPresentationApproval::new(stale, Duration::from_secs(30)),
+            f.now,
+        ),
+        Err(Error::BindingMismatch)
+    );
+    let expiring = f
+        .broker
+        .prepare_controller_presentation_approval(f.connection, first, enrollment, f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker.approve_controller_presentation(
+            f.connection,
+            NativeControllerPresentationApproval::new(expiring, Duration::from_secs(30)),
+            f.now + MAX_GRANT_LIFETIME,
+        ),
+        Err(Error::Expired)
+    );
+    let proposal = f
+        .broker
+        .prepare_controller_presentation_approval(
+            f.connection,
+            first,
+            enrollment,
+            f.now + MAX_GRANT_LIFETIME,
+        )
+        .unwrap();
+    assert_eq!(proposal.target(), f.a);
+    assert_eq!(proposal.registration(), first);
+    let other = f.broker.accept_connection().unwrap();
+    assert_eq!(
+        f.broker.approve_controller_presentation(
+            other,
+            NativeControllerPresentationApproval::new(proposal, Duration::from_secs(30)),
+            f.now + MAX_GRANT_LIFETIME,
+        ),
+        Err(Error::Unauthorized)
+    );
+}
+
+#[test]
+fn presentation_workspace_revision_detects_tab_aba_even_without_a_focus_event() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    let (_, requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        registration,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    let after_away_and_back = f
+        .broker
+        .observe_presentation(
+            monitor,
+            NativePresentationState::Foreground {
+                window,
+                selected: Some(f.a),
+                workspace_revision: 2,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        f.broker.revalidate_presentation(
+            f.connection,
+            requirement,
+            f.a,
+            after_away_and_back,
+            f.now,
+        ),
+        Err(Error::Revoked)
+    );
+    let old_snapshot = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, requirement, f.a, old_snapshot, f.now),
+        Err(Error::Revoked)
+    );
+}
+
+#[test]
+fn presentation_loss_and_regain_between_equal_samples_permanently_invalidates_revision() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    let (_, requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        registration,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    let first = foreground(&mut f.broker, monitor, window, f.a);
+    f.broker
+        .revalidate_presentation(f.connection, requirement, f.a, first, f.now)
+        .unwrap();
+
+    // The final sample is identical, but both transitions must be delivered.
+    f.broker.note_presentation_transition(monitor).unwrap();
+    f.broker.note_presentation_transition(monitor).unwrap();
+    let same_again = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, requirement, f.a, same_again, f.now),
+        Err(Error::Revoked)
+    );
+    let (_, new_requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        registration,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    let live = foreground(&mut f.broker, monitor, window, f.a);
+    f.broker
+        .revalidate_presentation(f.connection, new_requirement, f.a, live, f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, new_requirement, f.a, live, f.now),
+        Err(Error::Revoked)
+    );
+    let fresh = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, new_requirement, f.a, fresh, f.now),
+        Err(Error::Revoked)
+    );
+}
+
+#[test]
+fn presentation_evidence_does_not_survive_tab_window_or_monitor_changes() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let mut monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    for changed in [
+        NativePresentationState::Foreground {
+            window,
+            selected: Some(f.b),
+            workspace_revision: 0,
+        },
+        NativePresentationState::Foreground {
+            window: PresentationWindowId::from_host(2),
+            selected: Some(f.a),
+            workspace_revision: 0,
+        },
+        NativePresentationState::Inactive,
+    ] {
+        let (_, requirement) = presented(
+            &mut f.broker,
+            f.connection,
+            registration,
+            enrollment,
+            monitor,
+            window,
+            f.now,
+        );
+        f.broker.note_presentation_transition(monitor).unwrap();
+        let _ = f.broker.observe_presentation(monitor, changed).unwrap();
+        f.broker.note_presentation_transition(monitor).unwrap();
+        let back = foreground(&mut f.broker, monitor, window, f.a);
+        assert_eq!(
+            f.broker
+                .revalidate_presentation(f.connection, requirement, f.a, back, f.now),
+            Err(Error::Revoked)
+        );
+    }
+    let (_, requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        registration,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    f.broker.lose_presentation_monitor(monitor).unwrap();
+    monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let fresh = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, requirement, f.a, fresh, f.now),
+        Err(Error::Revoked)
+    );
+}
+
+#[test]
+fn presentation_required_input_cannot_drop_or_reuse_its_frozen_condition() {
+    let mut f = Fixture::new();
+    let (run, lease) = f.controlled();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.b);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    let (_, requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        registration,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    let operation = Operation::Control {
+        lease,
+        input: digest(3),
+        bytes: 10,
+        presentation: Some(requirement),
+    };
+    let request = f
+        .broker
+        .prepare_request(f.connection, run, operation, f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .commit_control(f.connection, request, digest(3), 10, f.now),
+        Err(Error::BindingMismatch)
+    );
+    let live = foreground(&mut f.broker, monitor, window, f.b);
+    f.broker
+        .commit_presented_control(f.connection, request, digest(3), 10, live, f.now)
+        .unwrap();
+    f.broker.settle_request(f.connection, request).unwrap();
+    let stale = f
+        .broker
+        .prepare_request(f.connection, run, operation, f.now)
+        .unwrap();
+    let live_before_loss = foreground(&mut f.broker, monitor, window, f.b);
+    f.broker.note_presentation_transition(monitor).unwrap();
+    f.broker.note_presentation_transition(monitor).unwrap();
+    assert_eq!(
+        f.broker.commit_presented_control(
+            f.connection,
+            stale,
+            digest(3),
+            10,
+            live_before_loss,
+            f.now,
+        ),
+        Err(Error::Revoked)
+    );
+    let status = f.broker.status(f.connection, run, f.now).unwrap();
+    assert_eq!(status.admitted_effects, 1);
+    assert!(status.execution_outcome_unknown);
+}
+
+#[test]
+fn presentation_grants_and_evidence_end_on_rebind_revoke_privacy_and_disconnect() {
+    for transition in 0..6 {
+        let mut f = Fixture::new();
+        let (registration, enrollment) =
+            presentation_registration(&mut f.broker, f.connection, f.a);
+        grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+        let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+        let window = PresentationWindowId::from_host(1);
+        let (_, requirement) = presented(
+            &mut f.broker,
+            f.connection,
+            registration,
+            enrollment,
+            monitor,
+            window,
+            f.now,
+        );
+        let observation = foreground(&mut f.broker, monitor, window, f.a);
+        match transition {
+            0 => {
+                let new_enrollment =
+                    enroll_controller(&mut f.broker, f.connection, registration, f.a);
+                assert_ne!(enrollment, new_enrollment);
+            }
+            1 => f.broker.revoke(f.connection),
+            2 => f.broker.revoke_all(),
+            3 => f.broker.disconnect(f.connection),
+            4 => {
+                f.broker
+                    .attach_target(f.a.session(), f.a.generation() + 1)
+                    .unwrap();
+            }
+            5 => f.broker.close_target(f.a).unwrap(),
+            _ => unreachable!(),
+        }
+        assert!(f
+            .broker
+            .revalidate_presentation(f.connection, requirement, f.a, observation, f.now)
+            .is_err());
+        if transition == 1 {
+            assert_eq!(
+                f.broker
+                    .resolve_controller_enrollment(f.connection, registration, enrollment),
+                Ok(f.a)
+            );
+        }
+    }
+}
+
+#[test]
+fn presentation_revisions_are_strict_opaque_wire_values() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    let (_, requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        registration,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    let revision = requirement.revision();
+    let wire = serde_json::to_string(&revision).unwrap();
+    assert_eq!(wire.len(), 50);
+    assert_eq!(
+        serde_json::from_str::<PresentationRevision>(&wire).unwrap(),
+        revision
+    );
+    for invalid in [r#""ABC""#, r#""a""#, "null", "[]"] {
+        assert!(serde_json::from_str::<PresentationRevision>(invalid).is_err());
+    }
 }
 
 #[test]
@@ -1337,6 +2159,7 @@ fn lease_ownership_is_exclusive_and_pending_transition_does_not_authorize() {
                 lease,
                 input: digest(3),
                 bytes: 10,
+                presentation: None,
             },
             f.now
         ),

@@ -5,9 +5,10 @@ use std::time::{Duration, Instant};
 
 use festerm_core::{Dimensions, Terminal};
 use festerm_session::{
-    AutomationEpoch, FlowDirection, HostKeyPrompt, PasswordPrompt, Session, SessionError,
-    SessionErrorKind, SessionEvent, SessionLifecycle, SessionSendError, SessionTryReceiveError,
-    SshPortForwardRuntime, TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
+    AutomationAdmissionGuard, AutomationEpoch, FlowDirection, HostKeyPrompt, PasswordPrompt,
+    Session, SessionError, SessionErrorKind, SessionEvent, SessionLifecycle, SessionSendError,
+    SessionTryReceiveError, SshPortForwardRuntime, TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY,
+    MAX_IO_CHUNK_BYTES,
 };
 use festerm_ui_egui::{
     EncodedInputSink, InputRoute, InputSinkDiagnostics, TERMINAL_RESIZE_DEBOUNCE,
@@ -413,6 +414,7 @@ pub(crate) enum PendingFlush {
 
 /// Exact input, IME, and backend attachment generations for one admission.
 pub struct AutomationInputFence {
+    controller_instance: u64,
     input: Arc<AutomationEpoch>,
     input_generation: u64,
     ime: Arc<AutomationEpoch>,
@@ -428,6 +430,17 @@ impl AutomationInputFence {
         self.input.is_current(self.input_generation)
             && self.ime.is_current(self.ime_generation)
             && self.attachment.is_current(self.attachment_generation)
+    }
+
+    pub(crate) fn matches_attachment(
+        &self,
+        controller_instance: u64,
+        attachment: &Arc<AutomationEpoch>,
+        generation: u64,
+    ) -> bool {
+        self.controller_instance == controller_instance
+            && Arc::ptr_eq(&self.attachment, attachment)
+            && self.attachment_generation == generation
     }
 }
 
@@ -641,6 +654,24 @@ impl<S: Session> SessionController<S> {
         self.session.as_ref()?.automation_epoch()
     }
 
+    /// Reserves only on this controller's backend. This is not authorization.
+    #[allow(dead_code)]
+    pub(crate) fn reserve_automation_input(
+        &self,
+        bytes: &[u8],
+    ) -> Result<
+        festerm_session::ReservedAutomationInput,
+        festerm_session::ReserveAutomationInputError,
+    > {
+        let instance = self
+            .automation_instance
+            .ok_or(festerm_session::ReserveAutomationInputError::Unavailable)?;
+        self.session
+            .as_ref()
+            .ok_or(festerm_session::ReserveAutomationInputError::Unavailable)?
+            .reserve_automation_input(instance, bytes)
+    }
+
     pub(crate) fn set_automation_ime_epoch(&mut self, epoch: &Arc<AutomationEpoch>) {
         if self
             .automation_ime_epoch
@@ -669,6 +700,16 @@ impl<S: Session> SessionController<S> {
     /// exact fence and publishing any effect or worker disclosure. An empty
     /// local queue does not prove a safe remote editing or TUI state.
     pub fn capture_automation_input_fence(&mut self) -> Option<AutomationInputFence> {
+        let guard = festerm_session::automation_admission_lock()?;
+        self.capture_automation_input_fence_locked(&guard)
+    }
+
+    /// Captures all three epochs atomically inside an existing admission
+    /// boundary. UI callers must obtain that boundary nonblockingly.
+    pub(crate) fn capture_automation_input_fence_locked(
+        &mut self,
+        guard: &AutomationAdmissionGuard,
+    ) -> Option<AutomationInputFence> {
         self.pending_human_inputs
             .retain(|intent| intent.strong_count() != 0);
         if !matches!(self.last_lifecycle, Some(SessionLifecycle::Running))
@@ -680,18 +721,19 @@ impl<S: Session> SessionController<S> {
             return None;
         }
         let attachment = self.session.as_ref()?.automation_epoch()?;
-        let attachment_generation = attachment.capture()?;
+        let attachment_generation = attachment.capture_under_admission(guard)?;
         let ime = self.automation_ime_epoch.as_ref()?.clone();
-        let ime_generation = ime.capture()?;
+        let ime_generation = ime.capture_under_admission(guard)?;
         let epoch = self
             .automation_input_epoch
             .get_or_insert_with(|| Arc::new(AutomationEpoch::new()))
             .clone();
-        if epoch.capture().is_none() {
-            epoch.transition(true);
+        if epoch.capture_under_admission(guard).is_none() {
+            epoch.transition_under_admission(guard, true);
         }
-        let generation = epoch.capture()?;
+        let generation = epoch.capture_under_admission(guard)?;
         let fence = AutomationInputFence {
+            controller_instance: self.automation_instance?,
             input: epoch,
             input_generation: generation,
             ime,
@@ -699,10 +741,6 @@ impl<S: Session> SessionController<S> {
             attachment,
             attachment_generation,
         };
-        let _guard = festerm_session::automation_admission_lock()?;
-        if !fence.is_current() {
-            return None;
-        }
         self.automation_input_armed = true;
         Some(fence)
     }

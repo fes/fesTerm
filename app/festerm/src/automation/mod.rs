@@ -1,5 +1,6 @@
 mod ipc;
 mod observation;
+pub(crate) mod presentation;
 #[cfg(test)]
 mod tests;
 mod workflow_selection;
@@ -40,6 +41,7 @@ type PrivacyMonitor = festerm_windows_power::PrivacyMonitor;
 type PrivacyMonitor = festerm_linux_power::PrivacyMonitor;
 
 pub(crate) use ipc::run_stdio;
+pub(crate) use presentation::WorkspaceRevision;
 pub(crate) use workflow_selection::{Status as WorkflowStatus, View as WorkflowView};
 
 #[derive(Clone)]
@@ -184,12 +186,24 @@ struct Target {
     reference: TargetRef,
     controller_instance: u64,
     controller_generation: u64,
+    local_pty: bool,
     liveness: Arc<AtomicBool>,
     registration: Arc<AtomicBool>,
     attachment: Arc<festerm_session::AutomationEpoch>,
     attachment_generation: u64,
     stamp: Stamp,
     revision: u64,
+}
+
+impl Target {
+    fn guard(&self) -> ipc::TargetGuard {
+        ipc::TargetGuard {
+            liveness: self.liveness.clone(),
+            registration: self.registration.clone(),
+            attachment: self.attachment.clone(),
+            generation: self.attachment_generation,
+        }
+    }
 }
 
 struct Prepared {
@@ -317,6 +331,10 @@ fn prepare_shared<P>(
 pub(crate) struct Coordinator {
     workflow: workflow_selection::Selection,
     javascript_enabled: bool,
+    presentation_workspace: Option<WorkspaceRevision>,
+    control_handoffs: BTreeMap<ConnectionId, presentation::BoundControlHandoff>,
+    pending_control_reviews:
+        BTreeMap<festerm_automation::ApprovalId, presentation::BoundControlReview>,
     broker: Option<Broker>,
     server: Option<ipc::Server>,
     privacy: Option<PrivacyMonitor>,
@@ -341,6 +359,9 @@ impl Default for Coordinator {
         Self {
             workflow: workflow_selection::Selection::default(),
             javascript_enabled: false,
+            presentation_workspace: None,
+            control_handoffs: BTreeMap::new(),
+            pending_control_reviews: BTreeMap::new(),
             broker: None,
             server: None,
             privacy: None,
@@ -359,6 +380,20 @@ impl Default for Coordinator {
             targets: BTreeMap::new(),
             generation: 0,
         }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn retry_automation_busy<T>(
+    mut operation: impl FnMut() -> festerm_automation::Result<T>,
+) -> festerm_automation::Result<T> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let result = operation();
+        if !matches!(result, Err(festerm_automation::Error::Busy)) || Instant::now() >= deadline {
+            return result;
+        }
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -510,6 +545,8 @@ impl Coordinator {
     fn stop_mcp(&mut self) {
         self.want_start = false;
         set_admission_flag(&self.stop, true);
+        self.control_handoffs.clear();
+        self.pending_control_reviews.clear();
         for (_, mut peer) in std::mem::take(&mut self.peers) {
             peer.connection.close();
             peer.machine.close();
@@ -541,6 +578,8 @@ impl Coordinator {
         if let Some(broker) = &mut self.broker {
             broker.revoke_all();
         }
+        self.control_handoffs.clear();
+        self.pending_control_reviews.clear();
         for target in self.targets.values() {
             set_admission_flag(&target.registration, false);
         }
@@ -913,6 +952,9 @@ impl Coordinator {
                 peer.connection.close();
                 peer.machine.close();
                 broker.disconnect(peer.principal);
+                self.control_handoffs.remove(&peer.principal);
+                self.pending_control_reviews
+                    .retain(|_, review| review.principal != peer.principal);
             }
         }
         for _ in 0..32 {
@@ -941,7 +983,7 @@ impl Coordinator {
                                 Peer {
                                     connection,
                                     principal,
-                                    machine: Machine::new(),
+                                    machine: Machine::with_unavailable_presentation(),
                                     code,
                                     grant: None,
                                     waits: Vec::new(),
@@ -1042,9 +1084,14 @@ impl Coordinator {
         {
             let stamp = stamp(session);
             let generation = session.controller.lifecycle_generation();
+            let local_pty = matches!(
+                session.controller.session(),
+                Some(crate::tabs::ApplicationSession::Local(_))
+            );
             let unchanged = self.targets.get(&id).is_some_and(|target| {
                 target.controller_instance == controller_instance
                     && target.controller_generation == generation
+                    && target.local_pty == local_pty
                     && Arc::ptr_eq(&target.liveness, &liveness)
                     && Arc::ptr_eq(&target.attachment, &attachment)
                     && target.attachment_generation == attachment_generation
@@ -1078,6 +1125,7 @@ impl Coordinator {
                                 reference,
                                 controller_instance,
                                 controller_generation: generation,
+                                local_pty,
                                 liveness,
                                 registration: Arc::new(AtomicBool::new(true)),
                                 attachment,
@@ -1165,15 +1213,7 @@ impl Coordinator {
         }
         let target_liveness = targets
             .iter()
-            .map(|reference| {
-                let target = &self.targets[&reference.session()];
-                ipc::TargetGuard {
-                    liveness: target.liveness.clone(),
-                    registration: target.registration.clone(),
-                    attachment: target.attachment.clone(),
-                    generation: target.attachment_generation,
-                }
-            })
+            .map(|reference| self.targets[&reference.session()].guard())
             .collect();
         let scope = Scope {
             discover: targets.clone(),

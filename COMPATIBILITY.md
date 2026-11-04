@@ -12,6 +12,9 @@ private peer authentication is qualified. macOS and Linux also require
 qualified screen-lock monitoring; iOS, JavaScript execution and terminal
 control remain unavailable. Automated tests are not native lifecycle, client
 interoperability, sandbox or mobile qualification evidence.
+The later-stage controller presentation tools report unavailable on every
+platform: native event continuity, foreground/admission ordering, enrollment
+UI and direct control are not qualified. A queued focus request is not success.
 
 The [Dev Tunnels subset](docs/dev-tunnels-experiment.md), included in default desktop builds, implements
 peer profiles, independently bound scoped credentials, exact-generation
