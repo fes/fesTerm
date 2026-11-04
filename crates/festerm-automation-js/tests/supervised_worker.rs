@@ -1,14 +1,44 @@
 use festerm_automation_js::{
-    platform,
+    event_wake_channel, platform,
     protocol::{HostRequest, HostResult, Limits, Outcome},
-    snapshot::{ApprovedBundle, Manifest, Parameters, SourceSnapshot},
-    Error, Event, Supervisor, WorkerProgram,
+    snapshot::{
+        ApprovedBundle, Manifest, ParameterType, ParameterValue, Parameters, SourceSnapshot,
+    },
+    DisclosureGuard, DisclosurePermit, Error, Event, Supervisor, WorkerProgram,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
+    sync::{mpsc, Arc, Mutex, TryLockError},
     time::{Duration, Instant},
 };
+
+struct TestDisclosure {
+    state: Arc<Mutex<bool>>,
+    attempted: Option<mpsc::SyncSender<()>>,
+}
+
+impl DisclosureGuard for TestDisclosure {
+    fn try_enter(&self) -> Result<Option<Box<dyn DisclosurePermit + '_>>, Error> {
+        match self.state.try_lock() {
+            Ok(guard) if *guard => Ok(Some(Box::new(guard))),
+            Ok(_) | Err(TryLockError::Poisoned(_)) => Err(Error::DisclosureRevoked),
+            Err(TryLockError::WouldBlock) => {
+                if let Some(attempted) = &self.attempted {
+                    let _ = attempted.try_send(());
+                }
+                Ok(None)
+            }
+        }
+    }
+}
+
+fn disclosure() -> Arc<dyn DisclosureGuard> {
+    Arc::new(TestDisclosure {
+        state: Arc::new(Mutex::new(true)),
+        attempted: None,
+    })
+}
 
 fn program() -> WorkerProgram {
     let path = Path::new(env!("CARGO_BIN_EXE_festerm-automation-js-worker"))
@@ -46,7 +76,11 @@ fn terminal(worker: &Supervisor, broker: bool) -> Event {
                     assert!(broker, "no host call should have been dispatched");
                     assert_eq!(request, HostRequest::Observe {});
                     worker
-                        .host_result(id, HostResult::Observation { targets: vec![] })
+                        .host_result(
+                            id,
+                            HostResult::Observation { targets: vec![] },
+                            disclosure(),
+                        )
                         .unwrap();
                 }
                 event => return event,
@@ -54,6 +88,165 @@ fn terminal(worker: &Supervisor, broker: bool) -> Event {
         }
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+#[test]
+fn worker_events_wake_a_consumer_without_polling() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let (wake, notifications) = event_wake_channel();
+    let worker = Supervisor::spawn_with_wake(
+        &program(),
+        &bundle("export async function main({fesTerm}) { await fesTerm.observe(); return 7; }"),
+        Parameters::new(),
+        Limits::default(),
+        wake.clone(),
+    )
+    .unwrap();
+    // The bridge may consume the worker's first signal before registration.
+    notifications.recv_timeout(Duration::from_secs(8)).unwrap();
+    wake.notify().unwrap();
+    notifications.recv_timeout(Duration::from_secs(8)).unwrap();
+    let Some(Event::HostCall { id, request }) = worker.try_event().unwrap() else {
+        panic!("host call must be queued before its wake");
+    };
+    assert_eq!(request, HostRequest::Observe {});
+    worker
+        .host_result(
+            id,
+            HostResult::Observation { targets: vec![] },
+            disclosure(),
+        )
+        .unwrap();
+    notifications.recv_timeout(Duration::from_secs(8)).unwrap();
+    assert!(matches!(
+        worker.try_event().unwrap(),
+        Some(Event::Finished {
+            outcome: Outcome::Completed { value }
+        }) if value == 7
+    ));
+    worker.shutdown().unwrap();
+}
+
+#[test]
+fn undrained_wake_does_not_block_worker_deadline_or_cleanup() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let (wake, notifications) = event_wake_channel();
+    wake.notify().unwrap();
+    let worker = Supervisor::spawn_with_wake(
+        &program(),
+        &bundle("export async function main({fesTerm}) { await fesTerm.observe(); }"),
+        Parameters::new(),
+        Limits {
+            run_ms: 500,
+            ..Limits::default()
+        },
+        wake,
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(750));
+    notifications.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(matches!(
+        terminal(&worker, false),
+        Event::Failed(Error::Deadline)
+    ));
+    worker.shutdown().unwrap();
+}
+
+#[test]
+fn losing_the_wake_receiver_closes_the_worker() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let (wake, notifications) = event_wake_channel();
+    drop(notifications);
+    let worker = Supervisor::spawn_with_wake(
+        &program(),
+        &bundle("export async function main({fesTerm}) { await fesTerm.observe(); }"),
+        Parameters::new(),
+        Limits::default(),
+        wake,
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        assert!(Instant::now() < deadline);
+        match worker.try_event().unwrap() {
+            Some(Event::Failed(Error::Unavailable("worker event wake receiver closed"))) => break,
+            Some(Event::HostCall { .. }) | None => std::thread::sleep(Duration::from_millis(1)),
+            Some(event) => panic!("worker ended unexpectedly: {event:?}"),
+        }
+    }
+    worker.shutdown().unwrap();
+}
+
+#[test]
+fn target_parameter_reaches_worker_as_exact_bound_handle() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let mut snapshot = bundle(
+        "export async function main({fesTerm,params}) { \
+         const result = await fesTerm.readScreen({target: params.target, maxBytes: 12}); \
+         return result.text; }",
+    )
+    .snapshot()
+    .clone();
+    snapshot
+        .manifest
+        .parameters
+        .insert("target".into(), ParameterType::Target {});
+    let bundle = ApprovedBundle::new(snapshot).unwrap();
+    let parameters = bundle
+        .bind_parameters(
+            BTreeMap::from([("target".into(), ParameterValue::Target("selected".into()))]),
+            BTreeMap::from([("selected".into(), 42)]),
+        )
+        .unwrap();
+    let worker =
+        Supervisor::spawn_bound(&program(), &bundle, &parameters, Limits::default()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        assert!(Instant::now() < deadline);
+        match worker.try_event().unwrap() {
+            Some(Event::HostCall { id, request }) => {
+                assert_eq!(
+                    request,
+                    HostRequest::ReadScreen {
+                        target: festerm_automation_js::protocol::Target {
+                            id: "selected".into(),
+                            generation: 42,
+                        },
+                        max_bytes: 12,
+                    }
+                );
+                worker
+                    .host_result(
+                        id,
+                        HostResult::Text {
+                            text: "ready".into(),
+                            revision: 1,
+                            truncated: false,
+                        },
+                        disclosure(),
+                    )
+                    .unwrap();
+                break;
+            }
+            Some(event) => panic!("worker ended before its bound read: {event:?}"),
+            None => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+    assert!(matches!(
+        terminal(&worker, false),
+        Event::Finished {
+            outcome: Outcome::Completed { value }
+        } if value == "ready"
+    ));
+    worker.shutdown().unwrap();
 }
 
 #[test]
@@ -177,11 +370,81 @@ fn cancellation_closes_admission_and_reaps_within_bounds() {
         .with_admission(|_| panic!("cancelled admission ran"))
         .is_err());
     assert!(worker
-        .host_result(1, HostResult::Observation { targets: vec![] })
+        .host_result(1, HostResult::Observation { targets: vec![] }, disclosure())
         .is_err());
     let started = Instant::now();
     worker.shutdown().unwrap();
     assert!(started.elapsed() < Duration::from_millis(2_500));
+}
+
+#[test]
+fn independently_revoked_result_never_reaches_the_worker() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let worker = Supervisor::spawn(
+        &program(),
+        &bundle(
+            "export async function main({fesTerm}) { \
+             return (await fesTerm.observe()).targets[0].target.id; }",
+        ),
+        Parameters::new(),
+        Limits::default(),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let id = loop {
+        assert!(Instant::now() < deadline);
+        match worker.try_event().unwrap() {
+            Some(Event::HostCall { id, request }) => {
+                assert_eq!(request, HostRequest::Observe {});
+                break id;
+            }
+            Some(event) => panic!("worker ended before the host call: {event:?}"),
+            None => std::thread::sleep(Duration::from_millis(1)),
+        }
+    };
+    let state = Arc::new(Mutex::new(true));
+    let (locked, observed_lock) = mpsc::sync_channel(0);
+    let (revoke, await_revocation) = mpsc::sync_channel(0);
+    let target_state = state.clone();
+    let transition = std::thread::spawn(move || {
+        let mut held = target_state.lock().unwrap();
+        locked.send(()).unwrap();
+        await_revocation.recv().unwrap();
+        *held = false;
+    });
+    observed_lock.recv_timeout(Duration::from_secs(2)).unwrap();
+    let (attempted, observed_attempt) = mpsc::sync_channel(1);
+    let guard = Arc::new(TestDisclosure {
+        state: state.clone(),
+        attempted: Some(attempted),
+    });
+    worker
+        .host_result(
+            id,
+            HostResult::Observation {
+                targets: vec![festerm_automation_js::protocol::TargetInfo {
+                    target: festerm_automation_js::protocol::Target {
+                        id: "private".into(),
+                        generation: 1,
+                    },
+                    revision: 1,
+                }],
+            },
+            guard,
+        )
+        .unwrap();
+    observed_attempt
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap();
+    revoke.send(()).unwrap();
+    transition.join().unwrap();
+    assert!(matches!(
+        terminal(&worker, false),
+        Event::Failed(Error::DisclosureRevoked)
+    ));
+    worker.shutdown().unwrap();
 }
 
 #[test]
@@ -214,7 +477,7 @@ fn host_admission_acknowledgement_unblocks_concurrent_calls() {
     }
     assert_eq!(ids, [1, 2]);
     worker
-        .host_result(2, HostResult::Observation { targets: vec![] })
+        .host_result(2, HostResult::Observation { targets: vec![] }, disclosure())
         .unwrap();
     worker.host_admitted(1).unwrap();
     assert!(matches!(
@@ -257,11 +520,11 @@ fn result_before_separate_acknowledgement_does_not_fail_the_run() {
     }
     assert_eq!(ids, [1, 2]);
     worker
-        .host_result(1, HostResult::Observation { targets: vec![] })
+        .host_result(1, HostResult::Observation { targets: vec![] }, disclosure())
         .unwrap();
     worker.host_admitted(1).unwrap();
     worker
-        .host_result(2, HostResult::Observation { targets: vec![] })
+        .host_result(2, HostResult::Observation { targets: vec![] }, disclosure())
         .unwrap();
     assert!(matches!(
         terminal(&worker, false),

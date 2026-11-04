@@ -4,7 +4,7 @@ use crate::{
         encode_frame, Decoder, HostRequest, HostResult, Limits, Outcome, ParentMessage,
         WorkerFailure, WorkerMessage, CHUNK_BYTES, MAX_PENDING_CALLS,
     },
-    snapshot::{ApprovedBundle, Parameters},
+    snapshot::{ApprovedBundle, BoundParameters, Parameters},
     Error,
 };
 use std::{
@@ -75,16 +75,83 @@ impl std::fmt::Debug for Event {
     }
 }
 
+/// A bounded, coalescing worker-event wake-up shared by application consumers.
+#[derive(Clone)]
+pub struct EventWake(mpsc::SyncSender<()>);
+
+/// Creates a one-slot wake channel. Drain each worker's events after a wake;
+/// the receiver may be bridged to a GUI notifier on a separate thread.
+pub fn event_wake_channel() -> (EventWake, mpsc::Receiver<()>) {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    (EventWake(sender), receiver)
+}
+
+impl EventWake {
+    /// Signal without waiting; an already-pending signal is sufficient.
+    pub fn notify(&self) -> Result<(), Error> {
+        match self.0.try_send(()) {
+            Ok(()) | Err(mpsc::TrySendError::Full(())) => Ok(()),
+            Err(mpsc::TrySendError::Disconnected(())) => {
+                Err(Error::Unavailable("worker event wake receiver closed"))
+            }
+        }
+    }
+}
+
+fn deliver_event(
+    events: &mpsc::SyncSender<Event>,
+    wake: Option<&EventWake>,
+    event: Event,
+) -> Result<(), Error> {
+    events.try_send(event).map_err(|_| Error::Protocol)?;
+    if let Some(wake) = wake {
+        wake.notify()?;
+    }
+    Ok(())
+}
+
+/// A held application-owned disclosure boundary.
+pub trait DisclosurePermit {}
+
+impl<T: ?Sized> DisclosurePermit for T {}
+
+/// Revalidates one result at every physical write to the worker.
+///
+/// The application must never block in `try_enter`: use a nonblocking lock
+/// attempt and return a permit holding the same boundary used to revoke this
+/// result's exact run, recipient, privacy state, and all source attachments.
+/// Contention returns `Ok(None)`; revoked, expired, or poisoned state returns
+/// an error. The guard is not authority: the broker must first authorize the
+/// result. A write admitted before revocation may finish afterward; remaining
+/// bytes are checked again.
+pub trait DisclosureGuard: Send + Sync {
+    fn try_enter(&self) -> Result<Option<Box<dyn DisclosurePermit + '_>>, Error>;
+}
+
+struct Outbound {
+    bytes: Vec<u8>,
+    disclosure: Option<Arc<dyn DisclosureGuard>>,
+}
+
+impl Outbound {
+    fn unguarded(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            disclosure: None,
+        }
+    }
+}
+
 enum Control {
     Admitted(u32),
-    Result(u32, HostResult),
+    Result(u32, HostResult, Arc<dyn DisclosureGuard>),
 }
 
 fn stage_control(
     control: Control,
     outstanding: &mut BTreeMap<u32, (HostRequest, bool)>,
     implicitly_admitted: &mut BTreeSet<u32>,
-    frames: &mut VecDeque<Vec<u8>>,
+    frames: &mut VecDeque<Outbound>,
 ) -> Result<(), Error> {
     match control {
         Control::Admitted(id) => {
@@ -93,21 +160,51 @@ fn stage_control(
                     return Err(Error::Protocol);
                 }
                 *admitted = true;
-                frames.push_back(encode_frame(&ParentMessage::HostAdmitted { id })?);
+                frames.push_back(Outbound::unguarded(encode_frame(
+                    &ParentMessage::HostAdmitted { id },
+                )?));
             } else if !implicitly_admitted.remove(&id) {
                 return Err(Error::Protocol);
             }
         }
-        Control::Result(id, result) => {
+        Control::Result(id, result, disclosure) => {
             let (request, admitted) = outstanding.remove(&id).ok_or(Error::Protocol)?;
             result.validate_for(&request)?;
             if !admitted {
                 implicitly_admitted.insert(id);
             }
-            frames.push_back(encode_frame(&ParentMessage::HostResult { id, result })?);
+            frames.push_back(Outbound {
+                bytes: encode_frame(&ParentMessage::HostResult { id, result })?,
+                disclosure: Some(disclosure),
+            });
         }
     }
     Ok(())
+}
+
+fn write_guarded(
+    admission: &Admission,
+    frame: &Outbound,
+    sent: usize,
+    input: &mut impl Write,
+) -> Result<Option<std::io::Result<usize>>, Error> {
+    let result = admission.try_with_open(|permit| {
+        let _disclosure = match &frame.disclosure {
+            Some(guard) => match guard.try_enter()? {
+                Some(permit) => Some(permit),
+                None => return Ok(None),
+            },
+            None => None,
+        };
+        permit
+            .commit(|_| input.write(&frame.bytes[sent..]))
+            .map(Some)
+    });
+    match result {
+        Ok(Some(result)) => result,
+        Ok(None) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 static CLEANUP_FAILED: AtomicBool = AtomicBool::new(false);
@@ -264,25 +361,74 @@ impl Supervisor {
         limits: Limits,
     ) -> Result<Self, Error> {
         platform::availability()?;
+        let parameters = bundle.bind_parameters(parameters, BTreeMap::new())?;
+        Self::spawn_bound(program, bundle, &parameters, limits)
+    }
+
+    /// Like `spawn`, with a nonblocking, coalesced event wake-up.
+    pub fn spawn_with_wake(
+        program: &WorkerProgram,
+        bundle: &ApprovedBundle,
+        parameters: Parameters,
+        limits: Limits,
+        wake: EventWake,
+    ) -> Result<Self, Error> {
+        platform::availability()?;
+        let parameters = bundle.bind_parameters(parameters, BTreeMap::new())?;
+        Self::spawn_bound_with_wake(program, bundle, &parameters, limits, wake)
+    }
+
+    /// Start with target references derived from an immutable invocation.
+    /// The caller must still enforce the native grant and broker checks.
+    pub fn spawn_bound(
+        program: &WorkerProgram,
+        bundle: &ApprovedBundle,
+        parameters: &BoundParameters,
+        limits: Limits,
+    ) -> Result<Self, Error> {
+        Self::spawn_inner(program, bundle, parameters, limits, None)
+    }
+
+    /// Like `spawn_bound`, with a nonblocking, coalesced event wake-up.
+    pub fn spawn_bound_with_wake(
+        program: &WorkerProgram,
+        bundle: &ApprovedBundle,
+        parameters: &BoundParameters,
+        limits: Limits,
+        wake: EventWake,
+    ) -> Result<Self, Error> {
+        Self::spawn_inner(program, bundle, parameters, limits, Some(wake))
+    }
+
+    fn spawn_inner(
+        program: &WorkerProgram,
+        bundle: &ApprovedBundle,
+        parameters: &BoundParameters,
+        limits: Limits,
+        wake: Option<EventWake>,
+    ) -> Result<Self, Error> {
+        platform::availability()?;
         if cleanup_failed() {
             return Err(Error::Unavailable("an owned worker could not be reaped"));
         }
         limits.validate()?;
-        bundle.validate_parameters(&parameters)?;
+        parameters.validate(bundle)?;
         let source = serde_json::to_vec(bundle.snapshot()).map_err(|_| Error::Snapshot)?;
         let mut frames = VecDeque::new();
-        frames.push_back(encode_frame(&ParentMessage::Begin {
+        frames.push_back(Outbound::unguarded(encode_frame(&ParentMessage::Begin {
             digest: bundle.digest().into(),
             snapshot_bytes: source.len() as u32,
-            parameters,
+            parameters: parameters.clone(),
             limits: limits.clone(),
-        })?);
+        })?));
         for bytes in source.chunks(CHUNK_BYTES) {
-            frames.push_back(encode_frame(&ParentMessage::SourceChunk {
-                bytes: bytes.to_vec(),
-            })?);
+            frames.push_back(Outbound::unguarded(encode_frame(
+                &ParentMessage::SourceChunk {
+                    bytes: bytes.to_vec(),
+                },
+            )?));
         }
-        frames.push_back(encode_frame(&ParentMessage::Run {})?);
+        frames.push_back(Outbound::unguarded(encode_frame(&ParentMessage::Run {})?));
         let mut command = Command::new(&program.0);
         command
             .arg("--automation-worker")
@@ -314,7 +460,9 @@ impl Supervisor {
         let open = admission.clone();
         let join = thread::Builder::new()
             .name("automation-js-watchdog".into())
-            .spawn(move || supervise(child, frames, limits, receiver, sender, startup, open))?;
+            .spawn(move || {
+                supervise(child, frames, limits, receiver, sender, startup, open, wake)
+            })?;
         match ready.recv_timeout(Duration::from_secs(3)) {
             Ok(Ok(())) => Ok(Self {
                 controls,
@@ -333,9 +481,16 @@ impl Supervisor {
         }
     }
 
-    /// Call only after the trusted broker has checked *this run's* live grant,
-    /// data recipients, exact target generation and lifecycle.
-    pub fn host_result(&self, id: u32, result: HostResult) -> Result<(), Error> {
+    /// Call only after the trusted broker has authorized this exact result.
+    /// The guard must retain its live authorization until every pipe write;
+    /// queuing this result neither grants authority nor guarantees delivery.
+    /// Do not call supervisor methods while holding the guard's own lock.
+    pub fn host_result(
+        &self,
+        id: u32,
+        result: HostResult,
+        disclosure: Arc<dyn DisclosureGuard>,
+    ) -> Result<(), Error> {
         if let HostResult::Workflow { value } = &result {
             crate::protocol::validate_value(value)?;
         }
@@ -346,7 +501,7 @@ impl Supervisor {
         })?;
         self.with_admission(|_| {
             self.controls
-                .try_send(Control::Result(id, result))
+                .try_send(Control::Result(id, result, disclosure))
                 .map_err(|_| Error::Protocol)
         })?
     }
@@ -462,12 +617,13 @@ fn reap(child: &mut Child) -> Result<(), Error> {
 #[allow(clippy::too_many_arguments)]
 fn supervise(
     mut owned: OwnedChild,
-    mut frames: VecDeque<Vec<u8>>,
+    mut frames: VecDeque<Outbound>,
     limits: Limits,
     controls: mpsc::Receiver<Control>,
     events: mpsc::SyncSender<Event>,
     startup: mpsc::SyncSender<Result<(), ()>>,
     admission: Arc<Admission>,
+    wake: Option<EventWake>,
 ) -> Result<(), Error> {
     let child = &mut owned.0;
     let result = (|| -> Result<Outcome, Error> {
@@ -500,7 +656,9 @@ fn supervise(
             let accepting = !admission.cancelled.load(Ordering::Acquire);
             if !accepting && cancelling.is_none() {
                 frames.clear();
-                frames.push_back(encode_frame(&ParentMessage::Cancel {})?);
+                frames.push_back(Outbound::unguarded(encode_frame(
+                    &ParentMessage::Cancel {},
+                )?));
                 sent = 0;
                 cancelling = Some(now + Duration::from_millis(250));
             }
@@ -521,24 +679,23 @@ fn supervise(
                 }
                 if let Some(frame) = frames.front() {
                     let written = if cancelling.is_some() {
-                        Some(input.write(&frame[sent..]))
+                        Some(input.write(&frame.bytes[sent..]))
                     } else {
-                        match admission
-                            .try_with_open(|permit| permit.commit(|_| input.write(&frame[sent..])))
-                        {
-                            Ok(Some(Ok(written))) => Some(written),
-                            Ok(None) => None,
-                            Ok(Some(Err(Error::Deadline))) | Err(Error::Deadline) => {
-                                return Err(Error::Deadline);
+                        match write_guarded(&admission, frame, sent, &mut input) {
+                            Ok(written) => written,
+                            Err(Error::Protocol)
+                                if admission.state.load(Ordering::Acquire) == ADMISSION_CLOSED =>
+                            {
+                                None
                             }
-                            Ok(Some(Err(_))) | Err(_) => None,
+                            Err(error) => return Err(error),
                         }
                     };
                     match written {
                         Some(Ok(0)) => return Err(Error::Protocol),
                         Some(Ok(n)) => {
                             sent += n;
-                            if sent == frame.len() {
+                            if sent == frame.bytes.len() {
                                 frames.pop_front();
                                 sent = 0;
                             }
@@ -569,9 +726,7 @@ fn supervise(
                         request.validate()?;
                         next_id += 1;
                         outstanding.insert(id, (request.clone(), false));
-                        events
-                            .try_send(Event::HostCall { id, request })
-                            .map_err(|_| Error::Protocol)?;
+                        deliver_event(&events, wake.as_ref(), Event::HostCall { id, request })?;
                     }
                     WorkerMessage::Finished { outcome } if qualified => {
                         if cancelling.is_some() {
@@ -606,15 +761,15 @@ fn supervise(
     let _ = startup.try_send(Err(()));
     if cleanup.is_err() {
         CLEANUP_FAILED.store(true, Ordering::SeqCst);
-        let _ = events.try_send(Event::Failed(Error::Cleanup));
+        let _ = deliver_event(&events, wake.as_ref(), Event::Failed(Error::Cleanup));
         return Err(Error::Cleanup);
     }
     match result {
         Ok(outcome) => {
-            let _ = events.try_send(Event::Finished { outcome });
+            let _ = deliver_event(&events, wake.as_ref(), Event::Finished { outcome });
         }
         Err(error) => {
-            let _ = events.try_send(Event::Failed(error));
+            let _ = deliver_event(&events, wake.as_ref(), Event::Failed(error));
         }
     }
     Ok(())
@@ -625,12 +780,172 @@ mod tests {
     use super::*;
 
     #[test]
+    fn event_wake_coalesces_without_blocking_and_refuses_a_lost_receiver() {
+        let (wake, receiver) = event_wake_channel();
+        wake.notify().unwrap();
+        wake.notify().unwrap();
+        assert_eq!(receiver.try_recv(), Ok(()));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        drop(receiver);
+        assert!(matches!(wake.notify(), Err(Error::Unavailable(_))));
+    }
+
+    struct TestDisclosure;
+
+    impl DisclosureGuard for TestDisclosure {
+        fn try_enter(&self) -> Result<Option<Box<dyn DisclosurePermit + '_>>, Error> {
+            Ok(Some(Box::new(())))
+        }
+    }
+
+    struct MutexDisclosure(Arc<Mutex<bool>>);
+
+    impl DisclosureGuard for MutexDisclosure {
+        fn try_enter(&self) -> Result<Option<Box<dyn DisclosurePermit + '_>>, Error> {
+            match self.0.try_lock() {
+                Ok(guard) if *guard => Ok(Some(Box::new(guard))),
+                Ok(_) | Err(TryLockError::Poisoned(_)) => Err(Error::DisclosureRevoked),
+                Err(TryLockError::WouldBlock) => Ok(None),
+            }
+        }
+    }
+
+    fn disclosure() -> Arc<dyn DisclosureGuard> {
+        Arc::new(TestDisclosure)
+    }
+
+    fn open_admission() -> Admission {
+        Admission {
+            state: AtomicU8::new(ADMISSION_OPEN),
+            cancelled: AtomicBool::new(false),
+            gate: Mutex::new(()),
+            deadline: Instant::now() + Duration::from_secs(5),
+        }
+    }
+
+    #[test]
+    fn disclosure_guard_refuses_revoked_and_busy_pipe_writes() {
+        let state = Arc::new(Mutex::new(true));
+        let frame = Outbound {
+            bytes: b"private result".to_vec(),
+            disclosure: Some(Arc::new(MutexDisclosure(state.clone()))),
+        };
+        let admission = open_admission();
+        let mut output = Vec::new();
+        let mut held = state.lock().unwrap();
+        assert!(write_guarded(&admission, &frame, 0, &mut output)
+            .unwrap()
+            .is_none());
+        *held = false;
+        drop(held);
+        assert!(matches!(
+            write_guarded(&admission, &frame, 0, &mut output),
+            Err(Error::DisclosureRevoked)
+        ));
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn disclosure_rechecks_after_a_partial_pipe_write() {
+        struct PartialWriter(Vec<u8>);
+
+        impl Write for PartialWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                let count = bytes.len().min(3);
+                self.0.extend_from_slice(&bytes[..count]);
+                Ok(count)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let state = Arc::new(Mutex::new(true));
+        let frame = Outbound {
+            bytes: b"private result".to_vec(),
+            disclosure: Some(Arc::new(MutexDisclosure(state.clone()))),
+        };
+        let admission = open_admission();
+        let mut output = PartialWriter(Vec::new());
+        assert!(matches!(
+            write_guarded(&admission, &frame, 0, &mut output),
+            Ok(Some(Ok(3)))
+        ));
+        *state.lock().unwrap() = false;
+        assert!(matches!(
+            write_guarded(&admission, &frame, 3, &mut output),
+            Err(Error::DisclosureRevoked)
+        ));
+        assert_eq!(output.0, b"pri");
+    }
+
+    #[test]
+    fn disclosure_write_and_source_revocation_are_serialized() {
+        struct PausedWriter {
+            entered: mpsc::SyncSender<()>,
+            release: mpsc::Receiver<()>,
+        }
+
+        impl Write for PausedWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.entered.send(()).unwrap();
+                self.release.recv().unwrap();
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let state = Arc::new(Mutex::new(true));
+        let frame = Outbound {
+            bytes: b"private result".to_vec(),
+            disclosure: Some(Arc::new(MutexDisclosure(state.clone()))),
+        };
+        let (entered, wait_until_entered) = mpsc::sync_channel(0);
+        let (release, wait_for_release) = mpsc::sync_channel(0);
+        let writer = thread::spawn(move || {
+            let mut input = PausedWriter {
+                entered,
+                release: wait_for_release,
+            };
+            write_guarded(&open_admission(), &frame, 0, &mut input)
+        });
+        wait_until_entered
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        let (started, wait_for_start) = mpsc::sync_channel(0);
+        let (revoked, wait_for_revocation) = mpsc::sync_channel(0);
+        let transition = thread::spawn(move || {
+            started.send(()).unwrap();
+            *state.lock().unwrap() = false;
+            revoked.send(()).unwrap();
+        });
+        wait_for_start.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            wait_for_revocation.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        release.send(()).unwrap();
+        assert!(matches!(writer.join().unwrap(), Ok(Some(Ok(14)))));
+        wait_for_revocation
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        transition.join().unwrap();
+    }
+
+    #[test]
     fn result_before_acknowledgement_is_implicitly_admitted_once() {
         let mut outstanding = BTreeMap::from([(1, (HostRequest::Observe {}, false))]);
         let mut implicitly_admitted = BTreeSet::new();
         let mut frames = VecDeque::new();
         stage_control(
-            Control::Result(1, HostResult::Observation { targets: vec![] }),
+            Control::Result(1, HostResult::Observation { targets: vec![] }, disclosure()),
             &mut outstanding,
             &mut implicitly_admitted,
             &mut frames,
@@ -666,7 +981,7 @@ mod tests {
         )
         .unwrap();
         stage_control(
-            Control::Result(1, HostResult::Observation { targets: vec![] }),
+            Control::Result(1, HostResult::Observation { targets: vec![] }, disclosure()),
             &mut outstanding,
             &mut implicitly_admitted,
             &mut frames,
@@ -814,6 +1129,7 @@ mod tests {
                 sender,
                 startup,
                 worker_gate,
+                None,
             )
         });
         assert!(matches!(
@@ -852,12 +1168,13 @@ mod tests {
         let watchdog = thread::spawn(move || {
             supervise(
                 OwnedChild(child, false),
-                VecDeque::from([vec![0]]),
+                VecDeque::from([Outbound::unguarded(vec![0])]),
                 Limits::default(),
                 receiver,
                 sender,
                 startup,
                 worker_gate,
+                None,
             )
         });
         let qualified = ready.recv_timeout(Duration::from_secs(2));

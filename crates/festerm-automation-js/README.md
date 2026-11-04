@@ -17,8 +17,14 @@ ApprovedBundle::{digest() -> &str, manifest() -> &Manifest,
 WorkerProgram::from_install_owned_absolute(&Path) -> Result<WorkerProgram, Error>
 Supervisor::spawn(&WorkerProgram, &ApprovedBundle, Parameters, Limits)
     -> Result<Supervisor, Error>
+Supervisor::spawn_bound(&WorkerProgram, &ApprovedBundle, &BoundParameters, Limits)
+    -> Result<Supervisor, Error>
+event_wake_channel() -> (EventWake, Receiver<()>)
+Supervisor::{spawn_with_wake, spawn_bound_with_wake}(..., EventWake)
+    -> Result<Supervisor, Error>
 Supervisor::try_event(&self) -> Result<Option<Event>, Error>
-Supervisor::host_result(&self, id: u32, HostResult) -> Result<(), Error>
+Supervisor::host_result(&self, id: u32, HostResult, Arc<dyn DisclosureGuard>)
+    -> Result<(), Error>
 Supervisor::cancel(&self)
 Supervisor::shutdown(self) -> Result<(), Error>
 worker_entry(input: impl Read, output: impl Write) -> Result<(), Error>
@@ -47,12 +53,34 @@ executables. It never uses a shell or PATH lookup. Linux additionally refuses
 an executable whose initial process mappings already exceed 128 MiB.
 
 Events are `HostCall { id, request }`, `Finished { outcome }`, and `Failed(Error)`.
+An application event loop must use a wake-enabled spawn and bridge the shared
+one-slot wake receiver to its GUI notifier on a separate thread. Each wake
+coalesces any number of queued events: drain all active supervisors or schedule
+another frame when a per-frame budget leaves work. A startup thread must publish
+its success or failure and signal the application. After registering a
+successfully started supervisor, the application must signal again: the bridge
+may already have consumed its first wake before the run was in the active set.
+Keep the receiver and an application-owned `EventWake` alive until all runs are
+cleaned up. The watchdog never invokes the GUI callback and does not wait for
+the receiver; a closed receiver stops the worker instead of silently abandoning
+host calls.
 For **every** host call, authorize the live run, exact target generation,
 readable sources and all reachable recipients in the trusted parent broker.
 Only then dispatch through existing application/controller APIs and deliver a
 typed `HostResult`. Method/schema validity is **not** authorization. Manifest
 capabilities are only declared maxima and are never interpreted as grants here.
 P2 observation-only callers should deny all write/open/invocation variants.
+
+Every host result requires an application-owned `DisclosureGuard`. Its
+nonblocking `try_enter` must check the exact run, recipient, privacy state,
+deadline and all source attachments while holding the same boundary their
+revocation uses, returning that held boundary as its `DisclosurePermit`. The
+watchdog repeats this check for each nonblocking pipe write; a busy boundary
+defers the write, and a revoked or poisoned boundary closes the worker. The
+application must implement and qualify this guard; no permissive guard is
+provided. `festerm_session::try_automation_admission_lock` exposes the shared
+backend transition boundary without blocking the watchdog. Do not call
+supervisor methods while holding the guard's lock.
 
 Use `cancel_with` to close broker admission synchronously before cancellation
 on revocation, lock/suspension, caller disconnect, human takeover, or parent
@@ -104,21 +132,21 @@ whitespace. This includes the manifest's typed parameter schema and capability
 maxima. **Actual parameter values are separately validated and moved into the
 immutable per-launch message; the broker must bind their exact values to its
 approval/grant.** Values are text, safe integers, booleans or opaque target
-tokens, with no unknown/extra parameters. JSON maps reject duplicate keys.
+tokens, with no unknown/extra parameters. The frozen invocation binds each
+target parameter to its approved generation and passes it to JavaScript as an
+opaque `{ id, generation }` handle. Bindings are tied to the exact bundle and
+do not grant discovery or session access. JSON maps reject duplicate keys.
 Each run gets a new runtime and new process; no module/global cache survives.
 
 Every `fesTerm` method returns a Promise, including malformed calls:
 
 ```js
 export async function main({ fesTerm, params }) {
-  const observation = await fesTerm.observe();
-  const binding = observation.targets.find(item => item.target.id === params.target);
-  if (!binding) throw new Error("target unavailable");
   const screen = await fesTerm.readScreen({
-    target: binding.target,
+    target: params.target,
     maxBytes: 4096
   });
-  return { observation, screen };
+  return screen;
 }
 ```
 

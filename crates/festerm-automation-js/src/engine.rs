@@ -1,7 +1,7 @@
 use crate::{
     platform,
     protocol::{HostRequest, HostResult, Limits, Outcome, MAX_PENDING_CALLS},
-    snapshot::{ApprovedBundle, ParameterValue, Parameters},
+    snapshot::{ApprovedBundle, BoundParameters, ParameterValue},
     HEAP_BYTES, STACK_BYTES,
 };
 use rquickjs::{
@@ -113,11 +113,11 @@ const BOOTSTRAP: &str = r#"
 /// native confinement. Unit tests qualify the engine in owned test processes.
 pub(crate) fn run(
     bundle: &ApprovedBundle,
-    parameters: &Parameters,
+    parameters: &BoundParameters,
     limits: &Limits,
     transport: &mut impl Transport,
 ) -> Outcome {
-    if limits.validate().is_err() || bundle.validate_parameters(parameters).is_err() {
+    if limits.validate().is_err() || parameters.validate(bundle).is_err() {
         return Outcome::ProtocolFailed {};
     }
     let start = Instant::now();
@@ -214,13 +214,17 @@ pub(crate) fn run(
             .ok_or(rquickjs::Error::Exception)??;
         let main: Function = module.get("main")?;
         let mut values = serde_json::Map::new();
-        for (key, value) in parameters {
+        for (key, value) in parameters.values() {
             let v = match value {
-                ParameterValue::Text(v) | ParameterValue::Target(v) => {
-                    serde_json::Value::String(v.clone())
-                }
+                ParameterValue::Text(v) => serde_json::Value::String(v.clone()),
                 ParameterValue::Integer(v) => serde_json::Value::from(*v),
                 ParameterValue::Boolean(v) => serde_json::Value::Bool(*v),
+                ParameterValue::Target(v) => serde_json::to_value(
+                    parameters
+                        .target(v)
+                        .ok_or_else(|| rquickjs::Error::new_from_js("host", "target"))?,
+                )
+                .map_err(|_| rquickjs::Error::Exception)?,
             };
             values.insert(key.clone(), v);
         }
@@ -337,7 +341,19 @@ pub(crate) fn run(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::snapshot::fixture;
+    use crate::snapshot::{fixture, Parameters};
+
+    fn run(
+        bundle: &ApprovedBundle,
+        parameters: &Parameters,
+        limits: &Limits,
+        transport: &mut impl Transport,
+    ) -> Outcome {
+        let parameters = bundle
+            .bind_parameters(parameters.clone(), BTreeMap::new())
+            .unwrap();
+        super::run(bundle, &parameters, limits, transport)
+    }
 
     #[derive(Default)]
     struct Broker {
@@ -390,6 +406,35 @@ mod tests {
             }
         );
         assert_eq!(broker.calls, [HostRequest::Observe {}]);
+    }
+
+    #[test]
+    fn target_parameters_are_generation_bound_handles() {
+        let mut snapshot = fixture("export function main({params}) { return params.target; }")
+            .snapshot()
+            .clone();
+        snapshot
+            .manifest
+            .parameters
+            .insert("target".into(), crate::snapshot::ParameterType::Target {});
+        let bundle = ApprovedBundle::new(snapshot).unwrap();
+        let parameters = bundle
+            .bind_parameters(
+                BTreeMap::from([("target".into(), ParameterValue::Target("selected".into()))]),
+                BTreeMap::from([("selected".into(), 42)]),
+            )
+            .unwrap();
+        assert_eq!(
+            super::run(
+                &bundle,
+                &parameters,
+                &Limits::default(),
+                &mut Broker::default()
+            ),
+            Outcome::Completed {
+                value: serde_json::json!({"id": "selected", "generation": 42})
+            }
+        );
     }
 
     #[test]

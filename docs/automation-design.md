@@ -312,22 +312,22 @@ terminal output as JavaScript is never a host API or workflow trigger.
 An illustrative read-only workflow, after native approval, could be:
 
 ```js
-export async function main({ fesTerm, params, signal }) {
-  const session = await fesTerm.sessions.get(params.target);
-  const first = await session.readScreen({ maxBytes: 16_384 });
-  const change = await session.waitForChange({
-    afterRevision: first.revision, timeoutMs: 30_000, signal
+export async function main({ fesTerm, params }) {
+  const first = await fesTerm.readScreen({ target: params.target, maxBytes: 16_384 });
+  const change = await fesTerm.waitForChange({
+    target: params.target, afterRevision: first.revision, timeoutMs: 30_000
   });
-  return change.kind === "changed"
-    ? await session.readScreen({ maxBytes: 16_384 })
-    : { status: change.kind };
+  return change.changed
+    ? await fesTerm.readScreen({ target: params.target, maxBytes: 16_384 })
+    : { status: "unchanged" };
 }
 ```
 
-`params.target` is an opaque reference validated against the run's target
-binding, not a script-selected current tab. The returned observation is itself
-subject to recipient/budget checks. `signal` is broker-owned cancellation state;
-ignoring it cannot keep an expired run authorized.
+`params.target` is an opaque, generation-bound handle derived from the run's
+frozen target mapping, not a script-selected current tab. It does not imply
+permission to discover other sessions. The returned observation is itself
+subject to recipient/budget checks; worker cancellation and the broker deadline
+apply even when JavaScript does not cooperate.
 
 ### Immutable workflow bundles
 
@@ -349,8 +349,11 @@ target names to application-instance/session/generation references. Its
 parameter digest includes that mapping, so swapping two approved targets cannot
 silently retarget an unchanged parameter. It rejects host calls outside the
 manifest and frozen scopes; profile opening and child workflow calls remain
-unavailable there. This is only an intake projection, not a native grant,
-worker launch or substitute for live broker and controller checks.
+unavailable there. Target parameters reach the worker only as handles derived
+from this mapping and bound to the exact bundle; the application must still use
+the matching frozen invocation when launching and projecting requests. This is
+only an intake projection, not a native grant, worker launch or substitute for
+live broker and controller checks.
 
 Code, parameter schema, permissions, dependency or API version changes produce
 a new digest and require a new grant. Filename, display version, publisher
@@ -542,6 +545,22 @@ serializes the broker cut before signalling the worker, while the watchdog can
 still reap at deadline without waiting for a stalled admission gate. App
 integration must also serialize target, privacy and cross-run revocation; this
 component alone does not provide those lifecycle hooks.
+
+Each worker host-result frame additionally requires an application-provided
+disclosure guard. The watchdog attempts that guard for every nonblocking
+pipe write, retaining its permit through the write; contention defers output
+without stalling the watchdog. The application must bind it to the exact run,
+recipient, privacy state, deadline and all source attachment generations, using
+the same serialization boundary as revocation. A guard is not itself a broker
+grant, and bytes already written to the worker cannot be recalled.
+
+Worker events can signal a shared one-slot wake channel without calling GUI
+code from the watchdog. A separate application bridge must request a frame and
+drain every active run, rescheduling when a frame budget leaves queued work.
+The startup thread must publish its success or failure and signal the
+application, which must signal again after registering a successful supervisor:
+the bridge may have consumed an earlier wake before the run was installed.
+A full wake channel coalesces signals; a disconnected receiver closes the worker.
 
 A `SessionRef` binds app-instance identity, logical tab/session identity and
 transport attachment generation; durable sessions also bind provider/host/

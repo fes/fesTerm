@@ -63,7 +63,7 @@ pub fn worker_entry(input: impl Read, output: impl Write) -> Result<(), Error> {
     if bundle.digest() != digest {
         return Err(Error::Snapshot);
     }
-    bundle.validate_parameters(&parameters)?;
+    parameters.validate(&bundle)?;
     drop(source);
     let outcome = engine::run(&bundle, &parameters, &limits, &mut pipe);
     pipe.finish(outcome)

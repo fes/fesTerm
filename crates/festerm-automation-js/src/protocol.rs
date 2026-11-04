@@ -1,4 +1,7 @@
-use crate::{snapshot::Parameters, Error, MAX_RUN_MS};
+use crate::{
+    snapshot::{BoundParameters, Parameters},
+    Error, MAX_RUN_MS,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{Read, Write};
 
@@ -265,8 +268,7 @@ pub enum ParentMessage {
     Begin {
         digest: String,
         snapshot_bytes: u32,
-        #[serde(deserialize_with = "crate::snapshot::unique_map")]
-        parameters: Parameters,
+        parameters: BoundParameters,
         limits: Limits,
     },
     SourceChunk {
