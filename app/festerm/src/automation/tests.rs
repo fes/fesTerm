@@ -5100,6 +5100,111 @@ fn automation_privacy_gate_closes_replaced_and_later_mcp_stops() {
     assert!(late.load(Ordering::Acquire));
 }
 
+struct PanicOnAdmissionPoison;
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for PanicOnAdmissionPoison {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _context: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        if *event.metadata().level() == tracing::Level::ERROR {
+            panic!("injected admission poison logging panic");
+        }
+    }
+}
+
+pub(super) fn assert_poison_log_panics(action: impl FnOnce()) {
+    use tracing_subscriber::prelude::*;
+
+    let subscriber = tracing_subscriber::registry().with(PanicOnAdmissionPoison);
+    let result = tracing::subscriber::with_default(subscriber, || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(action))
+    });
+    assert_eq!(
+        result
+            .expect_err("poison logging did not panic")
+            .downcast_ref::<&str>(),
+        Some(&"injected admission poison logging panic")
+    );
+}
+
+pub(super) fn isolate_poison_panic_test(marker: &str, test: &str) -> bool {
+    if std::env::var_os(marker).is_some() {
+        return false;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture"])
+        .env(marker, "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "isolated poison test failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("running 1 test"));
+    true
+}
+
+pub(super) fn poison_admission_for_panic_test() {
+    assert!(std::thread::spawn(|| {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        panic!("poison admission in isolated test process");
+    })
+    .join()
+    .is_err());
+}
+
+#[test]
+fn automation_poison_diagnostics_follow_fail_closed_cuts() {
+    if isolate_poison_panic_test(
+        "FESTERM_POISON_DIAGNOSTIC_ORDER_CHILD",
+        "automation::tests::automation_poison_diagnostics_follow_fail_closed_cuts",
+    ) {
+        return;
+    }
+
+    let gate = Arc::new(PrivacyGate::new(false));
+    let bound_stop = Arc::new(AtomicBool::new(false));
+    assert!(gate.bind_mcp(&bound_stop));
+    let (mut coordinator, _app, _tab, _ime, target) = control_review_fixture();
+    let principal = coordinator.peers[&1].principal;
+    let review = prepare_metadata_review(&mut coordinator, 1, &[target]);
+    approve_metadata_review(&mut coordinator, 1, &review).unwrap();
+    let (_, _, liveness) = metadata_disclosure(&mut coordinator, 1, &[target]);
+    assert!(liveness.is_live(principal, Instant::now()));
+    let first_closed = coordinator.peers[&1].connection.closed_flag();
+    add_metadata_peer(&mut coordinator, 2);
+    let second_closed = coordinator.peers[&2].connection.closed_flag();
+    assert!(!coordinator.stop.load(Ordering::Acquire));
+    assert!(!first_closed.load(Ordering::Acquire));
+    assert!(!second_closed.load(Ordering::Acquire));
+    poison_admission_for_panic_test();
+
+    let callback_gate = gate.clone();
+    std::thread::spawn(move || assert_poison_log_panics(|| callback_gate.close()))
+        .join()
+        .unwrap();
+    assert!(gate.is_closed());
+    assert!(bound_stop.load(Ordering::Acquire));
+    let closed = AtomicBool::new(false);
+    assert_poison_log_panics(|| set_admission_flag(&closed, true));
+    assert!(closed.load(Ordering::Acquire));
+    let live = AtomicBool::new(true);
+    assert_poison_log_panics(|| set_admission_flag(&live, false));
+    assert!(!live.load(Ordering::Acquire));
+
+    assert_poison_log_panics(|| coordinator.stop_mcp());
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    assert!(first_closed.load(Ordering::Acquire));
+    assert!(second_closed.load(Ordering::Acquire));
+    assert!(coordinator.broker.is_none());
+    assert!(!liveness.is_live(principal, Instant::now()));
+    assert!(coordinator.peers.is_empty());
+}
+
 #[test]
 fn automation_queued_restart_cannot_cross_privacy_loss() {
     let context = egui::Context::default();
