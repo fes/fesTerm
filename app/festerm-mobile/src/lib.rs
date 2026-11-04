@@ -482,22 +482,35 @@ impl MobileApp {
             ui.set_style(mobile_style(ui.style()));
             ui.painter()
                 .rect_filled(safe_rect, 0.0, ui.visuals().panel_fill);
+            if let Some(keyboard) = &self.keyboard {
+                apply_field_input(ui.ctx(), keyboard.take_field_input());
+            }
             apply_field_edit(ui.ctx());
             self.show_content(ui);
         });
+        let field = widgets::take_field_document(ui.ctx());
         self.keep_field_keyboard(ui.ctx());
         if !ui.input(|input| input.focused) {
             ui.ctx().output_mut(|output| output.ime = None);
         }
         if let Some(keyboard) = &self.keyboard {
+            let mut field = field;
             let mode = if self.terminal_keyboard_input {
                 ui.ctx().output_mut(|output| output.ime = None);
+                field = None;
                 festerm_ios_window::KeyboardMode::Terminal
             } else if ui.ctx().output(|output| output.ime.is_some()) {
-                festerm_ios_window::KeyboardMode::System
+                if field.is_some() {
+                    festerm_ios_window::KeyboardMode::Field
+                } else {
+                    festerm_ios_window::KeyboardMode::System
+                }
             } else {
+                field = None;
                 festerm_ios_window::KeyboardMode::Hidden
             };
+            // Publish before switching, so the keyboard reads the new field.
+            keyboard.set_field_document(field);
             if let Err(error) = keyboard.set_keyboard_mode(mode) {
                 log::error!("{error}");
                 self.input_notice = Some(error);
@@ -3274,6 +3287,51 @@ fn clipboard_text() -> Option<String> {
 
 /// Replays an edit chosen from a form field's menu as the clipboard or
 /// keyboard event egui's `TextEdit` already understands.
+/// Replays native keyboard edits into the focused form field as the events
+/// egui's `TextEdit` handles. A selection change leads its batch and is set
+/// on the field's state directly, before the field runs this frame.
+fn apply_field_input(ctx: &egui::Context, inputs: Vec<festerm_ios_window::FieldInput>) {
+    use festerm_ios_window::FieldInput;
+    let Some(field) = ctx.memory(|memory| memory.focused()) else {
+        return;
+    };
+    let key = |key| {
+        [true, false].map(|pressed| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        })
+    };
+    let mut events = Vec::new();
+    for input in inputs {
+        match input {
+            FieldInput::Select(range) => {
+                let mut state = egui::TextEdit::load_state(ctx, field).unwrap_or_default();
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(range.start),
+                        egui::text::CCursor::new(range.end),
+                    )));
+                state.store(ctx, field);
+            }
+            FieldInput::Insert(text) if text == "\n" => events.extend(key(egui::Key::Enter)),
+            FieldInput::Insert(text) => events.push(egui::Event::Text(text)),
+            FieldInput::DeleteBackward => events.extend(key(egui::Key::Backspace)),
+            FieldInput::Preedit { text, selected } => {
+                events.push(egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text,
+                    active_range_chars: Some(selected),
+                }));
+            }
+            FieldInput::Commit(text) => events.push(egui::Event::Ime(egui::ImeEvent::Commit(text))),
+        }
+    }
+    ctx.input_mut(|input| input.events.extend(events));
+}
+
 fn apply_field_edit(ctx: &egui::Context) {
     let Some(edit) = widgets::take_field_edit(ctx) else {
         return;

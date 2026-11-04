@@ -5,7 +5,12 @@ pub enum KeyboardMode {
     Hidden,
     System,
     Terminal,
+    /// The system keyboard edits the published form field via `UITextInput`.
+    Field,
 }
+
+mod field;
+pub use field::{FieldDocument, FieldInput, FieldModel, FieldSync};
 
 #[cfg(target_os = "ios")]
 mod ios;
@@ -36,6 +41,12 @@ impl KeyboardBridge {
     }
 
     pub fn play_input_click(&self) {}
+
+    pub fn set_field_document(&self, _document: Option<FieldDocument>) {}
+
+    pub fn take_field_input(&self) -> Vec<FieldInput> {
+        Vec::new()
+    }
 }
 
 /// No UIScene exists off iOS.
