@@ -117,7 +117,9 @@ to bypass another's restrictions.
    The local PTY backend can reserve an inert position in its existing bounded
    command queue before an exact broker commit. The controller must hold its
    worker, privacy and attachment fences through publication, and must verify
-   the writer lease and immutable bytes at commit. A reservation that is
+   the writer lease and immutable bytes at commit. Each reservation carries the
+   host controller identity and the creating backend's own attachment identity
+   and generation, rechecked against the target under that boundary. A reservation that is
    dropped, refused or not committed within 250 ms cannot release input; later
    commands retain their order. A lost slot after the broker callback succeeds
    requires conservative unknown-outcome handling, not replay. This primitive
@@ -133,6 +135,36 @@ to bypass another's restrictions.
    input/IME fences, any required presentation condition, and the same immutable
    bytes, in addition to the live grant and writer epoch. The kernel alone does
    not perform or qualify those checks.
+   The modeled presented-input seam freezes the original fence before an
+   explicit single-target native control review is displayed, then binds that
+   review's decision to its grant epoch and acquired lease/run. Human input,
+   IME loss/regain or attachment changes reject the pending decision even when
+   no handoff existed; a newly captured fence cannot revive it. Stale reviews
+   and handoffs are cut before a new proposal snapshots ownership. The review
+   also freezes the exact registration, lifecycle and backend-attachment guards
+   of every approved readable source, retaining and checking them through
+   publication under the same admission boundary. Source retirement cuts the
+   affected scopes; an already-retired target does not revoke unrelated
+   principals. An error after successful publication is an unknown outcome.
+   Contended UI admission refuses without blocking. This does not yet integrate
+   worker disclosure or expose input.
+   The internal metadata/control composition freezes exact metadata sources
+   and the current sink before a native metadata decision; a control review
+   separately exposes already authorized metadata sources. Reapproval cannot
+   widen the frozen control closure, and unbound metadata cannot silently
+   widen control. Slot-specific cuts preserve the other live slot, while
+   privacy loss and disconnect cut both. The legacy observation adapter cannot
+   compose with this seam until its queued frames carry per-slot delivery
+   fences. This is a modeled seam, not native UI or metadata routing.
+   The application-owned kernel also has a bounded, connection-owned
+   controller-registration association with an explicitly native-selected
+   exact target generation. Its fresh association reference is not authority.
+   A separately scoped native presentation grant, bounded pending state and
+   admission-time revalidation seam now exist, but no production native source
+   can prove the necessary uninterrupted focus history and admission ordering.
+   All production presentation remains unavailable; native UI and delivery for
+   independently authorized metadata and end-to-end input remain open under
+   [#524](https://github.com/fes/fesTerm/issues/524).
 8. **Gate execution and platform claims in stages.** The full contract,
    capability matrix, limits, threat model, outcomes and validation plan live
    in [the companion design](../automation-design.md), which is part of this
@@ -204,7 +236,9 @@ in the design must be visible in implementation/release review.
 - **GUI/action edges affected:** `AUT-01` through `AUT-04` remain deferred for
   workflows/control. `AUT-05` covers independent default-off settings,
   `AUT-06` the shared authority kernel, and `AUT-07` the partial local MCP
-  observation path and native pairing/revocation.
+  observation path and native pairing/revocation. `AUT-08` covers the
+  non-authorizing controller-enrollment kernel prerequisite; `AUT-09` covers
+  the bounded presentation/revalidation seam and its unavailable client contract.
 - **Automated tests required:** The future acceptance matrix in
   [automation design](../automation-design.md#validation-plan) covers delegation,
   replay, disclosure, imports, resource bounds, confinement, cancellation,
@@ -237,6 +271,22 @@ in the design must be visible in implementation/release review.
   strict decoding, path/link refusal and frozen invocation identity. Desktop
   selection provides a non-authorizing metadata and captured-source preview;
   approval, execution, iOS selection and platform qualification remain open.
+  Controller-enrollment tests cover exact selections, principal isolation,
+  registration bounds, stale decisions and lifecycle invalidation; they do not
+  prove a native selector or metadata authorization. Presentation tests inject
+  a continuous event source and freshness barrier, check exact app-command tab
+  routing, loss/regain and selection ABA, and exercise the modeled reserved-input
+  seam against native-review fences captured before consent, recaptured
+  human/IME fences, pending input, multiple principals, mismatched
+  controller/backend identities, replacement, privacy and disconnect. Injected
+  egui preedit/commit events also exercise the review-to-IME ordering. Separate
+  source-closure tests cover unreconciled disconnect, attachment/lifecycle and
+  registration changes, ordered publication, and unrelated-principal survival
+  after target retirement. They also force an error after publication, check
+  no replay, and exercise nonblocking contention. The
+  later-stage MCP contract explicitly refuses presentation while unqualified.
+  These tests do not establish native activation/event ordering, response
+  admission, a real presentation provider or an exposed controller-input path.
   Run the traceability gate and documentation checks.
 - **Worker process entry:** The desktop executable has a private
   `--automation-worker` entry before application initialization, exercised by
@@ -246,7 +296,7 @@ in the design must be visible in implementation/release review.
   standalone worker. Native package smoke requires that the packaged executable
   report its confined Ready frame before receiving source. Presence and that
   probe do not establish install provenance or enable application execution.
-- **Native/manual evidence required:** `AUTO-01` through `AUTO-04` remain open;
+- **Native/manual evidence required:** `AUTO-01` through `AUTO-05` remain open;
   observation requires real platform/client/lock evidence, and later stages
   additionally require engine, platform sandbox and input-ownership evidence.
 - **Coverage superseded:** None. All existing accepted requirements and evidence

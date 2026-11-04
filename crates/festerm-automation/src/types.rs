@@ -11,6 +11,8 @@ pub const MAX_PAYLOAD_BYTES: u32 = 65_536;
 pub const MAX_OBSERVATION_BYTES: u32 = 32_768;
 pub const MAX_INPUT_BYTES: u32 = 16_384;
 pub const MAX_SCOPE_TARGETS: usize = 32;
+pub const MAX_CONTROLLER_REGISTRATION_BYTES: usize = 128;
+pub const MAX_PENDING_APPROVALS: usize = 16;
 
 macro_rules! reference_id {
     ($name:ident) => {
@@ -30,6 +32,22 @@ reference_id!(ApprovalId);
 /// Obtained only from the trusted application acceptor, never decoded from IPC.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ConnectionId {
+    pub(crate) instance: [u8; 16],
+    pub(crate) sequence: u64,
+}
+
+/// An application-owned reference to one connection's opaque registration.
+/// It is not a target, a grant, or a supported wire identifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ControllerRegistrationId {
+    pub(crate) instance: [u8; 16],
+    pub(crate) sequence: u64,
+}
+
+/// A reference to one exact native-selected association, not authority.
+/// A later native rebind mints a different reference.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ControllerEnrollmentId {
     pub(crate) instance: [u8; 16],
     pub(crate) sequence: u64,
 }
@@ -101,8 +119,8 @@ pub struct InvocationBinding {
     pub parameters: Digest,
 }
 
-/// Requested scopes are data, not authority. No wildcard or presentation sink
-/// exists in this kernel. All results are returned only to the same connection.
+/// Requested scopes are data, not authority. Presentation uses its own native
+/// decision, not these scopes. Results return only to the same connection.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scope {
@@ -181,6 +199,51 @@ impl NativeApproval {
     ) -> Self {
         self.handoffs.insert(target, all_readable_sources);
         self
+    }
+
+    /// Whether this native decision contains exactly one accepted control
+    /// target. The host still has to validate the entire pending proposal.
+    pub fn is_single_control_handoff(&self, target: TargetRef) -> bool {
+        self.request.scope.control.len() == 1
+            && self.request.scope.control.contains(&target)
+            && self.handoffs.contains_key(&target)
+    }
+}
+
+/// A frozen candidate for native review, not an association or approval.
+#[derive(Debug)]
+pub struct ControllerEnrollmentProposal {
+    pub(crate) connection: ConnectionId,
+    pub(crate) registration: ControllerRegistrationId,
+    pub(crate) target: TargetRef,
+    pub(crate) revision: u64,
+}
+
+impl ControllerEnrollmentProposal {
+    pub fn registration(&self) -> ControllerRegistrationId {
+        self.registration
+    }
+
+    pub fn target(&self) -> TargetRef {
+        self.target
+    }
+}
+
+/// Native-only decision to associate the reviewed registration and exact target.
+/// Trusted application code constructs this only after explicit user selection.
+/// It is deliberately neither serializable nor deserializable.
+///
+/// ```compile_fail
+/// use festerm_automation::NativeControllerEnrollment;
+/// let _ = serde_json::from_str::<NativeControllerEnrollment>("{}");
+/// ```
+pub struct NativeControllerEnrollment {
+    pub(crate) proposal: ControllerEnrollmentProposal,
+}
+
+impl NativeControllerEnrollment {
+    pub fn new(proposal: ControllerEnrollmentProposal) -> Self {
+        Self { proposal }
     }
 }
 
@@ -337,6 +400,9 @@ pub enum Operation {
         lease: LeaseRef,
         input: Digest,
         bytes: u32,
+        /// A frozen requirement, if the caller requires confirmed presentation.
+        /// It cannot be removed between preparation and admission.
+        presentation: Option<crate::PresentationRequirement>,
     },
     Result {
         max_bytes: u32,
@@ -366,6 +432,8 @@ pub enum Error {
     Busy,
     Closed,
     BindingMismatch,
+    Unavailable,
+    ForegroundRefused,
     UnsettledHostCalls,
     UnsettledChildRuns,
 }
@@ -413,6 +481,8 @@ pub enum Completion {
 pub struct Limits {
     pub connections: usize,
     pub targets: usize,
+    pub controller_registrations: usize,
+    pub controller_registrations_per_connection: usize,
     pub retained_runs: usize,
     pub global_operations: u32,
     pub global_disclosed_bytes: u32,
@@ -423,6 +493,8 @@ impl Default for Limits {
         Self {
             connections: 16,
             targets: 128,
+            controller_registrations: 128,
+            controller_registrations_per_connection: 16,
             retained_runs: 128,
             global_operations: 4096,
             global_disclosed_bytes: 16 * 1_048_576,

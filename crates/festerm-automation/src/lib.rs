@@ -7,7 +7,7 @@
 mod broker;
 mod types;
 
-pub use broker::Broker;
+pub use broker::*;
 pub use types::*;
 
 #[cfg(test)]

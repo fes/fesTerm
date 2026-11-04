@@ -1,4 +1,6 @@
+use super::presentation::{NativePresentationBarrier, PendingControlReview, PendingMetadataReview};
 use super::*;
+use crate::session_controller::SessionController;
 use serde_json::{json, Value};
 
 fn ready() -> Machine {
@@ -48,6 +50,3506 @@ fn fixture() -> (Coordinator, FesTermApp, TabId, impl Fn() -> Option<Vec<u8>>) {
     );
     coordinator.broker = Some(broker);
     (coordinator, app, id, receive)
+}
+
+struct SimulatedPresentationBarrier {
+    monitor: festerm_automation::PresentationMonitorId,
+    window: festerm_automation::PresentationWindowId,
+    target: TargetRef,
+    unavailable: bool,
+    fail_after_operation: bool,
+    change_before_operation: Option<WorkspaceRevision>,
+}
+
+impl super::presentation::NativePresentationBarrier for SimulatedPresentationBarrier {
+    fn with_observation<T>(
+        &mut self,
+        broker: &mut Broker,
+        workspace_revision: u64,
+        operation: impl FnOnce(&mut Broker, festerm_automation::NativePresentationObservation) -> T,
+    ) -> festerm_automation::Result<T> {
+        use festerm_automation::{Error, NativePresentationState};
+        use festerm_session::AutomationAdmissionTryError;
+
+        assert!(matches!(
+            festerm_session::try_automation_admission_lock(),
+            Err(AutomationAdmissionTryError::Busy)
+        ));
+        if self.unavailable {
+            return Err(Error::Unavailable);
+        }
+        let observation = broker
+            .observe_presentation(
+                self.monitor,
+                NativePresentationState::Foreground {
+                    window: self.window,
+                    selected: Some(self.target),
+                    workspace_revision,
+                },
+            )?
+            .ok_or(Error::Unavailable)?;
+        if let Some(workspace) = self.change_before_operation.take() {
+            workspace.changed();
+        }
+        let result = operation(broker, observation);
+        assert!(matches!(
+            festerm_session::try_automation_admission_lock(),
+            Err(AutomationAdmissionTryError::Busy)
+        ));
+        if self.fail_after_operation {
+            Err(Error::Unavailable)
+        } else {
+            Ok(result)
+        }
+    }
+}
+
+struct PresentedInputFixture {
+    coordinator: Coordinator,
+    app: FesTermApp,
+    tab: TabId,
+    ime: Arc<festerm_session::AutomationEpoch>,
+    workspace: WorkspaceRevision,
+    run: RunId,
+    lease: festerm_automation::LeaseRef,
+    requirement: festerm_automation::PresentationRequirement,
+    request: RequestId,
+    barrier: SimulatedPresentationBarrier,
+}
+
+fn presentation_admission_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+fn reserve_presented_input(
+    coordinator: &Coordinator,
+    target: TargetRef,
+    bytes: &[u8],
+) -> (
+    festerm_session::ReservedAutomationInput,
+    festerm_session::PendingAutomationInput,
+) {
+    let target = &coordinator.targets[&target.session()];
+    reserve_for_binding(target.controller_instance, target.attachment.clone(), bytes)
+}
+
+fn reserve_for_binding(
+    controller_instance: u64,
+    attachment: Arc<festerm_session::AutomationEpoch>,
+    bytes: &[u8],
+) -> (
+    festerm_session::ReservedAutomationInput,
+    festerm_session::PendingAutomationInput,
+) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match festerm_session::automation_input_slot(bytes, controller_instance, attachment.clone())
+        {
+            Err(festerm_session::ReserveAutomationInputError::Busy)
+                if Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            result => return result.unwrap(),
+        }
+    }
+}
+
+fn presentation_control_request(target: TargetRef) -> (GrantRequest, Scope, InvocationBinding) {
+    let mut scope = Scope::default();
+    scope.control.insert(target);
+    scope.invoke_workflows = true;
+    scope.return_results = true;
+    let binding = InvocationBinding {
+        api_version: 1,
+        invocation: Invocation::Workflow {
+            bundle: Digest([1; 32]),
+            manifest: Digest([2; 32]),
+        },
+        parameters: Digest([3; 32]),
+    };
+    let request = GrantRequest {
+        scope: scope.clone(),
+        bindings: BTreeSet::from([binding]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    (request, scope, binding)
+}
+
+fn prepare_control_review<S: festerm_session::Session>(
+    coordinator: &mut Coordinator,
+    channel: u64,
+    target: TargetRef,
+    request: &GrantRequest,
+    controller: &mut SessionController<S>,
+) -> PendingControlReview {
+    retry_automation_busy(|| {
+        coordinator.prepare_control_handoff_review(
+            channel,
+            target,
+            request.clone(),
+            Duration::from_secs(60),
+            controller,
+        )
+    })
+    .unwrap()
+}
+
+fn approve_control_review(
+    coordinator: &mut Coordinator,
+    channel: u64,
+    review: &PendingControlReview,
+) -> festerm_automation::Result<()> {
+    let decision = review.accept_from_native();
+    retry_automation_busy(|| coordinator.approve_control_handoff(channel, review, &decision))
+}
+
+fn prepare_metadata_review(
+    coordinator: &mut Coordinator,
+    channel: u64,
+    targets: &[TargetRef],
+) -> PendingMetadataReview {
+    retry_automation_busy(|| {
+        coordinator.prepare_metadata_review(
+            channel,
+            festerm_automation::MetadataGrantRequest {
+                targets: targets.iter().copied().collect(),
+            },
+            Duration::from_secs(60),
+        )
+    })
+    .unwrap()
+}
+
+fn approve_metadata_review(
+    coordinator: &mut Coordinator,
+    channel: u64,
+    review: &PendingMetadataReview,
+) -> festerm_automation::Result<()> {
+    let decision = review.accept_from_native();
+    retry_automation_busy(|| coordinator.approve_metadata_review(channel, review, &decision))
+}
+
+fn metadata_disclosure(
+    coordinator: &mut Coordinator,
+    channel: u64,
+    targets: &[TargetRef],
+) -> (RunId, RequestId, festerm_automation::DisclosureLiveness) {
+    metadata_disclosure_with_deadline(coordinator, channel, targets, Duration::from_secs(30))
+}
+
+fn metadata_disclosure_with_deadline(
+    coordinator: &mut Coordinator,
+    channel: u64,
+    targets: &[TargetRef],
+    duration: Duration,
+) -> (RunId, RequestId, festerm_automation::DisclosureLiveness) {
+    let principal = coordinator.peers[&channel].principal;
+    let now = Instant::now();
+    let broker = coordinator.broker.as_mut().unwrap();
+    let run = broker
+        .admit_metadata_run(
+            principal,
+            festerm_automation::MetadataRunSpec {
+                parameters: Digest([19; 32]),
+                targets: targets.iter().copied().collect(),
+                budget: Budget::default(),
+                deadline: now + duration,
+            },
+            now,
+        )
+        .unwrap();
+    let request = broker
+        .prepare_request(
+            principal,
+            run,
+            AuthorityOperation::Discover { max_bytes: 64 },
+            now,
+        )
+        .unwrap();
+    let mut exact_targets = targets.to_vec();
+    exact_targets.sort();
+    assert_eq!(
+        broker.discovery_targets(principal, request, now).unwrap(),
+        exact_targets
+    );
+    broker
+        .commit_disclosure(principal, request, 8, now)
+        .unwrap();
+    let liveness = broker.disclosure_liveness(principal, request, now).unwrap();
+    (run, request, liveness)
+}
+
+fn add_metadata_peer(coordinator: &mut Coordinator, channel: u64) -> ConnectionId {
+    let principal = coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .accept_connection()
+        .unwrap();
+    let (connection, _receive) = ipc::test_connection(channel);
+    coordinator.peers.insert(
+        channel,
+        Peer {
+            connection,
+            principal,
+            machine: ready(),
+            code: VerificationCode::new("0123456789abcdef").unwrap(),
+            grant: None,
+            waits: Vec::new(),
+        },
+    );
+    principal
+}
+
+fn commit_presented_input_with_retry<B: NativePresentationBarrier>(
+    coordinator: &mut Coordinator,
+    channel: u64,
+    request: RequestId,
+    barrier: &mut B,
+    mut reserve: impl FnMut(
+        &Coordinator,
+    ) -> (
+        festerm_session::ReservedAutomationInput,
+        festerm_session::PendingAutomationInput,
+    ),
+) -> (
+    std::result::Result<(), festerm_session::CommitAutomationInputError<festerm_automation::Error>>,
+    festerm_session::PendingAutomationInput,
+) {
+    use festerm_automation::Error;
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let (reservation, mut pending) = reserve(coordinator);
+        let result = coordinator.commit_presented_input(channel, request, reservation, barrier);
+        if matches!(
+            result,
+            Err(CommitAutomationInputError::Refused(Error::Busy))
+        ) && Instant::now() < deadline
+        {
+            assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+            std::thread::sleep(Duration::from_millis(1));
+        } else {
+            return (result, pending);
+        }
+    }
+}
+
+fn commit_presented_input_retry(
+    coordinator: &mut Coordinator,
+    channel: u64,
+    request: RequestId,
+    barrier: &mut SimulatedPresentationBarrier,
+    bytes: &[u8],
+) -> (
+    std::result::Result<(), festerm_session::CommitAutomationInputError<festerm_automation::Error>>,
+    festerm_session::PendingAutomationInput,
+) {
+    let target = barrier.target;
+    commit_presented_input_with_retry(coordinator, channel, request, barrier, |coordinator| {
+        reserve_presented_input(coordinator, target, bytes)
+    })
+}
+
+fn control_review_fixture() -> (
+    Coordinator,
+    FesTermApp,
+    TabId,
+    Arc<festerm_session::AutomationEpoch>,
+    TargetRef,
+) {
+    control_review_fixture_with_sources(&[])
+}
+
+fn control_review_fixture_with_sources(
+    sources: &[&FesTermApp],
+) -> (
+    Coordinator,
+    FesTermApp,
+    TabId,
+    Arc<festerm_session::AutomationEpoch>,
+    TargetRef,
+) {
+    let (mut coordinator, mut app, tab, _receive) = fixture();
+    if !sources.is_empty() {
+        let apps: Vec<_> = std::iter::once(&app)
+            .chain(sources.iter().copied())
+            .collect();
+        let mut broker = coordinator.broker.take().unwrap();
+        coordinator.reconcile(&mut broker, &apps);
+        coordinator.broker = Some(broker);
+    }
+    let ime = Arc::new(festerm_session::AutomationEpoch::new());
+    ime.transition(true);
+    app.set_automation_ime_epoch(&ime);
+    let target = coordinator.targets.get_mut(&tab.chip_id()).unwrap();
+    // This fake transport is used only to exercise the local-only admission seam.
+    target.local_pty = true;
+    let target = target.reference;
+    (coordinator, app, tab, ime, target)
+}
+
+fn presented_input_fixture() -> PresentedInputFixture {
+    presented_input_fixture_with_sources(&[])
+}
+
+fn presented_input_fixture_with_sources(
+    sources: &[(&FesTermApp, TabId, bool)],
+) -> PresentedInputFixture {
+    presented_input_fixture_with_binding(sources, false)
+}
+
+fn presented_input_fixture_with_binding(
+    sources: &[(&FesTermApp, TabId, bool)],
+    direct_input: bool,
+) -> PresentedInputFixture {
+    presented_input_fixture_with_options(sources, direct_input, false)
+}
+
+fn presented_input_fixture_with_options(
+    sources: &[(&FesTermApp, TabId, bool)],
+    direct_input: bool,
+    include_target_source: bool,
+) -> PresentedInputFixture {
+    use festerm_automation::{
+        NativeControllerEnrollment, NativeControllerPresentationApproval, NativePresentationState,
+        PresentationRequirement, PresentationWindowId,
+    };
+
+    let source_apps: Vec<_> = sources.iter().map(|(app, _, _)| *app).collect();
+    let (mut coordinator, mut app, tab, ime, target) =
+        control_review_fixture_with_sources(&source_apps);
+    let principal = coordinator.peers[&1].principal;
+    let now = Instant::now();
+    let (mut request, mut scope, mut binding) = presentation_control_request(target);
+    if direct_input {
+        scope.invoke_workflows = false;
+        scope.return_results = false;
+        binding.invocation = Invocation::DirectInput {
+            target,
+            input: Digest(Sha256::digest(b"test").into()),
+            bytes: 4,
+        };
+        request.scope = scope.clone();
+        request.bindings = BTreeSet::from([binding]);
+    }
+    for (app, tab, discover) in sources {
+        assert!(app.automation_session(*tab).is_some());
+        let source = coordinator.targets[&tab.chip_id()].reference;
+        if *discover {
+            request.scope.discover.insert(source);
+        } else {
+            request.scope.observe.insert(source);
+        }
+    }
+    if include_target_source {
+        request.scope.discover.insert(target);
+    }
+    let review = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    approve_control_review(&mut coordinator, 1, &review).unwrap();
+    let run = coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .admit_run(
+            principal,
+            None,
+            RunSpec {
+                binding,
+                scope,
+                budget: Budget::default(),
+                deadline: now + Duration::from_secs(30),
+            },
+            now,
+        )
+        .unwrap();
+    let lease =
+        retry_automation_busy(|| coordinator.acquire_control_lease(1, run, target)).unwrap();
+    let broker = coordinator.broker.as_mut().unwrap();
+    let registration = broker
+        .register_controller_session(principal, b"controller")
+        .unwrap();
+    let proposal = broker
+        .prepare_controller_enrollment(principal, registration, target)
+        .unwrap();
+    let enrollment = broker
+        .approve_controller_enrollment(principal, NativeControllerEnrollment::new(proposal))
+        .unwrap();
+    let proposal = broker
+        .prepare_controller_presentation_approval(principal, registration, enrollment, now)
+        .unwrap();
+    broker
+        .approve_controller_presentation(
+            principal,
+            NativeControllerPresentationApproval::new(proposal, Duration::from_secs(60)),
+            now,
+        )
+        .unwrap();
+    let monitor = broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    let attempt = broker
+        .prepare_presentation(
+            principal,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(2),
+            now,
+        )
+        .unwrap();
+    broker
+        .presentation_requested(principal, attempt, now)
+        .unwrap();
+    let observation = broker
+        .observe_presentation(
+            monitor,
+            NativePresentationState::Foreground {
+                window,
+                selected: Some(target),
+                workspace_revision: 0,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let confirmed = broker
+        .finish_presentation(principal, attempt, Some(observation), now)
+        .unwrap()
+        .unwrap();
+    let requirement = PresentationRequirement::new(registration, enrollment, confirmed.revision);
+    if direct_input {
+        for (input, bytes) in [
+            (Digest(Sha256::digest(b"nope").into()), 4),
+            (Digest(Sha256::digest(b"test").into()), 5),
+        ] {
+            assert_eq!(
+                broker.prepare_request(
+                    principal,
+                    run,
+                    AuthorityOperation::Control {
+                        lease,
+                        input,
+                        bytes,
+                        presentation: Some(requirement),
+                    },
+                    now,
+                ),
+                Err(festerm_automation::Error::BindingMismatch)
+            );
+        }
+    }
+    let request = broker
+        .prepare_request(
+            principal,
+            run,
+            AuthorityOperation::Control {
+                lease,
+                input: Digest(Sha256::digest(b"test").into()),
+                bytes: 4,
+                presentation: Some(requirement),
+            },
+            now,
+        )
+        .unwrap();
+    let workspace = WorkspaceRevision::default();
+    coordinator.bind_presentation_workspace(&workspace).unwrap();
+    PresentedInputFixture {
+        coordinator,
+        app,
+        tab,
+        ime,
+        workspace,
+        run,
+        lease,
+        requirement,
+        request,
+        barrier: SimulatedPresentationBarrier {
+            monitor,
+            window,
+            target,
+            unavailable: false,
+            fail_after_operation: false,
+            change_before_operation: None,
+        },
+    }
+}
+
+fn disconnect_source_without_reconciliation(app: &FesTermApp, tab: TabId) {
+    let controller = &app.automation_session(tab).unwrap().controller;
+    let Some(crate::tabs::ApplicationSession::TestSsh(fake)) = controller.session() else {
+        panic!("expected fake SSH attachment");
+    };
+    fake.push_event(festerm_session::SessionEvent::Lifecycle(
+        festerm_session::SessionLifecycle::Disconnected(festerm_session::SessionError::new(
+            festerm_session::SessionErrorKind::Input,
+            "source disconnected",
+        )),
+    ));
+    assert_eq!(
+        controller.lifecycle(),
+        Some(festerm_session::SessionLifecycle::Running)
+    );
+}
+
+fn replace_source_attachment_without_event(app: &FesTermApp, tab: TabId) {
+    let Some(crate::tabs::ApplicationSession::TestSsh(fake)) =
+        app.automation_session(tab).unwrap().controller.session()
+    else {
+        panic!("expected fake SSH attachment");
+    };
+    fake.replace_attachment_without_event();
+}
+
+fn change_readable_source(
+    app: &mut FesTermApp,
+    tab: TabId,
+    coordinator: &mut Coordinator,
+    change: usize,
+) {
+    match change {
+        0 => disconnect_source_without_reconciliation(app, tab),
+        1 => replace_source_attachment_without_event(app, tab),
+        2 => {
+            let controller = &app.automation_session(tab).unwrap().controller;
+            let instance = controller.automation_instance();
+            let generation = controller.lifecycle_generation();
+            assert_eq!(app.automation_replace_fixture_session(), tab);
+            let controller = &app.automation_session(tab).unwrap().controller;
+            assert_ne!(controller.automation_instance(), instance);
+            assert_eq!(controller.lifecycle_generation(), generation);
+        }
+        3 => app
+            .automation_session_mut(tab)
+            .controller
+            .advance_lifecycle_generation(),
+        4 => set_admission_flag(&coordinator.targets[&tab.chip_id()].registration, false),
+        5 => {
+            let replacement = Arc::new(festerm_session::AutomationEpoch::new());
+            replacement.transition(true);
+            let target = coordinator.targets.get_mut(&tab.chip_id()).unwrap();
+            assert_eq!(replacement.capture(), Some(target.attachment_generation));
+            target.attachment = replacement;
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn presentation_input_admission_rechecks_native_barrier_and_exact_reserved_bytes() {
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    let PresentedInputFixture {
+        mut coordinator,
+        app: _app,
+        request,
+        mut barrier,
+        ..
+    } = presented_input_fixture();
+    let (result, mut pending) =
+        commit_presented_input_retry(&mut coordinator, 1, request, &mut barrier, b"test");
+    result.unwrap();
+    match pending.poll() {
+        AutomationInputStatus::Ready(bytes) => assert_eq!(&*bytes, b"test"),
+        _ => panic!("a successful admission must publish the exact reserved bytes"),
+    }
+
+    let PresentedInputFixture {
+        mut coordinator,
+        app: _app,
+        request,
+        mut barrier,
+        ..
+    } = presented_input_fixture();
+    let (result, mut pending) =
+        commit_presented_input_retry(&mut coordinator, 1, request, &mut barrier, b"wrong");
+    assert!(matches!(
+        result,
+        Err(festerm_session::CommitAutomationInputError::Refused(
+            festerm_automation::Error::BindingMismatch
+        ))
+    ));
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+}
+
+#[test]
+fn presentation_input_admits_only_the_reviewed_direct_action_once() {
+    use festerm_automation::Error;
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    let mut fixture = presented_input_fixture_with_binding(&[], true);
+    let (wrong, mut rejected) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"nope",
+    );
+    assert_eq!(
+        wrong,
+        Err(CommitAutomationInputError::Refused(Error::BindingMismatch))
+    );
+    assert!(matches!(rejected.poll(), AutomationInputStatus::Cancelled));
+    let (accepted, mut pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    accepted.unwrap();
+    match pending.poll() {
+        AutomationInputStatus::Ready(bytes) => assert_eq!(&*bytes, b"test"),
+        _ => panic!("a successful admission must publish the approved bytes"),
+    }
+    let principal = fixture.coordinator.peers[&1].principal;
+    let broker = fixture.coordinator.broker.as_mut().unwrap();
+    assert_eq!(
+        broker.prepare_request(
+            principal,
+            fixture.run,
+            AuthorityOperation::Control {
+                lease: fixture.lease,
+                input: Digest(Sha256::digest(b"test").into()),
+                bytes: 4,
+                presentation: Some(fixture.requirement),
+            },
+            Instant::now(),
+        ),
+        Err(Error::Closed)
+    );
+    let status = broker
+        .complete(
+            principal,
+            fixture.run,
+            festerm_automation::Completion::Returned,
+            Instant::now(),
+        )
+        .unwrap();
+    assert_eq!(status.admitted_effects, 1);
+    assert!(status.execution_outcome_unknown);
+}
+
+#[test]
+fn presentation_metadata_revocation_preserves_pending_direct_input_without_replay() {
+    use festerm_automation::{Error, RunState};
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    let (source_app, source_tab) = FesTermApp::automation_fixture();
+    let mut fixture =
+        presented_input_fixture_with_binding(&[(&source_app, source_tab, true)], true);
+    let principal = fixture.coordinator.peers[&1].principal;
+    let source = fixture.coordinator.targets[&source_tab.chip_id()].reference;
+    let review = prepare_metadata_review(&mut fixture.coordinator, 1, &[source]);
+    assert_eq!(review.request().targets, BTreeSet::from([source]));
+    assert_eq!(review.control_target(), Some(fixture.barrier.target));
+    assert_eq!(review.control_sources(), &BTreeSet::from([source]));
+    approve_metadata_review(&mut fixture.coordinator, 1, &review).unwrap();
+    let (_, _, metadata) = metadata_disclosure(&mut fixture.coordinator, 1, &[source]);
+    assert!(metadata.is_live(principal, Instant::now()));
+    assert!(!fixture.coordinator.javascript_enabled);
+
+    let (wrong_target, mut pending) = commit_presented_input_with_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        |coordinator| reserve_presented_input(coordinator, source, b"test"),
+    );
+    assert_eq!(
+        wrong_target,
+        Err(CommitAutomationInputError::Refused(Error::BindingMismatch))
+    );
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    let (wrong_bytes, mut pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"nope",
+    );
+    assert_eq!(
+        wrong_bytes,
+        Err(CommitAutomationInputError::Refused(Error::BindingMismatch))
+    );
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+
+    retry_automation_busy(|| fixture.coordinator.revoke_metadata_grant(1)).unwrap();
+    assert!(!metadata.is_live(principal, Instant::now()));
+    fixture.barrier.fail_after_operation = true;
+    let (result, mut pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    assert_eq!(result, Err(CommitAutomationInputError::LostAfterCommit));
+    assert!(matches!(
+        pending.poll(),
+        AutomationInputStatus::Ready(bytes) if &*bytes == b"test"
+    ));
+    let (replay, mut pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    assert!(replay.is_err());
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    let broker = fixture.coordinator.broker.as_mut().unwrap();
+    assert_eq!(
+        broker.prepare_request(
+            principal,
+            fixture.run,
+            AuthorityOperation::Control {
+                lease: fixture.lease,
+                input: Digest(Sha256::digest(b"test").into()),
+                bytes: 4,
+                presentation: Some(fixture.requirement),
+            },
+            Instant::now(),
+        ),
+        Err(Error::Closed)
+    );
+    broker.settle_request(principal, fixture.request).unwrap();
+    let status = broker
+        .complete(principal, fixture.run, Completion::Returned, Instant::now())
+        .unwrap();
+    assert_eq!(status.state, RunState::Completed);
+    assert_eq!(status.admitted_effects, 1);
+    assert!(status.execution_outcome_unknown);
+}
+
+#[test]
+fn presentation_metadata_and_control_expire_independently() {
+    use festerm_automation::MetadataGrantRequest;
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    for metadata_expires in [true, false] {
+        let (source_app, source_tab) = FesTermApp::automation_fixture();
+        let mut fixture =
+            presented_input_fixture_with_binding(&[(&source_app, source_tab, true)], true);
+        let principal = fixture.coordinator.peers[&1].principal;
+        let source = fixture.coordinator.targets[&source_tab.chip_id()].reference;
+        let metadata_lifetime = Duration::from_secs(if metadata_expires { 10 } else { 120 });
+        let review = retry_automation_busy(|| {
+            fixture.coordinator.prepare_metadata_review(
+                1,
+                MetadataGrantRequest {
+                    targets: BTreeSet::from([source]),
+                },
+                metadata_lifetime,
+            )
+        })
+        .unwrap();
+        approve_metadata_review(&mut fixture.coordinator, 1, &review).unwrap();
+        let run_lifetime = Duration::from_secs(if metadata_expires { 5 } else { 90 });
+        let (_, _, delivery) =
+            metadata_disclosure_with_deadline(&mut fixture.coordinator, 1, &[source], run_lifetime);
+        let future = Instant::now() + Duration::from_secs(if metadata_expires { 11 } else { 61 });
+        let broker = fixture.coordinator.broker.as_mut().unwrap();
+        broker.poll_expiry(future);
+        assert_eq!(delivery.is_live(principal, future), !metadata_expires);
+        assert_eq!(
+            broker.native_metadata_grant(principal, future).is_ok(),
+            !metadata_expires
+        );
+        assert_eq!(
+            broker
+                .native_control_grant(principal, fixture.barrier.target, future)
+                .is_ok(),
+            metadata_expires
+        );
+
+        let (result, mut pending) = commit_presented_input_retry(
+            &mut fixture.coordinator,
+            1,
+            fixture.request,
+            &mut fixture.barrier,
+            b"test",
+        );
+        if metadata_expires {
+            assert_eq!(result, Ok(()));
+            assert!(matches!(
+                pending.poll(),
+                AutomationInputStatus::Ready(bytes) if &*bytes == b"test"
+            ));
+        } else {
+            assert!(result.is_err());
+            assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+            assert!(delivery.is_live(principal, future));
+        }
+    }
+}
+
+#[test]
+fn presentation_metadata_first_requires_explicit_complete_control_review() {
+    use festerm_automation::Error;
+
+    let _serial = presentation_admission_test_guard();
+    let (source_app, source_tab) = FesTermApp::automation_fixture();
+    let (mut coordinator, mut app, tab, _ime, target) =
+        control_review_fixture_with_sources(&[&source_app]);
+    let source = coordinator.targets[&source_tab.chip_id()].reference;
+    let principal = coordinator.peers[&1].principal;
+    let metadata = prepare_metadata_review(&mut coordinator, 1, &[source]);
+    assert_eq!(metadata.control_target(), None);
+    assert!(metadata.control_sources().is_empty());
+    approve_metadata_review(&mut coordinator, 1, &metadata).unwrap();
+    let (_, _, liveness) = metadata_disclosure(&mut coordinator, 1, &[source]);
+
+    let (mut request, _, mut binding) = presentation_control_request(target);
+    binding.invocation = Invocation::DirectInput {
+        target,
+        input: Digest(Sha256::digest(b"test").into()),
+        bytes: 4,
+    };
+    request.scope.invoke_workflows = false;
+    request.scope.return_results = false;
+    request.bindings = BTreeSet::from([binding]);
+    assert!(matches!(
+        retry_automation_busy(|| coordinator.prepare_control_handoff_review(
+            1,
+            target,
+            request.clone(),
+            Duration::from_secs(60),
+            &mut app.automation_session_mut(tab).controller,
+        )),
+        Err(Error::Unauthorized)
+    ));
+    assert!(liveness.is_live(principal, Instant::now()));
+    request.scope.discover.insert(source);
+    let stale = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    assert_eq!(stale.metadata_sources(), &BTreeSet::from([source]));
+    assert!(!stale.request().scope.invoke_workflows);
+    assert!(stale.request().scope.observe.is_empty());
+
+    let replacement = prepare_metadata_review(&mut coordinator, 1, &[source]);
+    approve_metadata_review(&mut coordinator, 1, &replacement).unwrap();
+    assert!(!liveness.is_live(principal, Instant::now()));
+    assert_eq!(
+        approve_control_review(&mut coordinator, 1, &stale),
+        Err(Error::Revoked)
+    );
+    let fresh = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    assert_eq!(fresh.metadata_sources(), &BTreeSet::from([source]));
+    approve_control_review(&mut coordinator, 1, &fresh).unwrap();
+    assert!(coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .native_control_grant(principal, target, Instant::now())
+        .is_ok());
+}
+
+#[test]
+fn presentation_metadata_reapproval_cannot_widen_frozen_control_sources() {
+    use festerm_automation::{Error, MetadataGrantRequest};
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    let (a_app, a_tab) = FesTermApp::automation_fixture();
+    let (b_app, b_tab) = FesTermApp::automation_fixture();
+    let mut fixture = presented_input_fixture_with_binding(
+        &[(&a_app, a_tab, true), (&b_app, b_tab, false)],
+        true,
+    );
+    let principal = fixture.coordinator.peers[&1].principal;
+    let a = fixture.coordinator.targets[&a_tab.chip_id()].reference;
+    let b = fixture.coordinator.targets[&b_tab.chip_id()].reference;
+    let sink = fixture.barrier.target;
+    let first = prepare_metadata_review(&mut fixture.coordinator, 1, &[a]);
+    assert_eq!(first.control_sources(), &BTreeSet::from([a, b]));
+    approve_metadata_review(&mut fixture.coordinator, 1, &first).unwrap();
+    let (_, _, old_delivery) = metadata_disclosure(&mut fixture.coordinator, 1, &[a]);
+
+    let replacement = prepare_metadata_review(&mut fixture.coordinator, 1, &[a, b]);
+    assert_eq!(replacement.control_target(), Some(sink));
+    assert_eq!(replacement.request().targets, BTreeSet::from([a, b]));
+    assert_eq!(replacement.control_sources(), &BTreeSet::from([a, b]));
+    approve_metadata_review(&mut fixture.coordinator, 1, &replacement).unwrap();
+    assert!(!old_delivery.is_live(principal, Instant::now()));
+    let (_, _, current_delivery) = metadata_disclosure(&mut fixture.coordinator, 1, &[a, b]);
+    assert!(matches!(
+        retry_automation_busy(|| fixture.coordinator.prepare_metadata_review(
+            1,
+            MetadataGrantRequest {
+                targets: BTreeSet::from([sink]),
+            },
+            Duration::from_secs(60),
+        )),
+        Err(Error::Unauthorized)
+    ));
+    assert!(current_delivery.is_live(principal, Instant::now()));
+    let (result, mut pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    assert_eq!(result, Ok(()));
+    assert!(matches!(
+        pending.poll(),
+        AutomationInputStatus::Ready(bytes) if &*bytes == b"test"
+    ));
+}
+
+#[test]
+fn presentation_control_cuts_preserve_metadata_and_reclaim_stale_reviews() {
+    use festerm_automation::{Error, MetadataGrantRequest};
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    for takeover in [false, true] {
+        let (source_app, source_tab) = FesTermApp::automation_fixture();
+        let (other_app, other_tab) = FesTermApp::automation_fixture();
+        let mut fixture = presented_input_fixture_with_binding(
+            &[
+                (&source_app, source_tab, true),
+                (&other_app, other_tab, true),
+            ],
+            true,
+        );
+        let principal = fixture.coordinator.peers[&1].principal;
+        let other_principal = add_metadata_peer(&mut fixture.coordinator, 2);
+        let source = fixture.coordinator.targets[&source_tab.chip_id()].reference;
+        let other = fixture.coordinator.targets[&other_tab.chip_id()].reference;
+        let first = prepare_metadata_review(&mut fixture.coordinator, 1, &[source]);
+        approve_metadata_review(&mut fixture.coordinator, 1, &first).unwrap();
+        let (_, _, delivery) = metadata_disclosure(&mut fixture.coordinator, 1, &[source]);
+        let other_first = prepare_metadata_review(&mut fixture.coordinator, 2, &[other]);
+        approve_metadata_review(&mut fixture.coordinator, 2, &other_first).unwrap();
+        let (_, _, other_delivery) = metadata_disclosure(&mut fixture.coordinator, 2, &[other]);
+        let pending_a = prepare_metadata_review(&mut fixture.coordinator, 1, &[source]);
+        let pending_b = prepare_metadata_review(&mut fixture.coordinator, 1, &[source]);
+        let pending_other = prepare_metadata_review(&mut fixture.coordinator, 2, &[other]);
+        assert_eq!(
+            approve_metadata_review(&mut fixture.coordinator, 2, &pending_a),
+            Err(Error::Unauthorized)
+        );
+        assert!(matches!(
+            retry_automation_busy(|| fixture.coordinator.prepare_metadata_review(
+                1,
+                MetadataGrantRequest {
+                    targets: BTreeSet::from([source]),
+                },
+                Duration::from_secs(60),
+            )),
+            Err(Error::QuotaExceeded)
+        ));
+
+        let (foreign, mut foreign_pending) = commit_presented_input_retry(
+            &mut fixture.coordinator,
+            2,
+            fixture.request,
+            &mut fixture.barrier,
+            b"test",
+        );
+        assert!(matches!(
+            foreign,
+            Err(CommitAutomationInputError::Refused(Error::Unauthorized))
+        ));
+        assert!(matches!(
+            foreign_pending.poll(),
+            AutomationInputStatus::Cancelled
+        ));
+        if takeover {
+            type_in_presentation_tab(&mut fixture.app, fixture.tab);
+        } else {
+            retry_automation_busy(|| fixture.coordinator.revoke_control_handoff(1)).unwrap();
+        }
+        let (result, mut pending) = commit_presented_input_retry(
+            &mut fixture.coordinator,
+            1,
+            fixture.request,
+            &mut fixture.barrier,
+            b"test",
+        );
+        assert!(result.is_err());
+        assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+        assert!(delivery.is_live(principal, Instant::now()));
+        assert!(other_delivery.is_live(other_principal, Instant::now()));
+        assert_eq!(
+            approve_metadata_review(&mut fixture.coordinator, 1, &pending_a),
+            Err(Error::Revoked)
+        );
+        assert_eq!(
+            approve_metadata_review(&mut fixture.coordinator, 1, &pending_b),
+            Err(Error::Revoked)
+        );
+        approve_metadata_review(&mut fixture.coordinator, 2, &pending_other).unwrap();
+        let fresh = prepare_metadata_review(&mut fixture.coordinator, 1, &[source]);
+        assert_eq!(fresh.control_target(), None);
+        assert!(fixture
+            .coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .prepare_lease(
+                principal,
+                fixture.run,
+                fixture.barrier.target,
+                Instant::now()
+            )
+            .is_err());
+    }
+}
+
+#[test]
+fn presentation_takeover_preserves_metadata_for_the_same_exact_target() {
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    let mut fixture = presented_input_fixture_with_options(&[], true, true);
+    let principal = fixture.coordinator.peers[&1].principal;
+    let target = fixture.barrier.target;
+    let review = prepare_metadata_review(&mut fixture.coordinator, 1, &[target]);
+    assert_eq!(review.control_target(), Some(target));
+    approve_metadata_review(&mut fixture.coordinator, 1, &review).unwrap();
+    let (_, _, delivery) = metadata_disclosure(&mut fixture.coordinator, 1, &[target]);
+
+    type_in_presentation_tab(&mut fixture.app, fixture.tab);
+    let (result, mut pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    assert!(result.is_err());
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    assert!(delivery.is_live(principal, Instant::now()));
+    assert!(metadata_disclosure(&mut fixture.coordinator, 1, &[target])
+        .2
+        .is_live(principal, Instant::now()));
+    assert!(fixture
+        .coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .prepare_lease(principal, fixture.run, target, Instant::now())
+        .is_err());
+}
+
+#[test]
+fn presentation_metadata_review_and_slot_cuts_never_wait_for_admission() {
+    use festerm_automation::{Error, MetadataGrantRequest};
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    let (source_app, source_tab) = FesTermApp::automation_fixture();
+    let mut fixture =
+        presented_input_fixture_with_binding(&[(&source_app, source_tab, true)], true);
+    let source = fixture.coordinator.targets[&source_tab.chip_id()].reference;
+    let review = prepare_metadata_review(&mut fixture.coordinator, 1, &[source]);
+    let decision = review.accept_from_native();
+    let guard = festerm_session::automation_admission_lock().unwrap();
+    assert!(matches!(
+        fixture.coordinator.prepare_metadata_review(
+            1,
+            MetadataGrantRequest {
+                targets: BTreeSet::from([source]),
+            },
+            Duration::from_secs(60),
+        ),
+        Err(Error::Busy)
+    ));
+    assert_eq!(
+        fixture
+            .coordinator
+            .approve_metadata_review(1, &review, &decision),
+        Err(Error::Busy)
+    );
+    assert_eq!(
+        fixture.coordinator.cancel_metadata_review(1, &review),
+        Err(Error::Busy)
+    );
+    assert_eq!(
+        fixture.coordinator.revoke_control_handoff(1),
+        Err(Error::Busy)
+    );
+    assert_eq!(
+        fixture.coordinator.revoke_metadata_grant(1),
+        Err(Error::Busy)
+    );
+    drop(guard);
+    approve_metadata_review(&mut fixture.coordinator, 1, &review).unwrap();
+    let (result, mut pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    assert_eq!(result, Ok(()));
+    assert!(matches!(pending.poll(), AutomationInputStatus::Ready(_)));
+}
+
+#[test]
+fn presentation_metadata_sources_are_frozen_before_consent_and_through_publication() {
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    for after_consent in [false, true] {
+        for change in 0..6 {
+            let (mut source_app, source_tab) = FesTermApp::automation_fixture();
+            let mut fixture =
+                presented_input_fixture_with_binding(&[(&source_app, source_tab, true)], true);
+            let principal = fixture.coordinator.peers[&1].principal;
+            let source = fixture.coordinator.targets[&source_tab.chip_id()].reference;
+            let review = prepare_metadata_review(&mut fixture.coordinator, 1, &[source]);
+            let delivery = if after_consent {
+                approve_metadata_review(&mut fixture.coordinator, 1, &review).unwrap();
+                Some(metadata_disclosure(&mut fixture.coordinator, 1, &[source]).2)
+            } else {
+                None
+            };
+            change_readable_source(
+                &mut source_app,
+                source_tab,
+                &mut fixture.coordinator,
+                change,
+            );
+            if !after_consent {
+                assert!(approve_metadata_review(&mut fixture.coordinator, 1, &review).is_err());
+            }
+            let (result, mut pending) = commit_presented_input_retry(
+                &mut fixture.coordinator,
+                1,
+                fixture.request,
+                &mut fixture.barrier,
+                b"test",
+            );
+            assert!(result.is_err());
+            assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+            if let Some(delivery) = delivery {
+                assert!(!delivery.is_live(principal, Instant::now()));
+            }
+            let broker = fixture.coordinator.broker.as_ref().unwrap();
+            assert!(broker
+                .native_metadata_grant(principal, Instant::now())
+                .is_err());
+            assert!(broker
+                .native_control_grant(principal, fixture.barrier.target, Instant::now())
+                .is_err());
+        }
+    }
+}
+
+#[test]
+fn presentation_unbound_metadata_replacement_cuts_control_without_revoking_metadata() {
+    use festerm_automation::{MetadataGrantRequest, NativeMetadataApproval};
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    let (source_app, source_tab) = FesTermApp::automation_fixture();
+    let mut fixture =
+        presented_input_fixture_with_binding(&[(&source_app, source_tab, true)], true);
+    let principal = fixture.coordinator.peers[&1].principal;
+    let source = fixture.coordinator.targets[&source_tab.chip_id()].reference;
+    let review = prepare_metadata_review(&mut fixture.coordinator, 1, &[source]);
+    approve_metadata_review(&mut fixture.coordinator, 1, &review).unwrap();
+    let (_, _, old_delivery) = metadata_disclosure(&mut fixture.coordinator, 1, &[source]);
+
+    // Simulate an adapter bypassing the host's frozen review seam.
+    let now = Instant::now();
+    let request = MetadataGrantRequest {
+        targets: BTreeSet::from([source]),
+    };
+    let broker = fixture.coordinator.broker.as_mut().unwrap();
+    let id = broker
+        .request_metadata_approval(principal, request.clone(), now)
+        .unwrap();
+    broker
+        .approve_metadata(
+            principal,
+            id,
+            NativeMetadataApproval::new(request.clone(), Duration::from_secs(60))
+                .accept_control_disclosure(fixture.barrier.target, request.targets),
+            now,
+        )
+        .unwrap();
+    let unbound = broker.native_metadata_grant(principal, now).unwrap();
+    assert!(!old_delivery.is_live(principal, now));
+    let (result, mut pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    assert!(result.is_err());
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    let broker = fixture.coordinator.broker.as_ref().unwrap();
+    assert_eq!(
+        broker.native_metadata_grant(principal, Instant::now()),
+        Ok(unbound)
+    );
+    assert!(broker
+        .native_control_grant(principal, fixture.barrier.target, Instant::now())
+        .is_err());
+
+    let fresh = prepare_metadata_review(&mut fixture.coordinator, 1, &[source]);
+    assert_eq!(fresh.control_target(), None);
+    approve_metadata_review(&mut fixture.coordinator, 1, &fresh).unwrap();
+    assert_ne!(
+        fixture
+            .coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .native_metadata_grant(principal, Instant::now()),
+        Ok(unbound)
+    );
+}
+
+#[test]
+fn presentation_metadata_privacy_and_disconnect_cut_the_right_principals() {
+    use festerm_automation::{Error, MetadataRunSpec};
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    for privacy in [false, true] {
+        let (source_app, source_tab) = FesTermApp::automation_fixture();
+        let (other_app, other_tab) = FesTermApp::automation_fixture();
+        let mut fixture = presented_input_fixture_with_binding(
+            &[
+                (&source_app, source_tab, true),
+                (&other_app, other_tab, true),
+            ],
+            true,
+        );
+        let principal = fixture.coordinator.peers[&1].principal;
+        let other_principal = add_metadata_peer(&mut fixture.coordinator, 2);
+        let source = fixture.coordinator.targets[&source_tab.chip_id()].reference;
+        let other = fixture.coordinator.targets[&other_tab.chip_id()].reference;
+        let first = prepare_metadata_review(&mut fixture.coordinator, 1, &[source]);
+        approve_metadata_review(&mut fixture.coordinator, 1, &first).unwrap();
+        let (_, _, delivery) = metadata_disclosure(&mut fixture.coordinator, 1, &[source]);
+        let second = prepare_metadata_review(&mut fixture.coordinator, 2, &[other]);
+        approve_metadata_review(&mut fixture.coordinator, 2, &second).unwrap();
+        let (_, _, other_delivery) = metadata_disclosure(&mut fixture.coordinator, 2, &[other]);
+        if privacy {
+            fixture.coordinator.privacy_gate.close();
+        } else {
+            fixture.coordinator.peers[&1].connection.close();
+        }
+        let (result, mut pending) = commit_presented_input_retry(
+            &mut fixture.coordinator,
+            1,
+            fixture.request,
+            &mut fixture.barrier,
+            b"test",
+        );
+        assert!(result.is_err());
+        assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+        assert!(!delivery.is_live(principal, Instant::now()));
+        assert_eq!(
+            other_delivery.is_live(other_principal, Instant::now()),
+            !privacy
+        );
+        if !privacy {
+            let successor = add_metadata_peer(&mut fixture.coordinator, 3);
+            let now = Instant::now();
+            let broker = fixture.coordinator.broker.as_mut().unwrap();
+            assert_eq!(
+                broker.admit_metadata_run(
+                    successor,
+                    MetadataRunSpec {
+                        parameters: Digest([19; 32]),
+                        targets: BTreeSet::from([source]),
+                        budget: Budget::default(),
+                        deadline: now + Duration::from_secs(30),
+                    },
+                    now,
+                ),
+                Err(Error::Revoked)
+            );
+            assert!(broker
+                .prepared_control_binding(successor, fixture.request, now)
+                .is_err());
+        }
+    }
+}
+
+#[test]
+fn presentation_metadata_does_not_compose_with_legacy_observation_delivery() {
+    use festerm_automation::{Error, MetadataGrantRequest};
+
+    let _serial = presentation_admission_test_guard();
+    let (mut coordinator, mut app, tab, _ime, target) = control_review_fixture();
+    coordinator.approve(1, vec![target]).unwrap();
+    assert_eq!(
+        retry_automation_busy(|| coordinator.revoke_control_handoff(1)),
+        Err(Error::Unavailable)
+    );
+    assert!(coordinator.peers[&1].grant.is_some());
+    assert!(matches!(
+        retry_automation_busy(|| coordinator.prepare_metadata_review(
+            1,
+            MetadataGrantRequest {
+                targets: BTreeSet::from([target]),
+            },
+            Duration::from_secs(60),
+        )),
+        Err(Error::Unavailable)
+    ));
+    let (request, _, _) = presentation_control_request(target);
+    assert!(matches!(
+        retry_automation_busy(|| coordinator.prepare_control_handoff_review(
+            1,
+            target,
+            request.clone(),
+            Duration::from_secs(60),
+            &mut app.automation_session_mut(tab).controller,
+        )),
+        Err(Error::Unavailable)
+    ));
+
+    let (mut coordinator, _app, _tab, _ime, target) = control_review_fixture();
+    let principal = coordinator.peers[&1].principal;
+    let review = prepare_metadata_review(&mut coordinator, 1, &[target]);
+    approve_metadata_review(&mut coordinator, 1, &review).unwrap();
+    let (_, _, liveness) = metadata_disclosure(&mut coordinator, 1, &[target]);
+    assert_eq!(
+        coordinator.approve(1, vec![target]),
+        Err(Refusal::NotAuthorized)
+    );
+    assert!(liveness.is_live(principal, Instant::now()));
+}
+
+#[test]
+fn presentation_input_cuts_grant_when_any_unreconciled_source_changes() {
+    use festerm_automation::{Error, RunState};
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    for discover in [false, true] {
+        for change in 0..6 {
+            let (mut changed_app, changed_tab) = FesTermApp::automation_fixture();
+            let (other_app, other_tab) = FesTermApp::automation_fixture();
+            let mut fixture = presented_input_fixture_with_sources(&[
+                (&changed_app, changed_tab, discover),
+                (&other_app, other_tab, !discover),
+            ]);
+            let target = fixture.barrier.target;
+            let principal = fixture.coordinator.peers[&1].principal;
+            let changed = fixture.coordinator.targets[&changed_tab.chip_id()].reference;
+            let other = fixture.coordinator.targets[&other_tab.chip_id()].reference;
+            let registration = fixture.coordinator.targets[&changed_tab.chip_id()]
+                .registration
+                .clone();
+            let (observer, observer_run, _) = independent_run(&mut fixture.coordinator, other);
+            let first_reservation = reserve_presented_input(&fixture.coordinator, target, b"test");
+
+            change_readable_source(
+                &mut changed_app,
+                changed_tab,
+                &mut fixture.coordinator,
+                change,
+            );
+            assert_eq!(
+                fixture.coordinator.targets[&changed_tab.chip_id()].reference,
+                changed
+            );
+            assert_eq!(
+                fixture.coordinator.targets[&fixture.tab.chip_id()].reference,
+                target
+            );
+            let target_is_live =
+                festerm_session::automation_admission_lock().is_some_and(|_guard| {
+                    let current = &fixture.coordinator.targets[&fixture.tab.chip_id()];
+                    current.local_pty && current.guard().is_valid()
+                });
+            assert!(target_is_live);
+            let mut first_reservation = Some(first_reservation);
+            let (result, mut pending) = commit_presented_input_with_retry(
+                &mut fixture.coordinator,
+                1,
+                fixture.request,
+                &mut fixture.barrier,
+                |coordinator| {
+                    first_reservation
+                        .take()
+                        .unwrap_or_else(|| reserve_presented_input(coordinator, target, b"test"))
+                },
+            );
+            assert!(matches!(
+                result,
+                Err(CommitAutomationInputError::Refused(
+                    Error::Closed | Error::Revoked
+                ))
+            ));
+            assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+            assert!(!registration.load(Ordering::Acquire));
+            assert!(!fixture
+                .coordinator
+                .targets
+                .contains_key(&changed_tab.chip_id()));
+            let broker = fixture.coordinator.broker.as_mut().unwrap();
+            assert_eq!(
+                broker.native_control_grant(principal, target, Instant::now()),
+                Err(Error::Revoked)
+            );
+            assert!(broker
+                .prepared_control_binding(principal, fixture.request, Instant::now())
+                .is_err());
+            assert_eq!(
+                broker
+                    .status(observer, observer_run, Instant::now())
+                    .unwrap()
+                    .state,
+                RunState::Running
+            );
+        }
+    }
+}
+
+#[test]
+fn presentation_source_loss_preserves_other_controller_without_that_source() {
+    use festerm_automation::{Error, RunState};
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    let (source_app, source_tab) = FesTermApp::automation_fixture();
+    let mut fixture = presented_input_fixture_with_sources(&[(&source_app, source_tab, false)]);
+    let target = fixture.barrier.target;
+    let principal_one = fixture.coordinator.peers[&1].principal;
+    let principal_two = fixture
+        .coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .accept_connection()
+        .unwrap();
+    let (connection, _receive) = ipc::test_connection(2);
+    fixture.coordinator.peers.insert(
+        2,
+        Peer {
+            connection,
+            principal: principal_two,
+            machine: ready(),
+            code: VerificationCode::new("0123456789abcdef").unwrap(),
+            grant: None,
+            waits: Vec::new(),
+        },
+    );
+    let (request, scope, binding) = presentation_control_request(target);
+    let review = prepare_control_review(
+        &mut fixture.coordinator,
+        2,
+        target,
+        &request,
+        &mut fixture.app.automation_session_mut(fixture.tab).controller,
+    );
+    approve_control_review(&mut fixture.coordinator, 2, &review).unwrap();
+    let now = Instant::now();
+    let broker = fixture.coordinator.broker.as_mut().unwrap();
+    let other_grant = broker
+        .native_control_grant(principal_two, target, now)
+        .unwrap();
+    let other_run = broker
+        .admit_run(
+            principal_two,
+            None,
+            RunSpec {
+                binding,
+                scope,
+                budget: Budget::default(),
+                deadline: now + Duration::from_secs(30),
+            },
+            now,
+        )
+        .unwrap();
+
+    disconnect_source_without_reconciliation(&source_app, source_tab);
+    let (result, mut pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    assert!(result.is_err());
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    let broker = fixture.coordinator.broker.as_mut().unwrap();
+    assert_eq!(
+        broker.native_control_grant(principal_one, target, Instant::now()),
+        Err(Error::Revoked)
+    );
+    assert_eq!(
+        broker.native_control_grant(principal_two, target, Instant::now()),
+        Ok(other_grant)
+    );
+    assert_eq!(
+        broker
+            .status(principal_two, other_run, Instant::now())
+            .unwrap()
+            .state,
+        RunState::Running
+    );
+    assert_eq!(
+        retry_automation_busy(|| fixture
+            .coordinator
+            .acquire_control_lease(2, other_run, target))
+        .unwrap()
+        .target(),
+        target
+    );
+}
+
+struct ConcurrentSourceTransitionBarrier {
+    inner: SimulatedPresentationBarrier,
+    start: mpsc::SyncSender<()>,
+    checked: mpsc::Receiver<bool>,
+    finished: mpsc::Receiver<()>,
+    saw_busy: bool,
+    finished_before_return: bool,
+}
+
+impl NativePresentationBarrier for ConcurrentSourceTransitionBarrier {
+    fn with_observation<T>(
+        &mut self,
+        broker: &mut Broker,
+        workspace_revision: u64,
+        operation: impl FnOnce(&mut Broker, festerm_automation::NativePresentationObservation) -> T,
+    ) -> festerm_automation::Result<T> {
+        self.start.send(()).unwrap();
+        self.saw_busy = self
+            .checked
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap_or(false);
+        self.finished_before_return = self.finished.try_recv().is_ok();
+        let result = self
+            .inner
+            .with_observation(broker, workspace_revision, operation);
+        self.finished_before_return |= self.finished.try_recv().is_ok();
+        result
+    }
+}
+
+#[test]
+fn presentation_metadata_source_transition_is_ordered_after_direct_publication() {
+    use festerm_session::{AutomationAdmissionTryError, AutomationInputStatus};
+
+    let _serial = presentation_admission_test_guard();
+    let (source_app, source_tab) = FesTermApp::automation_fixture();
+    let mut fixture =
+        presented_input_fixture_with_binding(&[(&source_app, source_tab, true)], true);
+    let source = fixture.coordinator.targets[&source_tab.chip_id()].reference;
+    let principal = fixture.coordinator.peers[&1].principal;
+    let review = prepare_metadata_review(&mut fixture.coordinator, 1, &[source]);
+    approve_metadata_review(&mut fixture.coordinator, 1, &review).unwrap();
+    let (_, _, delivery) = metadata_disclosure(&mut fixture.coordinator, 1, &[source]);
+    let source_epoch = fixture.coordinator.targets[&source_tab.chip_id()]
+        .attachment
+        .clone();
+    let (start, started) = mpsc::sync_channel(1);
+    let (checked_send, checked) = mpsc::sync_channel(1);
+    let (finished_send, finished) = mpsc::sync_channel(1);
+    let transition = std::thread::spawn(move || {
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        checked_send
+            .send(matches!(
+                festerm_session::try_automation_admission_lock(),
+                Err(AutomationAdmissionTryError::Busy)
+            ))
+            .unwrap();
+        source_epoch.transition(false);
+        finished_send.send(()).unwrap();
+    });
+    let PresentedInputFixture {
+        mut coordinator,
+        app: _app,
+        request,
+        barrier,
+        ..
+    } = fixture;
+    let target = barrier.target;
+    let mut barrier = ConcurrentSourceTransitionBarrier {
+        inner: barrier,
+        start,
+        checked,
+        finished,
+        saw_busy: false,
+        finished_before_return: false,
+    };
+    let (result, mut pending) =
+        commit_presented_input_with_retry(&mut coordinator, 1, request, &mut barrier, |host| {
+            reserve_presented_input(host, target, b"test")
+        });
+    assert_eq!(result, Ok(()));
+    assert!(matches!(pending.poll(), AutomationInputStatus::Ready(_)));
+    transition.join().unwrap();
+    assert!(barrier.saw_busy);
+    assert!(!barrier.finished_before_return);
+    barrier
+        .finished
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap();
+
+    let (replay, mut pending) =
+        commit_presented_input_retry(&mut coordinator, 1, request, &mut barrier.inner, b"test");
+    assert!(replay.is_err());
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    assert!(!delivery.is_live(principal, Instant::now()));
+}
+
+#[test]
+fn presentation_input_orders_source_transition_after_publication() {
+    use festerm_session::{AutomationAdmissionTryError, AutomationInputStatus};
+
+    let _serial = presentation_admission_test_guard();
+    let (source_app, source_tab) = FesTermApp::automation_fixture();
+    let PresentedInputFixture {
+        mut coordinator,
+        app: _app,
+        run,
+        lease,
+        requirement,
+        request,
+        barrier,
+        ..
+    } = presented_input_fixture_with_sources(&[(&source_app, source_tab, false)]);
+    let principal = coordinator.peers[&1].principal;
+    let second_request = coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .prepare_request(
+            principal,
+            run,
+            AuthorityOperation::Control {
+                lease,
+                input: Digest(Sha256::digest(b"test").into()),
+                bytes: 4,
+                presentation: Some(requirement),
+            },
+            Instant::now(),
+        )
+        .unwrap();
+    let source_epoch = coordinator.targets[&source_tab.chip_id()]
+        .attachment
+        .clone();
+    let (start, started) = mpsc::sync_channel(1);
+    let (checked_send, checked) = mpsc::sync_channel(1);
+    let (finished_send, finished) = mpsc::sync_channel(1);
+    let transition = std::thread::spawn(move || {
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        let busy = matches!(
+            festerm_session::try_automation_admission_lock(),
+            Err(AutomationAdmissionTryError::Busy)
+        );
+        checked_send.send(busy).unwrap();
+        source_epoch.transition(false);
+        finished_send.send(()).unwrap();
+    });
+    let target = barrier.target;
+    let mut barrier = ConcurrentSourceTransitionBarrier {
+        inner: barrier,
+        start,
+        checked,
+        finished,
+        saw_busy: false,
+        finished_before_return: false,
+    };
+    let (result, mut pending) = commit_presented_input_with_retry(
+        &mut coordinator,
+        1,
+        request,
+        &mut barrier,
+        |coordinator| reserve_presented_input(coordinator, target, b"test"),
+    );
+    result.unwrap();
+    assert!(matches!(pending.poll(), AutomationInputStatus::Ready(_)));
+    transition.join().unwrap();
+    assert!(barrier.saw_busy);
+    assert!(!barrier.finished_before_return);
+    barrier
+        .finished
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap();
+
+    let (result, mut pending) = commit_presented_input_retry(
+        &mut coordinator,
+        1,
+        second_request,
+        &mut barrier.inner,
+        b"test",
+    );
+    assert!(result.is_err());
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+}
+
+#[test]
+fn presentation_input_admission_disarms_on_human_ime_privacy_disconnect_and_replacement() {
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    for transition in 0..5 {
+        let PresentedInputFixture {
+            mut coordinator,
+            mut app,
+            tab,
+            ime,
+            request,
+            mut barrier,
+            ..
+        } = presented_input_fixture();
+        match transition {
+            0 => assert!(app
+                .automation_session_mut(tab)
+                .controller
+                .begin_clipboard_input(77)),
+            1 => {
+                ime.transition(false);
+                ime.transition(true);
+            }
+            2 => coordinator.privacy_gate.close(),
+            3 => coordinator.peers[&1].connection.close(),
+            4 => {
+                let attachment = app
+                    .automation_session_mut(tab)
+                    .controller
+                    .automation_attachment_epoch()
+                    .unwrap();
+                attachment.transition(false);
+                attachment.transition(true);
+            }
+            _ => unreachable!(),
+        }
+        let (result, mut pending) =
+            commit_presented_input_retry(&mut coordinator, 1, request, &mut barrier, b"test");
+        assert!(result.is_err());
+        assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+        let principal = coordinator.peers[&1].principal;
+        assert!(coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .prepared_control_target(principal, request, Instant::now())
+            .is_err());
+    }
+}
+
+#[test]
+fn presentation_input_admission_refuses_aba_unknown_and_nonlocal_backends() {
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    for transition in 0..7 {
+        let PresentedInputFixture {
+            mut coordinator,
+            app: _app,
+            tab,
+            workspace,
+            request,
+            mut barrier,
+            ..
+        } = presented_input_fixture();
+        match transition {
+            0 => {
+                workspace.changed();
+                workspace.changed();
+            }
+            1 => {
+                let broker = coordinator.broker.as_mut().unwrap();
+                broker
+                    .note_presentation_transition(barrier.monitor)
+                    .unwrap();
+                broker
+                    .note_presentation_transition(barrier.monitor)
+                    .unwrap();
+            }
+            2 => barrier.unavailable = true,
+            3 => {
+                coordinator
+                    .targets
+                    .get_mut(&tab.chip_id())
+                    .unwrap()
+                    .local_pty = false
+            }
+            4 => barrier.change_before_operation = Some(workspace.clone()),
+            5 => assert_eq!(
+                coordinator.bind_presentation_workspace(&WorkspaceRevision::default()),
+                Err(festerm_automation::Error::Unavailable)
+            ),
+            6 => coordinator.presentation_workspace = None,
+            _ => unreachable!(),
+        }
+        let (result, mut pending) =
+            commit_presented_input_retry(&mut coordinator, 1, request, &mut barrier, b"test");
+        assert!(result.is_err());
+        assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+        if matches!(transition, 2 | 4..=6) {
+            assert_eq!(
+                coordinator.broker.as_mut().unwrap().observe_presentation(
+                    barrier.monitor,
+                    festerm_automation::NativePresentationState::Inactive,
+                ),
+                Err(festerm_automation::Error::Unavailable)
+            );
+        }
+    }
+}
+
+fn type_in_presentation_tab(app: &mut FesTermApp, tab: TabId) {
+    let session = app.automation_session_mut(tab);
+    festerm_ui_egui::route_input(
+        &mut session.terminal,
+        festerm_core::InputEvent::Key(festerm_core::Key::Enter),
+        &mut session.controller,
+    );
+}
+
+#[test]
+fn presentation_control_review_invalidates_before_first_grant_on_human_ime_and_attachment() {
+    use festerm_automation::Error;
+
+    let _serial = presentation_admission_test_guard();
+    for transition in 0..8 {
+        let (mut coordinator, mut app, tab, ime, target) = control_review_fixture();
+        let principal = coordinator.peers[&1].principal;
+        let (request, _, _) = presentation_control_request(target);
+        let review = prepare_control_review(
+            &mut coordinator,
+            1,
+            target,
+            &request,
+            &mut app.automation_session_mut(tab).controller,
+        );
+        assert_eq!(review.target(), target);
+        assert_eq!(review.request(), &request);
+        assert_eq!(review.lifetime(), Duration::from_secs(60));
+        let decision = review.accept_from_native();
+        let approval_id = *coordinator.pending_control_reviews.keys().next().unwrap();
+        assert!(coordinator.control_handoffs.is_empty());
+        let mut intent = None;
+        match transition {
+            0 => type_in_presentation_tab(&mut app, tab),
+            1 => ime.transition(false),
+            2 => {
+                ime.transition(false);
+                ime.transition(true);
+            }
+            3 | 4 => {
+                let controller = &mut app.automation_session_mut(tab).controller;
+                assert!(controller.begin_clipboard_input(77));
+                if transition == 4 {
+                    controller.cancel_clipboard_input(77, "test-cancel");
+                }
+            }
+            5 | 6 => {
+                intent = Some(
+                    app.automation_session_mut(tab)
+                        .controller
+                        .begin_pending_human_input(),
+                );
+                if transition == 6 {
+                    drop(intent.take());
+                }
+            }
+            7 => {
+                let attachment = app
+                    .automation_session_mut(tab)
+                    .controller
+                    .automation_attachment_epoch()
+                    .unwrap();
+                attachment.transition(false);
+                attachment.transition(true);
+            }
+            _ => unreachable!(),
+        }
+        let fresh = app
+            .automation_session_mut(tab)
+            .controller
+            .capture_automation_input_fence();
+        assert_eq!(fresh.is_some(), !matches!(transition, 1 | 3 | 5));
+        assert_eq!(
+            retry_automation_busy(|| coordinator.approve_control_handoff(1, &review, &decision)),
+            Err(Error::Revoked)
+        );
+        assert!(coordinator.control_handoffs.is_empty());
+        assert!(coordinator.pending_control_reviews.is_empty());
+        let broker = coordinator.broker.as_ref().unwrap();
+        assert!(!broker.pending_approval_is_active(principal, approval_id, Instant::now()));
+        assert_eq!(
+            broker.native_control_grant(principal, target, Instant::now()),
+            Err(Error::Revoked)
+        );
+
+        if transition == 1 {
+            ime.transition(true);
+        }
+        if transition == 3 {
+            app.automation_session_mut(tab)
+                .controller
+                .cancel_clipboard_input(77, "test-cancel");
+        }
+        drop(intent);
+        assert!(app
+            .automation_session_mut(tab)
+            .controller
+            .capture_automation_input_fence()
+            .is_some());
+        assert_eq!(
+            retry_automation_busy(|| coordinator.approve_control_handoff(1, &review, &decision)),
+            Err(Error::Revoked)
+        );
+    }
+}
+
+#[test]
+fn presentation_control_review_rejects_typing_after_prior_handoff_pruned() {
+    use festerm_automation::Error;
+
+    let _serial = presentation_admission_test_guard();
+    let mut fixture = presented_input_fixture();
+    let principal = fixture.coordinator.peers[&1].principal;
+    fixture
+        .coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .revoke(principal);
+    let (request, _, _) = presentation_control_request(fixture.barrier.target);
+    let review = prepare_control_review(
+        &mut fixture.coordinator,
+        1,
+        fixture.barrier.target,
+        &request,
+        &mut fixture.app.automation_session_mut(fixture.tab).controller,
+    );
+    let decision = review.accept_from_native();
+    assert!(fixture.coordinator.control_handoffs.is_empty());
+    type_in_presentation_tab(&mut fixture.app, fixture.tab);
+    assert!(fixture
+        .app
+        .automation_session_mut(fixture.tab)
+        .controller
+        .capture_automation_input_fence()
+        .is_some());
+    assert_eq!(
+        retry_automation_busy(|| fixture
+            .coordinator
+            .approve_control_handoff(1, &review, &decision)),
+        Err(Error::Revoked)
+    );
+    assert!(fixture.coordinator.pending_control_reviews.is_empty());
+    assert_eq!(
+        fixture
+            .coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .native_control_grant(principal, fixture.barrier.target, Instant::now()),
+        Err(Error::Revoked)
+    );
+}
+
+#[test]
+fn presentation_control_review_first_fresh_decision_succeeds_without_prior_handoff() {
+    use festerm_automation::Error;
+
+    let _serial = presentation_admission_test_guard();
+    let (mut coordinator, mut app, tab, _ime, target) = control_review_fixture();
+    let principal = coordinator.peers[&1].principal;
+    let (request, _, _) = presentation_control_request(target);
+    let stale = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    let old_decision = stale.accept_from_native();
+    type_in_presentation_tab(&mut app, tab);
+    assert!(app
+        .automation_session_mut(tab)
+        .controller
+        .capture_automation_input_fence()
+        .is_some());
+    let fresh = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    assert_eq!(
+        retry_automation_busy(|| coordinator.approve_control_handoff(1, &stale, &old_decision)),
+        Err(Error::Revoked)
+    );
+    assert_eq!(
+        retry_automation_busy(|| coordinator.approve_control_handoff(1, &fresh, &old_decision)),
+        Err(Error::Unauthorized)
+    );
+    let fresh_decision = fresh.accept_from_native();
+    retry_automation_busy(|| coordinator.approve_control_handoff(1, &fresh, &fresh_decision))
+        .unwrap();
+    assert!(coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .native_control_grant(principal, target, Instant::now())
+        .is_ok());
+}
+
+#[test]
+fn presentation_control_review_is_channel_bound_and_disconnect_is_isolated() {
+    use festerm_automation::Error;
+
+    let _serial = presentation_admission_test_guard();
+    let (mut coordinator, mut app, tab, _ime, target) = control_review_fixture();
+    let principal_two = coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .accept_connection()
+        .unwrap();
+    let (connection, _receive) = ipc::test_connection(2);
+    coordinator.peers.insert(
+        2,
+        Peer {
+            connection,
+            principal: principal_two,
+            machine: ready(),
+            code: VerificationCode::new("0123456789abcdef").unwrap(),
+            grant: None,
+            waits: Vec::new(),
+        },
+    );
+    let (request, _, _) = presentation_control_request(target);
+    let first = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    let second = prepare_control_review(
+        &mut coordinator,
+        2,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    assert_eq!(
+        approve_control_review(&mut coordinator, 2, &first),
+        Err(Error::Unauthorized)
+    );
+    coordinator.peers[&1].connection.close();
+    assert_eq!(
+        approve_control_review(&mut coordinator, 1, &first),
+        Err(Error::Revoked)
+    );
+    approve_control_review(&mut coordinator, 2, &second).unwrap();
+    assert!(coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .native_control_grant(principal_two, target, Instant::now())
+        .is_ok());
+}
+
+#[test]
+fn presentation_control_review_refuses_a_different_controller_and_privacy_loss() {
+    use festerm_automation::Error;
+
+    let _serial = presentation_admission_test_guard();
+    let (mut coordinator, mut app, tab, _ime, target) = control_review_fixture();
+    let (_other_coordinator, mut other_app, other_tab, _other_ime, _) = control_review_fixture();
+    let (request, _, _) = presentation_control_request(target);
+    assert!(matches!(
+        retry_automation_busy(|| coordinator.prepare_control_handoff_review(
+            1,
+            target,
+            request.clone(),
+            Duration::from_secs(60),
+            &mut other_app.automation_session_mut(other_tab).controller,
+        )),
+        Err(Error::BindingMismatch)
+    ));
+    assert!(coordinator.pending_control_reviews.is_empty());
+
+    let review = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    let decision = review.accept_from_native();
+    let principal = coordinator.peers[&1].principal;
+    let approval_id = *coordinator.pending_control_reviews.keys().next().unwrap();
+    coordinator.privacy_gate.close();
+    assert_eq!(
+        retry_automation_busy(|| coordinator.approve_control_handoff(1, &review, &decision)),
+        Err(Error::Revoked)
+    );
+    assert!(coordinator.pending_control_reviews.is_empty());
+    assert!(!coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .pending_approval_is_active(principal, approval_id, Instant::now()));
+}
+
+#[test]
+fn presentation_control_review_freezes_the_displayed_source_closure_and_lifetime() {
+    use festerm_automation::Error;
+
+    let _serial = presentation_admission_test_guard();
+    for observe in [false, true] {
+        let (mut coordinator, mut app, tab, _ime, target) = control_review_fixture();
+        let principal = coordinator.peers[&1].principal;
+        let (mut request, _, binding) = presentation_control_request(target);
+        if observe {
+            request.scope.observe.insert(target);
+        } else {
+            request.scope.discover.insert(target);
+        }
+        for lifetime in [
+            Duration::ZERO,
+            festerm_automation::MAX_GRANT_LIFETIME + Duration::from_secs(1),
+        ] {
+            assert!(matches!(
+                retry_automation_busy(|| coordinator.prepare_control_handoff_review(
+                    1,
+                    target,
+                    request.clone(),
+                    lifetime,
+                    &mut app.automation_session_mut(tab).controller,
+                )),
+                Err(Error::InvalidRequest)
+            ));
+        }
+        assert!(coordinator.pending_control_reviews.is_empty());
+        let review = prepare_control_review(
+            &mut coordinator,
+            1,
+            target,
+            &request,
+            &mut app.automation_session_mut(tab).controller,
+        );
+        approve_control_review(&mut coordinator, 1, &review).unwrap();
+        let now = Instant::now();
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .admit_run(
+                principal,
+                None,
+                RunSpec {
+                    binding,
+                    scope: request.scope,
+                    budget: Budget::default(),
+                    deadline: now + Duration::from_secs(30),
+                },
+                now,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn presentation_control_review_rejects_stale_sources_before_native_decision() {
+    use festerm_automation::{Error, RunState};
+
+    let _serial = presentation_admission_test_guard();
+    for discover in [false, true] {
+        for change in 0..6 {
+            let (mut source_app, source_tab) = FesTermApp::automation_fixture();
+            let (mut coordinator, mut app, tab, _ime, target) =
+                control_review_fixture_with_sources(&[&source_app]);
+            let source = coordinator.targets[&source_tab.chip_id()].reference;
+            let principal = coordinator.peers[&1].principal;
+            let (observer, observer_run, _) = independent_run(&mut coordinator, target);
+            let (mut request, _, _) = presentation_control_request(target);
+            if discover {
+                request.scope.discover.insert(source);
+            } else {
+                request.scope.observe.insert(source);
+            }
+            let review = prepare_control_review(
+                &mut coordinator,
+                1,
+                target,
+                &request,
+                &mut app.automation_session_mut(tab).controller,
+            );
+            let decision = review.accept_from_native();
+            let approval = *coordinator.pending_control_reviews.keys().next().unwrap();
+            assert!(coordinator.control_handoffs.is_empty());
+
+            change_readable_source(&mut source_app, source_tab, &mut coordinator, change);
+            assert_eq!(coordinator.targets[&source_tab.chip_id()].reference, source);
+            assert!(app
+                .automation_session_mut(tab)
+                .controller
+                .capture_automation_input_fence()
+                .is_some());
+            assert_eq!(
+                retry_automation_busy(|| {
+                    coordinator.approve_control_handoff(1, &review, &decision)
+                }),
+                Err(Error::Revoked)
+            );
+            assert!(coordinator.pending_control_reviews.is_empty());
+            let broker = coordinator.broker.as_mut().unwrap();
+            assert!(!broker.pending_approval_is_active(principal, approval, Instant::now()));
+            assert_eq!(
+                broker.native_control_grant(principal, target, Instant::now()),
+                Err(Error::Revoked)
+            );
+            assert_eq!(
+                broker
+                    .status(observer, observer_run, Instant::now())
+                    .unwrap()
+                    .state,
+                RunState::Running
+            );
+            assert!(matches!(
+                retry_automation_busy(|| coordinator.prepare_control_handoff_review(
+                    1,
+                    target,
+                    request.clone(),
+                    Duration::from_secs(60),
+                    &mut app.automation_session_mut(tab).controller,
+                )),
+                Err(Error::StaleTarget)
+            ));
+        }
+    }
+}
+
+#[test]
+fn presentation_control_review_refuses_stale_source_before_prompt_creation() {
+    use festerm_automation::Error;
+
+    let _serial = presentation_admission_test_guard();
+    for change in 0..5 {
+        let (mut source_app, source_tab) = FesTermApp::automation_fixture();
+        let (mut coordinator, mut app, tab, _ime, target) =
+            control_review_fixture_with_sources(&[&source_app]);
+        let source = coordinator.targets[&source_tab.chip_id()].reference;
+        let (mut request, _, _) = presentation_control_request(target);
+        request.scope.observe.insert(source);
+        change_readable_source(&mut source_app, source_tab, &mut coordinator, change);
+        assert!(matches!(
+            retry_automation_busy(|| coordinator.prepare_control_handoff_review(
+                1,
+                target,
+                request.clone(),
+                Duration::from_secs(60),
+                &mut app.automation_session_mut(tab).controller,
+            )),
+            Err(Error::StaleTarget)
+        ));
+        assert!(coordinator.pending_control_reviews.is_empty());
+        let (unrelated, _, _) = presentation_control_request(target);
+        let review = prepare_control_review(
+            &mut coordinator,
+            1,
+            target,
+            &unrelated,
+            &mut app.automation_session_mut(tab).controller,
+        );
+        approve_control_review(&mut coordinator, 1, &review).unwrap();
+    }
+}
+
+#[test]
+fn presentation_stale_pending_source_preserves_unrelated_existing_handoff() {
+    use festerm_automation::{Error, RunState};
+
+    let _serial = presentation_admission_test_guard();
+    let (source_app, source_tab) = FesTermApp::automation_fixture();
+    let (mut coordinator, mut app, tab, _ime, target) =
+        control_review_fixture_with_sources(&[&source_app]);
+    let source = coordinator.targets[&source_tab.chip_id()].reference;
+    let principal = coordinator.peers[&1].principal;
+    let (request, scope, binding) = presentation_control_request(target);
+    let initial = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    approve_control_review(&mut coordinator, 1, &initial).unwrap();
+    let now = Instant::now();
+    let broker = coordinator.broker.as_mut().unwrap();
+    let grant = broker.native_control_grant(principal, target, now).unwrap();
+    let run = broker
+        .admit_run(
+            principal,
+            None,
+            RunSpec {
+                binding,
+                scope,
+                budget: Budget::default(),
+                deadline: now + Duration::from_secs(30),
+            },
+            now,
+        )
+        .unwrap();
+    let lease =
+        retry_automation_busy(|| coordinator.acquire_control_lease(1, run, target)).unwrap();
+    let mut wider = request;
+    wider.scope.observe.insert(source);
+    let review = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &wider,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    let decision = review.accept_from_native();
+    disconnect_source_without_reconciliation(&source_app, source_tab);
+    assert_eq!(
+        retry_automation_busy(|| coordinator.approve_control_handoff(1, &review, &decision)),
+        Err(Error::Revoked)
+    );
+    let broker = coordinator.broker.as_mut().unwrap();
+    assert_eq!(
+        broker.native_control_grant(principal, target, Instant::now()),
+        Ok(grant)
+    );
+    assert_eq!(
+        broker.status(principal, run, Instant::now()).unwrap().state,
+        RunState::Running
+    );
+    assert!(broker
+        .prepare_request(
+            principal,
+            run,
+            AuthorityOperation::Control {
+                lease,
+                input: Digest(Sha256::digest(b"test").into()),
+                bytes: 4,
+                presentation: None,
+            },
+            Instant::now(),
+        )
+        .is_ok());
+}
+
+#[test]
+fn presentation_lease_refuses_source_attachment_loss_and_regain() {
+    use festerm_automation::{Error, RunState};
+
+    let _serial = presentation_admission_test_guard();
+    let (source_app, source_tab) = FesTermApp::automation_fixture();
+    let (mut coordinator, mut app, tab, _ime, target) =
+        control_review_fixture_with_sources(&[&source_app]);
+    let source = coordinator.targets[&source_tab.chip_id()].reference;
+    let principal = coordinator.peers[&1].principal;
+    let (observer, observer_run, _) = independent_run(&mut coordinator, target);
+    let (mut request, scope, binding) = presentation_control_request(target);
+    request.scope.observe.insert(source);
+    let review = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    approve_control_review(&mut coordinator, 1, &review).unwrap();
+    let now = Instant::now();
+    let run = coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .admit_run(
+            principal,
+            None,
+            RunSpec {
+                binding,
+                scope,
+                budget: Budget::default(),
+                deadline: now + Duration::from_secs(30),
+            },
+            now,
+        )
+        .unwrap();
+    replace_source_attachment_without_event(&source_app, source_tab);
+    assert_eq!(
+        retry_automation_busy(|| coordinator.acquire_control_lease(1, run, target)),
+        Err(Error::Revoked)
+    );
+    let broker = coordinator.broker.as_mut().unwrap();
+    assert_eq!(
+        broker.native_control_grant(principal, target, Instant::now()),
+        Err(Error::Revoked)
+    );
+    assert_eq!(
+        broker
+            .status(observer, observer_run, Instant::now())
+            .unwrap()
+            .state,
+        RunState::Running
+    );
+}
+
+#[test]
+fn presentation_first_fresh_review_succeeds_after_source_cut() {
+    use festerm_automation::RunState;
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    let (source_app, source_tab) = FesTermApp::automation_fixture();
+    let mut fixture = presented_input_fixture_with_sources(&[(&source_app, source_tab, false)]);
+    let target = fixture.barrier.target;
+    let (observer, observer_run, _) = independent_run(&mut fixture.coordinator, target);
+    let (reservation, mut pending) = reserve_presented_input(&fixture.coordinator, target, b"test");
+    replace_source_attachment_without_event(&source_app, source_tab);
+    let (request, scope, binding) = presentation_control_request(target);
+    let review = prepare_control_review(
+        &mut fixture.coordinator,
+        1,
+        target,
+        &request,
+        &mut fixture.app.automation_session_mut(fixture.tab).controller,
+    );
+    assert!(fixture
+        .coordinator
+        .commit_presented_input(1, fixture.request, reservation, &mut fixture.barrier)
+        .is_err());
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    approve_control_review(&mut fixture.coordinator, 1, &review).unwrap();
+    let principal = fixture.coordinator.peers[&1].principal;
+    let now = Instant::now();
+    let broker = fixture.coordinator.broker.as_mut().unwrap();
+    let run = broker
+        .admit_run(
+            principal,
+            None,
+            RunSpec {
+                binding,
+                scope,
+                budget: Budget::default(),
+                deadline: now + Duration::from_secs(30),
+            },
+            now,
+        )
+        .unwrap();
+    assert_eq!(
+        broker.status(observer, observer_run, now).unwrap().state,
+        RunState::Running
+    );
+    retry_automation_busy(|| fixture.coordinator.acquire_control_lease(1, run, target)).unwrap();
+}
+
+#[test]
+fn presentation_control_review_slots_are_reclaimed_after_cancel_revocation_and_expiry() {
+    use festerm_automation::Error;
+
+    let _serial = presentation_admission_test_guard();
+    let (mut coordinator, mut app, tab, _ime, target) = control_review_fixture();
+    let principal = coordinator.peers[&1].principal;
+    let (request, _, _) = presentation_control_request(target);
+    let first = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    let second = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    assert!(matches!(
+        retry_automation_busy(|| coordinator.prepare_control_handoff_review(
+            1,
+            target,
+            request.clone(),
+            Duration::from_secs(60),
+            &mut app.automation_session_mut(tab).controller,
+        )),
+        Err(Error::QuotaExceeded)
+    ));
+    retry_automation_busy(|| coordinator.cancel_control_handoff_review(1, &first)).unwrap();
+    assert_eq!(
+        approve_control_review(&mut coordinator, 1, &first),
+        Err(Error::Revoked)
+    );
+    let third = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    coordinator.broker.as_mut().unwrap().revoke(principal);
+    let fresh = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    assert_eq!(
+        approve_control_review(&mut coordinator, 1, &second),
+        Err(Error::Revoked)
+    );
+    assert_eq!(
+        approve_control_review(&mut coordinator, 1, &third),
+        Err(Error::Revoked)
+    );
+    coordinator.broker.as_mut().unwrap().poll_expiry(
+        Instant::now() + festerm_automation::MAX_GRANT_LIFETIME + Duration::from_secs(1),
+    );
+    let after_expiry = prepare_control_review(
+        &mut coordinator,
+        1,
+        target,
+        &request,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    assert_eq!(
+        approve_control_review(&mut coordinator, 1, &fresh),
+        Err(Error::Revoked)
+    );
+    approve_control_review(&mut coordinator, 1, &after_expiry).unwrap();
+    assert!(coordinator.pending_control_reviews.is_empty());
+}
+
+#[test]
+fn presentation_input_admission_cuts_old_handoff_after_typing_and_fresh_capture() {
+    use festerm_automation::Error;
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    let PresentedInputFixture {
+        mut coordinator,
+        mut app,
+        tab,
+        run,
+        lease,
+        request,
+        mut barrier,
+        ..
+    } = presented_input_fixture();
+    type_in_presentation_tab(&mut app, tab);
+    let fresh = app
+        .automation_session_mut(tab)
+        .controller
+        .capture_automation_input_fence()
+        .expect("a new capture is possible after the human write drains");
+    {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        assert!(fresh.is_current());
+    }
+
+    let (result, mut pending) =
+        commit_presented_input_retry(&mut coordinator, 1, request, &mut barrier, b"test");
+    assert!(matches!(
+        result,
+        Err(CommitAutomationInputError::Refused(
+            Error::Closed | Error::Revoked
+        ))
+    ));
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    let principal = coordinator.peers[&1].principal;
+    let broker = coordinator.broker.as_mut().unwrap();
+    assert_eq!(
+        broker.native_control_grant(principal, lease.target(), Instant::now()),
+        Err(Error::Revoked)
+    );
+    assert!(broker
+        .prepare_lease(principal, run, lease.target(), Instant::now())
+        .is_err());
+    assert!(
+        retry_automation_busy(|| coordinator.acquire_control_lease(1, run, barrier.target))
+            .is_err()
+    );
+}
+
+#[test]
+fn presentation_input_admission_requires_new_native_decision_after_takeover() {
+    use festerm_automation::Error;
+
+    let _serial = presentation_admission_test_guard();
+    let PresentedInputFixture {
+        mut coordinator,
+        mut app,
+        tab,
+        run,
+        lease,
+        request: old_request,
+        barrier,
+        ..
+    } = presented_input_fixture();
+    let principal = coordinator.peers[&1].principal;
+    let (grant, scope, binding) = presentation_control_request(barrier.target);
+    let stale_review = prepare_control_review(
+        &mut coordinator,
+        1,
+        barrier.target,
+        &grant,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    let stale_decision = stale_review.accept_from_native();
+    type_in_presentation_tab(&mut app, tab);
+    assert!(app
+        .automation_session_mut(tab)
+        .controller
+        .capture_automation_input_fence()
+        .is_some());
+
+    // The first new proposal must snapshot ownership after the takeover cut.
+    let fresh_review = prepare_control_review(
+        &mut coordinator,
+        1,
+        barrier.target,
+        &grant,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    assert_eq!(
+        retry_automation_busy(|| {
+            coordinator.approve_control_handoff(1, &fresh_review, &stale_decision)
+        }),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        retry_automation_busy(|| {
+            coordinator.approve_control_handoff(1, &stale_review, &stale_decision)
+        }),
+        Err(Error::Revoked)
+    );
+    let broker = coordinator.broker.as_mut().unwrap();
+    assert_eq!(
+        broker.native_control_grant(principal, barrier.target, Instant::now()),
+        Err(Error::Revoked)
+    );
+    assert!(broker
+        .prepared_control_target(principal, old_request, Instant::now())
+        .is_err());
+    assert!(broker
+        .prepare_lease(principal, run, barrier.target, Instant::now())
+        .is_err());
+
+    approve_control_review(&mut coordinator, 1, &fresh_review).unwrap();
+    let now = Instant::now();
+    let new_run = coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .admit_run(
+            principal,
+            None,
+            RunSpec {
+                binding,
+                scope,
+                budget: Budget::default(),
+                deadline: now + Duration::from_secs(30),
+            },
+            now,
+        )
+        .unwrap();
+    let new_lease =
+        retry_automation_busy(|| coordinator.acquire_control_lease(1, new_run, barrier.target))
+            .unwrap();
+    assert_ne!(new_lease, lease);
+    assert!(coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .prepared_control_target(principal, old_request, Instant::now())
+        .is_err());
+}
+
+#[test]
+fn presentation_input_admission_cuts_ime_loss_regain_and_pending_human_input() {
+    use festerm_automation::Error;
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    for regain_before_admission in [false, true] {
+        let PresentedInputFixture {
+            mut coordinator,
+            mut app,
+            tab,
+            ime,
+            run,
+            request,
+            mut barrier,
+            ..
+        } = presented_input_fixture();
+        ime.transition(false);
+        assert!(app
+            .automation_session_mut(tab)
+            .controller
+            .capture_automation_input_fence()
+            .is_none());
+        if regain_before_admission {
+            ime.transition(true);
+            assert!(app
+                .automation_session_mut(tab)
+                .controller
+                .capture_automation_input_fence()
+                .is_some());
+        }
+        let (result, mut pending) =
+            commit_presented_input_retry(&mut coordinator, 1, request, &mut barrier, b"test");
+        assert!(result.is_err());
+        assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+        if !regain_before_admission {
+            ime.transition(true);
+            assert!(app
+                .automation_session_mut(tab)
+                .controller
+                .capture_automation_input_fence()
+                .is_some());
+        }
+        let principal = coordinator.peers[&1].principal;
+        assert_eq!(
+            coordinator.broker.as_ref().unwrap().native_control_grant(
+                principal,
+                barrier.target,
+                Instant::now()
+            ),
+            Err(Error::Revoked)
+        );
+        assert!(retry_automation_busy(|| coordinator.acquire_control_lease(
+            1,
+            run,
+            barrier.target
+        ))
+        .is_err());
+    }
+
+    let PresentedInputFixture {
+        mut coordinator,
+        mut app,
+        tab,
+        run,
+        request,
+        mut barrier,
+        ..
+    } = presented_input_fixture();
+    let controller = &mut app.automation_session_mut(tab).controller;
+    assert!(controller.begin_clipboard_input(77));
+    assert!(controller.capture_automation_input_fence().is_none());
+    let (result, mut pending) =
+        commit_presented_input_retry(&mut coordinator, 1, request, &mut barrier, b"test");
+    assert!(result.is_err());
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    controller.cancel_clipboard_input(77, "test-cancel");
+    assert!(controller.capture_automation_input_fence().is_some());
+    assert!(
+        retry_automation_busy(|| coordinator.acquire_control_lease(1, run, barrier.target))
+            .is_err()
+    );
+}
+
+#[test]
+fn presentation_input_admission_refuses_pending_ime_at_native_handoff() {
+    use festerm_automation::Error;
+
+    let _serial = presentation_admission_test_guard();
+    let PresentedInputFixture {
+        mut coordinator,
+        mut app,
+        tab,
+        ime,
+        barrier,
+        ..
+    } = presented_input_fixture();
+    let (grant, _, _) = presentation_control_request(barrier.target);
+    let review = prepare_control_review(
+        &mut coordinator,
+        1,
+        barrier.target,
+        &grant,
+        &mut app.automation_session_mut(tab).controller,
+    );
+    ime.transition(false);
+    assert_eq!(
+        approve_control_review(&mut coordinator, 1, &review),
+        Err(Error::Revoked)
+    );
+    assert!(coordinator.control_handoffs.is_empty());
+    assert!(matches!(
+        retry_automation_busy(|| coordinator.prepare_control_handoff_review(
+            1,
+            barrier.target,
+            grant.clone(),
+            Duration::from_secs(60),
+            &mut app.automation_session_mut(tab).controller,
+        )),
+        Err(Error::Unavailable)
+    ));
+    ime.transition(true);
+    assert_eq!(
+        approve_control_review(&mut coordinator, 1, &review),
+        Err(Error::Revoked)
+    );
+}
+
+#[test]
+fn presentation_input_admission_refuses_other_backend_and_controller_reservations() {
+    use festerm_automation::Error;
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    let mut a = presented_input_fixture();
+    let b = presented_input_fixture();
+    let target_a = &a.coordinator.targets[&a.barrier.target.session()];
+    let target_b = &b.coordinator.targets[&b.barrier.target.session()];
+    assert_eq!(
+        target_a.attachment_generation,
+        target_b.attachment_generation
+    );
+    let owner_a = target_a.controller_instance;
+    let owner_b = target_b.controller_instance;
+    let attachment_a = target_a.attachment.clone();
+    let attachment_b = target_b.attachment.clone();
+    assert_ne!(owner_a, owner_b);
+    assert!(!Arc::ptr_eq(&attachment_a, &attachment_b));
+
+    for (owner, attachment) in [
+        (owner_b, attachment_b.clone()),
+        (owner_a, attachment_b),
+        (owner_b, attachment_a),
+    ] {
+        let (result, mut pending) = commit_presented_input_with_retry(
+            &mut a.coordinator,
+            1,
+            a.request,
+            &mut a.barrier,
+            |_| reserve_for_binding(owner, attachment.clone(), b"test"),
+        );
+        assert_eq!(
+            result,
+            Err(CommitAutomationInputError::Refused(Error::BindingMismatch))
+        );
+        assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    }
+    let (result, mut pending) =
+        commit_presented_input_retry(&mut a.coordinator, 1, a.request, &mut a.barrier, b"test");
+    result.unwrap();
+    assert!(matches!(pending.poll(), AutomationInputStatus::Ready(_)));
+}
+
+#[test]
+fn presentation_input_admission_refuses_reservation_from_replaced_attachment() {
+    use festerm_automation::Error;
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let PresentedInputFixture {
+            mut coordinator,
+            mut app,
+            tab,
+            run,
+            request,
+            mut barrier,
+            ..
+        } = presented_input_fixture();
+        let (reservation, mut pending) =
+            reserve_presented_input(&coordinator, barrier.target, b"test");
+        let controller = &mut app.automation_session_mut(tab).controller;
+        let attachment = controller.automation_attachment_epoch().unwrap();
+        attachment.transition(false);
+        attachment.transition(true);
+        assert!(controller.capture_automation_input_fence().is_some());
+        let result = coordinator.commit_presented_input(1, request, reservation, &mut barrier);
+        assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+        if matches!(
+            result,
+            Err(CommitAutomationInputError::Refused(Error::Busy))
+        ) && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(1));
+            continue;
+        }
+        assert!(matches!(
+            result,
+            Err(CommitAutomationInputError::Refused(
+                Error::Closed | Error::Revoked
+            ))
+        ));
+        let principal = coordinator.peers[&1].principal;
+        assert_eq!(
+            coordinator.broker.as_ref().unwrap().native_control_grant(
+                principal,
+                barrier.target,
+                Instant::now()
+            ),
+            Err(Error::Revoked)
+        );
+        assert!(retry_automation_busy(|| coordinator.acquire_control_lease(
+            1,
+            run,
+            barrier.target
+        ))
+        .is_err());
+        break;
+    }
+}
+
+#[test]
+fn presentation_input_admission_requires_the_bound_run_and_lease() {
+    use festerm_automation::Error;
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    let PresentedInputFixture {
+        mut coordinator,
+        app: _app,
+        run,
+        lease,
+        requirement,
+        mut barrier,
+        ..
+    } = presented_input_fixture();
+    let principal = coordinator.peers[&1].principal;
+    let (_, scope, binding) = presentation_control_request(barrier.target);
+    let now = Instant::now();
+    let broker = coordinator.broker.as_mut().unwrap();
+    broker.cancel_run(principal, run, now).unwrap();
+    let other_run = broker
+        .admit_run(
+            principal,
+            None,
+            RunSpec {
+                binding,
+                scope,
+                budget: Budget::default(),
+                deadline: now + Duration::from_secs(30),
+            },
+            now,
+        )
+        .unwrap();
+    let transition = broker
+        .prepare_lease(principal, other_run, barrier.target, now)
+        .unwrap();
+    let unbound_lease = broker.commit_lease(transition, now).unwrap();
+    assert_ne!(lease, unbound_lease);
+    let request = broker
+        .prepare_request(
+            principal,
+            other_run,
+            AuthorityOperation::Control {
+                lease: unbound_lease,
+                input: Digest(Sha256::digest(b"test").into()),
+                bytes: 4,
+                presentation: Some(requirement),
+            },
+            now,
+        )
+        .unwrap();
+    let (result, mut pending) =
+        commit_presented_input_retry(&mut coordinator, 1, request, &mut barrier, b"test");
+    assert_eq!(
+        result,
+        Err(CommitAutomationInputError::Refused(Error::BindingMismatch))
+    );
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+}
+
+#[test]
+fn presentation_input_admission_barrier_failure_after_publication_is_unknown() {
+    use festerm_automation::Error;
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    let mut fixture = presented_input_fixture();
+    fixture.barrier.fail_after_operation = true;
+    let principal = fixture.coordinator.peers[&1].principal;
+    let second_request = fixture
+        .coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .prepare_request(
+            principal,
+            fixture.run,
+            AuthorityOperation::Control {
+                lease: fixture.lease,
+                input: Digest(Sha256::digest(b"test").into()),
+                bytes: 4,
+                presentation: Some(fixture.requirement),
+            },
+            Instant::now(),
+        )
+        .unwrap();
+    let (result, mut pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    assert_eq!(result, Err(CommitAutomationInputError::LostAfterCommit));
+    assert!(matches!(
+        pending.poll(),
+        AutomationInputStatus::Ready(bytes) if &*bytes == b"test"
+    ));
+    let status = fixture
+        .coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .status(principal, fixture.run, Instant::now())
+        .unwrap();
+    assert_eq!(status.admitted_effects, 1);
+    assert!(status.execution_outcome_unknown);
+    let (result, mut replay_pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    assert!(result.is_err());
+    assert!(matches!(
+        replay_pending.poll(),
+        AutomationInputStatus::Cancelled
+    ));
+    let (result, mut second_pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        second_request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    assert!(result.is_err());
+    assert!(matches!(
+        second_pending.poll(),
+        AutomationInputStatus::Cancelled
+    ));
+
+    let mut refused = presented_input_fixture();
+    refused.barrier.fail_after_operation = true;
+    let (result, mut pending) = commit_presented_input_retry(
+        &mut refused.coordinator,
+        1,
+        refused.request,
+        &mut refused.barrier,
+        b"wrong",
+    );
+    assert_eq!(
+        result,
+        Err(CommitAutomationInputError::Refused(Error::BindingMismatch))
+    );
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+}
+
+#[test]
+fn presentation_input_admission_is_nonblocking_under_admission_contention() {
+    use festerm_automation::Error;
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    let mut fixture = presented_input_fixture();
+    let (grant, _, _) = presentation_control_request(fixture.barrier.target);
+    let review = prepare_control_review(
+        &mut fixture.coordinator,
+        1,
+        fixture.barrier.target,
+        &grant,
+        &mut fixture.app.automation_session_mut(fixture.tab).controller,
+    );
+    let decision = review.accept_from_native();
+    let (reservation, mut pending) =
+        reserve_presented_input(&fixture.coordinator, fixture.barrier.target, b"test");
+    let (held_send, held) = mpsc::sync_channel(1);
+    let (release, released) = mpsc::sync_channel(1);
+    let holder = std::thread::spawn(move || {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        held_send.send(()).unwrap();
+        released.recv_timeout(Duration::from_secs(2)).is_ok()
+    });
+    held.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(
+        fixture.coordinator.commit_presented_input(
+            1,
+            fixture.request,
+            reservation,
+            &mut fixture.barrier,
+        ),
+        Err(CommitAutomationInputError::Refused(Error::Busy))
+    );
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    assert_eq!(
+        fixture
+            .coordinator
+            .acquire_control_lease(1, fixture.run, fixture.barrier.target),
+        Err(Error::Busy)
+    );
+    assert_eq!(
+        fixture
+            .coordinator
+            .approve_control_handoff(1, &review, &decision),
+        Err(Error::Busy)
+    );
+    assert!(matches!(
+        fixture.coordinator.prepare_control_handoff_review(
+            1,
+            fixture.barrier.target,
+            grant,
+            Duration::from_secs(60),
+            &mut fixture.app.automation_session_mut(fixture.tab).controller,
+        ),
+        Err(Error::Busy)
+    ));
+    release.send(()).unwrap();
+    assert!(holder.join().unwrap());
+    let (result, mut pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    result.unwrap();
+    assert!(matches!(pending.poll(), AutomationInputStatus::Ready(_)));
+    retry_automation_busy(|| {
+        fixture
+            .coordinator
+            .approve_control_handoff(1, &review, &decision)
+    })
+    .unwrap();
+}
+
+#[test]
+fn presentation_input_admission_is_principal_bound_and_takeover_cuts_all_controllers() {
+    use festerm_automation::{Error, RunState};
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    let mut fixture = presented_input_fixture();
+    let principal_one = fixture.coordinator.peers[&1].principal;
+    let principal_two = fixture
+        .coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .accept_connection()
+        .unwrap();
+    let (connection, _receive) = ipc::test_connection(2);
+    fixture.coordinator.peers.insert(
+        2,
+        Peer {
+            connection,
+            principal: principal_two,
+            machine: ready(),
+            code: VerificationCode::new("0123456789abcdef").unwrap(),
+            grant: None,
+            waits: Vec::new(),
+        },
+    );
+    let now = Instant::now();
+    let (grant, scope, binding) = presentation_control_request(fixture.barrier.target);
+    let review = prepare_control_review(
+        &mut fixture.coordinator,
+        2,
+        fixture.barrier.target,
+        &grant,
+        &mut fixture.app.automation_session_mut(fixture.tab).controller,
+    );
+    assert_eq!(
+        approve_control_review(&mut fixture.coordinator, 1, &review),
+        Err(Error::Unauthorized)
+    );
+    approve_control_review(&mut fixture.coordinator, 2, &review).unwrap();
+    let second_run = fixture
+        .coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .admit_run(
+            principal_two,
+            None,
+            RunSpec {
+                binding,
+                scope,
+                budget: Budget::default(),
+                deadline: now + Duration::from_secs(30),
+            },
+            now,
+        )
+        .unwrap();
+    let (observer, observer_run, _) =
+        independent_run(&mut fixture.coordinator, fixture.barrier.target);
+    let (result, mut pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        2,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    assert_eq!(
+        result,
+        Err(CommitAutomationInputError::Refused(Error::Unauthorized))
+    );
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+
+    type_in_presentation_tab(&mut fixture.app, fixture.tab);
+    assert!(fixture
+        .app
+        .automation_session_mut(fixture.tab)
+        .controller
+        .capture_automation_input_fence()
+        .is_some());
+    let (result, mut pending) = commit_presented_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+    );
+    assert!(result.is_err());
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    let broker = fixture.coordinator.broker.as_mut().unwrap();
+    for (principal, run) in [(principal_one, fixture.run), (principal_two, second_run)] {
+        assert_eq!(
+            broker.native_control_grant(principal, fixture.barrier.target, Instant::now()),
+            Err(Error::Revoked)
+        );
+        assert!(broker
+            .prepare_lease(principal, run, fixture.barrier.target, Instant::now())
+            .is_err());
+    }
+    assert_eq!(
+        broker
+            .status(observer, observer_run, Instant::now())
+            .unwrap()
+            .state,
+        RunState::Running
+    );
+}
+
+#[test]
+fn presentation_retired_handoff_does_not_revoke_unrelated_principal_on_fresh_review() {
+    use festerm_automation::{Error, RunState};
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    let (other_app, other_tab) = FesTermApp::automation_fixture();
+    let mut fixture = presented_input_fixture_with_sources(&[(&other_app, other_tab, false)]);
+    let principal = fixture.coordinator.peers[&1].principal;
+    let old_target = fixture.barrier.target;
+    let other_target = fixture.coordinator.targets[&other_tab.chip_id()].reference;
+    let (observer, observer_run, _) = independent_run(&mut fixture.coordinator, other_target);
+    let (reservation, mut pending) =
+        reserve_presented_input(&fixture.coordinator, old_target, b"test");
+
+    let old_instance = fixture
+        .app
+        .automation_session(fixture.tab)
+        .unwrap()
+        .controller
+        .automation_instance();
+    assert_eq!(
+        fixture.app.automation_replace_fixture_session(),
+        fixture.tab
+    );
+    assert_ne!(
+        fixture
+            .app
+            .automation_session(fixture.tab)
+            .unwrap()
+            .controller
+            .automation_instance(),
+        old_instance
+    );
+    fixture.app.set_automation_ime_epoch(&fixture.ime);
+    let mut broker = fixture.coordinator.broker.take().unwrap();
+    fixture
+        .coordinator
+        .reconcile(&mut broker, &[&fixture.app, &other_app]);
+    let replacement = fixture
+        .coordinator
+        .targets
+        .get_mut(&fixture.tab.chip_id())
+        .unwrap();
+    replacement.local_pty = true;
+    let replacement = replacement.reference;
+    assert_ne!(replacement, old_target);
+    assert_eq!(
+        broker.native_control_grant(principal, old_target, Instant::now()),
+        Err(Error::StaleTarget)
+    );
+    assert!(fixture
+        .coordinator
+        .control_handoffs
+        .contains_key(&principal));
+    fixture.coordinator.broker = Some(broker);
+
+    let (request, scope, binding) = presentation_control_request(replacement);
+    let review = prepare_control_review(
+        &mut fixture.coordinator,
+        1,
+        replacement,
+        &request,
+        &mut fixture.app.automation_session_mut(fixture.tab).controller,
+    );
+    let result = fixture.coordinator.commit_presented_input(
+        1,
+        fixture.request,
+        reservation,
+        &mut fixture.barrier,
+    );
+    assert!(result.is_err());
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    approve_control_review(&mut fixture.coordinator, 1, &review).unwrap();
+    let now = Instant::now();
+    let broker = fixture.coordinator.broker.as_mut().unwrap();
+    let run = broker
+        .admit_run(
+            principal,
+            None,
+            RunSpec {
+                binding,
+                scope,
+                budget: Budget::default(),
+                deadline: now + Duration::from_secs(30),
+            },
+            now,
+        )
+        .unwrap();
+    assert_eq!(
+        broker.status(observer, observer_run, now).unwrap().state,
+        RunState::Running
+    );
+    let observation = broker
+        .prepare_request(
+            observer,
+            observer_run,
+            AuthorityOperation::Observe {
+                target: other_target,
+                max_bytes: 32,
+            },
+            now,
+        )
+        .unwrap();
+    broker
+        .commit_disclosure(observer, observation, 16, now)
+        .unwrap();
+    assert_eq!(
+        retry_automation_busy(|| {
+            fixture
+                .coordinator
+                .acquire_control_lease(1, run, replacement)
+        })
+        .unwrap()
+        .target(),
+        replacement
+    );
+}
+
+#[test]
+fn presentation_retired_source_does_not_revoke_its_reconciled_successor() {
+    use festerm_automation::RunState;
+
+    let _serial = presentation_admission_test_guard();
+    let (mut source_app, source_tab) = FesTermApp::automation_fixture();
+    let (other_app, other_tab) = FesTermApp::automation_fixture();
+    let mut fixture = presented_input_fixture_with_sources(&[
+        (&source_app, source_tab, false),
+        (&other_app, other_tab, true),
+    ]);
+    let target = fixture.barrier.target;
+    let old_source = fixture.coordinator.targets[&source_tab.chip_id()].reference;
+    let other_target = fixture.coordinator.targets[&other_tab.chip_id()].reference;
+    let (observer, observer_run, _) = independent_run(&mut fixture.coordinator, other_target);
+
+    assert_eq!(source_app.automation_replace_fixture_session(), source_tab);
+    // The test fixture substitutes an SSH backend for the controlled local PTY.
+    fixture
+        .coordinator
+        .targets
+        .get_mut(&fixture.tab.chip_id())
+        .unwrap()
+        .local_pty = false;
+    let mut broker = fixture.coordinator.broker.take().unwrap();
+    fixture
+        .coordinator
+        .reconcile(&mut broker, &[&fixture.app, &source_app, &other_app]);
+    let controlled = fixture
+        .coordinator
+        .targets
+        .get_mut(&fixture.tab.chip_id())
+        .unwrap();
+    assert_eq!(controlled.reference, target);
+    controlled.local_pty = true;
+    let successor = fixture.coordinator.targets[&source_tab.chip_id()].reference;
+    assert_ne!(successor, old_source);
+    fixture.coordinator.broker = Some(broker);
+    let (successor_observer, successor_run, _) =
+        independent_run(&mut fixture.coordinator, successor);
+
+    let (mut request, _, _) = presentation_control_request(target);
+    request.scope.observe.insert(successor);
+    let review = prepare_control_review(
+        &mut fixture.coordinator,
+        1,
+        target,
+        &request,
+        &mut fixture.app.automation_session_mut(fixture.tab).controller,
+    );
+    approve_control_review(&mut fixture.coordinator, 1, &review).unwrap();
+    let broker = fixture.coordinator.broker.as_mut().unwrap();
+    for (principal, run) in [
+        (observer, observer_run),
+        (successor_observer, successor_run),
+    ] {
+        assert_eq!(
+            broker.status(principal, run, Instant::now()).unwrap().state,
+            RunState::Running
+        );
+    }
+    let observation = broker
+        .prepare_request(
+            successor_observer,
+            successor_run,
+            AuthorityOperation::Observe {
+                target: successor,
+                max_bytes: 32,
+            },
+            Instant::now(),
+        )
+        .unwrap();
+    broker
+        .commit_disclosure(successor_observer, observation, 16, Instant::now())
+        .unwrap();
 }
 
 fn independent_run(

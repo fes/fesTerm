@@ -28,15 +28,26 @@ pub const MAX_IO_CHUNK_BYTES: usize = 64 * 1024;
 
 static AUTOMATION_ADMISSION: Mutex<()> = Mutex::new(());
 
+/// An opaque guard for the process-wide admission boundary. It cannot be
+/// constructed from a different mutex.
+#[derive(Debug)]
+pub struct AutomationAdmissionGuard {
+    _guard: MutexGuard<'static, ()>,
+}
+
 /// Serializes automation admission and disclosure with backend transitions.
 ///
 /// Every session in this process shares the same lock.
 /// A poisoned lock is never recovered: automation must refuse admission and
 /// disclosure for the rest of the process. Do not call [`AutomationEpoch`]
 /// methods that acquire this lock, or backend operations that can transition
-/// an epoch, while holding the returned guard.
-pub fn automation_admission_lock() -> Option<MutexGuard<'static, ()>> {
-    AUTOMATION_ADMISSION.lock().ok()
+/// an epoch, while holding the returned guard. The explicitly guard-taking
+/// epoch methods operate within the existing boundary instead.
+pub fn automation_admission_lock() -> Option<AutomationAdmissionGuard> {
+    AUTOMATION_ADMISSION
+        .lock()
+        .ok()
+        .map(|guard| AutomationAdmissionGuard { _guard: guard })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,12 +56,13 @@ pub enum AutomationAdmissionTryError {
     Poisoned,
 }
 
-/// Attempts the same disclosure boundary without delaying an independent
+/// Attempts the same boundary without delaying a UI caller or independent
 /// watchdog. Poison is permanent; contention may be retried.
 pub fn try_automation_admission_lock(
-) -> Result<MutexGuard<'static, ()>, AutomationAdmissionTryError> {
+) -> Result<AutomationAdmissionGuard, AutomationAdmissionTryError> {
     AUTOMATION_ADMISSION
         .try_lock()
+        .map(|guard| AutomationAdmissionGuard { _guard: guard })
         .map_err(|error| match error {
             TryLockError::WouldBlock => AutomationAdmissionTryError::Busy,
             TryLockError::Poisoned(_) => AutomationAdmissionTryError::Poisoned,
@@ -87,10 +99,15 @@ impl AutomationEpoch {
     /// a poisoned admission lock permanently disables this epoch. This
     /// method acquires the admission lock and must not be called with it held.
     pub fn transition(&self, running: bool) {
-        let Some(_guard) = automation_admission_lock() else {
+        let Some(guard) = automation_admission_lock() else {
             self.fail_closed();
             return;
         };
+        self.transition_under_admission(&guard, running);
+    }
+
+    /// Advances this epoch while the caller retains the admission boundary.
+    pub fn transition_under_admission(&self, _guard: &AutomationAdmissionGuard, running: bool) {
         self.running.store(false, Ordering::Release);
         if self.failed.load(Ordering::Acquire) {
             return;
@@ -108,10 +125,15 @@ impl AutomationEpoch {
     /// This method acquires the admission lock and must not be called with it
     /// held. A returned generation must be rechecked at disclosure time.
     pub fn capture(&self) -> Option<u64> {
-        let Some(_guard) = automation_admission_lock() else {
+        let Some(guard) = automation_admission_lock() else {
             self.fail_closed();
             return None;
         };
+        self.capture_under_admission(&guard)
+    }
+
+    /// Captures a running generation while the caller retains the boundary.
+    pub fn capture_under_admission(&self, _guard: &AutomationAdmissionGuard) -> Option<u64> {
         if self.failed.load(Ordering::Acquire) || !self.running.load(Ordering::Acquire) {
             return None;
         }
@@ -714,9 +736,13 @@ pub trait Session: Send + Sync {
     fn metrics(&self) -> SessionMetrics;
     fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError>;
     /// Reserves a position in the ordinary ordered transport queue without
-    /// admitting automation input. Unsupported backends must refuse.
+    /// admitting automation input. `controller_instance` is the host-owned
+    /// identity of the controller making the reservation, never a client
+    /// claim. The backend binds its own attachment identity and generation.
+    /// Unsupported backends must refuse.
     fn reserve_automation_input(
         &self,
+        _controller_instance: u64,
         _bytes: &[u8],
     ) -> Result<ReservedAutomationInput, ReserveAutomationInputError> {
         Err(ReserveAutomationInputError::Unsupported)

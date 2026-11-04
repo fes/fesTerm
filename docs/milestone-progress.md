@@ -1,5 +1,22 @@
 # Milestone Progress Narrative
 
+## Composing metadata and modeled controller handoff
+
+The inactive host seam freezes exact metadata source guards and the current
+control sink before native review, and exposes already authorized metadata
+sources in a later control review. Reapproval requires fresh explicit flow
+consent and cannot widen the frozen control closure. Slot-specific withdrawal
+preserves an independently live other slot; privacy loss and disconnect cut
+both. Presentation independently reaps ordinary-grant expiry at every
+admission boundary, and active presentation deadlines cannot outlive an
+ordinary grant. Unbound metadata replacement cuts control rather than widening
+it.
+
+The legacy observation adapter cannot coexist with this seam until queued
+frames have per-grant delivery fences. This adds no native metadata UI, MCP
+route, real terminal input or platform qualification; P1 remains
+observation-only.
+
 ## Separating metadata approval from terminal control
 
 The broker can now hold a narrow discovery-only grant independently of its
@@ -36,6 +53,85 @@ observation scope. This does not add an MCP tool, native control UI, terminal
 write, presentation or enrollment path; P1 remains observation-only. The real
 application adapter and native/platform security and usability evidence remain
 open.
+## Guarding the full readable-source closure
+
+Re-review found that an unreconciled disconnect of an approved source could
+otherwise leave control of a different target usable, and that synchronizing
+an already-retired handoff could revoke unrelated principals. The modeled
+review now freezes every approved readable source's exact lifecycle,
+registration and attachment guards before consent and checks them through
+input publication. Retirement cuts affected broker scopes while preserving
+unrelated live grants. Deterministic tests cover disconnect, loss/regain,
+replacement and guard changes before review, lease and publication, including
+serialization with a concurrent transition and first-try review after target
+replacement. These tests do not qualify native focus, worker disclosure or
+any production input path.
+
+## Freezing the control review before consent
+
+Re-review found that an old native control decision could otherwise be applied
+after human input when no handoff was retained, and that creating the first
+fresh proposal before cutting a stale handoff invalidated that proposal. The
+modeled coordinator now cuts stale handoffs/reviews first, freezes the exact
+controller/IME/attachment fence with a bounded pending proposal before native
+review, and binds the native decision to that proposal. Tests cover first-grant
+and pruned-handoff input, IME/preedit/paste and attachment loss/regain,
+cross-channel isolation and first-try fresh approval. Expected-success tests
+retry only bounded `Busy` results; explicit contention assertions still call
+the nonblocking production path directly. All native and production gates
+remain closed.
+
+## Binding presentation input to the original handoff and transport
+
+Independent review found that recapturing a current human-input fence could
+otherwise reuse an old control grant, that equal bytes did not identify the
+reserved PTY, and that a native barrier error after publication could be
+misreported as an unadmitted refusal. The modeled coordinator now retains the
+original native-handoff fence with the principal's grant and exact lease/run,
+propagates stale handoffs before recapture, and checks the reservation's
+controller and backend attachment identity/generation under the same admission
+lock. A post-publication barrier failure is unknown and cannot authorize replay.
+The UI admission and focus-queue paths refuse a contended lock without waiting.
+
+Deterministic cross-component tests cover typing followed by recapture,
+IME loss/regain and pending input, multiple principals, wrong or replaced PTYs,
+and callback success followed by barrier failure. These tests use injected
+barriers, not native activation evidence. Production presentation, native
+handoff UI, direct input and worker disclosure remain unavailable.
+
+## Refusing presentation without a continuous native witness
+
+The controller kernel now separates exact-target enrollment from an explicit
+native presentation grant and bounds pending activation, expiry and attempts.
+The application reuses its tab command and tracks non-reusable workspace
+changes; a modeled admission seam rechecks presentation together with the
+existing privacy, attachment, human-input and reserved-byte fences. An
+away-and-back transition cannot be repaired by seeing the same tab again.
+
+No current platform supplies the required complete native event history and
+ordering barrier through admission, and secondary eframe viewports lack a
+uniform raw-handle path. The later-stage MCP capability advertises
+unavailability and its presentation call refuses without prompting or focusing.
+Injected event tests are not native proof; enrollment UI, real activation,
+response delivery, direct input and Windows qualification remain open.
+
+## Selecting exact controller targets without granting authority
+
+An external controller's local registration can now be represented as bounded,
+connection-owned opaque bytes in the application-owned kernel. A typed native
+decision binds one registration to one exact existing target generation and
+returns a fresh association ID. Rebinding invalidates old IDs and stale
+decisions; even a new selection whose target has just gone stale invalidates
+older pending decisions without disturbing the current binding. Disconnect,
+privacy revocation, closure, replacement and broker restart discard affected
+associations. Identical session labels play no role.
+
+This is a non-authorizing foundation for [#524](https://github.com/fes/fesTerm/issues/524),
+not a client feature: there is no native enrollment UI or MCP operation.
+Separately approved metadata, native-confirmed presentation and end-to-end
+admission-time revalidation, native handoff/disarm, uncertain-outcome/no-replay
+handling and JavaScript-independent controller operation remain open. The P1
+#506 checkpoint remains observation-only.
 
 ## Encoding explicit worker input without admitting it
 

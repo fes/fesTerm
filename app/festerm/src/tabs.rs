@@ -566,10 +566,11 @@ impl Session for ApplicationSession {
 
     fn reserve_automation_input(
         &self,
+        controller_instance: u64,
         bytes: &[u8],
     ) -> Result<ReservedAutomationInput, ReserveAutomationInputError> {
         match self {
-            Self::Local(session) => session.reserve_automation_input(bytes),
+            Self::Local(session) => session.reserve_automation_input(controller_instance, bytes),
             _ => Err(ReserveAutomationInputError::Unsupported),
         }
     }
@@ -2857,6 +2858,7 @@ pub struct AppState {
     tunnel_reconnects: tunnel_reconnect::TunnelReconnects,
     tabs: Vec<Tab>,
     active: TabId,
+    presentation_workspace: Option<crate::automation::WorkspaceRevision>,
     /// Which tabs were looked at, oldest first, so that closing the active tab
     /// can return to the one it was opened from rather than to whichever tab
     /// happens to sit next to it. Only tabs carrying their own content are
@@ -2998,6 +3000,7 @@ impl AppState {
             tunnel_reconnects: Default::default(),
             tabs,
             active,
+            presentation_workspace: None,
             activation_history: Vec::new(),
             documents: DocumentRegistry::shared(),
             configuration,
@@ -6238,6 +6241,9 @@ impl AppState {
     /// notify them about.
     fn set_active(&mut self, id: TabId) {
         if self.active != id {
+            if let Some(revision) = &self.presentation_workspace {
+                revision.changed();
+            }
             if let Some(session) = self.session_tab_mut(self.active) {
                 session.view.cancel_rectangle_copy();
             }
@@ -6249,6 +6255,13 @@ impl AppState {
                 session.has_new_output_since_active = false;
             }
         }
+    }
+
+    pub(crate) fn set_presentation_workspace(
+        &mut self,
+        revision: &crate::automation::WorkspaceRevision,
+    ) {
+        self.presentation_workspace = Some(revision.clone());
     }
 
     /// Records the tab being left as the most recent place to return to.

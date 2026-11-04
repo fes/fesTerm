@@ -72,6 +72,7 @@ use std::fmt;
 use std::io::{self, BufRead, Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod presentation;
 mod schema;
 pub mod secure_channel;
 pub use secure_channel::handshake_io as secure_handshake_io;
@@ -315,6 +316,7 @@ struct Pending {
 pub struct Machine {
     lifecycle: Lifecycle,
     pending: Vec<Pending>,
+    unavailable_presentation: bool,
 }
 
 impl Default for Machine {
@@ -328,6 +330,17 @@ impl Machine {
         Self {
             lifecycle: Lifecycle::New,
             pending: Vec::with_capacity(MAX_IN_FLIGHT),
+            unavailable_presentation: false,
+        }
+    }
+
+    /// Later-stage capability negotiation with an explicitly unavailable
+    /// presentation operation. No native decision or activation can be made
+    /// through this mode. `new()` retains the observation-only P1 catalog.
+    pub fn with_unavailable_presentation() -> Self {
+        Self {
+            unavailable_presentation: true,
+            ..Self::new()
         }
     }
 
@@ -445,9 +458,33 @@ impl Machine {
                 if !schema::empty_params(params) {
                     return self.error(Some(&id), ProtocolError::InvalidParams);
                 }
-                Event::Reply(success(&id, json!({"tools": schema::tools()})))
+                let mut tools = schema::tools();
+                if self.unavailable_presentation {
+                    tools.extend(presentation::tools());
+                }
+                Event::Reply(success(&id, json!({"tools": tools})))
             }
             "tools/call" => {
+                if self.unavailable_presentation {
+                    if let Some(result) = presentation::call(params) {
+                        return match result {
+                            Ok(presentation::Call::Capabilities) => Event::Reply(tool_result(
+                                &id,
+                                json!({"status": "ok", "data": presentation::unavailable()}),
+                                false,
+                            )),
+                            Ok(presentation::Call::Present) => {
+                                Event::Reply(tool_refusal(&id, Refusal::Unavailable))
+                            }
+                            Err(schema::CallError::Protocol) => {
+                                self.error(Some(&id), ProtocolError::InvalidParams)
+                            }
+                            Err(schema::CallError::Arguments) => {
+                                Event::Reply(tool_refusal(&id, Refusal::InvalidArguments))
+                            }
+                        };
+                    }
+                }
                 let operation = match schema::call(params) {
                     Ok(operation) => operation,
                     Err(schema::CallError::Protocol) => {

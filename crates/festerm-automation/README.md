@@ -28,6 +28,11 @@ platforms and unqualified adapters disabled in the application.
    discovery or observation within the exact granted scope. Each such run still
    binds its own canonical operation/parameter digest. This policy cannot grant
    workflow starts, direct input, or any other effect; their bindings remain exact.
+   The kernel's ownership snapshot alone is insufficient for a control review:
+   before showing consent, the host must cut stale handoffs/reviews and bind
+   this proposal to the exact controller, human-input, IME and attachment
+   fence under its admission boundary. Never pair an older native decision
+   with a fresh proposal or replace its original fence after input.
 4. Native UI constructs `NativeApproval`, specifying exact targets and approved
    immutable `InvocationBinding`s. Show the real channel identity, observation
    disclosure, workflow/manifest/parameter digests and deadline. For direct
@@ -94,9 +99,18 @@ platforms and unqualified adapters disabled in the application.
    an infallible bounded queue slot and, at the real publication boundary,
    revalidate privacy, the live attachment/generation, terminal modes, input/IME
    fences, any required presentation condition, and immutable bytes.
-   Independently hash/count those bytes, call `commit_control` with those values,
-   and immediately fill the slot. There must be no intervening controller event.
-   Backpressure aborts before commit; never replay input.
+   Bind the original human-input/IME/attachment fence captured before native
+   review to that exact decision and grant epoch, and bind the lease/run to that
+   handoff. A fresh capture must never revive a stale review or grant: propagate
+   the cut before the next proposal or admission.
+   Recheck the reservation's host controller and backend-owned attachment
+   identity/generation against the prepared target under the same lock.
+   Independently hash/count the actual bytes and commit inside the reservation.
+   A presentation-required request must use `commit_presented_control` with a
+   fresh qualified native barrier; `commit_control` cannot drop its frozen
+   condition. Retain all host barriers through publication. A barrier error
+   after a successful callback is an unknown outcome, not a refusal or replay
+   permission. Backpressure aborts before commit; never replay input.
    Every actual downstream dispatch must also honor the controller ownership
    epoch; takeover/revoke discards stale **not-yet-admitted** items.
 9. `settle_request` acknowledges or aborts a host call; neither refunds quotas nor
@@ -154,17 +168,20 @@ from stale state.
 
 Reapproval cuts runs in the replaced slot but leaves the other grant live.
 `revoke_ordinary` cuts only that connection's ordinary grant, runs, leases and
-delivery liveness; `revoke_metadata` cuts only its metadata grant and delivery
-liveness. The other grant's otherwise-live runs and committed-delivery liveness
-remain valid, although its pending approvals become stale if a live slot changed.
+delivery liveness, and cancels its presentation reviews and evidence.
+`revoke_metadata` cuts only its metadata grant and delivery liveness, leaving
+presentation and enrollment intact. The other grant's otherwise-live runs and
+committed-delivery liveness remain valid, although its pending approvals become
+stale if a live slot changed.
 `revoke` cuts both slots for a principal, `revoke_all` cuts both globally, and
 `disconnect` cuts both before removing the connection. Revoking metadata does
 not remove separate discovery authority explicitly granted in the ordinary
 slot. No revocation represents already admitted input as rolled back.
 Expiry and target replacement cut affected slots, including an ordinary grant
 whose frozen source scope names the replaced metadata target. Exact generations
-are never retargeted. The caller must separately enforce any controller
-enrollment/eligibility policy; this branch adds no enrollment integration.
+are never retargeted. The caller must separately enforce controller
+enrollment/eligibility policy; the enrollment foundation is not integrated
+into a production adapter.
 
 Immediately after a successful `commit_disclosure` and before settling the
 request, `disclosure_liveness` can capture a non-serializable handle to its
@@ -181,16 +198,117 @@ stale frame. If revocation, expiry or cancellation interrupts a partial frame,
 never send its remaining bytes; close the connection and revoke both grants.
 Bytes already sent cannot be recalled.
 
-This is kernel-only: no native metadata UI, MCP routing, controller enrollment,
-terminal input or production gate is added. Future metadata projection must use
-a reviewed, bounded metadata schema and never put screen, scrollback, selection
-or workflow-result content in its fields. Native UI must explain the metadata
-recipients, repeatability, lifetime and each approved control flow. P1 remains
-observation-only.
+An inactive host seam freezes reviewed metadata source guards and the current
+control closure before consent. `native_metadata_grant` identifies one grant
+epoch for matching those guards; it is not a disclosure or control permit.
+The seam refuses composition with the legacy observation adapter until its
+queued frames have per-slot delivery fencing. No native metadata UI, MCP
+routing, exposed controller enrollment, terminal input or production gate is
+added. Future metadata projection must use a reviewed, bounded metadata schema
+and never put screen, scrollback, selection or workflow-result content in its
+fields. Native UI must explain the metadata recipients, repeatability, lifetime
+and each approved control flow. P1 remains observation-only.
+
+### Controller enrollment prerequisite
+
+This internal primitive is not an MCP operation or an implemented native UI.
+An ordinary connection may supply an opaque local registration of 1–128 bytes;
+the application must bound its decoder before allocating. Register it with the
+trusted acceptor's `ConnectionId`, not a wire-supplied identity. At most 16
+registrations belong to one connection and 128 to the broker; duplicate bytes on
+the same connection return the existing registration ID without changing its
+association. The bytes are untrusted, may contain sensitive or deceptive
+content, and must not be logged or persisted. Escape/sanitize them if a future
+native UI displays them. They are not a credential, gesture, target selector
+or authority.
+
+After an explicit native user selection of an existing exact target, the
+trusted composition root can freeze a `ControllerEnrollmentProposal` and
+construct a non-serializable `NativeControllerEnrollment` for that reviewed
+selection. `approve_controller_enrollment` consumes the decision and returns a
+fresh `ControllerEnrollmentId`. Do not construct this decision from IPC or a
+client's claim of approval. A rebind, even to the same target, needs a new
+native decision and invalidates the old enrollment ID; outstanding decisions
+against the old registration revision cannot overwrite it. Preparing a newer
+native selection supersedes earlier pending decisions even when the new target
+is already stale, but leaves the current association intact until approval.
+The native UI must serialize selection changes and cancellation before queued
+decisions reach the broker. Resolve only the exact connection,
+registration and current enrollment ID together. The kernel does not queue
+proposals; future native UI must bound and cancel its own pending reviews, and
+registration alone must not trigger a prompt.
+
+Unregister, connection loss and global privacy revocation remove registrations.
+Target close or replacement removes registrations bound to that target; a fresh
+broker instance also invalidates them when the host supplies a fresh
+unpredictable nonce as required by `Broker::new`. Re-registering the same bytes
+never restores an association. An unbound review candidate for a closed/replaced
+target is stale and requires a new native decision.
+`revoke(connection)` withdraws grants but leaves these non-authorizing
+registrations intact; an explicit unpair must unregister them or disconnect.
+The host must report lifecycle changes to the broker and independently hold
+and revalidate its actual attachment/liveness fences at any future admission or
+disclosure boundary; this pure kernel does not receive backend events. Capture
+the enrollment ID with each queued request and resolve that same ID again at
+admission; resolving only the current association could retarget queued work.
+
+Resolution is for trusted application code only, not permission to disclose
+even metadata to the client. Separately authorized metadata, observation,
+control, workflow invocation, native pairing and per-write privacy checks
+remain mandatory. This primitive does not enforce a local-backend policy,
+create a listener/worker, enable either setting, or qualify any platform.
+
+### Separately granted presentation
+
+Only a native user action may create `PresentationApprovalProposal` and
+`NativeControllerPresentationApproval` for one current connection, registration,
+enrollment and exact target. Neither type is a wire decision. A new review
+withdraws the old presentation grant; an expired or superseded decision cannot
+grant. This grant does not confer discovery, observation, input or workflow
+authority. Revocation, disconnection, rebinding, target lifecycle changes and
+global privacy loss invalidate it or its evidence. A native presentation-only
+revocation also withdraws pending reviews without revoking enrollment or other
+authority. Ordinary-grant reapproval, revocation or expiry also invalidates
+presentation reviews, grants and evidence, while metadata-only cuts do not.
+Presentation admissions reap expiry independently of a timer; an active
+attempt or confirmation wakes no later than its ordinary-grant deadline.
+
+The host may install `start_qualified_presentation_monitor` **only** after a
+native implementation proves an uninterrupted event source and an ordering
+barrier that remains effective through response or input admission. The kernel
+does not qualify a platform. Deliver every native focus transition, including
+away-and-back changes, with `note_presentation_transition`; any missing,
+unordered or unknown event must close the monitor. Samples of the same active
+window are not proof that focus was continuous. The application supplies a
+non-wrapping revision for all tab and window changes as well as actual selected
+target/window identity. All source transitions, sampling, broker checks,
+privacy/attachment/human fences and publication must be serialized. A local
+mutex alone cannot prevent an OS foreground change. No current production source
+meets this contract.
+
+One global attempt at a time may wait up to five seconds, with 16 attempts per
+grant and 4096 per broker lifetime. `prepare_presentation` is inert;
+`presentation_requested` means only that the application dispatched its tab
+command and queued activation. `finish_presentation` remains pending until a
+later barrier proves actual activation and selection. Its success identifies
+the exact target and an opaque revision. Before releasing that success or
+admitting each conditioned input, obtain another fresh barrier and call
+`revalidate_presentation` or `commit_presented_control`, while retaining all
+other required admission fences. A transition, changed workspace revision,
+unknown source, stale sample, different principal/target, revocation or expiry
+cannot silently restore old evidence. Timeout/cancel never implies that an
+already queued OS focus request can be undone.
+
+Production leaves the monitor uninstalled and the client presentation tool
+refuses; the separate injected-source tests do not establish native OS behavior.
+Native grant/enrollment UI, response-admission wiring and direct input remain
+unimplemented. See the [design](../../docs/automation-design.md#bounded-confirmed-presentation-seam)
+for the client contract and qualification blockers.
 
 ## Accounting and boundaries
 
 - At most 16 connections, 128 logical targets, 128 retained runs/receipts,
+  128 opaque controller registrations globally / 16 per principal,
   16 pending approvals globally / 2 per principal, 8 approval proposals per
   channel and 128 per broker lifetime. Approvals expire after five minutes.
 - Grants last at most five minutes. Each run and principal share ceilings of
@@ -211,16 +329,18 @@ observation-only.
   It does not represent a reusable content/result resource permission.
 - Source/sink closure is inherited even when child scopes shrink. All metadata
   and observation sources must be authorized to every controlled target. The
-  only result recipient is the original authenticated connection. No
-  presentation/notification/clipboard/open-session sinks or declassifier exist.
+  only result recipient is the original authenticated connection. The separate
+  presentation grant does not add a workflow sink or a declassifier;
+  notification/clipboard/open-session sinks remain absent.
 - Every admitted input has unknown execution outcome. Completion/cancellation
   never promises rollback, shell exit status, clean remote state or command
   success. Status aggregates admitted descendant effects.
-- Kernel records are content-free; no terminal text, input, script exceptions,
-  audit log or result cache is retained. The app must reserve its bounded
-  content-free audit record before committing a control effect. This kernel
-  does not implement audit export, subscription delivery, creation/trust/auth,
-  worker watchdogs, artifact loaders or transport queues.
+- Except for bounded untrusted controller registration bytes, kernel records
+  are content-free; the kernel does not collect terminal snapshots, input
+  payloads, script exceptions, audit logs or result caches. The app must reserve
+  its bounded content-free audit record before committing a control effect.
+  This kernel does not implement audit export, subscription delivery,
+  creation/trust/auth, worker watchdogs, artifact loaders or transport queues.
 
 ## Validation
 

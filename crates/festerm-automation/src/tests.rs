@@ -49,6 +49,7 @@ fn input_operation(lease: LeaseRef, input: Digest, bytes: u32) -> Operation {
         lease,
         input,
         bytes,
+        presentation: None,
     }
 }
 
@@ -90,6 +91,10 @@ impl Fixture {
     }
 
     fn approve(&mut self, scope: Scope, bindings: &[InvocationBinding]) {
+        self.approve_for(scope, bindings, MAX_GRANT_LIFETIME);
+    }
+
+    fn approve_for(&mut self, scope: Scope, bindings: &[InvocationBinding], lifetime: Duration) {
         let request = GrantRequest {
             scope,
             bindings: bindings.iter().copied().collect(),
@@ -99,7 +104,7 @@ impl Fixture {
             .broker
             .request_approval(self.connection, request.clone(), self.now)
             .unwrap();
-        let mut native = NativeApproval::new(request.clone(), MAX_GRANT_LIFETIME);
+        let mut native = NativeApproval::new(request.clone(), lifetime);
         for target in &request.scope.control {
             native = native.accept_control_handoff(*target, request.scope.sources());
         }
@@ -153,11 +158,1872 @@ impl Fixture {
                     lease,
                     input: digest(3),
                     bytes: 10,
+                    presentation: None,
                 },
                 self.now,
             )
             .unwrap()
     }
+}
+
+fn enroll_controller(
+    broker: &mut Broker,
+    connection: ConnectionId,
+    registration: ControllerRegistrationId,
+    target: TargetRef,
+) -> ControllerEnrollmentId {
+    let proposal = broker
+        .prepare_controller_enrollment(connection, registration, target)
+        .unwrap();
+    broker
+        .approve_controller_enrollment(connection, NativeControllerEnrollment::new(proposal))
+        .unwrap()
+}
+
+fn presentation_registration(
+    broker: &mut Broker,
+    connection: ConnectionId,
+    target: TargetRef,
+) -> (ControllerRegistrationId, ControllerEnrollmentId) {
+    let registration = broker
+        .register_controller_session(connection, b"identical local label")
+        .unwrap();
+    let enrollment = enroll_controller(broker, connection, registration, target);
+    (registration, enrollment)
+}
+
+fn grant_presentation(
+    broker: &mut Broker,
+    connection: ConnectionId,
+    registration: ControllerRegistrationId,
+    enrollment: ControllerEnrollmentId,
+    now: Instant,
+) {
+    let proposal = broker
+        .prepare_controller_presentation_approval(connection, registration, enrollment, now)
+        .unwrap();
+    broker
+        .approve_controller_presentation(
+            connection,
+            NativeControllerPresentationApproval::new(proposal, Duration::from_secs(60)),
+            now,
+        )
+        .unwrap();
+}
+
+fn foreground(
+    broker: &mut Broker,
+    monitor: PresentationMonitorId,
+    window: PresentationWindowId,
+    target: TargetRef,
+) -> NativePresentationObservation {
+    broker
+        .observe_presentation(
+            monitor,
+            NativePresentationState::Foreground {
+                window,
+                selected: Some(target),
+                workspace_revision: 0,
+            },
+        )
+        .unwrap()
+        .unwrap()
+}
+
+fn presented(
+    broker: &mut Broker,
+    connection: ConnectionId,
+    registration: ControllerRegistrationId,
+    enrollment: ControllerEnrollmentId,
+    monitor: PresentationMonitorId,
+    window: PresentationWindowId,
+    now: Instant,
+) -> (PresentationAttempt, PresentationRequirement) {
+    let attempt = broker
+        .prepare_presentation(
+            connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(2),
+            now,
+        )
+        .unwrap();
+    broker
+        .presentation_requested(connection, attempt, now)
+        .unwrap();
+    let observation = foreground(broker, monitor, window, attempt.target());
+    let confirmed = broker
+        .finish_presentation(connection, attempt, Some(observation), now)
+        .unwrap()
+        .unwrap();
+    assert_eq!(confirmed.target, attempt.target());
+    (
+        attempt,
+        PresentationRequirement::new(registration, enrollment, confirmed.revision),
+    )
+}
+
+#[test]
+fn presentation_needs_a_separate_native_grant_for_the_exact_principal_and_target() {
+    let mut f = Fixture::new();
+    let other = f.broker.accept_connection().unwrap();
+    let (first, first_enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    let (second, second_enrollment) = presentation_registration(&mut f.broker, other, f.b);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(42);
+    assert_eq!(
+        f.broker.prepare_presentation(
+            f.connection,
+            first,
+            first_enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        ),
+        Err(Error::Revoked)
+    );
+    grant_presentation(&mut f.broker, f.connection, first, first_enrollment, f.now);
+    assert_eq!(
+        f.broker.prepare_presentation(
+            other,
+            second,
+            second_enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        ),
+        Err(Error::Revoked)
+    );
+    assert_eq!(
+        f.broker.prepare_presentation(
+            other,
+            first,
+            first_enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    let attempt = f
+        .broker
+        .prepare_presentation(
+            f.connection,
+            first,
+            first_enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(attempt.target(), f.a);
+    f.broker
+        .presentation_requested(f.connection, attempt, f.now)
+        .unwrap();
+    let other_target = foreground(&mut f.broker, monitor, window, f.b);
+    assert_eq!(
+        f.broker
+            .finish_presentation(f.connection, attempt, Some(other_target), f.now),
+        Ok(None)
+    );
+    let exact = foreground(&mut f.broker, monitor, window, f.a);
+    let confirmation = f
+        .broker
+        .finish_presentation(f.connection, attempt, Some(exact), f.now)
+        .unwrap()
+        .unwrap();
+    assert_eq!(confirmation.target, f.a);
+
+    let spec = f.spec(f.scope(), binding(1));
+    assert_eq!(
+        f.broker.admit_run(f.connection, None, spec, f.now),
+        Err(Error::Revoked)
+    );
+    let copied = PresentationRequirement::new(second, second_enrollment, confirmation.revision);
+    let live = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(other, copied, f.a, live, f.now),
+        Err(Error::Revoked)
+    );
+}
+
+#[test]
+fn presentation_revocation_is_scoped_and_invalidates_pending_reviews() {
+    let mut f = Fixture::new();
+    let scope = f.scope();
+    f.approve(scope.clone(), &[binding(1)]);
+    let other = f.broker.accept_connection().unwrap();
+    let (first, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    let (second, other_enrollment) = presentation_registration(&mut f.broker, other, f.b);
+    grant_presentation(&mut f.broker, f.connection, first, enrollment, f.now);
+    grant_presentation(&mut f.broker, other, second, other_enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(42);
+    let (_, requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        first,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    assert_eq!(
+        f.broker.revoke_controller_presentation(other, first),
+        Err(Error::Unauthorized)
+    );
+    let observation = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, requirement, f.a, observation, f.now),
+        Ok(())
+    );
+    f.broker
+        .revoke_controller_presentation(f.connection, first)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, first, enrollment),
+        Ok(f.a)
+    );
+    let observation = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, requirement, f.a, observation, f.now),
+        Err(Error::Revoked)
+    );
+    let spec = f.spec(scope, binding(1));
+    assert!(f.broker.admit_run(f.connection, None, spec, f.now).is_ok());
+    let other_attempt = f
+        .broker
+        .prepare_presentation(
+            other,
+            second,
+            other_enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        )
+        .unwrap();
+    f.broker.cancel_presentation(other, other_attempt).unwrap();
+    let pending = f
+        .broker
+        .prepare_controller_presentation_approval(f.connection, first, enrollment, f.now)
+        .unwrap();
+    f.broker
+        .revoke_controller_presentation(f.connection, first)
+        .unwrap();
+    assert_eq!(
+        f.broker.approve_controller_presentation(
+            f.connection,
+            NativeControllerPresentationApproval::new(pending, Duration::from_secs(60)),
+            f.now,
+        ),
+        Err(Error::BindingMismatch)
+    );
+}
+
+#[test]
+fn slot_revocation_preserves_enrollment_and_only_ordinary_cuts_presentation() {
+    for ordinary_cut in [false, true] {
+        let mut f = Fixture::new();
+        f.approve(f.scope(), &[binding(1)]);
+        let source = f.a;
+        approve_metadata(&mut f, &[source], &[], Duration::from_secs(60));
+        let deadline = f.now + Duration::from_secs(30);
+        let metadata_run = metadata_run(&mut f, &[source], deadline);
+        let (review_registration, review_enrollment) =
+            presentation_registration(&mut f.broker, f.connection, source);
+        let pending = f
+            .broker
+            .prepare_controller_presentation_approval(
+                f.connection,
+                review_registration,
+                review_enrollment,
+                f.now,
+            )
+            .unwrap();
+        let active_registration = f
+            .broker
+            .register_controller_session(f.connection, b"second registration")
+            .unwrap();
+        let active_enrollment =
+            enroll_controller(&mut f.broker, f.connection, active_registration, source);
+        grant_presentation(
+            &mut f.broker,
+            f.connection,
+            active_registration,
+            active_enrollment,
+            f.now,
+        );
+        let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+        let window = PresentationWindowId::from_host(42);
+        let attempt = f
+            .broker
+            .prepare_presentation(
+                f.connection,
+                active_registration,
+                active_enrollment,
+                window,
+                Duration::from_secs(2),
+                f.now,
+            )
+            .unwrap();
+        f.broker
+            .presentation_requested(f.connection, attempt, f.now)
+            .unwrap();
+
+        if ordinary_cut {
+            f.broker.revoke_ordinary(f.connection);
+        } else {
+            f.broker.revoke_metadata(f.connection);
+        }
+
+        for (registration, enrollment) in [
+            (review_registration, review_enrollment),
+            (active_registration, active_enrollment),
+        ] {
+            assert_eq!(
+                f.broker
+                    .resolve_controller_enrollment(f.connection, registration, enrollment),
+                Ok(source)
+            );
+        }
+        let approved = f.broker.approve_controller_presentation(
+            f.connection,
+            NativeControllerPresentationApproval::new(pending, Duration::from_secs(60)),
+            f.now,
+        );
+        let observation = foreground(&mut f.broker, monitor, window, source);
+        let presentation =
+            f.broker
+                .finish_presentation(f.connection, attempt, Some(observation), f.now);
+        if ordinary_cut {
+            assert_eq!(approved, Err(Error::BindingMismatch));
+            assert_eq!(presentation, Err(Error::Closed));
+            assert!(f
+                .broker
+                .prepare_request(
+                    f.connection,
+                    metadata_run,
+                    Operation::Discover { max_bytes: 32 },
+                    f.now,
+                )
+                .is_ok());
+        } else {
+            assert_eq!(approved, Ok(()));
+            assert!(presentation.unwrap().is_some());
+            assert_eq!(
+                f.broker.prepare_request(
+                    f.connection,
+                    metadata_run,
+                    Operation::Discover { max_bytes: 32 },
+                    f.now,
+                ),
+                Err(Error::Revoked)
+            );
+        }
+    }
+}
+
+#[test]
+fn ordinary_expiry_closes_presentation_without_a_timer_poll() {
+    for boundary in 0..6 {
+        let mut f = Fixture::new();
+        f.approve_for(f.scope(), &[binding(1)], Duration::from_secs(2));
+        let target = f.a;
+        approve_metadata(&mut f, &[target], &[], Duration::from_secs(60));
+        let metadata_deadline = f.now + Duration::from_secs(30);
+        let metadata = metadata_run(&mut f, &[target], metadata_deadline);
+        let (review_registration, review_enrollment) =
+            presentation_registration(&mut f.broker, f.connection, target);
+        let mut pending = Some(
+            f.broker
+                .prepare_controller_presentation_approval(
+                    f.connection,
+                    review_registration,
+                    review_enrollment,
+                    f.now,
+                )
+                .unwrap(),
+        );
+        let active_registration = f
+            .broker
+            .register_controller_session(f.connection, b"active")
+            .unwrap();
+        let active_enrollment =
+            enroll_controller(&mut f.broker, f.connection, active_registration, target);
+        grant_presentation(
+            &mut f.broker,
+            f.connection,
+            active_registration,
+            active_enrollment,
+            f.now,
+        );
+        let fresh_registration = f
+            .broker
+            .register_controller_session(f.connection, b"fresh")
+            .unwrap();
+        let fresh_enrollment =
+            enroll_controller(&mut f.broker, f.connection, fresh_registration, target);
+        let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+        let window = PresentationWindowId::from_host(42);
+        let expires = f.now + Duration::from_secs(2);
+        let attempt = f
+            .broker
+            .prepare_presentation(
+                f.connection,
+                active_registration,
+                active_enrollment,
+                window,
+                MAX_PRESENTATION_WAIT,
+                f.now,
+            )
+            .unwrap();
+        assert_eq!(attempt.deadline(), expires);
+        assert_eq!(f.broker.next_presentation_deadline(), Some(expires));
+
+        if boundary >= 4 {
+            f.broker
+                .presentation_requested(f.connection, attempt, f.now)
+                .unwrap();
+        }
+        let requirement = if boundary == 5 {
+            let observation = foreground(&mut f.broker, monitor, window, target);
+            let confirmed = f
+                .broker
+                .finish_presentation(f.connection, attempt, Some(observation), f.now)
+                .unwrap()
+                .unwrap();
+            assert_eq!(f.broker.next_presentation_deadline(), Some(expires));
+            Some(PresentationRequirement::new(
+                active_registration,
+                active_enrollment,
+                confirmed.revision,
+            ))
+        } else {
+            None
+        };
+
+        let mut fresh = None;
+        match boundary {
+            0 => {
+                fresh = Some(
+                    f.broker
+                        .prepare_controller_presentation_approval(
+                            f.connection,
+                            fresh_registration,
+                            fresh_enrollment,
+                            expires,
+                        )
+                        .unwrap(),
+                );
+            }
+            1 => {
+                assert_eq!(
+                    f.broker.approve_controller_presentation(
+                        f.connection,
+                        NativeControllerPresentationApproval::new(
+                            pending.take().unwrap(),
+                            Duration::from_secs(60),
+                        ),
+                        expires,
+                    ),
+                    Err(Error::BindingMismatch)
+                );
+            }
+            2 => {
+                assert_eq!(
+                    f.broker.prepare_presentation(
+                        f.connection,
+                        active_registration,
+                        active_enrollment,
+                        window,
+                        MAX_PRESENTATION_WAIT,
+                        expires,
+                    ),
+                    Err(Error::Revoked)
+                );
+            }
+            3 => {
+                assert_eq!(
+                    f.broker
+                        .presentation_requested(f.connection, attempt, expires),
+                    Err(Error::Expired)
+                );
+            }
+            4 => {
+                let observation = foreground(&mut f.broker, monitor, window, target);
+                assert_eq!(
+                    f.broker
+                        .finish_presentation(f.connection, attempt, Some(observation), expires,),
+                    Err(Error::Expired)
+                );
+            }
+            5 => {
+                let observation = foreground(&mut f.broker, monitor, window, target);
+                assert_eq!(
+                    f.broker.revalidate_presentation(
+                        f.connection,
+                        requirement.unwrap(),
+                        target,
+                        observation,
+                        expires,
+                    ),
+                    Err(Error::Revoked)
+                );
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(f.broker.next_presentation_deadline(), None);
+        if let Some(pending) = pending {
+            assert_eq!(
+                f.broker.approve_controller_presentation(
+                    f.connection,
+                    NativeControllerPresentationApproval::new(pending, Duration::from_secs(60)),
+                    expires,
+                ),
+                Err(Error::BindingMismatch)
+            );
+        }
+        assert_eq!(
+            f.broker.prepare_presentation(
+                f.connection,
+                active_registration,
+                active_enrollment,
+                window,
+                MAX_PRESENTATION_WAIT,
+                expires,
+            ),
+            Err(Error::Revoked)
+        );
+        assert_eq!(
+            f.broker.resolve_controller_enrollment(
+                f.connection,
+                active_registration,
+                active_enrollment,
+            ),
+            Ok(target)
+        );
+        assert!(f
+            .broker
+            .prepare_request(
+                f.connection,
+                metadata,
+                Operation::Discover { max_bytes: 32 },
+                expires,
+            )
+            .is_ok());
+        if let Some(fresh) = fresh {
+            f.broker
+                .approve_controller_presentation(
+                    f.connection,
+                    NativeControllerPresentationApproval::new(fresh, Duration::from_secs(60)),
+                    expires,
+                )
+                .unwrap();
+            assert!(f
+                .broker
+                .prepare_presentation(
+                    f.connection,
+                    fresh_registration,
+                    fresh_enrollment,
+                    window,
+                    Duration::from_secs(1),
+                    expires,
+                )
+                .is_ok());
+        }
+    }
+}
+
+#[test]
+fn metadata_expiry_does_not_cut_presentation() {
+    let mut f = Fixture::new();
+    f.approve_for(f.scope(), &[binding(1)], Duration::from_secs(60));
+    let target = f.a;
+    approve_metadata(&mut f, &[target], &[], Duration::from_secs(1));
+    let metadata_deadline = f.now + Duration::from_secs(1);
+    let metadata = metadata_run(&mut f, &[target], metadata_deadline);
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, target);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(42);
+    let (_, requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        registration,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    let observation = foreground(&mut f.broker, monitor, window, target);
+    let expires = f.now + Duration::from_secs(1);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, requirement, target, observation, expires,),
+        Ok(())
+    );
+    assert_eq!(
+        f.broker.prepare_request(
+            f.connection,
+            metadata,
+            Operation::Discover { max_bytes: 32 },
+            expires,
+        ),
+        Err(Error::Revoked)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, enrollment),
+        Ok(target)
+    );
+}
+
+#[test]
+fn presentation_waits_for_a_fresh_barrier_and_explicitly_refuses_native_failures() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(3);
+    let before_queue = foreground(&mut f.broker, monitor, window, f.a);
+    let attempt = f
+        .broker
+        .prepare_presentation(
+            f.connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .finish_presentation(f.connection, attempt, None, f.now),
+        Err(Error::InvalidRequest)
+    );
+    f.broker
+        .presentation_requested(f.connection, attempt, f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .finish_presentation(f.connection, attempt, None, f.now),
+        Ok(None)
+    );
+    assert_eq!(
+        f.broker
+            .finish_presentation(f.connection, attempt, Some(before_queue), f.now),
+        Err(Error::Revoked)
+    );
+    let attempt = f
+        .broker
+        .prepare_presentation(
+            f.connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        )
+        .unwrap();
+    f.broker
+        .presentation_requested(f.connection, attempt, f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .observe_presentation(monitor, NativePresentationState::ForegroundRefused),
+        Err(Error::ForegroundRefused)
+    );
+    assert_eq!(
+        f.broker
+            .finish_presentation(f.connection, attempt, None, f.now),
+        Err(Error::Closed)
+    );
+    assert_eq!(
+        f.broker
+            .observe_presentation(monitor, NativePresentationState::Unknown),
+        Err(Error::Unavailable)
+    );
+    assert_eq!(
+        f.broker.prepare_presentation(
+            f.connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        ),
+        Err(Error::Unavailable)
+    );
+    assert_eq!(
+        f.broker
+            .observe_presentation(monitor, NativePresentationState::Inactive),
+        Err(Error::Unavailable)
+    );
+}
+
+#[test]
+fn presentation_inactive_or_unselected_samples_make_previous_observations_stale() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    for intervening in [
+        NativePresentationState::Inactive,
+        NativePresentationState::Foreground {
+            window,
+            selected: None,
+            workspace_revision: 0,
+        },
+    ] {
+        let attempt = f
+            .broker
+            .prepare_presentation(
+                f.connection,
+                registration,
+                enrollment,
+                window,
+                Duration::from_secs(1),
+                f.now,
+            )
+            .unwrap();
+        f.broker
+            .presentation_requested(f.connection, attempt, f.now)
+            .unwrap();
+        let stale = foreground(&mut f.broker, monitor, window, f.a);
+        assert_eq!(
+            f.broker.observe_presentation(monitor, intervening),
+            Ok(None)
+        );
+        assert_eq!(
+            f.broker
+                .finish_presentation(f.connection, attempt, Some(stale), f.now),
+            Err(Error::Revoked)
+        );
+    }
+}
+
+#[test]
+fn presentation_attempts_are_bounded_cancellable_and_expire_without_a_ui_poll() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    for timeout in [
+        Duration::ZERO,
+        MAX_PRESENTATION_WAIT + Duration::from_secs(1),
+    ] {
+        assert_eq!(
+            f.broker.prepare_presentation(
+                f.connection,
+                registration,
+                enrollment,
+                window,
+                timeout,
+                f.now,
+            ),
+            Err(Error::InvalidRequest)
+        );
+    }
+    let attempt = f
+        .broker
+        .prepare_presentation(
+            f.connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(
+        f.broker.next_presentation_deadline(),
+        Some(attempt.deadline())
+    );
+    assert_eq!(
+        f.broker.prepare_presentation(
+            f.connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(1),
+            f.now,
+        ),
+        Err(Error::Busy)
+    );
+    f.broker.poll_expiry(attempt.deadline());
+    assert_eq!(f.broker.next_presentation_deadline(), None);
+    assert_eq!(
+        f.broker
+            .finish_presentation(f.connection, attempt, None, attempt.deadline()),
+        Err(Error::Expired)
+    );
+    let later = attempt.deadline();
+    for _ in 1..MAX_PRESENTATION_ATTEMPTS_PER_GRANT {
+        let attempt = f
+            .broker
+            .prepare_presentation(
+                f.connection,
+                registration,
+                enrollment,
+                window,
+                Duration::from_secs(1),
+                later,
+            )
+            .unwrap();
+        f.broker.cancel_presentation(f.connection, attempt).unwrap();
+        assert_eq!(
+            f.broker.cancel_presentation(f.connection, attempt),
+            Err(Error::Closed)
+        );
+    }
+    assert_eq!(
+        f.broker.prepare_presentation(
+            f.connection,
+            registration,
+            enrollment,
+            window,
+            Duration::from_secs(1),
+            later,
+        ),
+        Err(Error::QuotaExceeded)
+    );
+}
+
+#[test]
+fn presentation_native_reviews_are_exact_superseded_and_expire() {
+    let mut f = Fixture::new();
+    let (first, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    let second = f
+        .broker
+        .register_controller_session(f.connection, b"other")
+        .unwrap();
+    let other_enrollment = enroll_controller(&mut f.broker, f.connection, second, f.b);
+    let stale = f
+        .broker
+        .prepare_controller_presentation_approval(f.connection, first, enrollment, f.now)
+        .unwrap();
+    assert!(matches!(
+        f.broker.prepare_controller_presentation_approval(
+            f.connection,
+            first,
+            other_enrollment,
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    ));
+    assert_eq!(
+        f.broker.approve_controller_presentation(
+            f.connection,
+            NativeControllerPresentationApproval::new(stale, Duration::from_secs(30)),
+            f.now,
+        ),
+        Err(Error::BindingMismatch)
+    );
+    let expiring = f
+        .broker
+        .prepare_controller_presentation_approval(f.connection, first, enrollment, f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker.approve_controller_presentation(
+            f.connection,
+            NativeControllerPresentationApproval::new(expiring, Duration::from_secs(30)),
+            f.now + MAX_GRANT_LIFETIME,
+        ),
+        Err(Error::Expired)
+    );
+    let proposal = f
+        .broker
+        .prepare_controller_presentation_approval(
+            f.connection,
+            first,
+            enrollment,
+            f.now + MAX_GRANT_LIFETIME,
+        )
+        .unwrap();
+    assert_eq!(proposal.target(), f.a);
+    assert_eq!(proposal.registration(), first);
+    let other = f.broker.accept_connection().unwrap();
+    assert_eq!(
+        f.broker.approve_controller_presentation(
+            other,
+            NativeControllerPresentationApproval::new(proposal, Duration::from_secs(30)),
+            f.now + MAX_GRANT_LIFETIME,
+        ),
+        Err(Error::Unauthorized)
+    );
+}
+
+#[test]
+fn presentation_workspace_revision_detects_tab_aba_even_without_a_focus_event() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    let (_, requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        registration,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    let after_away_and_back = f
+        .broker
+        .observe_presentation(
+            monitor,
+            NativePresentationState::Foreground {
+                window,
+                selected: Some(f.a),
+                workspace_revision: 2,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        f.broker.revalidate_presentation(
+            f.connection,
+            requirement,
+            f.a,
+            after_away_and_back,
+            f.now,
+        ),
+        Err(Error::Revoked)
+    );
+    let old_snapshot = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, requirement, f.a, old_snapshot, f.now),
+        Err(Error::Revoked)
+    );
+}
+
+#[test]
+fn presentation_loss_and_regain_between_equal_samples_permanently_invalidates_revision() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    let (_, requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        registration,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    let first = foreground(&mut f.broker, monitor, window, f.a);
+    f.broker
+        .revalidate_presentation(f.connection, requirement, f.a, first, f.now)
+        .unwrap();
+
+    // The final sample is identical, but both transitions must be delivered.
+    f.broker.note_presentation_transition(monitor).unwrap();
+    f.broker.note_presentation_transition(monitor).unwrap();
+    let same_again = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, requirement, f.a, same_again, f.now),
+        Err(Error::Revoked)
+    );
+    let (_, new_requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        registration,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    let live = foreground(&mut f.broker, monitor, window, f.a);
+    f.broker
+        .revalidate_presentation(f.connection, new_requirement, f.a, live, f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, new_requirement, f.a, live, f.now),
+        Err(Error::Revoked)
+    );
+    let fresh = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, new_requirement, f.a, fresh, f.now),
+        Err(Error::Revoked)
+    );
+}
+
+#[test]
+fn presentation_evidence_does_not_survive_tab_window_or_monitor_changes() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let mut monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    for changed in [
+        NativePresentationState::Foreground {
+            window,
+            selected: Some(f.b),
+            workspace_revision: 0,
+        },
+        NativePresentationState::Foreground {
+            window: PresentationWindowId::from_host(2),
+            selected: Some(f.a),
+            workspace_revision: 0,
+        },
+        NativePresentationState::Inactive,
+    ] {
+        let (_, requirement) = presented(
+            &mut f.broker,
+            f.connection,
+            registration,
+            enrollment,
+            monitor,
+            window,
+            f.now,
+        );
+        f.broker.note_presentation_transition(monitor).unwrap();
+        let _ = f.broker.observe_presentation(monitor, changed).unwrap();
+        f.broker.note_presentation_transition(monitor).unwrap();
+        let back = foreground(&mut f.broker, monitor, window, f.a);
+        assert_eq!(
+            f.broker
+                .revalidate_presentation(f.connection, requirement, f.a, back, f.now),
+            Err(Error::Revoked)
+        );
+    }
+    let (_, requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        registration,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    f.broker.lose_presentation_monitor(monitor).unwrap();
+    monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let fresh = foreground(&mut f.broker, monitor, window, f.a);
+    assert_eq!(
+        f.broker
+            .revalidate_presentation(f.connection, requirement, f.a, fresh, f.now),
+        Err(Error::Revoked)
+    );
+}
+
+#[test]
+fn presentation_required_input_cannot_drop_or_reuse_its_frozen_condition() {
+    let mut f = Fixture::new();
+    let (run, lease) = f.controlled();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.b);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    let (_, requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        registration,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    let operation = Operation::Control {
+        lease,
+        input: digest(3),
+        bytes: 10,
+        presentation: Some(requirement),
+    };
+    let request = f
+        .broker
+        .prepare_request(f.connection, run, operation, f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .commit_control(f.connection, request, digest(3), 10, f.now),
+        Err(Error::BindingMismatch)
+    );
+    let live = foreground(&mut f.broker, monitor, window, f.b);
+    f.broker
+        .commit_presented_control(f.connection, request, digest(3), 10, live, f.now)
+        .unwrap();
+    f.broker.settle_request(f.connection, request).unwrap();
+    let stale = f
+        .broker
+        .prepare_request(f.connection, run, operation, f.now)
+        .unwrap();
+    let live_before_loss = foreground(&mut f.broker, monitor, window, f.b);
+    f.broker.note_presentation_transition(monitor).unwrap();
+    f.broker.note_presentation_transition(monitor).unwrap();
+    assert_eq!(
+        f.broker.commit_presented_control(
+            f.connection,
+            stale,
+            digest(3),
+            10,
+            live_before_loss,
+            f.now,
+        ),
+        Err(Error::Revoked)
+    );
+    let status = f.broker.status(f.connection, run, f.now).unwrap();
+    assert_eq!(status.admitted_effects, 1);
+    assert!(status.execution_outcome_unknown);
+}
+
+#[test]
+fn direct_input_preserves_its_binding_and_one_effect_with_presented_control() {
+    for stale_presentation in [false, true] {
+        let mut f = Fixture::new();
+        let scope = input_scope(f.b);
+        let action = direct_input(f.b, digest(3), 10);
+        f.approve(scope.clone(), &[action]);
+        let run = f.run(scope, action);
+        let lease = f.lease(run, f.b);
+        let (registration, enrollment) =
+            presentation_registration(&mut f.broker, f.connection, f.b);
+        grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+        let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+        let window = PresentationWindowId::from_host(1);
+        let (_, requirement) = presented(
+            &mut f.broker,
+            f.connection,
+            registration,
+            enrollment,
+            monitor,
+            window,
+            f.now,
+        );
+        let operation = Operation::Control {
+            lease,
+            input: digest(3),
+            bytes: 10,
+            presentation: Some(requirement),
+        };
+        assert_eq!(
+            f.broker.prepare_request(
+                f.connection,
+                run,
+                Operation::Control {
+                    lease,
+                    input: digest(4),
+                    bytes: 10,
+                    presentation: Some(requirement),
+                },
+                f.now,
+            ),
+            Err(Error::BindingMismatch)
+        );
+        let request = f
+            .broker
+            .prepare_request(f.connection, run, operation, f.now)
+            .unwrap();
+        let live = foreground(&mut f.broker, monitor, window, f.b);
+        assert_eq!(
+            f.broker
+                .commit_control(f.connection, request, digest(3), 10, f.now),
+            Err(Error::BindingMismatch)
+        );
+        assert_eq!(
+            f.broker
+                .commit_presented_control(f.connection, request, digest(4), 10, live, f.now),
+            Err(Error::BindingMismatch)
+        );
+        if stale_presentation {
+            f.broker.note_presentation_transition(monitor).unwrap();
+            assert_eq!(
+                f.broker.commit_presented_control(
+                    f.connection,
+                    request,
+                    digest(3),
+                    10,
+                    live,
+                    f.now
+                ),
+                Err(Error::Revoked)
+            );
+        } else {
+            f.broker
+                .commit_presented_control(f.connection, request, digest(3), 10, live, f.now)
+                .unwrap();
+            assert_eq!(
+                f.broker.commit_presented_control(
+                    f.connection,
+                    request,
+                    digest(3),
+                    10,
+                    live,
+                    f.now
+                ),
+                Err(Error::Closed)
+            );
+        }
+        assert_eq!(
+            f.broker
+                .prepare_request(f.connection, run, operation, f.now),
+            Err(Error::Closed)
+        );
+        let status = f
+            .broker
+            .complete(f.connection, run, Completion::Returned, f.now)
+            .unwrap();
+        assert_eq!(status.admitted_effects, u32::from(!stale_presentation));
+        assert_eq!(status.execution_outcome_unknown, !stale_presentation);
+    }
+}
+
+#[test]
+fn presentation_grants_and_evidence_end_on_rebind_revoke_privacy_and_disconnect() {
+    for transition in 0..6 {
+        let mut f = Fixture::new();
+        let (registration, enrollment) =
+            presentation_registration(&mut f.broker, f.connection, f.a);
+        grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+        let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+        let window = PresentationWindowId::from_host(1);
+        let (_, requirement) = presented(
+            &mut f.broker,
+            f.connection,
+            registration,
+            enrollment,
+            monitor,
+            window,
+            f.now,
+        );
+        let observation = foreground(&mut f.broker, monitor, window, f.a);
+        match transition {
+            0 => {
+                let new_enrollment =
+                    enroll_controller(&mut f.broker, f.connection, registration, f.a);
+                assert_ne!(enrollment, new_enrollment);
+            }
+            1 => f.broker.revoke(f.connection),
+            2 => f.broker.revoke_all(),
+            3 => f.broker.disconnect(f.connection),
+            4 => {
+                f.broker
+                    .attach_target(f.a.session(), f.a.generation() + 1)
+                    .unwrap();
+            }
+            5 => f.broker.close_target(f.a).unwrap(),
+            _ => unreachable!(),
+        }
+        assert!(f
+            .broker
+            .revalidate_presentation(f.connection, requirement, f.a, observation, f.now)
+            .is_err());
+        if transition == 1 {
+            assert_eq!(
+                f.broker
+                    .resolve_controller_enrollment(f.connection, registration, enrollment),
+                Ok(f.a)
+            );
+        }
+    }
+}
+
+#[test]
+fn presentation_revisions_are_strict_opaque_wire_values() {
+    let mut f = Fixture::new();
+    let (registration, enrollment) = presentation_registration(&mut f.broker, f.connection, f.a);
+    grant_presentation(&mut f.broker, f.connection, registration, enrollment, f.now);
+    let monitor = f.broker.start_qualified_presentation_monitor().unwrap();
+    let window = PresentationWindowId::from_host(1);
+    let (_, requirement) = presented(
+        &mut f.broker,
+        f.connection,
+        registration,
+        enrollment,
+        monitor,
+        window,
+        f.now,
+    );
+    let revision = requirement.revision();
+    let wire = serde_json::to_string(&revision).unwrap();
+    assert_eq!(wire.len(), 50);
+    assert_eq!(
+        serde_json::from_str::<PresentationRevision>(&wire).unwrap(),
+        revision
+    );
+    for invalid in [r#""ABC""#, r#""a""#, "null", "[]"] {
+        assert!(serde_json::from_str::<PresentationRevision>(invalid).is_err());
+    }
+}
+
+#[test]
+fn controller_enrollment_uses_exact_native_selection_not_labels_or_position() {
+    let mut f = Fixture::new();
+    let first = f
+        .broker
+        .register_controller_session(f.connection, b"local-agent-1")
+        .unwrap();
+    let second = f
+        .broker
+        .register_controller_session(f.connection, b"local-agent-2")
+        .unwrap();
+    let mut displayed = [("same label", f.a), ("same label", f.b)];
+    let proposal = f
+        .broker
+        .prepare_controller_enrollment(f.connection, first, displayed[1].1)
+        .unwrap();
+    displayed.swap(0, 1);
+    let selected = f
+        .broker
+        .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(proposal))
+        .unwrap();
+    let other = enroll_controller(&mut f.broker, f.connection, second, displayed[1].1);
+
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, first, selected),
+        Ok(f.b)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, second, other),
+        Ok(f.a)
+    );
+    assert_eq!(
+        f.broker
+            .register_controller_session(f.connection, b"local-agent-1"),
+        Ok(first)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, first, selected),
+        Ok(f.b)
+    );
+}
+
+#[test]
+fn controller_registrations_are_connection_owned_and_disconnect_clears_them() {
+    let mut f = Fixture::new();
+    let other = f.broker.accept_connection().unwrap();
+    let first = f
+        .broker
+        .register_controller_session(f.connection, b"same-local-id")
+        .unwrap();
+    let second = f
+        .broker
+        .register_controller_session(other, b"same-local-id")
+        .unwrap();
+    assert_ne!(first, second);
+    assert_eq!(
+        f.broker.controller_registration(f.connection, first),
+        Ok(&b"same-local-id"[..])
+    );
+    assert_eq!(
+        f.broker.controller_registration(other, first),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .prepare_controller_enrollment(other, first, f.a)
+            .unwrap_err(),
+        Error::Unauthorized
+    );
+    let proposal = f
+        .broker
+        .prepare_controller_enrollment(f.connection, first, f.a)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .approve_controller_enrollment(other, NativeControllerEnrollment::new(proposal)),
+        Err(Error::Unauthorized)
+    );
+    let first_binding = enroll_controller(&mut f.broker, f.connection, first, f.a);
+    let second_binding = enroll_controller(&mut f.broker, other, second, f.b);
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(other, first, first_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(other, second, first_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.unregister_controller_session(other, first),
+        Err(Error::Unauthorized)
+    );
+
+    let before_disconnect = f
+        .broker
+        .prepare_controller_enrollment(f.connection, first, f.b)
+        .unwrap();
+    f.broker.disconnect(f.connection);
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, first, first_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(other, second, second_binding),
+        Ok(f.b)
+    );
+    let reconnected = f.broker.accept_connection().unwrap();
+    let new_registration = f
+        .broker
+        .register_controller_session(reconnected, b"same-local-id")
+        .unwrap();
+    assert_ne!(new_registration, first);
+    assert_eq!(
+        f.broker.approve_controller_enrollment(
+            reconnected,
+            NativeControllerEnrollment::new(before_disconnect)
+        ),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(reconnected, new_registration, first_binding),
+        Err(Error::Unauthorized)
+    );
+}
+
+#[test]
+fn controller_rebinding_invalidates_old_references_and_review_decisions() {
+    let mut f = Fixture::new();
+    let registration = f
+        .broker
+        .register_controller_session(f.connection, b"agent")
+        .unwrap();
+    let first_binding = enroll_controller(&mut f.broker, f.connection, registration, f.a);
+    let stale = f
+        .broker
+        .prepare_controller_enrollment(f.connection, registration, f.a)
+        .unwrap();
+    let latest = f
+        .broker
+        .prepare_controller_enrollment(f.connection, registration, f.b)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(stale)),
+        Err(Error::BindingMismatch)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, first_binding),
+        Ok(f.a)
+    );
+
+    let second_binding = f
+        .broker
+        .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(latest))
+        .unwrap();
+    assert_ne!(first_binding, second_binding);
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, first_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, second_binding),
+        Ok(f.b)
+    );
+    let third_binding = enroll_controller(&mut f.broker, f.connection, registration, f.b);
+    assert_ne!(second_binding, third_binding);
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, second_binding),
+        Err(Error::Unauthorized)
+    );
+
+    let pending = f
+        .broker
+        .prepare_controller_enrollment(f.connection, registration, f.a)
+        .unwrap();
+    f.broker
+        .unregister_controller_session(f.connection, registration)
+        .unwrap();
+    let replacement = f
+        .broker
+        .register_controller_session(f.connection, b"agent")
+        .unwrap();
+    assert_ne!(registration, replacement);
+    assert_eq!(
+        f.broker
+            .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(pending)),
+        Err(Error::Unauthorized)
+    );
+}
+
+#[test]
+fn stale_new_controller_selection_cancels_pending_decision_not_current_binding() {
+    let mut f = Fixture::new();
+    let registration = f
+        .broker
+        .register_controller_session(f.connection, b"agent")
+        .unwrap();
+    let current = enroll_controller(&mut f.broker, f.connection, registration, f.a);
+    let pending = f
+        .broker
+        .prepare_controller_enrollment(f.connection, registration, f.b)
+        .unwrap();
+    let stale_target = f.broker.attach_target(3, 1).unwrap();
+    f.broker.close_target(stale_target).unwrap();
+
+    assert_eq!(
+        f.broker
+            .prepare_controller_enrollment(f.connection, registration, stale_target)
+            .unwrap_err(),
+        Error::StaleTarget
+    );
+    assert_eq!(
+        f.broker
+            .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(pending)),
+        Err(Error::BindingMismatch)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, current),
+        Ok(f.a)
+    );
+}
+
+#[test]
+fn controller_enrollment_invalidates_on_replacement_close_and_broker_restart() {
+    let mut f = Fixture::new();
+    let other_connection = f.broker.accept_connection().unwrap();
+    let first = f
+        .broker
+        .register_controller_session(f.connection, b"first")
+        .unwrap();
+    let second = f
+        .broker
+        .register_controller_session(f.connection, b"second")
+        .unwrap();
+    let first_binding = enroll_controller(&mut f.broker, f.connection, first, f.a);
+    let second_binding = enroll_controller(&mut f.broker, f.connection, second, f.b);
+    let other_registration = f
+        .broker
+        .register_controller_session(other_connection, b"other")
+        .unwrap();
+    let other_binding = enroll_controller(&mut f.broker, other_connection, other_registration, f.a);
+    let pending = f
+        .broker
+        .prepare_controller_enrollment(f.connection, first, f.b)
+        .unwrap();
+    let replacement = f.broker.attach_target(f.a.session(), 2).unwrap();
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, first, first_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(other_connection, other_registration, other_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(pending)),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, second, second_binding),
+        Ok(f.b)
+    );
+    let fresh = f
+        .broker
+        .register_controller_session(f.connection, b"first")
+        .unwrap();
+    assert_ne!(fresh, first);
+    let fresh_binding = enroll_controller(&mut f.broker, f.connection, fresh, replacement);
+    let pending_closed_target = f
+        .broker
+        .prepare_controller_enrollment(f.connection, fresh, f.b)
+        .unwrap();
+    f.broker.close_target(f.b).unwrap();
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, second, second_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.approve_controller_enrollment(
+            f.connection,
+            NativeControllerEnrollment::new(pending_closed_target)
+        ),
+        Err(Error::StaleTarget)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, fresh, fresh_binding),
+        Ok(replacement)
+    );
+    let session = f.a.session();
+    drop(f);
+
+    let mut before = Broker::new([7; 16]);
+    let old_connection = before.accept_connection().unwrap();
+    let old_target = before.attach_target(session, 2).unwrap();
+    let old_registration = before
+        .register_controller_session(old_connection, b"first")
+        .unwrap();
+    let old_binding = enroll_controller(&mut before, old_connection, old_registration, old_target);
+    let before_restart = before
+        .prepare_controller_enrollment(old_connection, old_registration, old_target)
+        .unwrap();
+    drop(before);
+
+    let mut restarted = Broker::new([8; 16]);
+    let connection = restarted.accept_connection().unwrap();
+    let target = restarted.attach_target(session, 2).unwrap();
+    let registration = restarted
+        .register_controller_session(connection, b"first")
+        .unwrap();
+    assert_eq!(
+        restarted.resolve_controller_enrollment(connection, old_registration, old_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        restarted.approve_controller_enrollment(
+            connection,
+            NativeControllerEnrollment::new(before_restart)
+        ),
+        Err(Error::Unauthorized)
+    );
+    let binding = enroll_controller(&mut restarted, connection, registration, target);
+    assert_ne!(old_binding, binding);
+    assert_eq!(
+        restarted.resolve_controller_enrollment(connection, registration, old_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        restarted.resolve_controller_enrollment(connection, registration, binding),
+        Ok(target)
+    );
+}
+
+#[test]
+fn controller_registrations_are_bounded_and_capacity_is_reclaimed() {
+    let mut broker = Broker::with_limits(
+        [7; 16],
+        Limits {
+            controller_registrations: 3,
+            controller_registrations_per_connection: 2,
+            ..Limits::default()
+        },
+    );
+    let first = broker.accept_connection().unwrap();
+    let second = broker.accept_connection().unwrap();
+    assert_eq!(
+        broker.register_controller_session(first, b""),
+        Err(Error::InvalidRequest)
+    );
+    assert_eq!(
+        broker.register_controller_session(first, &[0; MAX_CONTROLLER_REGISTRATION_BYTES + 1]),
+        Err(Error::InvalidRequest)
+    );
+    let maximum = [0xff; MAX_CONTROLLER_REGISTRATION_BYTES];
+    let first_id = broker.register_controller_session(first, &maximum).unwrap();
+    let second_id = broker
+        .register_controller_session(first, b"\0opaque")
+        .unwrap();
+    assert_eq!(
+        broker.register_controller_session(first, &maximum),
+        Ok(first_id)
+    );
+    assert_eq!(
+        broker.register_controller_session(first, b"over-principal-limit"),
+        Err(Error::QuotaExceeded)
+    );
+    broker
+        .register_controller_session(second, b"other")
+        .unwrap();
+    assert_eq!(
+        broker.register_controller_session(second, b"over-global-limit"),
+        Err(Error::QuotaExceeded)
+    );
+    broker
+        .unregister_controller_session(first, second_id)
+        .unwrap();
+    broker
+        .register_controller_session(second, b"now-fits")
+        .unwrap();
+    broker.disconnect(first);
+    let third = broker.accept_connection().unwrap();
+    assert!(broker.register_controller_session(third, b"freed").is_ok());
+
+    let mut clamped = Broker::with_limits(
+        [9; 16],
+        Limits {
+            controller_registrations: usize::MAX,
+            controller_registrations_per_connection: usize::MAX,
+            ..Limits::default()
+        },
+    );
+    let connection = clamped.accept_connection().unwrap();
+    for id in 0..Limits::default().controller_registrations_per_connection {
+        clamped
+            .register_controller_session(connection, &[id as u8])
+            .unwrap();
+    }
+    assert_eq!(
+        clamped.register_controller_session(connection, b"one-too-many"),
+        Err(Error::QuotaExceeded)
+    );
+    for _ in 1..(Limits::default().controller_registrations
+        / Limits::default().controller_registrations_per_connection)
+    {
+        let connection = clamped.accept_connection().unwrap();
+        for id in 0..Limits::default().controller_registrations_per_connection {
+            clamped
+                .register_controller_session(connection, &[id as u8])
+                .unwrap();
+        }
+    }
+    let another = clamped.accept_connection().unwrap();
+    assert_eq!(
+        clamped.register_controller_session(another, b"over-global-ceiling"),
+        Err(Error::QuotaExceeded)
+    );
+}
+
+#[test]
+fn controller_enrollment_never_authorizes_discovery_observation_or_control() {
+    let mut f = Fixture::new();
+    let registration = f
+        .broker
+        .register_controller_session(f.connection, b"hardware-gesture=approved")
+        .unwrap();
+    let mut requested = f.scope();
+    requested.discover.insert(f.b);
+    requested.observe.insert(f.b);
+    requested.control.insert(f.b);
+    let spec = f.spec(requested.clone(), binding(1));
+    assert_eq!(
+        f.broker.admit_run(f.connection, None, spec.clone(), f.now),
+        Err(Error::Revoked)
+    );
+    let enrollment = enroll_controller(&mut f.broker, f.connection, registration, f.b);
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, enrollment),
+        Ok(f.b)
+    );
+    assert_eq!(
+        f.broker.admit_run(f.connection, None, spec, f.now),
+        Err(Error::Revoked)
+    );
+
+    let allowed = Scope {
+        discover: BTreeSet::from([f.a]),
+        observe: BTreeSet::from([f.a]),
+        ..Scope::default()
+    };
+    f.approve(
+        allowed.clone(),
+        &[
+            direct(DirectKind::Discovery),
+            direct(DirectKind::Observation),
+        ],
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, enrollment),
+        Ok(f.b)
+    );
+    let discovery = f.run(allowed.clone(), direct(DirectKind::Discovery));
+    let request = f
+        .broker
+        .prepare_request(
+            f.connection,
+            discovery,
+            Operation::Discover { max_bytes: 64 },
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .discovery_targets(f.connection, request, f.now)
+            .unwrap(),
+        vec![f.a]
+    );
+    let observation = f.run(allowed, direct(DirectKind::Observation));
+    assert_eq!(
+        f.broker.prepare_request(
+            f.connection,
+            observation,
+            Operation::Observe {
+                target: f.b,
+                max_bytes: 64,
+            },
+            f.now
+        ),
+        Err(Error::Unauthorized)
+    );
+    assert!(matches!(
+        f.broker
+            .prepare_lease(f.connection, observation, f.b, f.now),
+        Err(Error::Unauthorized)
+    ));
+    assert_eq!(
+        f.broker.admit_run(
+            f.connection,
+            None,
+            f.spec(requested.clone(), binding(1)),
+            f.now
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker.revoke(f.connection);
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, enrollment),
+        Ok(f.b)
+    );
+    assert_eq!(
+        f.broker
+            .admit_run(f.connection, None, f.spec(requested, binding(1)), f.now),
+        Err(Error::Revoked)
+    );
+}
+
+#[test]
+fn global_revocation_discards_controller_enrollments() {
+    let mut f = Fixture::new();
+    let registration = f
+        .broker
+        .register_controller_session(f.connection, b"agent")
+        .unwrap();
+    let enrollment = enroll_controller(&mut f.broker, f.connection, registration, f.a);
+    let pending = f
+        .broker
+        .prepare_controller_enrollment(f.connection, registration, f.b)
+        .unwrap();
+    f.broker.revoke_all();
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, enrollment),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(pending)),
+        Err(Error::Unauthorized)
+    );
+    let fresh = f
+        .broker
+        .register_controller_session(f.connection, b"agent")
+        .unwrap();
+    assert_ne!(registration, fresh);
 }
 
 #[test]
@@ -1536,6 +3402,7 @@ fn lease_ownership_is_exclusive_and_pending_transition_does_not_authorize() {
                 lease,
                 input: digest(3),
                 bytes: 10,
+                presentation: None,
             },
             f.now
         ),

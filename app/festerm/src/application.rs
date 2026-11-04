@@ -135,11 +135,18 @@ pub(crate) struct FesTermApplication {
     native_documents: Option<festerm_macos_window::OpenDocumentBridge>,
     activation_errors: Arc<Mutex<VecDeque<String>>>,
     automation: crate::automation::Coordinator,
+    presentation_workspace: crate::automation::WorkspaceRevision,
     ime_admission: ImeAdmission,
 }
 
 impl FesTermApplication {
-    pub(crate) fn new(primary: FesTermApp) -> Self {
+    pub(crate) fn new(mut primary: FesTermApp) -> Self {
+        let presentation_workspace = crate::automation::WorkspaceRevision::default();
+        primary.set_presentation_workspace(&presentation_workspace);
+        let mut automation = crate::automation::Coordinator::default();
+        automation
+            .bind_presentation_workspace(&presentation_workspace)
+            .expect("a new coordinator has no presentation workspace");
         Self {
             windows: vec![Window {
                 id: WindowId::PRIMARY,
@@ -151,7 +158,8 @@ impl FesTermApplication {
             document_activation: ActivationQueue::default(),
             native_documents: None,
             activation_errors: Default::default(),
-            automation: Default::default(),
+            automation,
+            presentation_workspace,
             ime_admission: ImeAdmission::new(),
         }
     }
@@ -176,6 +184,9 @@ impl FesTermApplication {
             self.windows[index]
                 .app
                 .restore_window_tabs(context, &restored);
+            self.windows[index]
+                .app
+                .set_presentation_workspace(&self.presentation_workspace);
         }
     }
 
@@ -293,6 +304,114 @@ impl FesTermApplication {
         );
         context.send_viewport_cmd_to(window.id.viewport_id(), egui::ViewportCommand::Focus);
         context.request_repaint();
+    }
+
+    /// Inert on every production backend until a qualified native monitor and
+    /// the enrollment/grant adapters exist. This only queues presentation; the
+    /// caller must still await a fresh native barrier and revalidate delivery.
+    #[allow(dead_code)]
+    fn queue_controller_presentation(
+        &mut self,
+        channel: u64,
+        registration: festerm_automation::ControllerRegistrationId,
+        enrollment: festerm_automation::ControllerEnrollmentId,
+        timeout: std::time::Duration,
+        context: &egui::Context,
+    ) -> festerm_automation::Result<festerm_automation::PresentationAttempt> {
+        self.queue_controller_presentation_if(
+            channel,
+            registration,
+            enrollment,
+            timeout,
+            context,
+            |session| {
+                matches!(
+                    session.controller.session(),
+                    Some(crate::tabs::ApplicationSession::Local(_))
+                )
+            },
+        )
+    }
+
+    fn queue_controller_presentation_if(
+        &mut self,
+        channel: u64,
+        registration: festerm_automation::ControllerRegistrationId,
+        enrollment: festerm_automation::ControllerEnrollmentId,
+        timeout: std::time::Duration,
+        context: &egui::Context,
+        eligible: impl FnOnce(&crate::tabs::SessionTab) -> bool,
+    ) -> festerm_automation::Result<festerm_automation::PresentationAttempt> {
+        use festerm_automation::{Error, PresentationWindowId};
+
+        let target =
+            self.automation
+                .controller_presentation_target(channel, registration, enrollment)?;
+        let tab = crate::tabs::TabId::from_chip_id(target.session());
+        let mut matches = self
+            .windows
+            .iter()
+            .enumerate()
+            .filter(|(_, window)| window.app.automation_session(tab).is_some());
+        let (index, window) = matches.next().ok_or(Error::StaleTarget)?;
+        if !eligible(
+            window
+                .app
+                .automation_session(tab)
+                .ok_or(Error::StaleTarget)?,
+        ) || matches.next().is_some()
+        {
+            return Err(Error::Unavailable);
+        }
+        let window = PresentationWindowId::from_host(window.id.0);
+        let guard =
+            festerm_session::try_automation_admission_lock().map_err(|error| match error {
+                festerm_session::AutomationAdmissionTryError::Busy => Error::Busy,
+                festerm_session::AutomationAdmissionTryError::Poisoned => Error::Unavailable,
+            })?;
+        if self.presentation_workspace.current().is_none() {
+            self.automation.invalidate_presentation_locked();
+            return Err(Error::Unavailable);
+        }
+        let attempt = self.automation.prepare_presentation_locked(
+            channel,
+            registration,
+            enrollment,
+            (target, window),
+            timeout,
+            &guard,
+        )?;
+        if !self.windows[index]
+            .app
+            .activate_presentation_target(tab, context)
+        {
+            self.automation
+                .cancel_presentation_locked(channel, attempt, &guard);
+            return Err(Error::StaleTarget);
+        }
+        if self.presentation_workspace.current().is_none() {
+            self.automation
+                .cancel_presentation_locked(channel, attempt, &guard);
+            self.automation.invalidate_presentation_locked();
+            return Err(Error::Unavailable);
+        }
+        self.focus_window(index, context);
+        if let Err(error) = self.automation.presentation_requested_locked(
+            channel,
+            attempt,
+            std::time::Instant::now(),
+            &guard,
+        ) {
+            self.automation
+                .cancel_presentation_locked(channel, attempt, &guard);
+            return Err(error);
+        }
+        context.request_repaint_after(
+            attempt
+                .deadline()
+                .saturating_duration_since(std::time::Instant::now()),
+        );
+        Ok(attempt)
     }
 
     #[cfg(test)]
@@ -450,6 +569,7 @@ impl FesTermApplication {
                 if target == source {
                     return;
                 }
+                self.presentation_workspace.changed();
                 let Some(tab) = self.windows[source_index].app.detach_tab(request.moved) else {
                     return;
                 };
@@ -483,6 +603,7 @@ impl FesTermApplication {
         if source != WindowId::PRIMARY && self.windows[source_index].app.tab_count() <= 1 {
             return;
         }
+        self.presentation_workspace.changed();
         let Some(tab) = self.windows[source_index].app.detach_tab(request.moved) else {
             return;
         };
@@ -514,6 +635,7 @@ impl FesTermApplication {
         if id == WindowId::PRIMARY {
             self.windows[index].app.open_launcher_if_empty(context);
         } else {
+            self.presentation_workspace.changed();
             self.windows.remove(index);
             context.request_repaint();
         }
@@ -634,6 +756,7 @@ impl FesTermApplication {
         // Without this, opening a window from an otherwise idle application
         // leaves egui with no reason to repaint and the window never appears.
         context.request_repaint();
+        self.presentation_workspace.changed();
         let (configuration, status, reloader, secret_store, documents) =
             self.windows[0].app.shared_application_services();
         let id = WindowId(self.next_window_id);
@@ -647,6 +770,7 @@ impl FesTermApplication {
             secret_store,
             documents,
         );
+        app.set_presentation_workspace(&self.presentation_workspace);
         if let Some(tab) = detached {
             app.adopt_detached_tab(tab);
         }
@@ -665,6 +789,13 @@ impl FesTermApplication {
     /// viewport with nothing to render.
     fn close_finished_windows(&mut self, context: &egui::Context) {
         let before = self.windows.len();
+        if self
+            .windows
+            .iter()
+            .any(|window| window.id != WindowId::PRIMARY && window.app.window_close_accepted())
+        {
+            self.presentation_workspace.changed();
+        }
         self.windows
             .retain(|window| window.id == WindowId::PRIMARY || !window.app.window_close_accepted());
         if self.windows.len() != before {
@@ -725,6 +856,7 @@ impl eframe::App for FesTermApplication {
     }
 
     fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
+        self.automation.advance_presentation_deadline(context);
         self.refresh_application_close_context();
         eframe::App::logic(self.primary_mut(), context, frame);
     }
@@ -764,6 +896,273 @@ mod tests {
         let context = egui::Context::default();
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         (FesTermApplication::new(app), context)
+    }
+
+    #[test]
+    fn presentation_routes_exact_tab_but_queueing_focus_is_not_confirmation() {
+        use festerm_automation::{Error, NativePresentationState, PresentationRequirement};
+
+        let context = egui::Context::default();
+        let (mut app, first) = FesTermApp::automation_fixture();
+        app.dispatch_for_test(AppCommand::OpenLauncher, &context);
+        let second = app.automation_replace_fixture_session();
+        app.automation_session_mut(first).label = "same".into();
+        app.automation_session_mut(second).label = "same".into();
+        let mut application = FesTermApplication::new(app);
+        let (channel, registration, enrollment, monitor, target) = application
+            .automation
+            .setup_presentation_for_test(&application.windows[0].app, first);
+        assert_eq!(application.primary_mut().active_tab_id_for_test(), second);
+        assert_eq!(
+            application.queue_controller_presentation(
+                channel,
+                registration,
+                enrollment,
+                std::time::Duration::from_secs(2),
+                &context,
+            ),
+            Err(Error::Unavailable)
+        );
+        assert_eq!(application.primary_mut().active_tab_id_for_test(), second);
+
+        let (held_send, held) = std::sync::mpsc::sync_channel(1);
+        let (release, released) = std::sync::mpsc::sync_channel(1);
+        let holder = std::thread::spawn(move || {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            held_send.send(()).unwrap();
+            released
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .is_ok()
+        });
+        held.recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(
+            application.queue_controller_presentation_if(
+                channel,
+                registration,
+                enrollment,
+                std::time::Duration::from_secs(2),
+                &context,
+                |_| true,
+            ),
+            Err(Error::Busy)
+        );
+        release.send(()).unwrap();
+        assert!(holder.join().unwrap());
+        assert_eq!(application.primary_mut().active_tab_id_for_test(), second);
+
+        let attempt = crate::automation::retry_automation_busy(|| {
+            application.queue_controller_presentation_if(
+                channel,
+                registration,
+                enrollment,
+                std::time::Duration::from_secs(2),
+                &context,
+                |_| true,
+            )
+        })
+        .unwrap();
+        assert_eq!(application.primary_mut().active_tab_id_for_test(), first);
+        assert_eq!(attempt.target(), target);
+        let revision = application.presentation_workspace.current().unwrap();
+        let (principal, broker) = application.automation.presentation_broker_for_test(channel);
+        assert_eq!(
+            broker.finish_presentation(principal, attempt, None, std::time::Instant::now()),
+            Ok(None)
+        );
+        let simulated = broker
+            .observe_presentation(
+                monitor,
+                NativePresentationState::Foreground {
+                    window: attempt.window(),
+                    selected: Some(target),
+                    workspace_revision: revision,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let confirmed = broker
+            .finish_presentation(
+                principal,
+                attempt,
+                Some(simulated),
+                std::time::Instant::now(),
+            )
+            .unwrap()
+            .unwrap();
+        let requirement =
+            PresentationRequirement::new(registration, enrollment, confirmed.revision);
+        application
+            .primary_mut()
+            .dispatch_for_test(AppCommand::ActivateTab(second), &context);
+        application
+            .primary_mut()
+            .dispatch_for_test(AppCommand::ActivateTab(first), &context);
+        let new_revision = application.presentation_workspace.current().unwrap();
+        assert!(new_revision > revision);
+        let (principal, broker) = application.automation.presentation_broker_for_test(channel);
+        let same_window_and_tab = broker
+            .observe_presentation(
+                monitor,
+                NativePresentationState::Foreground {
+                    window: attempt.window(),
+                    selected: Some(target),
+                    workspace_revision: new_revision,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            broker.revalidate_presentation(
+                principal,
+                requirement,
+                target,
+                same_window_and_tab,
+                std::time::Instant::now(),
+            ),
+            Err(Error::Revoked)
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn presentation_control_review_rejects_egui_ime_preedit_and_loss_regain() {
+        use festerm_automation::{
+            Digest, Error, GrantRequest, Invocation, InvocationBinding, Scope,
+        };
+        use std::{collections::BTreeSet, time::Duration};
+
+        for regain_before_decision in [false, true] {
+            let context = egui::Context::default();
+            let (app, tab) = FesTermApp::automation_fixture();
+            let mut application = FesTermApplication::new(app);
+            let ime = application.ime_admission.epoch.clone();
+            application.windows[0].app.set_automation_ime_epoch(&ime);
+            let (channel, _, _, _, target) = application
+                .automation
+                .setup_presentation_for_test(&application.windows[0].app, tab);
+            let request = GrantRequest {
+                scope: Scope {
+                    control: BTreeSet::from([target]),
+                    invoke_workflows: true,
+                    ..Scope::default()
+                },
+                bindings: BTreeSet::from([InvocationBinding {
+                    api_version: 1,
+                    invocation: Invocation::Workflow {
+                        bundle: Digest([1; 32]),
+                        manifest: Digest([2; 32]),
+                    },
+                    parameters: Digest([3; 32]),
+                }]),
+                direct_read_calls: BTreeSet::new(),
+            };
+            let review = crate::automation::retry_automation_busy(|| {
+                application.automation.prepare_control_handoff_review(
+                    channel,
+                    target,
+                    request.clone(),
+                    Duration::from_secs(60),
+                    &mut application.windows[0]
+                        .app
+                        .automation_session_mut(tab)
+                        .controller,
+                )
+            })
+            .unwrap();
+            let decision = review.accept_from_native();
+            let mut preedit = egui::RawInput {
+                events: vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "pending".to_owned(),
+                    active_range_chars: None,
+                })],
+                ..Default::default()
+            };
+            eframe::App::raw_input_hook(&mut application, &context, &mut preedit);
+            assert!(!application.ime_admission.finish_pass());
+
+            if regain_before_decision {
+                let mut commit = egui::RawInput {
+                    events: vec![egui::Event::Ime(egui::ImeEvent::Commit("x".into()))],
+                    ..Default::default()
+                };
+                eframe::App::raw_input_hook(&mut application, &context, &mut commit);
+                assert!(application.ime_admission.finish_pass());
+            }
+            assert_eq!(
+                crate::automation::retry_automation_busy(|| {
+                    application
+                        .automation
+                        .approve_control_handoff(channel, &review, &decision)
+                }),
+                Err(Error::Revoked)
+            );
+            if !regain_before_decision {
+                assert!(matches!(
+                    crate::automation::retry_automation_busy(|| {
+                        application.automation.prepare_control_handoff_review(
+                            channel,
+                            target,
+                            request.clone(),
+                            Duration::from_secs(60),
+                            &mut application.windows[0]
+                                .app
+                                .automation_session_mut(tab)
+                                .controller,
+                        )
+                    }),
+                    Err(Error::Unavailable)
+                ));
+                let mut commit = egui::RawInput {
+                    events: vec![egui::Event::Ime(egui::ImeEvent::Commit("x".into()))],
+                    ..Default::default()
+                };
+                eframe::App::raw_input_hook(&mut application, &context, &mut commit);
+                assert!(application.ime_admission.finish_pass());
+            }
+            let fresh = crate::automation::retry_automation_busy(|| {
+                application.automation.prepare_control_handoff_review(
+                    channel,
+                    target,
+                    request.clone(),
+                    Duration::from_secs(60),
+                    &mut application.windows[0]
+                        .app
+                        .automation_session_mut(tab)
+                        .controller,
+                )
+            })
+            .unwrap();
+            let fresh_decision = fresh.accept_from_native();
+            crate::automation::retry_automation_busy(|| {
+                application
+                    .automation
+                    .approve_control_handoff(channel, &fresh, &fresh_decision)
+            })
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn presentation_workspace_revision_tracks_all_window_selection_and_topology_changes() {
+        let (mut application, context) = application();
+        let initial_tab = application.primary_mut().active_tab_id_for_test();
+        let initial = application.presentation_workspace.current().unwrap();
+        application
+            .primary_mut()
+            .dispatch_for_test(AppCommand::OpenSettings, &context);
+        application
+            .primary_mut()
+            .dispatch_for_test(AppCommand::ActivateTab(initial_tab), &context);
+        let returned = application.presentation_workspace.current().unwrap();
+        assert!(returned >= initial + 2);
+        let index = application.open_window(&context, None);
+        let opened = application.presentation_workspace.current().unwrap();
+        assert!(opened > returned);
+        application.windows[index]
+            .app
+            .dispatch_for_test(AppCommand::OpenSettings, &context);
+        assert!(application.presentation_workspace.current().unwrap() > opened);
     }
 
     #[test]
@@ -2701,6 +3100,18 @@ id = "tab-3"
             Some((120.0, 64.0, 900.0, 600.0)),
             "an additional window reopens where and as large as it was saved"
         );
+        let revision = application.presentation_workspace.current().unwrap();
+        let active = application.window_mut(1).active_tab_id_for_test();
+        let other = application
+            .window_mut(1)
+            .tab_ids_for_test()
+            .into_iter()
+            .find(|tab| *tab != active)
+            .unwrap();
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::ActivateTab(other), &context);
+        assert!(application.presentation_workspace.current().unwrap() > revision);
     }
 
     /// The compact Launcher layout is on by default, so the change a sibling

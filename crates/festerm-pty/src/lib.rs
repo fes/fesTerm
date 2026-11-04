@@ -1313,9 +1313,14 @@ impl Session for LocalPtySession {
 
     fn reserve_automation_input(
         &self,
+        controller_instance: u64,
         bytes: &[u8],
     ) -> Result<ReservedAutomationInput, ReserveAutomationInputError> {
-        let (reservation, pending) = automation_input_slot(bytes)?;
+        let (reservation, pending) = automation_input_slot(
+            bytes,
+            controller_instance,
+            Arc::clone(&self.shared.automation_epoch),
+        )?;
         send_command(
             &self.command_sender,
             SessionCommand::AutomationInput(pending),
@@ -2438,10 +2443,28 @@ mod tests {
         }
     }
 
+    fn retry_automation_reservation<T>(
+        mut reserve: impl FnMut() -> Result<T, ReserveAutomationInputError>,
+    ) -> T {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match reserve() {
+                Err(ReserveAutomationInputError::Busy) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                result => return result.unwrap(),
+            }
+        }
+    }
+
     #[test]
     fn automation_reservation_preserves_order_and_releases_cancelled_slots() {
         let (sender, receiver) = mpsc::sync_channel(2);
-        let (reservation, pending) = automation_input_slot(b"automation-").unwrap();
+        let attachment = Arc::new(AutomationEpoch::new());
+        attachment.transition(true);
+        let (reservation, pending) = retry_automation_reservation(|| {
+            automation_input_slot(b"automation-", 1, attachment.clone())
+        });
         assert!(sender
             .try_send(SessionCommand::AutomationInput(pending))
             .is_ok());
@@ -2463,7 +2486,9 @@ mod tests {
             Ok(SessionCommand::Input(bytes)) if bytes == b"human"
         ));
 
-        let (reservation, pending) = automation_input_slot(b"must-not-send").unwrap();
+        let (reservation, pending) = retry_automation_reservation(|| {
+            automation_input_slot(b"must-not-send", 1, attachment.clone())
+        });
         assert!(sender
             .try_send(SessionCommand::AutomationInput(pending))
             .is_ok());
@@ -2503,7 +2528,15 @@ mod tests {
                     .windows(b"READY".len())
                     .any(|window| window == b"READY")
             });
-            let reservation = session.reserve_automation_input(b"automated-").unwrap();
+            let reservation =
+                retry_automation_reservation(|| session.reserve_automation_input(7, b"automated-"));
+            let attachment = session.automation_epoch().unwrap();
+            let generation = attachment.capture().unwrap();
+            {
+                let guard = festerm_session::automation_admission_lock().unwrap();
+                assert!(reservation.matches_attachment(7, &attachment, generation, &guard));
+                assert!(!reservation.matches_attachment(8, &attachment, generation, &guard));
+            }
             session.try_send_input(b"human\n").unwrap();
             if committed {
                 reservation.commit_with(|_| Ok::<_, ()>(())).unwrap();

@@ -110,6 +110,8 @@ fn schema_matches(schema: &Value, value: &Value) -> bool {
             | "minLength"
             | "maxLength"
             | "maxItems"
+            | "pattern"
+            | "default"
     )));
     let has_type = |name: &str| match name {
         "object" => value.is_object(),
@@ -165,6 +167,20 @@ fn schema_matches(schema: &Value, value: &Value) -> bool {
         {
             return false;
         }
+        if let Some(pattern) = schema.get("pattern") {
+            let expected = match pattern.as_str().unwrap() {
+                "^[0-9a-f]{16}$" => 16,
+                "^[0-9a-f]{48}$" => 48,
+                other => panic!("unsupported schema pattern {other}"),
+            };
+            if string.len() != expected
+                || !string
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return false;
+            }
+        }
     }
     if let Some(object) = value.as_object() {
         if schema.get("required").is_some_and(|required| {
@@ -205,6 +221,109 @@ fn schema_matches(schema: &Value, value: &Value) -> bool {
             .count()
             == 1
     })
+}
+
+#[test]
+fn presentation_contract_advertises_refusal_without_changing_p1_or_starting_work() {
+    let mut observation_only = ready();
+    error(
+        observation_only.process_value(call(
+            json!(9),
+            "festerm_workspace_present",
+            json!({"enrollment_ref": "opaque"}),
+        )),
+        -32602,
+    );
+
+    let mut machine = Machine::with_unavailable_presentation();
+    initialize(&mut machine, PROTOCOL_VERSION);
+    assert!(matches!(
+        machine.process_value(json!({"jsonrpc":"2.0","method":"notifications/initialized"})),
+        Event::NoReply
+    ));
+    let catalog = reply(machine.process_value(request(json!(2), "tools/list", json!({}))));
+    let tools = catalog["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 9);
+    let capability = tools
+        .iter()
+        .find(|tool| tool["name"] == "festerm_presentation_capabilities")
+        .unwrap();
+    let present = tools
+        .iter()
+        .find(|tool| tool["name"] == "festerm_workspace_present")
+        .unwrap();
+    assert_eq!(present["annotations"]["readOnlyHint"], false);
+    assert_eq!(present["annotations"]["idempotentHint"], false);
+    let status = reply(machine.process_value(call(
+        json!(3),
+        "festerm_presentation_capabilities",
+        json!({}),
+    )));
+    let structured = &status["result"]["structuredContent"];
+    assert!(schema_matches(&capability["outputSchema"], structured));
+    assert_eq!(
+        structured["data"],
+        json!({
+            "presentation": {"available": false, "reason": "NATIVE_EVIDENCE_UNQUALIFIED"},
+            "backends": {
+                "local_pty": "NATIVE_EVIDENCE_UNQUALIFIED",
+                "other": "UNSUPPORTED_BACKEND"
+            },
+            "enrollment_available": false,
+            "input_available": false
+        })
+    );
+    assert!(schema_matches(
+        &capability["outputSchema"],
+        &json!({
+            "status":"ok",
+            "data":{
+                "presentation":{"available":true, "reason":null},
+                "backends":{
+                    "local_pty":"AVAILABLE",
+                    "other":"UNSUPPORTED_BACKEND"
+                },
+                "enrollment_available":true,
+                "input_available":false
+            }
+        })
+    ));
+    let supported_result = json!({
+        "status":"ok",
+        "data":{"target_ref":"opaque exact target","presentation_revision":"a".repeat(48)}
+    });
+    assert!(schema_matches(&present["outputSchema"], &supported_result));
+    assert!(schema_matches(
+        &present["outputSchema"],
+        &json!({"status":"refused", "code":"FOREGROUND_REFUSED"})
+    ));
+    let refused = tool_error(
+        machine.process_value(call(
+            json!(4),
+            "festerm_workspace_present",
+            json!({"enrollment_ref": "untrusted", "timeout_ms": 5000}),
+        )),
+        "UNAVAILABLE",
+    );
+    assert!(schema_matches(
+        &present["outputSchema"],
+        &refused["result"]["structuredContent"]
+    ));
+    assert_eq!(machine.in_flight(), 0);
+    for arguments in [
+        json!({}),
+        json!({"enrollment_ref": ""}),
+        json!({"enrollment_ref": "x", "timeout_ms": 0}),
+        json!({"enrollment_ref": "x", "timeout_ms": 5001}),
+        json!({"enrollment_ref": "x", "claimed_gesture": true}),
+        json!({"enrollment_ref": "x".repeat(257)}),
+    ] {
+        tool_error(
+            machine.process_value(call(json!(5), "festerm_workspace_present", arguments)),
+            "INVALID_ARGUMENTS",
+        );
+    }
+    assert_eq!(machine.in_flight(), 0);
 }
 
 fn assert_strict_object(schema: &Value, payload: &Value, pointer: &str) {

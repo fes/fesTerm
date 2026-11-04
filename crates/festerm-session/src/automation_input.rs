@@ -7,7 +7,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{SessionOperation, SessionSendError, MAX_IO_CHUNK_BYTES};
+use crate::{
+    try_automation_admission_lock, AutomationAdmissionGuard, AutomationAdmissionTryError,
+    AutomationEpoch, SessionOperation, SessionSendError, MAX_IO_CHUNK_BYTES,
+};
 
 const RESERVATION_LIFETIME: Duration = Duration::from_millis(250);
 const PENDING: u8 = 0;
@@ -21,6 +24,9 @@ struct Slot {
     bytes: Arc<[u8]>,
     deadline: Instant,
     state: AtomicU8,
+    controller_instance: u64,
+    attachment: Arc<AutomationEpoch>,
+    attachment_generation: u64,
 }
 
 impl Slot {
@@ -43,9 +49,10 @@ impl Slot {
 /// A reserved backend queue position, not permission to control a session.
 ///
 /// The application must keep its worker-admission and privacy/lifecycle fences
-/// held through `commit_with` returning, and recheck the exact target, lease,
-/// broker authority and immutable bytes inside the callback. The callback must
-/// perform only bounded broker admission, not terminal I/O.
+/// held through `commit_with` returning, check this reservation's controller,
+/// backend identity and attachment generation against the exact target, and
+/// recheck the lease, broker authority and immutable bytes inside the callback.
+/// The callback must perform only bounded broker admission, not terminal I/O.
 pub struct ReservedAutomationInput {
     slot: Arc<Slot>,
 }
@@ -66,6 +73,8 @@ pub enum AutomationInputStatus {
 pub enum ReserveAutomationInputError {
     Unsupported,
     Empty,
+    Busy,
+    Unavailable,
     Rejected(SessionSendError),
 }
 
@@ -74,6 +83,8 @@ impl fmt::Display for ReserveAutomationInputError {
         match self {
             Self::Unsupported => formatter.write_str("automation input reservation is unsupported"),
             Self::Empty => formatter.write_str("automation input must not be empty"),
+            Self::Busy => formatter.write_str("automation admission is busy"),
+            Self::Unavailable => formatter.write_str("automation attachment is unavailable"),
             Self::Rejected(error) => {
                 write!(formatter, "automation input reservation rejected: {error}")
             }
@@ -94,12 +105,17 @@ pub enum CommitAutomationInputError<E> {
 
 /// Creates the two halves of one bounded, immutable reservation.
 ///
-/// A backend must enqueue the pending half in its ordinary ordered input queue
-/// before returning the reserved half to the caller. Dropping either half
-/// before commitment cancels it. A backend must poll the pending half and may
-/// not allow later input to overtake it.
+/// The backend supplies its own attachment identity, not one selected by the
+/// caller, and the host supplies its controller identity. The attachment's
+/// running generation is captured nonblockingly at creation. A backend must
+/// enqueue the pending half in its ordinary ordered input queue before
+/// returning the reserved half. Dropping either half before commitment cancels
+/// it. A backend must poll the pending half and may not allow later input to
+/// overtake it.
 pub fn automation_input_slot(
     bytes: &[u8],
+    controller_instance: u64,
+    attachment: Arc<AutomationEpoch>,
 ) -> Result<(ReservedAutomationInput, PendingAutomationInput), ReserveAutomationInputError> {
     if bytes.is_empty() {
         return Err(ReserveAutomationInputError::Empty);
@@ -113,20 +129,39 @@ pub fn automation_input_slot(
             },
         ));
     }
+    if controller_instance == 0 {
+        return Err(ReserveAutomationInputError::Unavailable);
+    }
+    let guard = try_automation_admission_lock().map_err(|error| match error {
+        AutomationAdmissionTryError::Busy => ReserveAutomationInputError::Busy,
+        AutomationAdmissionTryError::Poisoned => ReserveAutomationInputError::Unavailable,
+    })?;
+    let attachment_generation = attachment
+        .capture_under_admission(&guard)
+        .ok_or(ReserveAutomationInputError::Unavailable)?;
     Ok(slot_with_deadline(
         bytes,
         Instant::now() + RESERVATION_LIFETIME,
+        controller_instance,
+        attachment,
+        attachment_generation,
     ))
 }
 
 fn slot_with_deadline(
     bytes: &[u8],
     deadline: Instant,
+    controller_instance: u64,
+    attachment: Arc<AutomationEpoch>,
+    attachment_generation: u64,
 ) -> (ReservedAutomationInput, PendingAutomationInput) {
     let slot = Arc::new(Slot {
         bytes: Arc::from(bytes),
         deadline,
         state: AtomicU8::new(PENDING),
+        controller_instance,
+        attachment,
+        attachment_generation,
     });
     (
         ReservedAutomationInput { slot: slot.clone() },
@@ -135,6 +170,21 @@ fn slot_with_deadline(
 }
 
 impl ReservedAutomationInput {
+    /// Checks the backend-owned attachment and host controller at the same
+    /// admission boundary that must remain held through `commit_with`.
+    pub fn matches_attachment(
+        &self,
+        controller_instance: u64,
+        attachment: &Arc<AutomationEpoch>,
+        generation: u64,
+        _guard: &AutomationAdmissionGuard,
+    ) -> bool {
+        self.slot.controller_instance == controller_instance
+            && Arc::ptr_eq(&self.slot.attachment, attachment)
+            && self.slot.attachment_generation == generation
+            && self.slot.attachment.is_current(generation)
+    }
+
     /// Commits the exact immutable bytes after the caller's authority check.
     ///
     /// The callback is called at most once and must recheck the complete
@@ -253,9 +303,45 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
 
+    fn running_attachment() -> Arc<AutomationEpoch> {
+        let attachment = Arc::new(AutomationEpoch::new());
+        attachment.transition(true);
+        attachment
+    }
+
+    fn reserve(bytes: &[u8]) -> (ReservedAutomationInput, PendingAutomationInput) {
+        reserve_for(bytes, 1, running_attachment()).unwrap()
+    }
+
+    fn reserve_for(
+        bytes: &[u8],
+        controller_instance: u64,
+        attachment: Arc<AutomationEpoch>,
+    ) -> Result<(ReservedAutomationInput, PendingAutomationInput), ReserveAutomationInputError>
+    {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match automation_input_slot(bytes, controller_instance, attachment.clone()) {
+                Err(ReserveAutomationInputError::Busy) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                result => return result,
+            }
+        }
+    }
+
+    fn slot_with_deadline(
+        bytes: &[u8],
+        deadline: Instant,
+    ) -> (ReservedAutomationInput, PendingAutomationInput) {
+        let attachment = running_attachment();
+        let generation = attachment.capture().unwrap();
+        super::slot_with_deadline(bytes, deadline, 1, attachment, generation)
+    }
+
     #[test]
     fn reserved_input_waits_for_exact_commit_and_is_delivered_once() {
-        let (reservation, mut pending) = automation_input_slot(b"secret input").unwrap();
+        let (reservation, mut pending) = reserve(b"secret input");
         assert!(matches!(pending.poll(), AutomationInputStatus::Pending));
         reservation
             .commit_with(|bytes| {
@@ -271,25 +357,25 @@ mod tests {
 
     #[test]
     fn reservation_refusal_drop_and_missing_receiver_release_no_input() {
-        let (reservation, mut pending) = automation_input_slot(b"refused").unwrap();
+        let (reservation, mut pending) = reserve(b"refused");
         assert_eq!(
             reservation.commit_with(|_| Err::<(), _>("refused")),
             Err(CommitAutomationInputError::Refused("refused"))
         );
         assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
 
-        let (reservation, mut pending) = automation_input_slot(b"dropped").unwrap();
+        let (reservation, mut pending) = reserve(b"dropped");
         drop(reservation);
         assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
 
-        let (reservation, mut pending) = automation_input_slot(b"panic").unwrap();
+        let (reservation, mut pending) = reserve(b"panic");
         let result = std::panic::catch_unwind(|| {
             let _ = reservation.commit_with::<(), ()>(|_| panic!("commit failed"));
         });
         assert!(result.is_err());
         assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
 
-        let (reservation, pending) = automation_input_slot(b"lost").unwrap();
+        let (reservation, pending) = reserve(b"lost");
         drop(pending);
         assert_eq!(
             reservation.commit_with(|_| panic!("closed slot must not authorize")),
@@ -442,12 +528,13 @@ mod tests {
 
     #[test]
     fn reservation_enforces_input_bounds_and_expiry_before_authority() {
+        let attachment = running_attachment();
         assert!(matches!(
-            automation_input_slot(b""),
+            automation_input_slot(b"", 1, attachment.clone()),
             Err(ReserveAutomationInputError::Empty)
         ));
         assert!(matches!(
-            automation_input_slot(&vec![0; MAX_IO_CHUNK_BYTES + 1]),
+            automation_input_slot(&vec![0; MAX_IO_CHUNK_BYTES + 1], 1, attachment),
             Err(ReserveAutomationInputError::Rejected(
                 SessionSendError::TooLarge { .. }
             ))
@@ -458,5 +545,50 @@ mod tests {
             Err::<(), CommitAutomationInputError<()>>(CommitAutomationInputError::ClosedOrExpired)
         );
         assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    }
+
+    #[test]
+    fn reservation_is_bound_to_controller_attachment_and_creation_generation() {
+        let attachment = running_attachment();
+        let other = running_attachment();
+        let generation = attachment.capture().unwrap();
+        let (reservation, mut pending) = reserve_for(b"same bytes", 7, attachment.clone()).unwrap();
+        {
+            let guard = crate::automation_admission_lock().unwrap();
+            assert!(reservation.matches_attachment(7, &attachment, generation, &guard));
+            assert!(!reservation.matches_attachment(8, &attachment, generation, &guard));
+            assert!(!reservation.matches_attachment(7, &other, generation, &guard));
+        }
+        attachment.transition(false);
+        attachment.transition(true);
+        let replacement_generation = attachment.capture().unwrap();
+        {
+            let guard = crate::automation_admission_lock().unwrap();
+            assert!(!reservation.matches_attachment(7, &attachment, generation, &guard));
+            assert!(!reservation.matches_attachment(
+                7,
+                &attachment,
+                replacement_generation,
+                &guard
+            ));
+        }
+        drop(reservation);
+        assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    }
+
+    #[test]
+    fn reservation_capture_refuses_busy_or_unavailable_attachment() {
+        let attachment = running_attachment();
+        let guard = crate::automation_admission_lock().unwrap();
+        assert!(matches!(
+            automation_input_slot(b"input", 1, attachment.clone()),
+            Err(ReserveAutomationInputError::Busy)
+        ));
+        drop(guard);
+        attachment.transition(false);
+        assert!(matches!(
+            reserve_for(b"input", 1, attachment),
+            Err(ReserveAutomationInputError::Unavailable)
+        ));
     }
 }
