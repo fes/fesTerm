@@ -1016,6 +1016,7 @@ mod tests {
     use festerm_config::{Configuration, InterfaceSettings, Profile, TerminalFontPreference};
     use festerm_ui_egui::TerminalFontFamily;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
 
     fn application() -> (FesTermApplication, egui::Context) {
         let context = egui::Context::default();
@@ -1119,6 +1120,62 @@ mod tests {
         }
     }
 
+    fn controller_snapshot(
+        application: &FesTermApplication,
+    ) -> crate::automation::SettingsSnapshot {
+        let apps: Vec<_> = application
+            .windows
+            .iter()
+            .map(|window| &window.app)
+            .collect();
+        crate::automation::stable_controller_settings_for_test(&application.automation, &apps)
+    }
+
+    fn settle_controller_reconciliation(
+        application: &mut FesTermApplication,
+        context: &egui::Context,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            application.settle_windows_and_drive_automation(context);
+            if !application
+                .automation
+                .controller_reconciliation_deferred_for_test()
+            {
+                return;
+            }
+            assert!(Instant::now() < deadline, "reconciliation did not retry");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn submit_controller_command(
+        application: &mut FesTermApplication,
+        context: &egui::Context,
+        window: usize,
+        command: crate::automation::NativeCommand,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            application
+                .window_mut(window)
+                .queue_automation_command(command.clone());
+            application.settle_windows_and_drive_automation(context);
+            assert!(
+                application.deferred_automation_commands.is_empty(),
+                "controller action was not dispatched"
+            );
+            if !application
+                .automation
+                .controller_action_retryable_for_test()
+            {
+                return;
+            }
+            assert!(Instant::now() < deadline, "controller action stayed busy");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     fn reviewed_controller_application() -> (
         FesTermApplication,
         egui::Context,
@@ -1146,12 +1203,7 @@ mod tests {
                 &application.presentation_workspace,
             );
         application.automation = coordinator;
-        let apps: Vec<_> = application
-            .windows
-            .iter()
-            .map(|window| &window.app)
-            .collect();
-        let snapshot = application.automation.settings(&apps);
+        let snapshot = controller_snapshot(&application);
         for window in &mut application.windows {
             window.app.set_automation_settings(snapshot.clone());
         }
@@ -1230,14 +1282,7 @@ mod tests {
 
         let (mut application, context, _file, registration, token, _receive) =
             reviewed_controller_application();
-        let candidate = {
-            let apps: Vec<_> = application
-                .windows
-                .iter()
-                .map(|window| &window.app)
-                .collect();
-            application.automation.settings(&apps).controller_targets[0].clone()
-        };
+        let candidate = controller_snapshot(&application).controller_targets[0].clone();
         let active = application.window_mut(0).active_tab_id_for_test();
         let revision = application.presentation_workspace.current().unwrap();
         application
@@ -1247,30 +1292,20 @@ mod tests {
             .window_mut(0)
             .dispatch_for_test(AppCommand::ActivateTab(active), &context);
         assert!(application.presentation_workspace.current().unwrap() >= revision + 2);
-        let current_candidate = {
-            let apps: Vec<_> = application
-                .windows
-                .iter()
-                .map(|window| &window.app)
-                .collect();
-            application.automation.settings(&apps).controller_targets[0].clone()
-        };
+        let current_candidate = controller_snapshot(&application).controller_targets[0].clone();
         assert!(candidate == current_candidate);
 
-        application
-            .window_mut(0)
-            .queue_automation_command(NativeCommand::ConfirmController {
+        submit_controller_command(
+            &mut application,
+            &context,
+            0,
+            NativeCommand::ConfirmController {
                 channel: 1,
                 registration,
                 selection: token,
-            });
-        application.settle_windows_and_drive_automation(&context);
-        let apps: Vec<_> = application
-            .windows
-            .iter()
-            .map(|window| &window.app)
-            .collect();
-        let snapshot = application.automation.settings(&apps);
+            },
+        );
+        let snapshot = controller_snapshot(&application);
         assert!(snapshot.controllers[0].associated_target.is_none());
         assert!(matches!(
             snapshot.controllers[0].selection,
@@ -1291,18 +1326,13 @@ mod tests {
             .app
             .adopt_detached_tab(donor.detach_tab(third_tab).unwrap());
         application.window_mut(1).accept_window_close_for_test();
-        application.settle_windows_and_drive_automation(&context);
+        settle_controller_reconciliation(&mut application, &context);
         assert_eq!(application.windows.len(), 2);
         let third = application.windows[1].id;
         assert_eq!(third, WindowId::for_test(2));
         assert_eq!(application.windows[1].app.automation_window(), third);
 
-        let apps: Vec<_> = application
-            .windows
-            .iter()
-            .map(|window| &window.app)
-            .collect();
-        let snapshot = application.automation.settings(&apps);
+        let snapshot = controller_snapshot(&application);
         let target = snapshot
             .controller_targets
             .iter()
@@ -1329,60 +1359,51 @@ mod tests {
         );
         assert_ne!(target.reference, primary_target.reference);
         let reference = target.reference;
-        application
-            .window_mut(1)
-            .queue_automation_command(NativeCommand::ChooseController {
+        submit_controller_command(
+            &mut application,
+            &context,
+            1,
+            NativeCommand::ChooseController {
                 channel: 1,
                 registration,
-            });
-        application.settle_windows_and_drive_automation(&context);
-        let apps: Vec<_> = application
-            .windows
-            .iter()
-            .map(|window| &window.app)
-            .collect();
-        let snapshot = application.automation.settings(&apps);
+            },
+        );
+        let snapshot = controller_snapshot(&application);
         let ControllerSelectionView::Choosing { token, window } = snapshot.controllers[0].selection
         else {
             panic!("expected native chooser");
         };
         assert_eq!(window, third);
-        application
-            .window_mut(1)
-            .queue_automation_command(NativeCommand::SelectControllerTarget {
+        submit_controller_command(
+            &mut application,
+            &context,
+            1,
+            NativeCommand::SelectControllerTarget {
                 channel: 1,
                 registration,
                 selection: token,
                 target: reference,
-            });
-        application.settle_windows_and_drive_automation(&context);
-        let apps: Vec<_> = application
-            .windows
-            .iter()
-            .map(|window| &window.app)
-            .collect();
-        let snapshot = application.automation.settings(&apps);
+            },
+        );
+        let snapshot = controller_snapshot(&application);
         let ControllerSelectionView::Reviewing { token, window, .. } =
             snapshot.controllers[0].selection
         else {
             panic!("expected native review");
         };
         assert_eq!(window, third);
-        application
-            .window_mut(1)
-            .queue_automation_command(NativeCommand::ConfirmController {
+        submit_controller_command(
+            &mut application,
+            &context,
+            1,
+            NativeCommand::ConfirmController {
                 channel: 1,
                 registration,
                 selection: token,
-            });
-        application.settle_windows_and_drive_automation(&context);
-        let apps: Vec<_> = application
-            .windows
-            .iter()
-            .map(|window| &window.app)
-            .collect();
+            },
+        );
         assert_eq!(
-            application.automation.settings(&apps).controllers[0].associated_target,
+            controller_snapshot(&application).controllers[0].associated_target,
             Some(reference)
         );
     }

@@ -8,7 +8,9 @@ mod tests;
 mod workflow_selection;
 
 #[cfg(test)]
-pub(crate) use controller::tests::reviewed_controller_for_application;
+pub(crate) use controller::tests::{
+    reviewed_controller_for_application, stable_settings as stable_controller_settings_for_test,
+};
 #[cfg(test)]
 pub(crate) use tests::preference_application_fixture;
 
@@ -1815,6 +1817,19 @@ impl Coordinator {
             context.request_repaint();
         }
         suppressed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn controller_reconciliation_deferred_for_test(&self) -> bool {
+        self.reconciliation_deferred
+    }
+
+    #[cfg(test)]
+    pub(crate) fn controller_action_retryable_for_test(&self) -> bool {
+        matches!(
+            self.status,
+            controller::BUSY_STATUS | controller::RECONCILIATION_PENDING_STATUS
+        )
     }
 
     #[cfg(test)]

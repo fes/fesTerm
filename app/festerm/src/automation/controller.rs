@@ -996,7 +996,10 @@ pub(super) mod tests {
         serde_json::from_slice(&receive().expect("expected an outbound response")).unwrap()
     }
 
-    fn stable_settings(coordinator: &Coordinator, apps: &[&FesTermApp]) -> SettingsSnapshot {
+    pub(crate) fn stable_settings(
+        coordinator: &Coordinator,
+        apps: &[&FesTermApp],
+    ) -> SettingsSnapshot {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let snapshot = coordinator.settings(apps);
@@ -1236,8 +1239,20 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn controller_explicit_retry_replaces_busy_status_after_approval() {
-        let (app, tab) = FesTermApp::automation_local_fixture();
+    fn controller_explicit_retry_replaces_contention_status_after_approval() {
+        assert_explicit_retry_replaces_contention_status(false);
+        assert_explicit_retry_replaces_contention_status(true);
+    }
+
+    fn assert_explicit_retry_replaces_contention_status(deferred: bool) {
+        let (mut app, tab) = FesTermApp::automation_local_fixture();
+        app.adopt_broadcast_configuration(
+            festerm_config::Configuration::empty()
+                .with_interface_settings(
+                    festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true),
+                )
+                .unwrap(),
+        );
         let mut coordinator = fixture(&[&app]);
         let receive = add_peer(&mut coordinator, 1);
         call(
@@ -1263,23 +1278,6 @@ pub(super) mod tests {
             registration,
             selection: token,
         };
-        let context = egui::Context::default();
-        coordinator.reconciliation_deferred = true;
-        assert!(!coordinator.commands(
-            vec![NativeWindowCommand {
-                window: WindowId::PRIMARY,
-                command: confirmation.clone(),
-            }],
-            &context,
-            &[&app],
-        ));
-        assert_eq!(coordinator.status, RECONCILIATION_PENDING_STATUS);
-        assert!(coordinator.peers[&1]
-            .controller
-            .registrations
-            .values()
-            .all(|record| record.association.is_none()));
-        coordinator.reconciliation_deferred = false;
         let (held_tx, held_rx) = mpsc::sync_channel(1);
         let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
         let worker = std::thread::spawn(move || {
@@ -1288,6 +1286,11 @@ pub(super) mod tests {
             let _ = release_rx.recv_timeout(Duration::from_secs(3));
         });
         held_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let context = egui::Context::default();
+        if deferred {
+            coordinator.tick(&context, &[&app]);
+            assert!(coordinator.reconciliation_deferred);
+        }
         assert!(!coordinator.commands(
             vec![NativeWindowCommand {
                 window: WindowId::PRIMARY,
@@ -1296,7 +1299,14 @@ pub(super) mod tests {
             &context,
             &[&app],
         ));
-        assert_eq!(coordinator.status, BUSY_STATUS);
+        assert_eq!(
+            coordinator.status,
+            if deferred {
+                RECONCILIATION_PENDING_STATUS
+            } else {
+                BUSY_STATUS
+            }
+        );
         assert!(coordinator.peers[&1]
             .controller
             .registrations
@@ -1306,6 +1316,11 @@ pub(super) mod tests {
         worker.join().unwrap();
 
         let deadline = Instant::now() + Duration::from_secs(5);
+        while coordinator.reconciliation_deferred {
+            coordinator.tick(&context, &[&app]);
+            assert!(Instant::now() < deadline, "reconciliation did not retry");
+            std::thread::sleep(Duration::from_millis(1));
+        }
         loop {
             assert!(!coordinator.commands(
                 vec![NativeWindowCommand {

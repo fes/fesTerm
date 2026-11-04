@@ -16,8 +16,8 @@ in the authority crate and feed the same app-owned connection and writer.
 This changes ownership only: insertion is not guarded through publication,
 does not bind an enrollment or metadata grant, and proves no revocable enqueue
 or physical delivery. Production qualification and metadata routing remain
-closed. Focused queue and connection regressions have been added but have not
-yet been run.
+closed. Focused queue and connection regressions cover capacity, ordering,
+closure and guard freshness; execution results are tracked with the PR.
 
 ## Wiring non-authorizing controller enrollment
 
@@ -67,10 +67,10 @@ share the same try-acquired guard; a busy tick does not replay a controller
 confirmation. Controller settings report an incomplete view while admission
 is busy. Native controller actions now distinguish pre-mutation contention
 from other refusals and ask the user to retry; they are never automatically
-replayed. A later successful action replaces the stale busy message without
-claiming to change any existing grants. Test helpers retry only that
-proven-busy refusal or an incomplete snapshot. These integration changes still
-require combined-tree validation.
+replayed. A later successful action replaces a stale busy or pending-
+reconciliation message without claiming to change any existing grants. Test
+helpers retry only these proven pre-mutation refusals or an incomplete
+snapshot. These integration changes still require combined-tree validation.
 
 This is only a prerequisite: there is no enrollment witness or metadata-grant
 binding, no final-recipient/write fence or native consent, and no production

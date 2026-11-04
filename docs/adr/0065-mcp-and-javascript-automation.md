@@ -364,8 +364,8 @@ in the design must be visible in implementation/release review.
   across restart. MCP protocol, private framing, bounded
   observation, pairing and stale-target tests cover the P1 path.
   The outbound ownership extraction adds queue capacity/FIFO/disconnect and
-  guard-freshness checks plus app connection full/closed regressions; execution
-  and full local CI-equivalent validation remain pending.
+  guard-freshness checks plus app connection full/closed regressions; their
+  execution and native-platform evidence are tracked with the PR.
   Cancellation regressions exercise post-reconciliation contention, retained
   wait suppression, retry before a reused request ID, missing-run closure,
   defensive cleanup of an injected retained child, and isolated admission
