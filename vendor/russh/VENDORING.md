@@ -20,6 +20,19 @@ satisfy the repository diff policy.
 Keep these changes when updating the vendored crate and rerun the fesTerm SSH,
 credential-lifecycle, security, vendored-russh, and workspace Clippy gates.
 
+Global-request bookkeeping now records a FIFO owner only after an encrypted
+packet requesting a reply is assembled. Both peers honor `want_reply` for
+incoming requests, including unknown and forwarding requests; server reply
+helpers consume the requested reply once, and agent-forwarding responses use
+their channel rather than the global FIFO. An explicit success for a
+zero-port TCP forward is deferred until the handler returns the allocated
+port; without a port, the reply is failure. A requested reply to the
+`hostkeys-00@openssh.com` advertisement is refused because that extension
+specifies no reply. Focused vendored tests and an encrypted in-memory
+client/server regression cover the correlation rules and passed locally. This
+does not resolve cancellation, backpressure, qualified liveness, or lossless
+connection retirement.
+
 The experimental Dev Tunnels adapter additionally opts into
 `client::Config::maximum_pending_replies = Some(16)`. Its synchronous
 authentication/control-reply queue fails closed on overflow instead of allowing

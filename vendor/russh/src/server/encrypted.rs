@@ -28,6 +28,7 @@ use ssh_key::{PublicKey, Signature};
 use tokio::time::Instant;
 
 use super::super::*;
+use super::session::EphemeralForwardReply;
 use super::*;
 use crate::helpers::NameList;
 use crate::map_err;
@@ -418,6 +419,422 @@ mod tests {
         );
     }
 
+    #[allow(clippy::expect_used, clippy::indexing_slicing, clippy::unwrap_used)]
+    mod global_requests {
+        use super::*;
+        use tokio::sync::oneshot;
+        use tokio::sync::oneshot::error::TryRecvError;
+
+        fn request(name: &str, want_reply: u8, port: u32) -> Vec<u8> {
+            let mut packet = vec![msg::GLOBAL_REQUEST];
+            name.encode(&mut packet).unwrap();
+            want_reply.encode(&mut packet).unwrap();
+            match name {
+                "tcpip-forward" | "cancel-tcpip-forward" => {
+                    "127.0.0.1".encode(&mut packet).unwrap();
+                    port.encode(&mut packet).unwrap();
+                }
+                "streamlocal-forward@openssh.com" | "cancel-streamlocal-forward@openssh.com" => {
+                    "/fixture".encode(&mut packet).unwrap();
+                }
+                _ => {}
+            }
+            packet
+        }
+
+        fn take_written(session: &mut Session) -> Vec<u8> {
+            std::mem::take(&mut session.common.encrypted.as_mut().unwrap().write)
+        }
+
+        fn reply(msg: u8) -> Vec<u8> {
+            vec![0, 0, 0, 1, msg]
+        }
+
+        struct ForwardHandler {
+            result: bool,
+            manual: Option<bool>,
+            allocate: bool,
+            calls: usize,
+        }
+
+        impl ForwardHandler {
+            fn finish(&mut self, session: &mut Session) -> bool {
+                self.calls += 1;
+                if let Some(success) = self.manual {
+                    if success {
+                        session.request_success();
+                    } else {
+                        session.request_failure();
+                    }
+                }
+                self.result
+            }
+        }
+
+        impl Handler for ForwardHandler {
+            type Error = Error;
+
+            async fn tcpip_forward(
+                &mut self,
+                _address: &str,
+                port: &mut u32,
+                session: &mut Session,
+            ) -> Result<bool, Self::Error> {
+                if *port == 0 && self.allocate {
+                    *port = 4242;
+                }
+                Ok(self.finish(session))
+            }
+
+            async fn cancel_tcpip_forward(
+                &mut self,
+                _address: &str,
+                _port: u32,
+                session: &mut Session,
+            ) -> Result<bool, Self::Error> {
+                Ok(self.finish(session))
+            }
+
+            async fn streamlocal_forward(
+                &mut self,
+                _path: &str,
+                session: &mut Session,
+            ) -> Result<bool, Self::Error> {
+                Ok(self.finish(session))
+            }
+
+            async fn cancel_streamlocal_forward(
+                &mut self,
+                _path: &str,
+                session: &mut Session,
+            ) -> Result<bool, Self::Error> {
+                Ok(self.finish(session))
+            }
+        }
+
+        #[tokio::test]
+        async fn server_global_requests_reply_once_only_when_requested() {
+            for name in [
+                "tcpip-forward",
+                "cancel-tcpip-forward",
+                "streamlocal-forward@openssh.com",
+                "cancel-streamlocal-forward@openssh.com",
+            ] {
+                for want in [0, 1, 2] {
+                    for result in [false, true] {
+                        let mut session = test_authenticated_session();
+                        let mut handler = ForwardHandler {
+                            result,
+                            manual: None,
+                            allocate: false,
+                            calls: 0,
+                        };
+                        session
+                            .process_packet(&mut handler, &request(name, want, 2222))
+                            .await
+                            .unwrap();
+                        let expected = if want == 0 {
+                            Vec::new()
+                        } else if result {
+                            reply(msg::REQUEST_SUCCESS)
+                        } else {
+                            reply(msg::REQUEST_FAILURE)
+                        };
+                        assert_eq!(
+                            take_written(&mut session),
+                            expected,
+                            "{name} {want} {result}"
+                        );
+                        assert_eq!(handler.calls, 1);
+                        assert!(!session.common.wants_reply);
+                    }
+                }
+            }
+
+            for want in [0, 1, 2] {
+                let mut session = test_authenticated_session();
+                let mut handler = ForwardHandler {
+                    result: true,
+                    manual: None,
+                    allocate: false,
+                    calls: 0,
+                };
+                session
+                    .process_packet(&mut handler, &request("unknown@example.com", want, 0))
+                    .await
+                    .unwrap();
+                let expected = if want == 0 {
+                    Vec::new()
+                } else {
+                    reply(msg::REQUEST_FAILURE)
+                };
+                assert_eq!(take_written(&mut session), expected);
+                assert_eq!(handler.calls, 0);
+                assert!(!session.common.wants_reply);
+            }
+        }
+
+        #[tokio::test]
+        async fn explicit_global_reply_consumes_the_single_reply_owner() {
+            for want in [0, 1] {
+                for manual in [false, true] {
+                    for returned in [false, true] {
+                        let mut session = test_authenticated_session();
+                        let mut handler = ForwardHandler {
+                            result: returned,
+                            manual: Some(manual),
+                            allocate: false,
+                            calls: 0,
+                        };
+                        session
+                            .process_packet(&mut handler, &request("tcpip-forward", want, 2222))
+                            .await
+                            .unwrap();
+                        let expected = if want == 0 {
+                            Vec::new()
+                        } else if manual {
+                            reply(msg::REQUEST_SUCCESS)
+                        } else {
+                            reply(msg::REQUEST_FAILURE)
+                        };
+                        assert_eq!(take_written(&mut session), expected);
+                        assert!(!session.common.wants_reply);
+                    }
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn ephemeral_forward_success_contains_the_allocated_port() {
+            for allocate in [false, true] {
+                for manual in [None, Some(false), Some(true)] {
+                    for result in [false, true] {
+                        let mut session = test_authenticated_session();
+                        let mut handler = ForwardHandler {
+                            result,
+                            manual,
+                            allocate,
+                            calls: 0,
+                        };
+                        session
+                            .process_packet(&mut handler, &request("tcpip-forward", 1, 0))
+                            .await
+                            .unwrap();
+                        let accepted = manual.unwrap_or(result);
+                        let expected = if allocate && accepted {
+                            vec![0, 0, 0, 5, msg::REQUEST_SUCCESS, 0, 0, 16, 146]
+                        } else {
+                            reply(msg::REQUEST_FAILURE)
+                        };
+                        assert_eq!(take_written(&mut session), expected);
+                        assert!(!session.common.wants_reply);
+                        assert!(session.ephemeral_forward_reply.is_none());
+                    }
+                }
+            }
+        }
+
+        struct AgentHandler {
+            accepted: bool,
+            manual: Option<bool>,
+        }
+
+        impl Handler for AgentHandler {
+            type Error = Error;
+
+            async fn agent_request(
+                &mut self,
+                channel: ChannelId,
+                session: &mut Session,
+            ) -> Result<bool, Self::Error> {
+                if let Some(accepted) = self.manual {
+                    if accepted {
+                        session.channel_success(channel)?;
+                    } else {
+                        session.channel_failure(channel)?;
+                    }
+                }
+                Ok(self.accepted)
+            }
+        }
+
+        #[tokio::test]
+        async fn agent_channel_request_never_emits_a_global_reply() {
+            for want in [0, 1, 2] {
+                for accepted in [false, true] {
+                    for manual in [None, Some(!accepted)] {
+                        let mut session = test_authenticated_session();
+                        session.common.wants_reply = true;
+                        let enc = session.common.encrypted.as_mut().unwrap();
+                        let id = enc.new_channel(1024, 1024);
+                        let channel = enc.channels.get_mut(&id).unwrap();
+                        channel.confirmed = true;
+                        channel.recipient_channel = 42;
+                        let mut packet =
+                            channel_request_payload(id.0, b"auth-agent-req@openssh.com");
+                        *packet.last_mut().unwrap() = want;
+                        session
+                            .process_packet(&mut AgentHandler { accepted, manual }, &packet)
+                            .await
+                            .unwrap();
+                        let expected = if want == 0 {
+                            Vec::new()
+                        } else {
+                            let status = if manual.unwrap_or(accepted) {
+                                msg::CHANNEL_SUCCESS
+                            } else {
+                                msg::CHANNEL_FAILURE
+                            };
+                            vec![0, 0, 0, 5, status, 0, 0, 0, 42]
+                        };
+                        assert_eq!(take_written(&mut session), expected);
+                        assert!(session.common.wants_reply);
+                    }
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn server_global_request_fifo_correlates_success_and_failure() {
+            let mut session = test_authenticated_session();
+            session.tcpip_forward("127.0.0.1", 2222, None).unwrap();
+            session
+                .cancel_tcpip_forward("127.0.0.1", 2222, None)
+                .unwrap();
+            session.keepalive_request().unwrap();
+            let (sender, mut forward) = oneshot::channel();
+            session.tcpip_forward("127.0.0.1", 0, Some(sender)).unwrap();
+            let (sender, mut ping) = oneshot::channel();
+            session.send_ping(sender).unwrap();
+            let (sender, mut cancel) = oneshot::channel();
+            session
+                .cancel_tcpip_forward("127.0.0.1", 2222, Some(sender))
+                .unwrap();
+            let (sender, mut second_ping) = oneshot::channel();
+            session.send_ping(sender).unwrap();
+            assert_eq!(session.open_global_requests.len(), 5);
+
+            let mut handler = AgentHandler {
+                accepted: false,
+                manual: None,
+            };
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_FAILURE])
+                .await
+                .unwrap();
+            assert!(matches!(forward.try_recv(), Err(TryRecvError::Empty)));
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_FAILURE])
+                .await
+                .unwrap();
+            assert_eq!(forward.try_recv(), Ok(None));
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_SUCCESS])
+                .await
+                .unwrap();
+            assert_eq!(ping.try_recv(), Ok(()));
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_FAILURE])
+                .await
+                .unwrap();
+            assert_eq!(cancel.try_recv(), Ok(false));
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_FAILURE])
+                .await
+                .unwrap();
+            assert_eq!(second_ping.try_recv(), Ok(()));
+            assert!(session.open_global_requests.is_empty());
+
+            let (sender, mut allocated) = oneshot::channel();
+            session.tcpip_forward("127.0.0.1", 0, Some(sender)).unwrap();
+            let mut response = vec![msg::REQUEST_SUCCESS];
+            4242u32.encode(&mut response).unwrap();
+            session
+                .process_packet(&mut handler, &response)
+                .await
+                .unwrap();
+            assert_eq!(allocated.try_recv(), Ok(Some(4242)));
+        }
+
+        #[test]
+        fn server_global_requests_without_encryption_leave_no_reply_owner() {
+            let mut session = test_authenticated_session();
+            session.common.encrypted = None;
+            session.keepalive_request().unwrap();
+            let (sender, mut ping) = oneshot::channel();
+            session.send_ping(sender).unwrap();
+            assert!(matches!(ping.try_recv(), Err(TryRecvError::Closed)));
+            let (sender, mut forward) = oneshot::channel();
+            session.tcpip_forward("127.0.0.1", 1, Some(sender)).unwrap();
+            assert!(matches!(forward.try_recv(), Err(TryRecvError::Closed)));
+            let (sender, mut cancel) = oneshot::channel();
+            session
+                .cancel_tcpip_forward("127.0.0.1", 1, Some(sender))
+                .unwrap();
+            assert!(matches!(cancel.try_recv(), Err(TryRecvError::Closed)));
+            assert!(session.open_global_requests.is_empty());
+
+            let mut existing = test_authenticated_session();
+            let (sender, mut pending) = oneshot::channel();
+            existing.send_ping(sender).unwrap();
+            existing.common.encrypted = None;
+            let (sender, mut refused) = oneshot::channel();
+            existing.send_ping(sender).unwrap();
+            assert!(matches!(refused.try_recv(), Err(TryRecvError::Closed)));
+            assert!(matches!(pending.try_recv(), Err(TryRecvError::Empty)));
+            assert_eq!(existing.open_global_requests.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn no_reply_global_requests_do_not_precede_wire_responses() {
+            let mut stream = RawSession::connect().await;
+            stream.auth_none().await.unwrap();
+            let server_channel = stream.open_session().await.unwrap();
+            for name in [
+                "unknown@example.com",
+                "tcpip-forward",
+                "cancel-tcpip-forward",
+                "streamlocal-forward@openssh.com",
+                "cancel-streamlocal-forward@openssh.com",
+            ] {
+                stream.send_packet(&request(name, 0, 2222)).await.unwrap();
+            }
+            let mut no_reply =
+                channel_request_payload(server_channel, b"auth-agent-req@openssh.com");
+            *no_reply.last_mut().unwrap() = 0;
+            stream.send_packet(&no_reply).await.unwrap();
+            stream
+                .send_packet(&channel_request_payload(
+                    server_channel,
+                    b"auth-agent-req@openssh.com",
+                ))
+                .await
+                .unwrap();
+            let channel_reply = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                read_packet(&mut stream.stream),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(channel_reply, vec![msg::CHANNEL_FAILURE, 0, 0, 0, 0]);
+
+            stream
+                .send_packet(&request("unknown@example.com", 2, 0))
+                .await
+                .unwrap();
+            let global_reply = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                read_packet(&mut stream.stream),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(global_reply, vec![msg::REQUEST_FAILURE]);
+            stream.server_task.abort();
+        }
+    }
+
     #[derive(Default)]
     struct ChannelCallbackProbe {
         exec_called: bool,
@@ -548,6 +965,7 @@ mod tests {
             pending_len: 0,
             channels: std::collections::HashMap::new(),
             open_global_requests: std::collections::VecDeque::new(),
+            ephemeral_forward_reply: None,
             kex: SessionKexState::Idle,
         }
     }
@@ -1398,9 +1816,9 @@ impl Session {
 
                         let response = handler.agent_request(channel_num, self).await?;
                         if response {
-                            self.request_success()
+                            self.channel_success(channel_num)?;
                         } else {
-                            self.request_failure()
+                            self.channel_failure(channel_num)?;
                         }
                         Ok(())
                     }
@@ -1493,20 +1911,32 @@ impl Session {
                         map_err!(ensure_end(r))?;
                         debug!("handler.tcpip_forward {address:?} {port:?}");
                         let mut returned_port = port;
+                        if port == 0 && self.common.wants_reply {
+                            self.ephemeral_forward_reply = Some(EphemeralForwardReply::Awaiting);
+                        }
                         let result = handler
                             .tcpip_forward(&address, &mut returned_port, self)
-                            .await?;
-                        if let Some(ref mut enc) = self.common.encrypted {
-                            if result {
-                                push_packet!(enc.write, {
-                                    enc.write.push(msg::REQUEST_SUCCESS);
-                                    if self.common.wants_reply && port == 0 && returned_port != 0 {
-                                        map_err!(returned_port.encode(&mut enc.write))?;
-                                    }
-                                })
-                            } else {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_FAILURE))
-                            }
+                            .await;
+                        let explicit_success = matches!(
+                            self.ephemeral_forward_reply.take(),
+                            Some(EphemeralForwardReply::Success)
+                        );
+                        let result = result?;
+                        let wants_reply =
+                            std::mem::take(&mut self.common.wants_reply) || explicit_success;
+                        if let Some(enc) = self.common.encrypted.as_mut().filter(|_| wants_reply) {
+                            let success =
+                                (result || explicit_success) && (port != 0 || returned_port != 0);
+                            push_packet!(enc.write, {
+                                enc.write.push(if success {
+                                    msg::REQUEST_SUCCESS
+                                } else {
+                                    msg::REQUEST_FAILURE
+                                });
+                                if success && port == 0 {
+                                    map_err!(returned_port.encode(&mut enc.write))?;
+                                }
+                            });
                         }
                         Ok(())
                     }
@@ -1516,12 +1946,10 @@ impl Session {
                         map_err!(ensure_end(r))?;
                         debug!("handler.cancel_tcpip_forward {address:?} {port:?}");
                         let result = handler.cancel_tcpip_forward(&address, port, self).await?;
-                        if let Some(ref mut enc) = self.common.encrypted {
-                            if result {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_SUCCESS))
-                            } else {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_FAILURE))
-                            }
+                        if result {
+                            self.request_success();
+                        } else {
+                            self.request_failure();
                         }
                         Ok(())
                     }
@@ -1532,12 +1960,10 @@ impl Session {
                         let result = handler
                             .streamlocal_forward(&server_socket_path, self)
                             .await?;
-                        if let Some(ref mut enc) = self.common.encrypted {
-                            if result {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_SUCCESS))
-                            } else {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_FAILURE))
-                            }
+                        if result {
+                            self.request_success();
+                        } else {
+                            self.request_failure();
                         }
                         Ok(())
                     }
@@ -1548,21 +1974,15 @@ impl Session {
                         let result = handler
                             .cancel_streamlocal_forward(&socket_path, self)
                             .await?;
-                        if let Some(ref mut enc) = self.common.encrypted {
-                            if result {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_SUCCESS))
-                            } else {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_FAILURE))
-                            }
+                        if result {
+                            self.request_success();
+                        } else {
+                            self.request_failure();
                         }
                         Ok(())
                     }
                     _ => {
-                        if let Some(ref mut enc) = self.common.encrypted {
-                            push_packet!(enc.write, {
-                                enc.write.push(msg::REQUEST_FAILURE);
-                            });
-                        }
+                        self.request_failure();
                         Ok(())
                     }
                 }

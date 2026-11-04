@@ -307,11 +307,6 @@ impl Session {
     ) -> Result<(), crate::Error> {
         if let Some(ref mut enc) = self.common.encrypted {
             let want_reply = reply_channel.is_some();
-            if let Some(reply_channel) = reply_channel {
-                self.open_global_requests.push_back(
-                    crate::session::GlobalRequestResponse::TcpIpForward(reply_channel),
-                );
-            }
             push_packet!(enc.write, {
                 msg::GLOBAL_REQUEST.encode(&mut enc.write)?;
                 "tcpip-forward".encode(&mut enc.write)?;
@@ -319,6 +314,11 @@ impl Session {
                 address.encode(&mut enc.write)?;
                 port.encode(&mut enc.write)?;
             });
+            if let Some(reply_channel) = reply_channel {
+                self.open_global_requests.push_back(
+                    crate::session::GlobalRequestResponse::TcpIpForward(reply_channel),
+                );
+            }
         }
         Ok(())
     }
@@ -335,11 +335,6 @@ impl Session {
     ) -> Result<(), crate::Error> {
         if let Some(ref mut enc) = self.common.encrypted {
             let want_reply = reply_channel.is_some();
-            if let Some(reply_channel) = reply_channel {
-                self.open_global_requests.push_back(
-                    crate::session::GlobalRequestResponse::CancelTcpIpForward(reply_channel),
-                );
-            }
             push_packet!(enc.write, {
                 msg::GLOBAL_REQUEST.encode(&mut enc.write)?;
                 "cancel-tcpip-forward".encode(&mut enc.write)?;
@@ -347,6 +342,11 @@ impl Session {
                 address.encode(&mut enc.write)?;
                 port.encode(&mut enc.write)?;
             });
+            if let Some(reply_channel) = reply_channel {
+                self.open_global_requests.push_back(
+                    crate::session::GlobalRequestResponse::CancelTcpIpForward(reply_channel),
+                );
+            }
         }
         Ok(())
     }
@@ -362,17 +362,17 @@ impl Session {
     ) -> Result<(), crate::Error> {
         if let Some(ref mut enc) = self.common.encrypted {
             let want_reply = reply_channel.is_some();
-            if let Some(reply_channel) = reply_channel {
-                self.open_global_requests.push_back(
-                    crate::session::GlobalRequestResponse::StreamLocalForward(reply_channel),
-                );
-            }
             push_packet!(enc.write, {
                 msg::GLOBAL_REQUEST.encode(&mut enc.write)?;
                 "streamlocal-forward@openssh.com".encode(&mut enc.write)?;
                 (want_reply as u8).encode(&mut enc.write)?;
                 socket_path.encode(&mut enc.write)?;
             });
+            if let Some(reply_channel) = reply_channel {
+                self.open_global_requests.push_back(
+                    crate::session::GlobalRequestResponse::StreamLocalForward(reply_channel),
+                );
+            }
         }
         Ok(())
     }
@@ -388,56 +388,60 @@ impl Session {
     ) -> Result<(), crate::Error> {
         if let Some(ref mut enc) = self.common.encrypted {
             let want_reply = reply_channel.is_some();
-            if let Some(reply_channel) = reply_channel {
-                self.open_global_requests.push_back(
-                    crate::session::GlobalRequestResponse::CancelStreamLocalForward(reply_channel),
-                );
-            }
             push_packet!(enc.write, {
                 msg::GLOBAL_REQUEST.encode(&mut enc.write)?;
                 "cancel-streamlocal-forward@openssh.com".encode(&mut enc.write)?;
                 (want_reply as u8).encode(&mut enc.write)?;
                 socket_path.encode(&mut enc.write)?;
             });
+            if let Some(reply_channel) = reply_channel {
+                self.open_global_requests.push_back(
+                    crate::session::GlobalRequestResponse::CancelStreamLocalForward(reply_channel),
+                );
+            }
         }
         Ok(())
     }
 
     pub fn send_keepalive(&mut self, want_reply: bool) -> Result<(), crate::Error> {
-        self.open_global_requests
-            .push_back(crate::session::GlobalRequestResponse::Keepalive);
         if let Some(ref mut enc) = self.common.encrypted {
             push_packet!(enc.write, {
                 msg::GLOBAL_REQUEST.encode(&mut enc.write)?;
                 "keepalive@openssh.com".encode(&mut enc.write)?;
                 (want_reply as u8).encode(&mut enc.write)?;
             });
+            if want_reply {
+                self.open_global_requests
+                    .push_back(crate::session::GlobalRequestResponse::Keepalive);
+            }
         }
         Ok(())
     }
 
     pub fn send_ping(&mut self, reply_channel: oneshot::Sender<()>) -> Result<(), crate::Error> {
-        self.open_global_requests
-            .push_back(crate::session::GlobalRequestResponse::Ping(reply_channel));
         if let Some(ref mut enc) = self.common.encrypted {
             push_packet!(enc.write, {
                 msg::GLOBAL_REQUEST.encode(&mut enc.write)?;
                 "keepalive@openssh.com".encode(&mut enc.write)?;
                 (true as u8).encode(&mut enc.write)?;
             });
+            self.open_global_requests
+                .push_back(crate::session::GlobalRequestResponse::Ping(reply_channel));
         }
         Ok(())
     }
 
     pub fn no_more_sessions(&mut self, want_reply: bool) -> Result<(), crate::Error> {
-        self.open_global_requests
-            .push_back(crate::session::GlobalRequestResponse::NoMoreSessions);
         if let Some(ref mut enc) = self.common.encrypted {
             push_packet!(enc.write, {
                 msg::GLOBAL_REQUEST.encode(&mut enc.write)?;
                 "no-more-sessions@openssh.com".encode(&mut enc.write)?;
                 (want_reply as u8).encode(&mut enc.write)?;
             });
+            if want_reply {
+                self.open_global_requests
+                    .push_back(crate::session::GlobalRequestResponse::NoMoreSessions);
+            }
         }
         Ok(())
     }

@@ -15,6 +15,12 @@ use crate::helpers::NameList;
 use crate::kex::{EXTENSION_SUPPORT_AS_CLIENT, KexCause, SessionKexState};
 use crate::{ChannelOpenFailure, map_err, msg};
 
+#[derive(Debug)]
+pub(crate) enum EphemeralForwardReply {
+    Awaiting,
+    Success,
+}
+
 /// A connected server session. This type is unique to a client.
 #[derive(Debug)]
 pub struct Session {
@@ -26,6 +32,7 @@ pub struct Session {
     pub(crate) pending_len: u32,
     pub(crate) channels: HashMap<ChannelId, ChannelRef>,
     pub(crate) open_global_requests: VecDeque<GlobalRequestResponse>,
+    pub(crate) ephemeral_forward_reply: Option<EphemeralForwardReply>,
     pub(crate) kex: SessionKexState<ServerKex>,
 }
 
@@ -933,23 +940,28 @@ impl Session {
         self.common.debug(always_display, message, language_tag)
     }
 
-    /// Send a "success" reply to a /global/ request (requests without
-    /// a channel number, such as TCP/IP forwarding or
-    /// cancelling). Always call this function if the request was
-    /// successful (it checks whether the client expects an answer).
+    /// Send a "success" reply to a global request if one is still expected.
+    /// For an ephemeral TCP forward, the reply is deferred until the callback
+    /// returns its allocated port; a missing port produces a failure instead.
     pub fn request_success(&mut self) {
-        if self.common.wants_reply {
-            if let Some(ref mut enc) = self.common.encrypted {
-                self.common.wants_reply = false;
-                push_packet!(enc.write, enc.write.push(msg::REQUEST_SUCCESS))
-            }
+        if !std::mem::take(&mut self.common.wants_reply) {
+            return;
+        }
+        if let Some(reply) = self.ephemeral_forward_reply.as_mut() {
+            *reply = EphemeralForwardReply::Success;
+            return;
+        }
+        if let Some(ref mut enc) = self.common.encrypted {
+            push_packet!(enc.write, enc.write.push(msg::REQUEST_SUCCESS))
         }
     }
 
-    /// Send a "failure" reply to a global request.
+    /// Send a "failure" reply to a global request if one is still expected.
     pub fn request_failure(&mut self) {
+        if !std::mem::take(&mut self.common.wants_reply) {
+            return;
+        }
         if let Some(ref mut enc) = self.common.encrypted {
-            self.common.wants_reply = false;
             push_packet!(enc.write, enc.write.push(msg::REQUEST_FAILURE))
         }
     }
@@ -974,7 +986,7 @@ impl Session {
         Ok(())
     }
 
-    /// Send a "failure" reply to a global request.
+    /// Send a "failure" reply to a channel request.
     pub fn channel_failure(&mut self, channel: ChannelId) -> Result<(), crate::Error> {
         if let Some(ref mut enc) = self.common.encrypted {
             if let Some(channel) = enc.channels.get_mut(&channel) {
@@ -1134,13 +1146,13 @@ impl Session {
     pub fn keepalive_request(&mut self) -> Result<(), Error> {
         let want_reply = u8::from(true);
         if let Some(ref mut enc) = self.common.encrypted {
-            self.open_global_requests
-                .push_back(GlobalRequestResponse::Keepalive);
             push_packet!(enc.write, {
                 msg::GLOBAL_REQUEST.encode(&mut enc.write)?;
                 "keepalive@openssh.com".encode(&mut enc.write)?;
                 want_reply.encode(&mut enc.write)?;
-            })
+            });
+            self.open_global_requests
+                .push_back(GlobalRequestResponse::Keepalive);
         }
         Ok(())
     }
@@ -1149,13 +1161,13 @@ impl Session {
     pub fn send_ping(&mut self, reply_channel: oneshot::Sender<()>) -> Result<(), Error> {
         let want_reply = u8::from(true);
         if let Some(ref mut enc) = self.common.encrypted {
-            self.open_global_requests
-                .push_back(GlobalRequestResponse::Ping(reply_channel));
             push_packet!(enc.write, {
                 msg::GLOBAL_REQUEST.encode(&mut enc.write)?;
                 "keepalive@openssh.com".encode(&mut enc.write)?;
                 want_reply.encode(&mut enc.write)?;
-            })
+            });
+            self.open_global_requests
+                .push_back(GlobalRequestResponse::Ping(reply_channel));
         }
         Ok(())
     }
@@ -1354,11 +1366,6 @@ impl Session {
     ) -> Result<(), Error> {
         if let Some(ref mut enc) = self.common.encrypted {
             let want_reply = reply_channel.is_some();
-            if let Some(reply_channel) = reply_channel {
-                self.open_global_requests.push_back(
-                    crate::session::GlobalRequestResponse::TcpIpForward(reply_channel),
-                );
-            }
             push_packet!(enc.write, {
                 enc.write.push(msg::GLOBAL_REQUEST);
                 "tcpip-forward".encode(&mut enc.write)?;
@@ -1366,6 +1373,11 @@ impl Session {
                 address.encode(&mut enc.write)?;
                 port.encode(&mut enc.write)?;
             });
+            if let Some(reply_channel) = reply_channel {
+                self.open_global_requests.push_back(
+                    crate::session::GlobalRequestResponse::TcpIpForward(reply_channel),
+                );
+            }
         }
         Ok(())
     }
@@ -1379,11 +1391,6 @@ impl Session {
     ) -> Result<(), Error> {
         if let Some(ref mut enc) = self.common.encrypted {
             let want_reply = reply_channel.is_some();
-            if let Some(reply_channel) = reply_channel {
-                self.open_global_requests.push_back(
-                    crate::session::GlobalRequestResponse::CancelTcpIpForward(reply_channel),
-                );
-            }
             push_packet!(enc.write, {
                 msg::GLOBAL_REQUEST.encode(&mut enc.write)?;
                 "cancel-tcpip-forward".encode(&mut enc.write)?;
@@ -1391,6 +1398,11 @@ impl Session {
                 address.encode(&mut enc.write)?;
                 port.encode(&mut enc.write)?;
             });
+            if let Some(reply_channel) = reply_channel {
+                self.open_global_requests.push_back(
+                    crate::session::GlobalRequestResponse::CancelTcpIpForward(reply_channel),
+                );
+            }
         }
         Ok(())
     }
@@ -1544,6 +1556,7 @@ mod tests {
             pending_len: 0,
             channels: HashMap::new(),
             open_global_requests: VecDeque::new(),
+            ephemeral_forward_reply: None,
             kex: SessionKexState::Idle,
         }
     }

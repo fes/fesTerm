@@ -70,7 +70,7 @@ impl server::Handler for Server {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        session.request_success();
+        session.channel_success(channel)?;
         Ok(())
     }
 
