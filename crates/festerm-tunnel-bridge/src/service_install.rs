@@ -1406,7 +1406,8 @@ mod tests {
 
     #[test]
     fn service_windows_windowless_upgrade_accepts_only_exact_owned_legacy_tasks() {
-        let spec = spec();
+        let mut spec = spec();
+        spec.executable.set_extension("exe");
         let sid = "S-1-5-21-123-456-789-1001";
         let current = windows_definition(&spec, sid).unwrap();
         let legacy = windows_definition_with_console_policy(&spec, sid, false).unwrap();
