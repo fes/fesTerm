@@ -214,8 +214,58 @@ pub async fn list(
         _ = cancel.cancelled() => return Err(Error::Cancelled),
         value = management.list_all_tunnels(&options) => value.map_err(management_error)?,
     };
+    let tunnels = with_ports(tunnels, |tunnel| {
+        let management = &management;
+        let options = &options;
+        async move {
+            let locator = TunnelLocator::try_from(&tunnel).ok()?;
+            tokio::select! {
+                _ = cancel.cancelled() => None,
+                value = management.get_tunnel(&locator, options) => value.ok(),
+            }
+        }
+    })
+    .await;
+    if cancel.is_cancelled() {
+        return Err(Error::Cancelled);
+    }
     identity.confirm_account(&identity_http, cancel).await?;
     Ok(summarize(tunnels))
+}
+
+/// Most tunnels a single listing looks up individually for their ports.
+const PORT_LOOKUP_LIMIT: usize = 32;
+
+/// The service's cross-region listing omits ports even with `includePorts`,
+/// which would hide every bridge tunnel. Fetch each portless tunnel once
+/// (bounded) so the bridge-port check still decides what is listed; a failed
+/// lookup leaves the tunnel portless and therefore unlisted.
+async fn with_ports<F, Fut>(tunnels: Vec<Tunnel>, mut fetch: F) -> Vec<Tunnel>
+where
+    F: FnMut(Tunnel) -> Fut,
+    Fut: std::future::Future<Output = Option<Tunnel>>,
+{
+    let mut lookups = 0;
+    let mut filled = Vec::with_capacity(tunnels.len());
+    for tunnel in tunnels {
+        if !tunnel.ports.is_empty() || lookups >= PORT_LOOKUP_LIMIT {
+            filled.push(tunnel);
+            continue;
+        }
+        lookups += 1;
+        let listed = (tunnel.tunnel_id.clone(), tunnel.cluster_id.clone());
+        match fetch(tunnel.clone()).await {
+            Some(mut detailed)
+                if (detailed.tunnel_id.clone(), detailed.cluster_id.clone()) == listed =>
+            {
+                wipe_tokens(&mut detailed);
+                detailed.access_tokens = None;
+                filled.push(detailed);
+            }
+            _ => filled.push(tunnel),
+        }
+    }
+    filled
 }
 
 pub fn summarize(tunnels: Vec<Tunnel>) -> Vec<TunnelSummary> {
@@ -404,6 +454,76 @@ mod tests {
             [("live1.euw", true), ("idle1.use", false)]
         );
         assert_eq!(summaries[0].description.as_deref(), Some("laptop"));
+    }
+
+    #[tokio::test]
+    async fn portless_listings_are_filled_from_each_tunnel_before_filtering() {
+        let tunnels = listed(
+            r#"[
+              {"tunnelId":"festerm-1","clusterId":"usw3","description":"pi","status":{"hostConnectionCount":0},"ports":[]},
+              {"tunnelId":"web1","clusterId":"use","ports":[]},
+              {"tunnelId":"gone1","clusterId":"use","ports":[]},
+              {"tunnelId":"live1","clusterId":"euw","ports":[{"portNumber":22,"labels":["festerm-bridge-v1"]}]}
+            ]"#,
+        );
+        let mut fetched = Vec::new();
+        let filled = with_ports(tunnels, |tunnel| {
+            fetched.push(tunnel.tunnel_id.clone().unwrap_or_default());
+            let id = tunnel.tunnel_id.clone();
+            async move {
+                let detail = match id.as_deref() {
+                    Some("festerm-1") => {
+                        r#"[{"tunnelId":"festerm-1","clusterId":"usw3","description":"pi",
+                      "accessTokens":{"connect":"secret"},
+                      "ports":[{"portNumber":47461,"description":"festerm-bridge-v1"}]}]"#
+                    }
+                    Some("web1") => {
+                        r#"[{"tunnelId":"web1","clusterId":"use","ports":[{"portNumber":80}]}]"#
+                    }
+                    _ => return None,
+                };
+                listed(detail).pop()
+            }
+        })
+        .await;
+        assert_eq!(
+            fetched,
+            ["festerm-1", "web1", "gone1"],
+            "only portless tunnels are fetched"
+        );
+        assert!(filled.iter().all(|tunnel| tunnel.access_tokens.is_none()));
+        let summaries = summarize(filled);
+        assert_eq!(
+            summaries
+                .iter()
+                .map(|s| s.locator.as_str())
+                .collect::<Vec<_>>(),
+            ["festerm-1.usw3", "live1.euw"]
+        );
+        assert_eq!(summaries[0].description.as_deref(), Some("pi"));
+    }
+
+    #[tokio::test]
+    async fn port_lookups_are_bounded_and_ignore_a_different_tunnel() {
+        let many = (0..PORT_LOOKUP_LIMIT + 3)
+            .map(|i| format!(r#"{{"tunnelId":"t{i}","clusterId":"use","ports":[]}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut calls = 0;
+        let filled = with_ports(listed(&format!("[{many}]")), |_| {
+            calls += 1;
+            async {
+                listed(r#"[{"tunnelId":"other","clusterId":"use","ports":[{"portNumber":1,"labels":["festerm-bridge-v1"]}]}]"#)
+                    .pop()
+            }
+        })
+        .await;
+        assert_eq!(calls, PORT_LOOKUP_LIMIT);
+        assert_eq!(filled.len(), PORT_LOOKUP_LIMIT + 3);
+        assert!(
+            summarize(filled).is_empty(),
+            "a mismatched lookup is never listed"
+        );
     }
 
     #[test]
