@@ -1410,10 +1410,14 @@ mod tests {
         let sid = "S-1-5-21-123-456-789-1001";
         let current = windows_definition(&spec, sid).unwrap();
         let legacy = windows_definition_with_console_policy(&spec, sid, false).unwrap();
+        let legacy_command = format!(
+            "<Command>{}</Command>",
+            xml(spec.executable.to_str().unwrap())
+        );
         assert!(current.contains("festerm-tunnel-worker.exe</Command>"));
         assert!(current.contains("<Arguments>--state-dir "));
         assert!(!current.contains("--serve"));
-        assert!(legacy.contains("festerm-tunnel-setup.exe</Command>"));
+        assert!(legacy.contains(&legacy_command));
         assert!(legacy.contains("<Arguments>--serve --state-dir "));
         let accepted = windows_owned_definitions(&spec, sid).unwrap();
         assert_eq!(accepted[0], windows_task_bytes(&current));
@@ -1426,7 +1430,7 @@ mod tests {
         );
         for altered in [
             legacy.replace("LeastPrivilege", "HighestAvailable"),
-            legacy.replace("festerm-tunnel-setup.exe", "foreign.exe"),
+            legacy.replace(&legacy_command, "<Command>foreign.exe</Command>"),
             legacy.replace("été", "other-state"),
             legacy.replace(&spec.id, "00000000-0000-0000-0000-000000000001"),
         ] {
