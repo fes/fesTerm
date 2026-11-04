@@ -360,6 +360,7 @@
         "controller_identifier_collisions_and_exhaustion_fail_closed",
         "controller_cancellation_and_queue_limits_never_approve_a_stale_review",
         "controller_rejects_nonlocal_backend_and_closes_on_exhaustion",
+        "controller_limit_poison_log_panic_closes_peer_before_reporting",
         "cross_window_disable_or_cancel_precedes_controller_confirmation",
         "controller_review_rejects_away_and_back_tab_selection",
         "controller_chooser_tracks_surviving_window_identity_without_hidden_titles",

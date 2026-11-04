@@ -271,8 +271,8 @@ pub(super) fn execute(
             peer.connection.close_under_admission(&guard);
             broker.disconnect(peer.principal, &guard);
         } else {
-            tracing::error!("automation admission lock poisoned; disclosure remains closed");
             peer.connection.closed_flag().store(true, Ordering::Release);
+            tracing::error!("automation admission lock poisoned; disclosure remains closed");
         }
         peer.machine.close();
         peer.controller = PeerState::default();
@@ -2573,6 +2573,36 @@ pub(super) mod tests {
             .unwrap()
             .controller_registration(principal, registration)
             .is_err());
+        assert!(receive().is_none());
+    }
+
+    #[test]
+    fn controller_limit_poison_log_panic_closes_peer_before_reporting() {
+        if super::super::tests::isolate_poison_panic_test(
+            "FESTERM_CONTROLLER_LIMIT_POISON_LOG_PANIC_CHILD",
+            "automation::controller::tests::controller_limit_poison_log_panic_closes_peer_before_reporting",
+        ) {
+            return;
+        }
+        let (app, _) = FesTermApp::automation_local_fixture();
+        let mut coordinator = fixture(&[&app]);
+        let receive = add_peer(&mut coordinator, 1);
+        let peer = coordinator.peers.get_mut(&1).unwrap();
+        peer.controller.requests = MAX_CONTROLLER_REQUESTS;
+        let closed = peer.connection.closed_flag();
+        assert!(!closed.load(Ordering::Acquire));
+        super::super::tests::poison_admission_for_panic_test();
+
+        super::super::tests::assert_poison_log_panics(|| {
+            call(
+                &mut coordinator,
+                1,
+                &[&app],
+                "festerm_controller_capabilities",
+                json!({}),
+            )
+        });
+        assert!(closed.load(Ordering::Acquire));
         assert!(receive().is_none());
     }
 
