@@ -324,6 +324,13 @@ future work. Returning to A0 revokes all test
 principals/leases, stops owned workers and closes only fixture-owned sessions.
 Do not construct it with personal profiles, output or credentials.
 
+Prospective scoped-creation review has only non-authorizing profile/policy
+snapshot tests. Capture does not retrieve secret-store contents, but full
+profile fields may be sensitive; trusted code must not blindly log or disclose
+them to a worker, and redacted snapshot Debug does not sanitize those fields.
+`AUT-01` and `AUT-06` do not yet include a creation review,
+fresh-target binding or session-open edge; native review and launch remain gated.
+
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
 | `AUT-01` | A0 no authority → explicitly scoped invocation | Native user starts a reviewed immutable workflow or enables a paired local MCP caller; broker/grant UI prerequisite | Exact caller, bundle/parameter digests, target generations, disclosure/control scopes and expiry are shown; refusal or cancellation releases no data and admits no effects; connection/import alone grants nothing | Cancel/revoke to A0 | P, H, N, U; intake/binding and non-authorizing desktop source preview automated, approval and execution deferred |

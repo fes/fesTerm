@@ -129,6 +129,36 @@ mismatches fail before actions or disclosure. No wildcard target or active-tab
 alias is accepted in a write grant. New session creation yields one exact
 target under the approved creation scope, not authority over future sessions.
 
+The configuration crate provides a **non-authorizing** host-side effective
+profile snapshot for prospective native review. It copies the complete plain
+local, plain SSH-shell or serial profile and separately captures the known-host
+fingerprint selected by the saved profile's actual SSH connection identity.
+Capture and revalidation both use the same connection-profile conversion as
+launch, including its host normalization, and fail closed if it fails. Trust
+records are matched exactly, so a conflicting raw-host record is not substituted.
+The SSH value includes account, authentication kind, opaque credential
+reference and port forwards. Capture never retrieves secret-store contents,
+but full profile data, including freeform command arguments, may itself be
+sensitive; the configuration heuristic is not sanitization. Handle snapshots
+and accessor results only in trusted native code, never blindly log them or
+disclose them to a worker. Snapshot `Debug` is redacted, not its contents.
+Persistent local/SSH profiles, SFTP and Dev Tunnels are refused.
+The current SSH policy accepts a matching stored key and prompts for unknown or
+changed keys; a captured fingerprint is not a stricter trust policy.
+
+Exact revalidation compares both the captured values and an opaque in-process
+configuration revision. The host has not integrated revision ownership: a
+future owner must rotate it on every configuration adoption or mutation, never
+restore an old revision, and synchronize review and launch with that same
+owner. Reusing the revision permits identical remove/recreate (ABA). No content
+digest is produced here; even a future digest would identify content, not
+prove freshness. Neither snapshot nor revision pins executable/path contents,
+device identity or secret-store contents. Current profile launch resolves
+configuration again, SSH looks up trust separately and consumes stored-secret
+references asynchronously, and tab replacement does not attest a fresh session.
+Native approval, launch/privacy/attachment fences, fresh-target attestation,
+broker authority and workflow `open` therefore remain unavailable.
+
 Grants are memory-only in the initial phase. A native caller grant is owned
 by its approved connection/user invocation; derived request/run records cannot
 outlive it. Ending a short RPC request closes its request record, while the

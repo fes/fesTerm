@@ -7067,3 +7067,20 @@ implementation the shell can host like SSH. Displacement by another client ends
 the session with a typed reason and is never reattached silently. Offline tests
 and a real-daemon loopback pass on macOS; live Microsoft service, Keychain and
 device validation, and file reads over the tunnel remain open.
+
+## Scoped creation: immutable review data, not authority
+
+The configured launch paths resolve profiles at use time, SSH also reads the
+then-current known-host record and can consume an opaque secret reference
+asynchronously, and tab placement can reuse a launcher identity. A host-side
+snapshot now copies supported plain profiles and their separate SSH trust
+record for prospective review. Exact value checks and an opaque revision token
+are tested, but the application does not yet maintain a shared revision or
+fence. The token must change on every adoption/mutation; value equality alone
+cannot detect remove/recreate. Persistent profiles, SFTP and Dev Tunnels are
+refused. No session creation, grant, native approval or platform evidence is
+added by this slice.
+
+Capture never retrieves secret-store contents, but copied freeform profile data
+may itself be sensitive. Trusted handling, no blind logging and no worker
+disclosure are required; redacted snapshot Debug does not sanitize the profile.

@@ -2705,6 +2705,15 @@ native consent UI or input dispatch. Actual queue
 publication, takeover and platform behavior still require AUTO-03; P1 remains
 observation-only.
 
+Scoped creation has deterministic configuration snapshot tests only. Native
+review and usability evidence, a shared configuration epoch, privacy and
+attachment fences, exact fresh-session attestation, SSH trust/auth fencing,
+broker/worker authorization and launch validation are deferred and unperformed.
+These tests do not establish executable, device or secret-store pinning.
+Capture does not retrieve secret-store contents, but copied profile fields may
+themselves be sensitive. Trusted handling, no blind logging and no worker
+disclosure remain required; redacted snapshot Debug does not sanitize accessors.
+
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
 | AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts. | Deferred native + usability | Partial implementation: observation pairing/native grant UI, desktop file selection and non-authorizing captured-source review, and frozen-workflow binding components. Desktop source-view usability, iOS security-scoped access, pending-approval invalidation and platform path behavior still need qualification. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. A future direct-input approval must explicitly explain the target, remote-state uncertainty, expiry/budgets and that the approved action may be intentionally repeated throughout the live grant; obtain native handoff rather than accepting a device's claimed gesture, and distinguish approval from an explicit ownership cut. No native evidence collected for intake or workflow approval. |
