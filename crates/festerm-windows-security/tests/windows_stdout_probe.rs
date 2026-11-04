@@ -17,7 +17,8 @@ use std::{
 
 use festerm_windows_job::WindowsJob;
 use stdout_probe_control::{
-    mode_setup, ControlError, ControlParser, ModeAttempt, ModeSetup, MARKER, MAX_CONTROL,
+    mode_setup, ControlError, ControlParser, FillEvidence, ModeAttempt, ModeSetup, MARKER,
+    MAX_CONTROL, MAX_WRITES,
 };
 use windows_sys::Win32::{
     Foundation::{
@@ -47,7 +48,6 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(5);
 const OUTER_TIMEOUT: Duration = Duration::from_secs(25);
 const IO_LIMIT: Duration = Duration::from_secs(2);
 const CHUNK: usize = 64 * 1024;
-const MAX_WRITES: usize = 64;
 const MAX_PIPE_BYTES: usize = CHUNK * MAX_WRITES + MAX_CONTROL;
 const FILL_BYTE: u8 = 0xa5;
 const WAIT_BYTE: u8 = 0xb6;
@@ -626,37 +626,21 @@ fn probe_child() {
 
     command_byte(b'F');
     let bytes = [FILL_BYTE; CHUNK];
-    let mut total = 0_usize;
-    let mut full = false;
+    let mut fill = FillEvidence::default();
     for _ in 0..MAX_WRITES {
         let write = raw_write(stdout, &bytes);
+        report_write("FILL_WRITE", write);
         assert_prompt_success(write);
-        assert!((write.count as usize) <= bytes.len());
-        if write.count == 0 {
-            full = true;
+        fill.observe(bytes.len(), write.count as usize).unwrap();
+        if fill.full {
             break;
         }
-        total += write.count as usize;
     }
     assert!(
-        full && total > 0,
+        fill.full && fill.total > 0,
         "bounded pipe backpressure was not observed"
     );
-    report(&format!("FULL {total}"));
-
-    command_byte(b'P');
-    let mut length = [0; size_of::<u32>()];
-    io::stdin().read_exact(&mut length).unwrap();
-    let length = u32::from_le_bytes(length) as usize;
-    assert!(length > 1 && length <= MAX_PIPE_BYTES + 1);
-    let partial_bytes = vec![FILL_BYTE; length];
-    let partial = raw_write(stdout, &partial_bytes);
-    assert_prompt_success(partial);
-    assert!(partial.count > 0 && (partial.count as usize) < partial_bytes.len());
-    let zero = raw_write(stdout, &bytes);
-    assert_prompt_success(zero);
-    assert_eq!(zero.count, 0, "pipe did not return to full");
-    report(&format!("PARTIAL {}", partial.count));
+    report(&format!("FULL {}", fill.total));
 
     command_byte(b'W');
     let (known, mode) = query_pipe_mode(stdout);
@@ -830,23 +814,30 @@ fn probe_controller(stop_after_initial: bool) {
     let writer = probe.duplicate(ready[0]);
 
     probe.process.send(b"F");
+    let mut fill = FillEvidence::default();
+    for _ in 0..MAX_WRITES {
+        let write = probe.event("FILL_WRITE");
+        eprintln!("Native stdout fill write requested={CHUNK}, observed={write:?}");
+        assert_eq!(write.len(), 4);
+        let count = u32::try_from(write[1]).expect("fill count does not fit u32");
+        assert_write_event(&write, true, count);
+        fill.observe(CHUNK, count as usize).unwrap();
+        if fill.full {
+            break;
+        }
+    }
+    assert!(
+        fill.full && fill.total > 0,
+        "bounded pipe backpressure was not observed"
+    );
     let filled = probe.event("FULL");
     assert_eq!(filled.len(), 1);
-    let mut total = usize::try_from(filled[0]).unwrap();
-    assert!(total > 0 && total <= CHUNK * MAX_WRITES);
-
-    // After the bounded startup drain, no reads occur before backpressure.
-    let capacity = observed.drain(&mut probe);
-    assert_eq!(observed.fill, total);
-    assert!(capacity > 0 && capacity <= MAX_PIPE_BYTES);
-    probe.process.send(b"P");
-    probe
-        .process
-        .send(&u32::try_from(capacity + 1).unwrap().to_le_bytes());
-    let partial = probe.event("PARTIAL");
-    assert_eq!(partial.len(), 1);
-    let partial = usize::try_from(partial[0]).unwrap();
-    total += partial;
+    assert_eq!(usize::try_from(filled[0]).unwrap(), fill.total);
+    eprintln!(
+        "Native stdout fill: total={}, partial_observed={}",
+        fill.total, fill.partial
+    );
+    let mut total = fill.total;
 
     set_pipe_mode(writer.as_raw_handle(), PIPE_WAIT).unwrap();
     probe.process.send(b"W");
@@ -905,9 +896,13 @@ fn probe_controller(stop_after_initial: bool) {
         "probe exit exceeded the control deadline"
     );
     eprintln!(
-        "Native stdout probe: total={total} partial={partial} full_write=0 \
+        "Native stdout probe: total={total} partial_observed={} full_write=0 \
          restored_full_write=0 duplicate_wait_write=1 closed_error={}",
-        closed[2]
+        fill.partial, closed[2]
+    );
+    assert!(
+        fill.partial,
+        "positive partial write was not observed; stdout remains unqualified"
     );
     if let ModeSetup::SetAfterRefusal(first) = setup {
         panic!(

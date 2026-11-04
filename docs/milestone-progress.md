@@ -73,7 +73,12 @@ against a relay delaying ciphertext; it does not enable MCP or qualify
 production stdout. A native CI run instead found `ERROR_PIPE_BUSY` on the
 initial mode-setting call, before physical-write assertions. A bounded
 diagnostic records that first result and any retry after draining observed
-startup bytes, but a successful retry does not erase the initial failure.
+startup bytes, but a successful retry does not erase the initial failure. A
+later run observed 16 startup bytes and a successful retry, then failed an
+assumption that drained occupancy determined the next write's capacity. The
+probe now reports bounded fill-write results before checking them and requires
+an actually observed positive partial; full writes followed by zero do not
+qualify partial behavior.
 
 ## Verify the Dev Tunnel installer before execution
 

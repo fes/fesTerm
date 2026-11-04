@@ -417,6 +417,13 @@ result, drains only the stdout bytes observed under a bounded controller, and
 attempts the set once more only after an initial refusal. A successful retry
 still fails the test after the physical checks: the initial refusal remains
 unqualified, and the intervening drain and delay do not establish its cause.
+Another native run observed 16 startup bytes and a successful retry, but its
+attempt to infer a partial write from the drained occupancy failed before the
+write count was reported. Occupancy is not a proven pipe capacity. The revised
+probe records each bounded fill write before checking it and only claims a
+positive partial when one was actually observed; full writes followed by zero
+remain unqualified for partial behavior. Windows documents the
+[`CreatePipe` buffer size as a suggestion](https://learn.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-createpipe).
 After the final expected frame, the job-contained controller drains the
 control stream to observed EOF and requires a successful child exit within
 the same deadline; temporary emptiness or process exit alone is not EOF.
