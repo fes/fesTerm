@@ -4,7 +4,7 @@ pub(crate) const MARKER: &str = "FESTERM_STDOUT_PROBE";
 pub(crate) const MAX_CONTROL: usize = 16384;
 pub(crate) const MAX_EMPTY_LINES: usize = 16;
 pub(crate) const MAX_WRITES: usize = 64;
-const MAX_VALUES: usize = 4;
+const MAX_VALUES: usize = 5;
 const MAX_DIAGNOSTIC_BYTES: usize = 256;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -25,6 +25,62 @@ impl FillEvidence {
             .ok_or("fill byte count overflow")?;
         self.partial |= count > 0 && count < requested;
         self.full = count == 0;
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct RefillEvidence {
+    pub(crate) total: usize,
+    pub(crate) partial: bool,
+    request: usize,
+    writes: usize,
+    full: bool,
+}
+
+impl RefillEvidence {
+    pub(crate) fn new(request: usize) -> Result<Self, &'static str> {
+        if request == 0 {
+            return Err("invalid refill request");
+        }
+        Ok(Self {
+            total: 0,
+            partial: false,
+            request,
+            writes: 0,
+            full: false,
+        })
+    }
+
+    pub(crate) fn next_request(&self) -> Result<Option<usize>, &'static str> {
+        if self.full {
+            Ok(None)
+        } else if self.writes == MAX_WRITES {
+            Err("refill write budget exhausted before one-byte zero")
+        } else {
+            Ok(Some(self.request))
+        }
+    }
+
+    pub(crate) fn observe(&mut self, requested: usize, count: usize) -> Result<(), &'static str> {
+        if self.next_request()? != Some(requested) || count > requested {
+            return Err("invalid refill write");
+        }
+        let total = self
+            .total
+            .checked_add(count)
+            .ok_or("refill byte count overflow")?;
+        self.total = total;
+        self.partial |= count > 0 && count < requested;
+        self.writes += 1;
+        if count == 0 {
+            // A large zero does not establish that a one-byte write will block.
+            if requested == 1 {
+                self.full = true;
+            } else {
+                self.request = requested / 2;
+            }
+        }
         Ok(())
     }
 }

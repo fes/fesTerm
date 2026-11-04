@@ -4,8 +4,8 @@ mod stdout_probe_control;
 use std::time::{Duration, Instant};
 
 use stdout_probe_control::{
-    mode_setup, ControlError, ControlParser, FillEvidence, ModeAttempt, ModeSetup, MAX_CONTROL,
-    MAX_EMPTY_LINES, MAX_WRITES,
+    mode_setup, ControlError, ControlParser, FillEvidence, ModeAttempt, ModeSetup, RefillEvidence,
+    MAX_CONTROL, MAX_EMPTY_LINES, MAX_WRITES,
 };
 
 fn time_window() -> (Instant, Instant) {
@@ -39,23 +39,67 @@ fn stdout_fill_evidence_distinguishes_partial_from_full_then_zero() {
 }
 
 #[test]
-fn stdout_refill_after_a_drain_requires_observed_partial_and_zero() {
+fn stdout_refill_after_a_drain_requires_a_one_byte_zero() {
     let mut initial = FillEvidence::default();
     initial.observe(16, 16).unwrap();
     initial.observe(16, 0).unwrap();
 
-    let mut refill = FillEvidence::default();
-    refill.observe(16, 4).unwrap();
-    assert!(refill.partial);
-    assert!(!refill.full);
+    let mut refill = RefillEvidence::new(16).unwrap();
     refill.observe(16, 0).unwrap();
-    assert!(refill.full);
-    assert_eq!(initial.total + refill.total, 20);
+    assert_eq!(refill.next_request(), Ok(Some(8)));
+    refill.observe(8, 8).unwrap();
+    refill.observe(8, 0).unwrap();
+    refill.observe(4, 3).unwrap();
+    refill.observe(4, 0).unwrap();
+    refill.observe(2, 0).unwrap();
+    assert_eq!(refill.next_request(), Ok(Some(1)));
+    refill.observe(1, 1).unwrap();
+    refill.observe(1, 0).unwrap();
+    assert_eq!(refill.next_request(), Ok(None));
+    assert!(refill.partial);
+    assert_eq!(refill.total, 12);
+    assert_eq!(initial.total + refill.total, 28);
+    assert!(refill.observe(1, 0).is_err());
 
-    let mut no_partial = FillEvidence::default();
-    no_partial.observe(16, 16).unwrap();
+    let mut no_partial = RefillEvidence::new(16).unwrap();
     no_partial.observe(16, 0).unwrap();
+    no_partial.observe(8, 8).unwrap();
+    no_partial.observe(8, 0).unwrap();
+    no_partial.observe(4, 0).unwrap();
+    no_partial.observe(2, 0).unwrap();
+    no_partial.observe(1, 0).unwrap();
+    assert_eq!(no_partial.next_request(), Ok(None));
     assert!(!no_partial.partial);
+}
+
+#[test]
+fn stdout_refill_rejects_invalid_counts_requests_overflow_and_budget() {
+    assert!(RefillEvidence::new(0).is_err());
+    let mut refill = RefillEvidence::new(8).unwrap();
+    assert!(refill.observe(4, 0).is_err());
+    assert!(refill.observe(8, 9).is_err());
+    assert_eq!(refill.next_request(), Ok(Some(8)));
+    assert_eq!(refill.total, 0);
+
+    let mut overflow = RefillEvidence::new(usize::MAX).unwrap();
+    overflow.observe(usize::MAX, usize::MAX).unwrap();
+    assert!(overflow.observe(usize::MAX, 1).is_err());
+    assert_eq!(overflow.total, usize::MAX);
+
+    let mut budget = RefillEvidence::new(1).unwrap();
+    for _ in 0..MAX_WRITES {
+        budget.observe(1, 1).unwrap();
+    }
+    assert!(budget.next_request().is_err());
+    assert!(budget.observe(1, 0).is_err());
+    assert_eq!(budget.total, MAX_WRITES);
+
+    let mut last_write = RefillEvidence::new(1).unwrap();
+    for _ in 1..MAX_WRITES {
+        last_write.observe(1, 1).unwrap();
+    }
+    last_write.observe(1, 0).unwrap();
+    assert_eq!(last_write.next_request(), Ok(None));
 }
 
 #[test]
@@ -84,13 +128,25 @@ fn stdout_control_accepts_bounded_fill_trace() {
         .push(b"FESTERM_STDOUT_PROBE FULL 1\n", now, deadline)
         .unwrap();
     assert_eq!(parser.next_event("FULL", now, deadline), Ok(Some(vec![1])));
-    for _ in 0..=MAX_WRITES {
-        let refill = frame.replace("FILL_WRITE", "REFILL_WRITE");
+    let refill = format!(
+        "FESTERM_STDOUT_PROBE REFILL_WRITE {} 1 {} {} {}\n",
+        u32::MAX,
+        u32::MAX,
+        u32::MAX,
+        u64::MAX
+    );
+    for _ in 0..MAX_WRITES {
         parser.push(refill.as_bytes(), now, deadline).unwrap();
-        assert!(parser
-            .next_event("REFILL_WRITE", now, deadline)
-            .unwrap()
-            .is_some());
+        assert_eq!(
+            parser.next_event("REFILL_WRITE", now, deadline),
+            Ok(Some(vec![
+                u64::from(u32::MAX),
+                1,
+                u64::from(u32::MAX),
+                u64::from(u32::MAX),
+                u64::MAX
+            ]))
+        );
     }
     parser
         .push(b"FESTERM_STDOUT_PROBE REFILLED 1\n", now, deadline)
@@ -174,7 +230,7 @@ fn stdout_control_rejects_nonempty_malformed_frames_with_safe_diagnostics() {
         b"FESTERM_STDOUT_PROBE READY +1\n",
         b"FESTERM_STDOUT_PROBE READY \xff\n",
         b"FESTERM_STDOUT_PROBE READY 18446744073709551616\n",
-        b"FESTERM_STDOUT_PROBE READY 1 2 3 4 5\n",
+        b"FESTERM_STDOUT_PROBE READY 1 2 3 4 5 6\n",
     ];
     for frame in malformed {
         let mut parser = ControlParser::default();

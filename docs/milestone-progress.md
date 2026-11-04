@@ -79,9 +79,12 @@ assumption that drained occupancy determined the next write's capacity. The
 probe now reports bounded fill-write results before checking them and requires
 an actually observed positive partial; full writes followed by zero do not
 qualify partial behavior. A subsequent run observed exactly that full-then-zero
-sequence. The next probe physically drains a bounded prefix, reports another
-large write and refills to zero without inferring capacity; its native result
-remains pending and the initial refusal still fails qualification.
+sequence. A subsequent large write returned zero after a bounded drain, but a
+one-byte waiting write completed immediately, exposing a thread-handle race.
+The corrected probe uses bounded decreasing refill requests through an observed
+one-byte zero and duplicates the worker handle before releasing the write.
+Native verification remains pending and the initial refusal still fails
+qualification.
 
 ## Verify the Dev Tunnel installer before execution
 
