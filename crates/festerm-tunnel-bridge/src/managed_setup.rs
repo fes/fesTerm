@@ -1030,24 +1030,47 @@ async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
             .await
             .map_err(|_| refused("setup.bridge_cleanup"))?;
     }
-    if published {
-        health
-            .try_lock_exclusive()
-            .map_err(|_| refused("setup.worker_cleanup"))?;
+    if published && !reacquire_health(&health).await? {
+        // A setup rerun is still reading the published record; leave ready.json
+        // (it is ignored without a live worker) and let the next attempt retry.
+        cleanup_worker_destination(&run)?;
+        return Err(refused("setup.health_publication_busy"));
     }
     cleanup_worker_run(&state, &run)?;
     result
 }
 
+/// Readers (`healthy_record`) hold the shared health lock only briefly, so
+/// contention after the bridge exits is transient rather than a refusal.
+async fn reacquire_health(health: &File) -> io::Result<bool> {
+    for _ in 0..50 {
+        match health.try_lock_exclusive() {
+            Ok(()) => return Ok(true),
+            Err(error) if festerm_sessiond::lock_is_contended(&error) => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(_) => return Err(refused("setup.worker_cleanup")),
+        }
+    }
+    Ok(false)
+}
+
+fn cleanup_worker_destination(run: &Path) -> io::Result<()> {
+    match fs::remove_file(run.join("destination.json")) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(_) => return Err(refused("setup.worker_cleanup")),
+    }
+    fs::remove_dir(run).map_err(|_| refused("setup.worker_cleanup"))
+}
+
 fn cleanup_worker_run(state: &Path, run: &Path) -> io::Result<()> {
-    let remove_file = |path| match fs::remove_file(path) {
+    cleanup_worker_destination(run)?;
+    match fs::remove_file(state.join(READY)) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(_) => Err(refused("setup.worker_cleanup")),
-    };
-    remove_file(run.join("destination.json"))?;
-    fs::remove_dir(run).map_err(|_| refused("setup.worker_cleanup"))?;
-    remove_file(state.join(READY))
+    }
 }
 
 fn exit_status(status: &std::process::ExitStatus) -> String {
@@ -1074,6 +1097,37 @@ fn refuse_orphaned_state(state: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn managed_worker_waits_out_a_setup_rerun_reading_health_instead_of_refusing() {
+        let state = crate::test_support::private_directory("festerm-worker-health-contention");
+        let path = state.join("health.lock");
+        let worker = File::create(&path).unwrap();
+        let reader = File::open(&path).unwrap();
+        FileExt::lock_shared(&reader).unwrap();
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            FileExt::unlock(&reader).unwrap();
+        });
+        assert!(reacquire_health(&worker).await.unwrap());
+        release.await.unwrap();
+        FileExt::unlock(&worker).unwrap();
+
+        let reader = File::open(&path).unwrap();
+        FileExt::lock_shared(&reader).unwrap();
+        assert!(!reacquire_health(&worker).await.unwrap());
+        assert!(!is_permanent_refusal(&refused(
+            "setup.health_publication_busy"
+        )));
+        let run = state.join("run-test");
+        fs::create_dir(&run).unwrap();
+        fs::write(run.join("destination.json"), b"{}").unwrap();
+        cleanup_worker_destination(&run).unwrap();
+        assert!(!run.exists());
+        drop(reader);
+        drop(worker);
+        fs::remove_dir_all(state).unwrap();
+    }
 
     #[tokio::test]
     async fn managed_windows_worker_retries_until_recovery_and_stops_on_refusal() {

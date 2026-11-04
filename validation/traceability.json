@@ -106,6 +106,7 @@
         "managed_windows_worker_retries_until_recovery_and_stops_on_refusal",
         "managed_worker_retry_waits_and_can_be_cancelled_before_another_attempt",
         "managed_worker_cleans_ready_and_pre_ready_runs_without_touching_installation",
+        "managed_worker_waits_out_a_setup_rerun_reading_health_instead_of_refusing",
         "worker_log_values_are_stage_codes_only",
         "worker_log_forwards_only_well_formed_bridge_events",
         "worker_log_timestamps_are_utc_iso8601",
