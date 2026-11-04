@@ -430,18 +430,32 @@ fn peer_is_open(peer: &Peer, privacy: &PrivacyGate, stop: &AtomicBool) -> bool {
     !peer.connection.is_closed() && !privacy.is_closed() && !stop.load(Ordering::Acquire)
 }
 
+pub(super) const BUSY_STATUS: &str =
+    "Controller action refused while automation admission is busy. Try again.";
+pub(super) const ACCEPTED_STATUS: &str =
+    "Controller action accepted. This action granted no terminal access.";
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum CommandError {
+    Busy,
+    Refused(Refusal),
+}
+
 pub(super) fn command(
     coordinator: &mut Coordinator,
     window: WindowId,
     action: NativeCommand,
     apps: &[&FesTermApp],
-) -> Result<(), Refusal> {
+) -> Result<(), CommandError> {
     if let NativeCommand::CancelController {
         channel,
         registration,
     } = &action
     {
-        let peer = coordinator.peers.get_mut(channel).ok_or(Refusal::Closed)?;
+        let peer = coordinator
+            .peers
+            .get_mut(channel)
+            .ok_or(CommandError::Refused(Refusal::Closed))?;
         if peer
             .controller
             .selection
@@ -453,10 +467,30 @@ pub(super) fn command(
         return Ok(());
     }
     let guard = if matches!(&action, NativeCommand::UnregisterController { .. }) {
-        festerm_session::automation_admission_lock().ok_or(Refusal::Unavailable)?
+        festerm_session::automation_admission_lock().ok_or_else(|| {
+            tracing::error!("automation admission lock poisoned; controller action refused");
+            CommandError::Refused(Refusal::Unavailable)
+        })?
     } else {
-        festerm_session::try_automation_admission_lock().map_err(|_| Refusal::Unavailable)?
+        festerm_session::try_automation_admission_lock().map_err(|error| match error {
+            festerm_session::AutomationAdmissionTryError::Busy => CommandError::Busy,
+            festerm_session::AutomationAdmissionTryError::Poisoned => {
+                tracing::error!("automation admission lock poisoned; controller action refused");
+                CommandError::Refused(Refusal::Unavailable)
+            }
+        })?
     };
+    command_under_admission(coordinator, window, action, apps, &guard)
+        .map_err(CommandError::Refused)
+}
+
+fn command_under_admission(
+    coordinator: &mut Coordinator,
+    window: WindowId,
+    action: NativeCommand,
+    apps: &[&FesTermApp],
+    guard: &festerm_session::AutomationAdmissionGuard,
+) -> Result<(), Refusal> {
     let qualified = coordinator.controller_qualified();
     let available = qualified && coordinator.controller_opted_in;
     let workspace_revision = coordinator
@@ -548,7 +582,7 @@ pub(super) fn command(
             peer.controller.selection = None;
             let token = next_selection(&mut coordinator.controller_selection_revision)?;
             let proposal = broker
-                .prepare_controller_enrollment(peer.principal, registration, target, &guard)
+                .prepare_controller_enrollment(peer.principal, registration, target, guard)
                 .map_err(refusal)?;
             peer.controller.selection = Some(Selection::Reviewing {
                 registration,
@@ -605,7 +639,7 @@ pub(super) fn command(
                 .approve_controller_enrollment(
                     peer.principal,
                     NativeControllerEnrollment::new(proposal),
-                    &guard,
+                    guard,
                 )
                 .map_err(refusal)?;
             if broker
@@ -613,7 +647,7 @@ pub(super) fn command(
                 .ok()
                 != Some(target)
             {
-                remove_locked(broker, peer, id, &guard);
+                remove_locked(broker, peer, id, guard);
                 return Err(Refusal::NotAuthorized);
             }
             let record = peer
@@ -636,7 +670,7 @@ pub(super) fn command(
         } => {
             let peer = coordinator.peers.get_mut(&channel).ok_or(Refusal::Closed)?;
             if let Some(id) = public_registration(peer, registration) {
-                remove_locked(broker, peer, id, &guard);
+                remove_locked(broker, peer, id, guard);
             }
         }
         _ => return Err(Refusal::InvalidArguments),
@@ -958,6 +992,18 @@ pub(super) mod tests {
         serde_json::from_slice(&receive().expect("expected an outbound response")).unwrap()
     }
 
+    fn stable_settings(coordinator: &Coordinator, apps: &[&FesTermApp]) -> SettingsSnapshot {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let snapshot = coordinator.settings(apps);
+            if !snapshot.controller_targets_incomplete {
+                return snapshot;
+            }
+            assert!(Instant::now() < deadline, "controller settings stayed busy");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     fn row(coordinator: &Coordinator, apps: &[&FesTermApp], channel: u64) -> ControllerRow {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -983,11 +1029,23 @@ pub(super) mod tests {
         window: WindowId,
         command: NativeCommand,
     ) {
-        assert!(!coordinator.commands(
-            vec![NativeWindowCommand { window, command }],
-            &egui::Context::default(),
-            apps,
-        ));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            coordinator.status = "";
+            assert!(!coordinator.commands(
+                vec![NativeWindowCommand {
+                    window,
+                    command: command.clone(),
+                }],
+                &egui::Context::default(),
+                apps,
+            ));
+            if coordinator.status != BUSY_STATUS {
+                return;
+            }
+            assert!(Instant::now() < deadline, "controller command stayed busy");
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 
     fn review(
@@ -1108,9 +1166,22 @@ pub(super) mod tests {
                 },
                 &[&app],
             ),
-            Err(Refusal::Unavailable)
+            Err(CommandError::Busy)
         );
         let context = egui::Context::default();
+        assert!(!coordinator.commands(
+            vec![NativeWindowCommand {
+                window: WindowId::PRIMARY,
+                command: NativeCommand::ConfirmController {
+                    channel: 1,
+                    registration,
+                    selection: token,
+                },
+            }],
+            &context,
+            &[&app],
+        ));
+        assert_eq!(coordinator.status, BUSY_STATUS);
         coordinator.tick(&context, &[&app]);
         confirm(
             &mut coordinator,
@@ -1158,6 +1229,89 @@ pub(super) mod tests {
             .all(|record| record.association.is_none()));
         assert_ne!(coordinator.targets[&tab.chip_id()].reference, target);
         assert!(coordinator.peers[&1].grant.is_none());
+    }
+
+    #[test]
+    fn controller_explicit_retry_replaces_busy_status_after_approval() {
+        let (app, tab) = FesTermApp::automation_local_fixture();
+        let mut coordinator = fixture(&[&app]);
+        let receive = add_peer(&mut coordinator, 1);
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_controller_register",
+            json!({"local_id": "client"}),
+        );
+        response(&receive);
+        let registration = row(&coordinator, &[&app], 1).registration;
+        let target = coordinator.targets[&tab.chip_id()].reference;
+        let token = review(
+            &mut coordinator,
+            &[&app],
+            WindowId::PRIMARY,
+            1,
+            registration,
+            target,
+        );
+        let confirmation = NativeCommand::ConfirmController {
+            channel: 1,
+            registration,
+            selection: token,
+        };
+        let (held_tx, held_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+        let worker = std::thread::spawn(move || {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv_timeout(Duration::from_secs(3));
+        });
+        held_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let context = egui::Context::default();
+        assert!(!coordinator.commands(
+            vec![NativeWindowCommand {
+                window: WindowId::PRIMARY,
+                command: confirmation.clone(),
+            }],
+            &context,
+            &[&app],
+        ));
+        assert_eq!(coordinator.status, BUSY_STATUS);
+        assert!(coordinator.peers[&1]
+            .controller
+            .registrations
+            .values()
+            .all(|record| record.association.is_none()));
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(!coordinator.commands(
+                vec![NativeWindowCommand {
+                    window: WindowId::PRIMARY,
+                    command: confirmation.clone(),
+                }],
+                &context,
+                &[&app],
+            ));
+            if coordinator.peers[&1]
+                .controller
+                .registrations
+                .values()
+                .any(|record| record.association.is_some())
+            {
+                assert_eq!(coordinator.status, ACCEPTED_STATUS);
+                break;
+            }
+            assert_eq!(coordinator.status, BUSY_STATUS);
+            assert!(Instant::now() < deadline, "controller retry stayed busy");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            row(&coordinator, &[&app], 1).associated_target,
+            Some(target)
+        );
     }
 
     #[test]
@@ -1253,7 +1407,7 @@ pub(super) mod tests {
         );
         response(&receive);
         assert_eq!(row(&coordinator, &apps, 1).label, local_id);
-        let snapshot = coordinator.settings(&apps);
+        let snapshot = stable_settings(&coordinator, &apps);
         assert!(snapshot.controller_targets[0]
             .label
             .ends_with(&format!("\"{}...\"", "界".repeat(128))));
@@ -1269,7 +1423,7 @@ pub(super) mod tests {
             response(&receive)["result"]["structuredContent"]["code"],
             "INVALID_ARGUMENTS"
         );
-        assert_eq!(coordinator.settings(&apps).controllers.len(), 1);
+        assert_eq!(stable_settings(&coordinator, &apps).controllers.len(), 1);
     }
 
     #[test]
@@ -1297,7 +1451,7 @@ pub(super) mod tests {
             NativeCommand::EnableControllerEnrollment,
         );
         assert!(!coordinator.controller_opted_in);
-        assert!(!coordinator.settings(&[&app]).controller_opt_in_available);
+        assert!(!stable_settings(&coordinator, &[&app]).controller_opt_in_available);
 
         coordinator.synthetic_controller_qualified = true;
         native(
@@ -1486,7 +1640,7 @@ pub(super) mod tests {
             response(&receive_first)["result"]["structuredContent"]["data"]["registration_id"],
             wire
         );
-        let snapshot = coordinator.settings(&apps);
+        let snapshot = stable_settings(&coordinator, &apps);
         assert_eq!(snapshot.controller_targets.len(), 2);
         assert!(snapshot.controller_targets.iter().all(|candidate| {
             candidate
@@ -2307,7 +2461,7 @@ pub(super) mod tests {
         );
         response(&receive);
         let registration = row(&coordinator, &[&app], 1).registration;
-        app.set_automation_settings(coordinator.settings(&[&app]));
+        app.set_automation_settings(stable_settings(&coordinator, &[&app]));
         for _ in 0..=MAX_NATIVE_COMMANDS {
             app.queue_automation_command(NativeCommand::ChooseController {
                 channel: 1,
@@ -2354,7 +2508,9 @@ pub(super) mod tests {
         else {
             panic!("expected chooser");
         };
-        assert!(coordinator.settings(&[&app]).controller_targets.is_empty());
+        assert!(stable_settings(&coordinator, &[&app])
+            .controller_targets
+            .is_empty());
         native(
             &mut coordinator,
             &[&app],

@@ -1741,8 +1741,16 @@ impl Coordinator {
                     context.request_repaint();
                     continue;
                 }
-                if controller::command(self, window, command, apps).is_err() {
-                    self.status = "Controller selection refused: the connection, registration, window or local terminal changed. No association was approved.";
+                match controller::command(self, window, command, apps) {
+                    Ok(()) if self.status == controller::BUSY_STATUS => {
+                        self.status = controller::ACCEPTED_STATUS;
+                    }
+                    Ok(()) => {}
+                    Err(controller::CommandError::Busy) => self.status = controller::BUSY_STATUS,
+                    Err(controller::CommandError::Refused(reason)) => {
+                        tracing::warn!(?reason, "automation controller action refused");
+                        self.status = "Controller selection refused: the connection, registration, window or local terminal changed. No association was approved.";
+                    }
                 }
                 context.request_repaint();
             } else {
