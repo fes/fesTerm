@@ -871,3 +871,38 @@ Automated tests: `service_definitions_are_deterministic_scoped_and_have_no_secre
 `worker_log_forwards_only_well_formed_bridge_events` and
 `worker_log_timestamps_are_utc_iso8601`. Restarting after a real relay drop
 on Linux remains native evidence.
+
+## Amendment: Windows worker recovery after relay loss
+
+A Windows host lost its relay transport, logged a transient bridge exit, and
+stayed offline because its logon task was one-shot. The daemon shell remained
+alive; manually starting the same worker restored iOS discovery and attachment
+without changing the tunnel, host fingerprint or daemon generation.
+
+Windows `--serve` now retries transient worker failures in-process after
+15 seconds, matching the Linux retry interval. It runs only one bridge attempt
+at a time and repeats the existing account, host-key and exact-daemon checks
+before obtaining a fresh scoped host token. It never provisions another tunnel,
+key or shell. A clean bridge shutdown or permanent operator refusal stops;
+identity refusals still exit 78. macOS remains unchanged.
+
+Retries stay inside the setup worker rather than the GUI launcher: the existing
+owned-task upgrade stop operation can terminate that worker without a surviving
+launcher respawning it during replacement. No Scheduler definition, ownership
+snapshot, privilege or live-installation migration rule changes. Existing hosts
+need an explicit helper upgrade.
+
+Every attempt terminates a still-running bridge and removes its temporary
+destination directory and readiness file before another attempt. Failure to
+create protected attempt state, terminate a bridge or clean up is a permanent
+refusal, preventing retry loops from accumulating children or files. Retry
+events use the existing bounded private log and contain stage codes only.
+
+Automated coverage:
+`managed_windows_worker_retries_until_recovery_and_stops_on_refusal`,
+`managed_worker_retry_waits_and_can_be_cancelled_before_another_attempt`, and
+`managed_worker_cleans_ready_and_pre_ready_runs_without_touching_installation`.
+These extend the existing `TUNNEL-01`/`TUNNEL-05` validation impact. Manual
+worker recovery passed on the existing Windows-to-iOS fixture; automatic
+recovery after a real relay drop on the new signed helpers remains DT-05
+native evidence, not an accepted gate.
