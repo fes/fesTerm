@@ -7,6 +7,7 @@
 
 pub mod intake;
 pub mod review;
+pub mod terminal_input;
 
 use std::{
     collections::{BTreeMap, BTreeSet},

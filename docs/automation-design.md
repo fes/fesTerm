@@ -559,11 +559,14 @@ a dishonest callback. OS acceptance does not prove peer receipt.
 An independent incremental framing component supports fragmented, full-duplex
 record I/O, prefixing each encrypted record with a big-endian 16-bit length.
 It closes on truncated input or failed partial output and bounds one pending
-frame per direction. It takes a freshly verified channel before any records
-have been sent or received, and distinguishes interrupted writes from
-backpressure so edge-triggered callers can retry. It does not own I/O
-deadlines, authorization or privacy: the caller must hold the live disclosure
-boundary for each physical write.
+frame per direction. A panicking physical writer also closes the channel
+during unwinding because it may already have accepted an unknown prefix; the
+caller must discard the underlying stream and must not replay that frame. It
+takes a freshly verified channel before any records have been sent or
+received, and distinguishes interrupted writes from backpressure so
+edge-triggered callers can retry. It does not own I/O deadlines, authorization
+or privacy: the caller must hold the live disclosure boundary for each
+physical write.
 On cancellation or a denied boundary, the caller must close the channel and
 discard pending output rather than retrying under a later grant.
 None of these components is wired into the adapter or qualifies bootstrap or
@@ -780,6 +783,29 @@ adapter must enforce the automation write limit, bind the exact target and
 attachment, and recheck the captured modes while holding the relevant terminal
 and admission fences through publication. A mismatch refuses the entire batch;
 it must not silently re-encode or retry an approved write.
+
+The worker's `sendText` and `sendKeys` requests have a bounded, inert encoding
+adapter. `sendText` uses the ordinary paste encoder, including bracketed-paste
+mode and newline normalization, and adds no submit key. Supplied newlines or
+control characters can still execute commands. Empty or oversized text is
+refused.
+
+Each `sendKeys` token consists of zero or more distinct lowercase `ctrl:`,
+`alt:`, or `shift:` modifiers followed by an exact key name. A single ASCII
+letter, digit, `.`, `_`, or `-` denotes that character. Named characters are
+`Space`, `Plus`, `Equals`, `Slash`, `Backslash`, `BracketLeft`, `BracketRight`,
+`Comma`, `Semicolon`, `Quote`, and `Backtick`. Non-character names are `Enter`,
+`Tab`, `Backspace`, `Escape`, `ArrowUp`, `ArrowDown`, `ArrowRight`, `ArrowLeft`,
+`PageUp`, `PageDown`, `Home`, `End`, `Insert`, `Delete`, `F1` through `F12`,
+and `Keypad` followed by `0` through `9`, `Decimal`, `Enter`, `Add`,
+`Subtract`, `Multiply`, `Divide`, `Equal`, or `Separator`. For example,
+`ctrl:c`, `shift:Tab`, and `alt:ArrowLeft` are distinct typed events.
+Character values are already Shift-translated: `shift:A` supplies `A`, not a
+layout-dependent transformation. Unknown names, duplicate modifiers and
+unsupported chords refuse the entire batch. The core applies terminal modes;
+the adapter cannot turn a refused chord into a different key. An unrecognized
+token is `InvalidKey`; a syntactically valid chord that the core cannot encode
+(such as `ctrl:Plus`), or a locked key, is `Input(Rejected)`.
 
 The local PTY component can reserve an inert position in its existing bounded
 command queue before an exact broker commit. Its immutable bytes become

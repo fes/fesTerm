@@ -190,8 +190,10 @@ in the design must be visible in implementation/release review.
   MCP-only cleanup from global privacy revocation; they do not prove an
   integrated JavaScript adapter. Local PTY reservation tests exercise ordered
   commitment, cancellation and expiration, including a stalled callback; they
-  do not prove application writer-lease or human-takeover integration. P2 intake
-  tests cover bounded single-file capture,
+  do not prove application writer-lease or human-takeover integration. Terminal
+  request tests cover bounded mode-aware text/key preparation and refusal of
+  malformed or unsupported chords; they grant no authority. P2 intake tests
+  cover bounded single-file capture,
   strict decoding, path/link refusal and frozen invocation identity. Desktop
   selection provides a non-authorizing metadata and captured-source preview.
   A separate native review can freeze typed parameters and explicitly chosen

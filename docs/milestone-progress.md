@@ -18,6 +18,23 @@ platform is qualified for execution by this slice. A later explicit native
 decision must revalidate the same frozen binding before any authority exists.
 iOS selection and execution remain unavailable.
 
+## Encoding explicit worker input without admitting it
+
+Worker text and key requests now have an inert, bounded adapter to the
+terminal's existing paste and keyboard encoders. Key names and modifiers have
+an explicit grammar, unsupported chords refuse the whole batch, and captured
+terminal modes travel with the exact bytes. This is not a writer lease or an
+automation execution path; native authority, target and lifecycle checks remain
+required at admission.
+
+## Closing record channels on unknown write outcomes
+
+A physical record write can panic after the operating system accepts bytes,
+leaving its actual progress unknown. The output guard now closes and discards
+the channel during unwinding instead of permitting the same ciphertext to be
+retried. The transport owner must also discard the underlying stream; this
+does not enable MCP or replace its disclosure and privacy gates.
+
 ## Preparing exact terminal input without admission
 
 The terminal core can encode a bounded keyboard/paste batch against one
