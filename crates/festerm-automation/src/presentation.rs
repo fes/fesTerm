@@ -99,7 +99,7 @@ impl<'de> Deserialize<'de> for PresentationRevision {
                     return Err(E::invalid_value(de::Unexpected::Str(value), &self));
                 }
                 let mut bytes = [0_u8; 24];
-                for (pair, output) in value.as_bytes().chunks_exact(2).zip(&mut bytes) {
+                for (pair, output) in value.as_bytes().as_chunks::<2>().0.iter().zip(&mut bytes) {
                     let digit = |byte: u8| match byte {
                         b'0'..=b'9' => Some(byte - b'0'),
                         b'a'..=b'f' => Some(byte - b'a' + 10),
