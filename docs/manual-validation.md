@@ -2693,6 +2693,19 @@ initialize; its real-platform behavior is not yet validated. Deterministic
 tests are not native pairing, settings usability, containment or input-ordering
 evidence. JavaScript and terminal control remain unavailable.
 
+The Windows-only inherited-stdout pipe probe is a bounded feasibility test, not
+AUTO-03 or AUTO-04 acceptance. It requires execution on native Windows; a
+cross-compile does not exercise the kernel. It cannot establish an exclusive
+nonblocking mode, final-recipient privacy fencing, or independent caller
+liveness against a relay. The production stdio and bootstrap gates remain
+unqualified regardless of the probe result. Run it on native Windows with
+`cargo test --locked -p festerm-windows-security --test windows_stdout_probe -- --test-threads=1 --nocapture`.
+It uses only test-owned pipes and job-contained subprocesses, and deliberately
+stalls one writer to exercise termination and subsequent progress. If a
+write-only handle lacks mode-query rights, the result is reported as unknown;
+the physical write experiment is separate. Unsupported pipes, mode-setting or
+job-assignment failures fail the test rather than enabling the adapter.
+
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
 | AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts. | Deferred native + usability | Partial implementation: observation pairing and native grant UI. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. No native evidence collected. |

@@ -402,6 +402,27 @@ the private channel cannot be recalled. The stdio input reader buffers at most
 64 bounded frames independently of private-channel backpressure, so it can
 observe EOF and revoke while forwarding is stalled; overflow closes the channel.
 
+A native-Windows-only feasibility test probes an actual inherited stdout byte
+pipe, not the MCP adapter: a job-contained helper exercises `PIPE_NOWAIT`,
+physical partial/zero writes, reader closure, and a separate process changing
+the mode through a duplicated writer. Native execution is required, and results
+apply only to the controlled pipe and the tested Windows environment and
+configuration, not other hosts. A duplicated handle may change
+shared state; neither a mode query nor a successful write proves exclusive
+control or prevents a later mode-change race. Mode queries may also require
+rights absent from a write-only anonymous-pipe handle. Microsoft documents
+[`PIPE_NOWAIT` as a compatibility mode, not asynchronous I/O](https://learn.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-setnamedpipehandlestate).
+
+The current stdio adapter still uses blocking `write_all`/`flush` with a
+watchdog; a private-channel admission check or socket write is not a guard
+around the final physical stdout write, and buffered bytes cannot be recalled.
+Neither this probe nor endpoint fingerprint confirmation establishes
+independent caller liveness against a relay that delays ciphertext after the
+real client exits. Production bootstrap and privacy qualification therefore
+remain closed pending separate proofs of recipient-write fencing, exclusive or
+otherwise safe I/O ownership, independent caller provenance/liveness, native
+privacy monitoring and trusted peer approval.
+
 The handwritten adapter implements the MCP `2025-11-25` protocol baseline;
 native client interoperability is not yet qualified. Support only negotiated versions;
 do not combine lifecycle/metadata rules from different spec generations.

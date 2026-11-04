@@ -141,6 +141,8 @@
         "unqualified_bootstrap_refuses_server_and_stdio_before_ipc",
         "windows_stdio_eof_revokes_while_stdout_is_blocked",
         "full_windows_pipe_retries_only_after_rechecking_revocation",
+        "windows_stdout_inherited_pipe_nowait_probe",
+        "windows_stdout_probe_stalled_processes_are_supervised",
         "current_user_pipe_is_protected_and_supports_successive_instances",
         "revocation_serializes_with_an_in_flight_write_admission",
         "automation_ascii_selection_uses_its_actual_encoded_size",
@@ -155,6 +157,7 @@
       "status": "partial",
       "prerequisites": [
         "Native Windows pairing, lock/suspend, packaging and client interoperability remain unverified",
+        "Windows inherited-stdout probe results require native execution and apply only to each tested environment and configuration, not other hosts, final-recipient privacy fencing or independent caller liveness",
         "macOS and Linux activation remains unavailable until reliable screen-lock monitoring is qualified",
         "JavaScript, control, mobile hosting and network MCP require their separate stages"
       ]

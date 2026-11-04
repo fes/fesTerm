@@ -2650,6 +2650,7 @@ dependencies = [
 name = "festerm-windows-security"
 version = "0.14.1"
 dependencies = [
+ "festerm-windows-job",
  "tracing",
  "windows-sys 0.61.2",
 ]
