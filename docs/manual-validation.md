@@ -2714,10 +2714,13 @@ observed and drained, then tries once more after a refusal. It still fails if
 the initial attempt failed, even when the retry and physical checks succeed;
 the drain and intervening delay do not establish the failure's cause.
 Another native run wrote 65,536 bytes and then zero without observing a
-positive partial. The probe now makes one reported large write after a bounded
-physical drain and refills to an observed zero, without assuming the drain
-defines the next write's capacity. Native execution of that follow-up remains
-required.
+positive partial. After a bounded physical drain, a later large write also
+returned zero, yet the waiting one-byte writer completed immediately. The
+probe now refills with bounded, decreasing requests until an actual one-byte
+write returns zero, and duplicates the worker handle before releasing it.
+It still requires a physically observed pending write and a real positive
+partial; none of these follows from the drained byte count. Native execution
+of this correction remains required.
 Unsupported pipes, mode-setting or job-assignment failures fail the test rather
 than enabling the adapter.
 

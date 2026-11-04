@@ -17,13 +17,13 @@ use std::{
 
 use festerm_windows_job::WindowsJob;
 use stdout_probe_control::{
-    mode_setup, ControlError, ControlParser, FillEvidence, ModeAttempt, ModeSetup, MARKER,
-    MAX_CONTROL, MAX_WRITES,
+    mode_setup, ControlError, ControlParser, FillEvidence, ModeAttempt, ModeSetup, RefillEvidence,
+    MARKER, MAX_CONTROL, MAX_WRITES,
 };
 use windows_sys::Win32::{
     Foundation::{
         DuplicateHandle, DUPLICATE_SAME_ACCESS, ERROR_BROKEN_PIPE, ERROR_NO_DATA,
-        ERROR_PIPE_NOT_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+        ERROR_PIPE_NOT_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
     },
     Storage::FileSystem::{GetFileType, WriteFile, FILE_TYPE_PIPE},
     System::{
@@ -585,6 +585,12 @@ fn wait_for_pending_io(thread: &OwnedHandle, process: &mut Supervised) {
         if pending != 0 {
             return;
         }
+        // SAFETY: this duplicated thread handle remains live and the poll does not block.
+        assert_eq!(
+            unsafe { WaitForSingleObject(thread.as_raw_handle(), 0) },
+            WAIT_TIMEOUT,
+            "physical write returned before becoming pending, or thread state query failed"
+        );
         assert!(
             process.child.try_wait().unwrap().is_none(),
             "probe exited before the physical write became pending"
@@ -643,24 +649,19 @@ fn probe_child() {
     report(&format!("FULL {}", fill.total));
 
     command_byte(b'P');
-    let mut refill = FillEvidence::default();
-    let write = raw_write(stdout, &bytes);
-    report_write("PARTIAL_WRITE", write);
-    assert_prompt_success(write);
-    refill.observe(bytes.len(), write.count as usize).unwrap();
-    for _ in 0..MAX_WRITES {
-        if refill.full {
-            break;
-        }
-        let write = raw_write(stdout, &bytes);
-        report_write("REFILL_WRITE", write);
+    let mut refill = RefillEvidence::new(CHUNK).unwrap();
+    while let Some(requested) = refill.next_request().expect("bounded refill failed") {
+        let write = raw_write(stdout, &bytes[..requested]);
+        report(&format!(
+            "REFILL_WRITE {requested} {} {} {} {}",
+            u8::from(write.success),
+            write.count,
+            write.error,
+            write.elapsed.as_micros()
+        ));
         assert_prompt_success(write);
-        refill.observe(bytes.len(), write.count as usize).unwrap();
+        refill.observe(requested, write.count as usize).unwrap();
     }
-    assert!(
-        refill.full,
-        "bounded pipe backpressure was not re-established"
-    );
     report(&format!("REFILLED {}", refill.total));
 
     command_byte(b'W');
@@ -675,6 +676,8 @@ fn probe_child() {
         "WAIT_THREAD {} {known} {mode}",
         worker.as_raw_handle() as usize
     ));
+    // Keep the JoinHandle live until the controller has duplicated it.
+    command_byte(b'S');
     start.send(()).unwrap();
     // This join is only in the killable probe process, never the test runner.
     let write = worker.join().unwrap();
@@ -879,28 +882,16 @@ fn probe_controller(stop_after_initial: bool) {
         observed.fill, observed.harness
     );
     probe.process.send(b"P");
-    let mut refill = FillEvidence::default();
-    let write = probe.event("PARTIAL_WRITE");
-    eprintln!("Native stdout diagnostic write requested={CHUNK}, observed={write:?}");
-    assert_eq!(write.len(), 4);
-    let count = u32::try_from(write[1]).expect("diagnostic count does not fit u32");
-    assert_write_event(&write, true, count);
-    refill.observe(CHUNK, count as usize).unwrap();
-    for _ in 0..MAX_WRITES {
-        if refill.full {
-            break;
-        }
+    let mut refill = RefillEvidence::new(CHUNK).unwrap();
+    while let Some(requested) = refill.next_request().expect("bounded refill failed") {
         let write = probe.event("REFILL_WRITE");
-        eprintln!("Native stdout refill write requested={CHUNK}, observed={write:?}");
-        assert_eq!(write.len(), 4);
-        let count = u32::try_from(write[1]).expect("refill count does not fit u32");
-        assert_write_event(&write, true, count);
-        refill.observe(CHUNK, count as usize).unwrap();
+        eprintln!("Native stdout refill write requested={requested}, observed={write:?}");
+        assert_eq!(write.len(), 5);
+        assert_eq!(write[0], u64::try_from(requested).unwrap());
+        let count = u32::try_from(write[2]).expect("refill count does not fit u32");
+        assert_write_event(&write[1..], true, count);
+        refill.observe(requested, count as usize).unwrap();
     }
-    assert!(
-        refill.full,
-        "bounded pipe backpressure was not re-established"
-    );
     let refilled = probe.event("REFILLED");
     assert_eq!(refilled.len(), 1);
     assert_eq!(usize::try_from(refilled[0]).unwrap(), refill.total);
@@ -913,6 +904,7 @@ fn probe_controller(stop_after_initial: bool) {
     assert_eq!(waiting.len(), 3);
     assert_mode_if_queryable(waiting[1], waiting[2], PIPE_WAIT);
     let thread = probe.duplicate(waiting[0]);
+    probe.process.send(b"S");
     // The worker does no other I/O: pending means its physical stdout write is
     // actually in flight, not merely delayed before entering WriteFile.
     wait_for_pending_io(&thread, &mut probe.process);
