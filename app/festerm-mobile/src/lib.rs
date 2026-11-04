@@ -1037,6 +1037,13 @@ impl MobileApp {
                         }
                     }
                 }
+                ShellAction::MoveProfile { id, before } => {
+                    if let Some(profiles) = self.profiles.as_mut() {
+                        if let Err(error) = profiles.move_before(&id, before.as_deref()) {
+                            self.notice = Some(error);
+                        }
+                    }
+                }
                 ShellAction::CloseSurface(id) => self.close_tab(id),
                 ShellAction::OpenSurface(id) => {
                     self.shell.sessions_sheet = false;
@@ -2245,6 +2252,129 @@ mod tests {
         let reopened =
             MobileApp::new(Rc::new(Cell::new(Lifecycle::default()))).with_profiles(profiles);
         assert!(large(reopened.view.font_size_points()));
+    }
+
+    #[test]
+    fn touch_and_hold_drags_a_saved_profile_into_a_new_order() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let mut store = profiles::testing::profiles();
+        for name in ["alpha", "bravo", "charlie"] {
+            store
+                .save_ssh(
+                    None,
+                    name,
+                    festerm_mobile_profiles::SshProfile::new("web.example.net", "deploy"),
+                )
+                .unwrap();
+        }
+        let app = Rc::new(RefCell::new(
+            MobileApp::new(Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            })))
+            .with_profiles(store),
+        ));
+        let displayed = app.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(
+                move |ui, _: &mut ()| displayed.borrow_mut().show_with_occlusion(ui, 0.0),
+                (),
+            );
+        harness.run();
+        let order = |app: &Rc<RefCell<MobileApp>>| -> Vec<String> {
+            let app = app.borrow();
+            app.profiles
+                .as_ref()
+                .unwrap()
+                .rows(app.caps)
+                .into_iter()
+                .map(|row| row.name)
+                .collect()
+        };
+        let row = |harness: &Harness<'_, ()>, name: &str| harness.get_by_label(name).rect();
+        let pointer = |pressed: bool, pos: egui::Pos2| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let alpha = row(&harness, "alpha");
+        let grip = egui::pos2(alpha.left() + 60.0, alpha.center().y);
+        let below = egui::pos2(grip.x, row(&harness, "charlie").bottom() - 4.0);
+
+        // A press that moves at once scrolls; it never lifts the row.
+        let now = harness.ctx.input(|input| input.time);
+        let mut at = 0.0;
+        let mut play = |harness: &mut Harness<'_, ()>, steps: Vec<(f64, Vec<egui::Event>)>| {
+            for (elapsed, events) in steps {
+                at += elapsed;
+                harness.input_mut().time = Some(now + at);
+                for event in events {
+                    harness.event(event);
+                }
+                harness.step();
+            }
+        };
+        play(
+            &mut harness,
+            vec![
+                (
+                    0.01,
+                    vec![egui::Event::PointerMoved(grip), pointer(true, grip)],
+                ),
+                (0.05, vec![egui::Event::PointerMoved(below)]),
+                (0.6, vec![]),
+                (0.05, vec![pointer(false, below)]),
+            ],
+        );
+        harness.run();
+        assert_eq!(order(&app), ["alpha", "bravo", "charlie"]);
+
+        play(
+            &mut harness,
+            vec![
+                (
+                    0.5,
+                    vec![egui::Event::PointerMoved(grip), pointer(true, grip)],
+                ),
+                (0.3, vec![]),
+                (0.3, vec![]),
+                (0.05, vec![egui::Event::PointerMoved(below)]),
+                (0.05, vec![]),
+                (0.05, vec![pointer(false, below), egui::Event::PointerGone]),
+            ],
+        );
+        harness.run();
+        assert_eq!(order(&app), ["bravo", "charlie", "alpha"]);
+        assert_eq!(
+            app.borrow().surface,
+            Surface::Tabs,
+            "the release that drops a profile does not open it"
+        );
+        assert!(app.borrow().shell.reorder.is_none());
+
+        // A touch cancelled without a release abandons the drag in place.
+        let charlie = row(&harness, "charlie");
+        let grip = egui::pos2(charlie.left() + 60.0, charlie.center().y);
+        let top = egui::pos2(grip.x, row(&harness, "bravo").top() + 4.0);
+        play(
+            &mut harness,
+            vec![
+                (
+                    0.5,
+                    vec![egui::Event::PointerMoved(grip), pointer(true, grip)],
+                ),
+                (0.3, vec![]),
+                (0.3, vec![]),
+                (0.05, vec![egui::Event::PointerMoved(top)]),
+                (0.05, vec![egui::Event::PointerGone]),
+            ],
+        );
+        harness.run();
+        assert_eq!(order(&app), ["bravo", "charlie", "alpha"]);
+        assert!(app.borrow().shell.reorder.is_none());
     }
 
     #[test]

@@ -483,6 +483,37 @@ impl Profiles {
         self.store().delete(&id).map_err(|error| describe(&error))
     }
 
+    /// Moves `id` to just before `before`, or to the end when `before` is
+    /// `None`. Positions are resolved in the full store, so profiles the shell
+    /// hides keep their places relative to each other.
+    pub fn move_before(&mut self, id: &str, before: Option<&str>) -> Result<(), String> {
+        let missing = || "Profile not found".to_owned();
+        let moved = Self::id(id).ok_or_else(missing)?;
+        let mut store = self.store();
+        let position = |target: &str| {
+            store
+                .profiles()
+                .iter()
+                .position(|profile| profile.id.as_str() == target)
+        };
+        let from = position(id).ok_or_else(missing)?;
+        let index = match before {
+            Some(target) if target == id => return Ok(()),
+            Some(target) => {
+                let to = position(target).ok_or_else(missing)?;
+                if from < to {
+                    to - 1
+                } else {
+                    to
+                }
+            }
+            None => usize::MAX,
+        };
+        store
+            .move_profile(&moved, index)
+            .map_err(|error| describe(&error))
+    }
+
     pub fn mark_used(&mut self, id: &str) {
         if let Some(id) = Self::id(id) {
             // Recency is a convenience; a failed write must not block connecting.
@@ -651,6 +682,35 @@ mod tests {
             remote_session,
             recovery: Default::default(),
         }
+    }
+
+    #[test]
+    fn moving_a_profile_before_another_or_to_the_end_persists_the_order() {
+        let mut profiles = testing::profiles();
+        let ids: Vec<String> = ["alpha", "bravo", "charlie"]
+            .iter()
+            .map(|name| {
+                profiles
+                    .save_ssh(None, name, ssh(SshAuth::Ask, RemoteSession::Plain))
+                    .unwrap()
+            })
+            .collect();
+        let names = |profiles: &Profiles| -> Vec<String> {
+            profiles
+                .rows(Capabilities::production())
+                .into_iter()
+                .map(|row| row.name)
+                .collect()
+        };
+        profiles.move_before(&ids[0], Some(&ids[2])).unwrap();
+        assert_eq!(names(&profiles), ["bravo", "alpha", "charlie"]);
+        profiles.move_before(&ids[2], Some(&ids[1])).unwrap();
+        assert_eq!(names(&profiles), ["charlie", "bravo", "alpha"]);
+        profiles.move_before(&ids[2], None).unwrap();
+        assert_eq!(names(&profiles), ["bravo", "alpha", "charlie"]);
+        profiles.move_before(&ids[1], Some(&ids[1])).unwrap();
+        assert_eq!(names(&profiles), ["bravo", "alpha", "charlie"]);
+        assert!(profiles.move_before(&ids[1], Some("missing")).is_err());
     }
 
     #[test]
