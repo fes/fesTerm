@@ -744,6 +744,16 @@ the private channel cannot be recalled. The stdio input reader buffers at most
 64 bounded frames independently of private-channel backpressure, so it can
 observe EOF and revoke while forwarding is stalled; overflow closes the channel.
 
+An accepted peer cancellation marks its existing bounded wait before attempting
+the shared admission guard. Busy leaves that wait pending without servicing it,
+defers peer events and schedules a retry; native observation approval and
+controller confirmation are visibly refused, not replayed, while this or other
+admission/safety work defers the tick. Poison closes shared privacy. The
+exact run is cancelled under the guard, which is released before any response
+send. This does not migrate other broker cut or expiry APIs, serialize broker
+destruction, or fence enqueue and physical delivery. Queued or written bytes
+cannot be recalled.
+
 The existing capacity-four outbound queue and its frame/target-guard
 representation live in `festerm-automation`, while the app retains the same
 connection and writer. The frame limit and expiration remain host checks; the

@@ -2291,7 +2291,23 @@ impl Broker {
         Ok(status)
     }
 
-    pub fn cancel_run(&mut self, connection: ConnectionId, id: RunId, now: Instant) -> Result<()> {
+    /// Cancel this run under the existing admission boundary. Other cut and
+    /// expiry entry points are not yet uniformly guarded.
+    ///
+    /// ```compile_fail
+    /// use festerm_automation::{Broker, ConnectionId, RunId};
+    /// use std::time::Instant;
+    /// fn cancel(broker: &mut Broker, connection: ConnectionId, run: RunId) {
+    ///     let _ = broker.cancel_run(connection, run, Instant::now());
+    /// }
+    /// ```
+    pub fn cancel_run(
+        &mut self,
+        connection: ConnectionId,
+        id: RunId,
+        now: Instant,
+        _guard: &AutomationAdmissionGuard,
+    ) -> Result<()> {
         self.poll_expiry(now);
         let run = self.runs.get(&id).ok_or(Error::Unauthorized)?;
         if run.connection != connection {

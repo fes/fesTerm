@@ -1,5 +1,14 @@
 # Milestone Progress Narrative
 
+## Guarding peer wait cancellation
+
+Peer cancellation now retains a bounded, already-consumed cancellation on
+admission contention, suppresses the affected wait, and retries its broker
+cut before processing further peer events. `Broker::cancel_run` requires the
+shared guard; poison follows the existing global privacy-stop path. Regression
+execution is tracked with the PR. This does not guard other cuts or broker
+Drop, or qualify enqueue, metadata output or physical delivery.
+
 ## Outbound queue ownership extraction
 
 The existing four-frame IPC response queue and its frame/target guards now live

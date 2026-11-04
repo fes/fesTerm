@@ -407,6 +407,8 @@ struct Wait {
     target: TargetRef,
     after_revision: u64,
     deadline: Instant,
+    // The protocol event was consumed; retain its exact run until it is cut.
+    cancel_pending: bool,
 }
 
 struct Peer {
@@ -609,6 +611,8 @@ pub(crate) struct Coordinator {
     enabled: bool,
     privacy_lost_this_tick: bool,
     reconciliation_deferred: bool,
+    #[cfg(test)]
+    after_reconcile: Option<(mpsc::SyncSender<()>, mpsc::Receiver<()>)>,
     status: &'static str,
     peers: BTreeMap<u64, Peer>,
     targets: BTreeMap<u64, Target>,
@@ -643,6 +647,8 @@ impl Default for Coordinator {
             enabled: false,
             privacy_lost_this_tick: false,
             reconciliation_deferred: false,
+            #[cfg(test)]
+            after_reconcile: None,
             status: SettingsSnapshot::default().status,
             peers: BTreeMap::new(),
             targets: BTreeMap::new(),
@@ -1320,12 +1326,37 @@ impl Coordinator {
                 return;
             }
         }
+        #[cfg(test)]
+        if let Some((entered, release)) = self.after_reconcile.take() {
+            entered.send(()).expect("reconciliation test observer");
+            release
+                .recv_timeout(Duration::from_secs(10))
+                .expect("reconciliation test release");
+        }
         if self.privacy_gate.is_closed() {
             self.broker = Some(broker);
             self.privacy_lost();
             return;
         }
         let now = Instant::now();
+        let cancellation = self
+            .peers
+            .values_mut()
+            .try_for_each(|peer| retry_cancelled_waits(&mut broker, peer, now));
+        match cancellation {
+            Ok(()) => {}
+            Err(festerm_session::AutomationAdmissionTryError::Busy) => {
+                self.broker = Some(broker);
+                self.reconciliation_deferred = true;
+                context.request_repaint_after(Duration::from_millis(50));
+                return;
+            }
+            Err(festerm_session::AutomationAdmissionTryError::Poisoned) => {
+                self.broker = Some(broker);
+                self.privacy_lost();
+                return;
+            }
+        }
         broker.poll_expiry(now);
         self.metadata_grants.retain(|principal, bound| {
             broker.native_metadata_grant(*principal, now) == Ok(bound.grant)
@@ -1425,7 +1456,7 @@ impl Coordinator {
                 ipc::Event::Message { key, bytes } => {
                     let controller_qualified =
                         self.controller_qualified() && self.controller_opted_in;
-                    if let Some(peer) = self.peers.get_mut(&key) {
+                    let result = if let Some(peer) = self.peers.get_mut(&key) {
                         process_peer_message(
                             &mut broker,
                             &self.targets,
@@ -1436,7 +1467,23 @@ impl Coordinator {
                             &self.stop,
                             controller_qualified,
                             now,
-                        );
+                        )
+                    } else {
+                        Ok(())
+                    };
+                    match result {
+                        Ok(()) => {}
+                        Err(festerm_session::AutomationAdmissionTryError::Busy) => {
+                            self.broker = Some(broker);
+                            self.reconciliation_deferred = true;
+                            context.request_repaint_after(Duration::from_millis(50));
+                            return;
+                        }
+                        Err(festerm_session::AutomationAdmissionTryError::Poisoned) => {
+                            self.broker = Some(broker);
+                            self.privacy_lost();
+                            return;
+                        }
                     }
                 }
             }
@@ -1637,7 +1684,8 @@ impl Coordinator {
             NativeCommand::ApproveObservation { .. } if self.privacy_lost_this_tick => {}
             NativeCommand::ApproveObservation { .. } if self.reconciliation_deferred => {
                 self.status =
-                    "MCP approval refused while target reconciliation is pending. Try again.";
+                    "MCP approval refused while automation admission or safety work is pending. Try again.";
+                context.request_repaint();
             }
             NativeCommand::ApproveObservation { channel, targets } => {
                 if self.approve(channel, targets).is_err() {
@@ -1737,12 +1785,17 @@ impl Coordinator {
                     continue;
                 }
                 if self.reconciliation_deferred && command.is_confirmation() {
-                    self.status = "Controller action refused while target reconciliation is pending. Try again.";
+                    self.status = controller::RECONCILIATION_PENDING_STATUS;
                     context.request_repaint();
                     continue;
                 }
                 match controller::command(self, window, command, apps) {
-                    Ok(()) if self.status == controller::BUSY_STATUS => {
+                    Ok(())
+                        if matches!(
+                            self.status,
+                            controller::BUSY_STATUS | controller::RECONCILIATION_PENDING_STATUS
+                        ) =>
+                    {
                         self.status = controller::ACCEPTED_STATUS;
                     }
                     Ok(()) => {}
@@ -2019,12 +2072,55 @@ fn finish_run(broker: &mut Broker, peer: &Peer, run: RunId, now: Instant) {
     }
 }
 
-fn cancel_wait(broker: &mut Broker, peer: &mut Peer, key: &RequestKey, now: Instant) {
-    if let Some(index) = peer.waits.iter().position(|wait| wait.key == *key) {
-        let wait = peer.waits.remove(index);
-        let _ = broker.cancel_run(peer.principal, wait.run, now);
-        let _ = broker.forget_run(peer.principal, wait.run);
+fn retry_cancelled_waits(
+    broker: &mut Broker,
+    peer: &mut Peer,
+    now: Instant,
+) -> Result<(), festerm_session::AutomationAdmissionTryError> {
+    if !peer.waits.iter().any(|wait| wait.cancel_pending) {
+        return Ok(());
     }
+    let guard = festerm_session::try_automation_admission_lock()?;
+    while let Some(index) = peer.waits.iter().position(|wait| wait.cancel_pending) {
+        let wait = peer.waits.remove(index);
+        if let Err(error) = broker.cancel_run(peer.principal, wait.run, now, &guard) {
+            match error {
+                festerm_automation::Error::Expired
+                | festerm_automation::Error::Revoked
+                | festerm_automation::Error::Closed
+                | festerm_automation::Error::StaleTarget => {
+                    tracing::debug!(?error, "automation wait was already closed");
+                }
+                _ => tracing::warn!(?error, "automation wait cancellation failed"),
+            }
+        }
+        if let Err(error) = broker.forget_run(peer.principal, wait.run) {
+            tracing::warn!(
+                ?error,
+                "automation cancelled wait cleanup failed; closing peer"
+            );
+            peer.connection.close_under_admission(&guard);
+            broker.disconnect(peer.principal, &guard);
+            drop(guard);
+            peer.machine.close();
+            peer.waits.clear();
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
+fn cancel_wait(
+    broker: &mut Broker,
+    peer: &mut Peer,
+    key: &RequestKey,
+    now: Instant,
+) -> Result<(), festerm_session::AutomationAdmissionTryError> {
+    if let Some(wait) = peer.waits.iter_mut().find(|wait| wait.key == *key) {
+        wait.cancel_pending = true;
+        retry_cancelled_waits(broker, peer, now)?;
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2038,9 +2134,9 @@ fn process_peer_message(
     stop: &AtomicBool,
     controller_qualified: bool,
     now: Instant,
-) {
+) -> Result<(), festerm_session::AutomationAdmissionTryError> {
     if peer.connection.is_closed() || stop.load(Ordering::Acquire) || privacy.is_closed() {
-        return;
+        return Ok(());
     }
     match peer.machine.process_bytes(bytes) {
         Event::Reply(response) => send(peer, response, now, false),
@@ -2058,9 +2154,10 @@ fn process_peer_message(
             );
         }
         Event::Backend(request) => execute(broker, targets, peer, request, apps, now),
-        Event::Cancelled(key) => cancel_wait(broker, peer, &key, now),
+        Event::Cancelled(key) => return cancel_wait(broker, peer, &key, now),
         Event::NoReply => {}
     }
+    Ok(())
 }
 
 fn execute(
@@ -2106,6 +2203,7 @@ fn execute(
             target,
             after_revision,
             deadline: now + Duration::from_millis(u64::from(timeout_ms)),
+            cancel_pending: false,
         });
         return;
     }
@@ -2365,6 +2463,10 @@ fn settle_waits(
     let mut index = 0;
     while index < peer.waits.len() {
         let wait = &peer.waits[index];
+        if wait.cancel_pending {
+            index += 1;
+            continue;
+        }
         let target = targets
             .get(&wait.target.session())
             .filter(|target| target.reference == wait.target);

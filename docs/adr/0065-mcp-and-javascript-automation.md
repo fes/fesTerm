@@ -157,14 +157,25 @@ to bypass another's restrictions.
    flag and registry changes and release it before cleanup. UI reconciliation
    attempts the guard without waiting, captures the current attachment epoch
    under it, and defers the tick's broker/peer work on contention. A fresh
-   observation approval is refused rather than replayed while reconciliation
-   is pending; its connection, privacy, exact targets, attachment epochs and
+   observation approval and controller confirmations are visibly refused
+   rather than replayed while automation admission or safety work is pending,
+   including a deferred cancellation after successful target reconciliation.
+   Observation's connection, privacy, exact targets, attachment epochs and
    broker/host grant installation are checked under one try-guard. Startup
    defers its admission-dependent binding without consuming pending state.
    Mandatory active lifecycle cuts and the existing `Connection::send` can
    still wait for admission after reconciliation. Fixing response delivery
    requires bounded retained-response semantics; this is not a general
    UI-responsiveness claim.
+   The broker's `cancel_run` now requires the existing guard. If a peer
+   cancellation has already been consumed while admission is busy, the app
+   marks its bounded wait for cancellation, refuses to service it, and defers
+   further peer events until the guarded cut can be applied. Poison closes the
+   privacy boundary. The guard is released before any connection send.
+   Other run cuts, grant replacement/revocation and expiry APIs remain
+   unguarded; broker destruction still drops delivery epochs without the guard.
+   This is not a general cut invariant or a revocable enqueue, physical-output
+   or metadata-delivery fence.
    No enrollment witness is implemented, and this does not bind metadata grants
    or delivery liveness, fence physical recipients, or qualify native consent.
    The existing capacity-four app outbound channel and its frame and target
@@ -355,6 +366,11 @@ in the design must be visible in implementation/release review.
   The outbound ownership extraction adds queue capacity/FIFO/disconnect and
   guard-freshness checks plus app connection full/closed regressions; execution
   and full local CI-equivalent validation remain pending.
+  Cancellation regressions exercise post-reconciliation contention, retained
+  wait suppression, retry before a reused request ID, missing-run closure,
+  defensive cleanup of an injected retained child, and isolated admission
+  poison. Execution evidence is tracked with the PR; these tests do not
+  establish final delivery fencing.
   Incremental Noise handshake tests cover bounded framing, readiness and withholding the
   unverified channel until outbound handshake bytes are physically written.
   These do not prove trusted human comparison, native lock behavior, client

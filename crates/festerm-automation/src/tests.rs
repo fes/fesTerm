@@ -88,6 +88,11 @@ impl Broker {
         self.0.revoke_all(&guard);
     }
 
+    fn cancel_run(&mut self, connection: ConnectionId, id: RunId, now: Instant) -> Result<()> {
+        let guard = automation_admission_lock().unwrap();
+        self.0.cancel_run(connection, id, now, &guard)
+    }
+
     fn admit_run(
         &mut self,
         connection: ConnectionId,

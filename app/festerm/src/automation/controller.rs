@@ -432,6 +432,9 @@ fn peer_is_open(peer: &Peer, privacy: &PrivacyGate, stop: &AtomicBool) -> bool {
 
 pub(super) const BUSY_STATUS: &str =
     "Controller action refused while automation admission is busy. Try again.";
+// The deferred tick can also represent startup or cancellation safety work.
+pub(super) const RECONCILIATION_PENDING_STATUS: &str =
+    "Controller action refused while automation admission or safety work is pending. Try again.";
 pub(super) const ACCEPTED_STATUS: &str =
     "Controller action accepted. This action granted no terminal access.";
 
@@ -985,7 +988,8 @@ pub(super) mod tests {
             &coordinator.stop,
             qualified,
             Instant::now(),
-        );
+        )
+        .unwrap();
     }
 
     fn response(receive: &impl Fn() -> Option<Vec<u8>>) -> Value {
@@ -1259,6 +1263,23 @@ pub(super) mod tests {
             registration,
             selection: token,
         };
+        let context = egui::Context::default();
+        coordinator.reconciliation_deferred = true;
+        assert!(!coordinator.commands(
+            vec![NativeWindowCommand {
+                window: WindowId::PRIMARY,
+                command: confirmation.clone(),
+            }],
+            &context,
+            &[&app],
+        ));
+        assert_eq!(coordinator.status, RECONCILIATION_PENDING_STATUS);
+        assert!(coordinator.peers[&1]
+            .controller
+            .registrations
+            .values()
+            .all(|record| record.association.is_none()));
+        coordinator.reconciliation_deferred = false;
         let (held_tx, held_rx) = mpsc::sync_channel(1);
         let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
         let worker = std::thread::spawn(move || {
@@ -1267,7 +1288,6 @@ pub(super) mod tests {
             let _ = release_rx.recv_timeout(Duration::from_secs(3));
         });
         held_rx.recv_timeout(Duration::from_secs(3)).unwrap();
-        let context = egui::Context::default();
         assert!(!coordinator.commands(
             vec![NativeWindowCommand {
                 window: WindowId::PRIMARY,
@@ -1363,6 +1383,19 @@ pub(super) mod tests {
         assert!(elapsed < Duration::from_secs(1));
         assert_eq!(result, Ok(()));
         assert!(cleared);
+        coordinator.status = RECONCILIATION_PENDING_STATUS;
+        assert!(!coordinator.commands(
+            vec![NativeWindowCommand {
+                window: WindowId::PRIMARY,
+                command: NativeCommand::CancelController {
+                    channel: 1,
+                    registration,
+                },
+            }],
+            &egui::Context::default(),
+            &[&app],
+        ));
+        assert_eq!(coordinator.status, ACCEPTED_STATUS);
     }
 
     #[test]

@@ -13,6 +13,12 @@ does not check a broker grant, bind an enrollment or fence revocation. A future
 bound metadata path must prevent bypass through the legacy sender and establish
 its own publication and delivery prerequisites.
 
+`Broker::cancel_run` requires the shared admission guard; callers must pass an
+already-held guard rather than acquire it recursively. Other grant/run cuts and
+expiry paths are not uniformly guarded, and broker/epoch destruction still
+invalidates liveness without that guard. This partial migration does not fence
+publication or physical delivery.
+
 ## Application integration
 
 1. Keep one `Broker` exclusively in the application controller. Supply a fresh
