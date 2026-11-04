@@ -59,7 +59,7 @@ fn fixture() -> (Coordinator, FesTermApp, TabId, impl Fn() -> Option<Vec<u8>>) {
     (coordinator, app, id, receive)
 }
 
-fn approve_for_test(
+pub(super) fn approve_for_test(
     coordinator: &mut Coordinator,
     channel: u64,
     targets: Vec<TargetRef>,
@@ -4550,7 +4550,7 @@ pub(crate) fn preference_application_fixture(
     let (mut coordinator, app, id, receive) = fixture();
     let target = coordinator.targets[&id.chip_id()].reference;
     if approved {
-        coordinator.approve(1, vec![target]).unwrap();
+        approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
     }
     let stop = coordinator.stop.clone();
     (coordinator, app, target, stop, receive)
