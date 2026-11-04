@@ -58,8 +58,10 @@ share the same try-acquired guard; a busy tick does not replay a controller
 confirmation. Controller settings report an incomplete view while admission
 is busy. Native controller actions now distinguish pre-mutation contention
 from other refusals and ask the user to retry; they are never automatically
-replayed. Test helpers retry only that proven-busy refusal or an incomplete
-snapshot. These integration changes still require combined-tree validation.
+replayed. A later successful action replaces the stale busy message without
+claiming to change any existing grants. Test helpers retry only that
+proven-busy refusal or an incomplete snapshot. These integration changes still
+require combined-tree validation.
 
 This is only a prerequisite: there is no enrollment witness or metadata-grant
 binding, no final-recipient/write fence or native consent, and no production
