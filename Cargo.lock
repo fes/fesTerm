@@ -2271,6 +2271,7 @@ version = "0.14.1"
 dependencies = [
  "festerm-automation",
  "festerm-automation-js",
+ "festerm-core",
  "serde_json",
  "sha2 0.10.9",
 ]

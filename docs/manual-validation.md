@@ -2693,6 +2693,9 @@ initialize; its real-platform behavior is not yet validated. Deterministic
 tests are not native pairing, settings usability, containment or input-ordering
 evidence. JavaScript and terminal control remain unavailable.
 
+Terminal-request encoding has deterministic text, key, mode and refusal tests.
+Actual input admission, takeover and platform behavior still require AUTO-03.
+
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
 | AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts. | Deferred native + usability | Partial implementation: observation pairing/native grant UI and a separate, unintegrated frozen-workflow binding component. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. No native evidence collected. |

@@ -187,8 +187,10 @@ in the design must be visible in implementation/release review.
   MCP-only cleanup from global privacy revocation; they do not prove an
   integrated JavaScript adapter. Local PTY reservation tests exercise ordered
   commitment, cancellation and expiration, including a stalled callback; they
-  do not prove application writer-lease or human-takeover integration. Run the
-  traceability gate and documentation checks.
+  do not prove application writer-lease or human-takeover integration. Terminal
+  request tests cover bounded mode-aware text/key preparation and refusal of
+  malformed or unsupported chords; they grant no authority. Run the traceability
+  gate and documentation checks.
 - **Native/manual evidence required:** `AUTO-01` through `AUTO-04` remain open;
   observation requires real platform/client/lock evidence, and later stages
   additionally require engine, platform sandbox and input-ownership evidence.
