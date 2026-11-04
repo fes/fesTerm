@@ -2334,6 +2334,7 @@ version = "0.14.1"
 dependencies = [
  "festerm-automation",
  "festerm-automation-js",
+ "festerm-core",
  "festerm-unix-security",
  "festerm-windows-security",
  "serde_json",
