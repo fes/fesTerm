@@ -525,6 +525,7 @@
         "automation_mcp_loss_preserves_independent_broker_state",
         "automation_privacy_loss_revokes_every_principal_and_invalidates_targets",
         "automation_privacy_gate_closes_replaced_and_later_mcp_stops",
+        "automation_poison_diagnostics_follow_fail_closed_cuts",
         "automation_queued_restart_cannot_cross_privacy_loss",
         "automation_cancelled_shared_start_discards_queued_restart",
         "automation_shared_start_refuses_privacy_or_randomness_failure",
