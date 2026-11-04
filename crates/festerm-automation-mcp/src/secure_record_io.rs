@@ -245,12 +245,50 @@ impl RecordIo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{secure_channel, MAX_MESSAGE_BYTES};
+    use crate::{
+        secure_handshake_io::{HandshakeIo, ReadProgress},
+        MAX_MESSAGE_BYTES,
+    };
+    use std::io::Read;
+
+    fn read_handshake(handshake: &mut HandshakeIo, mut wire: &[u8]) {
+        loop {
+            match handshake.read_pending(|buffer| wire.read(buffer)).unwrap() {
+                ReadProgress::Partial => {}
+                ReadProgress::WriteReady | ReadProgress::Complete => break,
+                progress => panic!("unexpected handshake progress: {progress:?}"),
+            }
+        }
+        assert!(wire.is_empty());
+    }
 
     fn channels() -> (Channel, Channel) {
-        let (initiator, first) = secure_channel::initiate().unwrap();
-        let (application, reply) = secure_channel::respond(&first).unwrap();
-        let adapter = initiator.finish(&reply).unwrap();
+        let mut adapter = HandshakeIo::initiator().unwrap();
+        let mut application = HandshakeIo::responder();
+        let mut first = Vec::new();
+        assert_eq!(
+            adapter
+                .write_pending(|pending| {
+                    first.extend_from_slice(pending);
+                    Ok(pending.len())
+                })
+                .unwrap(),
+            WriteProgress::Complete
+        );
+        read_handshake(&mut application, &first);
+        let mut reply = Vec::new();
+        assert_eq!(
+            application
+                .write_pending(|pending| {
+                    reply.extend_from_slice(pending);
+                    Ok(pending.len())
+                })
+                .unwrap(),
+            WriteProgress::Complete
+        );
+        read_handshake(&mut adapter, &reply);
+        let adapter = adapter.take_unverified().unwrap();
+        let application = application.take_unverified().unwrap();
         let application_fingerprint = application.fingerprint().to_string();
         let adapter_fingerprint = adapter.fingerprint().to_string();
         (

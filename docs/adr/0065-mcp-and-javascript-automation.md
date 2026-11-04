@@ -167,9 +167,12 @@ in the design must be visible in implementation/release review.
   tests cover channel separation, exact targets, attenuation, quotas, lease
   epochs, completion cuts and idempotent starts. Configuration tests cover
   independent default-off opt-ins. MCP protocol, private framing, bounded
-  observation, pairing and stale-target tests cover the P1 path. These do not
-  prove native lock behavior, client interoperability, a confined engine or
-  native input ordering. Run the traceability gate and documentation checks.
+  observation, pairing and stale-target tests cover the P1 path. Incremental
+  Noise handshake tests cover bounded framing, readiness and withholding the
+  unverified channel until outbound handshake bytes are physically written.
+  These do not prove trusted human comparison, native lock behavior, client
+  interoperability, a confined engine or native input ordering. Run the
+  traceability gate and documentation checks.
 - **Native/manual evidence required:** `AUTO-01` through `AUTO-04` remain open;
   observation requires real platform/client/lock evidence, and later stages
   additionally require engine, platform sandbox and input-ownership evidence.

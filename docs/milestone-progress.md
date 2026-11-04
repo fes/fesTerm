@@ -1,5 +1,18 @@
 # Milestone Progress Narrative
 
+## Framing handshakes before exposing channels
+
+The experimental Noise handshake now has a bounded nonblocking driver for
+both roles. It tolerates fragmented I/O and readiness transitions, refuses
+malformed or truncated frames, and withholds the unverified responder channel
+until its entire reply has actually been written. Raw handshake entry points
+are private, so callers cannot bypass that ordering. The physical writer must
+truthfully report accepted bytes; a buffered queue is not the write boundary.
+
+This is not peer authentication or an MCP activation path. Independent trusted
+human comparison of complete fingerprints, deadlines, cancellation, privacy,
+transport identity and platform qualification remain caller-owned prerequisites.
+
 ## Framing verified channels without blocking on full messages
 
 The experimental Noise channel now has a bounded incremental record-framing

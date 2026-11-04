@@ -3,8 +3,28 @@
 //! Noise NN does not authenticate either endpoint. Both endpoints must derive
 //! and independently present the complete fingerprint for trusted human
 //! comparison before a caller is trusted or any sensitive data is exchanged.
-//! This module does not implement that comparison, approval, I/O, deadlines,
-//! privacy monitoring, or process identity, and does not enable MCP.
+//! The handshake I/O driver does not implement that comparison, approval,
+//! deadlines, privacy monitoring, or process identity, and does not enable MCP.
+//! Raw handshake construction is private so the driver cannot be bypassed.
+//!
+//! ```compile_fail
+//! use festerm_automation_mcp::secure_channel;
+//! let _ = secure_channel::respond(&[0; 32]);
+//! ```
+//!
+//! ```compile_fail
+//! use festerm_automation_mcp::secure_channel;
+//! let _ = secure_channel::initiate();
+//! ```
+//!
+//! An unverified channel cannot encrypt application data:
+//!
+//! ```compile_fail
+//! use festerm_automation_mcp::secure_channel::UnverifiedChannel;
+//! fn send(channel: &mut UnverifiedChannel) {
+//!     let _ = channel.seal_frame(b"private");
+//! }
+//! ```
 
 use sha2::{Digest, Sha256};
 use snow::{
@@ -16,6 +36,9 @@ use std::fmt;
 use subtle::ConstantTimeEq;
 
 use crate::MAX_MESSAGE_BYTES;
+
+#[path = "secure_handshake_io.rs"]
+pub mod handshake_io;
 
 const PATTERN: &str = "Noise_NN_25519_ChaChaPoly_SHA256";
 const PROLOGUE: &[u8] = b"fesTerm local MCP channel v1; initiator=adapter; responder=application";
@@ -61,8 +84,7 @@ impl fmt::Display for Fingerprint {
     }
 }
 
-/// The adapter's pending initiator handshake.
-pub struct Initiator(snow::HandshakeState);
+struct Initiator(snow::HandshakeState);
 
 struct CheckedResolver;
 
@@ -147,9 +169,7 @@ fn handshake(initiator: bool) -> Result<snow::HandshakeState, ChannelError> {
     .map_err(|_| ChannelError::Unavailable)
 }
 
-/// Start a fresh adapter handshake. Send the returned bytes as one bounded
-/// handshake record; do not send client data before independent verification.
-pub fn initiate() -> Result<(Initiator, Vec<u8>), ChannelError> {
+fn initiate() -> Result<(Initiator, Vec<u8>), ChannelError> {
     let mut state = handshake(true)?;
     let mut first = vec![0; FIRST_HANDSHAKE_BYTES + TAG_BYTES];
     let length = state
@@ -163,8 +183,7 @@ pub fn initiate() -> Result<(Initiator, Vec<u8>), ChannelError> {
 }
 
 impl Initiator {
-    /// Finish after receiving the application handshake record.
-    pub fn finish(mut self, reply: &[u8]) -> Result<UnverifiedChannel, ChannelError> {
+    fn finish(mut self, reply: &[u8]) -> Result<UnverifiedChannel, ChannelError> {
         if reply.len() != SECOND_HANDSHAKE_BYTES {
             return Err(ChannelError::InvalidMessage);
         }
@@ -180,9 +199,7 @@ impl Initiator {
     }
 }
 
-/// Accept one adapter handshake record and create an unverified application
-/// channel. Send the returned reply before using the channel.
-pub fn respond(first: &[u8]) -> Result<(UnverifiedChannel, Vec<u8>), ChannelError> {
+fn respond(first: &[u8]) -> Result<(UnverifiedChannel, Vec<u8>), ChannelError> {
     if first.len() != FIRST_HANDSHAKE_BYTES {
         return Err(ChannelError::InvalidMessage);
     }
@@ -235,7 +252,9 @@ impl UnverifiedChannel {
     }
 
     /// Confirm only a complete fingerprint supplied through an independently
-    /// trusted human comparison, never a value received from this peer.
+    /// trusted human comparison, never this endpoint's own value or a value
+    /// received over the peer channel being verified. The caller owns that
+    /// trust boundary; equality alone is not proof of a human comparison.
     pub fn confirm(self, compared_fingerprint: &str) -> Result<Channel, ChannelError> {
         if self.fingerprint.to_string() != compared_fingerprint {
             return Err(ChannelError::InvalidMessage);

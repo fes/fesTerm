@@ -390,18 +390,33 @@ before forwarding sensitive client data or granting terminal access. A
 model-controlled MCP tool call that copies the adapter's own public fingerprint
 is not evidence of human verification. The existing public pairing code is not
 this fingerprint. The primitive refuses low-order X25519 contributions and
-rejects tampering, replay and malformed bounded records. An independent
-incremental framing component supports fragmented, full-duplex record I/O,
-prefixing each encrypted record with a big-endian 16-bit length. It closes on
-truncated input or failed partial output and bounds one pending frame per
-direction. It takes a freshly verified channel before any records have been
-sent or received, and distinguishes interrupted writes from backpressure so
-edge-triggered callers can retry. It does not own I/O deadlines, authorization
-or privacy:
-the caller must hold the live disclosure boundary for each physical write.
+rejects tampering, replay and malformed bounded records. Raw handshake entry
+points are private; a transport-independent incremental driver frames the
+initiator's 32-byte message and responder's 48-byte reply with two-byte
+big-endian lengths, rejects every other length before buffering a payload, and
+never reads past the expected frame. It exposes only an unverified channel,
+after every required outbound byte has been written, and performs no fingerprint
+confirmation or peer authentication. EOF, cancellation, malformed input,
+terminal I/O errors or an unknown callback outcome discard pending state. A
+partial or interrupted operation is immediately retryable; only `WouldBlock`
+calls for waiting on readiness. A direction change must also be attempted
+without assuming a fresh readiness edge. The caller must enforce deadlines,
+live privacy/admission checks and cancellation, and close the owned stream.
+Every write callback must report the actual bytes accepted by a physical
+nonblocking stream write, not a local buffered queue; the driver cannot verify
+a dishonest callback. OS acceptance does not prove peer receipt.
+
+An independent incremental framing component supports fragmented, full-duplex
+record I/O, prefixing each encrypted record with a big-endian 16-bit length.
+It closes on truncated input or failed partial output and bounds one pending
+frame per direction. It takes a freshly verified channel before any records
+have been sent or received, and distinguishes interrupted writes from
+backpressure so edge-triggered callers can retry. It does not own I/O
+deadlines, authorization or privacy: the caller must hold the live disclosure
+boundary for each physical write.
 On cancellation or a denied boundary, the caller must close the channel and
 discard pending output rather than retrying under a later grant.
-Neither component is wired into the adapter or qualifies bootstrap or
+None of these components is wired into the adapter or qualifies bootstrap or
 executable provenance.
 An active relay can delay ciphertext or suppress disconnect; independently
 qualified liveness is required for strict caller-loss guarantees.
