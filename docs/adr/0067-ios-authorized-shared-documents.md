@@ -40,6 +40,12 @@ coordinated access and safe publication; it owns only bounded transient I/O
 snapshots, not canonical editor text or history. Success requires both a
 successful native completion and an actual verified serialization/write.
 Native autosave is not the owner of the app's dirty state.
+Each native instance admits only its initial open. A failed native revert can
+close the document and leave that instance editing-disabled after reopening;
+recovery must obtain fresh authority through Files, not reuse the failed
+instance. Refresh/save on a closed instance refuse before calling UIKit.
+Dropping during native I/O defers close until its actual completion, and
+successful reads supersede obsolete pending failures.
 
 An app-owned admission lease excludes native saves from local Files mutations
 and SFTP downloads. Parallel downloads retain their existing admission, but
@@ -104,3 +110,7 @@ sources, exact encoding/line-ending undo, stale reads and save completion.
 Native Files-provider access/revocation, software-keyboard occlusion,
 VoiceOver/Dynamic Type and approved-mockup visual comparison remain required
 under `MOB-08`; speech availability remains separately tracked under `MOB-07`.
+The opt-in Simulator fixture additionally covers a real failed revert,
+closed-instance operation refusal, fresh-instance recovery and subsequent
+actual save, superseded pending failures, and release after unopened and
+in-flight drops. It does not qualify picker-based reacquisition.

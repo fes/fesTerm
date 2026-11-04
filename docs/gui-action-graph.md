@@ -299,6 +299,13 @@ the state left by an unrelated test. A driver may skip an edge only when its
 capability guard is false; it records **not run: capability unavailable**, not
 pass.
 
+`MOB-08` native failure recovery never calls revert/save on a closed
+`UIDocument` or reopens a used instance. Reacquire through Files; preserve the
+canonical unsaved document while replacing only its native authority.
+Simulator fixture coverage includes failed-revert refusal, fresh-instance
+recovery/save, superseded pending failures and deferred-close lease release;
+picker/provider reacquisition remains native qualification.
+
 Edge records use this shape:
 
 | Field | Meaning |

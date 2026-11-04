@@ -52,6 +52,7 @@ struct FrozenSave {
 #[derive(Default)]
 struct FileState {
     path: Option<PathBuf>,
+    started: bool,
     opened: bool,
     working: bool,
     cancelled: bool,
@@ -141,6 +142,7 @@ impl BoundedDocument {
             {
                 state.path = Some(snapshot.path.clone());
                 state.loaded = Some(snapshot);
+                state.unavailable = None;
                 drop(state);
                 (self.ivars().repaint)();
                 true
@@ -274,6 +276,7 @@ impl DocumentFile {
 
     pub fn open(&self) -> Result<(), DocumentFileError> {
         self.begin(false)?;
+        let document = self.document.clone();
         let state = self.document.ivars().state.clone();
         let repaint = self.document.ivars().repaint.clone();
         let completed = RcBlock::new(move |success: Bool| {
@@ -285,7 +288,11 @@ impl DocumentFile {
                 state.unavailable =
                     Some(state.error.take().unwrap_or(DocumentFileError::Unavailable));
             }
+            let cancelled = state.cancelled;
             drop(state);
+            if cancelled {
+                close_idle_document(document.clone());
+            }
             repaint();
         });
         self.document.openWithCompletionHandler(Some(&completed));
@@ -293,6 +300,16 @@ impl DocumentFile {
     }
 
     fn begin(&self, require_open: bool) -> Result<(), DocumentFileError> {
+        let closed = self
+            .document
+            .documentState()
+            .contains(UIDocumentState::Closed);
+        if require_open && closed {
+            return Err(DocumentFileError::Unavailable);
+        }
+        if !require_open && !closed {
+            return Err(DocumentFileError::Busy);
+        }
         let mut state = self
             .document
             .ivars()
@@ -302,18 +319,26 @@ impl DocumentFile {
         if state.cancelled || (require_open && !state.opened) {
             return Err(DocumentFileError::Unavailable);
         }
-        if state.working {
+        if state.working || state.completed.is_some() {
             return Err(DocumentFileError::Busy);
+        }
+        if !require_open && state.started {
+            return Err(DocumentFileError::Unavailable);
+        }
+        if !require_open {
+            state.started = true;
         }
         state.working = true;
         state.read_epoch += 1;
         state.loaded = None;
         state.error = None;
+        state.unavailable = None;
         Ok(())
     }
 
     pub fn refresh(&self) -> Result<(), DocumentFileError> {
         self.begin(true)?;
+        let document = self.document.clone();
         let state = self.document.ivars().state.clone();
         let repaint = self.document.ivars().repaint.clone();
         let completed = RcBlock::new(move |success: Bool| {
@@ -324,7 +349,11 @@ impl DocumentFile {
                 state.unavailable =
                     Some(state.error.take().unwrap_or(DocumentFileError::Unavailable));
             }
+            let cancelled = state.cancelled;
             drop(state);
+            if cancelled {
+                close_idle_document(document.clone());
+            }
             repaint();
         });
         self.document
@@ -341,11 +370,11 @@ impl DocumentFile {
         if bytes.len() > MAX_DOCUMENT_BYTES {
             return Err(DocumentFileError::TooLarge);
         }
-        if self
-            .document
-            .documentState()
-            .contains(UIDocumentState::EditingDisabled)
-        {
+        let native_state = self.document.documentState();
+        if native_state.contains(UIDocumentState::Closed) {
+            return Err(DocumentFileError::Unavailable);
+        }
+        if native_state.contains(UIDocumentState::EditingDisabled) {
             return Err(DocumentFileError::ReadOnly);
         }
         let permit =
@@ -358,10 +387,6 @@ impl DocumentFile {
                 .state
                 .lock()
                 .expect("native document state");
-            if state.completed.is_some() {
-                state.working = false;
-                return Err(DocumentFileError::Busy);
-            }
             state.save = Some(FrozenSave {
                 operation,
                 expected,
@@ -370,6 +395,7 @@ impl DocumentFile {
                 _permit: permit,
             });
         }
+        let document = self.document.clone();
         let state = self.document.ivars().state.clone();
         let repaint = self.document.ivars().repaint.clone();
         let completed = RcBlock::new(move |success: Bool| {
@@ -394,7 +420,11 @@ impl DocumentFile {
                     }
                 });
             }
+            let cancelled = state.cancelled;
             drop(state);
+            if cancelled {
+                close_idle_document(document.clone());
+            }
             repaint();
         });
         self.document.saveToURL_forSaveOperation_completionHandler(
@@ -436,7 +466,7 @@ impl DocumentFile {
 
 impl Drop for DocumentFile {
     fn drop(&mut self) {
-        {
+        let idle = {
             let mut state = self
                 .document
                 .ivars()
@@ -447,16 +477,26 @@ impl Drop for DocumentFile {
                 return;
             }
             state.cancelled = true;
+            !state.working
+        };
+        if idle {
+            close_idle_document(self.document.clone());
         }
-        let held = self.document.clone();
-        let completed = RcBlock::new(move |success: Bool| {
-            let _ = &held;
-            if !success.as_bool() {
-                eprintln!("festerm-mobile: native document close failed");
-            }
-        });
-        self.document.closeWithCompletionHandler(Some(&completed));
     }
+}
+
+fn close_idle_document(document: Retained<BoundedDocument>) {
+    if document.documentState().contains(UIDocumentState::Closed) {
+        return;
+    }
+    let held = document.clone();
+    let completed = RcBlock::new(move |success: Bool| {
+        let _ = &held;
+        if !success.as_bool() {
+            eprintln!("festerm-mobile: native document close failed");
+        }
+    });
+    document.closeWithCompletionHandler(Some(&completed));
 }
 
 #[cfg(all(feature = "native-document-smoke", target_abi = "sim"))]

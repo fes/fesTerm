@@ -3746,7 +3746,7 @@
       "status": "partial",
       "prerequisites": [
         "Issue #570: portable registry and native UIDocument/picker boundaries exist, but the mobile source/editor surfaces, live Markdown views, Find/Replace and shared keyboard-region dictation composer are not wired.",
-        "Simulator fixture smoke passed actual native publication, 0600 permissions, stale overwrite refusal, refresh and close/cleanup; portable and real OpenSSH tests cover app-owned writer exclusion. Picker grants, iCloud/third-party provider coordination, revocation/move/delete, file-protection metadata, storage failures, actual keyboard/safe-area/IME, physical iPhone/iPad accessibility and Claude-based real-capture visual review remain MOB-08 qualification; no Edit/Preview split panes at any viewport size.",
+        "Simulator fixture smoke passed actual native publication, 0600 permissions, stale overwrite refusal, refresh, failed-revert closed-instance refusal, fresh-instance recovery/save, superseded pending failures, unopened/in-flight-drop lease release and close/cleanup; production recovery requires fresh Files authority rather than reopening the failed instance. Portable and real OpenSSH tests cover app-owned writer exclusion. Picker grants/reacquisition, iCloud/third-party provider coordination, revocation/move/delete, file-protection metadata, storage failures, actual keyboard/safe-area/IME, physical iPhone/iPad accessibility and Claude-based real-capture visual review remain MOB-08 qualification; no Edit/Preview split panes at any viewport size.",
         "On-device speech availability and privacy remain the separate MOB-07/#564 gate; online recognition remains deferred in #567."
       ]
     },

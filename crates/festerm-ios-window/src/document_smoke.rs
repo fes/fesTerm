@@ -68,6 +68,10 @@ impl Case {
         let url = NSURL::fileURLWithPath(&NSString::from_str(
             path.to_str().ok_or(DocumentFileError::Unavailable)?,
         ));
+        drop(DocumentFile::selected(&url, repaint.clone(), mtm)?);
+        let cancelled = DocumentFile::selected(&url, repaint.clone(), mtm)?;
+        cancelled.open()?;
+        drop(cancelled);
         let document = DocumentFile::selected(&url, repaint, mtm)?;
         document.open()?;
         eprintln!("festerm-document-smoke: started");
@@ -80,7 +84,60 @@ impl Case {
     }
 
     fn poll(&mut self) -> Result<bool, DocumentFileError> {
-        for event in self.document.take_events() {
+        if self.phase == 4 {
+            let (working, unavailable) = {
+                let state = self
+                    .document
+                    .document
+                    .ivars()
+                    .state
+                    .lock()
+                    .expect("native document state");
+                (state.working, state.unavailable)
+            };
+            if working {
+                return Ok(false);
+            }
+            if unavailable != Some(DocumentFileError::TooLarge) {
+                return Err(DocumentFileError::Io);
+            }
+            if self.document.refresh() != Err(DocumentFileError::Unavailable)
+                || self.document.save(999, [0; 32], Vec::new())
+                    != Err(DocumentFileError::Unavailable)
+                || self.document.open() != Err(DocumentFileError::Unavailable)
+            {
+                return Err(DocumentFileError::Io);
+            }
+            std::fs::write(&self.path, EXTERNAL).map_err(|_| DocumentFileError::Io)?;
+            let url = self.document.document.fileURL();
+            let fresh = DocumentFile::selected(
+                &url,
+                self.document.document.ivars().repaint.clone(),
+                MainThreadMarker::new().ok_or(DocumentFileError::Unavailable)?,
+            )?;
+            self.document = fresh;
+            // Model a pending older provider failure independently of the
+            // real failed-revert case, which UIKit closes before recovery.
+            self.document
+                .document
+                .ivars()
+                .state
+                .lock()
+                .expect("native document state")
+                .unavailable = Some(DocumentFileError::TooLarge);
+            self.document.open()?;
+            self.phase += 1;
+            return Ok(false);
+        }
+        let events = self.document.take_events();
+        if matches!(self.phase, 5 | 6)
+            && events
+                .iter()
+                .any(|event| matches!(event, DocumentFileEvent::Unavailable(_)))
+        {
+            return Err(DocumentFileError::Io);
+        }
+        for event in events {
             match (self.phase, event) {
                 (0, DocumentFileEvent::Loaded(snapshot)) => {
                     if snapshot.bytes != INITIAL || !snapshot.writable {
@@ -127,6 +184,28 @@ impl Case {
                         return Err(DocumentFileError::Io);
                     }
                     eprintln!("festerm-document-smoke: external refresh PASS");
+                    self.fail_next_refresh()?;
+                    self.phase = 4;
+                }
+                (5, DocumentFileEvent::Loaded(snapshot)) => {
+                    if snapshot.bytes != EXTERNAL {
+                        return Err(DocumentFileError::Io);
+                    }
+                    eprintln!(
+                        "festerm-document-smoke: fresh authority supersedes pending failure PASS"
+                    );
+                    self.document.save(3, snapshot.version, EDITED.to_vec())?;
+                    self.phase = 6;
+                }
+                (6, DocumentFileEvent::Saved { operation: 3, .. }) => {
+                    self.verify_bytes(EDITED)?;
+                    eprintln!("festerm-document-smoke: reopened source saves cleanly PASS");
+                    if LIVE_DOCUMENTS.load(Ordering::Acquire) != 1 {
+                        return Err(DocumentFileError::Io);
+                    }
+                    eprintln!(
+                        "festerm-document-smoke: unopened and in-flight drop release leases PASS"
+                    );
                     return Ok(true);
                 }
                 (_, DocumentFileEvent::SaveFailed { error, .. })
@@ -136,6 +215,12 @@ impl Case {
             }
         }
         Ok(false)
+    }
+
+    fn fail_next_refresh(&self) -> Result<(), DocumentFileError> {
+        std::fs::write(&self.path, vec![b'x'; MAX_DOCUMENT_BYTES + 1])
+            .map_err(|_| DocumentFileError::Io)?;
+        self.document.refresh()
     }
 
     fn verify_bytes(&self, expected: &[u8]) -> Result<(), DocumentFileError> {

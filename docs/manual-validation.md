@@ -754,6 +754,13 @@ close, stale reads and save completion. A Simulator-only native smoke proves
 actual BOM/CRLF/Unicode publication through a Unicode/space-bearing filename,
 preservation of 0600 permissions, stale
 overwrite refusal, external refresh and asynchronous close/fixture cleanup.
+The extended fixture induces a real oversized-file revert failure, verifies
+that refresh/save/reopen on the failed instance refuse without a UIKit
+exception, then recovers with a fresh native instance and verifies actual
+publication again. A deliberately seeded older failure must be superseded by
+the fresh read. Native lease counts prove unopened and in-flight-drop objects
+are released. Production recovery must reacquire authority through Files;
+reopening the failed instance is intentionally not supported.
 Writer-admission tests cover save/mutation exclusion and worker lifetimes;
 real OpenSSH integration additionally checks refused downloads/mutations leave
 existing files untouched and the blocking publication worker owns its lease.
