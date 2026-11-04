@@ -1492,7 +1492,9 @@ impl FesTermApp {
     /// touches no tab, focus, scroll offset, selection, or in-progress text
     /// entry (ADR 0032).
     pub(crate) fn adopt_broadcast_configuration(&mut self, configuration: Configuration) {
-        if configuration.interface_settings() != &self.current_interface_settings() {
+        if self.automation_settings.workflow.current_bundle().is_some()
+            && configuration.interface_settings() != &self.current_interface_settings()
+        {
             self.automation_settings.workflow.invalidate_review();
         }
         if !configuration.interface_settings().mcp_enabled() {

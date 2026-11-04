@@ -237,6 +237,14 @@ fn workflow_review_settings_broadcast_invalidates_the_selection_revision() {
     let revision = selection.review_token().unwrap().0;
     app.adopt_broadcast_configuration(
         Configuration::empty()
+            .with_interface_settings(javascript.clone())
+            .unwrap(),
+    );
+    assert!(revision.is_current());
+
+    let revision = selection.review_token().unwrap().0;
+    app.adopt_broadcast_configuration(
+        Configuration::empty()
             .with_interface_settings(javascript.with_mcp_enabled(true))
             .unwrap(),
     );
