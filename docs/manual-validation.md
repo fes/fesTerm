@@ -2705,10 +2705,11 @@ Windows worker ownership has an unresolved
 cleanup after creator death inside `CreateProcessW` is not explicitly
 established by the reviewed public references. This is not a demonstrated
 Windows defect. A test-only ownership probe is restricted to a dedicated
-GitHub-hosted Windows Actions job; it has not yet run on Windows, and its
-post-return observations do not close that gap. An independent re-review found
-no significant issues; the exact completion receipt and native CI evidence
-remain pending. No production launcher was added.
+GitHub-hosted Windows Actions job, which passed at
+[`cde253bd`](https://github.com/fes/fesTerm/actions/runs/41776002822/job/126396385915)
+with the exact completion receipt. Its post-return observations do not close
+that gap, and an independent re-review found no significant issues. No
+production launcher was added.
 Secure worker transport and the AppContainer policy remain separate
 prerequisites for AUTO-02.
 

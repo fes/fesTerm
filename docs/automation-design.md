@@ -529,10 +529,11 @@ probe. The disposable VM is a last-resort isolation boundary, not evidence that
 in-flight creation is safe. The probe releases its exited-process handles
 before checking outer-job accounting; an unrelated retained process reference
 can delay that accounting and cause a bounded test failure.
-This test has not yet run on Windows; it does not exercise creator death inside
-`CreateProcessW`, indirect descendants, or adversarial same-user access.
-An independent re-review found no significant issues; its dedicated CI job
-and native execution remain pending.
+The [dedicated GitHub-hosted Windows job](https://github.com/fes/fesTerm/actions/runs/41776002822/job/126396385915)
+passed at commit `cde253bd80b475effd0231b55cbe9cbc674e78e5` and emitted the
+required completion receipt. An independent re-review found no significant
+issues. This evidence does not exercise creator death inside `CreateProcessW`,
+indirect descendants, or adversarial same-user access.
 
 The workflow rejects a runner unless the Actions
 [`runner.environment` and `runner.os` context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#runner-context)

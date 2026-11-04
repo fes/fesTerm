@@ -13,8 +13,10 @@ confinement and native evidence remain necessary. A test-only probe restricted
 to a dedicated GitHub-hosted Windows job checks post-return job membership,
 sole-owner drop and creator death with an independent process-handle observer.
 An antagonist review prompted runner-context, discovery and receipt hardening,
-and an independent re-review found no significant issues. Windows execution
-and CI remain pending and cannot prove in-flight cleanup.
+and an independent re-review found no significant issues. The dedicated
+[GitHub-hosted Windows probe](https://github.com/fes/fesTerm/actions/runs/41776002822/job/126396385915)
+passed at `cde253bd80b475effd0231b55cbe9cbc674e78e5`, including its exact
+completion receipt. This does not prove in-flight cleanup.
 
 ## Encoding explicit worker input without admitting it
 

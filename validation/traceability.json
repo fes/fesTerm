@@ -174,7 +174,10 @@
         "automation_reservation_preserves_order_and_releases_cancelled_slots",
         "local_pty_automation_reservation_cannot_send_cancelled_bytes",
         "worker_argument_with_extra_arguments_refuses_before_gui_startup",
-        "application_worker_reports_qualification_before_receiving_source"
+        "application_worker_reports_qualification_before_receiving_source",
+        "windows_job_ownership_qualification",
+        "runner_gate_requires_every_hosted_windows_signal",
+        "discovery_filters_and_disabled_execution_do_not_run_the_probe"
       ],
       "manual_scenarios": ["AUTO-02", "AUTO-03"],
       "status": "partial",
