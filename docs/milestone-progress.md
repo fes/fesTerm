@@ -1,5 +1,14 @@
 # Milestone Progress Narrative
 
+## Guarding principal grant revocations
+
+Ordinary-slot, legacy metadata-slot and whole-principal revocation now require
+the shared admission guard. A contention regression checks the cut and preserves
+independently approved enrollment metadata for the two slot-specific operations.
+Grant replacement, other cuts and expiry are not uniformly guarded, and
+broker destruction remains outside the boundary; no enqueue or
+recipient-delivery fence is claimed.
+
 ## Adding exact-enrollment metadata authority in the broker
 
 The kernel adds separate discovery-only grants and quota-charged runs for exact
@@ -37,7 +46,7 @@ shared guard; poison follows the existing global privacy-stop path. Regression
 execution is tracked with the PR. Cleanup now disconnects under admission but
 defers bounded error logging until after releasing it, so a tracing subscriber
 cannot reenter the non-reentrant guard from those logs. This does not guard
-other cuts or broker Drop, or qualify enqueue, metadata output or physical
+other run cuts or broker Drop, or qualify enqueue, metadata output or physical
 delivery.
 
 ## Outbound queue ownership extraction

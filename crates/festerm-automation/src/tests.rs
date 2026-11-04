@@ -83,6 +83,21 @@ impl Broker {
         self.0.disconnect(connection, &guard);
     }
 
+    fn revoke_ordinary(&mut self, connection: ConnectionId) {
+        let guard = automation_admission_lock().unwrap();
+        self.0.revoke_ordinary(connection, &guard);
+    }
+
+    fn revoke_metadata(&mut self, connection: ConnectionId) {
+        let guard = automation_admission_lock().unwrap();
+        self.0.revoke_metadata(connection, &guard);
+    }
+
+    fn revoke(&mut self, connection: ConnectionId) {
+        let guard = automation_admission_lock().unwrap();
+        self.0.revoke(connection, &guard);
+    }
+
     fn revoke_all(&mut self) {
         let guard = automation_admission_lock().unwrap();
         self.0.revoke_all(&guard);
@@ -4387,6 +4402,81 @@ fn committed_discovery(f: &mut Fixture, run: RunId) -> DisclosureLiveness {
         .unwrap();
     f.broker.forget_run(f.connection, run).unwrap();
     liveness
+}
+
+#[test]
+fn ordinary_legacy_metadata_and_principal_revocations_share_admission() {
+    for action in 0..3 {
+        let mut f = Fixture::new();
+        let target = f.a;
+        let scope = Scope {
+            discover: BTreeSet::from([target]),
+            ..Scope::default()
+        };
+        f.approve(scope.clone(), &[direct(DirectKind::Discovery)]);
+        approve_metadata(&mut f, &[target], &[], MAX_GRANT_LIFETIME);
+        let (registration, enrollment) = authority_enrollment(&mut f, b"controller", target);
+        let proposal = authority_proposal(&mut f, registration, enrollment);
+        authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+        let ordinary_run = f.run(scope, direct(DirectKind::Discovery));
+        let ordinary = committed_discovery(&mut f, ordinary_run);
+        let deadline = f.now + Duration::from_secs(30);
+        let metadata_run = metadata_run(&mut f, &[target], deadline);
+        let metadata = committed_discovery(&mut f, metadata_run);
+        let enrollment_run = authority_run(
+            &mut f,
+            registration,
+            enrollment,
+            target,
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        let enrolled = committed_authority_discovery(&mut f, enrollment_run, target);
+        let connection = f.connection;
+        let now = f.now;
+        let mut broker = f.broker.0;
+        let guard = automation_admission_lock().unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let busy = matches!(
+                try_automation_admission_lock(),
+                Err(AutomationAdmissionTryError::Busy)
+            );
+            ready_tx.send(busy).unwrap();
+            let guard = automation_admission_lock().unwrap();
+            match action {
+                0 => broker.revoke_ordinary(connection, &guard),
+                1 => broker.revoke_metadata(connection, &guard),
+                _ => broker.revoke(connection, &guard),
+            }
+            drop(guard);
+            broker
+        });
+        let busy = ready_rx.recv_timeout(Duration::from_secs(2));
+        let before = (
+            ordinary.is_live(connection, now),
+            metadata.is_live(connection, now),
+            enrolled.is_live(connection, now),
+        );
+        drop(guard);
+        let broker = worker.join().unwrap();
+
+        assert_eq!(busy, Ok(true));
+        assert_eq!(before, (true, true, true));
+        assert_eq!(
+            (
+                ordinary.is_live(connection, now),
+                metadata.is_live(connection, now),
+                enrolled.is_live(connection, now)
+            ),
+            match action {
+                0 => (false, true, true),
+                1 => (true, false, true),
+                _ => (false, false, false),
+            }
+        );
+        drop(broker);
+    }
 }
 
 #[test]

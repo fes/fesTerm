@@ -759,9 +759,12 @@ admission/safety work defers the tick. Poison closes shared privacy. The
 exact run is cancelled under the guard; cleanup failures close and disconnect
 the peer under it. Bounded error details are logged only after its release,
 because tracing subscribers can reenter admission. It is also released before
-any response send. This does not migrate other broker cut or expiry APIs,
-serialize broker destruction, or fence enqueue and physical delivery. Queued
-or written bytes cannot be recalled.
+any response send. Explicit ordinary-slot, legacy metadata-slot and
+whole-principal broker revocations also require that guard; the first two
+preserve independently approved enrollment metadata. Other broker cuts,
+grant replacement and expiry are not uniformly guarded, and broker destruction
+remains unguarded. This does not fence enqueue or physical delivery. Queued or
+written bytes cannot be recalled.
 
 The existing capacity-four outbound queue and its frame/target-guard
 representation live in `festerm-automation`, while the app retains the same

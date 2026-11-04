@@ -62,6 +62,7 @@
         "prepared_input_bounds_include_normalization_and_paste_markers",
         "metadata_reapproval_and_takeover_preserve_the_other_grant",
         "metadata_revocation_cuts_delivery_without_interrupting_pending_control",
+        "ordinary_legacy_metadata_and_principal_revocations_share_admission",
         "metadata_and_control_expire_independently_at_their_exact_deadlines",
         "metadata_lifecycle_cuts_affected_generations_privacy_and_connections",
         "metadata_takeover_and_principal_revocation_remain_isolated",
@@ -255,6 +256,7 @@
         "connection_and_wire_ids_never_grant_authority",
         "session_and_kernel_share_admission_and_poison",
         "automation_epoch_exhaustion_is_permanently_fail_closed",
+        "ordinary_legacy_metadata_and_principal_revocations_share_admission",
         "replacement_and_revocation_win_over_pending_disclosure",
         "control_requires_native_remote_handoff_and_all_source_disclosure",
         "child_inherits_sources_even_when_its_observe_scope_is_empty",
@@ -329,6 +331,7 @@
       "decisions": ["ADR-0065"],
       "automated_tests": [
         "enrollment_registry_mutations_share_the_admission_boundary",
+        "ordinary_legacy_metadata_and_principal_revocations_share_admission",
         "controller_enrollment_uses_exact_native_selection_not_labels_or_position",
         "controller_registrations_are_connection_owned_and_disconnect_clears_them",
         "controller_rebinding_invalidates_old_references_and_review_decisions",

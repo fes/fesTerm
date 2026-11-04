@@ -381,8 +381,8 @@ impl Broker {
         Ok(connection)
     }
 
-    pub fn disconnect(&mut self, connection: ConnectionId, _guard: &AutomationAdmissionGuard) {
-        self.revoke(connection);
+    pub fn disconnect(&mut self, connection: ConnectionId, guard: &AutomationAdmissionGuard) {
+        self.revoke(connection, guard);
         self.principals.remove(&connection);
         self.runs.retain(|_, run| run.connection != connection);
         self.starts.retain(|(owner, _), _| *owner != connection);
@@ -1426,19 +1426,40 @@ impl Broker {
     /// revoking its independently approved metadata grant. Ordinary proposals
     /// are discarded; if a live grant changes revision, stale opposite-slot
     /// proposals are also discarded. Lifetime proposal charges are not refunded.
-    pub fn revoke_ordinary(&mut self, connection: ConnectionId) {
+    ///
+    /// ```compile_fail
+    /// use festerm_automation::{Broker, ConnectionId};
+    /// fn revoke_without_admission(broker: &mut Broker, connection: ConnectionId) {
+    ///     broker.revoke_ordinary(connection);
+    /// }
+    /// ```
+    pub fn revoke_ordinary(&mut self, connection: ConnectionId, _guard: &AutomationAdmissionGuard) {
         self.revoke_slot(connection, GrantSlot::Ordinary);
     }
 
     /// Revoke only the independently approved metadata grant. Metadata proposals
     /// are discarded; if a live grant changes revision, stale opposite-slot
     /// proposals are also discarded. Lifetime proposal charges are not refunded.
-    pub fn revoke_metadata(&mut self, connection: ConnectionId) {
+    ///
+    /// ```compile_fail
+    /// use festerm_automation::{Broker, ConnectionId};
+    /// fn revoke_without_admission(broker: &mut Broker, connection: ConnectionId) {
+    ///     broker.revoke_metadata(connection);
+    /// }
+    /// ```
+    pub fn revoke_metadata(&mut self, connection: ConnectionId, _guard: &AutomationAdmissionGuard) {
         self.revoke_slot(connection, GrantSlot::Metadata);
     }
 
     /// Revoke all authority and pending approvals for this connection.
-    pub fn revoke(&mut self, connection: ConnectionId) {
+    ///
+    /// ```compile_fail
+    /// use festerm_automation::{Broker, ConnectionId};
+    /// fn revoke_without_admission(broker: &mut Broker, connection: ConnectionId) {
+    ///     broker.revoke(connection);
+    /// }
+    /// ```
+    pub fn revoke(&mut self, connection: ConnectionId, _guard: &AutomationAdmissionGuard) {
         self.revoke_slot(connection, GrantSlot::Ordinary);
         self.revoke_slot(connection, GrantSlot::Metadata);
         let enrollment_slots: Vec<_> = self
@@ -1466,10 +1487,10 @@ impl Broker {
     }
 
     /// Lock/suspend/privacy loss is a global revocation, never a pause/resume.
-    pub fn revoke_all(&mut self, _guard: &AutomationAdmissionGuard) {
+    pub fn revoke_all(&mut self, guard: &AutomationAdmissionGuard) {
         let connections: Vec<_> = self.principals.keys().copied().collect();
         for connection in connections {
-            self.revoke(connection);
+            self.revoke(connection, guard);
         }
         for principal in self.principals.values_mut() {
             principal.controller_registrations.clear();

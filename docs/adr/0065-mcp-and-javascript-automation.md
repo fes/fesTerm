@@ -172,8 +172,11 @@ to bypass another's restrictions.
    marks its bounded wait for cancellation, refuses to service it, and defers
    further peer events until the guarded cut can be applied. Poison closes the
    privacy boundary. The guard is released before any connection send.
-   Other run cuts, grant replacement/revocation and expiry APIs remain
-   unguarded; broker destruction still drops delivery epochs without the guard.
+   Explicit ordinary-slot, legacy metadata-slot and whole-principal broker
+   revocations also require the shared guard, preserving independent enrollment
+   metadata unless the whole principal is revoked. Other run cuts, grant
+   replacement and expiry APIs remain unguarded; broker destruction still
+   drops delivery epochs without the guard.
    This is not a general cut invariant or a revocable enqueue, physical-output
    or metadata-delivery fence.
    The inert per-enrollment metadata-review model remains non-authorizing.
