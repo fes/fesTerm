@@ -721,24 +721,30 @@ impl FieldTouch {
     }
 
     fn touch(&mut self, pos: egui::Pos2, hold: f64) {
-        let touch = |phase| egui::Event::Touch {
+        self.touch_path(&[pos], hold);
+    }
+
+    /// Presses at `path[0]`, holds, slides through the rest, then lifts.
+    fn touch_path(&mut self, path: &[egui::Pos2], hold: f64) {
+        let touch = |phase, pos| egui::Event::Touch {
             device_id: egui::TouchDeviceId(1),
             id: egui::TouchId(1),
             phase,
             pos,
             force: None,
         };
-        let press = |pressed| egui::Event::PointerButton {
+        let press = |pressed, pos| egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,
             pressed,
             modifiers: egui::Modifiers::NONE,
         };
+        let start = path[0];
         self.frame(
             vec![
-                touch(egui::TouchPhase::Start),
-                egui::Event::PointerMoved(pos),
-                press(true),
+                touch(egui::TouchPhase::Start, start),
+                egui::Event::PointerMoved(start),
+                press(true, start),
             ],
             0.02,
         );
@@ -747,10 +753,20 @@ impl FieldTouch {
             self.frame(vec![], 0.1);
             held += 0.1;
         }
+        for pos in &path[1..] {
+            self.frame(
+                vec![
+                    touch(egui::TouchPhase::Move, *pos),
+                    egui::Event::PointerMoved(*pos),
+                ],
+                0.03,
+            );
+        }
+        let end = *path.last().expect("a touch has a position");
         self.frame(
             vec![
-                touch(egui::TouchPhase::End),
-                press(false),
+                touch(egui::TouchPhase::End, end),
+                press(false, end),
                 egui::Event::PointerGone,
             ],
             0.02,
@@ -758,6 +774,15 @@ impl FieldTouch {
         for _ in 0..3 {
             self.frame(vec![], 0.02);
         }
+    }
+
+    fn caret(&self) -> Option<std::ops::Range<usize>> {
+        let field = self.harness.ctx.memory(|memory| memory.focused())?;
+        let range = egui::TextEdit::load_state(&self.harness.ctx, field)?
+            .cursor
+            .char_range()?
+            .as_sorted_char_range();
+        Some(range.start.0..range.end.0)
     }
 
     fn long_press_username(&mut self) {
@@ -845,6 +870,114 @@ fn a_quick_tap_or_drag_on_a_form_field_does_not_open_the_edit_menu() {
 }
 
 #[test]
+fn holding_then_sliding_on_a_form_field_moves_its_caret_without_selecting() {
+    let mut rig = FieldTouch::editor();
+    let field = {
+        use egui_kittest::kittest::Queryable;
+        rig.harness.get(placeholder("dev")).rect()
+    };
+    rig.harness.state_mut().editor.username = "festerm".to_owned();
+    let end_of_text = rig.username_at;
+    rig.touch(end_of_text, 0.2);
+    assert_eq!(
+        rig.caret(),
+        Some(7..7),
+        "a tap past the text puts the caret at its end"
+    );
+
+    let start_of_text = egui::pos2(field.left() + 14.0, field.center().y);
+    let path: Vec<egui::Pos2> = (0..=6)
+        .map(|step| end_of_text.lerp(start_of_text, step as f32 / 6.0))
+        // A finger drifting off the row still steers the caret sideways.
+        .chain([start_of_text + egui::vec2(0.0, 60.0)])
+        .collect();
+    rig.touch_path(&path, 0.7);
+    assert_eq!(
+        rig.caret(),
+        Some(0..0),
+        "the held finger carries a caret, not a selection"
+    );
+    assert!(
+        !rig.has_menu("Paste"),
+        "a moved hold does not open the menu"
+    );
+    assert!(rig.keyboard_up());
+    assert_eq!(rig.username(), "festerm");
+}
+
+#[test]
+fn native_keyboard_edits_reach_the_focused_form_field_in_order() {
+    use festerm_ios_window::{FieldDocument, FieldInput};
+    type Field = (String, Vec<FieldInput>, Option<FieldDocument>);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(390.0, 200.0))
+        .build_ui_state(
+            |ui, (text, inputs, document): &mut Field| {
+                super::apply_field_input(ui.ctx(), std::mem::take(inputs));
+                let response = crate::widgets::form_field(
+                    ui,
+                    [ui.available_width(), 48.0],
+                    "field",
+                    egui::TextEdit::singleline(text),
+                    false,
+                );
+                if ui.ctx().memory(|memory| memory.focused()).is_none() {
+                    response.request_focus();
+                }
+                *document = crate::widgets::take_field_document(ui.ctx());
+            },
+            ("abc".to_owned(), Vec::new(), None),
+        );
+    harness.run_steps(2);
+    let document = harness
+        .state()
+        .2
+        .clone()
+        .expect("the focused field is published");
+    assert_eq!(document.text, "abc");
+    assert_eq!(document.selection, 3..3);
+    assert_eq!(document.carets.len(), 4);
+    assert!(document.carets.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(!document.secure);
+
+    let mut send = |inputs: Vec<FieldInput>| {
+        harness.state_mut().1 = inputs;
+        harness.run_steps(1);
+        let (text, _, document) = harness.state();
+        (
+            text.clone(),
+            document.as_ref().map(|document| document.selection.clone()),
+        )
+    };
+    assert_eq!(
+        send(vec![
+            FieldInput::Select(1..1),
+            FieldInput::Insert("X".into())
+        ]),
+        ("aXbc".to_owned(), Some(2..2)),
+        "a trackpad move lands before the typed text"
+    );
+    assert_eq!(
+        send(vec![FieldInput::DeleteBackward]),
+        ("abc".to_owned(), Some(1..1))
+    );
+    assert_eq!(
+        send(vec![FieldInput::Preedit {
+            text: "k".into(),
+            selected: 1..1,
+        }])
+        .0,
+        "akbc"
+    );
+    assert_eq!(
+        send(vec![FieldInput::Commit("か".into())]),
+        ("aかbc".to_owned(), Some(2..2)),
+        "a commit replaces the marked text"
+    );
+    assert_eq!(send(vec![FieldInput::Select(0..4)]).1, Some(0..4));
+}
+
+#[test]
 fn a_password_field_menu_pastes_but_never_offers_copy_or_cut() {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(390.0, 400.0))
@@ -852,15 +985,16 @@ fn a_password_field_menu_pastes_but_never_offers_copy_or_cut() {
             |ui, password: &mut String| {
                 super::apply_field_edit(ui.ctx());
                 ui.add_space(120.0);
-                let response = ui.add_sized(
+                crate::widgets::form_field(
+                    ui,
                     [ui.available_width(), 48.0],
+                    "password",
                     egui::TextEdit::singleline(password)
                         .password(true)
                         .sensitive(true)
                         .hint_text("Password"),
+                    true,
                 );
-                let has_text = !password.is_empty();
-                crate::widgets::field_edit_menu(ui, &response, has_text, true);
             },
             "hunter2".to_owned(),
         );

@@ -7,7 +7,7 @@ use super::model::{Capabilities, DevTunnelChoices, HostDecision, HostVerificatio
 use super::profiles::{SftpSpec, TunnelSpec};
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
-    bottom_sheet, button, button_sized, caption_label, card, field_edit_menu, footnote, labelled,
+    bottom_sheet, button, button_sized, caption_label, card, footnote, form_field, labelled,
     list_row, paint_fit, segmented, sheet_title, switch_row, text_field, ButtonKind, RowSpec,
     Trailing,
 };
@@ -620,8 +620,10 @@ pub fn authentication_sheet(
             ),
             AuthMode::Password => {
                 caption_label(ui, "Password");
-                let response = ui.add_sized(
+                form_field(
+                    ui,
                     [ui.available_width(), space::FIELD_HEIGHT],
+                    "profile_password",
                     egui::TextEdit::singleline(&mut state.password)
                         .password(true)
                         .sensitive(true)
@@ -632,9 +634,8 @@ pub fn authentication_sheet(
                         })
                         .margin(egui::Margin::symmetric(14, 14))
                         .char_limit(1024),
+                    true,
                 );
-                let has_text = !state.password.is_empty();
-                field_edit_menu(ui, &response, has_text, true);
                 footnote(
                     ui,
                     if state.durable_credentials {
@@ -716,16 +717,18 @@ fn key_section(
     }
     if state.needs_passphrase {
         caption_label(ui, "Key passphrase");
-        let response = ui.add_sized(
+        form_field(
+            ui,
             [ui.available_width(), space::FIELD_HEIGHT],
+            "key_passphrase",
             egui::TextEdit::singleline(&mut state.key_passphrase)
                 .password(true)
                 .sensitive(true)
                 .hint_text("Passphrase to decrypt the key")
                 .margin(egui::Margin::symmetric(14, 14))
                 .char_limit(1024),
+            true,
         );
-        field_edit_menu(ui, &response, !state.key_passphrase.is_empty(), true);
         if button(ui, ButtonKind::Primary, "Unlock & import key", true).clicked() {
             *action = AuthAction::ImportPending;
         }
@@ -1075,16 +1078,17 @@ pub fn password_sheet(
                     .color(color::WARNING),
             );
         }
-        let response = ui.add_sized(
+        form_field(
+            ui,
             [ui.available_width(), space::FIELD_HEIGHT],
+            "auth_password",
             egui::TextEdit::singleline(password)
                 .password(true)
                 .sensitive(true)
                 .margin(egui::Margin::symmetric(14, 14))
                 .char_limit(4096),
+            true,
         );
-        let has_text = !egui::TextBuffer::as_str(password).is_empty();
-        field_edit_menu(ui, &response, has_text, true);
         if button(ui, ButtonKind::Primary, "Authenticate", true).clicked() {
             decision = PasswordDecision::Submit;
         }
