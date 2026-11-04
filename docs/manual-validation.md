@@ -2707,8 +2707,14 @@ trailing output, and a still-open writer under a job-supervised deadline.
 It uses only test-owned pipes and job-contained subprocesses, and deliberately
 stalls one writer to exercise termination and subsequent progress. If a
 write-only handle lacks mode-query rights, the result is reported as unknown;
-the physical write experiment is separate. Unsupported pipes, mode-setting or
-job-assignment failures fail the test rather than enabling the adapter.
+the physical write experiment is separate. A native CI run returned
+`ERROR_PIPE_BUSY` on the initial mode-setting attempt before any physical-write
+assertions. The diagnostic records that result and the number of stdout bytes
+observed and drained, then tries once more after a refusal. It still fails if
+the initial attempt failed, even when the retry and physical checks succeed;
+the drain and intervening delay do not establish the failure's cause.
+Unsupported pipes, mode-setting or job-assignment failures fail the test rather
+than enabling the adapter.
 
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
