@@ -21,6 +21,19 @@ const FRAME_DEADLINE: Duration = Duration::from_secs(2);
 type Waker = Arc<dyn Fn() + Send + Sync>;
 type Connections = BTreeMap<u64, (Connection, JoinHandle<()>)>;
 
+#[cfg(test)]
+struct EnqueueTestGate {
+    entered: SyncSender<()>,
+    resume: Receiver<()>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static ENQUEUE_TEST_GATE: std::cell::RefCell<Option<EnqueueTestGate>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
 fn next_connection_key(counter: &AtomicU64) -> Option<u64> {
     counter
         .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
@@ -69,28 +82,38 @@ impl Connection {
         targets: &[TargetGuard],
         flags: &[Arc<AtomicBool>],
     ) -> io::Result<()> {
-        let allowed = festerm_session::automation_admission_lock().is_some_and(|_guard| {
-            bytes.len() <= MAX_FRAME
-                && !self.is_closed()
-                && Instant::now() < expires
-                && targets.iter().all(TargetGuard::is_valid)
-                && flags.iter().all(|flag| flag.load(Ordering::Acquire))
-        });
-        if !allowed {
+        let frame = OutboundFrame {
+            bytes,
+            expires,
+            targets: targets.to_vec(),
+            flags: flags.to_vec(),
+        };
+        let Some(guard) = festerm_session::automation_admission_lock() else {
             self.close();
             return Err(io::ErrorKind::BrokenPipe.into());
+        };
+        if frame.bytes.len() > MAX_FRAME
+            || self.is_closed()
+            || Instant::now() >= frame.expires
+            || !frame.is_valid()
+        {
+            self.close_under_admission(&guard);
+            return Err(io::ErrorKind::BrokenPipe.into());
         }
-        self.output
-            .try_send(OutboundFrame {
-                bytes,
-                expires,
-                targets: targets.to_vec(),
-                flags: flags.to_vec(),
-            })
-            .map_err(|_| {
-                self.close();
-                io::ErrorKind::WouldBlock.into()
-            })
+        #[cfg(test)]
+        ENQUEUE_TEST_GATE.with(|slot| {
+            if let Some(gate) = slot.borrow_mut().take() {
+                gate.entered.send(()).expect("signal enqueue test gate");
+                gate.resume
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("release enqueue test gate");
+            }
+        });
+        if self.output.try_send(frame, &guard).is_err() {
+            self.close_under_admission(&guard);
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        Ok(())
     }
 }
 
@@ -933,6 +956,82 @@ mod tests {
             io::ErrorKind::WouldBlock
         );
         assert!(connection.is_closed());
+    }
+
+    #[test]
+    fn connection_enqueue_serializes_validation_with_revocation() {
+        if super::super::tests::isolate_poison_panic_test(
+            "FESTERM_ENQUEUE_ADMISSION_CHILD",
+            "automation::ipc::tests::connection_enqueue_serializes_validation_with_revocation",
+        ) {
+            return;
+        }
+        let (output, receiver) = outbound_channel();
+        let connection = Connection {
+            key: 3,
+            closed: Arc::new(AtomicBool::new(false)),
+            output,
+        };
+        let valid = Arc::new(AtomicBool::new(true));
+        let (entered, entered_rx) = mpsc::sync_channel(1);
+        let (resume, resume_rx) = mpsc::sync_channel(1);
+        let sender_connection = connection.clone();
+        let sender_valid = valid.clone();
+        let sender = thread::spawn(move || {
+            ENQUEUE_TEST_GATE.with(|slot| {
+                *slot.borrow_mut() = Some(EnqueueTestGate {
+                    entered,
+                    resume: resume_rx,
+                });
+            });
+            sender_connection.send_guarded(
+                b"secret".to_vec(),
+                Instant::now() + Duration::from_secs(30),
+                &[],
+                &[sender_valid],
+            )
+        });
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("enqueue did not reach the publication gate");
+        let busy = match festerm_session::try_automation_admission_lock() {
+            Err(festerm_session::AutomationAdmissionTryError::Busy) => true,
+            Ok(guard) => {
+                valid.store(false, Ordering::Release);
+                drop(guard);
+                false
+            }
+            Err(festerm_session::AutomationAdmissionTryError::Poisoned) => {
+                panic!("admission was poisoned")
+            }
+        };
+        resume.send(()).unwrap();
+        let result = sender.join().unwrap();
+        assert!(busy, "revocation crossed validation before insertion");
+        assert!(result.is_ok());
+
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        valid.store(false, Ordering::Release);
+        let queued = receiver.try_recv().unwrap();
+        assert!(!queued.is_valid());
+        drop(guard);
+        assert_eq!(
+            connection
+                .send_guarded(
+                    b"late".to_vec(),
+                    Instant::now() + Duration::from_secs(30),
+                    &[],
+                    &[valid],
+                )
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        assert!(connection.is_closed());
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
     }
 
     #[test]

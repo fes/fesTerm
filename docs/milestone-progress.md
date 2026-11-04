@@ -1,5 +1,14 @@
 # Milestone Progress Narrative
 
+## Serializing outbound queue admission
+
+The app now retains the shared admission guard from its connection, deadline
+and target checks through the bounded nonblocking response-queue insertion;
+queue failure closes the connection before releasing that guard. A
+child-isolated regression pauses at insertion and verifies that a competing
+revocation cannot cross the checks. The legacy frame remains non-authorizing,
+and broker liveness and final-recipient delivery fences are still missing.
+
 ## Closing poison paths before diagnostics
 
 The shared admission-flag helper, privacy gate and MCP stop now apply their
@@ -15,11 +24,12 @@ final-recipient delivery fence.
 
 The existing four-frame IPC response queue and its frame/target guards now live
 in the authority crate and feed the same app-owned connection and writer.
-This changes ownership only: insertion is not guarded through publication,
-does not bind an enrollment or metadata grant, and proves no revocable enqueue
-or physical delivery. Production qualification and metadata routing remain
-closed. Focused queue and connection regressions cover capacity, ordering,
-closure and guard freshness; execution results are tracked with the PR.
+That extraction changed ownership only: insertion was not yet guarded through
+enqueue, did not bind an enrollment or metadata grant, and proved no revocable
+enqueue or physical delivery. Production qualification and metadata routing
+remain closed. Focused queue and connection regressions cover capacity,
+ordering, closure and guard freshness; execution results are tracked with the
+PR.
 
 ## Wiring non-authorizing controller enrollment
 

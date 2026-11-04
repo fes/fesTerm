@@ -8,10 +8,12 @@ platforms and unqualified adapters disabled in the application.
 The crate also owns the existing four-frame in-memory host outbound queue and
 its frame/target-guard representation. The application still owns frame-size
 limits, connection closure, deadlines, admission checks and physical writes.
-The queue and its publicly constructible frames are not authority: insertion
-does not check a broker grant, bind an enrollment or fence revocation. A future
-bound metadata path must prevent bypass through the legacy sender and establish
-its own publication and delivery prerequisites.
+The sender requires the shared admission guard, which the app retains through
+its checks and nonblocking insertion. The queue and its publicly constructible
+frames are not authority: insertion does not check a broker grant, bind an
+enrollment or fence every revocation. A future bound metadata path must prevent
+bypass through the legacy sender and establish its own publication and delivery
+prerequisites.
 
 ## Application integration
 
