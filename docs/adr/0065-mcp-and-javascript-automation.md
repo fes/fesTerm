@@ -102,6 +102,11 @@ to bypass another's restrictions.
    invalidates the fence before delivery. This is not a lease: integration must
    still cut the broker grant and worker, check the exact fence at every effect
    and disclosure boundary, and obtain native handoff.
+   The application-owned kernel also has a bounded, connection-owned
+   controller-registration association with an explicitly native-selected
+   exact target generation. Its fresh association reference is not authority;
+   native UI, independently authorized metadata and all presentation/input
+   integration remain open under [#524](https://github.com/fes/fesTerm/issues/524).
 8. **Gate execution and platform claims in stages.** The full contract,
    capability matrix, limits, threat model, outcomes and validation plan live
    in [the companion design](../automation-design.md), which is part of this
@@ -173,7 +178,8 @@ in the design must be visible in implementation/release review.
 - **GUI/action edges affected:** `AUT-01` through `AUT-04` remain deferred for
   workflows/control. `AUT-05` covers independent default-off settings,
   `AUT-06` the shared authority kernel, and `AUT-07` the partial local MCP
-  observation path and native pairing/revocation.
+  observation path and native pairing/revocation. `AUT-08` covers the
+  non-authorizing controller-enrollment kernel prerequisite only.
 - **Automated tests required:** The future acceptance matrix in
   [automation design](../automation-design.md#validation-plan) covers delegation,
   replay, disclosure, imports, resource bounds, confinement, cancellation,
@@ -197,6 +203,10 @@ in the design must be visible in implementation/release review.
   strict decoding, path/link refusal and frozen invocation identity. Desktop
   selection provides a non-authorizing metadata and captured-source preview;
   approval, execution, iOS selection and platform qualification remain open.
+  Controller-enrollment tests cover exact selections, principal isolation,
+  registration bounds, stale decisions and lifecycle invalidation; they do not
+  prove a native selector, backend liveness, metadata authorization, presentation
+  or controller input.
   Run the traceability gate and documentation checks.
 - **Worker process entry:** The desktop executable has a private
   `--automation-worker` entry before application initialization, exercised by

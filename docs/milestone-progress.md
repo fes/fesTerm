@@ -1,5 +1,21 @@
 # Milestone Progress Narrative
 
+## Selecting exact controller targets without granting authority
+
+An external controller's local registration can now be represented as bounded,
+connection-owned opaque bytes in the application-owned kernel. A typed native
+decision binds one registration to one exact existing target generation and
+returns a fresh association ID. Rebinding invalidates old IDs and stale
+decisions; disconnect, privacy revocation, closure, replacement and broker
+restart discard affected associations. Identical session labels play no role.
+
+This is a non-authorizing foundation for [#524](https://github.com/fes/fesTerm/issues/524),
+not a client feature: there is no native enrollment UI or MCP operation.
+Separately approved metadata, confirmed presentation and admission-time
+revalidation, native handoff/disarm, uncertain-outcome/no-replay handling,
+JavaScript-independent operation and platform/backend capability reporting
+remain open. The P1 #506 checkpoint remains observation-only.
+
 ## Encoding explicit worker input without admitting it
 
 Worker text and key requests now have an inert, bounded adapter to the

@@ -574,6 +574,74 @@ model for authorization, token audience separation, origin/Host validation,
 DNS rebinding, TLS, request limits and reconnect/replay. Existing GitHub/Dev
 Tunnel/SSH credentials are not MCP credentials and must never be passed through.
 
+### Controller enrollment prerequisite
+
+The hardware-controller use case in [#524](https://github.com/fes/fesTerm/issues/524)
+begins with an ordinary untrusted MCP connection, not a privileged device.
+Claimed gestures, labels, PIDs, working directories, tab positions and
+correlation IDs establish neither user intent nor target ownership. The
+application-owned kernel can record a connection's opaque 1–128-byte local
+registration, bounded to 16 per connection and 128 globally. The same bytes on
+another connection are independent; repeating them on the same connection does
+not select or change a target. Registration does not trigger a native prompt.
+
+For a future native selection flow, trusted application code freezes the
+registration, the real `ConnectionId`, the user's explicitly selected live
+`TargetRef` and the registration revision. A non-serializable
+`NativeControllerEnrollment` represents that native decision; trusted code must
+never construct it from an IPC claim. Committing it associates precisely that
+target generation and mints a fresh broker-owned enrollment ID. A later binding
+requires another native decision, invalidates the old ID and rejects older
+in-flight review decisions. Preparing a newer native selection supersedes an
+earlier pending decision without changing an existing association. The kernel
+does not queue proposals; future native UI must bound and cancel its own pending
+reviews and sanitize displayed registration bytes. Identical labels and changes
+in display ordering never retarget an association. Unregister, disconnect and
+global privacy revocation remove registrations; close or attachment replacement
+removes registrations bound to that target and invalidates review candidates
+naming its old generation. A fresh broker instance with a fresh unpredictable instance nonce
+invalidates all records. A new registration or decision is required; matching
+bytes do not restore an association. Per-connection grant revocation alone
+leaves these non-authorizing registrations intact; unpairing must unregister
+them or disconnect.
+
+This is only an internal kernel prerequisite. There is no enrollment UI, wire
+operation or supported controller workflow. The returned reference identifies
+an association; it does not authorize disclosure of even target metadata, or
+screen, scrollback, selection, input, presentation or workflow invocation.
+It starts no listener or worker and enables neither MCP nor JavaScript. The
+application must deliver target/connection lifecycle transitions to the broker
+and, before any future use or disclosure, revalidate real attachment liveness
+under its admission boundary; the kernel cannot observe backend transitions on
+its own. Queued work must capture its original enrollment ID and resolve that
+same ID again at admission, never resolve the then-current association in its
+place. It is backend-neutral, not an implementation of #524's local-session
+eligibility policy.
+
+The remaining #524 contract is deliberately open:
+
+- Native pairing/selection and **separately authorized metadata-only**
+  disclosure and bounded lifecycle refresh, without granting terminal contents.
+- Confirmed presentation of the exact target with a host-owned freshness
+  revision. A queued focus request is not confirmation; refused Windows
+  foreground activation must be reported as refusal, not success. No physical
+  visibility or human-attention claim is implied.
+- Revalidation of required presentation at input admission together with the
+  target, privacy and writer-lease fences. Human input, pending IME/paste,
+  lock, revocation, expiry and disconnect require explicit disarm and fresh
+  native handoff/reapproval, never silent lease reacquisition.
+- Honest not-admitted, admitted and unknown outcomes; queue admission is not
+  command completion, and lost responses do not authorize replay. The external
+  client owns its durable uncertain-action interlock.
+- Independent operation with JavaScript disabled, real capability/unavailability
+  reporting for each backend/platform, and native Windows qualification before
+  claiming Windows controller support. Authenticated private bootstrap and
+  qualified privacy monitoring remain prerequisites; unsupported combinations
+  must remain unavailable.
+
+The P1 #506 checkpoint remains observation-only; none of these controller or
+input requirements is backported into its MCP surface.
+
 ### Proposed operations and results
 
 | Operation | Contract | Required scope / stage |

@@ -11,6 +11,19 @@ struct Usage {
 struct Principal {
     grant: Option<Grant>,
     approvals_requested: u32,
+    controller_registrations: BTreeMap<ControllerRegistrationId, ControllerRegistration>,
+}
+
+struct ControllerRegistration {
+    local_id: Box<[u8]>,
+    revision: u64,
+    enrollment: Option<ControllerEnrollment>,
+}
+
+#[derive(Clone, Copy)]
+struct ControllerEnrollment {
+    id: ControllerEnrollmentId,
+    target: TargetRef,
 }
 
 struct Grant {
@@ -60,7 +73,7 @@ struct StartReceipt {
     run: RunId,
 }
 
-/// Pure state kernel; no transport, UI, engine, terminal data or OS I/O.
+/// Pure state kernel; no transport, UI, engine, terminal snapshots or OS I/O.
 ///
 /// Keep this value exclusively in the application-owned controller. Methods
 /// accepting native decisions MUST NOT be projected onto a worker/wire API.
@@ -86,7 +99,8 @@ impl Broker {
         Self::with_limits(application_instance, Limits::default())
     }
 
-    /// Limits may only lower the fixed qualification ceilings.
+    /// Requires the same fresh instance nonce as `new`. Limits may only lower
+    /// the fixed qualification ceilings.
     pub fn with_limits(application_instance: [u8; 16], limits: Limits) -> Self {
         let ceiling = Limits::default();
         Self {
@@ -95,6 +109,12 @@ impl Broker {
             limits: Limits {
                 connections: limits.connections.min(ceiling.connections),
                 targets: limits.targets.min(ceiling.targets),
+                controller_registrations: limits
+                    .controller_registrations
+                    .min(ceiling.controller_registrations),
+                controller_registrations_per_connection: limits
+                    .controller_registrations_per_connection
+                    .min(ceiling.controller_registrations_per_connection),
                 retained_runs: limits.retained_runs.min(ceiling.retained_runs),
                 global_operations: limits.global_operations.min(ceiling.global_operations),
                 global_disclosed_bytes: limits
@@ -133,6 +153,7 @@ impl Broker {
             Principal {
                 grant: None,
                 approvals_requested: 0,
+                controller_registrations: BTreeMap::new(),
             },
         );
         Ok(connection)
@@ -143,6 +164,180 @@ impl Broker {
         self.principals.remove(&connection);
         self.runs.retain(|_, run| run.connection != connection);
         self.starts.retain(|(owner, _), _| *owner != connection);
+    }
+
+    /// Record an untrusted, opaque local registration on this exact connection.
+    /// This does not select a target, request a dialog, or grant any authority.
+    /// Repeating the same bytes on this connection returns the existing ID.
+    pub fn register_controller_session(
+        &mut self,
+        connection: ConnectionId,
+        local_id: &[u8],
+    ) -> Result<ControllerRegistrationId> {
+        let principal = self
+            .principals
+            .get(&connection)
+            .ok_or(Error::Unauthorized)?;
+        if local_id.is_empty() || local_id.len() > MAX_CONTROLLER_REGISTRATION_BYTES {
+            return Err(Error::InvalidRequest);
+        }
+        if let Some((id, _)) = principal
+            .controller_registrations
+            .iter()
+            .find(|(_, registration)| registration.local_id.as_ref() == local_id)
+        {
+            return Ok(*id);
+        }
+        if principal.controller_registrations.len()
+            >= self.limits.controller_registrations_per_connection
+            || self
+                .principals
+                .values()
+                .map(|principal| principal.controller_registrations.len())
+                .sum::<usize>()
+                >= self.limits.controller_registrations
+        {
+            return Err(Error::QuotaExceeded);
+        }
+        let id = ControllerRegistrationId {
+            instance: self.instance,
+            sequence: self.mint()?,
+        };
+        let principal = self
+            .principals
+            .get_mut(&connection)
+            .ok_or(Error::Unauthorized)?;
+        principal.controller_registrations.insert(
+            id,
+            ControllerRegistration {
+                local_id: local_id.into(),
+                revision: id.sequence,
+                enrollment: None,
+            },
+        );
+        Ok(id)
+    }
+
+    /// Returns only the submitting connection's untrusted registration bytes.
+    /// Native presentation must treat these bytes as potentially deceptive.
+    pub fn controller_registration(
+        &self,
+        connection: ConnectionId,
+        id: ControllerRegistrationId,
+    ) -> Result<&[u8]> {
+        self.principals
+            .get(&connection)
+            .and_then(|principal| principal.controller_registrations.get(&id))
+            .map(|registration| registration.local_id.as_ref())
+            .ok_or(Error::Unauthorized)
+    }
+
+    /// Freeze the latest native-selected candidate for review, superseding any
+    /// older candidate without changing the existing association. A candidate
+    /// is not an association and may not become an IPC-supplied decision.
+    pub fn prepare_controller_enrollment(
+        &mut self,
+        connection: ConnectionId,
+        registration: ControllerRegistrationId,
+        target: TargetRef,
+    ) -> Result<ControllerEnrollmentProposal> {
+        self.principals
+            .get(&connection)
+            .and_then(|principal| principal.controller_registrations.get(&registration))
+            .ok_or(Error::Unauthorized)?;
+        self.target(target)?;
+        let revision = self.mint()?;
+        let record = self
+            .principals
+            .get_mut(&connection)
+            .and_then(|principal| principal.controller_registrations.get_mut(&registration))
+            .ok_or(Error::Unauthorized)?;
+        record.revision = revision;
+        Ok(ControllerEnrollmentProposal {
+            connection,
+            registration,
+            target,
+            revision,
+        })
+    }
+
+    /// Apply one explicit native decision. A new reference is minted for every
+    /// binding, including a rebind to the same target. Older decisions and
+    /// references cannot redirect to the new association.
+    pub fn approve_controller_enrollment(
+        &mut self,
+        connection: ConnectionId,
+        decision: NativeControllerEnrollment,
+    ) -> Result<ControllerEnrollmentId> {
+        let proposal = decision.proposal;
+        if proposal.connection != connection {
+            return Err(Error::Unauthorized);
+        }
+        let record = self
+            .principals
+            .get(&connection)
+            .and_then(|principal| {
+                principal
+                    .controller_registrations
+                    .get(&proposal.registration)
+            })
+            .ok_or(Error::Unauthorized)?;
+        if record.revision != proposal.revision {
+            return Err(Error::BindingMismatch);
+        }
+        self.target(proposal.target)?;
+        let id = ControllerEnrollmentId {
+            instance: self.instance,
+            sequence: self.mint()?,
+        };
+        let record = self
+            .principals
+            .get_mut(&connection)
+            .and_then(|principal| {
+                principal
+                    .controller_registrations
+                    .get_mut(&proposal.registration)
+            })
+            .ok_or(Error::Unauthorized)?;
+        record.revision = id.sequence;
+        record.enrollment = Some(ControllerEnrollment {
+            id,
+            target: proposal.target,
+        });
+        Ok(id)
+    }
+
+    /// Resolve only the current association owned by this connection. The
+    /// returned target is an internal reference, not a disclosure permission.
+    pub fn resolve_controller_enrollment(
+        &self,
+        connection: ConnectionId,
+        registration: ControllerRegistrationId,
+        enrollment: ControllerEnrollmentId,
+    ) -> Result<TargetRef> {
+        let association = self
+            .principals
+            .get(&connection)
+            .and_then(|principal| principal.controller_registrations.get(&registration))
+            .and_then(|record| record.enrollment)
+            .filter(|association| association.id == enrollment)
+            .ok_or(Error::Unauthorized)?;
+        self.target(association.target)?;
+        Ok(association.target)
+    }
+
+    /// Forget one connection's registration and invalidate its association and
+    /// any outstanding native-review candidates.
+    pub fn unregister_controller_session(
+        &mut self,
+        connection: ConnectionId,
+        registration: ControllerRegistrationId,
+    ) -> Result<()> {
+        self.principals
+            .get_mut(&connection)
+            .and_then(|principal| principal.controller_registrations.remove(&registration))
+            .ok_or(Error::Unauthorized)?;
+        Ok(())
     }
 
     /// Attachment generations must strictly increase, including after
@@ -162,7 +357,7 @@ impl Broker {
         }
         let epoch = self.mint()?;
         if let Some(old) = self.targets.get(&session) {
-            self.invalidate_target_grants(old.reference);
+            self.invalidate_target(old.reference);
         }
         let reference = TargetRef {
             instance: self.instance,
@@ -190,7 +385,7 @@ impl Broker {
 
     pub fn close_target(&mut self, reference: TargetRef) -> Result<()> {
         self.target(reference)?;
-        self.invalidate_target_grants(reference);
+        self.invalidate_target(reference);
         if let Some(target) = self.targets.get_mut(&reference.session) {
             target.active = false;
             target.writer = None;
@@ -218,7 +413,16 @@ impl Broker {
         Ok(())
     }
 
-    fn invalidate_target_grants(&mut self, target: TargetRef) {
+    fn invalidate_target(&mut self, target: TargetRef) {
+        for principal in self.principals.values_mut() {
+            principal
+                .controller_registrations
+                .retain(|_, registration| {
+                    registration
+                        .enrollment
+                        .is_none_or(|association| association.target != target)
+                });
+        }
         let connections: Vec<_> = self
             .principals
             .iter()
@@ -450,6 +654,9 @@ impl Broker {
         let connections: Vec<_> = self.principals.keys().copied().collect();
         for connection in connections {
             self.revoke(connection);
+        }
+        for principal in self.principals.values_mut() {
+            principal.controller_registrations.clear();
         }
     }
 

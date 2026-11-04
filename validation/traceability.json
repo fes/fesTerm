@@ -231,6 +231,31 @@
       ]
     },
     {
+      "id": "automation-controller-enrollment-foundation",
+      "edges": ["AUT-08"],
+      "requirements": [
+        "REQUIREMENTS.md#req-ext-004-separate-design-for-extensions",
+        "docs/automation-design.md#controller-enrollment-prerequisite"
+      ],
+      "decisions": ["ADR-0065"],
+      "automated_tests": [
+        "controller_enrollment_uses_exact_native_selection_not_labels_or_position",
+        "controller_registrations_are_connection_owned_and_disconnect_clears_them",
+        "controller_rebinding_invalidates_old_references_and_review_decisions",
+        "controller_enrollment_invalidates_on_replacement_close_and_broker_restart",
+        "controller_registrations_are_bounded_and_capacity_is_reclaimed",
+        "controller_enrollment_never_authorizes_discovery_observation_or_control",
+        "global_revocation_discards_controller_enrollments"
+      ],
+      "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04"],
+      "status": "partial",
+      "prerequisites": [
+        "Native selection, local-backend eligibility, authenticated client integration and separately authorized metadata-only disclosure remain unavailable",
+        "Confirmed presentation, admission-time presentation revalidation, native handoff and explicit disarm require independent implementation and native lifecycle evidence",
+        "No-replay uncertainty handling, JavaScript-independent client operation and platform/backend capability reporting remain unqualified"
+      ]
+    },
+    {
       "id": "automation-local-mcp-observation",
       "edges": ["AUT-07"],
       "requirements": [

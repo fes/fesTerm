@@ -2700,6 +2700,13 @@ guards still require the native and interoperability evidence in AUTO-04.
 Terminal-request encoding has deterministic text, key, mode and refusal tests.
 Actual input admission, takeover and platform behavior still require AUTO-03.
 
+Controller enrollment has deterministic, non-authorizing kernel tests only.
+Native selection of identically labelled local sessions, separately approved
+metadata, real attachment/disconnect races, confirmed presentation (including
+Windows activation refusal), input-time presentation revalidation and explicit
+human handoff/disarm remain deferred under AUTO-01, AUTO-03 and AUTO-04. No
+controller UI, MCP operation or native-platform evidence is claimed.
+
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
 | AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts. | Deferred native + usability | Partial implementation: observation pairing/native grant UI, desktop file selection and non-authorizing captured-source review, and frozen-workflow binding components. Desktop source-view usability, iOS security-scoped access, pending-approval invalidation and platform path behavior still need qualification. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. No native evidence collected for intake or workflow approval. |

@@ -121,6 +121,553 @@ impl Fixture {
     }
 }
 
+fn enroll_controller(
+    broker: &mut Broker,
+    connection: ConnectionId,
+    registration: ControllerRegistrationId,
+    target: TargetRef,
+) -> ControllerEnrollmentId {
+    let proposal = broker
+        .prepare_controller_enrollment(connection, registration, target)
+        .unwrap();
+    broker
+        .approve_controller_enrollment(connection, NativeControllerEnrollment::new(proposal))
+        .unwrap()
+}
+
+#[test]
+fn controller_enrollment_uses_exact_native_selection_not_labels_or_position() {
+    let mut f = Fixture::new();
+    let first = f
+        .broker
+        .register_controller_session(f.connection, b"local-agent-1")
+        .unwrap();
+    let second = f
+        .broker
+        .register_controller_session(f.connection, b"local-agent-2")
+        .unwrap();
+    let mut displayed = [("same label", f.a), ("same label", f.b)];
+    let proposal = f
+        .broker
+        .prepare_controller_enrollment(f.connection, first, displayed[1].1)
+        .unwrap();
+    displayed.swap(0, 1);
+    let selected = f
+        .broker
+        .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(proposal))
+        .unwrap();
+    let other = enroll_controller(&mut f.broker, f.connection, second, displayed[1].1);
+
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, first, selected),
+        Ok(f.b)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, second, other),
+        Ok(f.a)
+    );
+    assert_eq!(
+        f.broker
+            .register_controller_session(f.connection, b"local-agent-1"),
+        Ok(first)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, first, selected),
+        Ok(f.b)
+    );
+}
+
+#[test]
+fn controller_registrations_are_connection_owned_and_disconnect_clears_them() {
+    let mut f = Fixture::new();
+    let other = f.broker.accept_connection().unwrap();
+    let first = f
+        .broker
+        .register_controller_session(f.connection, b"same-local-id")
+        .unwrap();
+    let second = f
+        .broker
+        .register_controller_session(other, b"same-local-id")
+        .unwrap();
+    assert_ne!(first, second);
+    assert_eq!(
+        f.broker.controller_registration(f.connection, first),
+        Ok(&b"same-local-id"[..])
+    );
+    assert_eq!(
+        f.broker.controller_registration(other, first),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .prepare_controller_enrollment(other, first, f.a)
+            .unwrap_err(),
+        Error::Unauthorized
+    );
+    let proposal = f
+        .broker
+        .prepare_controller_enrollment(f.connection, first, f.a)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .approve_controller_enrollment(other, NativeControllerEnrollment::new(proposal)),
+        Err(Error::Unauthorized)
+    );
+    let first_binding = enroll_controller(&mut f.broker, f.connection, first, f.a);
+    let second_binding = enroll_controller(&mut f.broker, other, second, f.b);
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(other, first, first_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(other, second, first_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.unregister_controller_session(other, first),
+        Err(Error::Unauthorized)
+    );
+
+    let before_disconnect = f
+        .broker
+        .prepare_controller_enrollment(f.connection, first, f.b)
+        .unwrap();
+    f.broker.disconnect(f.connection);
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, first, first_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(other, second, second_binding),
+        Ok(f.b)
+    );
+    let reconnected = f.broker.accept_connection().unwrap();
+    let new_registration = f
+        .broker
+        .register_controller_session(reconnected, b"same-local-id")
+        .unwrap();
+    assert_ne!(new_registration, first);
+    assert_eq!(
+        f.broker.approve_controller_enrollment(
+            reconnected,
+            NativeControllerEnrollment::new(before_disconnect)
+        ),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(reconnected, new_registration, first_binding),
+        Err(Error::Unauthorized)
+    );
+}
+
+#[test]
+fn controller_rebinding_invalidates_old_references_and_review_decisions() {
+    let mut f = Fixture::new();
+    let registration = f
+        .broker
+        .register_controller_session(f.connection, b"agent")
+        .unwrap();
+    let first_binding = enroll_controller(&mut f.broker, f.connection, registration, f.a);
+    let stale = f
+        .broker
+        .prepare_controller_enrollment(f.connection, registration, f.a)
+        .unwrap();
+    let latest = f
+        .broker
+        .prepare_controller_enrollment(f.connection, registration, f.b)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(stale)),
+        Err(Error::BindingMismatch)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, first_binding),
+        Ok(f.a)
+    );
+
+    let second_binding = f
+        .broker
+        .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(latest))
+        .unwrap();
+    assert_ne!(first_binding, second_binding);
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, first_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, second_binding),
+        Ok(f.b)
+    );
+    let third_binding = enroll_controller(&mut f.broker, f.connection, registration, f.b);
+    assert_ne!(second_binding, third_binding);
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, second_binding),
+        Err(Error::Unauthorized)
+    );
+
+    let pending = f
+        .broker
+        .prepare_controller_enrollment(f.connection, registration, f.a)
+        .unwrap();
+    f.broker
+        .unregister_controller_session(f.connection, registration)
+        .unwrap();
+    let replacement = f
+        .broker
+        .register_controller_session(f.connection, b"agent")
+        .unwrap();
+    assert_ne!(registration, replacement);
+    assert_eq!(
+        f.broker
+            .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(pending)),
+        Err(Error::Unauthorized)
+    );
+}
+
+#[test]
+fn controller_enrollment_invalidates_on_replacement_close_and_broker_restart() {
+    let mut f = Fixture::new();
+    let other_connection = f.broker.accept_connection().unwrap();
+    let first = f
+        .broker
+        .register_controller_session(f.connection, b"first")
+        .unwrap();
+    let second = f
+        .broker
+        .register_controller_session(f.connection, b"second")
+        .unwrap();
+    let first_binding = enroll_controller(&mut f.broker, f.connection, first, f.a);
+    let second_binding = enroll_controller(&mut f.broker, f.connection, second, f.b);
+    let other_registration = f
+        .broker
+        .register_controller_session(other_connection, b"other")
+        .unwrap();
+    let other_binding = enroll_controller(&mut f.broker, other_connection, other_registration, f.a);
+    let pending = f
+        .broker
+        .prepare_controller_enrollment(f.connection, first, f.b)
+        .unwrap();
+    let replacement = f.broker.attach_target(f.a.session(), 2).unwrap();
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, first, first_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(other_connection, other_registration, other_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(pending)),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, second, second_binding),
+        Ok(f.b)
+    );
+    let fresh = f
+        .broker
+        .register_controller_session(f.connection, b"first")
+        .unwrap();
+    assert_ne!(fresh, first);
+    let fresh_binding = enroll_controller(&mut f.broker, f.connection, fresh, replacement);
+    let pending_closed_target = f
+        .broker
+        .prepare_controller_enrollment(f.connection, fresh, f.b)
+        .unwrap();
+    f.broker.close_target(f.b).unwrap();
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, second, second_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.approve_controller_enrollment(
+            f.connection,
+            NativeControllerEnrollment::new(pending_closed_target)
+        ),
+        Err(Error::StaleTarget)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, fresh, fresh_binding),
+        Ok(replacement)
+    );
+    let session = f.a.session();
+    drop(f);
+
+    let mut before = Broker::new([7; 16]);
+    let old_connection = before.accept_connection().unwrap();
+    let old_target = before.attach_target(session, 2).unwrap();
+    let old_registration = before
+        .register_controller_session(old_connection, b"first")
+        .unwrap();
+    let old_binding = enroll_controller(&mut before, old_connection, old_registration, old_target);
+    let before_restart = before
+        .prepare_controller_enrollment(old_connection, old_registration, old_target)
+        .unwrap();
+    drop(before);
+
+    let mut restarted = Broker::new([8; 16]);
+    let connection = restarted.accept_connection().unwrap();
+    let target = restarted.attach_target(session, 2).unwrap();
+    let registration = restarted
+        .register_controller_session(connection, b"first")
+        .unwrap();
+    assert_eq!(
+        restarted.resolve_controller_enrollment(connection, old_registration, old_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        restarted.approve_controller_enrollment(
+            connection,
+            NativeControllerEnrollment::new(before_restart)
+        ),
+        Err(Error::Unauthorized)
+    );
+    let binding = enroll_controller(&mut restarted, connection, registration, target);
+    assert_ne!(old_binding, binding);
+    assert_eq!(
+        restarted.resolve_controller_enrollment(connection, registration, old_binding),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        restarted.resolve_controller_enrollment(connection, registration, binding),
+        Ok(target)
+    );
+}
+
+#[test]
+fn controller_registrations_are_bounded_and_capacity_is_reclaimed() {
+    let mut broker = Broker::with_limits(
+        [7; 16],
+        Limits {
+            controller_registrations: 3,
+            controller_registrations_per_connection: 2,
+            ..Limits::default()
+        },
+    );
+    let first = broker.accept_connection().unwrap();
+    let second = broker.accept_connection().unwrap();
+    assert_eq!(
+        broker.register_controller_session(first, b""),
+        Err(Error::InvalidRequest)
+    );
+    assert_eq!(
+        broker.register_controller_session(first, &[0; MAX_CONTROLLER_REGISTRATION_BYTES + 1]),
+        Err(Error::InvalidRequest)
+    );
+    let maximum = [0xff; MAX_CONTROLLER_REGISTRATION_BYTES];
+    let first_id = broker.register_controller_session(first, &maximum).unwrap();
+    let second_id = broker
+        .register_controller_session(first, b"\0opaque")
+        .unwrap();
+    assert_eq!(
+        broker.register_controller_session(first, &maximum),
+        Ok(first_id)
+    );
+    assert_eq!(
+        broker.register_controller_session(first, b"over-principal-limit"),
+        Err(Error::QuotaExceeded)
+    );
+    broker
+        .register_controller_session(second, b"other")
+        .unwrap();
+    assert_eq!(
+        broker.register_controller_session(second, b"over-global-limit"),
+        Err(Error::QuotaExceeded)
+    );
+    broker
+        .unregister_controller_session(first, second_id)
+        .unwrap();
+    broker
+        .register_controller_session(second, b"now-fits")
+        .unwrap();
+    broker.disconnect(first);
+    let third = broker.accept_connection().unwrap();
+    assert!(broker.register_controller_session(third, b"freed").is_ok());
+
+    let mut clamped = Broker::with_limits(
+        [9; 16],
+        Limits {
+            controller_registrations: usize::MAX,
+            controller_registrations_per_connection: usize::MAX,
+            ..Limits::default()
+        },
+    );
+    let connection = clamped.accept_connection().unwrap();
+    for id in 0..Limits::default().controller_registrations_per_connection {
+        clamped
+            .register_controller_session(connection, &[id as u8])
+            .unwrap();
+    }
+    assert_eq!(
+        clamped.register_controller_session(connection, b"one-too-many"),
+        Err(Error::QuotaExceeded)
+    );
+    for _ in 1..(Limits::default().controller_registrations
+        / Limits::default().controller_registrations_per_connection)
+    {
+        let connection = clamped.accept_connection().unwrap();
+        for id in 0..Limits::default().controller_registrations_per_connection {
+            clamped
+                .register_controller_session(connection, &[id as u8])
+                .unwrap();
+        }
+    }
+    let another = clamped.accept_connection().unwrap();
+    assert_eq!(
+        clamped.register_controller_session(another, b"over-global-ceiling"),
+        Err(Error::QuotaExceeded)
+    );
+}
+
+#[test]
+fn controller_enrollment_never_authorizes_discovery_observation_or_control() {
+    let mut f = Fixture::new();
+    let registration = f
+        .broker
+        .register_controller_session(f.connection, b"hardware-gesture=approved")
+        .unwrap();
+    let mut requested = f.scope();
+    requested.discover.insert(f.b);
+    requested.observe.insert(f.b);
+    requested.control.insert(f.b);
+    let spec = f.spec(requested.clone(), binding(1));
+    assert_eq!(
+        f.broker.admit_run(f.connection, None, spec.clone(), f.now),
+        Err(Error::Revoked)
+    );
+    let enrollment = enroll_controller(&mut f.broker, f.connection, registration, f.b);
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, enrollment),
+        Ok(f.b)
+    );
+    assert_eq!(
+        f.broker.admit_run(f.connection, None, spec, f.now),
+        Err(Error::Revoked)
+    );
+
+    let allowed = Scope {
+        discover: BTreeSet::from([f.a]),
+        observe: BTreeSet::from([f.a]),
+        ..Scope::default()
+    };
+    f.approve(
+        allowed.clone(),
+        &[
+            direct(DirectKind::Discovery),
+            direct(DirectKind::Observation),
+        ],
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, enrollment),
+        Ok(f.b)
+    );
+    let discovery = f.run(allowed.clone(), direct(DirectKind::Discovery));
+    let request = f
+        .broker
+        .prepare_request(
+            f.connection,
+            discovery,
+            Operation::Discover { max_bytes: 64 },
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .discovery_targets(f.connection, request, f.now)
+            .unwrap(),
+        vec![f.a]
+    );
+    let observation = f.run(allowed, direct(DirectKind::Observation));
+    assert_eq!(
+        f.broker.prepare_request(
+            f.connection,
+            observation,
+            Operation::Observe {
+                target: f.b,
+                max_bytes: 64,
+            },
+            f.now
+        ),
+        Err(Error::Unauthorized)
+    );
+    assert!(matches!(
+        f.broker
+            .prepare_lease(f.connection, observation, f.b, f.now),
+        Err(Error::Unauthorized)
+    ));
+    assert_eq!(
+        f.broker.admit_run(
+            f.connection,
+            None,
+            f.spec(requested.clone(), binding(1)),
+            f.now
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker.revoke(f.connection);
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, enrollment),
+        Ok(f.b)
+    );
+    assert_eq!(
+        f.broker
+            .admit_run(f.connection, None, f.spec(requested, binding(1)), f.now),
+        Err(Error::Revoked)
+    );
+}
+
+#[test]
+fn global_revocation_discards_controller_enrollments() {
+    let mut f = Fixture::new();
+    let registration = f
+        .broker
+        .register_controller_session(f.connection, b"agent")
+        .unwrap();
+    let enrollment = enroll_controller(&mut f.broker, f.connection, registration, f.a);
+    let pending = f
+        .broker
+        .prepare_controller_enrollment(f.connection, registration, f.b)
+        .unwrap();
+    f.broker.revoke_all();
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, enrollment),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(pending)),
+        Err(Error::Unauthorized)
+    );
+    let fresh = f
+        .broker
+        .register_controller_session(f.connection, b"agent")
+        .unwrap();
+    assert_ne!(registration, fresh);
+}
+
 #[test]
 fn connection_and_wire_ids_never_grant_authority() {
     let mut f = Fixture::new();

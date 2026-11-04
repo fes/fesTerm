@@ -87,9 +87,57 @@ platforms and unqualified adapters disabled in the application.
     from the deadline timer. Cancel/reap workers and waits externally with bounded
     watchdogs. Kernel closure is synchronous; it is not process cleanup.
 
+### Controller enrollment prerequisite
+
+This internal primitive is not an MCP operation or an implemented native UI.
+An ordinary connection may supply an opaque local registration of 1–128 bytes;
+the application must bound its decoder before allocating. Register it with the
+trusted acceptor's `ConnectionId`, not a wire-supplied identity. At most 16
+registrations belong to one connection and 128 to the broker; duplicate bytes on
+the same connection return the existing registration ID without changing its
+association. The bytes are untrusted, may contain sensitive or deceptive
+content, and must not be logged or persisted. Escape/sanitize them if a future
+native UI displays them. They are not a credential, gesture, target selector
+or authority.
+
+After an explicit native user selection of an existing exact target, the
+trusted composition root can freeze a `ControllerEnrollmentProposal` and
+construct a non-serializable `NativeControllerEnrollment` for that reviewed
+selection. `approve_controller_enrollment` consumes the decision and returns a
+fresh `ControllerEnrollmentId`. Do not construct this decision from IPC or a
+client's claim of approval. A rebind, even to the same target, needs a new
+native decision and invalidates the old enrollment ID; outstanding decisions
+against the old registration revision cannot overwrite it. Preparing a newer
+native selection supersedes earlier pending decisions but leaves the current
+association intact until approval. Resolve only the exact connection,
+registration and current enrollment ID together. The kernel does not queue
+proposals; future native UI must bound and cancel its own pending reviews, and
+registration alone must not trigger a prompt.
+
+Unregister, connection loss and global privacy revocation remove registrations.
+Target close or replacement removes registrations bound to that target; a fresh
+broker instance also invalidates them when the host supplies a fresh
+unpredictable nonce as required by `Broker::new`. Re-registering the same bytes
+never restores an association. An unbound review candidate for a closed/replaced
+target is stale and requires a new native decision.
+`revoke(connection)` withdraws grants but leaves these non-authorizing
+registrations intact; an explicit unpair must unregister them or disconnect.
+The host must report lifecycle changes to the broker and independently hold
+and revalidate its actual attachment/liveness fences at any future admission or
+disclosure boundary; this pure kernel does not receive backend events. Capture
+the enrollment ID with each queued request and resolve that same ID again at
+admission; resolving only the current association could retarget queued work.
+
+Resolution is for trusted application code only, not permission to disclose
+even metadata to the client. Separately authorized metadata, observation,
+control, workflow invocation, native pairing and per-write privacy checks
+remain mandatory. This primitive does not enforce a local-backend policy,
+create a listener/worker, enable either setting, or qualify any platform.
+
 ## Accounting and boundaries
 
 - At most 16 connections, 128 logical targets, 128 retained runs/receipts,
+  128 opaque controller registrations globally / 16 per principal,
   16 pending approvals globally / 2 per principal, 8 approval proposals per
   channel and 128 per broker lifetime. Approvals expire after five minutes.
 - Grants last at most five minutes. Each run and principal share ceilings of
@@ -112,11 +160,12 @@ platforms and unqualified adapters disabled in the application.
 - Every admitted input has unknown execution outcome. Completion/cancellation
   never promises rollback, shell exit status, clean remote state or command
   success. Status aggregates admitted descendant effects.
-- Kernel records are content-free; no terminal text, input, script exceptions,
-  audit log or result cache is retained. The app must reserve its bounded
-  content-free audit record before committing a control effect. This kernel
-  does not implement audit export, subscription delivery, creation/trust/auth,
-  worker watchdogs, artifact loaders or transport queues.
+- Except for bounded untrusted controller registration bytes, kernel records
+  are content-free; the kernel does not collect terminal snapshots, input
+  payloads, script exceptions, audit logs or result caches. The app must reserve
+  its bounded content-free audit record before committing a control effect.
+  This kernel does not implement audit export, subscription delivery,
+  creation/trust/auth, worker watchdogs, artifact loaders or transport queues.
 
 ## Validation
 
