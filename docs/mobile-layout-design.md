@@ -41,10 +41,20 @@ save is finishing. Only the last dirty view prompts on close.
 
 The native boundary stages bounded snapshots through UIDocument and a
 single-selection Files picker, with safe publication and app-owned writer
-admission tested independently of the UI. Native sources and the picker are
-not yet wired to mobile surfaces. A mobile editor surface, live Edit/Preview
-and Contents, Find/Replace and the shared keyboard-region dictation composer
-are subsequent slices, **not enabled by these foundations alone**.
+admission tested independently of the UI. The dependent local-editor slice
+wires Browse in Files and source views into the existing global shell,
+without replacing Profiles/Sessions/Settings. Document views join the shared
+chip/surface inventory but never own a terminal grid or worker. Local source
+typing, shared undo/redo and dirty-close handling use the registry; the native
+field bridge now publishes visual rows and mirrors multiline Return. Geometry
+uses a linear row/glyph walk and is cached for unchanged layout. Source actions
+use standard button heights; short-height views move them into More instead of
+consuming the editing area. Conflict review displays the external version:
+Keep edits requires a separate Save, Reload explicitly discards edits/history,
+and changed revision/source/access invalidates either decision.
+Actual provider grants and native keyboard behavior still require qualification.
+Live Edit/Preview and Contents, Find/Replace, safe local copy/Save As
+and the shared keyboard-region dictation composer remain subsequent slices.
 Files URLs require retained authorization and file-provider coordination;
 display paths never grant access. Remote SFTP remains read-only beneath
 the UI, and saving an editable local copy creates a distinct origin/history.

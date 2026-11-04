@@ -438,14 +438,15 @@ define_class!(
             direction: UITextLayoutDirection,
             by: NSInteger,
         ) -> Option<Retained<UITextPosition>> {
-            let len = self.ivars().model.borrow().len();
+            let model = self.ivars().model.borrow();
+            let len = model.len();
             let from = offset(position);
-            // A single-line field: vertical moves reach either end.
             let target = match direction {
-                UITextLayoutDirection::Left => from.saturating_sub(by.unsigned_abs()),
-                UITextLayoutDirection::Right => from.saturating_add(by.unsigned_abs()).min(len),
-                UITextLayoutDirection::Up => 0,
-                _ => len,
+                UITextLayoutDirection::Left => from.saturating_add_signed(by.saturating_neg()).min(len),
+                UITextLayoutDirection::Right => from.saturating_add_signed(by).min(len),
+                UITextLayoutDirection::Up => model.vertical(from, by.saturating_neg()),
+                UITextLayoutDirection::Down => model.vertical(from, by),
+                _ => from.min(len),
             };
             Some(FieldPosition::create(MainThreadMarker::from(self), target))
         }
@@ -546,8 +547,12 @@ define_class!(
         fn first_rect_for_range(&self, text_range: &UITextRange) -> CGRect {
             let model = self.ivars().model.borrow();
             let range = range(text_range);
-            let (top, bottom) = model.row();
-            let (start, end) = (model.caret_x(range.start), model.caret_x(range.end));
+            let (top, bottom) = model.row_at(range.start);
+            let start = model.caret_x(range.start);
+            let end = (range.start..=range.end.min(model.len()))
+                .take_while(|offset| model.row_at(*offset) == (top, bottom))
+                .map(|offset| model.caret_x(offset))
+                .fold(start, f32::max);
             CGRect::new(
                 CGPoint::new(start.min(end).into(), top.into()),
                 CGSize::new((end - start).abs().into(), (bottom - top).into()),
@@ -557,7 +562,7 @@ define_class!(
         #[unsafe(method(caretRectForPosition:))]
         fn caret_rect_for_position(&self, position: &UITextPosition) -> CGRect {
             let model = self.ivars().model.borrow();
-            let (top, bottom) = model.row();
+            let (top, bottom) = model.row_at(offset(position));
             CGRect::new(
                 CGPoint::new(model.caret_x(offset(position)).into(), top.into()),
                 CGSize::new(2.0, (bottom - top).into()),
@@ -574,7 +579,7 @@ define_class!(
 
         #[unsafe(method_id(closestPositionToPoint:))]
         fn closest_position_to_point(&self, point: CGPoint) -> Option<Retained<UITextPosition>> {
-            let closest = self.ivars().model.borrow().closest(point.x as f32);
+            let closest = self.ivars().model.borrow().closest_at(point.x as f32, point.y as f32);
             Some(FieldPosition::create(MainThreadMarker::from(self), closest))
         }
 
@@ -585,7 +590,7 @@ define_class!(
             text_range: &UITextRange,
         ) -> Option<Retained<UITextPosition>> {
             let range = range(text_range);
-            let closest = self.ivars().model.borrow().closest(point.x as f32);
+            let closest = self.ivars().model.borrow().closest_at(point.x as f32, point.y as f32);
             Some(FieldPosition::create(
                 MainThreadMarker::from(self),
                 closest.clamp(range.start, range.end),
@@ -595,7 +600,7 @@ define_class!(
         #[unsafe(method_id(characterRangeAtPoint:))]
         fn character_range_at_point(&self, point: CGPoint) -> Option<Retained<UITextRange>> {
             let model = self.ivars().model.borrow();
-            let at = model.closest(point.x as f32);
+            let at = model.closest_at(point.x as f32, point.y as f32);
             let range = model.clamp(at..at + 1);
             Some(FieldRange::create(MainThreadMarker::from(self), range))
         }
@@ -612,7 +617,11 @@ impl FieldResponder {
     }
 
     fn move_caret_to(&self, point: CGPoint) {
-        let closest = self.ivars().model.borrow().closest(point.x as f32);
+        let closest = self
+            .ivars()
+            .model
+            .borrow()
+            .closest_at(point.x as f32, point.y as f32);
         self.edit(|model| model.set_selection(closest..closest));
     }
 

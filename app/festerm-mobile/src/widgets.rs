@@ -1484,6 +1484,62 @@ fn caret_drag(ctx: &egui::Context) -> Option<CaretDrag> {
 struct FieldLayout {
     galley: std::sync::Arc<egui::Galley>,
     galley_pos: egui::Pos2,
+    multiline: bool,
+    geometry: Option<std::sync::Arc<FieldGeometry>>,
+}
+
+#[derive(Clone)]
+struct FieldGeometry {
+    carets: Vec<f32>,
+    rows: Vec<(f32, f32)>,
+}
+
+fn field_geometry(galley: &egui::Galley, pos: egui::Pos2, multiline: bool) -> FieldGeometry {
+    use egui::epaint::text::cursor::LayoutCursor;
+    let chars = galley.text().chars().count();
+    let mut geometry = FieldGeometry {
+        carets: Vec::with_capacity(chars + 1),
+        rows: if multiline {
+            Vec::with_capacity(chars + 1)
+        } else {
+            Vec::new()
+        },
+    };
+    let mut base = 0;
+    for (row_index, row) in galley.rows.iter().enumerate() {
+        for column in 0..=row.char_count_excluding_newline().0 {
+            // A soft-wrap offset belongs to the preceding row's endpoint.
+            if base + column < geometry.carets.len() {
+                continue;
+            }
+            let rect = galley
+                .pos_from_layout_cursor(&LayoutCursor {
+                    row: row_index,
+                    column: egui::text::CharIndex(column),
+                })
+                .translate(pos.to_vec2());
+            geometry.carets.push(rect.left());
+            if multiline {
+                geometry
+                    .rows
+                    .push((rect.top(), rect.bottom().max(rect.top() + 1.0)));
+            }
+        }
+        base += row.char_count_including_newline().0;
+    }
+    let end = galley
+        .pos_from_layout_cursor(&LayoutCursor {
+            row: galley.rows.len(),
+            column: egui::text::CharIndex(0),
+        })
+        .translate(pos.to_vec2());
+    geometry.carets.resize(chars + 1, end.left());
+    if multiline {
+        geometry
+            .rows
+            .resize(chars + 1, (end.top(), end.bottom().max(end.top() + 1.0)));
+    }
+    geometry
 }
 
 fn published_field_id() -> Id {
@@ -1495,8 +1551,37 @@ pub fn take_field_document(ctx: &egui::Context) -> Option<festerm_ios_window::Fi
     ctx.data_mut(|data| {
         let document = data.get_temp::<festerm_ios_window::FieldDocument>(published_field_id());
         data.remove::<festerm_ios_window::FieldDocument>(published_field_id());
+        let owner = published_field_id().with("owner");
+        let current = data.get_temp::<Id>(published_field_id().with("current"));
+        data.remove::<Id>(published_field_id().with("current"));
+        if let Some(previous) = data.get_temp::<Id>(owner) {
+            if current != Some(previous) {
+                data.remove::<FieldLayout>(previous.with("layout"));
+            }
+        }
+        match current {
+            Some(current) => {
+                data.insert_temp(owner, current);
+            }
+            None => data.remove::<Id>(owner),
+        }
         document
     })
+}
+
+pub fn forget_local_text_edit(ctx: &egui::Context, field: Id) {
+    let focused = ctx.memory(|memory| memory.has_focus(field));
+    ctx.memory_mut(|memory| memory.surrender_focus(field));
+    if focused {
+        ctx.output_mut(|output| output.ime = None);
+    }
+    ctx.data_mut(|data| {
+        data.remove::<egui::text_edit::TextEditState>(field);
+        data.remove::<FieldLayout>(field.with("layout"));
+    });
+    if field_menu_owner(ctx) == Some(field) {
+        close_field_menu(ctx);
+    }
 }
 
 /// A single-line form field: a sized `TextEdit` with the long-press caret
@@ -1509,46 +1594,67 @@ pub fn form_field(
     secret: bool,
 ) -> Response {
     let layout = egui::Layout::centered_and_justified(ui.layout().main_dir());
-    let output = ui
-        .allocate_ui_with_layout(size.into(), layout, |ui| {
-            let id = ui.make_persistent_id(id_salt);
-            follow_caret_drag(ui, id);
-            edit.id(id).show(ui)
-        })
-        .inner;
+    ui.allocate_ui_with_layout(size.into(), layout, |ui| {
+        let id = ui.make_persistent_id(id_salt);
+        local_text_edit(ui, id, edit, secret, false)
+            .response
+            .response
+    })
+    .inner
+}
+
+/// Shared local field presentation for forms, source editors and drafts.
+pub fn local_text_edit(
+    ui: &mut Ui,
+    id: Id,
+    edit: egui::TextEdit<'_>,
+    secret: bool,
+    multiline: bool,
+) -> egui::text_edit::TextEditOutput {
+    follow_caret_drag(ui, id);
+    let output = edit.id(id).show(ui);
     let response = output.response.response.clone();
     let ctx = ui.ctx().clone();
+    let geometry = response.has_focus().then(|| {
+        ctx.data(|data| data.get_temp::<FieldLayout>(id.with("layout")))
+            .filter(|previous| {
+                std::sync::Arc::ptr_eq(&previous.galley, &output.galley)
+                    && previous.galley_pos == output.galley_pos
+                    && previous.multiline == multiline
+            })
+            .and_then(|previous| previous.geometry)
+            .unwrap_or_else(|| {
+                std::sync::Arc::new(field_geometry(&output.galley, output.galley_pos, multiline))
+            })
+    });
     let layout = FieldLayout {
         galley: output.galley.clone(),
         galley_pos: output.galley_pos,
+        multiline,
+        geometry,
     };
     if response.has_focus() {
         let galley = &layout.galley;
         let chars = galley.text().chars().count();
-        let carets = (0..=chars)
-            .map(|index| {
-                layout.galley_pos.x
-                    + galley
-                        .pos_from_cursor(egui::text::CCursor::new(index))
-                        .min
-                        .x
-            })
-            .collect();
+        let geometry = layout.geometry.as_ref().expect("focused field geometry");
         let selection = output
             .cursor_range
             .map(|range| range.as_sorted_char_range())
             .map_or(chars..chars, |range| range.start.0..range.end.0);
         let row = galley.rect.translate(layout.galley_pos.to_vec2());
         ctx.data_mut(|data| {
+            data.insert_temp(published_field_id().with("current"), response.id);
             data.insert_temp(
                 published_field_id(),
                 festerm_ios_window::FieldDocument {
                     field: response.id.value(),
                     text: galley.text().to_owned(),
                     selection,
-                    carets,
+                    carets: geometry.carets.clone(),
                     top: row.top(),
                     bottom: row.bottom().max(row.top() + 1.0),
+                    rows: geometry.rows.clone(),
+                    multiline,
                     secure: secret,
                 },
             );
@@ -1556,7 +1662,7 @@ pub fn form_field(
     }
     ctx.data_mut(|data| data.insert_temp(response.id.with("layout"), layout));
     field_edit_menu(ui, &response, !output.galley.text().is_empty(), secret);
-    response
+    output
 }
 
 /// Before the field runs, pins its caret under a long-pressed finger. egui's
@@ -1575,11 +1681,13 @@ fn follow_caret_drag(ui: &Ui, field: Id) {
     ) else {
         return;
     };
-    // Single-line: follow the finger horizontally even when it drifts off
-    // the row, rather than snapping to either end.
     let at = egui::vec2(
         pointer.x - layout.galley_pos.x,
-        layout.galley.rect.center().y,
+        if layout.multiline {
+            pointer.y - layout.galley_pos.y
+        } else {
+            layout.galley.rect.center().y
+        },
     );
     let caret = layout.galley.cursor_from_pos(at);
     ctx.stop_dragging();
@@ -1588,4 +1696,89 @@ fn follow_caret_drag(ui: &Ui, field: Id) {
         .cursor
         .set_char_range(Some(egui::text::CCursorRange::one(caret)));
     state.store(ctx, field);
+}
+
+#[cfg(test)]
+mod field_geometry_tests {
+    use super::*;
+    use egui_kittest::Harness;
+
+    #[test]
+    fn linear_field_geometry_preserves_wrapped_unicode_and_newline_carets() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, galleys: &mut Vec<std::sync::Arc<egui::Galley>>| {
+                if galleys.is_empty() {
+                    for text in [
+                        "",
+                        "a\n",
+                        "a\n\nb",
+                        "one two three four five",
+                        "é👩\u{200d}💻\n最後\n",
+                    ] {
+                        galleys.push(ui.fonts_mut(|fonts| {
+                            fonts.layout(
+                                text.to_owned(),
+                                egui::FontId::monospace(14.0),
+                                Color32::WHITE,
+                                35.0,
+                            )
+                        }));
+                    }
+                }
+            },
+            Vec::new(),
+        );
+        harness.run();
+        let pos = egui::pos2(17.0, -23.0);
+        for galley in harness.state() {
+            for multiline in [false, true] {
+                let geometry = field_geometry(galley, pos, multiline);
+                assert_eq!(geometry.carets.len(), galley.text().chars().count() + 1);
+                for (index, x) in geometry.carets.iter().enumerate() {
+                    let rect = galley
+                        .pos_from_cursor(egui::text::CCursor::new(index))
+                        .translate(pos.to_vec2());
+                    assert_eq!(*x, rect.left());
+                    if multiline {
+                        assert_eq!(
+                            geometry.rows[index],
+                            (rect.top(), rect.bottom().max(rect.top() + 1.0))
+                        );
+                    }
+                }
+                assert_eq!(geometry.rows.is_empty(), !multiline);
+            }
+        }
+    }
+
+    #[test]
+    fn maximum_document_field_geometry_is_complete_and_cached_between_frames() {
+        let text = format!("{}\n", "x".repeat(63)).repeat(16_000);
+        let chars = text.chars().count();
+        let id = Id::new("maximum-document-field");
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, text: &mut String| {
+                local_text_edit(ui, id, egui::TextEdit::multiline(text), false, true);
+            },
+            text,
+        );
+        harness.ctx.memory_mut(|memory| memory.request_focus(id));
+        harness.run();
+        let first = harness
+            .ctx
+            .data(|data| data.get_temp::<FieldLayout>(id.with("layout")))
+            .unwrap()
+            .geometry
+            .unwrap();
+        assert_eq!(first.carets.len(), chars + 1);
+        assert_eq!(first.rows.len(), chars + 1);
+        harness.run();
+        let second = harness
+            .ctx
+            .data(|data| data.get_temp::<FieldLayout>(id.with("layout")))
+            .unwrap()
+            .geometry
+            .unwrap();
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+    }
 }

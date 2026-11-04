@@ -2,6 +2,7 @@
 
 mod app_lock;
 mod dictation;
+mod documents;
 #[cfg_attr(not(feature = "live-ssh"), allow(dead_code))] // SFTP needs the SSH transport
 mod files;
 #[cfg(test)]
@@ -318,6 +319,7 @@ enum Surface {
     #[default]
     Tabs,
     Terminal,
+    Documents,
 }
 
 /// Content-free view of the live SSH worker for chrome decisions.
@@ -359,6 +361,7 @@ pub struct MobileApp {
     files: Option<Box<files::FilesSession>>,
     files_ctx: files_shell::FilesContext,
     markdown: Option<workspaces::MarkdownWorkspace>,
+    documents: documents::DocumentHost,
     surface: Surface,
     shell: shell::ShellState,
     profiles: Option<profiles::Profiles>,
@@ -436,6 +439,7 @@ impl MobileApp {
             files: None,
             files_ctx: files_shell::FilesContext::default(),
             markdown: None,
+            documents: documents::DocumentHost::default(),
             #[cfg(feature = "live-ssh")]
             tunnel: tunnel_link::TunnelUi::default(),
             surface: Surface::Tabs,
@@ -538,6 +542,11 @@ impl MobileApp {
     }
 
     pub fn with_keyboard(mut self, keyboard: Option<festerm_ios_window::KeyboardBridge>) -> Self {
+        self.documents.bind_picker(
+            keyboard
+                .as_ref()
+                .and_then(|bridge| bridge.document_picker()),
+        );
         self.keyboard = keyboard;
         self
     }
@@ -906,7 +915,9 @@ impl MobileApp {
         if let Some(sessions) = &self.sessions_override {
             return model::SessionSource::surfaces(sessions);
         }
-        self.tab_surfaces()
+        let mut surfaces = self.tab_surfaces();
+        surfaces.extend(self.documents.surfaces(self.surface == Surface::Documents));
+        surfaces
     }
 
     fn reattachable(&self) -> Vec<model::Reattachable> {
@@ -959,6 +970,7 @@ impl MobileApp {
             self.terminal_keyboard.cancel();
         }
         if lifecycle.suspensions != self.observed_suspensions {
+            self.documents.invalidate_sources();
             #[cfg(feature = "live-ssh")]
             self.suspend_sessions();
             self.gestures.cancel();
@@ -1009,14 +1021,20 @@ impl MobileApp {
             self.show_host_setup(ui.ctx(), bounds);
             return;
         }
+        if lifecycle.active && self.documents.poll(&mut self.next_tab) {
+            self.park_active();
+            self.surface = Surface::Documents;
+        }
         match self.surface {
             Surface::Tabs => self.show_tabs(ui),
             Surface::Terminal => self.show_surface(ui, lifecycle),
+            Surface::Documents => self.show_documents(ui),
         }
         self.show_sheets(ui.ctx(), bounds);
         self.show_files_sheets(ui.ctx(), bounds);
         self.show_host_setup(ui.ctx(), bounds);
         self.show_dictation(ui.ctx(), bounds);
+        self.documents.show_close(ui.ctx(), bounds);
     }
 
     fn show_host_setup(&mut self, ctx: &egui::Context, bounds: egui::Rect) {
@@ -1162,6 +1180,12 @@ impl MobileApp {
                 ShellAction::CloseSurface(id) => self.close_tab(id),
                 ShellAction::OpenSurface(id) => {
                     self.shell.sessions_sheet = false;
+                    if self.documents.contains(id) {
+                        self.park_active();
+                        self.documents.activate(id);
+                        self.surface = Surface::Documents;
+                        continue;
+                    }
                     self.activate_tab(id);
                     if self.active_tab == Some(id) {
                         self.surface = Surface::Terminal;
@@ -1184,6 +1208,11 @@ impl MobileApp {
                     self.shell.sessions_sheet = false;
                     self.shell.tab = shell::Tab::Profiles;
                     self.leave_terminal();
+                }
+                ShellAction::OpenDocuments => {
+                    self.park_active();
+                    self.documents.active = None;
+                    self.surface = Surface::Documents;
                 }
             }
         }
@@ -1698,6 +1727,12 @@ impl MobileApp {
                 back = header.back;
                 chip_action = header.chip;
                 let menu = egui::Popup::menu(&header.more).show(|ui| {
+                    if ui.button("Documents").clicked() {
+                        self.park_active();
+                        self.documents.active = None;
+                        self.surface = Surface::Documents;
+                        ui.close();
+                    }
                     if in_terminal && self.active_tab.is_some() {
                         ui.weak(&chrome.line.label);
                         ui.separator();
@@ -1761,6 +1796,9 @@ impl MobileApp {
                 });
                 self.menu_open = menu.is_some();
             });
+        if self.surface != Surface::Terminal {
+            return;
+        }
         if let Some(id) = close_tab {
             self.close_tab(id);
             return;
@@ -1794,7 +1832,7 @@ impl MobileApp {
                 self.activate_tab(id);
                 return;
             }
-            terminal_chrome::ChipAction::Close(id) => self.confirm_close = Some(id),
+            terminal_chrome::ChipAction::Close(id) => self.request_surface_close(id),
             terminal_chrome::ChipAction::All => self.shell.sessions_sheet = true,
             terminal_chrome::ChipAction::New => {
                 self.shell.tab = shell::Tab::Profiles;
@@ -1822,7 +1860,10 @@ impl MobileApp {
     }
 
     fn terminal_input_ready(&self, lifecycle: Lifecycle) -> bool {
-        let ready = lifecycle.active && !self.shell.sessions_sheet && !self.editor.open;
+        let ready = lifecycle.active
+            && !self.shell.sessions_sheet
+            && !self.editor.open
+            && !self.documents.modal_open();
         #[cfg(feature = "live-ssh")]
         let ready = ready
             && self

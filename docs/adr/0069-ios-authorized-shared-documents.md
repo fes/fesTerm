@@ -24,6 +24,20 @@ model; its link/resource policy remains reusable and unchanged.
 The existing engine remains the
 only owner of text, encoding, line endings, revisions and bounded undo.
 Presentation owns selection, scroll, wrap, focus and projection caches.
+The existing global shell retains Profiles/Sessions/Settings; Documents is a
+launcher for authorized sources and open views, not a second application home.
+Document chips share the surface-ID allocator but never acquire a terminal
+grid or transport. Native multiline input reuses the form field responder
+with visual-row caret geometry; widget-private undo is cleared so only the
+shared engine can undo document edits.
+Native caret publication walks visual rows/glyphs once and reuses unchanged
+geometry; focusing a bounded large document must not perform a row scan for
+each character. Stale refresh results requeue without replacing edits or
+restoring obsolete authority; permission downgrades remain fail-closed.
+Conflict decisions capture a complete edit/source/access target before showing
+the external version. A changed target refuses Keep/Reload; Keep only permits
+a later explicit, source-version-bound Save. Document-chip closes from either
+surface use the same last-dirty-view guard and block background terminal input.
 Registry handles are monotonic and are not recycled after closing a view.
 Opening an existing origin attaches a view without replacing unsaved bytes.
 
@@ -114,3 +128,11 @@ The opt-in Simulator fixture additionally covers a real failed revert,
 closed-instance operation refusal, fresh-instance recovery and subsequent
 actual save, superseded pending failures, and release after unopened and
 in-flight drops. It does not qualify picker-based reacquisition.
+Actual-widget tests additionally exercise local multiline replay without
+terminal bytes, cross-view undo and independent selection, read-only refusal,
+dirty-close modal input gating, failed native saves, stale opens and fresh
+authority preserving dirty content, stale-refresh requeue/access refusal,
+target-bound explicit conflict decisions, terminal-side document-chip close,
+short-height action reachability and large-document geometry/cache reuse.
+Headless images are widget/theme evidence,
+not native Files-provider or UIKit keyboard acceptance.

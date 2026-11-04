@@ -746,7 +746,15 @@ and paste ordering, and More → Force redraw without terminal input or reset.
 ### Shared iOS documents
 
 The first #570/ADR 0069 slice implements the portable document registry and
-native I/O boundary, not the native editor or a wired Files picker.
+native I/O boundary (draft #575). Its dependent local-editor slice wires the
+Documents launcher/Browse in Files and shared local source views into the
+existing shell. Local multiline replay, shared undo/redo, independent view
+selection, read-only refusal and dirty-close input gating have actual-widget
+tests; native keyboard/IME and picker/provider qualification remain open.
+Additional regressions cover a focused 1,024,000-character document with cached
+linear caret geometry, hardware Tab, stale-refresh requeue and permission
+downgrades, explicit target-bound Compare/Keep/Reload, and document-chip close
+from a terminal without background input. Short-height actions live in More.
 Its deterministic tests prove shared
 identity/history, independent selection targets, exact multiline Unicode/BOM/
 line-ending undo, read-only/revoked mutation refusal, encoded bounds, last-view
@@ -775,6 +783,15 @@ The iPhone 17 Pro/iOS 26.5 Simulator passed this fixture smoke on 2026-11-04.
 This does not qualify picker grants, iCloud/third-party providers, file
 protection metadata, background operation or UI behavior.
 Native provider and visual evidence remains open:
+
+The opt-in `capture_document_ui` test emits actual-widget phone, landscape
+and tablet images plus hashes/source attribution to a new directory named by
+`FESTERM_DOCUMENT_UI_OUT`. Fixtures use the refusing non-iOS native stub, never
+real Files grants. Keyboard occlusion is simulated and no UIKit keyboard
+pixels are present; do not treat these as native acceptance.
+The existing `scripts/capture-mobile-ui.py` runner (and optional-validation
+entry point) includes this gallery under `documents/`, with its own manifest.
+Failure of either capture remains a failed attempt with evidence retained.
 
 | ID | Environment | Required evidence |
 |---|---|---|

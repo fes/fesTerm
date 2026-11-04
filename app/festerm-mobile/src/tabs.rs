@@ -97,8 +97,14 @@ impl MobileApp {
     /// Makes `id` the active terminal without touching its connection.
     pub(super) fn activate_tab(&mut self, id: u64) {
         self.cancel_dictation();
+        if self.documents.activate(id) {
+            self.park_active();
+            self.surface = Surface::Documents;
+            return;
+        }
         if self.active_tab == Some(id) {
             self.workspace = workspaces::Workspace::Terminal;
+            self.surface = Surface::Terminal;
             return;
         }
         let Some(position) = self.tabs.iter().position(|tab| tab.id == id) else {
@@ -126,6 +132,7 @@ impl MobileApp {
         }
         self.workspace = workspaces::Workspace::Terminal;
         self.keys_panel.open = false;
+        self.surface = Surface::Terminal;
     }
 
     pub(super) fn push_tab(&mut self, title: String, spec: Option<SessionSpec>) -> u64 {
@@ -263,7 +270,19 @@ impl MobileApp {
             .and_then(|tab| tab.tunnel.as_ref())
     }
 
+    pub(super) fn request_surface_close(&mut self, id: u64) {
+        if self.documents.contains(id) {
+            self.documents.request_close(id);
+        } else {
+            self.confirm_close = Some(id);
+        }
+    }
+
     pub(super) fn close_tab(&mut self, id: u64) {
+        if self.documents.contains(id) {
+            self.documents.request_close(id);
+            return;
+        }
         #[cfg(feature = "live-ssh")]
         if self
             .tunnel
