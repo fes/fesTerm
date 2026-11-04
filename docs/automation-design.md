@@ -780,6 +780,26 @@ Tunnel/SSH credentials are not MCP credentials and must never be passed through.
 
 ### Controller enrollment prerequisite
 
+The authority kernel also models a bounded, per-registration metadata review
+and decision, independent of the legacy metadata slot. Each candidate freezes
+the exact connection, enrollment, target, ordinary-grant revision and control
+ownership. A native-only model input must acknowledge every current control
+sink, and the ordinary grant must already contain the metadata source and
+handoff closure. Rebinding, cancellation, per-registration revocation,
+principal revocation, target loss and expiry fail closed; an ordinary grant
+revision invalidates the model decision rather than silently composing it with
+a new grant. Decisions have no metadata-run, request, charging or disclosure
+route, and are not consent or publication permits. The model stores no labels;
+two differently registered terminals can have identical visible labels.
+
+Turning these inert decisions into independently usable authority still
+requires per-enrollment broker slots and quotas, admission/request and
+revocation integration, bidirectional cross-consent on ordinary approval,
+native review, and enrollment-bound disclosure liveness through actual
+publication under the shared privacy, attachment and cancellation fence.
+The existing unbound metadata slot must never substitute for these checks.
+No production gate or capability is enabled by the model.
+
 The hardware-controller use case in [#524](https://github.com/fes/fesTerm/issues/524)
 begins with an ordinary untrusted MCP connection, not a privileged device.
 Claimed gestures, labels, PIDs, working directories, tab positions and

@@ -1,5 +1,14 @@
 # Milestone Progress Narrative
 
+## Modeling enrollment-scoped metadata decisions
+
+The kernel now models separate, bounded metadata reviews for exact controller
+enrollments without giving those decisions any route to runs or disclosure.
+Review freezes current control ownership and requires explicit compatible
+cross-flow consent; independent registrations can be revoked separately.
+Native consent, usable per-enrollment grants and publication fencing remain
+future work, and controller metadata remains unavailable.
+
 ## Guarding peer wait cancellation
 
 Peer cancellation now retains a bounded, already-consumed cancellation on

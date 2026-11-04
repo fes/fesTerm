@@ -418,6 +418,253 @@ fn enroll_controller(
         .unwrap()
 }
 
+fn enrollment_metadata_review(
+    f: &mut Fixture,
+    registration: ControllerRegistrationId,
+    enrollment: ControllerEnrollmentId,
+) -> EnrollmentMetadataReview {
+    let guard = automation_admission_lock().unwrap();
+    f.broker
+        .prepare_enrollment_metadata_review(f.connection, registration, enrollment, f.now, &guard)
+        .unwrap()
+}
+
+fn approve_enrollment_metadata(
+    f: &mut Fixture,
+    review: EnrollmentMetadataReview,
+    lifetime: Duration,
+) -> Result<EnrollmentMetadataDecision> {
+    let guard = automation_admission_lock().unwrap();
+    f.broker.approve_enrollment_metadata_review(
+        f.connection,
+        NativeEnrollmentMetadataApproval::new(review, lifetime),
+        f.now,
+        &guard,
+    )
+}
+
+fn enrollment_metadata_is_live(
+    f: &Fixture,
+    registration: ControllerRegistrationId,
+    enrollment: ControllerEnrollmentId,
+    decision: EnrollmentMetadataDecision,
+    now: Instant,
+) -> bool {
+    f.broker
+        .check_enrollment_metadata_decision(f.connection, registration, enrollment, decision, now)
+        .is_ok()
+}
+
+#[test]
+fn enrollment_metadata_model_is_exact_independent_and_not_a_grant() {
+    let mut f = Fixture::new();
+    // Both targets can have the same visible label; registrations are distinct.
+    let first = f
+        .broker
+        .register_controller_session(f.connection, b"one")
+        .unwrap();
+    let second = f
+        .broker
+        .register_controller_session(f.connection, b"two")
+        .unwrap();
+    let first_enrollment = enroll_controller(&mut f.broker, f.connection, first, f.a);
+    let second_enrollment = enroll_controller(&mut f.broker, f.connection, second, f.b);
+    let review = enrollment_metadata_review(&mut f, first, first_enrollment);
+    let first_decision =
+        approve_enrollment_metadata(&mut f, review, Duration::from_secs(60)).unwrap();
+    assert!(enrollment_metadata_is_live(
+        &f,
+        first,
+        first_enrollment,
+        first_decision,
+        f.now
+    ));
+    assert!(!enrollment_metadata_is_live(
+        &f,
+        second,
+        second_enrollment,
+        first_decision,
+        f.now
+    ));
+    assert!(f
+        .broker
+        .admit_metadata_run(
+            f.connection,
+            metadata_spec(&[f.a], f.now + Duration::from_secs(30)),
+            f.now
+        )
+        .is_err());
+    let target = f.b;
+    approve_metadata(&mut f, &[target], &[], Duration::from_secs(60));
+    assert!(!enrollment_metadata_is_live(
+        &f,
+        second,
+        second_enrollment,
+        first_decision,
+        f.now
+    ));
+    let review = enrollment_metadata_review(&mut f, second, second_enrollment);
+    let second_decision =
+        approve_enrollment_metadata(&mut f, review, Duration::from_secs(60)).unwrap();
+    {
+        let guard = automation_admission_lock().unwrap();
+        f.broker
+            .revoke_enrollment_metadata_decision(f.connection, first, &guard)
+            .unwrap();
+    }
+    assert!(!enrollment_metadata_is_live(
+        &f,
+        first,
+        first_enrollment,
+        first_decision,
+        f.now
+    ));
+    assert!(enrollment_metadata_is_live(
+        &f,
+        second,
+        second_enrollment,
+        second_decision,
+        f.now
+    ));
+    let other = f.broker.accept_connection().unwrap();
+    assert!(f
+        .broker
+        .check_enrollment_metadata_decision(
+            other,
+            second,
+            second_enrollment,
+            second_decision,
+            f.now
+        )
+        .is_err());
+    f.broker.close_target(f.b).unwrap();
+    assert!(!enrollment_metadata_is_live(
+        &f,
+        second,
+        second_enrollment,
+        second_decision,
+        f.now
+    ));
+}
+
+#[test]
+fn enrollment_metadata_model_cancellation_expiry_and_rebind_fail_closed() {
+    let mut f = Fixture::new();
+    let registration = f
+        .broker
+        .register_controller_session(f.connection, b"one")
+        .unwrap();
+    let enrollment = enroll_controller(&mut f.broker, f.connection, registration, f.a);
+    let stale = enrollment_metadata_review(&mut f, registration, enrollment);
+    let current = enrollment_metadata_review(&mut f, registration, enrollment);
+    assert!(approve_enrollment_metadata(&mut f, stale, Duration::from_secs(60)).is_err());
+    {
+        let guard = automation_admission_lock().unwrap();
+        f.broker
+            .cancel_enrollment_metadata_review(f.connection, current, &guard)
+            .unwrap();
+    }
+    let expired = enrollment_metadata_review(&mut f, registration, enrollment);
+    f.now += MAX_GRANT_LIFETIME;
+    assert!(approve_enrollment_metadata(&mut f, expired, Duration::from_secs(60)).is_err());
+    let review = enrollment_metadata_review(&mut f, registration, enrollment);
+    let decision = approve_enrollment_metadata(&mut f, review, Duration::from_secs(1)).unwrap();
+    assert!(!enrollment_metadata_is_live(
+        &f,
+        registration,
+        enrollment,
+        decision,
+        f.now + Duration::from_secs(1)
+    ));
+    let review = enrollment_metadata_review(&mut f, registration, enrollment);
+    let decision = approve_enrollment_metadata(&mut f, review, Duration::from_secs(60)).unwrap();
+    let replacement = enroll_controller(&mut f.broker, f.connection, registration, f.a);
+    assert!(!enrollment_metadata_is_live(
+        &f,
+        registration,
+        replacement,
+        decision,
+        f.now
+    ));
+    let review = enrollment_metadata_review(&mut f, registration, replacement);
+    let decision = approve_enrollment_metadata(&mut f, review, Duration::from_secs(60)).unwrap();
+    f.broker.revoke(f.connection);
+    assert!(!enrollment_metadata_is_live(
+        &f,
+        registration,
+        replacement,
+        decision,
+        f.now
+    ));
+}
+
+#[test]
+fn enrollment_metadata_model_refuses_incompatible_or_stale_cross_consent() {
+    let mut f = Fixture::new();
+    let registration = f
+        .broker
+        .register_controller_session(f.connection, b"one")
+        .unwrap();
+    let enrollment = enroll_controller(&mut f.broker, f.connection, registration, f.a);
+    approve_control(&mut f, Duration::from_secs(60));
+    let review = enrollment_metadata_review(&mut f, registration, enrollment);
+    assert_eq!(review.control_sinks().collect::<Vec<_>>(), vec![f.b]);
+    assert!(approve_enrollment_metadata(&mut f, review, Duration::from_secs(30)).is_err());
+    let review = enrollment_metadata_review(&mut f, registration, enrollment);
+    let guard = automation_admission_lock().unwrap();
+    let decision = f
+        .broker
+        .approve_enrollment_metadata_review(
+            f.connection,
+            NativeEnrollmentMetadataApproval::new(review, Duration::from_secs(30))
+                .accept_control_sink(f.b),
+            f.now,
+            &guard,
+        )
+        .unwrap();
+    drop(guard);
+    let stale_review = enrollment_metadata_review(&mut f, registration, enrollment);
+    f.broker.revoke_ordinary(f.connection);
+    assert!(!enrollment_metadata_is_live(
+        &f,
+        registration,
+        enrollment,
+        decision,
+        f.now
+    ));
+    let guard = automation_admission_lock().unwrap();
+    assert!(f
+        .broker
+        .approve_enrollment_metadata_review(
+            f.connection,
+            NativeEnrollmentMetadataApproval::new(stale_review, Duration::from_secs(30))
+                .accept_control_sink(f.b),
+            f.now,
+            &guard,
+        )
+        .is_err());
+    drop(guard);
+
+    let scope = Scope {
+        control: BTreeSet::from([f.b]),
+        ..Scope::default()
+    };
+    let binding = direct_input(f.b, digest(3), 10);
+    f.approve(scope, &[binding]);
+    let review = enrollment_metadata_review(&mut f, registration, enrollment);
+    let guard = automation_admission_lock().unwrap();
+    assert!(f
+        .broker
+        .approve_enrollment_metadata_review(
+            f.connection,
+            NativeEnrollmentMetadataApproval::new(review, Duration::from_secs(30))
+                .accept_control_sink(f.b),
+            f.now,
+            &guard,
+        )
+        .is_err());
+}
+
 fn presentation_registration(
     broker: &mut Broker,
     connection: ConnectionId,

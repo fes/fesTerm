@@ -176,8 +176,12 @@ to bypass another's restrictions.
    unguarded; broker destruction still drops delivery epochs without the guard.
    This is not a general cut invariant or a revocable enqueue, physical-output
    or metadata-delivery fence.
-   No enrollment witness is implemented, and this does not bind metadata grants
-   or delivery liveness, fence physical recipients, or qualify native consent.
+   A separate inert per-enrollment metadata-review model freezes exact
+   association and control closure and records bounded model decisions, but
+   has no grant, request or delivery path. It cannot authorize disclosure or
+   replace the legacy slot. No enrollment witness is implemented, and this does
+   not bind metadata grants or delivery liveness, fence physical recipients,
+   or qualify native consent.
    The existing capacity-four app outbound channel and its frame and target
    guards now reside in the authority crate and remain connected to the same
    app writer. The app retains the existing admission validation, size and

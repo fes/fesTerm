@@ -7,8 +7,13 @@ use std::sync::{
 };
 use std::time::Instant;
 
+#[path = "enrollment_metadata.rs"]
+mod enrollment_metadata;
 #[path = "presentation.rs"]
 mod presentation;
+pub use enrollment_metadata::{
+    EnrollmentMetadataDecision, EnrollmentMetadataReview, NativeEnrollmentMetadataApproval,
+};
 pub use presentation::{
     ConfirmedPresentation, NativeControllerPresentationApproval, NativePresentationObservation,
     NativePresentationState, PresentationApprovalProposal, PresentationAttempt,
@@ -51,6 +56,8 @@ struct ControllerRegistration {
     enrollment: Option<ControllerEnrollment>,
     presentation_review: Option<u64>,
     presentation_grant: Option<PresentationGrant>,
+    metadata_review: Option<u64>,
+    metadata_decision: Option<EnrollmentMetadataDecision>,
 }
 
 #[derive(Clone, Copy)]
@@ -376,6 +383,8 @@ impl Broker {
                 enrollment: None,
                 presentation_review: None,
                 presentation_grant: None,
+                metadata_review: None,
+                metadata_decision: None,
             },
         );
         Ok(id)
@@ -472,6 +481,8 @@ impl Broker {
         });
         record.presentation_review = None;
         record.presentation_grant = None;
+        record.metadata_review = None;
+        record.metadata_decision = None;
         self.cancel_presentation_for_registration(connection, proposal.registration);
         Ok(id)
     }
@@ -1205,6 +1216,12 @@ impl Broker {
     pub fn revoke(&mut self, connection: ConnectionId) {
         self.revoke_slot(connection, GrantSlot::Ordinary);
         self.revoke_slot(connection, GrantSlot::Metadata);
+        if let Some(principal) = self.principals.get_mut(&connection) {
+            for record in principal.controller_registrations.values_mut() {
+                record.metadata_review = None;
+                record.metadata_decision = None;
+            }
+        }
         self.pending
             .retain(|_, pending| pending.connection != connection);
     }
