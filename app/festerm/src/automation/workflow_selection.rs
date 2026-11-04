@@ -11,6 +11,17 @@ use std::{
 use eframe::egui;
 use festerm_automation_js::snapshot::ApprovedBundle;
 use festerm_automation_workflow::intake::load_user_selected_bundle;
+use festerm_automation_workflow::review::{ReviewEpoch, ReviewRevision};
+
+fn invalidate_review_epoch(epoch: &ReviewEpoch) -> Option<ReviewRevision> {
+    let guard = festerm_session::automation_admission_lock();
+    let revision = epoch.invalidate();
+    if guard.is_some() {
+        revision
+    } else {
+        None
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Status {
@@ -28,6 +39,7 @@ pub(crate) struct View {
     pub status: Status,
     bundle: Option<Arc<ApprovedBundle>>,
     cancelled: Option<Arc<AtomicBool>>,
+    review_epoch: Option<ReviewEpoch>,
 }
 
 impl View {
@@ -35,6 +47,11 @@ impl View {
         self.status == other.status
             && self.bundle.as_ref().map(|bundle| bundle.digest())
                 == other.bundle.as_ref().map(|bundle| bundle.digest())
+            && match (&self.review_epoch, &other.review_epoch) {
+                (Some(left), Some(right)) => left.same_epoch(right),
+                (None, None) => true,
+                _ => false,
+            }
     }
 
     pub(crate) fn busy(&self) -> bool {
@@ -57,9 +74,24 @@ impl View {
     }
 
     pub(crate) fn disable(&self) {
+        let _guard = festerm_session::automation_admission_lock();
+        if let Some(epoch) = &self.review_epoch {
+            let _ = epoch.invalidate();
+        }
         if let Some(cancelled) = &self.cancelled {
             cancelled.store(true, Ordering::Release);
         }
+    }
+
+    pub(crate) fn review_token(&self) -> Option<(ReviewRevision, Arc<AtomicBool>)> {
+        self.current_bundle()?;
+        let revision = self.review_epoch.as_ref()?.capture()?;
+        let cancelled = self.cancelled.as_ref()?.clone();
+        Some((revision, cancelled))
+    }
+
+    pub(crate) fn invalidate_review(&self) -> Option<ReviewRevision> {
+        invalidate_review_epoch(self.review_epoch.as_ref()?)
     }
 
     #[cfg(test)]
@@ -68,6 +100,7 @@ impl View {
             status: Status::Captured,
             bundle: Some(Arc::new(bundle)),
             cancelled: Some(Arc::new(AtomicBool::new(false))),
+            review_epoch: Some(ReviewEpoch::default()),
         }
     }
 }
@@ -89,6 +122,7 @@ pub(super) struct Selection {
     bundle: Option<Arc<ApprovedBundle>>,
     error: Option<String>,
     cancelled: Option<Arc<AtomicBool>>,
+    review_epoch: Option<ReviewEpoch>,
 }
 
 impl Selection {
@@ -106,6 +140,7 @@ impl Selection {
         self.cancel();
         let cancelled = Arc::new(AtomicBool::new(false));
         self.cancelled = Some(cancelled.clone());
+        self.review_epoch = Some(ReviewEpoch::default());
         let queued = Queued {
             capture: Box::new(capture),
             cancelled,
@@ -146,6 +181,10 @@ impl Selection {
         self.bundle = None;
         self.error = None;
         self.queued = None;
+        let _guard = festerm_session::automation_admission_lock();
+        if let Some(epoch) = &self.review_epoch {
+            let _ = epoch.invalidate();
+        }
         if let Some(pending) = &self.pending {
             pending.cancelled.store(true, Ordering::Release);
         }
@@ -157,6 +196,7 @@ impl Selection {
     pub(super) fn refuse(&mut self, message: &'static str) {
         self.cancel();
         self.cancelled = None;
+        self.review_epoch = None;
         self.error = Some(message.into());
     }
 
@@ -225,6 +265,7 @@ impl Selection {
             status,
             bundle: if cancelled { None } else { self.bundle.clone() },
             cancelled: self.cancelled.clone(),
+            review_epoch: self.review_epoch.clone(),
         }
     }
 }
@@ -337,5 +378,28 @@ mod tests {
             Status::Failed("invalid snapshot".into())
         );
         assert!(selection.view().bundle.is_none());
+    }
+
+    #[test]
+    fn workflow_review_revision_changes_serialize_with_admission() {
+        let selection = View::captured_for_test(bundle());
+        let revision = selection.review_token().unwrap().0;
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        let (started, start_receiver) = mpsc::sync_channel(0);
+        let (finished, finish_receiver) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            started.send(()).unwrap();
+            selection.invalidate_review();
+            finished.send(()).unwrap();
+        });
+        start_receiver.recv().unwrap();
+        assert!(finish_receiver.try_recv().is_err());
+        assert!(revision.is_current());
+        drop(guard);
+        finish_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        worker.join().unwrap();
+        assert!(!revision.is_current());
     }
 }

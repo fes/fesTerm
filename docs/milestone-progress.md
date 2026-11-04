@@ -1,5 +1,23 @@
 # Milestone Progress Narrative
 
+## Reviewing a frozen observation proposal without authority
+
+Desktop Settings can assemble validated typed parameters and explicitly chosen
+live shared-broker attachment generations into a frozen workflow proposal. It
+shows the captured source and exact requested observation operations, native
+result recipient and immutable bundle/parameter/target identities. Unsupported
+control, session creation and child invocation are refused. Input, selection,
+settings, attachment and privacy changes discard stale proposals.
+
+When necessary, an explicit action starts only shared privacy monitoring and
+the in-memory broker. MCP remains separately controlled, and no listener,
+grant, worker or execution is created by review. Privacy monitor installation
+is required: macOS and Linux currently refuse review initialization, and
+Windows native privacy and review usability evidence is still pending. No
+platform is qualified for execution by this slice. A later explicit native
+decision must revalidate the same frozen binding before any authority exists.
+iOS selection and execution remain unavailable.
+
 ## Preparing exact terminal input without admission
 
 The terminal core can encode a bounded keyboard/paste batch against one
@@ -62,8 +80,8 @@ When JavaScript workflows are enabled, desktop Settings can select a local JSON
 bundle and preview its captured digest, requested capabilities, parameter
 schema and module names. Capture runs off the UI thread, retains its single
 slot until I/O finishes, and discards cancelled or superseded results. This is
-not approval: source review within approval, parameter/target selection,
-worker execution, iOS selection and native platform qualification remain open.
+not approval: a later native authority decision, worker execution, iOS
+selection and native platform qualification remain open.
 
 ## Packaging a separate Linux automation worker
 

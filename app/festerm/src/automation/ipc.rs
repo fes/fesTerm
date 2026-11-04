@@ -36,7 +36,7 @@ pub(super) struct TargetGuard {
 }
 
 impl TargetGuard {
-    fn is_valid(&self) -> bool {
+    pub(super) fn is_valid(&self) -> bool {
         self.liveness.load(Ordering::Acquire)
             && self.registration.load(Ordering::Acquire)
             && self.attachment.is_current(self.generation)

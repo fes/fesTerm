@@ -138,10 +138,131 @@ fn automation_approval_labels_escape_spoofing_controls_and_mark_truncation() {
         approval_label("production\n\u{202e}client\u{2069}"),
         "production\\u{a}\\u{202e}client\\u{2069}"
     );
+    assert_eq!(approval_label(r"literal\u{202e}"), r"literal\\u{202e}");
+    assert_eq!(
+        review_label("combining\u{301}\u{200d}\\u{202e}"),
+        r"combining\u{301}\u{200d}\\u{202e}"
+    );
     assert_eq!(
         approval_label(&"x".repeat(129)),
         format!("{}...", "x".repeat(128))
     );
+}
+
+fn workflow_review_bundle() -> festerm_automation_js::snapshot::ApprovedBundle {
+    use festerm_automation_js::snapshot::{ApprovedBundle, Capability, Manifest, SourceSnapshot};
+    ApprovedBundle::new(SourceSnapshot {
+        manifest: Manifest {
+            version: 1,
+            api_version: 1,
+            name: "test".into(),
+            entry: "main.js".into(),
+            modules: vec!["main.js".into()],
+            parameters: BTreeMap::new(),
+            capabilities: BTreeSet::from([Capability::ReadScreen]),
+        },
+        modules: BTreeMap::from([("main.js".into(), "export default 1;".into())]),
+    })
+    .unwrap()
+}
+
+#[test]
+fn workflow_review_uses_shared_targets_without_mcp_disclosure_or_approval() {
+    use festerm_automation_workflow::review::Draft;
+
+    let (mut coordinator, app, id, _) = fixture();
+    let target = coordinator.targets[&id.chip_id()].reference;
+    coordinator.stop_mcp();
+    assert!(coordinator.settings(&[&app]).targets.is_empty());
+    assert!(coordinator.broker.is_some());
+    assert!(coordinator.peers.is_empty());
+    assert!(coordinator.server.is_none());
+
+    let selection = WorkflowView::captured_for_test(workflow_review_bundle());
+    let mut review = workflow_review::State::default();
+    review.reconcile(
+        &selection,
+        &[&app],
+        &coordinator.targets,
+        &coordinator.privacy_gate,
+        true,
+        false,
+    );
+    let view = review.view(&selection);
+    assert_eq!(view.live_targets()[0].reference, target);
+    let revision = selection.review_token().unwrap().0;
+    let request = WorkflowReviewRequest::new(
+        &selection,
+        &revision,
+        Draft {
+            parameters: BTreeMap::new(),
+            targets: BTreeSet::from([target]),
+        },
+    )
+    .unwrap();
+    review.prepare(request, &selection);
+    let view = review.view(&selection);
+    let proposal = view.proposal().unwrap().review().invocation();
+    assert_eq!(proposal.targets()["target-1"], target);
+    assert_eq!(
+        proposal.grant_request().scope.observe,
+        BTreeSet::from([target])
+    );
+    assert!(proposal.grant_request().scope.control.is_empty());
+    assert!(coordinator.peers.is_empty());
+    coordinator.privacy_gate.close();
+    assert!(view.proposal().is_none());
+}
+
+#[test]
+fn workflow_review_settings_broadcast_invalidates_the_selection_revision() {
+    use festerm_config::{Configuration, InterfaceSettings};
+
+    let (mut app, _) = FesTermApp::automation_fixture();
+    let selection = WorkflowView::captured_for_test(workflow_review_bundle());
+    app.set_automation_settings(SettingsSnapshot {
+        workflow: selection.clone(),
+        ..SettingsSnapshot::default()
+    });
+
+    let revision = selection.review_token().unwrap().0;
+    let javascript = InterfaceSettings::DEFAULT.with_javascript_enabled(true);
+    app.adopt_broadcast_configuration(
+        Configuration::empty()
+            .with_interface_settings(javascript.clone())
+            .unwrap(),
+    );
+    assert!(!revision.is_current());
+
+    let revision = selection.review_token().unwrap().0;
+    app.adopt_broadcast_configuration(
+        Configuration::empty()
+            .with_interface_settings(javascript.with_mcp_enabled(true))
+            .unwrap(),
+    );
+    assert!(!revision.is_current());
+
+    app.adopt_broadcast_configuration(
+        Configuration::empty()
+            .with_interface_settings(InterfaceSettings::DEFAULT.with_mcp_enabled(true))
+            .unwrap(),
+    );
+    assert!(selection.current_bundle().is_none());
+}
+
+#[test]
+fn workflow_review_initialization_without_selection_starts_nothing() {
+    let mut coordinator = Coordinator::default();
+    coordinator.javascript_enabled = true;
+    coordinator.command(
+        NativeCommand::InitializeWorkflowReview,
+        &egui::Context::default(),
+    );
+    assert!(coordinator.broker.is_none());
+    assert!(coordinator.privacy.is_none());
+    assert!(coordinator.starting.is_none());
+    assert!(coordinator.server.is_none());
+    assert!(!coordinator.want_shared_start);
 }
 
 #[test]

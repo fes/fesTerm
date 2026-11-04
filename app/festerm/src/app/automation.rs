@@ -42,8 +42,15 @@ impl FesTermApp {
         match &command {
             NativeCommand::RestartMcp => self.automation_settings.disable(),
             NativeCommand::Revoke { channel } => self.automation_settings.revoke(*channel),
-            NativeCommand::ClearWorkflow => self.automation_settings.workflow.disable(),
-            NativeCommand::ApproveObservation { .. } | NativeCommand::CaptureWorkflow(_) => {}
+            NativeCommand::ClearWorkflow | NativeCommand::CaptureWorkflow(_) => {
+                self.automation_settings.workflow.disable();
+            }
+            NativeCommand::DiscardWorkflowReview => {
+                self.automation_settings.workflow.invalidate_review();
+            }
+            NativeCommand::ApproveObservation { .. }
+            | NativeCommand::InitializeWorkflowReview
+            | NativeCommand::PrepareWorkflowReview(_) => {}
         }
         self.automation_command = Some(command);
     }

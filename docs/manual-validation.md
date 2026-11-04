@@ -2695,10 +2695,30 @@ evidence. JavaScript and terminal control remain unavailable.
 
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
-| AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts. | Deferred native + usability | Partial implementation: observation pairing/native grant UI, desktop file selection and non-authorizing captured-source review, and frozen-workflow binding components. Desktop source-view usability, iOS security-scoped access, pending-approval invalidation and platform path behavior still need qualification. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. No native evidence collected for intake or workflow approval. |
+| AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts. | Deferred native + usability | Partial implementation: observation pairing/native grant UI and desktop source plus typed-parameter/exact-target review without approval. Pure model and mocked-interface checks are not native UI evidence. Desktop usability, iOS security-scoped access, future pending-approval invalidation and platform path behavior still need qualification. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. No native evidence collected for workflow review or approval. |
 | AUTO-02 | Run a malicious-worker fixture under the real installed sandbox on Windows x64/ARM64, macOS Apple Silicon and supported Linux distributions; attempt forbidden file/network/process/handle/debugger/IPC access and exceed CPU/memory budgets. | Partial native security + packaging | A Linux ARM64 VM exercised the worker's own seccomp denial probes and resource ceilings, including without Docker's seccomp profile. Automated subprocess tests cover the desktop application's early worker branch and qualification refusal; Linux package smoke requires the AppImage and installed Debian helper to report native qualification before receiving source. Installed executable provenance, the desktop executable's memory baseline, native x86-64 and broader Linux qualification, application integration and responsiveness remain open. macOS, Windows and iOS execution remain unavailable pending qualified confinement. |
 | AUTO-03 | Against controlled local/SSH/tunnel targets, race human input, lock/suspend, disconnect, close, reattach/replacement, caller loss and expiry with each broker admission/delivery boundary. Once an independent adapter exists, also race MCP disable/restart/failure against its activity and global privacy loss against both. | Deferred native lifecycle + usability | Observation has deterministic epoch/revocation coverage; actual lock/suspend behavior needs platform qualification. Component tests cover local PTY reservation ordering and a controller human-input epoch, including clipboard and IME; control still needs integrated leases, broker/worker takeover and native handoff, and other backends cannot reserve automation input. No stale writes/data, replay, takeover or exited-shell recreation; already admitted effects remain explicit. Re-unlock/recovery requires a new run/grant. No native evidence collected. |
 | AUTO-04 | Exercise qualified local MCP clients with multiple principals, restricted workflow invocation, resource/status/result access, malformed requests, response loss, cancellation and result/backpressure quotas. | Deferred interoperability + native | The observation adapter implements MCP 2025-11-25 and has deterministic channel/attenuation tests; real clients remain unqualified. Separate experimental Noise, incremental handshake and record-framing components are not integrated: independently trusted human verification at both endpoints, client bootstrap, per-write disclosure guards, deadlines, relay/disconnect liveness and native UI evidence remain open. Future workflow tests must distinguish the start RPC lifetime from its connection-owned asynchronous run and parent-owned script children. No cross-client disclosure, scope amplification or duplicate run. HTTP, unattended triggers, command-job guarantees and iOS remain separately gated. No native evidence collected. |
+
+### Pending workflow-review evidence (AUTO-01)
+
+Using only owned fixtures, verify independent default-off settings. With
+JavaScript enabled and MCP off, select a captured bundle and explicitly
+initialize review targets. A platform without qualified privacy monitoring must
+show refusal; elsewhere confirm this creates no MCP listener, grant or worker.
+Choose live attachments deliberately, enter every parameter type including
+escaped controls/non-ASCII, and compare the complete source, parameter,
+recipient, capability and target identities with the captured fixture. Verify
+that a manifest requesting control, creation or child invocation is visibly
+refused, not partially approved.
+
+Change a value or target, select a different bundle, edit settings in either
+window, close/reconnect/replace a target, and trigger lock or suspend. Each
+must hide or discard the old proposal without retargeting. Exercise malicious
+labels, long input, narrow layouts, keyboard and screen-reader access. Check
+that there is no approval, execution or result delivery action. Record real
+native observations separately; none are claimed here. iOS document access and
+execution are not qualified by this scenario.
 
 ## Intake rule for new work
 

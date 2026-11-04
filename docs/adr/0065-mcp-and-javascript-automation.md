@@ -193,8 +193,14 @@ in the design must be visible in implementation/release review.
   do not prove application writer-lease or human-takeover integration. P2 intake
   tests cover bounded single-file capture,
   strict decoding, path/link refusal and frozen invocation identity. Desktop
-  selection provides a non-authorizing metadata and captured-source preview;
-  approval, execution, iOS selection and platform qualification remain open.
+  selection provides a non-authorizing metadata and captured-source preview.
+  A separate native review can freeze typed parameters and explicitly chosen
+  shared-broker attachment generations with the requested observation scopes
+  and native result recipient. It requires an already running broker or an
+  explicit review initialization, which starts privacy monitoring and the
+  in-memory broker only; it creates no MCP listener, grant or worker. A stale
+  selection, setting, target or privacy fence invalidates the proposal.
+  Approval, execution, iOS selection and platform qualification remain open.
   Run the traceability gate and documentation checks.
 - **Worker process entry:** The desktop executable has a private
   `--automation-worker` entry before application initialization, exercised by

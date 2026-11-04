@@ -1,5 +1,8 @@
 //! Settings application-surface presentation, split out of `screens.rs`.
 
+#[path = "workflow_review.rs"]
+mod workflow_review;
+
 use std::{collections::BTreeSet, path::PathBuf};
 
 use eframe::egui::{self, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
@@ -920,6 +923,9 @@ fn workflow_settings(
         "JavaScript execution is not yet available. Selecting a workflow captures a \
          preview only; it grants no access and cannot run the workflow.",
     );
+    if !enabled || snapshot.workflow.current_bundle().is_none() {
+        workflow_review::clear_draft(ui);
+    }
     if !enabled {
         return None;
     }
@@ -1006,6 +1012,11 @@ fn workflow_settings(
                     }
                 });
                 workflow_source_review(ui, bundle);
+                if let Some(action) =
+                    workflow_review::show(ui, &snapshot.workflow, &snapshot.workflow_review, bundle)
+                {
+                    command = Some(action);
+                }
             }
         }
     }

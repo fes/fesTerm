@@ -436,6 +436,39 @@ the matching frozen invocation when launching and projecting requests. This is
 only an intake projection, not a native grant, worker launch or substitute for
 live broker and controller checks.
 
+Desktop Settings can now prepare a **non-authorizing** observation-only review
+from an explicitly selected captured bundle. It requires every parameter to
+be supplied with its declared type and every observation target to be chosen
+explicitly; there is no active-tab default. Target-valued parameters must refer
+to one of those selected attachments. Text input uses bounded printable-ASCII
+JSON literals, and the frozen text, source and untrusted target descriptions
+are displayed with controls and non-ASCII escaped. A manifest requesting input,
+session creation or child invocation is refused rather than silently reduced.
+The proposed native-user recipient, requested discovery/read/wait operations,
+full bundle and manifest digests, parameter-and-mapping digest, and exact
+broker instance/session/attachment generations are shown. The root-workflow
+bit required by the existing binding kernel is not child-invocation authority.
+
+The workflow target snapshot is separate from the MCP Settings snapshot. If
+the shared broker is not already running, the user must explicitly
+initialize review targets; that starts only privacy monitoring and the
+in-memory broker, never an MCP listener, grant or workflow worker. Failure to
+install the required privacy monitor or obtain a secure broker identity refuses
+the review. The macOS and Linux monitors currently refuse initialization;
+Windows has an implementation but still needs native qualification evidence.
+This review does not qualify execution on any platform. Review references are
+the **same** broker-minted references a
+later decision would need, not labels or synthetic references from a second
+broker. The selected attachment guards, selection/input revision and privacy
+gate are rechecked before a proposal is displayed; changing the selection,
+parameters, settings, target generations or privacy state invalidates it.
+Revision invalidation and guard checks use the shared admission lock. No
+native decision exists yet. Any future approval must revalidate the same frozen
+binding, current settings, live guards, privacy state, caller, recipient and
+budgets, establish their atomicity, and hold the admission boundary through its
+decision; this review is neither approval nor a substitute for platform
+qualification. iOS selection and execution remain unavailable.
+
 Code, parameter schema, permissions, dependency or API version changes produce
 a new digest and require a new grant. Filename, display version, publisher
 signature and an assistant's description are provenance/context only. In the

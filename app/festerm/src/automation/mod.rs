@@ -2,6 +2,7 @@ mod ipc;
 mod observation;
 #[cfg(test)]
 mod tests;
+mod workflow_review;
 mod workflow_selection;
 
 use std::{
@@ -40,6 +41,10 @@ type PrivacyMonitor = festerm_windows_power::PrivacyMonitor;
 type PrivacyMonitor = festerm_linux_power::PrivacyMonitor;
 
 pub(crate) use ipc::run_stdio;
+pub(crate) use workflow_review::{
+    Proposal as WorkflowReviewProposal, Request as WorkflowReviewRequest,
+    View as WorkflowReviewView,
+};
 pub(crate) use workflow_selection::{Status as WorkflowStatus, View as WorkflowView};
 
 #[derive(Clone)]
@@ -63,6 +68,9 @@ pub(crate) enum NativeCommand {
     },
     CaptureWorkflow(SelectedWorkflow),
     ClearWorkflow,
+    InitializeWorkflowReview,
+    PrepareWorkflowReview(WorkflowReviewRequest),
+    DiscardWorkflowReview,
 }
 
 #[derive(Clone)]
@@ -80,6 +88,7 @@ pub(crate) struct SettingsSnapshot {
     pub channels: Vec<ChannelRow>,
     pub targets: Vec<(TargetRef, String)>,
     pub workflow: WorkflowView,
+    pub workflow_review: WorkflowReviewView,
     stop: Arc<AtomicBool>,
 }
 
@@ -90,6 +99,7 @@ impl Default for SettingsSnapshot {
             channels: Vec::new(),
             targets: Vec::new(),
             workflow: WorkflowView::default(),
+            workflow_review: WorkflowReviewView::default(),
             stop: Arc::new(AtomicBool::new(true)),
         }
     }
@@ -100,6 +110,9 @@ impl SettingsSnapshot {
         self.status == other.status
             && self.targets == other.targets
             && self.workflow.same_presentation(&other.workflow)
+            && self
+                .workflow_review
+                .same_presentation(&other.workflow_review)
             && self.channels.len() == other.channels.len()
             && self
                 .channels
@@ -316,6 +329,8 @@ fn prepare_shared<P>(
 
 pub(crate) struct Coordinator {
     workflow: workflow_selection::Selection,
+    workflow_review: workflow_review::State,
+    review_settings: Vec<(bool, bool)>,
     javascript_enabled: bool,
     broker: Option<Broker>,
     server: Option<ipc::Server>,
@@ -340,6 +355,8 @@ impl Default for Coordinator {
     fn default() -> Self {
         Self {
             workflow: workflow_selection::Selection::default(),
+            workflow_review: workflow_review::State::default(),
+            review_settings: Vec::new(),
             javascript_enabled: false,
             broker: None,
             server: None,
@@ -377,7 +394,9 @@ fn approval_label(value: &str) -> String {
     let mut characters = value.chars();
     let mut label = String::new();
     for character in characters.by_ref().take(128) {
-        if character.is_control()
+        if character == '\\' {
+            label.push_str("\\\\");
+        } else if character.is_control()
             || matches!(
                 character,
                 '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}'
@@ -393,6 +412,59 @@ fn approval_label(value: &str) -> String {
         label.push_str("...");
     }
     label
+}
+
+fn review_label(value: &str) -> String {
+    let mut characters = value.chars();
+    let mut label = String::new();
+    for character in characters.by_ref().take(128) {
+        match character {
+            '\\' => label.push_str("\\\\"),
+            ' '..='~' => label.push(character),
+            _ => label.extend(character.escape_unicode()),
+        }
+    }
+    if characters.next().is_some() {
+        label.push_str("...");
+    }
+    label
+}
+
+fn target_description_with(
+    window: usize,
+    session: &SessionTab,
+    label: fn(&str) -> String,
+) -> String {
+    let name = label(&session.label);
+    let detail = match &session.inspector_transport {
+        crate::tabs::InspectorTransport::Local { .. } => "local shell".to_owned(),
+        crate::tabs::InspectorTransport::Ssh {
+            username,
+            host,
+            port,
+            ..
+        }
+        | crate::tabs::InspectorTransport::Sftp {
+            username,
+            host,
+            port,
+        } => format!("{}@{}:{}", label(username), label(host), port),
+        crate::tabs::InspectorTransport::Serial { device, .. } => {
+            format!("serial {}", label(device))
+        }
+        crate::tabs::InspectorTransport::DevTunnel { host, port, .. } => {
+            format!("tunnel {}:{}", label(host), port)
+        }
+    };
+    format!("Window {}: {} - {}", window + 1, name, detail)
+}
+
+fn target_description(window: usize, session: &SessionTab) -> String {
+    target_description_with(window, session, approval_label)
+}
+
+fn review_target_description(window: usize, session: &SessionTab) -> String {
+    target_description_with(window, session, review_label)
 }
 
 fn stamp(session: &SessionTab) -> Stamp {
@@ -609,9 +681,22 @@ impl Coordinator {
         }
     }
 
+    fn cancel_review_initialization(&mut self) {
+        if self.workflow_review.starting()
+            && self.broker.is_none()
+            && !self.want_start
+            && self.server.is_none()
+            && self.peers.is_empty()
+        {
+            self.shutdown();
+        }
+        self.workflow_review.reset();
+    }
+
     fn privacy_lost(&mut self) {
         self.privacy_lost_this_tick = true;
         self.shutdown();
+        self.workflow_review.fail();
         if !self.enabled {
             self.status = SettingsSnapshot::default().status;
         } else {
@@ -628,6 +713,7 @@ impl Coordinator {
     fn shared_start_failed(&mut self, failure: StartFailure) {
         self.privacy_lost_this_tick = true;
         self.privacy_gate.close();
+        self.workflow_review.startup_failed();
         if self.want_start {
             self.stop_mcp();
             self.status = start_failure_status(failure);
@@ -662,6 +748,7 @@ impl Coordinator {
                 self.starting = None;
                 self.privacy_lost_this_tick = true;
                 self.privacy_gate.close();
+                self.workflow_review.startup_failed();
                 if self.want_start {
                     self.stop_mcp();
                     self.status = "MCP unavailable: startup worker failed.";
@@ -675,6 +762,7 @@ impl Coordinator {
             if self.retiring.failed && self.want_shared_start {
                 self.want_shared_start = false;
                 self.privacy_gate.close();
+                self.workflow_review.startup_failed();
                 if self.want_start {
                     self.stop_mcp();
                 }
@@ -728,6 +816,7 @@ impl Coordinator {
                     tracing::warn!("automation startup worker unavailable: {error}");
                     self.privacy_lost_this_tick = true;
                     self.privacy_gate.close();
+                    self.workflow_review.startup_failed();
                     if self.want_start {
                         self.stop_mcp();
                         self.status = "MCP unavailable: startup worker failed.";
@@ -860,6 +949,19 @@ impl Coordinator {
 
     pub(crate) fn tick(&mut self, context: &egui::Context, apps: &[&FesTermApp]) {
         self.privacy_lost_this_tick = false;
+        let review_settings: Vec<_> = apps
+            .iter()
+            .map(|app| {
+                (
+                    app.automation_mcp_enabled(),
+                    app.automation_javascript_enabled(),
+                )
+            })
+            .collect();
+        if self.review_settings != review_settings {
+            self.workflow.view().invalidate_review();
+            self.review_settings = review_settings;
+        }
         let javascript_enabled =
             !apps.is_empty() && apps.iter().all(|app| app.automation_javascript_enabled());
         if self.javascript_enabled && !javascript_enabled {
@@ -867,6 +969,9 @@ impl Coordinator {
         }
         self.javascript_enabled = javascript_enabled;
         self.workflow.poll(context);
+        if self.workflow_review.starting() && self.workflow.view().current_bundle().is_none() {
+            self.cancel_review_initialization();
+        }
         let enabled = apps.first().is_some_and(|app| app.automation_mcp_enabled());
         if enabled != self.enabled {
             self.enabled = enabled;
@@ -882,11 +987,27 @@ impl Coordinator {
             self.mcp_failed();
         }
         let Some(mut broker) = self.broker.take() else {
+            self.workflow_review.reconcile(
+                &self.workflow.view(),
+                apps,
+                &self.targets,
+                &self.privacy_gate,
+                false,
+                self.starting.is_some() || self.want_shared_start,
+            );
             return;
         };
         let now = Instant::now();
         broker.poll_expiry(now);
         self.reconcile(&mut broker, apps);
+        self.workflow_review.reconcile(
+            &self.workflow.view(),
+            apps,
+            &self.targets,
+            &self.privacy_gate,
+            self.privacy.is_some(),
+            false,
+        );
         if self.privacy_gate.is_closed() {
             self.broker = Some(broker);
             self.privacy_lost();
@@ -1128,6 +1249,7 @@ impl Coordinator {
                 }
             }
             NativeCommand::CaptureWorkflow(SelectedWorkflow(path)) => {
+                self.cancel_review_initialization();
                 if self.javascript_enabled {
                     self.workflow.capture(path, context);
                 } else {
@@ -1136,7 +1258,28 @@ impl Coordinator {
                         .refuse("Enable JavaScript workflows in all windows before selecting.");
                 }
             }
-            NativeCommand::ClearWorkflow => self.workflow.cancel(),
+            NativeCommand::ClearWorkflow => {
+                self.workflow.cancel();
+                self.cancel_review_initialization();
+            }
+            NativeCommand::InitializeWorkflowReview => {
+                if self.javascript_enabled
+                    && !self.privacy_lost_this_tick
+                    && self.workflow.view().current_bundle().is_some_and(|bundle| {
+                        festerm_automation_workflow::review::supports_observation_review(bundle)
+                    })
+                {
+                    self.workflow_review.begin();
+                    self.ensure_shared();
+                    self.advance_shared(context);
+                }
+            }
+            NativeCommand::PrepareWorkflowReview(request) => {
+                if self.javascript_enabled {
+                    self.workflow_review.prepare(request, &self.workflow.view());
+                }
+            }
+            NativeCommand::DiscardWorkflowReview => self.workflow_review.discard(),
         }
         context.request_repaint();
     }
@@ -1241,39 +1384,11 @@ impl Coordinator {
                 apps.iter().enumerate().find_map(|(window, app)| {
                     let session =
                         app.automation_session(TabId::from_chip_id(target.reference.session()))?;
-                    let name = approval_label(&session.label);
-                    let detail = match &session.inspector_transport {
-                        crate::tabs::InspectorTransport::Local { .. } => "local shell".to_owned(),
-                        crate::tabs::InspectorTransport::Ssh {
-                            username,
-                            host,
-                            port,
-                            ..
-                        }
-                        | crate::tabs::InspectorTransport::Sftp {
-                            username,
-                            host,
-                            port,
-                        } => format!(
-                            "{}@{}:{}",
-                            approval_label(username),
-                            approval_label(host),
-                            port,
-                        ),
-                        crate::tabs::InspectorTransport::Serial { device, .. } => {
-                            format!("serial {}", approval_label(device))
-                        }
-                        crate::tabs::InspectorTransport::DevTunnel { host, port, .. } => {
-                            format!("tunnel {}:{}", approval_label(host), port)
-                        }
-                    };
                     Some((
                         target.reference,
                         format!(
-                            "Window {}: {} - {} (tab {}, attachment {})",
-                            window + 1,
-                            name,
-                            detail,
+                            "{} (tab {}, attachment {})",
+                            target_description(window, session),
                             target.reference.session(),
                             target.reference.generation(),
                         ),
@@ -1286,6 +1401,7 @@ impl Coordinator {
             channels,
             targets,
             workflow: self.workflow.view(),
+            workflow_review: self.workflow_review.view(&self.workflow.view()),
             stop: self.stop.clone(),
         }
     }

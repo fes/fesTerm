@@ -6,6 +6,7 @@
 //! capabilities. Recheck lifecycle and recipients at the admission boundary.
 
 pub mod intake;
+pub mod review;
 
 use std::{
     collections::{BTreeMap, BTreeSet},

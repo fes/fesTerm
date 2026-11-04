@@ -91,6 +91,24 @@
         "workflow_source_pages_cover_utf8_without_splitting_characters",
         "workflow_source_display_escapes_spoofing_and_literal_backslashes",
         "workflow_source_review_pages_the_captured_snapshot_and_revokes_display",
+        "workflow_review_input_rejects_spoofing_and_overflow_without_truncation",
+        "workflow_review_uses_shared_targets_without_mcp_disclosure_or_approval",
+        "workflow_review_settings_broadcast_invalidates_the_selection_revision",
+        "workflow_review_initialization_without_selection_starts_nothing",
+        "queued_review_requires_the_exact_current_selection_and_revision",
+        "workflow_review_revision_changes_serialize_with_admission",
+        "workflow_review_fails_closed_without_a_live_privacy_gate",
+        "workflow_review_requires_a_live_monitored_shared_broker",
+        "replacing_a_prepared_review_revokes_prior_views",
+        "proposal_disappears_on_attachment_replacement_or_revision_change",
+        "privacy_loss_hides_review_before_coordinator_reconciliation",
+        "native_review_revision_is_single_selection_and_never_resurrects",
+        "native_review_text_literals_refuse_hidden_input_and_decode_escapes",
+        "native_review_requires_explicit_target_and_freezes_observation_scope",
+        "native_review_rejects_stale_and_replaced_attachment_generations",
+        "native_review_invalidates_changed_bundle_and_typed_parameters",
+        "native_review_validates_all_parameter_types_and_bounds",
+        "native_review_refuses_every_unsupported_manifest_capability",
         "workflow_picker_requires_opt_in_and_does_not_retarget_the_file_picker",
         "cancelled_workflow_capture_keeps_its_slot_and_discards_late_result",
         "newer_workflow_selection_waits_for_io_and_discards_superseded_results",
@@ -118,7 +136,7 @@
       "manual_scenarios": ["AUTO-01"],
       "status": "partial",
       "prerequisites": [
-        "iOS security-scoped selection, pending-approval invalidation, exact approval UI, worker/broker integration and platform qualification remain open; the desktop metadata and source previews are not an approval"
+        "iOS security-scoped selection, future pending-approval invalidation, exact approval UI, worker/broker integration and platform qualification remain open; desktop source and typed-target review are not approval and require native usability evidence"
       ]
     },
     {
