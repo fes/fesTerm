@@ -1,7 +1,7 @@
 use std::{fmt, time::Instant};
 
 pub(crate) const MARKER: &str = "FESTERM_STDOUT_PROBE";
-pub(crate) const MAX_CONTROL: usize = 8192;
+pub(crate) const MAX_CONTROL: usize = 16384;
 pub(crate) const MAX_EMPTY_LINES: usize = 16;
 pub(crate) const MAX_WRITES: usize = 64;
 const MAX_VALUES: usize = 4;

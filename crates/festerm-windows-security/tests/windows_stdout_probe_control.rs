@@ -39,6 +39,26 @@ fn stdout_fill_evidence_distinguishes_partial_from_full_then_zero() {
 }
 
 #[test]
+fn stdout_refill_after_a_drain_requires_observed_partial_and_zero() {
+    let mut initial = FillEvidence::default();
+    initial.observe(16, 16).unwrap();
+    initial.observe(16, 0).unwrap();
+
+    let mut refill = FillEvidence::default();
+    refill.observe(16, 4).unwrap();
+    assert!(refill.partial);
+    assert!(!refill.full);
+    refill.observe(16, 0).unwrap();
+    assert!(refill.full);
+    assert_eq!(initial.total + refill.total, 20);
+
+    let mut no_partial = FillEvidence::default();
+    no_partial.observe(16, 16).unwrap();
+    no_partial.observe(16, 0).unwrap();
+    assert!(!no_partial.partial);
+}
+
+#[test]
 fn stdout_control_accepts_bounded_fill_trace() {
     let (now, deadline) = time_window();
     let mut parser = ControlParser::default();
@@ -64,6 +84,21 @@ fn stdout_control_accepts_bounded_fill_trace() {
         .push(b"FESTERM_STDOUT_PROBE FULL 1\n", now, deadline)
         .unwrap();
     assert_eq!(parser.next_event("FULL", now, deadline), Ok(Some(vec![1])));
+    for _ in 0..=MAX_WRITES {
+        let refill = frame.replace("FILL_WRITE", "REFILL_WRITE");
+        parser.push(refill.as_bytes(), now, deadline).unwrap();
+        assert!(parser
+            .next_event("REFILL_WRITE", now, deadline)
+            .unwrap()
+            .is_some());
+    }
+    parser
+        .push(b"FESTERM_STDOUT_PROBE REFILLED 1\n", now, deadline)
+        .unwrap();
+    assert_eq!(
+        parser.next_event("REFILLED", now, deadline),
+        Ok(Some(vec![1]))
+    );
 }
 
 #[test]

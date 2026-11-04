@@ -421,8 +421,13 @@ Another native run observed 16 startup bytes and a successful retry, but its
 attempt to infer a partial write from the drained occupancy failed before the
 write count was reported. Occupancy is not a proven pipe capacity. The revised
 probe records each bounded fill write before checking it and only claims a
-positive partial when one was actually observed; full writes followed by zero
-remain unqualified for partial behavior. Windows documents the
+positive partial when one was actually observed. A subsequent run reported a
+65,536-byte full write followed by zero, but no positive partial; its initial
+mode attempt was again refused. The probe now also drains a bounded physical
+prefix after a zero write, reports a further large write and refills to another
+observed zero before testing the duplicated writer. A zero or full diagnostic
+write is still not positive-partial evidence, and draining does not establish
+the next write's capacity. Windows documents the
 [`CreatePipe` buffer size as a suggestion](https://learn.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-createpipe).
 After the final expected frame, the job-contained controller drains the
 control stream to observed EOF and requires a successful child exit within
