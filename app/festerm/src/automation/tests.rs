@@ -266,6 +266,31 @@ fn workflow_review_initialization_without_selection_starts_nothing() {
 }
 
 #[test]
+fn workflow_review_tick_requires_installed_privacy_monitor() {
+    let (mut coordinator, mut app, _, _) = fixture();
+    let settings = festerm_config::InterfaceSettings::DEFAULT.with_javascript_enabled(true);
+    app.adopt_broadcast_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap(),
+    );
+    coordinator.workflow =
+        workflow_selection::Selection::captured_for_test(workflow_review_bundle());
+    assert!(coordinator.broker.is_some());
+    assert!(!coordinator.privacy_gate.is_closed());
+    assert!(coordinator.privacy.is_none());
+
+    coordinator.tick(&egui::Context::default(), &[&app]);
+
+    let view = coordinator
+        .workflow_review
+        .view(&coordinator.workflow.view());
+    assert!(!view.ready());
+    assert!(view.live_targets().is_empty());
+    assert!(view.proposal().is_none());
+}
+
+#[test]
 fn automation_encoded_limits_count_actual_json_escaping() {
     let value = json!({"present": true, "text": "ordinary ASCII and \"quoted\" text"});
     let encoded = serde_json::to_vec(&value).unwrap();

@@ -95,6 +95,7 @@
         "workflow_review_uses_shared_targets_without_mcp_disclosure_or_approval",
         "workflow_review_settings_broadcast_invalidates_the_selection_revision",
         "workflow_review_initialization_without_selection_starts_nothing",
+        "workflow_review_tick_requires_installed_privacy_monitor",
         "queued_review_requires_the_exact_current_selection_and_revision",
         "workflow_review_revision_changes_serialize_with_admission",
         "workflow_review_fails_closed_without_a_live_privacy_gate",

@@ -126,6 +126,17 @@ pub(super) struct Selection {
 }
 
 impl Selection {
+    #[cfg(test)]
+    pub(super) fn captured_for_test(bundle: ApprovedBundle) -> Self {
+        let view = View::captured_for_test(bundle);
+        Self {
+            bundle: view.bundle,
+            cancelled: view.cancelled,
+            review_epoch: view.review_epoch,
+            ..Self::default()
+        }
+    }
+
     pub(super) fn capture(&mut self, path: PathBuf, context: &egui::Context) {
         self.begin(context, move || {
             load_user_selected_bundle(&path).map_err(|error| error.to_string())
