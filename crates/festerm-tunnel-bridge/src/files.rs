@@ -1,5 +1,5 @@
-//! Explicit read-only capability under the bridge's OS user. No shell, SFTP,
-//! pathname reopen, link traversal, device paths, or remote writes.
+//! Legacy known-file snapshots and explicit rooted service selection.
+//! Rooted enumeration and writes are implemented separately in `filesystem`.
 use crate::protocol::invalid;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -158,6 +158,7 @@ pub fn valid_path(path: &str, style: PathStyle) -> bool {
 pub struct FileService {
     allowed: bool,
     slot: Arc<Semaphore>,
+    filesystem: Option<Arc<crate::filesystem::Filesystem>>,
 }
 #[cfg(feature = "relay")]
 impl FileService {
@@ -168,7 +169,16 @@ impl FileService {
         Self {
             allowed,
             slot: Arc::new(Semaphore::new(1)),
+            filesystem: None,
         }
+    }
+    pub fn rooted(policy: &crate::file_protocol::Policy) -> io::Result<Self> {
+        let mut service = Self::new(false);
+        service.filesystem = Some(crate::filesystem::Filesystem::open(policy)?);
+        Ok(service)
+    }
+    pub fn filesystem(&self) -> Option<&Arc<crate::filesystem::Filesystem>> {
+        self.filesystem.as_ref()
     }
     pub async fn read(&self, path: String) -> io::Result<Vec<u8>> {
         if !self.allowed || !valid_path(&path, PathStyle::native()) {

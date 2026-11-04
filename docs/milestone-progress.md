@@ -72,6 +72,24 @@ the background. Stop also cancelled the recognition task immediately after
 ending audio, so review showed the last lagging partial; a short `Finishing`
 phase now waits for the final result, an error or a 1.5-second grace timer.
 
+## Rooted Dev Tunnel host filesystem
+
+The bridge's opt-in known-file snapshot reader could not support browsing or
+large transfers. The host now has a separately negotiated, default-off rooted
+filesystem service: bounded directory pages, metadata, chunked read/write and
+mkdir, independent of terminal attachment. Operators choose the root and
+read-only/write grant explicitly, including on an existing managed tunnel;
+revocation stops the owned hosting workers without replacing the tunnel, key
+or daemon shell.
+
+Uploads stage private files and publish without clobbering concurrent creates;
+explicit replacement binds to a previously opened file and checks for changes,
+preserving a recovery backup when restoration is unsafe. ADR 0067 and the
+[wire contract](dev-tunnel-files-protocol.md) define the host/client boundary.
+Deterministic tests cover legacy negotiation, streamed files above the old
+snapshot bound, conflicts, cancellation and link refusal. Desktop/iOS clients
+and signed-host/native transfer qualification remain separate work.
+
 ## 0.14.2: iOS field editing and Dev Tunnel resiliency
 
 This patch packages five fixes. iOS profile form fields now support the native

@@ -641,6 +641,15 @@ Mock isolation tests are not two-account real-service qualification.
 
 ### Detected and OSC 8 remote files
 
+For general **host-side** rooted enumeration, metadata, chunked download/upload
+and mkdir, see the [filesystem protocol](dev-tunnel-files-protocol.md) and
+[ADR 0067](adr/0067-rooted-dev-tunnel-host-filesystem.md). Managed installers can
+explicitly enable/reconfigure `--file-root` with optional `--allow-file-write`,
+or revoke using `--disable-files`, on an existing tunnel without replacing
+its identity or shell. This default-off grant uses separate negotiated streams;
+desktop/iOS file-manager clients are a separate implementation. It does not
+silently enable the legacy unrestricted snapshot capability below.
+
 Add **`--allow-file-read`** to the host command to explicitly authorize reads.
 The resulting destination advertises the capability and remote path style.
 This grants holders of its connect token bounded, read-only access to local

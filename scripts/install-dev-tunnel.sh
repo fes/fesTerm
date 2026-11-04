@@ -3,13 +3,16 @@ set -euo pipefail
 umask 077
 
 fail() { printf 'fesTerm tunnel setup: %s\n' "$*" >&2; exit 1; }
-usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected]'
+usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected] [--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files]'
 version=
 install_dependencies=false
 no_takeover=false
 upgrade=false
 friendly_name=
 restart_unexpected=
+file_root=
+file_write=false
+disable_files=false
 while (($#)); do
     if [[ $1 == --install-dependencies ]]; then
         install_dependencies=true
@@ -20,6 +23,15 @@ while (($#)); do
     elif [[ $1 == --restart-unexpected || $1 == --no-restart-unexpected ]]; then
         [[ -z $restart_unexpected ]] || fail 'Choose only one unexpected-failure restart policy.'
         restart_unexpected=$1
+        shift
+    elif [[ $1 == --file-root && $# -ge 2 && -n $2 && -z $file_root ]]; then
+        file_root=$2
+        shift 2
+    elif [[ $1 == --allow-file-write ]] && ! "$file_write"; then
+        file_write=true
+        shift
+    elif [[ $1 == --disable-files ]] && ! "$disable_files"; then
+        disable_files=true
         shift
     elif [[ $1 == --upgrade ]]; then
         # Switch an existing host's service to this release's helpers,
@@ -37,6 +49,13 @@ while (($#)); do
     fi
 done
 setup_extra=()
+if "$disable_files" && { [[ -n $file_root ]] || "$file_write"; }; then
+    fail 'Use --file-root with optional --allow-file-write, or --disable-files.'
+fi
+if "$file_write" && [[ -z $file_root ]]; then fail '--allow-file-write requires --file-root.'; fi
+if [[ -n $file_root ]]; then setup_extra+=(--file-root "$file_root"); fi
+if "$file_write"; then setup_extra+=(--allow-file-write); fi
+if "$disable_files"; then setup_extra+=(--disable-files); fi
 if "$no_takeover"; then setup_extra+=(--no-takeover); fi
 if "$upgrade"; then setup_extra+=(--upgrade); fi
 if [[ -n $restart_unexpected ]]; then setup_extra+=("$restart_unexpected"); fi

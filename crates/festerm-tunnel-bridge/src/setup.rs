@@ -419,7 +419,8 @@ fn main() {
     if args == ["--help"] {
         println!(concat!(
             "festerm-tunnel-setup [--managed] --devtunnel ABSOLUTE_CLI_PATH --state-dir ABSOLUTE_PRIVATE_DIRECTORY ",
-            "[--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected]\n",
+            "[--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected] ",
+            "[--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files]\n",
             "Default: new foreground-only setup in a new directory.\n",
             "--managed: explicit per-user service setup; healthy reruns reuse the original private tunnel, ",
             "host identity and exact shell generation, printing public profile JSON without credentials. ",
@@ -432,6 +433,11 @@ fn main() {
             "Missing evidence and uncertain creation refuse. --no-restart-unexpected disables this policy. ",
             "Policy changes restart the owned worker; older helpers require --upgrade. ",
             "Automatic client recovery never switches generations; reconnect explicitly. Programs/state are not restored.\n",
+            "Managed filesystem policy: --file-root ABSOLUTE_DIRECTORY enables rooted enumeration/downloads; ",
+            "add --allow-file-write for uploads/mkdir. Rerun --file-root without writes to make it read-only, ",
+            "or --disable-files to revoke. Omitted policy preserves existing consent. ",
+            "Changes restart only owned hosting workers, never the shell or cloud tunnel. ",
+            "Different helper releases require --upgrade.\n",
             "--serve --state-dir ABSOLUTE_PRIVATE_DIRECTORY: existing installation worker, no cloud provisioning or key regeneration.\n",
             "First setup uses interactive official GitHub login and creates one private 30-day tunnel, ",
             "marked virtual port and retained platform-default shell session. Managed startup requires an unelevated user; ",
@@ -441,7 +447,7 @@ fn main() {
             "Existing hosts need an explicit helper upgrade. The worker records start/ready/retry/exit, ",
             "daemon loss/replacement and client open/close events in bounded worker.log. ",
             "Daemons retain bounded private lifecycle journals under the runtime root. ",
-            "No credentials or terminal data are logged. No remote file access, ACL widening or automatic client takeover/reconnect."
+            "No credentials or terminal data are logged. No remote file access by default; no ACL widening or automatic client takeover/reconnect."
         ));
         return;
     }

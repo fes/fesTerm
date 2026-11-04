@@ -123,6 +123,9 @@ async fn setup_help_distinguishes_managed_service_from_foreground_mode() {
         "unelevated",
         "reboot",
         "never creates a replacement",
+        "--file-root",
+        "--allow-file-write",
+        "--disable-files",
     ] {
         assert!(help.contains(contract), "missing help contract: {contract}");
     }
