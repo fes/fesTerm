@@ -55,6 +55,8 @@ fn run() -> io::Result<()> {
     let mut experimental = false;
     let mut stdin = false;
     let mut allow_file_read = false;
+    let mut file_root = None;
+    let mut allow_file_write = false;
     let mut takeover = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -62,6 +64,10 @@ fn run() -> io::Result<()> {
             "--experimental" => experimental = true,
             "--token-stdin" => stdin = true,
             "--allow-file-read" => allow_file_read = true,
+            "--allow-file-write" if !allow_file_write => allow_file_write = true,
+            "--file-root" if file_root.is_none() => {
+                file_root = Some(PathBuf::from(iter.next().ok_or_else(invalid)?));
+            }
             "--takeover" => takeover = true,
             "--existing-host-identity" => existing_host_identity = true,
             "--tunnel-id" => tunnel = iter.next().cloned(),
@@ -103,6 +109,19 @@ fn run() -> io::Result<()> {
     if !experimental {
         return Err(invalid());
     }
+    if (allow_file_write && file_root.is_none()) || (allow_file_read && file_root.is_some()) {
+        return Err(invalid());
+    }
+    let files = if let Some(root) = file_root {
+        festerm_tunnel_bridge::files::FileService::rooted(
+            &festerm_tunnel_bridge::file_protocol::Policy {
+                root,
+                write: allow_file_write,
+            },
+        )?
+    } else {
+        festerm_tunnel_bridge::files::FileService::new(allow_file_read)
+    };
     validate_host_identity_options(host_identity.as_deref(), existing_host_identity)?;
     let expected_session = exact_session_pin(expected_pid, expected_generation)?;
     let (tunnel, cluster, port, name, path) = (
@@ -170,7 +189,9 @@ fn run() -> io::Result<()> {
             .map_err(|_| std::io::Error::other("host.metadata_encode"))?;
         eprintln!("Experimental bridge ready: one configured session; attach/detach only.");
         if allow_file_read { eprintln!("Read-only file capability enabled: connect credentials also authorize bounded regular-file reads as this remote OS user."); }
-        let files = festerm_tunnel_bridge::files::FileService::new(allow_file_read);
+        if let Some(filesystem) = files.filesystem() {
+            eprintln!("Rooted filesystem capability enabled; writes={}. Connect credentials authorize the configured grant.", filesystem.capabilities().write);
+        }
         // Connections are served concurrently (bounded by the relay host) so a
         // second client can request takeover; the session daemon arbitrates.
         let mut clients = tokio::task::JoinSet::<(u64, io::Result<()>)>::new();

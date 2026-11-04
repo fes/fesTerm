@@ -206,6 +206,11 @@ pub fn validate_length(kind: u8, length: usize) -> io::Result<()> {
     let maximum = match kind {
         FILE_READ => 8192,
         FILE_RESULT => FILE_LIMIT + 9,
+        crate::file_protocol::OPEN => 4096,
+        crate::file_protocol::REQUEST | crate::file_protocol::RESPONSE => {
+            crate::file_protocol::JSON_LIMIT
+        }
+        crate::file_protocol::DATA => crate::file_protocol::CHUNK_LIMIT + 4,
         SNAPSHOT => SNAPSHOT_LIMIT,
         HELLO | DESCRIPTION => 4096,
         DISCOVER => 2,

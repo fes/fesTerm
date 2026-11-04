@@ -527,7 +527,22 @@ pub async fn serve_with_reclaim(
     let (kind, bytes) = tokio::time::timeout(DEADLINE, read_client_frame(&mut stream))
         .await
         .map_err(|_| invalid())??;
+    if kind == crate::file_protocol::OPEN {
+        let filesystem = file_service.filesystem().ok_or_else(invalid)?.clone();
+        return crate::filesystem::serve(stream, filesystem, target, &bytes).await;
+    }
     if kind == DISCOVER {
+        if bytes == crate::file_protocol::DISCOVERY_VERSION.to_be_bytes() {
+            let description = crate::file_protocol::Discovery {
+                version: crate::file_protocol::DISCOVERY_VERSION,
+                target,
+                filesystem: file_service
+                    .filesystem()
+                    .map(|filesystem| filesystem.capabilities()),
+            };
+            write_frame(&mut stream, DESCRIPTION, &serde_json::to_vec(&description)?).await?;
+            return Ok(());
+        }
         if bytes != VERSION.to_be_bytes() {
             return Err(invalid());
         }

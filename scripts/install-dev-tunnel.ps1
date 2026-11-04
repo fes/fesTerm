@@ -6,11 +6,17 @@ param(
     # Switch an existing host's service to this release's helpers, keeping its
     # tunnel, host key and running daemon session.
     [switch]$Upgrade,
+    [string]$FileRoot = '',
+    [switch]$AllowFileWrite,
+    [switch]$DisableFiles,
     [string]$FriendlyName = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if (($DisableFiles -and ($FileRoot -or $AllowFileWrite)) -or ($AllowFileWrite -and -not $FileRoot)) {
+    throw 'Use -FileRoot with optional -AllowFileWrite, or -DisableFiles.'
+}
 if ([Security.Principal.WindowsIdentity]::GetCurrent().IsSystem) {
     throw 'Run setup as your normal user, not SYSTEM.'
 }
@@ -178,6 +184,9 @@ try {
     $setupArguments = @('--managed', '--devtunnel', $cli, '--state-dir', (Join-Path $root 'state'))
     if ($NoTakeover) { $setupArguments += '--no-takeover' }
     if ($Upgrade) { $setupArguments += '--upgrade' }
+    if ($FileRoot) { $setupArguments += @('--file-root', $FileRoot) }
+    if ($AllowFileWrite) { $setupArguments += '--allow-file-write' }
+    if ($DisableFiles) { $setupArguments += '--disable-files' }
     if ($FriendlyName) {
         $setupArguments += @('--friendly-name', $FriendlyName.Trim())
     }
