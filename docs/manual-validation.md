@@ -2737,3 +2737,13 @@ same change.
   evidence handling.
 - `gui-design.md` defines intended behavior and identifies usability
   hypotheses; this registry says where their validation is tracked.
+
+For MOB-06 / TUNNEL-11, add two distinct GitHub accounts on iPhone and iPad;
+choose the intended identity in GitHub's device approval page. Verify both
+accounts survive relaunch, each lists its own tunnels, and two saved profiles
+connect using their respective accounts. Switch during a pending listing and
+confirm no old results or draft target survive. Cancel adding an account and
+verify the previous selection remains. Reauthorize the same user without a
+duplicate entry. Sign out one account and verify the other remains available
+and the removed account's profiles never silently use the remaining identity.
+These native/service checks remain pending.

@@ -469,3 +469,8 @@ displacement and shell exit do not recover automatically. iOS may still suspend
 or terminate sockets/processes; no indefinite background execution is promised.
 See ADR 0057 and MOB-03/MOB-06 for bounds and the unperformed physical-device
 matrix (switching, lock/Face ID, snapshots, network changes, long suspension).
+
+The Dev Tunnel profile editor supports multiple stored GitHub accounts. Use
+**Add GitHub account**, choose the intended identity in GitHub's device approval
+page, then select the account for each profile. Switching accounts clears the
+draft tunnel and session; existing profiles retain their own bindings.

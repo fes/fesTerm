@@ -3507,6 +3507,9 @@
         "ADR-0063"
       ],
       "automated_tests": [
+        "choosing_another_tunnel_account_clears_discovery_and_preserves_saved_binding",
+        "choosing_the_same_tunnel_account_keeps_the_draft_target",
+        "an_unbound_saved_tunnel_does_not_choose_another_account",
         "takeover_defaults_on_and_off_adds_the_flag",
         "upgrade_defaults_off_and_on_adds_the_flag",
         "dependencies_apply_to_linux_only",

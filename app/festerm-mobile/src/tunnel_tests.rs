@@ -726,3 +726,95 @@ fn lifecycle_resume_checks_transport_while_lock_keeps_content_hidden() {
     assert_eq!(rig.script.connections.load(Ordering::SeqCst), dials);
     assert!(rig.script.input.lock().unwrap().is_empty());
 }
+
+#[test]
+fn choosing_another_tunnel_account_clears_discovery_and_preserves_saved_binding() {
+    let mut rig = rig(None, false, true);
+    let profiles = rig.app.profiles.as_ref().unwrap();
+    let original = profiles.tunnel_spec(&rig.profile).unwrap().account.unwrap();
+    let second = seed_account(&profiles.store_handle(), 43, "other", false);
+    rig.app.editor.tunnel_account = Some(original.clone());
+    rig.app.editor.tunnel_name = "devbox.euw".into();
+    rig.app.editor.session_name = "old-session".into();
+    rig.app.editor.tunnel = Some(model::DevTunnelChoices {
+        accounts: vec![
+            (original.clone(), "octo".into()),
+            (second.clone(), "other".into()),
+        ],
+        ..Default::default()
+    });
+    rig.app.tunnel.list = Some(tunnel_link::TunnelList {
+        account: original.clone(),
+        job: None,
+        items: Vec::new(),
+        error: Some("old error".into()),
+    });
+    rig.app
+        .apply_tunnel_editor_action(&rig.ctx, forms::EditorAction::SelectTunnelAccount(1));
+    assert_eq!(rig.app.editor.tunnel_account, Some(second));
+    assert!(rig.app.editor.tunnel_name.is_empty());
+    assert!(rig.app.editor.session_name.is_empty());
+    assert!(rig.app.tunnel.list.is_none());
+    assert!(rig.app.editor.tunnel.is_none());
+    assert_eq!(rig.app.tunnel_accounts().len(), 2);
+    assert_eq!(
+        rig.app
+            .profiles
+            .as_ref()
+            .unwrap()
+            .tunnel_spec(&rig.profile)
+            .unwrap()
+            .account,
+        Some(original)
+    );
+}
+
+#[test]
+fn choosing_the_same_tunnel_account_keeps_the_draft_target() {
+    let mut rig = rig(None, false, true);
+    let account = rig.app.tunnel_accounts()[0].clone();
+    rig.app.editor.tunnel_account = Some(account.0.clone());
+    rig.app.editor.tunnel_name = "devbox.euw".into();
+    rig.app.editor.tunnel = Some(model::DevTunnelChoices {
+        accounts: vec![account],
+        ..Default::default()
+    });
+    rig.app
+        .apply_tunnel_editor_action(&rig.ctx, forms::EditorAction::SelectTunnelAccount(0));
+    assert_eq!(rig.app.editor.tunnel_name, "devbox.euw");
+    rig.app
+        .apply_tunnel_editor_action(&rig.ctx, forms::EditorAction::SelectTunnelAccount(99));
+    assert_eq!(rig.app.editor.tunnel_name, "devbox.euw");
+}
+
+#[test]
+fn an_unbound_saved_tunnel_does_not_choose_another_account() {
+    let mut rig = rig(None, false, true);
+    let profiles = rig.app.profiles.as_ref().unwrap();
+    let spec = profiles.tunnel_spec(&rig.profile).unwrap();
+    seed_account(&profiles.store_handle(), 43, "other", false);
+    rig.app.sign_out_account(spec.account.as_deref().unwrap());
+    let spec = rig
+        .app
+        .profiles
+        .as_ref()
+        .unwrap()
+        .tunnel_spec(&rig.profile)
+        .unwrap();
+    assert!(spec.account.is_none());
+    rig.app
+        .editor
+        .open_edit_tunnel(&rig.profile, &spec, rig.app.caps);
+    rig.app.sync_editor_tunnel(&rig.ctx);
+    assert!(rig.app.editor.tunnel_account.is_none());
+    assert!(rig
+        .app
+        .editor
+        .tunnel
+        .as_ref()
+        .unwrap()
+        .account_login
+        .is_none());
+    assert_eq!(rig.app.editor.tunnel.as_ref().unwrap().accounts.len(), 1);
+    assert!(rig.app.tunnel.list.is_none());
+}

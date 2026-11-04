@@ -212,6 +212,8 @@ pub struct BannerText {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DevTunnelChoices {
+    /// Stored account identifiers and GitHub logins, in picker order.
+    pub accounts: Vec<(String, String)>,
     /// GitHub login of the bound account; `None` until signed in.
     pub account_login: Option<String>,
     pub tunnels: Vec<DevTunnelChoice>,

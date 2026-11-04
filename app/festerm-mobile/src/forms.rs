@@ -267,6 +267,7 @@ pub enum EditorAction {
     OpenAuthentication,
     Delete,
     SignIn,
+    SelectTunnelAccount(usize),
     RefreshTunnels,
     PickTunnel(usize),
     DeleteTunnel(usize),
@@ -746,6 +747,14 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 6.0;
         caption_label(ui, "GitHub account");
+        for (index, (id, login)) in choices.accounts.iter().enumerate() {
+            if ui
+                .selectable_label(state.tunnel_account.as_ref() == Some(id), login)
+                .clicked()
+            {
+                *action = EditorAction::SelectTunnelAccount(index);
+            }
+        }
         match &choices.account_login {
             Some(login) => {
                 info_row(
@@ -758,7 +767,13 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
                 if button(ui, ButtonKind::Secondary, "Sign out", true).clicked() {
                     *action = EditorAction::SignOut;
                 }
-                footnote(ui, "Your account can be reused by other tunnel profiles.");
+                if button(ui, ButtonKind::Secondary, "Add GitHub account", true).clicked() {
+                    *action = EditorAction::SignIn;
+                }
+                footnote(
+                    ui,
+                    "Choose the account for this profile. Other profiles keep their accounts.",
+                );
             }
             None => {
                 if button(ui, ButtonKind::Primary, "Sign in with GitHub", true).clicked() {
