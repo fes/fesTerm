@@ -12,7 +12,9 @@ mod enrollment_metadata;
 #[path = "presentation.rs"]
 mod presentation;
 pub use enrollment_metadata::{
-    EnrollmentMetadataDecision, EnrollmentMetadataReview, NativeEnrollmentMetadataApproval,
+    EnrollmentMetadataDecision, EnrollmentMetadataGrantProposal, EnrollmentMetadataReview,
+    NativeEnrollmentMetadataApproval, NativeEnrollmentMetadataGrant,
+    NativeEnrollmentMetadataGrantApproval, NativeOrdinaryEnrollmentReview,
 };
 pub use presentation::{
     ConfirmedPresentation, NativeControllerPresentationApproval, NativePresentationObservation,
@@ -32,12 +34,14 @@ struct Usage {
 enum GrantSlot {
     Ordinary,
     Metadata,
+    EnrollmentMetadata(ControllerRegistrationId, ControllerEnrollmentId),
 }
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 struct GrantRevisions {
     ordinary: u64,
     metadata: u64,
+    enrollment_metadata: u64,
 }
 
 struct Principal {
@@ -58,6 +62,46 @@ struct ControllerRegistration {
     presentation_grant: Option<PresentationGrant>,
     metadata_review: Option<u64>,
     metadata_decision: Option<EnrollmentMetadataDecision>,
+    metadata_grant: Option<MetadataGrant>,
+    metadata_cross_consent: Option<EnrollmentCrossConsent>,
+}
+
+#[derive(Eq, PartialEq)]
+struct EnrollmentCrossConsent {
+    ordinary_epoch: u64,
+    metadata_epoch: u64,
+    sinks: BTreeSet<TargetRef>,
+}
+
+impl Principal {
+    fn has_any_grant(&self) -> bool {
+        self.grant.is_some()
+            || self.metadata.is_some()
+            || self
+                .controller_registrations
+                .values()
+                .any(|registration| registration.metadata_grant.is_some())
+    }
+
+    fn enrollment_metadata_sources(
+        &self,
+        connection: ConnectionId,
+    ) -> Vec<NativeEnrollmentMetadataGrant> {
+        self.controller_registrations
+            .iter()
+            .filter_map(|(registration, record)| {
+                let enrollment = record.enrollment?;
+                let grant = record.metadata_grant.as_ref()?;
+                Some(NativeEnrollmentMetadataGrant {
+                    connection,
+                    registration: *registration,
+                    enrollment: enrollment.id,
+                    target: enrollment.target,
+                    epoch: grant.epoch,
+                })
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -100,6 +144,11 @@ struct MetadataGrant {
 enum PendingProposal {
     Ordinary(GrantRequest),
     Metadata(MetadataGrantRequest),
+    EnrollmentMetadata {
+        registration: ControllerRegistrationId,
+        enrollment: ControllerEnrollmentId,
+        target: TargetRef,
+    },
 }
 
 impl PendingProposal {
@@ -107,6 +156,11 @@ impl PendingProposal {
         match self {
             Self::Ordinary(_) => GrantSlot::Ordinary,
             Self::Metadata(_) => GrantSlot::Metadata,
+            Self::EnrollmentMetadata {
+                registration,
+                enrollment,
+                ..
+            } => GrantSlot::EnrollmentMetadata(*registration, *enrollment),
         }
     }
 
@@ -114,13 +168,14 @@ impl PendingProposal {
         match self {
             Self::Ordinary(request) => request.scope.targets().contains(&target),
             Self::Metadata(request) => request.targets.contains(&target),
+            Self::EnrollmentMetadata { target: source, .. } => *source == target,
         }
     }
 }
 
 /// Opaque host-only identity of one approved control grant. It is not a wire
 /// credential and is not serializable.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct NativeControlGrant {
     instance: [u8; 16],
     epoch: u64,
@@ -385,6 +440,8 @@ impl Broker {
                 presentation_grant: None,
                 metadata_review: None,
                 metadata_decision: None,
+                metadata_grant: None,
+                metadata_cross_consent: None,
             },
         );
         Ok(id)
@@ -460,11 +517,18 @@ impl Broker {
         if record.revision != proposal.revision {
             return Err(Error::BindingMismatch);
         }
+        let old = record.enrollment;
         self.target(proposal.target)?;
         let id = ControllerEnrollmentId {
             instance: self.instance,
             sequence: self.mint()?,
         };
+        if let Some(old) = old {
+            self.revoke_slot(
+                connection,
+                GrantSlot::EnrollmentMetadata(proposal.registration, old.id),
+            );
+        }
         let record = self
             .principals
             .get_mut(&connection)
@@ -514,6 +578,18 @@ impl Broker {
         registration: ControllerRegistrationId,
         _guard: &AutomationAdmissionGuard,
     ) -> Result<()> {
+        let enrollment = self
+            .principals
+            .get(&connection)
+            .and_then(|principal| principal.controller_registrations.get(&registration))
+            .ok_or(Error::Unauthorized)?
+            .enrollment;
+        if let Some(enrollment) = enrollment {
+            self.revoke_slot(
+                connection,
+                GrantSlot::EnrollmentMetadata(registration, enrollment.id),
+            );
+        }
         self.principals
             .get_mut(&connection)
             .and_then(|principal| principal.controller_registrations.remove(&registration))
@@ -606,6 +682,28 @@ impl Broker {
 
     fn invalidate_target(&mut self, target: TargetRef, _guard: &AutomationAdmissionGuard) {
         self.cancel_presentation_for_target(target);
+        let enrollment_slots: Vec<_> = self
+            .principals
+            .iter()
+            .flat_map(|(connection, principal)| {
+                principal.controller_registrations.iter().filter_map(
+                    move |(registration, record)| {
+                        record
+                            .enrollment
+                            .filter(|enrollment| enrollment.target == target)
+                            .map(|enrollment| {
+                                (
+                                    *connection,
+                                    GrantSlot::EnrollmentMetadata(*registration, enrollment.id),
+                                )
+                            })
+                    },
+                )
+            })
+            .collect();
+        for (connection, slot) in enrollment_slots {
+            self.revoke_slot(connection, slot);
+        }
         for principal in self.principals.values_mut() {
             principal
                 .controller_registrations
@@ -698,7 +796,10 @@ impl Broker {
             .get(&connection)
             .ok_or(Error::Unauthorized)?
             .revisions;
-        if revisions.ordinary == u64::MAX || revisions.metadata == u64::MAX {
+        if revisions.ordinary == u64::MAX
+            || revisions.metadata == u64::MAX
+            || revisions.enrollment_metadata == u64::MAX
+        {
             return Err(Error::QuotaExceeded);
         }
         Ok(revisions)
@@ -894,6 +995,41 @@ impl Broker {
         } else {
             None
         };
+        let enrollment_sources = principal.enrollment_metadata_sources(connection);
+        let control_sinks = approval.request.scope.control.clone();
+        if let Some(review) = &approval.enrollment_review {
+            if review.connection != connection
+                || review.id != id
+                || review.revisions != pending.revisions
+                || review.ordinary_epoch != principal.grant.as_ref().map(|grant| grant.epoch)
+                || review.grants != enrollment_sources
+                || review.sinks != control_sinks
+            {
+                return Err(Error::Unauthorized);
+            }
+        } else if !control_sinks.is_empty() && !enrollment_sources.is_empty() {
+            return Err(Error::Unauthorized);
+        }
+        if !approval.request.scope.control.is_empty() {
+            let identities: BTreeSet<_> = enrollment_sources.iter().copied().collect();
+            if approval.enrollment_metadata != identities
+                || approval.enrollment_disclosures.len() != identities.len()
+                || identities
+                    .iter()
+                    .any(|grant| approval.enrollment_disclosures.get(grant) != Some(&control_sinks))
+            {
+                return Err(Error::Unauthorized);
+            }
+        } else if !approval.enrollment_metadata.is_empty()
+            || !approval.enrollment_disclosures.is_empty()
+        {
+            return Err(Error::Unauthorized);
+        }
+        let targets = enrollment_sources
+            .iter()
+            .map(|grant| grant.target)
+            .collect();
+        Self::validate_cross_closure(&approval.request.scope, &approval.handoffs, &targets)?;
         self.validate_revision_transition(connection, GrantSlot::Ordinary)?;
         let expires = now
             .checked_add(approval.lifetime)
@@ -904,7 +1040,7 @@ impl Broker {
             .principals
             .get_mut(&connection)
             .ok_or(Error::Unauthorized)?;
-        if principal.metadata.is_none() {
+        if !principal.has_any_grant() {
             principal.usage = Usage::default();
         }
         principal.revisions.ordinary += 1;
@@ -916,6 +1052,19 @@ impl Broker {
             usage: Usage::default(),
             delivery: DeliveryEpoch::new(),
         });
+        if !control_sinks.is_empty() {
+            for source in enrollment_sources {
+                let record = principal
+                    .controller_registrations
+                    .get_mut(&source.registration)
+                    .ok_or(Error::Revoked)?;
+                record.metadata_cross_consent = Some(EnrollmentCrossConsent {
+                    ordinary_epoch: epoch,
+                    metadata_epoch: source.epoch,
+                    sinks: control_sinks.clone(),
+                });
+            }
+        }
         principal.cross_consent = metadata_epoch.map(|metadata| (epoch, metadata));
         self.discard_stale_proposals(connection);
         Ok(())
@@ -984,7 +1133,7 @@ impl Broker {
             .principals
             .get_mut(&connection)
             .ok_or(Error::Unauthorized)?;
-        if principal.grant.is_none() {
+        if !principal.has_any_grant() {
             principal.usage = Usage::default();
         }
         principal.revisions.metadata += 1;
@@ -1012,6 +1161,22 @@ impl Broker {
         let (revision, present) = match slot {
             GrantSlot::Ordinary => (principal.revisions.ordinary, principal.grant.is_some()),
             GrantSlot::Metadata => (principal.revisions.metadata, principal.metadata.is_some()),
+            GrantSlot::EnrollmentMetadata(registration, enrollment) => {
+                let record = principal
+                    .controller_registrations
+                    .get(&registration)
+                    .ok_or(Error::Unauthorized)?;
+                if record
+                    .enrollment
+                    .is_none_or(|current| current.id != enrollment)
+                {
+                    return Err(Error::Unauthorized);
+                }
+                (
+                    principal.revisions.enrollment_metadata,
+                    record.metadata_grant.is_some(),
+                )
+            }
         };
         revision
             .checked_add(1 + u64::from(present))
@@ -1067,6 +1232,35 @@ impl Broker {
                     &ordinary.handoffs,
                     &metadata.targets,
                 )?;
+            }
+        }
+        if let Some(ordinary) = ordinary {
+            for record in principal.controller_registrations.values() {
+                if let Some(metadata) = record
+                    .metadata_grant
+                    .as_ref()
+                    .filter(|grant| now < grant.expires)
+                {
+                    let enrollment = record.enrollment.ok_or(Error::Revoked)?;
+                    self.target(enrollment.target)?;
+                    if !ordinary.request.scope.control.is_empty()
+                        && record
+                            .metadata_cross_consent
+                            .as_ref()
+                            .is_none_or(|consent| {
+                                consent.ordinary_epoch != ordinary.epoch
+                                    || consent.metadata_epoch != metadata.epoch
+                                    || consent.sinks != ordinary.request.scope.control
+                            })
+                    {
+                        return Err(Error::Revoked);
+                    }
+                    Self::validate_cross_closure(
+                        &ordinary.request.scope,
+                        &ordinary.handoffs,
+                        &BTreeSet::from([enrollment.target]),
+                    )?;
+                }
             }
         }
         Ok(())
@@ -1137,6 +1331,19 @@ impl Broker {
             GrantSlot::Metadata => {
                 GrantRef::Metadata(principal.metadata.as_ref().ok_or(Error::Revoked)?)
             }
+            GrantSlot::EnrollmentMetadata(registration, enrollment) => {
+                let target =
+                    self.resolve_controller_enrollment(connection, registration, enrollment)?;
+                let grant = principal
+                    .controller_registrations
+                    .get(&registration)
+                    .and_then(|record| record.metadata_grant.as_ref())
+                    .ok_or(Error::Revoked)?;
+                if grant.targets != BTreeSet::from([target]) {
+                    return Err(Error::Revoked);
+                }
+                GrantRef::Metadata(grant)
+            }
         };
         if now >= grant.expires() {
             return Err(Error::Expired);
@@ -1160,19 +1367,37 @@ impl Broker {
                 for registration in principal.controller_registrations.values_mut() {
                     registration.presentation_review = None;
                     registration.presentation_grant = None;
+                    registration.metadata_cross_consent = None;
                 }
             }
             let removed = match slot {
                 GrantSlot::Ordinary => principal.grant.take().is_some(),
                 GrantSlot::Metadata => principal.metadata.take().is_some(),
+                GrantSlot::EnrollmentMetadata(registration, enrollment) => principal
+                    .controller_registrations
+                    .get_mut(&registration)
+                    .filter(|record| {
+                        record
+                            .enrollment
+                            .is_some_and(|current| current.id == enrollment)
+                    })
+                    .is_some_and(|record| {
+                        record.metadata_cross_consent = None;
+                        record.metadata_grant.take().is_some()
+                    }),
             };
             if removed {
                 let revision = match slot {
                     GrantSlot::Ordinary => &mut principal.revisions.ordinary,
                     GrantSlot::Metadata => &mut principal.revisions.metadata,
+                    GrantSlot::EnrollmentMetadata(_, _) => {
+                        &mut principal.revisions.enrollment_metadata
+                    }
                 };
                 *revision = revision.saturating_add(1);
-                principal.cross_consent = None;
+                if !matches!(slot, GrantSlot::EnrollmentMetadata(_, _)) {
+                    principal.cross_consent = None;
+                }
             }
         }
         if slot == GrantSlot::Ordinary {
@@ -1216,6 +1441,20 @@ impl Broker {
     pub fn revoke(&mut self, connection: ConnectionId) {
         self.revoke_slot(connection, GrantSlot::Ordinary);
         self.revoke_slot(connection, GrantSlot::Metadata);
+        let enrollment_slots: Vec<_> = self
+            .principals
+            .get(&connection)
+            .into_iter()
+            .flat_map(|principal| principal.controller_registrations.iter())
+            .filter_map(|(registration, record)| {
+                record
+                    .enrollment
+                    .map(|enrollment| GrantSlot::EnrollmentMetadata(*registration, enrollment.id))
+            })
+            .collect();
+        for slot in enrollment_slots {
+            self.revoke_slot(connection, slot);
+        }
         if let Some(principal) = self.principals.get_mut(&connection) {
             for record in principal.controller_registrations.values_mut() {
                 record.metadata_review = None;
@@ -1273,6 +1512,25 @@ impl Broker {
             })
             .collect();
         for (connection, slot) in grants {
+            self.revoke_slot(connection, slot);
+        }
+        let expired_enrollments: Vec<_> = self
+            .principals
+            .iter()
+            .flat_map(|(connection, principal)| {
+                principal.controller_registrations.iter().filter_map(
+                    move |(registration, record)| {
+                        let enrollment = record.enrollment?;
+                        let grant = record.metadata_grant.as_ref()?;
+                        (now >= grant.expires).then_some((
+                            *connection,
+                            GrantSlot::EnrollmentMetadata(*registration, enrollment.id),
+                        ))
+                    },
+                )
+            })
+            .collect();
+        for (connection, slot) in expired_enrollments {
             self.revoke_slot(connection, slot);
         }
     }
@@ -1372,6 +1630,19 @@ impl Broker {
         let grant_usage = match slot {
             GrantSlot::Ordinary => &mut principal.grant.as_mut().ok_or(Error::Revoked)?.usage,
             GrantSlot::Metadata => &mut principal.metadata.as_mut().ok_or(Error::Revoked)?.usage,
+            GrantSlot::EnrollmentMetadata(registration, enrollment) => {
+                let record = principal
+                    .controller_registrations
+                    .get_mut(&registration)
+                    .ok_or(Error::Revoked)?;
+                if record
+                    .enrollment
+                    .is_none_or(|current| current.id != enrollment)
+                {
+                    return Err(Error::Revoked);
+                }
+                &mut record.metadata_grant.as_mut().ok_or(Error::Revoked)?.usage
+            }
         };
         grant_usage.operations += operations;
         grant_usage.bytes += bytes;

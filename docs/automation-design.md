@@ -799,13 +799,44 @@ a new grant. Decisions have no metadata-run, request, charging or disclosure
 route, and are not consent or publication permits. The model stores no labels;
 two differently registered terminals can have identical visible labels.
 
-Turning these inert decisions into independently usable authority still
-requires per-enrollment broker slots and quotas, admission/request and
-revocation integration, bidirectional cross-consent on ordinary approval,
-native review, and enrollment-bound disclosure liveness through actual
-publication under the shared privacy, attachment and cancellation fence.
-The existing unbound metadata slot must never substitute for these checks.
-No production gate or capability is enabled by the model.
+A separate broker-only authority path now supports independently approved
+discovery grants for each exact connection, registration, enrollment and
+target generation. It does not convert the inert decisions above into grants.
+The host-only grant proposal freezes the ordinary and metadata revisions and
+current control ownership and existing control-grant identity, and consumes
+the existing pending and lifetime approval budgets. If control is active,
+trusted review must separately acknowledge each sink from the new metadata
+side and from the exact existing control-grant side; the ordinary grant's
+reviewed source and handoff closure must already contain the target. An
+ordinary control review conversely exposes each exact active enrollment-grant
+identity and requires separate control-side and metadata-side acknowledgement
+of each source/sink combination. That native decision must carry a
+broker-frozen, non-serializable review bound to the exact pending approval,
+connection, revisions, current ordinary epoch, enrollment-grant epochs and
+approved sink set. It cannot be reused for a different pending approval.
+Unbound legacy ordinary decisions remain available only when no enrollment
+metadata is being composed with control. The resulting consent binds both grant
+epochs and the entire sink set. Either grant's replacement requires a fresh
+two-sided review, including when two enrollments name the same target.
+Adding, removing or replacing an enrollment grant invalidates earlier pending
+grant reviews, including ABA transitions.
+
+An enrollment metadata root accepts exactly the associated target and uses
+only that enrollment's grant. Existing run, request, reserved-byte, principal
+and global budgets apply; another slot's reapproval cannot replenish shared
+usage while any grant remains. Per-enrollment revocation, rebind, unregistration,
+target loss and expiry cut its runs and grant liveness without cutting unrelated
+enrollments. Removing, expiring or disarming ordinary control, or changing an
+observation-only ordinary grant, preserves live enrollment metadata; a later
+ordinary control decision must explicitly review the then-current exact
+enrollments and their complete source/sink closure.
+Cancellation, principal revocation, disconnect and privacy loss
+use the existing broker lifecycle. Legacy unbound metadata is never a fallback
+for this path. All broker grant and request results are internal and do not
+establish recipient delivery or native consent. Native review, production
+transport, application attachment/privacy revalidation and enrollment-bound
+per-write recipient fencing remain unimplemented; no gate or metadata
+capability is enabled.
 
 The hardware-controller use case in [#524](https://github.com/fes/fesTerm/issues/524)
 begins with an ordinary untrusted MCP connection, not a privileged device.

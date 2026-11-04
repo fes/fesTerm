@@ -177,6 +177,10 @@ pub struct NativeApproval {
     pub(crate) request: GrantRequest,
     pub(crate) lifetime: Duration,
     pub(crate) handoffs: BTreeMap<TargetRef, BTreeSet<TargetRef>>,
+    pub(crate) enrollment_metadata: BTreeSet<crate::NativeEnrollmentMetadataGrant>,
+    pub(crate) enrollment_disclosures:
+        BTreeMap<crate::NativeEnrollmentMetadataGrant, BTreeSet<TargetRef>>,
+    pub(crate) enrollment_review: Option<crate::NativeOrdinaryEnrollmentReview>,
 }
 
 impl NativeApproval {
@@ -185,6 +189,9 @@ impl NativeApproval {
             request,
             lifetime,
             handoffs: BTreeMap::new(),
+            enrollment_metadata: BTreeSet::new(),
+            enrollment_disclosures: BTreeMap::new(),
+            enrollment_review: None,
         }
     }
 
@@ -198,6 +205,48 @@ impl NativeApproval {
         all_readable_sources: BTreeSet<TargetRef>,
     ) -> Self {
         self.handoffs.insert(target, all_readable_sources);
+        self
+    }
+
+    /// Begin a fresh native cross-consent decision for one frozen ordinary
+    /// approval. Existing decisions cannot be rebound to a different review.
+    ///
+    /// ```compile_fail
+    /// use festerm_automation::{NativeApproval, NativeOrdinaryEnrollmentReview};
+    /// fn rebind(old: NativeApproval, review: NativeOrdinaryEnrollmentReview) {
+    ///     let _ = old.bind_enrollment_review(review);
+    /// }
+    /// ```
+    pub fn new_for_enrollment(
+        request: GrantRequest,
+        lifetime: Duration,
+        review: crate::NativeOrdinaryEnrollmentReview,
+    ) -> Self {
+        let mut approval = Self::new(request, lifetime);
+        approval.enrollment_review = Some(review);
+        approval
+    }
+
+    /// Control-side acknowledgement of one exact existing metadata grant.
+    pub fn accept_enrollment_metadata(
+        mut self,
+        grant: crate::NativeEnrollmentMetadataGrant,
+    ) -> Self {
+        self.enrollment_metadata.insert(grant);
+        self
+    }
+
+    /// Metadata-side acknowledgement of this proposed control sink, reviewed
+    /// separately for the exact existing enrollment grant.
+    pub fn accept_metadata_control_sink(
+        mut self,
+        grant: crate::NativeEnrollmentMetadataGrant,
+        sink: TargetRef,
+    ) -> Self {
+        self.enrollment_disclosures
+            .entry(grant)
+            .or_default()
+            .insert(sink);
         self
     }
 

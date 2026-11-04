@@ -176,12 +176,16 @@ to bypass another's restrictions.
    unguarded; broker destruction still drops delivery epochs without the guard.
    This is not a general cut invariant or a revocable enqueue, physical-output
    or metadata-delivery fence.
-   A separate inert per-enrollment metadata-review model freezes exact
-   association and control closure and records bounded model decisions, but
-   has no grant, request or delivery path. It cannot authorize disclosure or
-   replace the legacy slot. No enrollment witness is implemented, and this does
-   not bind metadata grants or delivery liveness, fence physical recipients,
-   or qualify native consent.
+   The inert per-enrollment metadata-review model remains non-authorizing.
+   Separately, a broker-only discovery grant binds an exact enrollment to its
+   own slot, request charging and liveness. Composition requires separate
+   acknowledgements by both sides, bound to the exact ordinary and enrollment
+   grant epochs and sink set, in either approval order. An ordinary native
+   composition decision is also bound to its exact pending approval and frozen
+   revisions; it cannot be replayed onto a different proposal. It does not use
+   the unbound slot as authority or enable metadata transport. No enrollment
+   publication witness is implemented, and the kernel does not fence physical
+   recipients or qualify native consent.
    The existing capacity-four app outbound channel and its frame and target
    guards now reside in the authority crate and remain connected to the same
    app writer. The app retains the existing admission validation, size and
@@ -353,8 +357,10 @@ in the design must be visible in implementation/release review.
   observation scope. They also verify approval does not steal another writer.
   Separate metadata-slot tests cover explicit cross-slot closure, routing,
   per-grant delivery liveness, takeover/expiry/replacement, stale decisions and
-  shared quotas. Native metadata UI and per-write publication fencing are not
-  implemented by those tests.
+  shared quotas. Enrollment-scoped broker tests additionally cover isolated
+  grants, both cross-consent directions, control disarm and observation-only
+  changes, exact lifecycle cuts and shared budgets. Native metadata UI and
+  per-write publication fencing are not implemented by those tests.
   They do not expose control in the P1 observation-only MCP checkpoint or
   qualify any real input adapter. Configuration tests cover
   snapshot value, trust rotation, revision/ABA limitations and redacted debug;

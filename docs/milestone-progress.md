@@ -1,5 +1,13 @@
 # Milestone Progress Narrative
 
+## Adding exact-enrollment metadata authority in the broker
+
+The kernel adds separate discovery-only grants and quota-charged runs for exact
+enrollments, with scoped lifecycle cuts and fresh two-sided, epoch-bound
+cross-consent against ordinary control. The older model decisions remain inert
+and the legacy unbound slot is not a fallback. This is broker authority only:
+native review, metadata routing and recipient-delivery fencing are still absent.
+
 ## Modeling enrollment-scoped metadata decisions
 
 The kernel now models separate, bounded metadata reviews for exact controller

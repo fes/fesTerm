@@ -6007,3 +6007,1262 @@ fn metadata_and_ordinary_work_share_global_lifetime_quotas() {
         Err(Error::QuotaExceeded)
     );
 }
+
+fn authority_enrollment(
+    f: &mut Fixture,
+    local_id: &[u8],
+    target: TargetRef,
+) -> (ControllerRegistrationId, ControllerEnrollmentId) {
+    let registration = f
+        .broker
+        .register_controller_session(f.connection, local_id)
+        .unwrap();
+    let enrollment = enroll_controller(&mut f.broker, f.connection, registration, target);
+    (registration, enrollment)
+}
+
+fn authority_proposal(
+    f: &mut Fixture,
+    registration: ControllerRegistrationId,
+    enrollment: ControllerEnrollmentId,
+) -> EnrollmentMetadataGrantProposal {
+    let guard = automation_admission_lock().unwrap();
+    f.broker
+        .request_enrollment_metadata_approval(f.connection, registration, enrollment, f.now, &guard)
+        .unwrap()
+}
+
+fn authority_approve(
+    f: &mut Fixture,
+    proposal: EnrollmentMetadataGrantProposal,
+    lifetime: Duration,
+    sinks: &[TargetRef],
+) -> Result<()> {
+    let control = proposal.control_grant();
+    let mut approval = NativeEnrollmentMetadataGrantApproval::new(proposal, lifetime);
+    for sink in sinks {
+        approval = approval.accept_control_sink(*sink);
+        if let Some(control) = control {
+            approval = approval.accept_existing_control_sink(control, *sink);
+        }
+    }
+    let guard = automation_admission_lock().unwrap();
+    f.broker
+        .approve_enrollment_metadata_grant(f.connection, approval, f.now, &guard)
+}
+
+fn ordinary_metadata_review(
+    f: &Fixture,
+    id: ApprovalId,
+    sinks: &[TargetRef],
+) -> NativeOrdinaryEnrollmentReview {
+    let guard = automation_admission_lock().unwrap();
+    f.broker
+        .prepare_ordinary_enrollment_review(
+            f.connection,
+            id,
+            sinks.iter().copied().collect(),
+            f.now,
+            &guard,
+        )
+        .unwrap()
+}
+
+fn accept_both_sides(
+    mut approval: NativeApproval,
+    grants: &[NativeEnrollmentMetadataGrant],
+    sinks: &[TargetRef],
+) -> NativeApproval {
+    for grant in grants {
+        approval = approval.accept_enrollment_metadata(*grant);
+        for sink in sinks {
+            approval = approval.accept_metadata_control_sink(*grant, *sink);
+        }
+    }
+    approval
+}
+
+fn authority_run(
+    f: &mut Fixture,
+    registration: ControllerRegistrationId,
+    enrollment: ControllerEnrollmentId,
+    target: TargetRef,
+    duration: Duration,
+) -> Result<RunId> {
+    f.broker.admit_enrollment_metadata_run(
+        f.connection,
+        registration,
+        enrollment,
+        metadata_spec(&[target], f.now + duration),
+        f.now,
+    )
+}
+
+fn committed_authority_discovery(
+    f: &mut Fixture,
+    run: RunId,
+    target: TargetRef,
+) -> DisclosureLiveness {
+    let request = f
+        .broker
+        .prepare_request(
+            f.connection,
+            run,
+            Operation::Discover { max_bytes: 64 },
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .discovery_targets(f.connection, request, f.now)
+            .unwrap(),
+        vec![target]
+    );
+    f.broker
+        .commit_disclosure(f.connection, request, 10, f.now)
+        .unwrap();
+    let liveness = f
+        .broker
+        .disclosure_liveness(f.connection, request, f.now)
+        .unwrap();
+    f.broker.settle_request(f.connection, request).unwrap();
+    f.broker
+        .complete(f.connection, run, Completion::Returned, f.now)
+        .unwrap();
+    f.broker.forget_run(f.connection, run).unwrap();
+    liveness
+}
+
+#[test]
+fn enrollment_metadata_authority_is_exact_and_independently_revocable() {
+    let mut f = Fixture::new();
+    let (a, b) = (f.a, f.b);
+    // Visible labels are not identities; the two targets may display the same label.
+    let (first, first_enrollment) = authority_enrollment(&mut f, b"one", a);
+    let (second, second_enrollment) = authority_enrollment(&mut f, b"two", b);
+    approve_metadata(&mut f, &[a, b], &[], MAX_GRANT_LIFETIME);
+    assert!(authority_run(&mut f, first, first_enrollment, a, Duration::from_secs(30)).is_err());
+    let proposal = authority_proposal(&mut f, first, first_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    assert!(authority_run(
+        &mut f,
+        second,
+        second_enrollment,
+        b,
+        Duration::from_secs(30)
+    )
+    .is_err());
+    let proposal = authority_proposal(&mut f, second, second_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    assert!(authority_run(&mut f, first, first_enrollment, b, Duration::from_secs(30)).is_err());
+    let first_run =
+        authority_run(&mut f, first, first_enrollment, a, Duration::from_secs(30)).unwrap();
+    let second_run = authority_run(
+        &mut f,
+        second,
+        second_enrollment,
+        b,
+        Duration::from_secs(30),
+    )
+    .unwrap();
+    let request = f
+        .broker
+        .prepare_request(
+            f.connection,
+            first_run,
+            Operation::Discover { max_bytes: 64 },
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .discovery_targets(f.connection, request, f.now)
+            .unwrap(),
+        vec![a]
+    );
+    let other = f.broker.accept_connection().unwrap();
+    assert!(f.broker.discovery_targets(other, request, f.now).is_err());
+    f.broker
+        .commit_disclosure(f.connection, request, 8, f.now)
+        .unwrap();
+    let first_live = f
+        .broker
+        .disclosure_liveness(f.connection, request, f.now)
+        .unwrap();
+    let second_live = committed_authority_discovery(&mut f, second_run, b);
+    let proposal = authority_proposal(&mut f, first, first_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    assert!(!first_live.is_live(f.connection, f.now));
+    assert!(second_live.is_live(f.connection, f.now));
+    let current_run =
+        authority_run(&mut f, first, first_enrollment, a, Duration::from_secs(30)).unwrap();
+    let current_live = committed_authority_discovery(&mut f, current_run, a);
+    let guard = automation_admission_lock().unwrap();
+    f.broker
+        .revoke_enrollment_metadata_grant(f.connection, first, first_enrollment, &guard)
+        .unwrap();
+    drop(guard);
+    assert!(!first_live.is_live(f.connection, f.now));
+    assert!(!current_live.is_live(f.connection, f.now));
+    assert!(second_live.is_live(f.connection, f.now));
+    assert!(f
+        .broker
+        .commit_disclosure(f.connection, request, 8, f.now)
+        .is_err());
+    assert!(authority_run(&mut f, first, first_enrollment, a, Duration::from_secs(30)).is_err());
+    assert!(f
+        .broker
+        .admit_metadata_run(
+            f.connection,
+            metadata_spec(&[a], f.now + Duration::from_secs(30)),
+            f.now
+        )
+        .is_ok());
+}
+
+#[test]
+fn enrollment_metadata_authority_lifecycle_cuts_only_the_exact_grant() {
+    for action in 0..6 {
+        let mut f = Fixture::new();
+        let (a, b) = (f.a, f.b);
+        let (first, first_enrollment) = authority_enrollment(&mut f, b"one", a);
+        let (second, second_enrollment) = authority_enrollment(&mut f, b"two", b);
+        let proposal = authority_proposal(&mut f, first, first_enrollment);
+        authority_approve(&mut f, proposal, Duration::from_secs(1), &[]).unwrap();
+        let proposal = authority_proposal(&mut f, second, second_enrollment);
+        authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+        let first_run =
+            authority_run(&mut f, first, first_enrollment, a, Duration::from_secs(1)).unwrap();
+        let second_run = authority_run(
+            &mut f,
+            second,
+            second_enrollment,
+            b,
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        let first_live = committed_authority_discovery(&mut f, first_run, a);
+        let second_live = committed_authority_discovery(&mut f, second_run, b);
+        match action {
+            0 => {
+                enroll_controller(&mut f.broker, f.connection, first, a);
+            }
+            1 => {
+                f.broker
+                    .unregister_controller_session(f.connection, first)
+                    .unwrap();
+            }
+            2 => {
+                f.broker.close_target(a).unwrap();
+            }
+            3 => {
+                f.now += Duration::from_secs(1);
+                f.broker.poll_expiry(f.now);
+            }
+            4 => {
+                f.broker
+                    .attach_target(a.session(), a.generation() + 1)
+                    .unwrap();
+            }
+            _ => {
+                let guard = automation_admission_lock().unwrap();
+                f.broker
+                    .revoke_enrollment_metadata_grant(f.connection, first, first_enrollment, &guard)
+                    .unwrap();
+            }
+        }
+        assert!(!first_live.is_live(f.connection, f.now));
+        assert!(second_live.is_live(f.connection, f.now));
+        assert!(authority_run(&mut f, first, first_enrollment, a, Duration::from_secs(1)).is_err());
+        let run = authority_run(
+            &mut f,
+            second,
+            second_enrollment,
+            b,
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        let request = f
+            .broker
+            .prepare_request(
+                f.connection,
+                run,
+                Operation::Discover { max_bytes: 64 },
+                f.now,
+            )
+            .unwrap();
+        assert_eq!(
+            f.broker
+                .discovery_targets(f.connection, request, f.now)
+                .unwrap(),
+            vec![b]
+        );
+    }
+}
+
+#[test]
+fn enrollment_metadata_authority_requires_cross_consent_in_both_directions() {
+    let mut f = Fixture::new();
+    let (a, b) = (f.a, f.b);
+    let (first, enrollment) = authority_enrollment(&mut f, b"one", a);
+    let proposal = authority_proposal(&mut f, first, enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    let incompatible = GrantRequest {
+        scope: Scope {
+            control: BTreeSet::from([b]),
+            ..Scope::default()
+        },
+        bindings: BTreeSet::from([direct_input(b, digest(3), 10)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let rejected = f
+        .broker
+        .request_approval(f.connection, incompatible.clone(), f.now)
+        .unwrap();
+    let review = ordinary_metadata_review(&f, rejected, &[b]);
+    let first_grant = review.grants()[0];
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            rejected,
+            NativeApproval::new_for_enrollment(incompatible, MAX_GRANT_LIFETIME, review)
+                .accept_control_handoff(b, BTreeSet::new())
+                .accept_enrollment_metadata(first_grant)
+                .accept_metadata_control_sink(first_grant, b),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker.reject_approval(f.connection, rejected).unwrap();
+    let scope = Scope {
+        discover: BTreeSet::from([a]),
+        control: BTreeSet::from([b]),
+        ..Scope::default()
+    };
+    let request = GrantRequest {
+        scope: scope.clone(),
+        bindings: BTreeSet::from([direct_input(b, digest(3), 10)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let id = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    let review = ordinary_metadata_review(&f, id, &[b]);
+    let sources = review.grants();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].registration(), first);
+    assert_eq!(sources[0].enrollment(), enrollment);
+    assert_eq!(sources[0].target(), a);
+    let first_grant = sources[0];
+    let native = || {
+        NativeApproval::new_for_enrollment(request.clone(), MAX_GRANT_LIFETIME, review.clone())
+            .accept_control_handoff(b, scope.sources())
+    };
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            id,
+            native().accept_enrollment_metadata(first_grant),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            id,
+            native().accept_metadata_control_sink(first_grant, b),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker
+        .approve(
+            f.connection,
+            id,
+            native()
+                .accept_enrollment_metadata(first_grant)
+                .accept_metadata_control_sink(first_grant, b),
+            f.now,
+        )
+        .unwrap();
+    let (second, second_enrollment) = authority_enrollment(&mut f, b"two", a);
+    let proposal = authority_proposal(&mut f, second, second_enrollment);
+    let rejected = proposal.approval_id();
+    let guard = automation_admission_lock().unwrap();
+    assert_eq!(
+        f.broker.approve_enrollment_metadata_grant(
+            f.connection,
+            NativeEnrollmentMetadataGrantApproval::new(proposal, MAX_GRANT_LIFETIME)
+                .accept_control_sink(b),
+            f.now,
+            &guard,
+        ),
+        Err(Error::Unauthorized)
+    );
+    drop(guard);
+    f.broker.reject_approval(f.connection, rejected).unwrap();
+    let proposal = authority_proposal(&mut f, second, second_enrollment);
+    let rejected = proposal.approval_id();
+    let control = proposal.control_grant().unwrap();
+    let guard = automation_admission_lock().unwrap();
+    assert_eq!(
+        f.broker.approve_enrollment_metadata_grant(
+            f.connection,
+            NativeEnrollmentMetadataGrantApproval::new(proposal, MAX_GRANT_LIFETIME)
+                .accept_existing_control_sink(control, b),
+            f.now,
+            &guard,
+        ),
+        Err(Error::Unauthorized)
+    );
+    drop(guard);
+    f.broker.reject_approval(f.connection, rejected).unwrap();
+    let proposal = authority_proposal(&mut f, second, second_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[b]).unwrap();
+    let id = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    let review = ordinary_metadata_review(&f, id, &[b]);
+    let sources = review.grants();
+    assert_eq!(sources.len(), 2);
+    let second_grant = *sources
+        .iter()
+        .find(|grant| grant.registration() == second)
+        .unwrap();
+    assert_ne!(first_grant, second_grant);
+    let native = || {
+        NativeApproval::new_for_enrollment(request.clone(), MAX_GRANT_LIFETIME, review.clone())
+            .accept_control_handoff(b, scope.sources())
+    };
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            id,
+            native()
+                .accept_enrollment_metadata(first_grant)
+                .accept_metadata_control_sink(first_grant, b),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker
+        .approve(
+            f.connection,
+            id,
+            native()
+                .accept_enrollment_metadata(first_grant)
+                .accept_metadata_control_sink(first_grant, b)
+                .accept_enrollment_metadata(second_grant)
+                .accept_metadata_control_sink(second_grant, b),
+            f.now,
+        )
+        .unwrap();
+    let (third, third_enrollment) = authority_enrollment(&mut f, b"three", b);
+    let proposal = authority_proposal(&mut f, third, third_enrollment);
+    assert_eq!(
+        authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[b]),
+        Err(Error::Unauthorized)
+    );
+}
+
+#[test]
+fn enrollment_metadata_consent_binds_both_epochs_and_exact_sinks() {
+    let mut f = Fixture::new();
+    let (source, old_sink) = (f.a, f.b);
+    let new_sink = f.broker.attach_target(3, 1).unwrap();
+    let (first, enrollment) = authority_enrollment(&mut f, b"one", source);
+    let proposal = authority_proposal(&mut f, first, enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    let scope = Scope {
+        discover: BTreeSet::from([source]),
+        control: BTreeSet::from([old_sink]),
+        ..Scope::default()
+    };
+    let request = GrantRequest {
+        scope: scope.clone(),
+        bindings: BTreeSet::from([direct_input(old_sink, digest(3), 10)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let id = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    let review = ordinary_metadata_review(&f, id, &[old_sink]);
+    let snapshots = review.grants().to_vec();
+    let native = || {
+        NativeApproval::new_for_enrollment(request.clone(), MAX_GRANT_LIFETIME, review.clone())
+            .accept_control_handoff(old_sink, scope.sources())
+    };
+    f.broker
+        .approve(
+            f.connection,
+            id,
+            accept_both_sides(native(), &snapshots, &[old_sink]),
+            f.now,
+        )
+        .unwrap();
+
+    let (second, second_enrollment) = authority_enrollment(&mut f, b"two", source);
+    let stale = authority_proposal(&mut f, second, second_enrollment);
+    let old_control = stale.control_grant().unwrap();
+    let id = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    let review = ordinary_metadata_review(&f, id, &[old_sink]);
+    let snapshots = review.grants().to_vec();
+    let native = || {
+        NativeApproval::new_for_enrollment(request.clone(), MAX_GRANT_LIFETIME, review.clone())
+            .accept_control_handoff(old_sink, scope.sources())
+    };
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            id,
+            native().accept_enrollment_metadata(snapshots[0]),
+            f.now
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker
+        .approve(
+            f.connection,
+            id,
+            accept_both_sides(native(), &snapshots, &[old_sink]),
+            f.now,
+        )
+        .unwrap();
+    assert!(authority_approve(&mut f, stale, MAX_GRANT_LIFETIME, &[old_sink]).is_err());
+
+    let proposal = authority_proposal(&mut f, second, second_enrollment);
+    assert_ne!(proposal.control_grant(), Some(old_control));
+    let rejected = proposal.approval_id();
+    let guard = automation_admission_lock().unwrap();
+    assert_eq!(
+        f.broker.approve_enrollment_metadata_grant(
+            f.connection,
+            NativeEnrollmentMetadataGrantApproval::new(proposal, MAX_GRANT_LIFETIME)
+                .accept_control_sink(old_sink)
+                .accept_existing_control_sink(old_control, old_sink),
+            f.now,
+            &guard,
+        ),
+        Err(Error::Unauthorized)
+    );
+    drop(guard);
+    f.broker.reject_approval(f.connection, rejected).unwrap();
+    let proposal = authority_proposal(&mut f, second, second_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[old_sink]).unwrap();
+
+    let new_scope = Scope {
+        discover: BTreeSet::from([source]),
+        control: BTreeSet::from([new_sink]),
+        ..Scope::default()
+    };
+    let new_request = GrantRequest {
+        scope: new_scope.clone(),
+        bindings: BTreeSet::from([direct_input(new_sink, digest(3), 10)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let id = f
+        .broker
+        .request_approval(f.connection, new_request.clone(), f.now)
+        .unwrap();
+    let review = ordinary_metadata_review(&f, id, &[new_sink]);
+    let snapshots = review.grants().to_vec();
+    assert_eq!(snapshots.len(), 2);
+    let native = || {
+        NativeApproval::new_for_enrollment(new_request.clone(), MAX_GRANT_LIFETIME, review.clone())
+            .accept_control_handoff(new_sink, new_scope.sources())
+    };
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            id,
+            accept_both_sides(native(), &snapshots, &[old_sink]),
+            f.now
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker
+        .approve(
+            f.connection,
+            id,
+            accept_both_sides(native(), &snapshots, &[new_sink]),
+            f.now,
+        )
+        .unwrap();
+    assert!(authority_run(&mut f, first, enrollment, source, Duration::from_secs(30)).is_ok());
+    assert!(authority_run(
+        &mut f,
+        second,
+        second_enrollment,
+        source,
+        Duration::from_secs(30)
+    )
+    .is_ok());
+}
+
+#[test]
+fn enrollment_metadata_replacement_requires_its_new_epoch_in_control_review() {
+    let mut f = Fixture::new();
+    let (source, sink) = (f.a, f.b);
+    let (registration, enrollment) = authority_enrollment(&mut f, b"one", source);
+    let proposal = authority_proposal(&mut f, registration, enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    let scope = Scope {
+        discover: BTreeSet::from([source]),
+        control: BTreeSet::from([sink]),
+        ..Scope::default()
+    };
+    let request = GrantRequest {
+        scope: scope.clone(),
+        bindings: BTreeSet::from([direct_input(sink, digest(3), 10)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let id = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    let review = ordinary_metadata_review(&f, id, &[sink]);
+    let old = review.grants().to_vec();
+    let native = || {
+        NativeApproval::new_for_enrollment(request.clone(), MAX_GRANT_LIFETIME, review.clone())
+            .accept_control_handoff(sink, scope.sources())
+    };
+    f.broker
+        .approve(
+            f.connection,
+            id,
+            accept_both_sides(native(), &old, &[sink]),
+            f.now,
+        )
+        .unwrap();
+    let stale_id = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    let stale_review = ordinary_metadata_review(&f, stale_id, &[sink]);
+    let stale_grants = stale_review.grants().to_vec();
+    let stale_decision = accept_both_sides(
+        NativeApproval::new_for_enrollment(request.clone(), MAX_GRANT_LIFETIME, stale_review)
+            .accept_control_handoff(sink, scope.sources()),
+        &stale_grants,
+        &[sink],
+    );
+    let proposal = authority_proposal(&mut f, registration, enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[sink]).unwrap();
+    let id = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    let review = ordinary_metadata_review(&f, id, &[sink]);
+    let current = review.grants().to_vec();
+    let native = || {
+        NativeApproval::new_for_enrollment(request.clone(), MAX_GRANT_LIFETIME, review.clone())
+            .accept_control_handoff(sink, scope.sources())
+    };
+    assert_ne!(old, current);
+    assert_eq!(
+        f.broker.approve(f.connection, id, stale_decision, f.now),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            id,
+            accept_both_sides(native(), &old, &[sink]),
+            f.now
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker
+        .approve(
+            f.connection,
+            id,
+            accept_both_sides(native(), &current, &[sink]),
+            f.now,
+        )
+        .unwrap();
+}
+
+#[test]
+fn enrollment_metadata_survives_control_disarm_but_new_control_needs_consent() {
+    for action in 0..3 {
+        let mut f = Fixture::new();
+        let (source, sink) = (f.a, f.b);
+        let (registration, enrollment) = authority_enrollment(&mut f, b"one", source);
+        let control_lifetime = if action == 2 {
+            Duration::from_secs(1)
+        } else {
+            MAX_GRANT_LIFETIME
+        };
+        approve_control(&mut f, control_lifetime);
+        let binding = direct_input(sink, digest(3), 10);
+        let mut input_spec = f.spec(input_scope(sink), binding);
+        input_spec.deadline = f.now + control_lifetime;
+        let input_run = f
+            .broker
+            .admit_run(f.connection, None, input_spec, f.now)
+            .unwrap();
+        let lease = f.lease(input_run, sink);
+        let input = f.write(input_run, lease);
+        let proposal = authority_proposal(&mut f, registration, enrollment);
+        authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[sink]).unwrap();
+        let run = authority_run(
+            &mut f,
+            registration,
+            enrollment,
+            source,
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        let liveness = committed_authority_discovery(&mut f, run, source);
+        let stale = authority_proposal(&mut f, registration, enrollment);
+        match action {
+            0 => f.broker.revoke_ordinary(f.connection),
+            1 => f.broker.human_takeover(sink).unwrap(),
+            _ => {
+                f.now += Duration::from_secs(1);
+                f.broker.poll_expiry(f.now);
+            }
+        }
+        assert!(f
+            .broker
+            .commit_control(f.connection, input, digest(3), 10, f.now)
+            .is_err());
+        assert!(liveness.is_live(f.connection, f.now));
+        assert!(authority_approve(&mut f, stale, MAX_GRANT_LIFETIME, &[sink]).is_err());
+        assert!(authority_run(
+            &mut f,
+            registration,
+            enrollment,
+            source,
+            Duration::from_secs(30),
+        )
+        .is_ok());
+
+        let scope = Scope {
+            discover: BTreeSet::from([source]),
+            control: BTreeSet::from([sink]),
+            ..Scope::default()
+        };
+        let request = GrantRequest {
+            scope: scope.clone(),
+            bindings: BTreeSet::from([direct_input(sink, digest(3), 10)]),
+            direct_read_calls: BTreeSet::new(),
+        };
+        let id = f
+            .broker
+            .request_approval(f.connection, request.clone(), f.now)
+            .unwrap();
+        let review = ordinary_metadata_review(&f, id, &[sink]);
+        let native = || {
+            NativeApproval::new_for_enrollment(request.clone(), MAX_GRANT_LIFETIME, review.clone())
+                .accept_control_handoff(sink, scope.sources())
+        };
+        let metadata = review.grants()[0];
+        assert_eq!(
+            f.broker.approve(
+                f.connection,
+                id,
+                native().accept_enrollment_metadata(metadata),
+                f.now,
+            ),
+            Err(Error::Unauthorized)
+        );
+        f.broker
+            .approve(
+                f.connection,
+                id,
+                native()
+                    .accept_enrollment_metadata(metadata)
+                    .accept_metadata_control_sink(metadata, sink),
+                f.now,
+            )
+            .unwrap();
+        assert!(liveness.is_live(f.connection, f.now));
+        assert!(f
+            .broker
+            .commit_control(f.connection, input, digest(3), 10, f.now)
+            .is_err());
+        let fresh_run = f.run(input_scope(sink), direct_input(sink, digest(3), 10));
+        let fresh_lease = f.lease(fresh_run, sink);
+        let fresh_request = f.write(fresh_run, fresh_lease);
+        f.broker
+            .commit_control(f.connection, fresh_request, digest(3), 10, f.now)
+            .unwrap();
+        assert!(f
+            .broker
+            .commit_control(f.connection, input, digest(3), 10, f.now)
+            .is_err());
+    }
+}
+
+#[test]
+fn enrollment_metadata_after_control_allows_a_new_control_request() {
+    let mut f = Fixture::new();
+    let (source, sink) = (f.a, f.b);
+    let (registration, enrollment) = authority_enrollment(&mut f, b"one", source);
+    approve_control(&mut f, MAX_GRANT_LIFETIME);
+    let proposal = authority_proposal(&mut f, registration, enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[sink]).unwrap();
+    let run = f.run(input_scope(sink), direct_input(sink, digest(3), 10));
+    let lease = f.lease(run, sink);
+    let request = f.write(run, lease);
+    f.broker
+        .commit_control(f.connection, request, digest(3), 10, f.now)
+        .unwrap();
+    f.broker.revoke_ordinary(f.connection);
+    assert!(f
+        .broker
+        .commit_control(f.connection, request, digest(3), 10, f.now)
+        .is_err());
+    assert!(authority_run(
+        &mut f,
+        registration,
+        enrollment,
+        source,
+        Duration::from_secs(30),
+    )
+    .is_ok());
+}
+
+#[test]
+fn enrollment_metadata_survives_observation_only_grant_changes() {
+    let mut f = Fixture::new();
+    let (source, observed) = (f.a, f.b);
+    let (registration, enrollment) = authority_enrollment(&mut f, b"one", source);
+    let proposal = authority_proposal(&mut f, registration, enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    let run = authority_run(
+        &mut f,
+        registration,
+        enrollment,
+        source,
+        Duration::from_secs(30),
+    )
+    .unwrap();
+    let liveness = committed_authority_discovery(&mut f, run, source);
+    let scope = Scope {
+        observe: BTreeSet::from([observed]),
+        ..Scope::default()
+    };
+    let binding = direct(DirectKind::Observation);
+    f.approve(scope.clone(), &[binding]);
+    let stale = authority_proposal(&mut f, registration, enrollment);
+    f.approve(scope, &[binding]);
+    assert!(authority_approve(&mut f, stale, MAX_GRANT_LIFETIME, &[]).is_err());
+    f.broker.revoke_ordinary(f.connection);
+    assert!(liveness.is_live(f.connection, f.now));
+    assert!(authority_run(
+        &mut f,
+        registration,
+        enrollment,
+        source,
+        Duration::from_secs(30),
+    )
+    .is_ok());
+}
+
+#[test]
+fn ordinary_enrollment_consent_cannot_be_replayed_to_another_proposal() {
+    for action in 0..4 {
+        let mut f = Fixture::new();
+        let (source, sink) = (f.a, f.b);
+        let (registration, enrollment) = authority_enrollment(&mut f, b"one", source);
+        let proposal = authority_proposal(&mut f, registration, enrollment);
+        authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+        let scope = Scope {
+            discover: BTreeSet::from([source]),
+            control: BTreeSet::from([sink]),
+            ..Scope::default()
+        };
+        let request = GrantRequest {
+            scope: scope.clone(),
+            bindings: BTreeSet::from([direct_input(sink, digest(3), 10)]),
+            direct_read_calls: BTreeSet::new(),
+        };
+        let lifetime = if action == 1 {
+            Duration::from_secs(1)
+        } else {
+            MAX_GRANT_LIFETIME
+        };
+        let initial = f
+            .broker
+            .request_approval(f.connection, request.clone(), f.now)
+            .unwrap();
+        let review = ordinary_metadata_review(&f, initial, &[sink]);
+        let grants = review.grants().to_vec();
+        let decision = NativeApproval::new_for_enrollment(request.clone(), lifetime, review)
+            .accept_control_handoff(sink, scope.sources());
+        f.broker
+            .approve(
+                f.connection,
+                initial,
+                accept_both_sides(decision, &grants, &[sink]),
+                f.now,
+            )
+            .unwrap();
+
+        let first = f
+            .broker
+            .request_approval(f.connection, request.clone(), f.now)
+            .unwrap();
+        let review = ordinary_metadata_review(&f, first, &[sink]);
+        let grants = review.grants().to_vec();
+        let old = accept_both_sides(
+            NativeApproval::new_for_enrollment(request.clone(), MAX_GRANT_LIFETIME, review)
+                .accept_control_handoff(sink, scope.sources()),
+            &grants,
+            &[sink],
+        );
+        match action {
+            0 => f.broker.revoke_ordinary(f.connection),
+            1 => {
+                f.now += Duration::from_secs(1);
+                f.broker.poll_expiry(f.now);
+            }
+            2 => f.broker.reject_approval(f.connection, first).unwrap(),
+            _ => {}
+        }
+        let second = f
+            .broker
+            .request_approval(f.connection, request.clone(), f.now)
+            .unwrap();
+        assert_eq!(
+            f.broker.approve(f.connection, second, old, f.now),
+            Err(Error::Unauthorized)
+        );
+        let review = ordinary_metadata_review(&f, second, &[sink]);
+        let grants = review.grants().to_vec();
+        let fresh = accept_both_sides(
+            NativeApproval::new_for_enrollment(request.clone(), MAX_GRANT_LIFETIME, review)
+                .accept_control_handoff(sink, scope.sources()),
+            &grants,
+            &[sink],
+        );
+        f.broker
+            .approve(f.connection, second, fresh, f.now)
+            .unwrap();
+        assert!(!f
+            .broker
+            .pending_approval_is_active(f.connection, first, f.now));
+        assert!(authority_run(
+            &mut f,
+            registration,
+            enrollment,
+            source,
+            Duration::from_secs(30)
+        )
+        .is_ok());
+    }
+}
+
+#[test]
+fn ordinary_enrollment_review_binds_the_exact_approved_sink_set() {
+    let mut f = Fixture::new();
+    let (source, first_sink) = (f.a, f.b);
+    let other_sink = f.broker.attach_target(3, 1).unwrap();
+    let (registration, enrollment) = authority_enrollment(&mut f, b"one", source);
+    let proposal = authority_proposal(&mut f, registration, enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    let scope = Scope {
+        discover: BTreeSet::from([source]),
+        control: BTreeSet::from([first_sink, other_sink]),
+        ..Scope::default()
+    };
+    let request = GrantRequest {
+        scope: scope.clone(),
+        bindings: BTreeSet::from([direct_input(first_sink, digest(3), 10)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let id = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    let mut approved = request;
+    approved.scope.control = BTreeSet::from([first_sink]);
+    let wrong = ordinary_metadata_review(&f, id, &[other_sink]);
+    let grants = wrong.grants().to_vec();
+    let native = || {
+        NativeApproval::new(approved.clone(), MAX_GRANT_LIFETIME)
+            .accept_control_handoff(first_sink, scope.sources())
+    };
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            id,
+            accept_both_sides(native(), &grants, &[first_sink]),
+            f.now
+        ),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            id,
+            accept_both_sides(
+                NativeApproval::new_for_enrollment(approved.clone(), MAX_GRANT_LIFETIME, wrong)
+                    .accept_control_handoff(first_sink, scope.sources()),
+                &grants,
+                &[first_sink]
+            ),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    let review = ordinary_metadata_review(&f, id, &[first_sink]);
+    let grants = review.grants().to_vec();
+    f.broker
+        .approve(
+            f.connection,
+            id,
+            accept_both_sides(
+                NativeApproval::new_for_enrollment(approved.clone(), MAX_GRANT_LIFETIME, review)
+                    .accept_control_handoff(first_sink, scope.sources()),
+                &grants,
+                &[first_sink],
+            ),
+            f.now,
+        )
+        .unwrap();
+}
+
+#[test]
+fn enrollment_metadata_authority_uses_shared_budgets_and_pending_limits() {
+    let limits = Limits {
+        global_operations: 4,
+        ..Limits::default()
+    };
+    let mut f = Fixture::with_limits(limits);
+    let (a, b) = (f.a, f.b);
+    let (first, first_enrollment) = authority_enrollment(&mut f, b"one", a);
+    let (second, second_enrollment) = authority_enrollment(&mut f, b"two", b);
+    let pending = authority_proposal(&mut f, first, first_enrollment);
+    let other = authority_proposal(&mut f, second, second_enrollment);
+    let guard = automation_admission_lock().unwrap();
+    assert!(f
+        .broker
+        .request_enrollment_metadata_approval(f.connection, first, first_enrollment, f.now, &guard)
+        .is_err());
+    drop(guard);
+    f.broker
+        .reject_approval(f.connection, other.approval_id())
+        .unwrap();
+    authority_approve(&mut f, pending, MAX_GRANT_LIFETIME, &[]).unwrap();
+    let proposal = authority_proposal(&mut f, second, second_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    let run = authority_run(&mut f, first, first_enrollment, a, Duration::from_secs(30)).unwrap();
+    committed_authority_discovery(&mut f, run, a);
+    let run = authority_run(
+        &mut f,
+        second,
+        second_enrollment,
+        b,
+        Duration::from_secs(30),
+    )
+    .unwrap();
+    committed_authority_discovery(&mut f, run, b);
+    let proposal = authority_proposal(&mut f, first, first_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    assert_eq!(
+        authority_run(&mut f, first, first_enrollment, a, Duration::from_secs(30)),
+        Err(Error::QuotaExceeded)
+    );
+}
+
+#[test]
+fn enrollment_metadata_reapproval_cannot_refill_a_shared_principal_budget() {
+    let mut f = Fixture::new();
+    let (a, b) = (f.a, f.b);
+    let (first, first_enrollment) = authority_enrollment(&mut f, b"one", a);
+    let (second, second_enrollment) = authority_enrollment(&mut f, b"two", b);
+    let proposal = authority_proposal(&mut f, first, first_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    let proposal = authority_proposal(&mut f, second, second_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    for _ in 0..127 {
+        let run =
+            authority_run(&mut f, first, first_enrollment, a, Duration::from_secs(30)).unwrap();
+        committed_authority_discovery(&mut f, run, a);
+    }
+    let run = authority_run(
+        &mut f,
+        second,
+        second_enrollment,
+        b,
+        Duration::from_secs(30),
+    )
+    .unwrap();
+    committed_authority_discovery(&mut f, run, b);
+    let proposal = authority_proposal(&mut f, first, first_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    assert_eq!(
+        authority_run(&mut f, first, first_enrollment, a, Duration::from_secs(30)),
+        Err(Error::QuotaExceeded)
+    );
+}
+
+#[test]
+fn enrollment_metadata_approval_and_disclosure_quotas_are_not_refunded() {
+    let limits = Limits {
+        global_disclosed_bytes: 64,
+        ..Limits::default()
+    };
+    let mut f = Fixture::with_limits(limits);
+    let (a, b) = (f.a, f.b);
+    let (first, first_enrollment) = authority_enrollment(&mut f, b"one", a);
+    let (second, second_enrollment) = authority_enrollment(&mut f, b"two", b);
+    let proposal = authority_proposal(&mut f, first, first_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    let proposal = authority_proposal(&mut f, second, second_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    let first_run =
+        authority_run(&mut f, first, first_enrollment, a, Duration::from_secs(30)).unwrap();
+    let request = f
+        .broker
+        .prepare_request(
+            f.connection,
+            first_run,
+            Operation::Discover { max_bytes: 64 },
+            f.now,
+        )
+        .unwrap();
+    f.broker.settle_request(f.connection, request).unwrap();
+    let second_run = authority_run(
+        &mut f,
+        second,
+        second_enrollment,
+        b,
+        Duration::from_secs(30),
+    )
+    .unwrap();
+    assert_eq!(
+        f.broker.prepare_request(
+            f.connection,
+            second_run,
+            Operation::Discover { max_bytes: 1 },
+            f.now,
+        ),
+        Err(Error::QuotaExceeded)
+    );
+
+    let mut f = Fixture::new();
+    let target = f.a;
+    let (registration, enrollment) = authority_enrollment(&mut f, b"one", target);
+    for _ in 0..8 {
+        let proposal = authority_proposal(&mut f, registration, enrollment);
+        f.broker
+            .reject_approval(f.connection, proposal.approval_id())
+            .unwrap();
+    }
+    let guard = automation_admission_lock().unwrap();
+    assert!(matches!(
+        f.broker.request_enrollment_metadata_approval(
+            f.connection,
+            registration,
+            enrollment,
+            f.now,
+            &guard,
+        ),
+        Err(Error::QuotaExceeded)
+    ));
+}
+
+#[test]
+fn enrollment_metadata_authority_cancellation_and_disconnect_are_principal_scoped() {
+    let mut f = Fixture::new();
+    let target = f.a;
+    let (first, enrollment) = authority_enrollment(&mut f, b"one", target);
+    let proposal = authority_proposal(&mut f, first, enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    let other = f.broker.accept_connection().unwrap();
+    let registration = f.broker.register_controller_session(other, b"one").unwrap();
+    let other_enrollment = enroll_controller(&mut f.broker, other, registration, target);
+    let guard = automation_admission_lock().unwrap();
+    let proposal = f
+        .broker
+        .request_enrollment_metadata_approval(other, registration, other_enrollment, f.now, &guard)
+        .unwrap();
+    f.broker
+        .approve_enrollment_metadata_grant(
+            other,
+            NativeEnrollmentMetadataGrantApproval::new(proposal, MAX_GRANT_LIFETIME),
+            f.now,
+            &guard,
+        )
+        .unwrap();
+    drop(guard);
+    let run = authority_run(&mut f, first, enrollment, target, Duration::from_secs(30)).unwrap();
+    let other_run = f
+        .broker
+        .admit_enrollment_metadata_run(
+            other,
+            registration,
+            other_enrollment,
+            metadata_spec(&[target], f.now + Duration::from_secs(30)),
+            f.now,
+        )
+        .unwrap();
+    assert!(f
+        .broker
+        .prepare_request(other, run, Operation::Discover { max_bytes: 64 }, f.now)
+        .is_err());
+    f.broker.cancel_run(f.connection, run, f.now).unwrap();
+    f.broker.disconnect(f.connection);
+    let request = f
+        .broker
+        .prepare_request(
+            other,
+            other_run,
+            Operation::Discover { max_bytes: 64 },
+            f.now,
+        )
+        .unwrap();
+    f.broker.revoke_all();
+    assert!(f
+        .broker
+        .commit_disclosure(other, request, 8, f.now)
+        .is_err());
+}
+
+#[test]
+fn enrollment_metadata_authority_rejects_stale_opposite_slot_reviews() {
+    let mut f = Fixture::new();
+    let target = f.a;
+    let (first, first_enrollment) = authority_enrollment(&mut f, b"one", target);
+    let (second, second_enrollment) = authority_enrollment(&mut f, b"two", target);
+    let proposal = authority_proposal(&mut f, first, first_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    let request = GrantRequest {
+        scope: Scope {
+            discover: BTreeSet::from([target]),
+            ..Scope::default()
+        },
+        bindings: BTreeSet::from([direct(DirectKind::Discovery)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let pending = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    let proposal = authority_proposal(&mut f, second, second_enrollment);
+    authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    assert!(f
+        .broker
+        .approve(
+            f.connection,
+            pending,
+            NativeApproval::new(request, MAX_GRANT_LIFETIME),
+            f.now
+        )
+        .is_err());
+    let stale = authority_proposal(&mut f, first, first_enrollment);
+    let replacement = enroll_controller(&mut f.broker, f.connection, first, target);
+    assert_ne!(replacement, first_enrollment);
+    assert!(authority_approve(&mut f, stale, MAX_GRANT_LIFETIME, &[]).is_err());
+}
