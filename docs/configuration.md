@@ -293,6 +293,17 @@ must refuse execution even if its preference was enabled. Resetting interface
 settings disables both. Neither approval nor a reusable bearer token is stored
 in configuration. See [the automation contract](automation-design.md).
 
+Desktop windows share this pair for fesTerm's in-process saves and broadcasts,
+so a stale sibling save cannot restore a successfully saved disable. If saving
+an automation preference fails or its outcome is uncertain, MCP and JavaScript
+stop for the current process and Settings warns that an enabled value may
+remain on disk. Retry explicitly after repairing configuration access; a
+successful retry saves the requested pair but keeps automation stopped until
+restart. No durable off latch is written on failure, so restart can read an
+enabled value still on disk, although prior grants are not restored. This
+feature-specific fence does not resolve unrelated indeterminate configuration
+outcomes or coordinate with external editors.
+
 Other interface preferences are
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
 `"single-row-scroll"`), `status_bar_visible` (default `true`),

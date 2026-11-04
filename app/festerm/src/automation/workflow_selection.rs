@@ -98,6 +98,22 @@ impl Selection {
         });
     }
 
+    #[cfg(test)]
+    pub(super) fn pending_capture_for_test(
+        &mut self,
+    ) -> mpsc::SyncSender<Result<ApprovedBundle, String>> {
+        assert!(self.pending.is_none());
+        self.cancel();
+        let (send, result) = mpsc::sync_channel(1);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.pending = Some(Pending {
+            result,
+            cancelled: cancelled.clone(),
+        });
+        self.cancelled = Some(cancelled);
+        send
+    }
+
     fn begin(
         &mut self,
         context: &egui::Context,

@@ -195,12 +195,38 @@
       "decisions": ["ADR-0065"],
       "automated_tests": [
         "automation_settings_are_independent_explicit_opt_ins",
-        "automation_preferences_do_not_start_unqualified_or_javascript_adapters"
+        "automation_preferences_do_not_start_unqualified_or_javascript_adapters",
+        "automation_settings_ui_persists_toggles_and_displays_save_failure",
+        "automation_disables_fence_stale_cross_window_saves_and_reload",
+        "automation_disables_survive_stale_broadcasts_unrelated_saves_and_close",
+        "automation_preference_save_failures_stay_stopped_and_visible_until_retry",
+        "automation_uncertain_enable_is_not_copied_by_an_unrelated_save",
+        "automation_same_pass_stale_toggles_and_reset_cannot_reenable",
+        "automation_cross_window_aba_invalidates_the_old_toggle_interaction",
+        "automation_disable_guard_survives_discarded_ui_pass",
+        "automation_reset_from_stale_default_window_saves_or_warns",
+        "automation_preferences_remain_independent_for_normal_toggles",
+        "automation_conflict_warning_survives_frames_and_unrelated_saves",
+        "automation_failed_disables_stop_live_admission_before_settlement",
+        "automation_cross_window_disable_blocks_queued_approvals",
+        "automation_discarded_pass_never_approves_before_a_later_disable",
+        "automation_discarded_pass_cancellation_suppresses_approval",
+        "automation_same_pass_cancellation_suppresses_approval_and_capture",
+        "automation_competing_workflow_captures_cancel_pending_without_winner",
+        "automation_cross_window_competing_captures_fail_closed_across_passes",
+        "conflicting_automation_actions_are_visible_in_settings",
+        "automation_command_queue_overflow_stops_admission_before_settlement",
+        "automation_toggle_release_cannot_reenable_a_changed_preference",
+        "automation_toggle_release_cannot_reenable_after_same_pass_aba",
+        "exhausted_preference_ui_revision_fails_closed_but_allows_disable",
+        "settings_automation_conflicts_stop_before_approval_or_unrelated_actions",
+        "uncertain_automation_preferences_show_warning_and_safe_retry"
       ],
       "manual_scenarios": ["AUTO-01"],
       "status": "partial",
       "prerequisites": [
-        "Native settings usability remains open under AUTO-01; configuration opt-in is not runtime or platform qualification"
+        "Native multi-window Settings, warning and retry usability remain open under AUTO-01; configuration opt-in is not runtime or platform qualification",
+        "Failed or indeterminate preference saves cannot promise a durable off value across restart; unrelated indeterminate configuration outcomes and external writers remain outside this feature-specific fence"
       ]
     },
     {

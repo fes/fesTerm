@@ -56,6 +56,12 @@ pub(crate) struct SettingsViewModel {
     pub automatic_update_checks: bool,
     pub mcp_enabled: bool,
     pub javascript_enabled: bool,
+    pub automation_mcp_enabled: bool,
+    pub automation_javascript_enabled: bool,
+    pub automation_mcp_ui_revision: u64,
+    pub automation_javascript_ui_revision: u64,
+    pub automation_preference_feedback: Option<&'static str>,
+    pub automation_preference_retry_available: bool,
     pub automation: crate::automation::SettingsSnapshot,
     pub default_sftp_local_directory: Option<String>,
     pub sftp_pane_order: SftpPaneOrderPreference,
@@ -104,6 +110,12 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         automatic_update_checks,
         mcp_enabled,
         javascript_enabled,
+        automation_mcp_enabled,
+        automation_javascript_enabled,
+        automation_mcp_ui_revision,
+        automation_javascript_ui_revision,
+        automation_preference_feedback,
+        automation_preference_retry_available,
         automation,
         default_sftp_local_directory,
         sftp_pane_order,
@@ -129,6 +141,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
     }
     state.sftp_pane_order.get_or_insert(sftp_pane_order);
     let mut command = None;
+    let mut automation_command = SettingsAutomationCommands::default();
     ui.horizontal(|ui| {
         ui.add_space(26.0);
         // Bound Settings' own height to whatever room is actually left
@@ -346,44 +359,61 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             }
                             ui.add_space(10.0);
                             if ui.button("Reset interface settings to defaults").clicked() {
-                                command = Some(AppCommand::ResetInterfaceSettings);
+                                automation_command.record(AppCommand::ResetInterfaceSettings);
                             }
                         });
 
                         ui.add_space(12.0);
 
                         settings_card(ui, "Automation", |ui| {
-                            if settings_toggle_row(
-                                ui,
-                                "Enable local MCP",
-                                "Allow a local assistant adapter to request access. Each connection \
-                                 still needs a separate native grant for exact terminals. Terminal \
-                                 output can contain secrets. Off by default.",
-                                mcp_enabled,
-                            ) {
-                                command = Some(AppCommand::ToggleMcpEnabled);
+                            if let Some(feedback) = automation_preference_feedback {
+                                ssh_paragraph(ui, feedback);
+                                if automation_preference_retry_available
+                                    && ui.button("Retry saving automation preferences (stay stopped)").clicked()
+                                {
+                                    automation_command.record(AppCommand::RetryAutomationSettings);
+                                }
+                                ui.add_space(10.0);
+                            }
+                            let viewport = ui.ctx().viewport_id();
+                            if ui.push_id(("mcp_preference", viewport, mcp_enabled, automation_mcp_ui_revision), |ui| {
+                                settings_toggle_row(
+                                    ui,
+                                    "Enable local MCP",
+                                    "Allow a local assistant adapter to request access. Each connection \
+                                     still needs a separate native grant for exact terminals. Terminal \
+                                     output can contain secrets. Off by default.",
+                                    mcp_enabled,
+                                )
+                            }).inner {
+                                automation_command.record(AppCommand::ToggleMcpEnabled);
                             }
                             ssh_paragraph(ui, "MCP activation is unavailable until private peer authentication is qualified; an enabled preference grants no terminal access.");
                             ui.add_space(10.0);
                             ui.separator();
                             ui.add_space(10.0);
-                            if settings_toggle_row(
-                                ui,
-                                "Enable JavaScript workflows",
-                                "Allow explicitly approved workflows only where isolated execution \
-                                 is qualified. This does not grant terminal access or shell control. \
-                                 Off by default.",
-                                javascript_enabled,
-                            ) {
-                                command = Some(AppCommand::ToggleJavascriptEnabled);
+                            if ui.push_id(("javascript_preference", viewport, javascript_enabled, automation_javascript_ui_revision), |ui| {
+                                settings_toggle_row(
+                                    ui,
+                                    "Enable JavaScript workflows",
+                                    "Allow explicitly approved workflows only where isolated execution \
+                                     is qualified. This does not grant terminal access or shell control. \
+                                     Off by default.",
+                                    javascript_enabled,
+                                )
+                            }).inner {
+                                automation_command.record(AppCommand::ToggleJavascriptEnabled);
                             }
                             if let Some(action) =
-                                workflow_settings(ui, &automation, javascript_enabled)
+                                workflow_settings(ui, &automation, automation_javascript_enabled)
                             {
-                                command = Some(action);
+                                if matches!(&action, AppCommand::OpenWorkflowPicker) {
+                                    command = Some(AppCommand::OpenWorkflowPicker);
+                                }
+                                automation_command.record(action);
                             }
-                            if let Some(action) = automation_settings(ui, &automation, mcp_enabled) {
-                                command = Some(AppCommand::Automation(action));
+                            if let Some(action) = automation_settings(ui, &automation, automation_mcp_enabled) {
+                                automation_command.record(AppCommand::Automation(action));
                             }
                         });
 
@@ -790,7 +820,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         });
     });
     ui.data_mut(|data| data.insert_temp(state_id, state));
-    command
+    automation_command.resolve(command)
 }
 
 const fn terminal_font_label(font: TerminalFontPreference) -> &'static str {
@@ -924,7 +954,7 @@ fn workflow_settings(
         return None;
     }
 
-    let mut command = None;
+    let mut command = SettingsAutomationCommands::default();
     if ui
         .add_enabled(
             !snapshot.workflow.busy(),
@@ -932,7 +962,7 @@ fn workflow_settings(
         )
         .clicked()
     {
-        command = Some(AppCommand::OpenWorkflowPicker);
+        command.record(AppCommand::OpenWorkflowPicker);
     }
     match &snapshot.workflow.status {
         WorkflowStatus::Empty => {}
@@ -1012,9 +1042,41 @@ fn workflow_settings(
     if (snapshot.workflow.busy() || snapshot.workflow.current_bundle().is_some())
         && ui.button("Clear workflow preview").clicked()
     {
-        command = Some(AppCommand::Automation(NativeCommand::ClearWorkflow));
+        command.record(AppCommand::Automation(NativeCommand::ClearWorkflow));
     }
-    command
+    command.resolve(None)
+}
+
+// Settings emits one AppCommand per frame, so conflicts must not discard a stop.
+#[derive(Default)]
+struct SettingsAutomationCommands(Option<AppCommand>);
+
+impl SettingsAutomationCommands {
+    fn record(&mut self, action: AppCommand) {
+        self.0 = Some(if self.0.is_some() {
+            AppCommand::Automation(crate::automation::NativeCommand::SafetyStop)
+        } else {
+            action
+        });
+    }
+
+    fn resolve(self, other: Option<AppCommand>) -> Option<AppCommand> {
+        match self.0 {
+            Some(AppCommand::OpenWorkflowPicker) => other.or(Some(AppCommand::OpenWorkflowPicker)),
+            action => action.or(other),
+        }
+    }
+}
+
+fn record_automation_action(
+    slot: &mut Option<crate::automation::NativeCommand>,
+    action: crate::automation::NativeCommand,
+) {
+    *slot = Some(if slot.is_some() {
+        crate::automation::NativeCommand::SafetyStop
+    } else {
+        action
+    });
 }
 
 /// A titled card matching the launcher/profile-editor "quiet section" visual
@@ -1038,7 +1100,7 @@ fn automation_settings(
         .button("Restart local MCP (revokes MCP access)")
         .clicked()
     {
-        command = Some(NativeCommand::RestartMcp);
+        record_automation_action(&mut command, NativeCommand::RestartMcp);
     }
     ssh_paragraph(
         ui,
@@ -1058,12 +1120,12 @@ fn automation_settings(
                     }
                 }
                 if ui.button("Revoke this MCP connection").clicked() {
-                    command = Some(NativeCommand::Revoke { channel: channel.channel });
+                    record_automation_action(&mut command, NativeCommand::Revoke { channel: channel.channel });
                 }
                 return;
             }
             if ui.button("Disconnect this MCP connection").clicked() {
-                command = Some(NativeCommand::Revoke { channel: channel.channel });
+                record_automation_action(&mut command, NativeCommand::Revoke { channel: channel.channel });
             }
             ssh_paragraph(ui, "Choose exact attachments. This discloses their labels, live screen, retained history and selections, including any secrets they contain. \
                 At most 1 MiB and 256 operations per grant; no shell input. Lock, suspend, disconnect, replacement, expiry or disabling MCP revokes access.");
@@ -1090,7 +1152,7 @@ fn automation_settings(
             }
             let allowed = verified && !selected.is_empty() && selected.len() <= 32;
             if ui.add_enabled(allowed, egui::Button::new("Approve observation for 5 minutes")).clicked() {
-                command = Some(NativeCommand::ApproveObservation {
+                record_automation_action(&mut command, NativeCommand::ApproveObservation {
                     channel: channel.channel, targets: selected.iter().copied().collect(),
                 });
                 verified = false;
@@ -1382,6 +1444,13 @@ mod tests {
         command: Option<AppCommand>,
         keyboard_bindings: festerm_config::KeyboardBindings,
         font_download_failed: bool,
+        mcp_enabled: bool,
+        javascript_enabled: bool,
+        mcp_ui_revision: u64,
+        javascript_ui_revision: u64,
+        automation_stopped: bool,
+        automation_preference_feedback: Option<&'static str>,
+        automation_preference_retry_available: bool,
     }
 
     fn settings_harness() -> Harness<'static, SettingsHarnessState> {
@@ -1498,8 +1567,16 @@ mod tests {
                             show_resumable_sessions: false,
                             show_durable_session_in_status_bar: false,
                             automatic_update_checks: false,
-                            mcp_enabled: false,
-                            javascript_enabled: false,
+                            mcp_enabled: state.mcp_enabled,
+                            javascript_enabled: state.javascript_enabled,
+                            automation_mcp_enabled: state.mcp_enabled && !state.automation_stopped,
+                            automation_javascript_enabled: state.javascript_enabled
+                                && !state.automation_stopped,
+                            automation_mcp_ui_revision: state.mcp_ui_revision,
+                            automation_javascript_ui_revision: state.javascript_ui_revision,
+                            automation_preference_feedback: state.automation_preference_feedback,
+                            automation_preference_retry_available: state
+                                .automation_preference_retry_available,
                             automation: Default::default(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
@@ -1518,6 +1595,13 @@ mod tests {
                     command: None,
                     keyboard_bindings: bindings,
                     font_download_failed: false,
+                    mcp_enabled: false,
+                    javascript_enabled: false,
+                    mcp_ui_revision: 0,
+                    javascript_ui_revision: 0,
+                    automation_stopped: false,
+                    automation_preference_feedback: None,
+                    automation_preference_retry_available: false,
                 },
             )
     }
@@ -1748,6 +1832,256 @@ mod tests {
             harness.state(),
             Some(crate::automation::NativeCommand::Revoke { channel: 7 })
         ));
+    }
+
+    #[test]
+    fn automation_toggle_release_cannot_reenable_a_changed_preference() {
+        for label in ["Enable local MCP", "Enable JavaScript workflows"] {
+            let mut harness = settings_harness();
+            harness.state_mut().mcp_enabled = true;
+            harness.state_mut().javascript_enabled = true;
+            harness.run();
+            let position = harness
+                .get_by_role_and_label(accesskit::Role::CheckBox, label)
+                .rect()
+                .center();
+            harness.event(egui::Event::PointerMoved(position));
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+            if label == "Enable local MCP" {
+                harness.state_mut().mcp_enabled = false;
+            } else {
+                harness.state_mut().javascript_enabled = false;
+            }
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+            assert!(harness.state().command.is_none());
+
+            harness
+                .get_by_role_and_label(accesskit::Role::CheckBox, label)
+                .click();
+            harness.step();
+            assert!(matches!(
+                (&harness.state().command, label),
+                (Some(AppCommand::ToggleMcpEnabled), "Enable local MCP")
+                    | (
+                        Some(AppCommand::ToggleJavascriptEnabled),
+                        "Enable JavaScript workflows"
+                    )
+            ));
+        }
+    }
+
+    #[test]
+    fn automation_toggle_release_cannot_reenable_after_same_pass_aba() {
+        use crate::automation::preferences::{Feature, Shared, Values};
+
+        for (label, feature) in [
+            ("Enable local MCP", Feature::Mcp),
+            ("Enable JavaScript workflows", Feature::Javascript),
+        ] {
+            let preferences = Shared::new(Values {
+                mcp: false,
+                javascript: false,
+            });
+            let mut harness = settings_harness();
+            harness.run();
+            let position = harness
+                .get_by_role_and_label(accesskit::Role::CheckBox, label)
+                .rect()
+                .center();
+            harness.event(egui::Event::PointerMoved(position));
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+
+            assert!(preferences.toggle(feature).is_some());
+            assert!(preferences.toggle(feature).is_some());
+            let revision = preferences.ui_revision(feature);
+            match feature {
+                Feature::Mcp => harness.state_mut().mcp_ui_revision = revision,
+                Feature::Javascript => harness.state_mut().javascript_ui_revision = revision,
+            }
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+            assert!(harness.state().command.is_none());
+
+            harness
+                .get_by_role_and_label(accesskit::Role::CheckBox, label)
+                .click();
+            harness.step();
+            assert!(matches!(
+                (&harness.state().command, feature),
+                (Some(AppCommand::ToggleMcpEnabled), Feature::Mcp)
+                    | (
+                        Some(AppCommand::ToggleJavascriptEnabled),
+                        Feature::Javascript
+                    )
+            ));
+        }
+    }
+
+    #[test]
+    fn settings_automation_conflicts_stop_before_approval_or_unrelated_actions() {
+        use crate::automation::NativeCommand;
+
+        #[derive(Clone, Copy, Debug)]
+        enum Action {
+            Javascript,
+            Mcp,
+            OpenWorkflow,
+            ClearWorkflow,
+            ResetSettings,
+            Retry,
+            Approve,
+            Revoke,
+        }
+        let make = |action| match action {
+            Action::Javascript => AppCommand::ToggleJavascriptEnabled,
+            Action::Mcp => AppCommand::ToggleMcpEnabled,
+            Action::OpenWorkflow => AppCommand::OpenWorkflowPicker,
+            Action::ClearWorkflow => AppCommand::Automation(NativeCommand::ClearWorkflow),
+            Action::ResetSettings => AppCommand::ResetInterfaceSettings,
+            Action::Retry => AppCommand::RetryAutomationSettings,
+            Action::Approve => AppCommand::Automation(NativeCommand::ApproveObservation {
+                channel: 7,
+                targets: Vec::new(),
+            }),
+            Action::Revoke => AppCommand::Automation(NativeCommand::Revoke { channel: 7 }),
+        };
+        for (first, second) in [
+            (Action::Javascript, Action::Approve),
+            (Action::Javascript, Action::ClearWorkflow),
+            (Action::Javascript, Action::Mcp),
+            (Action::ClearWorkflow, Action::Approve),
+            (Action::OpenWorkflow, Action::ClearWorkflow),
+            (Action::ResetSettings, Action::Approve),
+            (Action::Retry, Action::Approve),
+            (Action::Revoke, Action::Approve),
+        ] {
+            for (first, second) in [(first, second), (second, first)] {
+                let mut commands = SettingsAutomationCommands::default();
+                commands.record(make(first));
+                commands.record(make(second));
+                commands.record(make(Action::Approve));
+                assert!(
+                    matches!(
+                        commands.resolve(Some(AppCommand::ToggleStatusBar)),
+                        Some(AppCommand::Automation(NativeCommand::SafetyStop))
+                    ),
+                    "{first:?} followed by {second:?} must stop, even with later actions"
+                );
+            }
+        }
+        for action in [
+            Action::Javascript,
+            Action::Mcp,
+            Action::ClearWorkflow,
+            Action::ResetSettings,
+            Action::Retry,
+            Action::Revoke,
+        ] {
+            let mut commands = SettingsAutomationCommands::default();
+            commands.record(make(action));
+            assert!(!matches!(
+                commands.resolve(Some(AppCommand::ToggleStatusBar)),
+                Some(AppCommand::ToggleStatusBar) | None
+            ));
+        }
+        let mut commands = SettingsAutomationCommands::default();
+        commands.record(make(Action::OpenWorkflow));
+        assert!(matches!(
+            commands.resolve(Some(AppCommand::ToggleStatusBar)),
+            Some(AppCommand::ToggleStatusBar)
+        ));
+        assert!(matches!(
+            SettingsAutomationCommands::default().resolve(Some(AppCommand::ToggleStatusBar)),
+            Some(AppCommand::ToggleStatusBar)
+        ));
+
+        let mut actions = None;
+        record_automation_action(&mut actions, NativeCommand::Revoke { channel: 7 });
+        record_automation_action(
+            &mut actions,
+            NativeCommand::ApproveObservation {
+                channel: 7,
+                targets: Vec::new(),
+            },
+        );
+        assert!(matches!(actions, Some(NativeCommand::SafetyStop)));
+    }
+
+    #[test]
+    fn uncertain_automation_preferences_show_warning_and_safe_retry() {
+        use crate::automation::preferences::{Shared, Values};
+
+        let enabled = Values {
+            mcp: true,
+            javascript: true,
+        };
+        let preferences = Shared::new(enabled);
+        preferences.save_failed(enabled);
+        let mut harness = settings_harness();
+        harness.state_mut().mcp_enabled = true;
+        harness.state_mut().javascript_enabled = true;
+        harness.state_mut().automation_stopped = true;
+        harness.state_mut().automation_preference_feedback = preferences.feedback();
+        harness.state_mut().automation_preference_retry_available = preferences.retry_available();
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("may remain on disk and be read after restart")
+            .is_some());
+        assert!(harness.query_by_label("Select workflow JSON").is_none());
+        assert!(harness
+            .query_by_label("Restart local MCP (revokes MCP access)")
+            .is_none());
+        harness
+            .get_by_label("Retry saving automation preferences (stay stopped)")
+            .click();
+        harness.step();
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::RetryAutomationSettings)
+        ));
+    }
+
+    #[test]
+    fn conflicting_automation_actions_are_visible_in_settings() {
+        use crate::automation::preferences::{Shared, Values};
+
+        let preferences = Shared::new(Values {
+            mcp: true,
+            javascript: true,
+        });
+        preferences.action_conflicted();
+        let mut harness = settings_harness();
+        harness.state_mut().automation_preference_feedback = preferences.feedback();
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("conflicted or overflowed")
+            .is_some());
+        assert!(harness
+            .query_by_label_contains("workflow previews cancelled")
+            .is_some());
     }
 
     #[test]
@@ -2421,6 +2755,12 @@ mod tests {
                             automatic_update_checks: false,
                             mcp_enabled: false,
                             javascript_enabled: false,
+                            automation_mcp_enabled: false,
+                            automation_javascript_enabled: false,
+                            automation_mcp_ui_revision: 0,
+                            automation_javascript_ui_revision: 0,
+                            automation_preference_feedback: None,
+                            automation_preference_retry_available: false,
                             automation: Default::default(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
@@ -2433,6 +2773,13 @@ mod tests {
                     command: None,
                     keyboard_bindings: Default::default(),
                     font_download_failed: false,
+                    mcp_enabled: false,
+                    javascript_enabled: false,
+                    mcp_ui_revision: 0,
+                    javascript_ui_revision: 0,
+                    automation_stopped: false,
+                    automation_preference_feedback: None,
+                    automation_preference_retry_available: false,
                 },
             );
         harness.run();

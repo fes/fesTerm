@@ -50,6 +50,24 @@ fn fixture() -> (Coordinator, FesTermApp, TabId, impl Fn() -> Option<Vec<u8>>) {
     (coordinator, app, id, receive)
 }
 
+pub(crate) fn preference_application_fixture(
+    approved: bool,
+) -> (
+    Coordinator,
+    FesTermApp,
+    TargetRef,
+    Arc<AtomicBool>,
+    impl Fn() -> Option<Vec<u8>>,
+) {
+    let (mut coordinator, app, id, receive) = fixture();
+    let target = coordinator.targets[&id.chip_id()].reference;
+    if approved {
+        coordinator.approve(1, vec![target]).unwrap();
+    }
+    let stop = coordinator.stop.clone();
+    (coordinator, app, target, stop, receive)
+}
+
 fn independent_run(
     coordinator: &mut Coordinator,
     target: TargetRef,
@@ -678,10 +696,21 @@ fn automation_selected_workflow_preview_requires_opt_in_and_grants_no_access() {
         WorkflowStatus::Failed(_)
     ));
     coordinator.tick(&context, &[&enabled]);
-    coordinator.command(
-        NativeCommand::CaptureWorkflow(SelectedWorkflow(path)),
+    assert!(coordinator.commands(
+        vec![
+            NativeCommand::CaptureWorkflow(SelectedWorkflow(path.clone())),
+            NativeCommand::CaptureWorkflow(SelectedWorkflow(path.clone())),
+        ],
         &context,
-    );
+        &[&enabled],
+    ));
+    assert_eq!(coordinator.workflow.view().status, WorkflowStatus::Empty);
+    coordinator.tick(&context, &[&enabled]);
+    assert!(!coordinator.commands(
+        vec![NativeCommand::CaptureWorkflow(SelectedWorkflow(path))],
+        &context,
+        &[&enabled],
+    ));
     let deadline = Instant::now() + Duration::from_secs(5);
     while coordinator.workflow.view().busy() {
         coordinator.tick(&context, &[&enabled]);
@@ -714,6 +743,140 @@ fn automation_restart_stops_existing_channels_before_coordinator_dispatch() {
         app.take_automation_command(),
         Some(NativeCommand::RestartMcp)
     ));
+}
+
+#[test]
+fn automation_same_pass_cancellation_suppresses_approval_and_capture() {
+    let context = egui::Context::default();
+    for revoke in [false, true] {
+        for cancellation_first in [false, true] {
+            let (mut coordinator, app, id, _receive) = fixture();
+            let target = coordinator.targets[&id.chip_id()].reference;
+            let approval = NativeCommand::ApproveObservation {
+                channel: 1,
+                targets: vec![target],
+            };
+            let cancellation = if revoke {
+                NativeCommand::Revoke { channel: 1 }
+            } else {
+                NativeCommand::ClearWorkflow
+            };
+            let commands = if cancellation_first {
+                vec![cancellation, approval]
+            } else {
+                vec![approval, cancellation]
+            };
+            assert!(coordinator.commands(commands, &context, &[&app]));
+            assert!(coordinator.peers[&1].grant.is_none());
+            assert_eq!(coordinator.peers[&1].connection.is_closed(), revoke);
+            assert!(coordinator.status.contains("blocked"));
+        }
+    }
+
+    for clear_first in [false, true] {
+        let (mut coordinator, app, _, _receive) = fixture();
+        let capture = NativeCommand::CaptureWorkflow(SelectedWorkflow("unused.json".into()));
+        let commands = if clear_first {
+            vec![NativeCommand::ClearWorkflow, capture]
+        } else {
+            vec![capture, NativeCommand::ClearWorkflow]
+        };
+        assert!(coordinator.commands(commands, &context, &[&app]));
+        assert!(matches!(
+            coordinator.workflow.view().status,
+            WorkflowStatus::Empty
+        ));
+        assert!(coordinator.status.contains("blocked"));
+    }
+}
+
+#[test]
+fn automation_competing_workflow_captures_cancel_pending_without_winner() {
+    use festerm_automation_js::snapshot::{ApprovedBundle, Manifest, SourceSnapshot};
+
+    let context = egui::Context::default();
+    for identical in [false, true] {
+        for reverse in [false, true] {
+            let first = std::path::PathBuf::from("first.json");
+            let second = if identical {
+                first.clone()
+            } else {
+                "second.json".into()
+            };
+            let commands = || {
+                let mut commands = vec![
+                    NativeCommand::CaptureWorkflow(SelectedWorkflow(first.clone())),
+                    NativeCommand::CaptureWorkflow(SelectedWorkflow(second.clone())),
+                ];
+                if reverse {
+                    commands.reverse();
+                }
+                commands
+            };
+            {
+                let (mut coordinator, app, _, _receive) = fixture();
+                coordinator.javascript_enabled = true;
+                assert!(coordinator.commands(commands(), &context, &[&app]));
+                let snapshot = coordinator.settings(&[&app]);
+                assert_eq!(snapshot.workflow.status, WorkflowStatus::Empty);
+                assert!(snapshot.workflow.current_bundle().is_none());
+                assert!(snapshot.status.contains("conflicted"));
+            }
+
+            let (mut coordinator, app, _, _receive) = fixture();
+            coordinator.javascript_enabled = true;
+            let bundle = ApprovedBundle::new(SourceSnapshot {
+                manifest: Manifest {
+                    version: 1,
+                    api_version: 1,
+                    name: "pending".into(),
+                    entry: "main.js".into(),
+                    modules: vec!["main.js".into()],
+                    parameters: BTreeMap::new(),
+                    capabilities: BTreeSet::new(),
+                },
+                modules: BTreeMap::from([("main.js".into(), "export default 1;".into())]),
+            })
+            .unwrap();
+            let complete_capture = coordinator.workflow.pending_capture_for_test();
+            assert_eq!(
+                coordinator.workflow.view().status,
+                WorkflowStatus::Capturing
+            );
+
+            assert!(coordinator.commands(commands(), &context, &[&app]));
+            let snapshot = coordinator.settings(&[&app]);
+            assert_eq!(snapshot.workflow.status, WorkflowStatus::Cancelling);
+            assert!(snapshot.workflow.current_bundle().is_none());
+            assert!(snapshot.status.contains("conflicted"));
+            assert!(coordinator.stop.load(Ordering::Acquire));
+
+            complete_capture.send(Ok(bundle)).unwrap();
+            coordinator.workflow.poll(&context);
+            let snapshot = coordinator.settings(&[&app]);
+            assert_eq!(snapshot.workflow.status, WorkflowStatus::Empty);
+            assert!(snapshot.workflow.current_bundle().is_none());
+            assert!(snapshot.status.contains("conflicted"));
+        }
+    }
+}
+
+#[test]
+fn automation_command_queue_overflow_stops_admission_before_settlement() {
+    let (coordinator, mut app, id, _receive) = fixture();
+    let target = coordinator.targets[&id.chip_id()].reference;
+    let stop = coordinator.stop.clone();
+    app.set_automation_settings(coordinator.settings(&[&app]));
+    for _ in 0..=MAX_NATIVE_COMMANDS {
+        app.queue_automation_command(NativeCommand::ApproveObservation {
+            channel: 1,
+            targets: vec![target],
+        });
+    }
+    assert!(stop.load(Ordering::Acquire));
+    let (commands, overflow) = app.take_automation_commands();
+    assert!(commands.is_empty());
+    assert!(overflow);
 }
 
 #[test]
