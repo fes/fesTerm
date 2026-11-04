@@ -390,10 +390,12 @@ impl SettingsSnapshot {
 
 pub(crate) fn set_admission_flag(flag: &AtomicBool, value: bool) {
     let guard = festerm_session::automation_admission_lock();
-    if guard.is_none() {
+    let poisoned = guard.is_none();
+    flag.store(value, Ordering::Release);
+    drop(guard);
+    if poisoned {
         tracing::error!("automation admission lock poisoned; disclosure remains closed");
     }
-    flag.store(value, Ordering::Release);
 }
 
 struct Grant {
@@ -514,9 +516,7 @@ impl PrivacyGate {
 
     fn close(&self) {
         let guard = festerm_session::automation_admission_lock();
-        if guard.is_none() {
-            tracing::error!("automation admission lock poisoned; disclosure remains closed");
-        }
+        let poisoned = guard.is_none();
         self.closed.store(true, Ordering::Release);
         let stop = self
             .mcp_stop
@@ -524,6 +524,11 @@ impl PrivacyGate {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(stop) = stop.as_ref() {
             stop.store(true, Ordering::Release);
+        }
+        drop(stop);
+        drop(guard);
+        if poisoned {
+            tracing::error!("automation admission lock poisoned; disclosure remains closed");
         }
     }
 
@@ -875,13 +880,16 @@ impl Coordinator {
                 }
             }
         } else if needs_guard {
-            tracing::error!("automation admission lock poisoned; disclosure remains closed");
             for peer in peers.values() {
                 peer.connection.closed_flag().store(true, Ordering::Release);
             }
             self.broker = None;
         }
+        let poisoned = needs_guard && guard.is_none();
         drop(guard);
+        if poisoned {
+            tracing::error!("automation admission lock poisoned; disclosure remains closed");
+        }
         for (_, mut peer) in peers {
             peer.machine.close();
         }
