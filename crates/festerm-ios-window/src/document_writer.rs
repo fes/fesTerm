@@ -29,15 +29,22 @@ impl Writers {
         exclusive: bool,
         repaint: Arc<dyn Fn() + Send + Sync>,
     ) -> Result<DocumentWritePermit, DocumentFileError> {
-        self.admitted
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                if exclusive {
-                    (count == 0).then_some(SAVING)
-                } else {
-                    count.checked_add(1).filter(|next| *next < SAVING)
-                }
-            })
-            .map_err(|_| DocumentFileError::Busy)?;
+        loop {
+            let count = self.admitted.load(Ordering::Acquire);
+            let next = if exclusive {
+                (count == 0).then_some(SAVING)
+            } else {
+                count.checked_add(1).filter(|next| *next < SAVING)
+            }
+            .ok_or(DocumentFileError::Busy)?;
+            if self
+                .admitted
+                .compare_exchange(count, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                break;
+            }
+        }
         Ok(DocumentWritePermit {
             writers: self.clone(),
             exclusive,

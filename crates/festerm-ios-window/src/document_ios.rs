@@ -259,11 +259,18 @@ impl DocumentFile {
         if !url.isFileURL() {
             return Err(DocumentFileError::NotAFile);
         }
-        LIVE_DOCUMENTS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                (count < MAX_NATIVE_DOCUMENTS).then_some(count + 1)
-            })
-            .map_err(|_| DocumentFileError::Busy)?;
+        loop {
+            let count = LIVE_DOCUMENTS.load(Ordering::Acquire);
+            if count >= MAX_NATIVE_DOCUMENTS {
+                return Err(DocumentFileError::Busy);
+            }
+            if LIVE_DOCUMENTS
+                .compare_exchange(count, count + 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                break;
+            }
+        }
         let allocated = BoundedDocument::alloc(mtm).set_ivars(FileIvars {
             state: Arc::new(Mutex::new(FileState::default())),
             repaint,
