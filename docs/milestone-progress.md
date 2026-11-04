@@ -1,5 +1,21 @@
 # Milestone Progress Narrative
 
+## Investigating Windows worker ownership
+
+Creation-time Job Object assignment can place a process in a job before its
+initial thread executes, but the reviewed Windows API contract does not
+explicitly settle creator death inside the creation call or cleanup of a
+possibly unassigned suspended child. This is a missing guarantee, not a
+demonstrated orphan. No Windows worker launcher was implemented, and
+application execution remains unavailable. A documented ownership contract or
+a different independently owned design, secure worker transport, AppContainer
+confinement and native evidence remain necessary. A test-only probe restricted
+to a dedicated GitHub-hosted Windows job checks post-return job membership,
+sole-owner drop and creator death with an independent process-handle observer.
+An antagonist review prompted runner-context, discovery and receipt hardening,
+and an independent re-review found no significant issues. Windows execution
+and CI remain pending and cannot prove in-flight cleanup.
+
 ## Encoding explicit worker input without admitting it
 
 Worker text and key requests now have an inert, bounded adapter to the

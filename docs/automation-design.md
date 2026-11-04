@@ -471,6 +471,121 @@ separate process or language builtins restriction alone is insufficient.
 If an adequate OS sandbox cannot be provided on a platform/distribution,
 untrusted JavaScript is unavailable there; no silent in-process fallback.
 
+#### Windows worker ownership remains unproven
+
+The existing ConPTY Job Object wrapper assigns an already-started process and
+is not a birth-to-death worker launcher. A possible Windows 10+ building block
+is `CreateProcessW` with `PROC_THREAD_ATTRIBUTE_JOB_LIST`, a private unnamed job
+with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and a suspended initial thread.
+Microsoft's [attribute reference](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)
+lists the job-list attribute, and its
+[guidance](https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812)
+explicitly presents it as a solution to the orphan window and states that
+assignment precedes execution of the initial thread. The
+[job documentation](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+applies kill-on-close to processes already associated with the job when its
+last handle closes.
+
+The reviewed public contract does not explicitly establish what happens if the
+sole creator dies *inside* `CreateProcessW`, before it can retain the returned
+process handle: in particular, whether an unassigned suspended child is
+excluded and how pending job assignment is ordered against closing the last
+job handle. This is a documentation gap, **not** evidence that Windows actually
+leaves such a child. A membership check or an observer that obtains a pinned
+child handle only after the call returns cannot resolve that gap. Until an
+authoritative contract or another independently owned design covers that
+interval and failure cleanup, no production worker launcher is implemented or
+enabled. The
+[`CreateProcessW` reference](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw)
+describes returned handles and failure reporting but does not state rollback
+semantics for a creator terminated during the call. Microsoft's
+[process-termination documentation](https://learn.microsoft.com/en-us/windows/win32/procthread/terminating-a-process)
+describes handle closure and process signaling, but not rollback of an
+interrupted creation. Its
+[kernel object lifecycle documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/life-cycle-of-an-object)
+distinguishes the object reference count from the open-handle count; an assumed
+internal pointer reference cannot be treated as a documented postponement of
+last-*handle* close or proof of assignment.
+
+The test-only `festerm-windows-job` `ownership_probe` is restricted to its
+dedicated GitHub-hosted Windows Actions job. It exercises two post-return
+cases: dropping the sole inner job owner, and terminating a creator after an
+independent observer pins the suspended fixture's process handle. An
+independently held outer job contains
+the trusted creator and its fixtures; its bootstrap follows the principle of
+[Microsoft's test-harness guidance](https://devblogs.microsoft.com/oldnewthing/20181116-00/?p=100245).
+The creator starts without inherited handles or ambient environment, using an
+allowlist of fixed runner-gate metadata. It waits with a deadline, verifies the
+exact outer job using a temporarily duplicated query handle, and closes that
+handle before creating a fixture. While that duplicate exists it delays
+last-handle cleanup of the outer job; a stalled bootstrap launches no fixture
+and has a finite wait. The observer retains the outer job while observing
+inner-job cleanup. It duplicates the fixture process handle
+from the identity-pinned creator, checks that handle against the exact outer
+job, and waits on it; it does not reopen or kill by PID. A thread-description
+handshake carries only test metadata and is not qualified worker IPC. Its
+Windows APIs are dynamically resolved and missing support fails the opted-in
+probe. The disposable VM is a last-resort isolation boundary, not evidence that
+in-flight creation is safe. The probe releases its exited-process handles
+before checking outer-job accounting; an unrelated retained process reference
+can delay that accounting and cause a bounded test failure.
+This test has not yet run on Windows; it does not exercise creator death inside
+`CreateProcessW`, indirect descendants, or adversarial same-user access.
+An independent re-review found no significant issues; its dedicated CI job
+and native execution remain pending.
+
+The workflow rejects a runner unless the Actions
+[`runner.environment` and `runner.os` context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#runner-context)
+reports `github-hosted` and `Windows`; a self-hosted runner with a matching
+label fails the job. The ignored qualification test and its feature-gated
+child-role executable also require the dedicated job, the Actions default
+runner variables, step-scoped context values and an explicit opt-in. The
+fixture environment contains only these fixed metadata values, not inherited
+user environment or handles. A direct invocation with just the opt-in fails.
+Local process environment variables can be forged, so these checks are not a
+cryptographic VM attestation: do not invoke the probe on a shared host by
+spoofing them. Only the workflow's context-gated route is approved.
+
+Ordinary workspace tests leave the qualification test ignored, and libtest
+handles discovery and filters normally. The only supported qualification
+invocation, inside that context-gated job, is:
+
+```text
+cargo test --locked -p festerm-windows-job --features experimental-windows-job-probe --test ownership_probe -- --ignored --exact windows_job_ownership_qualification --nocapture
+```
+
+Unsupported or unauthorized invocations of that selected test fail rather than
+skip. As with libtest generally, an unmatched filter or an omitted `--ignored`
+can exit successfully without running it; that is not qualification. The test
+emits `FESTERM_WINDOWS_JOB_OWNERSHIP_PROBE_V1: PASS` only after both scenarios
+and cleanup complete; the workflow requires exactly one matching line and a
+successful exit. The helper accepts only exact child-role arguments and cannot
+start a fixture without its own gate and the outer-job bootstrap.
+
+A reusable no-inheritance launcher must also specify a safe environment and
+current directory and avoid an inherited console; `bInheritHandles=FALSE` does
+not sanitize those. The job-list value must outlive the attribute list. Check
+the exact returned process against the exact job while suspended, fail on
+unsupported or incompatible outer jobs, and bound cleanup waits. A death-test
+observer should retain an identity-pinned process handle, not another inner job
+handle that would prevent last-handle closure.
+
+The candidate also assumes a sole, non-inheritable job handle that untrusted
+code cannot open or duplicate, no breakaway, compatible outer jobs, and a
+trusted creator that does not lose its ownership thread while the process
+continues. Job membership is not a filesystem or network sandbox; for example,
+the job documentation excludes children created through `Win32_Process.Create`
+from automatic association. A qualified policy must prevent such indirect
+creation and unauthorized handle access separately.
+
+Secure worker transport is also open. The
+[handle-list attribute](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)
+requires inheritable handles and `bInheritHandles=TRUE` for the intended
+child. A concurrent unrestricted process creation could inherit those handles
+while they are inheritable; limiting the intended child's handle list alone
+does not constrain unrelated spawns. No anonymous-stdio inheritance scheme is
+qualified by this investigation.
+
 Keep host calls nonblocking and short. The broker can cancel/deny a call even
 if the engine is stuck. Engine limits cover pure-JS loops, recursion, regex,
 allocation and microtask storms; the supervisor's watchdog covers failures of

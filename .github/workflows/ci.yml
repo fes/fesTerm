@@ -132,6 +132,57 @@ jobs:
       - name: Require audit-metadata preservation and thread-scoped privileges
         run: cargo test --locked -p festerm-windows-security --lib -- --ignored --nocapture
 
+  windows-job-ownership-probe:
+    name: Experimental Windows job ownership probe
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require a GitHub-hosted Windows runner
+        shell: pwsh
+        env:
+          CONTEXT_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          CONTEXT_RUNNER_OS: ${{ runner.os }}
+        run: |
+          if ($env:CONTEXT_RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+              $env:CONTEXT_RUNNER_OS -cne 'Windows' -or
+              $env:RUNNER_ENVIRONMENT -cne $env:CONTEXT_RUNNER_ENVIRONMENT -or
+              $env:RUNNER_OS -cne $env:CONTEXT_RUNNER_OS -or
+              $env:GITHUB_ACTIONS -cne 'true' -or
+              $env:GITHUB_JOB -cne 'windows-job-ownership-probe') {
+            throw 'The ownership probe requires the GitHub-hosted Windows job.'
+          }
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run and verify the experimental ownership probe
+        if: ${{ runner.environment == 'github-hosted' && runner.os == 'Windows' }}
+        shell: pwsh
+        env:
+          FESTERM_WINDOWS_JOB_DISPOSABLE_VM: "1"
+          FESTERM_WINDOWS_JOB_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          FESTERM_WINDOWS_JOB_RUNNER_OS: ${{ runner.os }}
+        run: |
+          $receipt = 'FESTERM_WINDOWS_JOB_OWNERSHIP_PROBE_V1: PASS'
+          function Test-ProbeReceipt([string[]]$lines) {
+            return (@($lines | Where-Object { $_ -ceq $receipt }).Count -eq 1)
+          }
+          if ((Test-ProbeReceipt -lines @()) -or
+              (Test-ProbeReceipt -lines @(" $receipt")) -or
+              (Test-ProbeReceipt -lines @("$receipt extra")) -or
+              (Test-ProbeReceipt -lines @($receipt.ToLowerInvariant())) -or
+              (Test-ProbeReceipt -lines @($receipt, $receipt)) -or
+              -not (Test-ProbeReceipt -lines @($receipt))) {
+            throw 'Ownership probe receipt verifier failed its controls.'
+          }
+          $output = @(& cargo test --locked -p festerm-windows-job --features experimental-windows-job-probe --test ownership_probe -- --ignored --exact windows_job_ownership_qualification --nocapture)
+          $exitCode = $LASTEXITCODE
+          $output | ForEach-Object { Write-Output $_ }
+          if ($exitCode -ne 0) {
+            throw "Ownership probe failed with exit code $exitCode."
+          }
+          if (-not (Test-ProbeReceipt -lines $output)) {
+            throw 'Ownership probe did not emit exactly one complete receipt.'
+          }
+
   quality:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

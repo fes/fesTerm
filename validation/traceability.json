@@ -180,6 +180,7 @@
       "status": "partial",
       "prerequisites": [
         "Installed helper provenance and native sandbox qualification remain required per supported platform",
+        "Windows worker birth-to-death ownership, including creator death during process creation, and secure worker transport remain unproven",
         "Native approval, broker dispatch and lifecycle integration remain unavailable",
         "Controller writer leases, human takeover and worker admission integration remain unavailable",
         "SSH, persistent, tunnel and serial transports do not yet support reservations"

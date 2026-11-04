@@ -7,6 +7,21 @@ authors.workspace = true
 repository.workspace = true
 description = "Narrow Windows Job Object ownership support for fesTerm."
 
+[features]
+experimental-windows-job-probe = ["windows-sys/Win32_System_LibraryLoader"]
+
+[[bin]]
+name = "festerm-windows-job-ownership-probe-child"
+path = "tests/ownership_probe/child.rs"
+required-features = ["experimental-windows-job-probe"]
+test = false
+bench = false
+doc = false
+
+[[test]]
+name = "ownership_probe"
+path = "tests/ownership_probe.rs"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",

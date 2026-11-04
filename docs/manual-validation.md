@@ -2700,6 +2700,18 @@ guards still require the native and interoperability evidence in AUTO-04.
 Terminal-request encoding has deterministic text, key, mode and refusal tests.
 Actual input admission, takeover and platform behavior still require AUTO-03.
 
+Windows worker ownership has an unresolved
+[creation-time contract gap](automation-design.md#windows-worker-ownership-remains-unproven):
+cleanup after creator death inside `CreateProcessW` is not explicitly
+established by the reviewed public references. This is not a demonstrated
+Windows defect. A test-only ownership probe is restricted to a dedicated
+GitHub-hosted Windows Actions job; it has not yet run on Windows, and its
+post-return observations do not close that gap. An independent re-review found
+no significant issues; the exact completion receipt and native CI evidence
+remain pending. No production launcher was added.
+Secure worker transport and the AppContainer policy remain separate
+prerequisites for AUTO-02.
+
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
 | AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts. | Deferred native + usability | Partial implementation: observation pairing/native grant UI, desktop file selection and non-authorizing captured-source review, and frozen-workflow binding components. Desktop source-view usability, iOS security-scoped access, pending-approval invalidation and platform path behavior still need qualification. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. No native evidence collected for intake or workflow approval. |

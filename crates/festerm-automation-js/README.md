@@ -186,7 +186,7 @@ only queues a message, not a delivery receipt.
 | Linux x86-64 | Same implementation and runtime qualification; native x86-64 CI/distribution evidence still required before shipping enablement. |
 | Other Linux architectures, or missing kernel prerequisites | Explicit unavailable, no fallback. |
 | macOS | Explicit unavailable. Seatbelt alone cannot enforce the mandatory hard 128 MiB process ceiling; no advisory RSS limit or polling approximation is substituted. No unconfined production engine execution. |
-| Windows | Explicit unavailable pending reviewed native AppContainer containment. A Job Object alone is insufficient. |
+| Windows | Explicit unavailable pending reviewed native AppContainer containment, [birth-to-death ownership](../../docs/automation-design.md#windows-worker-ownership-remains-unproven), and secure worker transport. A Job Object alone is insufficient. |
 | iOS | Explicit unavailable: no qualified separate helper/stdio P1 transport. |
 
 Linux qualification runs **before Ready/source reception/engine construction**:
