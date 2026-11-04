@@ -3765,7 +3765,8 @@
         "markdown_edit_preview_keeps_source_selection_and_shared_history",
         "markdown_contents_is_view_local_and_never_mutates_or_sends_terminal_input",
         "markdown_contents_navigation_and_view_switch_dismiss_the_captured_sheet",
-        "markdown_contents_scrolls_to_an_offscreen_heading_without_editing"
+        "markdown_contents_scrolls_to_an_offscreen_heading_without_editing",
+        "markdown_wide_preview_uses_contents_rail_and_dismisses_old_sheet"
       ],
       "manual_scenarios": ["MOB-08"],
       "status": "partial",

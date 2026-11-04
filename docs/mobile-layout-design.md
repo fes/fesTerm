@@ -60,8 +60,9 @@ retains its slot until actual completion. Stale results never become current.
 Each view retains its own mode, source selection, preview scroll and heading
 navigation. Compact Contents is a bounded sheet captured against its view and
 revision; switching views or updating the source dismisses it. Wide Contents
-uses the existing reading rail, never an Edit/Preview split. Short-height mode
-controls join source actions in the scrollable More menu. Parser errors remain
+uses the existing reading rail, never an Edit/Preview split. Contents headings
+retain minimum 44-point touch regions. Short-height mode controls join source
+actions in the scrollable More menu. Parser errors remain
 visible and offer explicit retry without changing source. The reused mobile
 renderer keeps links, images and embedded HTML inert; no resource authority or
 network loading is added.

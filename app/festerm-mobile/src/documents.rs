@@ -34,6 +34,7 @@ struct View {
     previewing: bool,
     preview: Option<super::workspaces::MarkdownWorkspace>,
     preview_revision: Option<u64>,
+    wide_preview: bool,
 }
 
 #[derive(Default)]
@@ -53,6 +54,7 @@ pub(super) struct DocumentHost {
     compare: Option<EditTarget>,
     contents: Option<(ViewId, u64)>,
     preview: super::document_preview::PreviewLoader,
+    focus_source: Option<ViewId>,
 }
 
 impl DocumentHost {
@@ -297,6 +299,7 @@ impl DocumentHost {
             previewing: false,
             preview: None,
             preview_revision: None,
+            wide_preview: false,
         });
         *next_tab = next;
         self.active = Some(view);
@@ -547,6 +550,7 @@ impl DocumentHost {
                 previewing: false,
                 preview: None,
                 preview_revision: None,
+                wide_preview: false,
             });
             *next_tab = next;
             self.active = Some(id);
@@ -708,14 +712,12 @@ impl DocumentHost {
                 {
                     self.views[index].previewing = previewing;
                     widgets::blur_local_text_edit(ui.ctx(), body_id(view));
-                    if !previewing {
-                        ui.ctx()
-                            .memory_mut(|memory| memory.request_focus(body_id(view)));
-                    }
+                    self.focus_source = (!previewing).then_some(view);
                     acted = true;
                 }
             }
             if self.views[index].previewing
+                && !self.views[index].wide_preview
                 && widgets::button_sized(
                     ui,
                     ButtonKind::Secondary,
@@ -780,6 +782,12 @@ impl DocumentHost {
                     ));
                 }
                 entry.preview_revision = Some(revision);
+                let wide = super::workspaces::LayoutTier::for_size(ui.available_size())
+                    == super::workspaces::LayoutTier::Wide;
+                if entry.wide_preview != wide {
+                    entry.wide_preview = wide;
+                    ui.ctx().request_repaint();
+                }
                 ui.push_id(("document-preview", view.raw()), |ui| {
                     entry
                         .preview
@@ -813,6 +821,7 @@ impl DocumentHost {
 
     fn show_source(&mut self, ui: &mut egui::Ui, view: ViewId) {
         let id = body_id(view);
+        let focus = self.focus_source.take() == Some(view);
         if ui.ctx().memory(|memory| memory.has_focus(id)) {
             let (redo, undo) = ui.input_mut(|input| {
                 let redo = input.consume_key(
@@ -877,6 +886,10 @@ impl DocumentHost {
                 )
             })
             .inner;
+        if focus && writable {
+            output.response.request_focus();
+            ui.ctx().request_repaint();
+        }
         if output.response.changed() {
             let result = self.registry.sync(&target, &text).map(|_| ());
             self.record(result);
@@ -945,6 +958,16 @@ impl DocumentHost {
         };
         if self.active != Some(view) {
             self.contents = None;
+            ctx.request_repaint();
+            return;
+        }
+        if self
+            .views
+            .iter()
+            .any(|entry| entry.id == view && entry.wide_preview)
+        {
+            self.contents = None;
+            ctx.request_repaint();
             return;
         }
         let current = self

@@ -731,6 +731,8 @@ fn markdown_edit_preview_keeps_source_selection_and_shared_history() {
     assert!(harness.output().platform_output.ime.is_none());
     harness.get_by_label("Edit").click();
     harness.run();
+    assert!(harness.ctx.memory(|memory| memory.has_focus(body_id(view))));
+    assert!(harness.output().platform_output.ime.is_some());
     assert_eq!(
         egui::TextEdit::load_state(&harness.ctx, body_id(view))
             .unwrap()
@@ -819,6 +821,35 @@ fn markdown_contents_is_view_local_and_never_mutates_or_sends_terminal_input() {
 }
 
 #[test]
+fn markdown_wide_preview_uses_contents_rail_and_dismisses_old_sheet() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1194.0, 834.0))
+        .build_ui_state(
+            |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+            app(true),
+        );
+    harness.run();
+    let view = harness.state().documents.active.unwrap();
+    harness.get_by_label("Preview").click();
+    wait_preview(&mut harness, view);
+    assert!(harness.query_by_label("Contents").is_none());
+    assert!(harness.query_by_label("CONTENTS").is_some());
+    let revision = harness
+        .state()
+        .documents
+        .registry
+        .view(view)
+        .unwrap()
+        .text()
+        .revision();
+    harness.state_mut().documents.contents = Some((view, revision));
+    harness.run();
+    assert!(harness.state().documents.contents.is_none());
+    assert!(harness.query_by_label("Contents").is_none());
+    assert!(harness.query_by_label("CONTENTS").is_some());
+}
+
+#[test]
 fn markdown_contents_scrolls_to_an_offscreen_heading_without_editing() {
     let mut app = app(true);
     let view = app.documents.active.unwrap();
@@ -872,7 +903,9 @@ fn markdown_contents_navigation_and_view_switch_dismiss_the_captured_sheet() {
     wait_preview(&mut harness, view);
     harness.get_by_label("Contents").click();
     harness.run();
-    harness.get_all_by_label("Runbook").last().unwrap().click();
+    let heading = harness.get_all_by_label("Runbook").last().unwrap();
+    assert!(heading.rect().height() >= space::TOUCH);
+    heading.click();
     harness.run();
     assert!(harness.state().documents.contents.is_none());
     {

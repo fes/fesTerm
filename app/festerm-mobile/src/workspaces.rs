@@ -198,6 +198,7 @@ impl MarkdownWorkspace {
                 .show(ui, |ui| {
                     for (index, heading) in self.document.headings().iter().enumerate() {
                         ui.horizontal(|ui| {
+                            ui.spacing_mut().interact_size.y = super::theme::space::TOUCH;
                             ui.add_space(f32::from(heading.level().saturating_sub(1)) * 10.0);
                             if ui
                                 .selectable_label(self.selected_heading == index, heading.text())

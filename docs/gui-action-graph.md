@@ -292,6 +292,8 @@ completion; old/closed-document results cannot become current. Parser errors
 offer explicit retry, and links/images/HTML grant no loading/execution authority.
 Source syntax/line numbers, Find/Replace and local-copy/composer tools remain
 pending; native provider/keyboard/accessibility qualification is unchanged.
+Returning to Edit restores the source focus after handling the toolbar click.
+The actual wide reading viewport suppresses the compact Contents button/sheet.
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |

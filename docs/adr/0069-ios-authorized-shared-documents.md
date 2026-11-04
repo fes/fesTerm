@@ -156,3 +156,8 @@ external refresh invalidation and absence of terminal input. The opt-in gallery
 adds Preview and Contents at all four viewports; simulated occlusion remains
 non-native evidence. Source syntax/line numbers, Find/Replace, local copy/Save As
 and shared document dictation are still subsequent work.
+Mode-switch regression also verifies restored source focus/native input metadata.
+Wide Preview uses only its measured Contents rail; any compact sheet is dismissed
+when the actual reading viewport becomes Wide, with no duplicate sheet/button.
+Contents heading navigation also preserves minimum 44-point touch targets,
+covered by actual-widget geometry assertions.
