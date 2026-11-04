@@ -6406,8 +6406,108 @@ fn automation_cancelled_wait_defers_without_output_and_retries_before_new_events
         .any(|wait| wait.key == key));
 }
 
+fn isolate_admission_contention_test(marker: &str, test: &str) -> bool {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    if std::env::var_os(marker).is_some() {
+        return false;
+    }
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture"])
+        .env(marker, "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn isolated admission test");
+    let read_output = |mut stream: Box<dyn Read + Send>| {
+        std::thread::spawn(move || {
+            let mut output = Vec::new();
+            stream
+                .by_ref()
+                .take(64 * 1024)
+                .read_to_end(&mut output)
+                .expect("read isolated test output");
+            std::io::copy(&mut stream, &mut std::io::sink()).expect("drain isolated test output");
+            output
+        })
+    };
+    let stdout = read_output(Box::new(child.stdout.take().unwrap()));
+    let stderr = read_output(Box::new(child.stderr.take().unwrap()));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => break Err("isolated admission test timed out".to_owned()),
+            Err(error) => break Err(format!("isolated admission test wait failed: {error}")),
+        }
+    };
+    if status.is_err() {
+        if let Err(error) = child.kill() {
+            assert!(
+                matches!(child.try_wait(), Ok(Some(_))),
+                "could not terminate isolated admission test: {error}"
+            );
+        }
+        child.wait().expect("reap isolated admission test");
+    }
+    let stdout = stdout.join().expect("isolated stdout reader panicked");
+    let stderr = stderr.join().expect("isolated stderr reader panicked");
+    let output = || {
+        format!(
+            "\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        )
+    };
+    let status = status.unwrap_or_else(|error| panic!("{error}{}", output()));
+    assert!(
+        status.success(),
+        "isolated admission test failed{}",
+        output()
+    );
+    assert!(
+        String::from_utf8_lossy(&stdout).contains("running 1 test"),
+        "isolated admission test did not run{}",
+        output()
+    );
+    true
+}
+
+fn hold_admission_after_test_hook(
+    entered: mpsc::Receiver<()>,
+    resume: mpsc::SyncSender<()>,
+    release: mpsc::Receiver<()>,
+    armed: Option<Arc<AtomicBool>>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        entered
+            .recv_timeout(Duration::from_secs(10))
+            .expect("admission test hook was not reached");
+        let guard = festerm_session::automation_admission_lock().expect("admission poisoned");
+        if let Some(armed) = armed {
+            armed.store(true, Ordering::Release);
+        }
+        let resumed = resume.send(());
+        if resumed.is_ok() {
+            let _ = release.recv();
+        }
+        drop(guard);
+        assert!(resumed.is_ok(), "admission test hook was abandoned");
+    })
+}
+
 #[test]
 fn automation_completion_busy_after_send_retains_exact_cleanup_before_peer_events() {
+    if isolate_admission_contention_test(
+        "FESTERM_COMPLETION_BUSY_SEND_CHILD",
+        "automation::tests::automation_completion_busy_after_send_retains_exact_cleanup_before_peer_events",
+    ) {
+        return;
+    }
     let (mut coordinator, mut app, id, receive) = fixture();
     let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
     app.adopt_broadcast_configuration(
@@ -6477,19 +6577,18 @@ fn automation_completion_busy_after_send_retains_exact_cleanup_before_peer_event
     let (resume_tx, resume_rx) = mpsc::sync_channel(1);
     let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
     coordinator.peers.get_mut(&1).unwrap().after_finish = Some((entered_tx, resume_rx));
-    let worker = std::thread::spawn(move || {
-        entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-        let _guard = festerm_session::automation_admission_lock().unwrap();
-        resume_tx.send(()).unwrap();
-        release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-    });
+    let worker = hold_admission_after_test_hook(entered_rx, resume_tx, release_rx, None);
     let context = egui::Context::default();
     let deadline = Instant::now() + Duration::from_secs(10);
     while coordinator.peers[&1].after_finish.is_some() {
         coordinator.tick(&context, &[&app]);
         assert!(Instant::now() < deadline, "request was not dispatched");
-        std::thread::sleep(Duration::from_millis(1));
+        if coordinator.peers[&1].after_finish.is_some() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
+    release_tx.send(()).unwrap();
+    worker.join().unwrap();
     let pending = coordinator.peers[&1].pending_completion.unwrap();
     let principal = coordinator.peers[&1].principal;
     assert!(coordinator.reconciliation_deferred);
@@ -6507,8 +6606,6 @@ fn automation_completion_busy_after_send_retains_exact_cleanup_before_peer_event
             .forget_run(principal, pending.run),
         Err(festerm_automation::Error::Busy)
     );
-    release_tx.send(()).unwrap();
-    worker.join().unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     while coordinator.peers[&1].pending_completion.is_some() {
         coordinator.tick(&context, &[&app]);
@@ -6573,6 +6670,12 @@ fn complete_screen_without_cleanup(
 
 #[test]
 fn automation_wait_completion_busy_after_send_does_not_repeat_wait() {
+    if isolate_admission_contention_test(
+        "FESTERM_WAIT_COMPLETION_BUSY_CHILD",
+        "automation::tests::automation_wait_completion_busy_after_send_does_not_repeat_wait",
+    ) {
+        return;
+    }
     let (mut coordinator, app, id, receive) = fixture();
     let target = coordinator.targets[&id.chip_id()].reference;
     approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
@@ -6591,24 +6694,19 @@ fn automation_wait_completion_busy_after_send_does_not_repeat_wait() {
     let (resume_tx, resume_rx) = mpsc::sync_channel(1);
     let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
     coordinator.peers.get_mut(&1).unwrap().after_finish = Some((entered_tx, resume_rx));
-    let worker = std::thread::spawn(move || {
-        entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-        let _guard = festerm_session::automation_admission_lock().unwrap();
-        resume_tx.send(()).unwrap();
-        release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-    });
+    let worker = hold_admission_after_test_hook(entered_rx, resume_tx, release_rx, None);
     let result = settle_waits(
         coordinator.broker.as_mut().unwrap(),
         &coordinator.targets,
         coordinator.peers.get_mut(&1).unwrap(),
         Instant::now(),
     );
+    release_tx.send(()).unwrap();
+    worker.join().unwrap();
     let pending = coordinator.peers[&1].pending_completion;
     let wait_count = coordinator.peers[&1].waits.len();
     let first = receive();
     let extra = receive();
-    release_tx.send(()).unwrap();
-    worker.join().unwrap();
     assert_eq!(
         result,
         Err(festerm_session::AutomationAdmissionTryError::Busy)
@@ -6798,6 +6896,12 @@ fn automation_direct_command_repaint_unwind_fails_closed() {
 
 #[test]
 fn automation_sent_response_busy_controller_command_repaint_unwind_fails_closed() {
+    if isolate_admission_contention_test(
+        "FESTERM_COMPLETION_BUSY_COMMAND_CHILD",
+        "automation::tests::automation_sent_response_busy_controller_command_repaint_unwind_fails_closed",
+    ) {
+        return;
+    }
     let (mut coordinator, mut app, id, receive) = fixture();
     app.adopt_broadcast_configuration(
         festerm_config::Configuration::empty()
@@ -6838,19 +6942,18 @@ fn automation_sent_response_busy_controller_command_repaint_unwind_fails_closed(
     let (resume_tx, resume_rx) = mpsc::sync_channel(1);
     let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
     coordinator.peers.get_mut(&1).unwrap().after_finish = Some((entered_tx, resume_rx));
-    let worker = std::thread::spawn(move || {
-        entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-        let _guard = festerm_session::automation_admission_lock().unwrap();
-        resume_tx.send(()).unwrap();
-        release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-    });
+    let worker = hold_admission_after_test_hook(entered_rx, resume_tx, release_rx, None);
     let context = egui::Context::default();
     let deadline = Instant::now() + Duration::from_secs(10);
     while coordinator.peers[&1].after_finish.is_some() {
         coordinator.tick(&context, &[&app]);
         assert!(Instant::now() < deadline, "request was not dispatched");
-        std::thread::sleep(Duration::from_millis(1));
+        if coordinator.peers[&1].after_finish.is_some() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
+    release_tx.send(()).unwrap();
+    worker.join().unwrap();
     assert!(coordinator.reconciliation_deferred);
     assert_eq!(response(&receive)["id"], 1);
     assert!(receive().is_none());
@@ -6882,8 +6985,6 @@ fn automation_sent_response_busy_controller_command_repaint_unwind_fails_closed(
             &[&app],
         );
     }));
-    let _ = release_tx.send(());
-    worker.join().unwrap();
     assert_eq!(
         result
             .expect_err("deferred command repaint did not panic")
@@ -6907,6 +7008,12 @@ fn automation_sent_response_busy_controller_command_repaint_unwind_fails_closed(
 
 #[test]
 fn automation_sent_response_busy_repaint_panic_drops_broker_without_replay() {
+    if isolate_admission_contention_test(
+        "FESTERM_COMPLETION_BUSY_REPAINT_CHILD",
+        "automation::tests::automation_sent_response_busy_repaint_panic_drops_broker_without_replay",
+    ) {
+        return;
+    }
     let (mut coordinator, mut app, id, receive) = fixture();
     let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
     app.adopt_broadcast_configuration(
@@ -6970,43 +7077,64 @@ fn automation_sent_response_busy_repaint_panic_drops_broker_without_replay() {
         })
         .is_ok());
 
-    let context = egui::Context::default();
-    for _ in 0..4 {
-        let mut output = context.run_ui(Default::default(), |_| {});
-        output.textures_delta.clear();
-    }
     let armed = Arc::new(AtomicBool::new(false));
     let invoked = Arc::new(AtomicBool::new(false));
-    let callback_armed = armed.clone();
-    let callback_invoked = invoked.clone();
-    context.set_request_repaint_callback(move |_| {
-        if callback_armed.load(Ordering::Acquire) {
-            callback_invoked.store(true, Ordering::Release);
-            panic!("post-send busy repaint");
-        }
-    });
+    let busy_repaint = Arc::new(AtomicBool::new(false));
+    let witnessed = Arc::new(AtomicBool::new(false));
+    coordinator.peer_message_busy_repaint = Some(busy_repaint.clone());
     let (entered_tx, entered_rx) = mpsc::sync_channel(1);
     let (resume_tx, resume_rx) = mpsc::sync_channel(1);
     let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
     coordinator.peers.get_mut(&1).unwrap().after_finish = Some((entered_tx, resume_rx));
-    let worker = std::thread::spawn(move || {
-        entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-        let _guard = festerm_session::automation_admission_lock().unwrap();
-        armed.store(true, Ordering::Release);
-        resume_tx.send(()).unwrap();
-        release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-    });
+    let worker =
+        hold_admission_after_test_hook(entered_rx, resume_tx, release_rx, Some(armed.clone()));
     let deadline = Instant::now() + Duration::from_secs(10);
     let result = loop {
+        // A previous Busy tick may have already scheduled the same repaint.
+        // Prime a fresh context before installing the callback for this tick.
+        let context = egui::Context::default();
+        for _ in 0..4 {
+            let mut output = context.run_ui(Default::default(), |_| {});
+            output.textures_delta.clear();
+        }
+        busy_repaint.store(false, Ordering::Release);
+        let callback_armed = armed.clone();
+        let callback_invoked = invoked.clone();
+        let callback_busy_repaint = busy_repaint.clone();
+        let callback_witnessed = witnessed.clone();
+        let expected_delay = Duration::from_millis(50).saturating_sub(
+            Duration::try_from_secs_f32(context.input(|input| input.predicted_dt))
+                .unwrap_or_default(),
+        );
+        context.set_request_repaint_callback(move |info| {
+            if callback_armed.load(Ordering::Acquire) {
+                callback_invoked.store(true, Ordering::Release);
+                callback_witnessed.store(
+                    callback_busy_repaint.load(Ordering::Acquire)
+                        && info.delay == expected_delay
+                        && matches!(
+                            festerm_session::try_automation_admission_lock(),
+                            Err(festerm_session::AutomationAdmissionTryError::Busy)
+                        ),
+                    Ordering::Release,
+                );
+                panic!("post-send busy repaint");
+            }
+        });
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             coordinator.tick(&context, &[&app]);
         }));
-        if result.is_err() || Instant::now() >= deadline {
+        if result.is_err()
+            || coordinator.peers[&1].after_finish.is_none()
+            || Instant::now() >= deadline
+        {
             break result;
         }
         std::thread::sleep(Duration::from_millis(1));
     };
-    let _ = release_tx.send(());
+    // Dropping the sender also releases the worker on an unexpected unwind.
+    drop(release_tx);
+    coordinator.peers.get_mut(&1).unwrap().after_finish.take();
     worker.join().unwrap();
     let panic = result.expect_err("post-send busy repaint did not panic");
     assert_eq!(
@@ -7014,6 +7142,7 @@ fn automation_sent_response_busy_repaint_panic_drops_broker_without_replay() {
         Some(&"post-send busy repaint")
     );
     assert!(invoked.load(Ordering::Acquire));
+    assert!(witnessed.load(Ordering::Acquire));
     assert!(coordinator.reconciliation_deferred);
     assert!(coordinator.peers[&1].pending_completion.is_some());
     assert_eq!(coordinator.peers[&1].machine.in_flight(), 0);
@@ -7036,6 +7165,12 @@ fn automation_sent_response_busy_repaint_panic_drops_broker_without_replay() {
 
 #[test]
 fn automation_pending_completion_next_tick_pre_take_panic_drops_broker() {
+    if isolate_admission_contention_test(
+        "FESTERM_COMPLETION_PRE_TAKE_PANIC_CHILD",
+        "automation::tests::automation_pending_completion_next_tick_pre_take_panic_drops_broker",
+    ) {
+        return;
+    }
     let (mut coordinator, mut app, id, receive) = fixture();
     let settings = festerm_config::InterfaceSettings::DEFAULT
         .with_mcp_enabled(true)
@@ -7066,19 +7201,18 @@ fn automation_pending_completion_next_tick_pre_take_panic_drops_broker() {
     let (resume_tx, resume_rx) = mpsc::sync_channel(1);
     let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
     coordinator.peers.get_mut(&1).unwrap().after_finish = Some((entered_tx, resume_rx));
-    let worker = std::thread::spawn(move || {
-        entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-        let _guard = festerm_session::automation_admission_lock().unwrap();
-        resume_tx.send(()).unwrap();
-        release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-    });
+    let worker = hold_admission_after_test_hook(entered_rx, resume_tx, release_rx, None);
     let context = egui::Context::default();
     let deadline = Instant::now() + Duration::from_secs(10);
     while coordinator.peers[&1].after_finish.is_some() {
         coordinator.tick(&context, &[&app]);
         assert!(Instant::now() < deadline, "request was not dispatched");
-        std::thread::sleep(Duration::from_millis(1));
+        if coordinator.peers[&1].after_finish.is_some() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
+    release_tx.send(()).unwrap();
+    worker.join().unwrap();
     assert!(coordinator.reconciliation_deferred);
     assert_eq!(response(&receive)["id"], 1);
     assert!(receive().is_none());
@@ -7146,8 +7280,6 @@ fn automation_pending_completion_next_tick_pre_take_panic_drops_broker() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         coordinator.tick(&next_context, &[&app]);
     }));
-    let _ = release_tx.send(());
-    worker.join().unwrap();
     let panic = result.expect_err("workflow repaint did not panic");
     assert_eq!(
         panic.downcast_ref::<&str>(),
@@ -7414,6 +7546,12 @@ fn automation_js_disabled_at_unwind_can_be_explicitly_enabled_after_cleanup() {
 
 #[test]
 fn automation_pending_completion_busy_repaint_unwind_drops_taken_broker() {
+    if isolate_admission_contention_test(
+        "FESTERM_COMPLETION_PENDING_REPAINT_CHILD",
+        "automation::tests::automation_pending_completion_busy_repaint_unwind_drops_taken_broker",
+    ) {
+        return;
+    }
     let (mut coordinator, mut app, id, receive) = fixture();
     let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
     app.adopt_broadcast_configuration(
@@ -7437,46 +7575,68 @@ fn automation_pending_completion_busy_repaint_unwind_drops_taken_broker() {
     assert_eq!(response(&receive)["id"], 1);
     assert!(receive().is_none());
 
-    let context = egui::Context::default();
-    for _ in 0..4 {
-        let mut output = context.run_ui(Default::default(), |_| {});
-        output.textures_delta.clear();
-    }
     let armed = Arc::new(AtomicBool::new(false));
     let invoked = Arc::new(AtomicBool::new(false));
-    let callback_armed = armed.clone();
-    let callback_invoked = invoked.clone();
-    context.set_request_repaint_callback(move |_| {
-        if callback_armed.load(Ordering::Acquire) {
-            callback_invoked.store(true, Ordering::Release);
-            panic!("injected busy repaint panic");
-        }
-    });
+    let busy_repaint = Arc::new(AtomicBool::new(false));
+    let witnessed = Arc::new(AtomicBool::new(false));
+    coordinator.pending_cleanup_busy_repaint = Some(busy_repaint.clone());
     let (entered_tx, entered_rx) = mpsc::sync_channel(1);
     let (resume_tx, resume_rx) = mpsc::sync_channel(1);
     let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
     coordinator.after_reconcile = Some((entered_tx, resume_rx));
-    let worker = std::thread::spawn(move || {
-        entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-        let _guard = festerm_session::automation_admission_lock().unwrap();
-        armed.store(true, Ordering::Release);
-        resume_tx.send(()).unwrap();
-        release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-    });
+    let worker =
+        hold_admission_after_test_hook(entered_rx, resume_tx, release_rx, Some(armed.clone()));
     let deadline = Instant::now() + Duration::from_secs(10);
     let result = loop {
+        // Earlier reconciliation contention must not coalesce this repaint.
+        // The callback is installed only after the new context is primed.
+        let context = egui::Context::default();
+        for _ in 0..4 {
+            let mut output = context.run_ui(Default::default(), |_| {});
+            output.textures_delta.clear();
+        }
+        busy_repaint.store(false, Ordering::Release);
+        let callback_armed = armed.clone();
+        let callback_invoked = invoked.clone();
+        let callback_busy_repaint = busy_repaint.clone();
+        let callback_witnessed = witnessed.clone();
+        let expected_delay = Duration::from_millis(50).saturating_sub(
+            Duration::try_from_secs_f32(context.input(|input| input.predicted_dt))
+                .unwrap_or_default(),
+        );
+        context.set_request_repaint_callback(move |info| {
+            if callback_armed.load(Ordering::Acquire) {
+                callback_invoked.store(true, Ordering::Release);
+                callback_witnessed.store(
+                    callback_busy_repaint.load(Ordering::Acquire)
+                        && info.delay == expected_delay
+                        && matches!(
+                            festerm_session::try_automation_admission_lock(),
+                            Err(festerm_session::AutomationAdmissionTryError::Busy)
+                        ),
+                    Ordering::Release,
+                );
+                panic!("injected busy repaint panic");
+            }
+        });
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             coordinator.tick(&context, &[&app]);
         }));
-        if result.is_err() || Instant::now() >= deadline {
+        if result.is_err() || coordinator.after_reconcile.is_none() || Instant::now() >= deadline {
             break result;
         }
         std::thread::sleep(Duration::from_millis(1));
     };
-    let _ = release_tx.send(());
+    drop(release_tx);
+    coordinator.after_reconcile.take();
     worker.join().unwrap();
-    assert!(result.is_err(), "busy repaint callback did not panic");
+    let panic = result.expect_err("busy repaint callback did not panic");
+    assert_eq!(
+        panic.downcast_ref::<&str>(),
+        Some(&"injected busy repaint panic")
+    );
     assert!(invoked.load(Ordering::Acquire));
+    assert!(witnessed.load(Ordering::Acquire));
     assert!(coordinator.reconciliation_deferred);
     assert!(coordinator.peers[&1].pending_completion.is_some());
     assert!(coordinator.broker.is_none());

@@ -666,6 +666,10 @@ pub(crate) struct Coordinator {
     workflow_unwind_disabled_seen: bool,
     #[cfg(test)]
     after_reconcile: Option<(mpsc::SyncSender<()>, mpsc::Receiver<()>)>,
+    #[cfg(test)]
+    peer_message_busy_repaint: Option<Arc<AtomicBool>>,
+    #[cfg(test)]
+    pending_cleanup_busy_repaint: Option<Arc<AtomicBool>>,
     status: &'static str,
     peers: BTreeMap<u64, Peer>,
     targets: BTreeMap<u64, Target>,
@@ -706,6 +710,10 @@ impl Default for Coordinator {
             workflow_unwind_disabled_seen: false,
             #[cfg(test)]
             after_reconcile: None,
+            #[cfg(test)]
+            peer_message_busy_repaint: None,
+            #[cfg(test)]
+            pending_cleanup_busy_repaint: None,
             status: SettingsSnapshot::default().status,
             peers: BTreeMap::new(),
             targets: BTreeMap::new(),
@@ -1478,6 +1486,10 @@ impl Coordinator {
             Ok(()) => {}
             Err(festerm_session::AutomationAdmissionTryError::Busy) => {
                 self.reconciliation_deferred = true;
+                #[cfg(test)]
+                if let Some(marker) = &self.pending_cleanup_busy_repaint {
+                    marker.store(true, Ordering::Release);
+                }
                 context.request_repaint_after(Duration::from_millis(50));
                 self.broker = Some(broker);
                 return;
@@ -1605,6 +1617,10 @@ impl Coordinator {
                         Ok(()) => {}
                         Err(festerm_session::AutomationAdmissionTryError::Busy) => {
                             self.reconciliation_deferred = true;
+                            #[cfg(test)]
+                            if let Some(marker) = &self.peer_message_busy_repaint {
+                                marker.store(true, Ordering::Release);
+                            }
                             context.request_repaint_after(Duration::from_millis(50));
                             self.broker = Some(broker);
                             return;
