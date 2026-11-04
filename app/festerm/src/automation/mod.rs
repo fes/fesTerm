@@ -1536,6 +1536,10 @@ fn direct_binding(
             ]),
         ),
         Operation::PairingStatus => return Err(Refusal::InvalidArguments),
+        Operation::ControllerCapabilities
+        | Operation::ControllerRegister { .. }
+        | Operation::ControllerStatus { .. }
+        | Operation::ControllerUnregister { .. } => return Err(Refusal::Unavailable),
     };
     let canonical = serde_json::to_vec(&parameters).map_err(|_| Refusal::InvalidArguments)?;
     Ok(InvocationBinding {
@@ -1552,6 +1556,15 @@ fn admit_request(
     operation: &Operation,
     now: Instant,
 ) -> Result<(RunId, RequestId, Option<TargetRef>), Refusal> {
+    if matches!(
+        operation,
+        Operation::ControllerCapabilities
+            | Operation::ControllerRegister { .. }
+            | Operation::ControllerStatus { .. }
+            | Operation::ControllerUnregister { .. }
+    ) {
+        return Err(Refusal::Unavailable);
+    }
     let grant = peer.grant.as_ref().ok_or(Refusal::NotAuthorized)?;
     let discovery = matches!(
         operation,
@@ -1578,6 +1591,10 @@ fn admit_request(
             Some(reference)
         }
         Operation::PairingStatus => return Err(Refusal::InvalidArguments),
+        Operation::ControllerCapabilities
+        | Operation::ControllerRegister { .. }
+        | Operation::ControllerStatus { .. }
+        | Operation::ControllerUnregister { .. } => return Err(Refusal::Unavailable),
     };
     let scope = if discovery {
         Scope {

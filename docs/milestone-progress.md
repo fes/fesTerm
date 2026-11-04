@@ -129,6 +129,17 @@ uniform raw-handle path. The later-stage MCP capability advertises
 unavailability and its presentation call refuses without prompting or focusing.
 Injected event tests are not native proof; enrollment UI, real activation,
 response delivery, direct input and Windows qualification remain open.
+## Specifying a dormant controller protocol
+
+The MCP protocol crate now has an explicitly selected catalog for bounded,
+typed controller registration and status requests. The default observation
+catalog is unchanged, and the application refuses controller operations even
+if given the optional catalog. Requests cannot open a native prompt or grant
+authority. This is a protocol seam, not a controller service: no listener or
+native selection is enabled, and association IDs have no metadata consumer.
+The metadata feature is reported unavailable regardless of enrollment or grant
+status. Private bootstrap, privacy qualification and client integration remain
+open.
 
 ## Selecting exact controller targets without granting authority
 
@@ -142,11 +153,12 @@ privacy revocation, closure, replacement and broker restart discard affected
 associations. Identical session labels play no role.
 
 This is a non-authorizing foundation for [#524](https://github.com/fes/fesTerm/issues/524),
-not a client feature: there is no native enrollment UI or MCP operation.
+not a client feature: there is no native enrollment UI or integrated controller
+MCP operation.
 Separately approved metadata, native-confirmed presentation and end-to-end
 admission-time revalidation, native handoff/disarm, uncertain-outcome/no-replay
-handling and JavaScript-independent controller operation remain open. The P1
-#506 checkpoint remains observation-only.
+handling, JavaScript-independent controller operation and platform/backend
+capability reporting remain open. The P1 #506 checkpoint remains observation-only.
 
 ## Encoding explicit worker input without admitting it
 

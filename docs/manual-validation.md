@@ -2724,7 +2724,9 @@ grant/connection fences at every nonblocking frame write, closure after an
 interrupted partial frame and no automatic retry of uncertain input. Native
 evidence for these integrations remains uncollected.
 
-Controller enrollment has deterministic, non-authorizing kernel tests only.
+Controller enrollment has deterministic, non-authorizing kernel tests and a
+dormant opt-in protocol schema; the application does not expose its controller
+operations.
 The separately granted presentation state machine, app-command routing,
 workspace revision and presented-input admission seam have deterministic
 synthetic-source tests, including original-handoff/lease binding, wrong-backend
@@ -2740,7 +2742,8 @@ local sessions, actual metadata delivery, real attachment/disconnect races,
 actual activation confirmation (including Windows refusal), response/input
 ordering and explicit human handoff/disarm remain deferred under AUTO-01,
 AUTO-03, AUTO-04 and AUTO-05. No supported controller UI, real presentation
-operation, direct-input adapter or native-platform evidence is claimed.
+operation, direct-input adapter, association-handle metadata consumer or
+native-platform evidence is claimed.
 
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |

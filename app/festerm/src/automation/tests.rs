@@ -6,8 +6,7 @@ use super::*;
 use crate::session_controller::SessionController;
 use serde_json::{json, Value};
 
-fn ready() -> Machine {
-    let mut machine = Machine::new();
+fn ready_with(mut machine: Machine) -> Machine {
     assert!(matches!(
         machine.process_value(json!({
             "jsonrpc": "2.0", "id": 0, "method": "initialize",
@@ -26,6 +25,10 @@ fn ready() -> Machine {
         Event::NoReply
     ));
     machine
+}
+
+fn ready() -> Machine {
+    ready_with(Machine::new())
 }
 
 fn fixture() -> (Coordinator, FesTermApp, TabId, impl Fn() -> Option<Vec<u8>>) {
@@ -4479,6 +4482,106 @@ fn call(
 
 fn response(receive: &impl Fn() -> Option<Vec<u8>>) -> Value {
     serde_json::from_slice(&receive().expect("expected reply")).unwrap()
+}
+
+#[test]
+fn dormant_controller_operations_are_refused_without_host_effects() {
+    let (mut coordinator, mut app, id, receive) = fixture();
+    coordinator.peers.get_mut(&1).unwrap().machine =
+        ready_with(Machine::with_controller_enrollment());
+    let principal = coordinator.peers[&1].principal;
+    let retained = coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .register_controller_session(principal, b"existing-registration")
+        .unwrap();
+    let target = coordinator.targets[&id.chip_id()].reference;
+    let registration = festerm_automation_mcp::ControllerId::from_random_bytes([0x12; 16]);
+    let registration_id = registration.to_wire();
+    for operation in [
+        Operation::ControllerCapabilities,
+        Operation::ControllerRegister {
+            local_id: "client".into(),
+        },
+        Operation::ControllerStatus {
+            registration_id: registration,
+        },
+        Operation::ControllerUnregister {
+            registration_id: registration,
+        },
+    ] {
+        assert!(matches!(
+            direct_binding(&operation, Some(target)),
+            Err(Refusal::Unavailable)
+        ));
+    }
+
+    for approved in [false, true] {
+        if approved {
+            coordinator.approve(1, vec![target]).unwrap();
+        }
+        for (tool, arguments) in [
+            ("festerm_controller_capabilities", json!({})),
+            (
+                "festerm_controller_status",
+                json!({"registration_id": registration_id.as_str()}),
+            ),
+            (
+                "festerm_controller_unregister",
+                json!({"registration_id": registration_id.as_str()}),
+            ),
+            (
+                "festerm_controller_register",
+                json!({"local_id": "untrusted-controller-must-not-leak"}),
+            ),
+        ] {
+            call(&mut coordinator, &[&app], tool, arguments);
+            let reply = response(&receive);
+            assert_eq!(
+                reply["result"]["structuredContent"],
+                json!({"status": "refused", "code": "UNAVAILABLE"})
+            );
+            assert!(!reply
+                .to_string()
+                .contains("untrusted-controller-must-not-leak"));
+            assert_eq!(coordinator.peers[&1].grant.is_some(), approved);
+            assert!(coordinator.peers[&1].waits.is_empty());
+            assert!(app.take_automation_command().is_none());
+            assert_eq!(
+                coordinator
+                    .broker
+                    .as_ref()
+                    .unwrap()
+                    .controller_registration(principal, retained)
+                    .unwrap(),
+                b"existing-registration"
+            );
+        }
+        if approved {
+            call(
+                &mut coordinator,
+                &[&app],
+                "festerm_sessions_get",
+                json!({"session_ref": "ab".repeat(16)}),
+            );
+            assert_eq!(
+                response(&receive)["result"]["structuredContent"],
+                json!({"status": "refused", "code": "INVALID_ARGUMENTS"})
+            );
+            assert!(coordinator.peers[&1].grant.is_some());
+            assert!(app.take_automation_command().is_none());
+        }
+    }
+
+    let broker = coordinator.broker.as_mut().unwrap();
+    for index in
+        0..festerm_automation::Limits::default().controller_registrations_per_connection - 1
+    {
+        broker
+            .register_controller_session(principal, format!("capacity-probe-{index}").as_bytes())
+            .unwrap();
+    }
 }
 
 #[test]
