@@ -1,5 +1,20 @@
 # Milestone Progress Narrative
 
+## 0.14.2: iOS field editing and Dev Tunnel resiliency
+
+This patch packages five fixes. iOS profile form fields now support the native
+paste menu, long-press caret dragging and the space-bar trackpad (#536, #538).
+Dev Tunnel listing no longer drops tunnels whose listing omits port details
+(#537). Windows managed tunnel workers retry transient relay failures, and a
+worker whose health record is briefly held by a setup rerun now waits rather
+than stopping permanently (#539). The desktop Dev Tunnel profile editor is
+simplified to Save, Save and Connect and Cancel; saved profiles still connect
+when secure storage is unavailable, without keeping the sign-in (#545).
+
+Each change passed its hosted Windows, macOS and Linux checks before merge. The
+iOS field navigation was also checked by hand on an iPhone. Live signed-helper
+recovery qualification and clean-machine gates remain under #432.
+
 ## Dev Tunnel profile editor cleanup and theme alignment
 
 The native Dev Tunnel profile editor was pruned to a single, consistent form.
