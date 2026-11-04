@@ -60,6 +60,19 @@ struct Output {
     written: usize,
 }
 
+struct InFlightOutput<'a> {
+    io: &'a mut RecordIo,
+    output: Option<Output>,
+}
+
+impl Drop for InFlightOutput<'_> {
+    fn drop(&mut self) {
+        if self.output.is_some() {
+            self.io.close();
+        }
+    }
+}
+
 /// One verified channel with at most one pending frame in each direction.
 pub struct RecordIo {
     channel: Channel,
@@ -142,40 +155,45 @@ impl RecordIo {
 
     /// Perform one physical nonblocking write. The caller must hold its live
     /// disclosure/admission guard for the entire supplied write closure and
-    /// close the channel if that guard cannot be acquired.
+    /// close the channel if that guard cannot be acquired. A panicking closure
+    /// closes this channel during unwinding; the underlying stream must also
+    /// be discarded because the physical write outcome is unknown.
     pub fn write_pending(
         &mut self,
         write: impl FnOnce(&[u8]) -> io::Result<usize>,
     ) -> Result<WriteProgress, Error> {
         self.require_open()?;
-        let Some(output) = self.output.as_mut() else {
+        let Some(output) = self.output.take() else {
             return Ok(WriteProgress::Idle);
         };
+        let mut in_flight = InFlightOutput {
+            io: self,
+            output: Some(output),
+        };
+        let output = in_flight.output.as_mut().expect("output is in flight");
         let pending = &output.bytes[output.written..];
         match write(pending) {
-            Ok(0) => {
-                self.close();
-                Err(Error::Io(io::ErrorKind::WriteZero.into()))
-            }
-            Ok(written) if written > pending.len() => {
-                self.close();
-                Err(Error::InvalidRecord)
-            }
+            Ok(0) => Err(Error::Io(io::ErrorKind::WriteZero.into())),
+            Ok(written) if written > pending.len() => Err(Error::InvalidRecord),
             Ok(written) => {
                 output.written += written;
                 if output.written == output.bytes.len() {
-                    self.output = None;
+                    in_flight.output = None;
                     Ok(WriteProgress::Complete)
                 } else {
+                    in_flight.io.output = in_flight.output.take();
                     Ok(WriteProgress::Partial)
                 }
             }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(WriteProgress::Blocked),
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(WriteProgress::Retry),
-            Err(error) => {
-                self.close();
-                Err(Error::Io(error))
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                in_flight.io.output = in_flight.output.take();
+                Ok(WriteProgress::Blocked)
             }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                in_flight.io.output = in_flight.output.take();
+                Ok(WriteProgress::Retry)
+            }
+            Err(error) => Err(Error::Io(error)),
         }
     }
 
@@ -497,5 +515,29 @@ mod tests {
             sender.prepare_send(b"retry"),
             Err(Error::Channel(ChannelError::Closed))
         ));
+    }
+
+    #[test]
+    fn panicking_physical_write_closes_without_replaying_unknown_bytes() {
+        let (mut sender, mut receiver) = pair();
+        sender.prepare_send(b"private").unwrap();
+        let mut wire = Vec::new();
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = sender.write_pending(|pending| {
+                wire.push(pending[0]);
+                panic!("write panicked after accepting a byte");
+            });
+        }));
+        assert!(panic.is_err());
+        assert!(matches!(
+            sender.write_pending(|_| panic!("closed output must not be written")),
+            Err(Error::Channel(ChannelError::Closed))
+        ));
+        assert!(matches!(
+            sender.prepare_send(b"retry"),
+            Err(Error::Channel(ChannelError::Closed))
+        ));
+        assert_eq!(receiver.receive(&wire).unwrap(), (1, None));
+        assert!(matches!(receiver.end_input(), Err(Error::Truncated)));
     }
 }
