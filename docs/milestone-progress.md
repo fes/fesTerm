@@ -7084,3 +7084,11 @@ added by this slice.
 Capture never retrieves secret-store contents, but copied freeform profile data
 may itself be sensitive. Trusted handling, no blind logging and no worker
 disclosure are required; redacted snapshot Debug does not sanitize the profile.
+
+## Secondary window workspace document preservation
+
+With workspace restore enabled, new and restored secondary windows keep the
+complete supplied configuration for later saves without restoring the primary
+window's tabs. When restore is off, stale workspace metadata remains scrubbed.
+Focused regressions cover both cases; cross-window save ordering and
+configuration-generation ownership remain unresolved.

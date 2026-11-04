@@ -736,16 +736,21 @@ impl FesTermApp {
         secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
         documents: SharedDocuments,
     ) -> Self {
+        let configuration = if configuration.interface_settings().restore_workspace() {
+            configuration
+        } else {
+            configuration.without_workspace()
+        };
         let mut window = Self::with_configuration_status_and_secret_store_and_native_smoke(
             context,
-            // A new window starts on the Launcher. Workspace restore is the
-            // primary window's startup behaviour, not something every later
-            // window repeats.
+            // Choose the Launcher without restoring the primary window's
+            // tabs. Retain the document after applying the restore preference.
             configuration.without_workspace(),
             configuration_status,
             secret_store,
             None,
         );
+        window.state.replace_configuration(configuration);
         window.configuration_reloader = configuration_reloader;
         // The registry is application-scoped: a second window joins the one
         // that already exists rather than starting its own.
@@ -768,7 +773,7 @@ impl FesTermApp {
     ) {
         self.state = AppState::with_restored_window(
             context,
-            self.state.configuration().clone().without_workspace(),
+            self.state.configuration().clone(),
             window.tabs(),
             window.focused_tab_id(),
         );
@@ -13920,6 +13925,173 @@ mod tests {
             app.configuration_status,
             ConfigurationStartupStatus::Loaded
         ));
+    }
+
+    fn secondary_workspace_configuration() -> Configuration {
+        use festerm_config::{WorkspaceConfiguration, WorkspaceTab, WorkspaceWindow};
+
+        let workspace = WorkspaceConfiguration::with_windows(
+            vec![
+                WorkspaceTab::settings("primary-settings").unwrap(),
+                WorkspaceTab::ssh_session("primary-ssh", "remote").unwrap(),
+            ],
+            Some("primary-settings".to_owned()),
+            vec![WorkspaceWindow::new(
+                vec![
+                    WorkspaceTab::launcher("secondary-launcher").unwrap(),
+                    WorkspaceTab::profiles("secondary-profiles").unwrap(),
+                ],
+                Some("secondary-profiles".to_owned()),
+                None,
+            )],
+        )
+        .unwrap();
+        let profile = Profile::ssh("remote", "example.test", 22, "user", "xterm", 80, 24).unwrap();
+        Configuration::new_with_workspace(vec![profile], workspace)
+            .unwrap()
+            .with_interface_settings(InterfaceSettings::DEFAULT.with_compact_launcher_grid(false))
+            .unwrap()
+    }
+
+    fn secondary_window_with_workspace(
+        context: &egui::Context,
+        configuration: &Configuration,
+        path: &std::path::Path,
+    ) -> FesTermApp {
+        FesTermApp::secondary_window(
+            context,
+            configuration.clone(),
+            ConfigurationStartupStatus::Loaded,
+            ConfigurationReloader::from_path_for_test(path.to_owned()),
+            Ok(Arc::new(MemorySecretStore::new())),
+            crate::documents::DocumentRegistry::shared(),
+        )
+    }
+
+    fn assert_secondary_profile_save_preserves_workspace(
+        window: &mut FesTermApp,
+        configuration: &Configuration,
+        path: &std::path::Path,
+    ) {
+        let profile = Profile::local("new", "sh", vec![], None).unwrap();
+        let expected = configuration.with_profile(profile.clone()).unwrap();
+        assert!(window.save_profile(profile));
+        assert_eq!(window.state.configuration(), &expected);
+        assert_eq!(Configuration::load_from_path(path).unwrap(), expected);
+        assert_eq!(expected.workspace(), configuration.workspace());
+        assert!(expected.without_profile("remote").is_err());
+    }
+
+    #[test]
+    fn new_secondary_preserves_workspace_document_on_profile_save() {
+        let context = egui::Context::default();
+        let fixture = crate::configuration_startup::SessionNameConfigurationFixture::new();
+        let configuration = secondary_workspace_configuration();
+        configuration.save_to_path(&fixture.path).unwrap();
+        let mut window = secondary_window_with_workspace(&context, &configuration, &fixture.path);
+
+        assert_eq!(window.state.configuration(), &configuration);
+        assert_eq!(
+            window.state.interface_settings(),
+            *configuration.interface_settings()
+        );
+        assert_eq!(window.state.tabs().len(), 1);
+        assert!(matches!(
+            window.state.active_tab().content,
+            TabContent::Launcher
+        ));
+        assert!(window.take_restored_windows().is_empty());
+        assert_secondary_profile_save_preserves_workspace(
+            &mut window,
+            &configuration,
+            &fixture.path,
+        );
+        assert_eq!(window.state.tabs().len(), 1);
+        assert!(matches!(
+            window.state.active_tab().content,
+            TabContent::Launcher
+        ));
+    }
+
+    #[test]
+    fn restored_secondary_preserves_workspace_document_on_profile_save() {
+        let context = egui::Context::default();
+        let fixture = crate::configuration_startup::SessionNameConfigurationFixture::new();
+        let configuration = secondary_workspace_configuration();
+        configuration.save_to_path(&fixture.path).unwrap();
+        let mut window = secondary_window_with_workspace(&context, &configuration, &fixture.path);
+        let saved_window = &configuration.workspace().unwrap().windows()[0];
+        window.restore_window_tabs(&context, saved_window);
+
+        assert_eq!(window.state.configuration(), &configuration);
+        assert_eq!(
+            window.state.interface_settings(),
+            *configuration.interface_settings()
+        );
+        assert_eq!(window.state.tabs().len(), 2);
+        assert!(matches!(
+            window.state.tabs()[0].content,
+            TabContent::Launcher
+        ));
+        assert!(matches!(
+            window.state.tabs()[1].content,
+            TabContent::Profiles
+        ));
+        assert!(matches!(
+            window.state.active_tab().content,
+            TabContent::Profiles
+        ));
+        assert!(window.take_restored_windows().is_empty());
+        assert_secondary_profile_save_preserves_workspace(
+            &mut window,
+            &configuration,
+            &fixture.path,
+        );
+        assert_eq!(window.state.tabs().len(), 2);
+        assert!(matches!(
+            window.state.active_tab().content,
+            TabContent::Profiles
+        ));
+    }
+
+    #[test]
+    fn secondary_with_restore_off_scrubs_workspace_before_profile_save() {
+        let context = egui::Context::default();
+        let fixture = crate::configuration_startup::SessionNameConfigurationFixture::new();
+        let configuration = secondary_workspace_configuration()
+            .with_interface_settings(InterfaceSettings::new(
+                festerm_config::ChipLayoutPreference::SingleRowScroll,
+                true,
+                false,
+                false,
+                false,
+            ))
+            .unwrap();
+        assert!(configuration.workspace().is_some());
+        configuration.save_to_path(&fixture.path).unwrap();
+        let mut window = secondary_window_with_workspace(&context, &configuration, &fixture.path);
+        let scrubbed = configuration.without_workspace();
+
+        assert_eq!(window.state.configuration(), &scrubbed);
+        assert_eq!(
+            window.state.interface_settings(),
+            *configuration.interface_settings()
+        );
+        assert!(!window.state.restore_workspace());
+        assert_eq!(window.state.tabs().len(), 1);
+        assert!(matches!(
+            window.state.active_tab().content,
+            TabContent::Launcher
+        ));
+        assert!(window.take_restored_windows().is_empty());
+
+        let profile = Profile::local("new", "sh", vec![], None).unwrap();
+        let expected = scrubbed.with_profile(profile.clone()).unwrap();
+        assert!(window.save_profile(profile));
+        let saved = Configuration::load_from_path(&fixture.path).unwrap();
+        assert_eq!(saved, expected);
+        assert!(!saved.workspace_enabled());
+        assert!(saved.workspace().is_none());
     }
 
     #[test]
