@@ -77,6 +77,8 @@ fn native_windows_default_shell_stays_interactive_in_the_requested_directory() {
     command
         .args(["start", "--name", name, "--cols", "512", "--cwd"])
         .arg(&runtime);
+    let generation = festerm_sessiond::lifecycle::now_ms();
+    command.env("FESTERM_SESSIOND_GENERATION", generation.to_string());
     assert_success("default-shell start", &run_start_command(command));
 
     let registry = runtime.join("fesTerm").join("sessiond");
@@ -91,6 +93,20 @@ fn native_windows_default_shell_stays_interactive_in_the_requested_directory() {
         noop_session_event_notifier(),
     )
     .unwrap();
+    assert_eq!(selected.created_at_unix_ms, generation);
+    let history = festerm_sessiond::lifecycle::history(
+        &registry,
+        &festerm_sessiond::NativeSessionIdentity {
+            name: selected.name.clone(),
+            pid: selected.pid,
+            created_at_unix_ms: selected.created_at_unix_ms,
+            endpoint: selected.endpoint.clone(),
+        },
+    )
+    .unwrap();
+    assert!(history
+        .iter()
+        .any(|entry| entry.event == festerm_sessiond::lifecycle::Event::Ready));
     bounded_poll(
         || session.lifecycle() == SessionLifecycle::Running,
         "default-shell attachment",
@@ -1474,6 +1490,17 @@ fn native_daemon_exits_and_deregisters_when_its_shell_exits() {
 
     let registry = runtime_root.join("festerm").join("sessiond");
     let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
+    let selected = festerm_sessiond::list_unattached_sessions_in(&registry)
+        .unwrap()
+        .into_iter()
+        .find(|session| session.name == name)
+        .unwrap();
+    let identity = festerm_sessiond::NativeSessionIdentity {
+        name: name.clone(),
+        pid: selected.pid,
+        created_at_unix_ms: selected.created_at_unix_ms,
+        endpoint: endpoint.clone(),
+    };
     let mut client = connect(
         &endpoint,
         registry_admission(&registry.join("registry.json"), &name, false),
@@ -1505,6 +1532,12 @@ fn native_daemon_exits_and_deregisters_when_its_shell_exits() {
             String::from_utf8(output.stdout).unwrap().trim() == "no live sessions"
         },
     );
+    let history = festerm_sessiond::lifecycle::history(&registry, &identity).unwrap();
+    assert!(history.iter().any(|entry| matches!(
+        entry.event,
+        festerm_sessiond::lifecycle::Event::ShellExited { code: 0 }
+    )));
+    assert!(!festerm_sessiond::lifecycle::unexpected_exit(&history));
 }
 
 /// A client that stops reading for a moment must not be disconnected.
@@ -1770,22 +1803,28 @@ fn short_runtime_root(_suffix: &str) -> PathBuf {
             PathBuf::from(root),
             format!("{}-{index}", std::process::id()),
         ),
-        None => (
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        None => {
+            #[cfg(windows)]
+            let base = std::env::temp_dir();
+            #[cfg(unix)]
+            let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .and_then(Path::parent)
                 .and_then(Path::parent)
                 .expect("crate lives under /Users/fes/src workspace during native tests")
-                .join(".f"),
-            native_test_runtime_leaf(
-                std::process::id(),
-                index,
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis(),
-            ),
-        ),
+                .join(".f");
+            (
+                base,
+                native_test_runtime_leaf(
+                    std::process::id(),
+                    index,
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis(),
+                ),
+            )
+        }
     };
     let root = base.join(leaf);
     #[cfg(unix)]

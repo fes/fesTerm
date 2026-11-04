@@ -68,10 +68,12 @@
         "TUNNEL-0[12356]"
       ],
       "requirements": [
-        "docs/adr/0053-separate-dev-tunnels-session-bridge.md#decision"
+        "docs/adr/0053-separate-dev-tunnels-session-bridge.md#decision",
+        "docs/adr/0066-opt-in-managed-daemon-recovery.md#decision"
       ],
       "decisions": [
-        "ADR-0053"
+        "ADR-0053",
+        "ADR-0066"
       ],
       "automated_tests": [
         "private_token_line_preserves_bound_with_lf_crlf_and_invalid_input",
@@ -104,6 +106,10 @@
         "service_rerun_keeps_a_legacy_linux_definition_until_helpers_are_current",
         "managed_worker_retries_transient_failures_but_not_operator_refusals",
         "managed_windows_worker_retries_until_recovery_and_stops_on_refusal",
+        "lifecycle_journal_is_bounded_generation_scoped_and_preserves_stop_intent",
+        "managed_daemon_restart_budget_survives_reload_and_refuses_clock_rollback",
+        "managed_daemon_recovery_replaces_only_the_authorized_generation",
+        "host_refusal_does_not_claim_that_enabled_takeover_is_off",
         "managed_worker_retry_waits_and_can_be_cancelled_before_another_attempt",
         "managed_worker_cleans_ready_and_pre_ready_runs_without_touching_installation",
         "managed_worker_waits_out_a_setup_rerun_reading_health_instead_of_refusing",
@@ -124,6 +130,7 @@
         "default_shell_accepts_a_working_directory_without_losing_its_arguments",
         "shell_arguments_still_require_an_explicit_shell_with_or_without_a_directory",
         "native_windows_default_shell_stays_interactive_in_the_requested_directory",
+        "native_daemon_exits_and_deregisters_when_its_shell_exits",
         "windows_default_shell_finds_pwsh_on_path_or_in_program_files_before_cmd",
         "windows_default_shell_prefers_the_user_powershell_alias_when_enabled",
         "windows_default_shell_falls_back_to_comspec_then_windows_powershell",

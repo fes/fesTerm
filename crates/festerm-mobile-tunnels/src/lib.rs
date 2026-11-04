@@ -783,10 +783,7 @@ impl TunnelClient {
                 &cancel.0,
             )
             .await
-            .map_err(|error| match error {
-                mobile::AttachError::Refused => TunnelError::SessionInUse { by: held },
-                other => other.into(),
-            })?;
+            .map_err(TunnelError::from)?;
             let session = TunnelSession::spawn(self.runtime.handle(), handshake, notifier);
             Ok(Attachment {
                 probe: stream.probe,

@@ -33,6 +33,8 @@ pub enum TunnelError {
         presented: String,
     },
     SessionNotFound,
+    /// Legacy refusals do not distinguish occupancy from a dead/changed daemon.
+    AttachRefused,
     /// Someone holds the session and this profile does not allow takeover (or
     /// the host forbids it).
     SessionInUse {
@@ -68,6 +70,9 @@ impl fmt::Display for TunnelError {
                 f.write_str("The host identity changed. Verify it before connecting.")
             }
             Self::SessionNotFound => f.write_str("The remote session is no longer available."),
+            Self::AttachRefused => f.write_str(
+                "The host refused the attachment. The session may have ended or changed; check the host logs.",
+            ),
             Self::SessionInUse { .. } => {
                 f.write_str("The session is attached elsewhere and takeover is off.")
             }
@@ -130,7 +135,7 @@ impl From<ClientError> for TunnelError {
 impl From<AttachError> for TunnelError {
     fn from(error: AttachError) -> Self {
         match error {
-            AttachError::Refused => Self::SessionInUse { by: None },
+            AttachError::Refused => Self::AttachRefused,
             AttachError::Protocol => Self::Protocol,
             AttachError::Connection => Self::Network,
             AttachError::Cancelled => Self::Cancelled,

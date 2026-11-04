@@ -417,7 +417,32 @@ fn main() {
         return;
     }
     if args == ["--help"] {
-        println!("festerm-tunnel-setup [--managed] --devtunnel ABSOLUTE_CLI_PATH --state-dir ABSOLUTE_PRIVATE_DIRECTORY [--no-takeover] [--upgrade] [--friendly-name NAME]\nDefault: new foreground-only setup in a new directory.\n--managed: explicit per-user service setup; healthy reruns reuse the original private tunnel, host identity and exact shell generation, printing public profile JSON without credentials. Stale/partial/foreign state refuses, never creates a replacement. Add --upgrade to switch an existing installation's service to this release's helpers, keeping its tunnel, host key and running daemon session. Add --friendly-name NAME on first setup to name the tunnel's user-visible description.\n--serve --state-dir ABSOLUTE_PRIVATE_DIRECTORY: existing installation worker, no provisioning or key regeneration.\nFirst setup uses interactive official GitHub login and creates one private 30-day tunnel, marked virtual port and retained /bin/sh or cmd.exe session. Managed startup requires an unelevated user; sign-in auto-start does not preserve a shell through reboot. Linux services and Windows workers retry 15s after a transient bridge/relay failure (never after a stale-daemon/account/identity or unsafe-cleanup refusal, exit 78). Windows retries in-process and stops after clean bridge shutdown; existing hosts need an explicit helper upgrade. The worker always records start/ready/retry/exit and client open/close events, without credentials or terminal data, in the state directory's bounded worker.log. No remote file access, ACL widening, takeover or automatic client reconnect.");
+        println!(concat!(
+            "festerm-tunnel-setup [--managed] --devtunnel ABSOLUTE_CLI_PATH --state-dir ABSOLUTE_PRIVATE_DIRECTORY ",
+            "[--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected]\n",
+            "Default: new foreground-only setup in a new directory.\n",
+            "--managed: explicit per-user service setup; healthy reruns reuse the original private tunnel, ",
+            "host identity and exact shell generation, printing public profile JSON without credentials. ",
+            "By default stale/partial/foreign state refuses, never creates a replacement. ",
+            "Add --upgrade to switch an existing installation's service to this release's helpers, ",
+            "keeping its tunnel, host key and running daemon session. ",
+            "Add --friendly-name NAME on first setup to name the tunnel's user-visible description.\n",
+            "--restart-unexpected: explicitly allow a NEW default shell after instrumented unexpected daemon loss, ",
+            "at most three starts per ten minutes; never after observed shell exit or operator stop. ",
+            "Missing evidence and uncertain creation refuse. --no-restart-unexpected disables this policy. ",
+            "Policy changes restart the owned worker; older helpers require --upgrade. ",
+            "Automatic client recovery never switches generations; reconnect explicitly. Programs/state are not restored.\n",
+            "--serve --state-dir ABSOLUTE_PRIVATE_DIRECTORY: existing installation worker, no cloud provisioning or key regeneration.\n",
+            "First setup uses interactive official GitHub login and creates one private 30-day tunnel, ",
+            "marked virtual port and retained platform-default shell session. Managed startup requires an unelevated user; ",
+            "sign-in auto-start does not preserve a shell through reboot. Linux services and Windows workers retry 15s ",
+            "after transient bridge/relay failure; opted-in daemon supervision also retries on macOS. ",
+            "Identity, unauthorized stale-generation and unsafe-cleanup refusals exit 78. ",
+            "Existing hosts need an explicit helper upgrade. The worker records start/ready/retry/exit, ",
+            "daemon loss/replacement and client open/close events in bounded worker.log. ",
+            "Daemons retain bounded private lifecycle journals under the runtime root. ",
+            "No credentials or terminal data are logged. No remote file access, ACL widening or automatic client takeover/reconnect."
+        ));
         return;
     }
     let result = tokio::runtime::Builder::new_multi_thread()
