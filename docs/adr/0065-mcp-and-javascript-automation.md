@@ -51,7 +51,14 @@ to bypass another's restrictions.
    control of another terminal, titles/notifications, child parameters and
    outcomes, or the mixed invocation refuses. External clients can retain and
    reuse legitimately released data; this is not end-to-end DLP. Script-supplied
-   approval flags are never authority.
+   approval flags are never authority. The pure broker kernel supports a typed
+   direct-input binding containing one exact target, the application-computed
+   digest and length of immutable encoded input, alongside the separate canonical
+   invocation-parameter digest. A live native grant must approve that exact
+   binding and control scope with explicit handoff. Such a root needs neither
+   JavaScript nor observation scope and can prepare only one control request;
+   abort, settlement or commit does not permit a second effect in that run.
+   This primitive adds no MCP tool, native approval UI or terminal write path.
 4. **Treat observation as disclosure and terminal control as execution.** Data
    reads may disclose passwords, tokens or private output; redaction is best
    effort, not authorization. Arbitrary terminal input grants the target
@@ -86,8 +93,17 @@ to bypass another's restrictions.
    suspension, disconnect, replacement
    or grant revocation closes admission and invalidates queued effects. Existing
    accepted writes may have executed and cannot be rolled back. Recovery never
-   silently retargets or replays a run; a new run requires a fresh grant. No
-   automatic takeover or recreation of an exited shell is introduced.
+   silently retargets or replays a run; after takeover, revocation or recovery,
+   a new run requires a fresh native grant. A still-live grant may authorize
+   repeated **new intentional** invocations of the same approved action within
+   its lifetime and budgets. Native UI must make this repetition clear. No
+   adapter may automatically replay a lost response, and the client owns #524's
+   durable uncertain-action interlock; the kernel keeps no persistent
+   exactly-once input receipts. Approval alone does not transfer another
+   principal's writer or revoke its grant. Before a transfer, the native adapter
+   must explicitly cut the old grant/run/lease and serialize the handoff with
+   controller and worker admission; a cut may require a fresh proposal and
+   approval. No automatic takeover or recreation of an exited shell is introduced.
    The local PTY backend can reserve an inert position in its existing bounded
    command queue before an exact broker commit. The controller must hold its
    worker, privacy and attachment fences through publication, and must verify
@@ -102,6 +118,11 @@ to bypass another's restrictions.
    invalidates the fence before delivery. This is not a lease: integration must
    still cut the broker grant and worker, check the exact fence at every effect
    and disclosure boundary, and obtain native handoff.
+   At the real input queue publication boundary the future application adapter
+   must revalidate privacy, attachment/generation, terminal modes, human
+   input/IME fences, any required presentation condition, and the same immutable
+   bytes, in addition to the live grant and writer epoch. The kernel alone does
+   not perform or qualify those checks.
 8. **Gate execution and platform claims in stages.** The full contract,
    capability matrix, limits, threat model, outcomes and validation plan live
    in [the companion design](../automation-design.md), which is part of this
@@ -179,7 +200,12 @@ in the design must be visible in implementation/release review.
   replay, disclosure, imports, resource bounds, confinement, cancellation,
   stale-target input and MCP transport behavior. The kernel's deterministic
   tests cover channel separation, exact targets, attenuation, quotas, lease
-  epochs, completion cuts and idempotent starts. Configuration tests cover
+  epochs, completion cuts and idempotent starts. New direct-input kernel tests
+  cover the exact approved binding, single-request cut, repeatable new
+  invocations, explicit takeover and lifecycle revocation without workflow or
+  observation scope. They also verify approval does not steal another writer.
+  They do not expose control in the P1 observation-only MCP checkpoint or
+  qualify any real input adapter. Configuration tests cover
   independent default-off opt-ins. MCP protocol, private framing, bounded
   observation, pairing and stale-target tests cover the P1 path. Incremental
   Noise handshake tests cover bounded framing, readiness and withholding the

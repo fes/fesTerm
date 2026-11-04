@@ -52,8 +52,9 @@ impl TargetRef {
     }
 }
 
-/// SHA-256 digest computed by the application over a frozen canonical artifact
-/// or schema-validated canonical parameters, not an asserted worker hash.
+/// SHA-256 digest computed by the application over a frozen canonical artifact,
+/// schema-validated canonical parameters, or immutable encoded input; never an
+/// asserted worker or client hash.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct Digest(pub [u8; 32]);
 
@@ -70,8 +71,21 @@ pub enum DirectKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Invocation {
-    Direct { operation: DirectKind },
-    Workflow { bundle: Digest, manifest: Digest },
+    Direct {
+        operation: DirectKind,
+    },
+    /// One exact direct-input action; no workflow or observation is implied.
+    DirectInput {
+        target: TargetRef,
+        /// Application-computed SHA-256 digest of the immutable encoded input.
+        input: Digest,
+        /// Length of those same encoded bytes.
+        bytes: u32,
+    },
+    Workflow {
+        bundle: Digest,
+        manifest: Digest,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
@@ -79,6 +93,7 @@ pub enum Invocation {
 pub struct InvocationBinding {
     pub api_version: u32,
     pub invocation: Invocation,
+    /// Digest of the schema-validated canonical invocation parameters.
     pub parameters: Digest,
 }
 
@@ -127,7 +142,7 @@ pub struct GrantRequest {
 
 /// Native UI decision. Deliberately neither serializable nor deserializable.
 /// Only trusted application code may construct this after showing exact scopes,
-/// workflow/parameter digests and the caller identity.
+/// invocation bindings, parameter/input digests and the caller identity.
 pub struct NativeApproval {
     pub(crate) request: GrantRequest,
     pub(crate) lifetime: Duration,
@@ -146,6 +161,7 @@ impl NativeApproval {
     /// Native consent to unknown remote editing/TUI state AND disclosure of all
     /// listed sources through this exact account's execution/network authority.
     /// An empty local input queue is not evidence for granting this consent.
+    /// Recording consent does not cut a current owner or acquire a writer lease.
     pub fn accept_control_handoff(
         mut self,
         target: TargetRef,

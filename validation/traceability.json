@@ -221,12 +221,22 @@
         "takeover_invalidates_queued_writes_and_permanently_disqualifies_old_runs",
         "pending_host_calls_and_late_callbacks_cannot_cross_the_completion_cut",
         "normal_start_response_does_not_orphan_or_cancel_its_distinct_workflow",
-        "successful_and_exceptional_completion_release_the_invocations_own_lease"
+        "successful_and_exceptional_completion_release_the_invocations_own_lease",
+        "direct_input_requires_exact_native_handoff_without_workflow_or_observation",
+        "direct_input_binds_parameters_target_lease_and_exact_committed_input",
+        "direct_read_policy_never_authorizes_a_direct_input_action",
+        "direct_input_is_one_request_even_after_abort_settlement_or_lost_response",
+        "control_approval_does_not_transfer_an_existing_writer",
+        "control_approval_preserves_other_pending_snapshots_without_a_writer",
+        "explicit_takeover_cuts_cross_principal_control_and_stale_approvals",
+        "direct_input_lifecycle_revocation_never_restores_old_runs",
+        "direct_input_charges_run_principal_and_global_budgets_across_invocations"
       ],
       "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04"],
       "status": "partial",
       "prerequisites": [
         "Control and worker integration require input ownership validation and platform confinement",
+        "Native direct-input approval and actual publication-boundary revalidation remain unavailable",
         "Native lifecycle evidence and workflow result delivery remain open"
       ]
     },

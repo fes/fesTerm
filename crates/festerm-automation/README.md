@@ -27,15 +27,24 @@ platforms and unqualified adapters disabled in the application.
    `direct_read_calls` is an explicit native-approved policy for schema-validated
    discovery or observation within the exact granted scope. Each such run still
    binds its own canonical operation/parameter digest. This policy cannot grant
-   workflow starts, control, or any other effect; their bindings remain exact.
+   workflow starts, direct input, or any other effect; their bindings remain exact.
 4. Native UI constructs `NativeApproval`, specifying exact targets and approved
    immutable `InvocationBinding`s. Show the real channel identity, observation
-   disclosure, workflow/manifest/parameter digests and deadline. To authorize
-   control, call `accept_control_handoff` for **each** controlled target with
-   **every** readable source, including discovery metadata. This native-only
-   decision accepts unknown remote editing/TUI state and full account execution/
-   network disclosure. Empty local queues or caller flags are not consent.
-   Approval checks the ownership snapshot captured in the pending proposal.
+   disclosure, workflow/manifest/parameter digests and deadline. For direct
+   input, also show the exact target and action, the grant lifetime and that
+   the same approved action may be invoked repeatedly while it remains live.
+   To authorize control, call `accept_control_handoff` for **each** controlled
+   target with **every** readable source, including discovery metadata. This
+   native-only decision accepts unknown remote editing/TUI state and full
+   account execution/network authority. Empty local queues, hardware gestures
+   claimed by a client or caller flags are not consent. Approval checks the
+   ownership snapshot captured in the pending proposal; consent and approval
+   alone neither transfer another principal's writer nor revoke its grant.
+   Before a transfer, the native adapter must explicitly cut the old grant/run/
+   lease and serialize the corresponding controller, worker and input fences.
+   `human_takeover` is an explicit target-wide cut; because it invalidates
+   existing control grants and pending ownership snapshots, a fresh proposal
+   and native approval may be needed after the cut.
 5. Freeze and validate the entire workflow bundle/manifest and canonical
    parameters in the application. Compute their digests there. The application
    derives `RunSpec.scope` from the verified immutable manifest maximum;
@@ -43,6 +52,18 @@ platforms and unqualified adapters disabled in the application.
    the native grant and parent intersection, deadlines and shared budgets.
    Bindings cannot be changed after admission. Only trusted application code
    admits native roots; JS host calls MUST supply their actual parent.
+   For a direct input root, the application instead constructs
+   `Invocation::DirectInput` with the exact `TargetRef`, SHA-256 digest and
+   byte count of its immutable encoded input. `InvocationBinding.parameters`
+   remains the separate digest of the schema-validated canonical operation and
+   parameters; neither digest is accepted from the client. The run must retain
+   that target in its control scope, but needs no workflow or observation scope.
+   It can prepare one control request only, even after that request is aborted,
+   settled or committed, and cannot perform reads, start workflows or disclose
+   results. A live native grant can authorize a **new intentional invocation**
+   of the same approved binding within its lifetime and shared budgets. This is
+   not an exactly-once receipt: an adapter must never automatically retry a lost
+   response, and the client owns the durable uncertain-action interlock.
 6. For asynchronous MCP starts, create a bounded `DirectKind::WorkflowStart`
    context and call `start_workflow` with a per-channel `StartKey`. It atomically
    creates a distinct connection-owned run plus immutable receipt before worker
@@ -67,10 +88,15 @@ platforms and unqualified adapters disabled in the application.
    Only then call `commit_lease`; dropping the transition aborts. Install the
    returned `ownership_epoch` in the same controller. This does **not** prove
    clean remote state. `prepare_request(Control)` binds this exact lease and
-   encoded input digest/byte count. Reserve an infallible bounded queue slot,
-   independently hash/count the actual encoded bytes, call `commit_control`
-   with those values, and immediately fill the slot. There must be no intervening
-   controller event. Backpressure aborts before commit; never replay input.
+   encoded input digest/byte count. A direct input's lease target must match the
+   approved binding at lease preparation and commit; request preparation and
+   exact input commit must also match its approved digest and length. Reserve
+   an infallible bounded queue slot and, at the real publication boundary,
+   revalidate privacy, the live attachment/generation, terminal modes, input/IME
+   fences, any required presentation condition, and immutable bytes.
+   Independently hash/count those bytes, call `commit_control` with those values,
+   and immediately fill the slot. There must be no intervening controller event.
+   Backpressure aborts before commit; never replay input.
    Every actual downstream dispatch must also honor the controller ownership
    epoch; takeover/revoke discards stale **not-yet-admitted** items.
 9. `settle_request` acknowledges or aborts a host call; neither refunds quotas nor

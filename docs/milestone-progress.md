@@ -1,5 +1,24 @@
 # Milestone Progress Narrative
 
+## Binding direct input without a workflow
+
+The shared authority kernel can now bind a direct input invocation to an exact
+target, immutable encoded-input digest and length while retaining its canonical
+parameter digest. It requires the existing native control scope and handoff,
+checks the writer lease and exact commit, and permits only one prepared control
+request per invocation. Explicit human takeover cuts old grants, runs and
+leases; ordinary approval does not transfer another writer. A future native
+adapter must explicitly serialize the cut/handoff before a transfer. A still-live
+grant may authorize a new intentional repeat within its budgets; a lost response
+never authorizes automatic replay, and #524 leaves the durable uncertain-action
+interlock to the client.
+
+Deterministic broker tests cover these boundaries without workflow or
+observation scope. This does not add an MCP tool, native control UI, terminal
+write, presentation or enrollment path; P1 remains observation-only. The real
+application adapter and native/platform security and usability evidence remain
+open.
+
 ## Encoding explicit worker input without admitting it
 
 Worker text and key requests now have an inert, bounded adapter to the

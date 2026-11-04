@@ -152,6 +152,34 @@ default workflow. The operation schema bounds its requested scopes. Native
 manual invocations use the same accounting/approval record, with their native
 user-invocation principal.
 
+The pure broker kernel also represents one direct terminal-input invocation as
+an exact `TargetRef`, SHA-256 digest and byte length of immutable encoded input,
+plus the existing canonical parameter digest. The trusted application computes
+both digests; the canonical digest binds the operation/schema identity and
+validated parameters. A client-supplied digest is not authority. A native grant
+must explicitly approve this whole binding and the target's control scope, including
+`accept_control_handoff`; an invocation needs neither JavaScript/workflow nor
+screen, scrollback or selection observation. The kernel checks the approved
+target at lease preparation/commit and checks the target, input digest and
+length at control preparation and exact commit. That invocation cannot be used
+for discovery, observation, workflow start or result-content disclosure.
+
+One successfully prepared direct-input request consumes the invocation's sole
+action even if the request is aborted or settled; an already committed request
+cannot be committed again. A live native grant can authorize later **new
+intentional** invocations of the same approved action, subject to its original
+lifetime and shared budgets. The future native UI must explain this repetition
+and obtain explicit handoff; a client assertion about a hardware gesture is not
+proof of consent. The kernel has no persistent input receipt and cannot tell a
+new intent from a replay. No adapter may automatically replay a lost response;
+the #524 client owns the durable uncertain-action interlock and disarm/reapproval
+flow. Admitted input remains outcome-unknown, not command completion.
+
+This is only a broker prerequisite. #524's P1 checkpoint remains
+observation-only: this change adds no MCP input tool, workflow tool, enrollment
+or presentation feature, native approval UI, real terminal write or feature
+activation. Those paths and desktop qualification remain separately gated.
+
 A direct `workflows.start` request is an admission transaction, not the lifetime
 parent of the workflow it creates. At the serialized start boundary the broker
 atomically reserves capacity/idempotency receipt and creates a **distinct
@@ -189,8 +217,10 @@ allowance by issuing many short calls: per connection, at most 1 MiB disclosed,
 5-minute maximum grant lifetime. The global worker/approval/result limits also
 apply. Exhaustion or expiry requires a new explicit native grant; reconnecting
 does not silently renew it. Every wait/subscription consumes that context and
-closes on disconnect/revocation. A direct tool's response is finalized under
-the same broker completion/admission rule as a workflow result.
+closes on disconnect/revocation. A direct read tool's response is finalized under
+the same broker completion/admission rule as a workflow result. An eventual
+input adapter must securely report admission/refusal on the original channel;
+an input disposition is not permission to disclose workflow result content.
 
 ### Capability matrix
 
@@ -734,6 +764,14 @@ silently interleave human keys
 with an automated command. Existing core replies and required transport
 control retain their independent ordering; the automation lease is not a
 second owner for terminal parsing, host query replies or screen mutation.
+Native approval checks the proposal's ownership snapshot, but consent and
+approval alone do not transfer another principal's writer, revoke its grant or
+advance the target's ownership epoch. Before a transfer, the native adapter
+must explicitly cut the old grant/run/lease and serialize the handoff with the
+controller, worker and input fences. `human_takeover` is an explicit target-wide
+cut that invalidates existing control grants and pending ownership snapshots;
+the application must obtain a fresh proposal and native approval when needed.
+A kernel cut alone does not perform controller or worker cleanup.
 
 Broker admission and revocation are serialized at the controller boundary.
 Pending requests carry epoch checks; revoked items that have not crossed
@@ -747,9 +785,11 @@ changing its input queue. It captures the terminal modes used by the existing
 encoder and retains the exact immutable bytes. Preparation is not a target
 binding, writer lease, authorization or transport reservation. The future
 adapter must enforce the automation write limit, bind the exact target and
-attachment, and recheck the captured modes while holding the relevant terminal
-and admission fences through publication. A mismatch refuses the entire batch;
-it must not silently re-encode or retry an approved write.
+attachment, and recheck privacy, attachment/generation, captured terminal
+modes, human input/IME, any required presentation condition and the same
+immutable bytes while holding the relevant terminal and admission fences through
+real queue publication. A mismatch refuses the entire batch; it must not
+silently re-encode or retry an approved write.
 
 The worker's `sendText` and `sendKeys` requests have a bounded, inert encoding
 adapter. `sendText` uses the ordinary paste encoder, including bracketed-paste

@@ -25,6 +25,33 @@ fn direct(kind: DirectKind) -> InvocationBinding {
     }
 }
 
+fn direct_input(target: TargetRef, input: Digest, bytes: u32) -> InvocationBinding {
+    InvocationBinding {
+        api_version: 1,
+        invocation: Invocation::DirectInput {
+            target,
+            input,
+            bytes,
+        },
+        parameters: digest(99),
+    }
+}
+
+fn input_scope(target: TargetRef) -> Scope {
+    Scope {
+        control: BTreeSet::from([target]),
+        ..Scope::default()
+    }
+}
+
+fn input_operation(lease: LeaseRef, input: Digest, bytes: u32) -> Operation {
+    Operation::Control {
+        lease,
+        input,
+        bytes,
+    }
+}
+
 struct Fixture {
     broker: Broker,
     connection: ConnectionId,
@@ -35,7 +62,11 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let mut broker = Broker::new([7; 16]);
+        Self::with_limits(Limits::default())
+    }
+
+    fn with_limits(limits: Limits) -> Self {
+        let mut broker = Broker::with_limits([7; 16], limits);
         let connection = broker.accept_connection().unwrap();
         let a = broker.attach_target(1, 1).unwrap();
         let b = broker.attach_target(2, 1).unwrap();
@@ -103,6 +134,14 @@ impl Fixture {
             .unwrap();
         let lease = self.broker.commit_lease(transition, self.now).unwrap();
         (run, lease)
+    }
+
+    fn lease(&mut self, run: RunId, target: TargetRef) -> LeaseRef {
+        let transition = self
+            .broker
+            .prepare_lease(self.connection, run, target, self.now)
+            .unwrap();
+        self.broker.commit_lease(transition, self.now).unwrap()
     }
 
     fn write(&mut self, run: RunId, lease: LeaseRef) -> RequestId {
@@ -276,6 +315,746 @@ fn exact_direct_bindings_remain_parameter_specific() {
             .admit_run(f.connection, None, f.spec(f.scope(), changed), f.now),
         Err(Error::Unauthorized)
     );
+}
+
+#[test]
+fn direct_input_requires_exact_native_handoff_without_workflow_or_observation() {
+    let mut f = Fixture::new();
+    let scope = input_scope(f.b);
+    let action = direct_input(f.b, digest(3), 10);
+    let proposal = GrantRequest {
+        scope: scope.clone(),
+        bindings: BTreeSet::from([action]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let mut invalid = proposal.clone();
+    invalid.scope.control.clear();
+    assert_eq!(
+        f.broker.request_approval(f.connection, invalid, f.now),
+        Err(Error::InvalidRequest)
+    );
+    for bytes in [0, MAX_INPUT_BYTES + 1] {
+        let mut invalid = proposal.clone();
+        invalid.bindings = BTreeSet::from([direct_input(f.b, digest(3), bytes)]);
+        assert_eq!(
+            f.broker.request_approval(f.connection, invalid, f.now),
+            Err(Error::InvalidRequest)
+        );
+    }
+    let pending = f
+        .broker
+        .request_approval(f.connection, proposal.clone(), f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            pending,
+            NativeApproval::new(proposal.clone(), MAX_GRANT_LIFETIME),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker
+        .approve(
+            f.connection,
+            pending,
+            NativeApproval::new(proposal, MAX_GRANT_LIFETIME)
+                .accept_control_handoff(f.b, BTreeSet::new()),
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .admit_run(f.connection, None, f.spec(Scope::default(), action), f.now),
+        Err(Error::Unauthorized)
+    );
+    let mut expired = f.spec(scope.clone(), action);
+    expired.deadline = f.now;
+    assert_eq!(
+        f.broker.admit_run(f.connection, None, expired, f.now),
+        Err(Error::InvalidRequest)
+    );
+    let mut too_late = f.spec(scope.clone(), action);
+    too_late.deadline = f.now + MAX_GRANT_LIFETIME + Duration::from_secs(1);
+    assert_eq!(
+        f.broker.admit_run(f.connection, None, too_late, f.now),
+        Err(Error::InvalidRequest)
+    );
+
+    let run = f.run(scope, action);
+    let lease = f.lease(run, f.b);
+    let request = f
+        .broker
+        .prepare_request(
+            f.connection,
+            run,
+            input_operation(lease, digest(3), 10),
+            f.now,
+        )
+        .unwrap();
+    f.broker
+        .commit_control(f.connection, request, digest(3), 10, f.now)
+        .unwrap();
+    f.broker.settle_request(f.connection, request).unwrap();
+    let status = f
+        .broker
+        .complete(f.connection, run, Completion::Returned, f.now)
+        .unwrap();
+    assert_eq!(status.state, RunState::Completed);
+    assert_eq!(status.admitted_effects, 1);
+    assert!(status.execution_outcome_unknown);
+}
+
+#[test]
+fn direct_input_binds_parameters_target_lease_and_exact_committed_input() {
+    let mut f = Fixture::new();
+    let mut scope = f.scope();
+    scope.control = BTreeSet::from([f.a, f.b]);
+    let action = direct_input(f.b, digest(3), 10);
+    f.approve(scope.clone(), &[action, binding(1)]);
+
+    let mut changed_parameters = action;
+    changed_parameters.parameters = digest(100);
+    for changed in [
+        changed_parameters,
+        direct_input(f.a, digest(3), 10),
+        direct_input(f.b, digest(4), 10),
+        direct_input(f.b, digest(3), 11),
+    ] {
+        assert_eq!(
+            f.broker
+                .admit_run(f.connection, None, f.spec(scope.clone(), changed), f.now),
+            Err(Error::Unauthorized)
+        );
+    }
+    let run = f.run(scope.clone(), action);
+    assert!(matches!(
+        f.broker.prepare_lease(f.connection, run, f.a, f.now),
+        Err(Error::BindingMismatch)
+    ));
+    let replaced = TargetRef {
+        generation: f.b.generation + 1,
+        ..f.b
+    };
+    assert!(matches!(
+        f.broker.prepare_lease(f.connection, run, replaced, f.now),
+        Err(Error::BindingMismatch)
+    ));
+    let lease = f.lease(run, f.b);
+    let another_run = f.run(scope.clone(), action);
+    assert_eq!(
+        f.broker.prepare_request(
+            f.connection,
+            another_run,
+            input_operation(lease, digest(3), 10),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    let other = f.broker.accept_connection().unwrap();
+    assert!(matches!(
+        f.broker.prepare_lease(other, run, f.b, f.now),
+        Err(Error::Unauthorized)
+    ));
+    for operation in [
+        Operation::Discover { max_bytes: 10 },
+        Operation::Observe {
+            target: f.a,
+            max_bytes: 10,
+        },
+        Operation::Result { max_bytes: 10 },
+    ] {
+        assert_eq!(
+            f.broker
+                .prepare_request(f.connection, run, operation, f.now),
+            Err(Error::Unauthorized)
+        );
+    }
+    assert_eq!(
+        f.broker.start_workflow(
+            f.connection,
+            run,
+            StartKey([1; 16]),
+            f.spec(scope.clone(), binding(1)),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker
+            .admit_run(f.connection, Some(run), f.spec(scope, binding(1)), f.now,),
+        Err(Error::Unauthorized)
+    );
+    for operation in [
+        input_operation(
+            LeaseRef {
+                target: f.a,
+                ..lease
+            },
+            digest(3),
+            10,
+        ),
+        input_operation(lease, digest(4), 10),
+        input_operation(lease, digest(3), 11),
+    ] {
+        assert_eq!(
+            f.broker
+                .prepare_request(f.connection, run, operation, f.now),
+            Err(Error::BindingMismatch)
+        );
+    }
+    assert_eq!(
+        f.broker.prepare_request(
+            f.connection,
+            run,
+            input_operation(
+                LeaseRef {
+                    epoch: lease.epoch + 1,
+                    ..lease
+                },
+                digest(3),
+                10
+            ),
+            f.now,
+        ),
+        Err(Error::Revoked)
+    );
+    let request = f
+        .broker
+        .prepare_request(
+            f.connection,
+            run,
+            input_operation(lease, digest(3), 10),
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .commit_control(other, request, digest(3), 10, f.now),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.settle_request(other, request),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.commit_disclosure(f.connection, request, 0, f.now),
+        Err(Error::InvalidRequest)
+    );
+    assert_eq!(
+        f.broker
+            .complete_with_result(f.connection, run, request, 0, f.now),
+        Err(Error::InvalidRequest)
+    );
+    for (input, bytes) in [(digest(4), 10), (digest(3), 11)] {
+        assert_eq!(
+            f.broker
+                .commit_control(f.connection, request, input, bytes, f.now),
+            Err(Error::BindingMismatch)
+        );
+    }
+    f.broker
+        .commit_control(f.connection, request, digest(3), 10, f.now)
+        .unwrap();
+}
+
+#[test]
+fn direct_read_policy_never_authorizes_a_direct_input_action() {
+    let mut f = Fixture::new();
+    let mut scope = input_scope(f.b);
+    scope.observe.insert(f.a);
+    let proposal = GrantRequest {
+        scope: scope.clone(),
+        bindings: BTreeSet::new(),
+        direct_read_calls: BTreeSet::from([DirectKind::Observation]),
+    };
+    let mut wire = serde_json::to_value(&proposal).unwrap();
+    wire["direct_read_calls"] = serde_json::json!(["control"]);
+    assert!(serde_json::from_value::<GrantRequest>(wire).is_err());
+    let pending = f
+        .broker
+        .request_approval(f.connection, proposal.clone(), f.now)
+        .unwrap();
+    f.broker
+        .approve(
+            f.connection,
+            pending,
+            NativeApproval::new(proposal, MAX_GRANT_LIFETIME)
+                .accept_control_handoff(f.b, BTreeSet::from([f.a])),
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(
+        f.broker.admit_run(
+            f.connection,
+            None,
+            f.spec(scope.clone(), direct_input(f.b, digest(3), 10)),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    let read = f.run(scope, direct(DirectKind::Observation));
+    assert!(matches!(
+        f.broker.prepare_lease(f.connection, read, f.b, f.now),
+        Err(Error::Unauthorized)
+    ));
+}
+
+#[test]
+fn direct_input_is_one_request_even_after_abort_settlement_or_lost_response() {
+    let mut f = Fixture::new();
+    let scope = input_scope(f.b);
+    let action = direct_input(f.b, digest(3), 10);
+    f.approve(scope.clone(), &[action]);
+
+    for disposition in 0..3 {
+        let run = f.run(scope.clone(), action);
+        let lease = f.lease(run, f.b);
+        let operation = input_operation(lease, digest(3), 10);
+        let request = f
+            .broker
+            .prepare_request(f.connection, run, operation, f.now)
+            .unwrap();
+        assert_eq!(
+            f.broker
+                .prepare_request(f.connection, run, operation, f.now),
+            Err(Error::Closed)
+        );
+        if disposition == 0 {
+            f.broker.settle_request(f.connection, request).unwrap();
+            assert_eq!(
+                f.broker
+                    .commit_control(f.connection, request, digest(3), 10, f.now),
+                Err(Error::Closed)
+            );
+        } else {
+            f.broker
+                .commit_control(f.connection, request, digest(3), 10, f.now)
+                .unwrap();
+            assert_eq!(
+                f.broker
+                    .commit_control(f.connection, request, digest(3), 10, f.now),
+                Err(Error::Closed)
+            );
+            if disposition == 2 {
+                f.broker.settle_request(f.connection, request).unwrap();
+            }
+        }
+        assert_eq!(
+            f.broker
+                .prepare_request(f.connection, run, operation, f.now),
+            Err(Error::Closed)
+        );
+        assert!(matches!(
+            f.broker.prepare_lease(f.connection, run, f.b, f.now),
+            Err(Error::Closed)
+        ));
+        let status = f
+            .broker
+            .complete(f.connection, run, Completion::Returned, f.now)
+            .unwrap();
+        assert_eq!(status.admitted_effects, u32::from(disposition != 0));
+        assert_eq!(status.execution_outcome_unknown, disposition != 0);
+        assert_eq!(
+            status.failure,
+            (disposition == 1).then_some(Error::UnsettledHostCalls)
+        );
+        assert_eq!(
+            f.broker
+                .commit_control(f.connection, request, digest(3), 10, f.now),
+            Err(Error::Closed)
+        );
+    }
+}
+
+#[test]
+fn control_approval_does_not_transfer_an_existing_writer() {
+    for owner_is_workflow in [false, true] {
+        let mut f = Fixture::new();
+        let mut scope = input_scope(f.b);
+        scope.invoke_workflows = true;
+        let direct_action = direct_input(f.b, digest(3), 10);
+        let workflow_action = binding(1);
+        let (owner_action, other_action) = if owner_is_workflow {
+            (workflow_action, direct_action)
+        } else {
+            (direct_action, workflow_action)
+        };
+        f.approve(scope.clone(), &[owner_action]);
+        let owner = f.run(scope.clone(), owner_action);
+        let lease = f.lease(owner, f.b);
+        let request = f
+            .broker
+            .prepare_request(
+                f.connection,
+                owner,
+                input_operation(lease, digest(3), 10),
+                f.now,
+            )
+            .unwrap();
+        let other = f.broker.accept_connection().unwrap();
+        let proposal = GrantRequest {
+            scope: scope.clone(),
+            bindings: BTreeSet::from([other_action]),
+            direct_read_calls: BTreeSet::new(),
+        };
+        let pending = f
+            .broker
+            .request_approval(other, proposal.clone(), f.now)
+            .unwrap();
+        f.broker
+            .approve(
+                other,
+                pending,
+                NativeApproval::new(proposal, MAX_GRANT_LIFETIME)
+                    .accept_control_handoff(f.b, BTreeSet::new()),
+                f.now,
+            )
+            .unwrap();
+        let competing = f
+            .broker
+            .admit_run(other, None, f.spec(scope, other_action), f.now)
+            .unwrap();
+        assert!(matches!(
+            f.broker.prepare_lease(other, competing, f.b, f.now),
+            Err(Error::Busy)
+        ));
+        f.broker
+            .commit_control(f.connection, request, digest(3), 10, f.now)
+            .unwrap();
+        f.broker.settle_request(f.connection, request).unwrap();
+        let status = f
+            .broker
+            .complete(f.connection, owner, Completion::Returned, f.now)
+            .unwrap();
+        assert_eq!(status.admitted_effects, 1);
+        assert!(status.execution_outcome_unknown);
+    }
+}
+
+#[test]
+fn control_approval_preserves_other_pending_snapshots_without_a_writer() {
+    let mut f = Fixture::new();
+    let scope = input_scope(f.b);
+    let action = direct_input(f.b, digest(3), 10);
+    let proposal = GrantRequest {
+        scope: scope.clone(),
+        bindings: BTreeSet::from([action]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let other = f.broker.accept_connection().unwrap();
+    let first = f
+        .broker
+        .request_approval(f.connection, proposal.clone(), f.now)
+        .unwrap();
+    let second = f
+        .broker
+        .request_approval(other, proposal.clone(), f.now)
+        .unwrap();
+    f.broker
+        .approve(
+            f.connection,
+            first,
+            NativeApproval::new(proposal.clone(), MAX_GRANT_LIFETIME)
+                .accept_control_handoff(f.b, BTreeSet::new()),
+            f.now,
+        )
+        .unwrap();
+    f.broker
+        .approve(
+            other,
+            second,
+            NativeApproval::new(proposal, MAX_GRANT_LIFETIME)
+                .accept_control_handoff(f.b, BTreeSet::new()),
+            f.now,
+        )
+        .unwrap();
+    let first_run = f.run(scope.clone(), action);
+    let second_run = f
+        .broker
+        .admit_run(other, None, f.spec(scope, action), f.now)
+        .unwrap();
+    let first_lease = f
+        .broker
+        .prepare_lease(f.connection, first_run, f.b, f.now)
+        .unwrap();
+    let second_lease = f
+        .broker
+        .prepare_lease(other, second_run, f.b, f.now)
+        .unwrap();
+    f.broker.commit_lease(first_lease, f.now).unwrap();
+    assert_eq!(f.broker.commit_lease(second_lease, f.now), Err(Error::Busy));
+}
+
+#[test]
+fn explicit_takeover_cuts_cross_principal_control_and_stale_approvals() {
+    let mut f = Fixture::new();
+    let scope = input_scope(f.b);
+    let action = direct_input(f.b, digest(3), 10);
+    f.approve(scope.clone(), &[action]);
+    let old = f.run(scope.clone(), action);
+    let lease = f.lease(old, f.b);
+    let request = f
+        .broker
+        .prepare_request(
+            f.connection,
+            old,
+            input_operation(lease, digest(3), 10),
+            f.now,
+        )
+        .unwrap();
+    let second = f.broker.accept_connection().unwrap();
+    let third = f.broker.accept_connection().unwrap();
+    let mut workflow_scope = scope.clone();
+    workflow_scope.invoke_workflows = true;
+    let proposal = GrantRequest {
+        scope: workflow_scope.clone(),
+        bindings: BTreeSet::from([binding(1)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let next = f
+        .broker
+        .request_approval(second, proposal.clone(), f.now)
+        .unwrap();
+    f.broker
+        .approve(
+            second,
+            next,
+            NativeApproval::new(proposal.clone(), MAX_GRANT_LIFETIME)
+                .accept_control_handoff(f.b, BTreeSet::new()),
+            f.now,
+        )
+        .unwrap();
+    let waiting = f
+        .broker
+        .admit_run(
+            second,
+            None,
+            f.spec(workflow_scope.clone(), binding(1)),
+            f.now,
+        )
+        .unwrap();
+    let stale = f
+        .broker
+        .request_approval(third, proposal.clone(), f.now)
+        .unwrap();
+    f.broker.human_takeover(f.b).unwrap();
+    assert_eq!(
+        f.broker.approve(
+            third,
+            stale,
+            NativeApproval::new(proposal.clone(), MAX_GRANT_LIFETIME)
+                .accept_control_handoff(f.b, BTreeSet::new()),
+            f.now,
+        ),
+        Err(Error::Revoked)
+    );
+    assert_eq!(
+        f.broker
+            .commit_control(f.connection, request, digest(3), 10, f.now),
+        Err(Error::Closed)
+    );
+    assert!(f
+        .broker
+        .prepare_lease(f.connection, old, f.b, f.now)
+        .is_err());
+    assert!(f.broker.prepare_lease(second, waiting, f.b, f.now).is_err());
+    let next = f
+        .broker
+        .request_approval(second, proposal.clone(), f.now)
+        .unwrap();
+    f.broker
+        .approve(
+            second,
+            next,
+            NativeApproval::new(proposal, MAX_GRANT_LIFETIME)
+                .accept_control_handoff(f.b, BTreeSet::new()),
+            f.now,
+        )
+        .unwrap();
+    assert!(f.broker.prepare_lease(second, waiting, f.b, f.now).is_err());
+    let next_run = f
+        .broker
+        .admit_run(second, None, f.spec(workflow_scope, binding(1)), f.now)
+        .unwrap();
+    let transition = f
+        .broker
+        .prepare_lease(second, next_run, f.b, f.now)
+        .unwrap();
+    let next_lease = f.broker.commit_lease(transition, f.now).unwrap();
+    assert_ne!(lease, next_lease);
+    f.approve(scope, &[action]);
+    assert!(f
+        .broker
+        .prepare_lease(f.connection, old, f.b, f.now)
+        .is_err());
+    let request = f
+        .broker
+        .prepare_request(
+            second,
+            next_run,
+            input_operation(next_lease, digest(3), 10),
+            f.now,
+        )
+        .unwrap();
+    f.broker
+        .commit_control(second, request, digest(3), 10, f.now)
+        .unwrap();
+}
+
+#[test]
+fn direct_input_lifecycle_revocation_never_restores_old_runs() {
+    for event in 0..8 {
+        let mut f = Fixture::new();
+        let scope = input_scope(f.b);
+        let action = direct_input(f.b, digest(3), 10);
+        f.approve(scope.clone(), &[action]);
+        let mut spec = f.spec(scope, action);
+        spec.deadline = if event == 6 {
+            f.now + Duration::from_secs(1)
+        } else {
+            f.now + MAX_GRANT_LIFETIME
+        };
+        let run = f.broker.admit_run(f.connection, None, spec, f.now).unwrap();
+        let lease = f.lease(run, f.b);
+        let request = f
+            .broker
+            .prepare_request(
+                f.connection,
+                run,
+                input_operation(lease, digest(3), 10),
+                f.now,
+            )
+            .unwrap();
+        match event {
+            0 => f.broker.human_takeover(f.b).unwrap(),
+            1 => f.broker.revoke(f.connection),
+            2 => f.broker.revoke_all(),
+            3 => {
+                f.broker.close_target(f.b).unwrap();
+                f.b = f.broker.attach_target(2, 2).unwrap();
+            }
+            4 => f.b = f.broker.attach_target(2, 2).unwrap(),
+            5 => f.broker.disconnect(f.connection),
+            6 => f.now += Duration::from_secs(1),
+            7 => f.now += MAX_GRANT_LIFETIME,
+            _ => unreachable!(),
+        }
+        assert!(f
+            .broker
+            .commit_control(f.connection, request, digest(3), 10, f.now)
+            .is_err());
+        assert!(f
+            .broker
+            .prepare_lease(f.connection, run, lease.target(), f.now)
+            .is_err());
+        if event == 5 {
+            f.connection = f.broker.accept_connection().unwrap();
+        }
+        let new_action = direct_input(f.b, digest(3), 10);
+        f.approve(input_scope(f.b), &[new_action]);
+        assert!(f
+            .broker
+            .prepare_lease(f.connection, run, lease.target(), f.now)
+            .is_err());
+    }
+}
+
+#[test]
+fn direct_input_charges_run_principal_and_global_budgets_across_invocations() {
+    let mut f = Fixture::with_limits(Limits {
+        global_operations: 3,
+        ..Limits::default()
+    });
+    let scope = input_scope(f.b);
+    let action = direct_input(f.b, digest(3), 10);
+    f.approve(scope.clone(), &[action]);
+    let first = f.run(scope.clone(), action);
+    let lease = f.lease(first, f.b);
+    let request = f
+        .broker
+        .prepare_request(
+            f.connection,
+            first,
+            input_operation(lease, digest(3), 10),
+            f.now,
+        )
+        .unwrap();
+    f.broker.settle_request(f.connection, request).unwrap();
+    f.broker
+        .complete(f.connection, first, Completion::Returned, f.now)
+        .unwrap();
+    let second = f.run(scope.clone(), action);
+    let lease = f.lease(second, f.b);
+    assert_eq!(
+        f.broker.prepare_request(
+            f.connection,
+            second,
+            input_operation(lease, digest(3), 10),
+            f.now,
+        ),
+        Err(Error::QuotaExceeded)
+    );
+    f.approve(scope.clone(), &[action]);
+    assert_eq!(
+        f.broker
+            .admit_run(f.connection, None, f.spec(scope, action), f.now),
+        Err(Error::QuotaExceeded)
+    );
+
+    let mut f = Fixture::new();
+    let scope = input_scope(f.b);
+    let action = direct_input(f.b, digest(3), 10);
+    f.approve(scope.clone(), &[action]);
+    let mut spec = f.spec(scope.clone(), action);
+    spec.budget.operations = 1;
+    let run = f.broker.admit_run(f.connection, None, spec, f.now).unwrap();
+    let lease = f.lease(run, f.b);
+    assert_eq!(
+        f.broker.prepare_request(
+            f.connection,
+            run,
+            input_operation(lease, digest(3), 10),
+            f.now,
+        ),
+        Err(Error::QuotaExceeded)
+    );
+    f.broker.cancel_run(f.connection, run, f.now).unwrap();
+    f.broker.forget_run(f.connection, run).unwrap();
+    for _ in 0..127 {
+        let run = f.run(scope.clone(), action);
+        let lease = f.lease(run, f.b);
+        let request = f
+            .broker
+            .prepare_request(
+                f.connection,
+                run,
+                input_operation(lease, digest(3), 10),
+                f.now,
+            )
+            .unwrap();
+        f.broker.settle_request(f.connection, request).unwrap();
+        f.broker
+            .complete(f.connection, run, Completion::Returned, f.now)
+            .unwrap();
+        f.broker.forget_run(f.connection, run).unwrap();
+    }
+    let final_run = f.run(scope.clone(), action);
+    let lease = f.lease(final_run, f.b);
+    assert_eq!(
+        f.broker.prepare_request(
+            f.connection,
+            final_run,
+            input_operation(lease, digest(3), 10),
+            f.now,
+        ),
+        Err(Error::QuotaExceeded)
+    );
+    f.approve(scope.clone(), &[action]);
+    assert!(f
+        .broker
+        .admit_run(f.connection, None, f.spec(scope, action), f.now)
+        .is_ok());
 }
 
 #[test]

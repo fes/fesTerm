@@ -45,6 +45,7 @@ struct Run {
     usage: Usage,
     status: RunStatus,
     started_workflow: Option<(StartKey, RunId)>,
+    direct_input_prepared: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -265,7 +266,16 @@ impl Broker {
         {
             return Err(Error::InvalidRequest);
         }
-        self.validate_scope(&request.scope)
+        self.validate_scope(&request.scope)?;
+        for binding in &request.bindings {
+            if let Invocation::DirectInput { target, bytes, .. } = binding.invocation {
+                if !request.scope.control.contains(&target) || bytes == 0 || bytes > MAX_INPUT_BYTES
+                {
+                    return Err(Error::InvalidRequest);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Only an explicit paired-client/user invocation may be routed here by the
@@ -342,6 +352,7 @@ impl Broker {
     /// Native-only decision, bound to the exact pending channel/proposal.
     /// Reapproval revokes all old runs; only this explicit native decision resets
     /// that principal's shared counters. Global counters never reset.
+    /// Approval does not transfer another principal's writer lease.
     pub fn approve(
         &mut self,
         connection: ConnectionId,
@@ -598,6 +609,11 @@ impl Broker {
         if !spec.scope.subset_of(&grant.request.scope) || !binding_approved {
             return Err(Error::Unauthorized);
         }
+        if let Invocation::DirectInput { target, .. } = spec.binding.invocation {
+            if !spec.scope.control.contains(&target) {
+                return Err(Error::Unauthorized);
+            }
+        }
         if spec.deadline <= now
             || spec.deadline > grant.expires
             || spec.budget.operations == 0
@@ -682,6 +698,7 @@ impl Broker {
                     execution_outcome_unknown: false,
                 },
                 started_workflow: None,
+                direct_input_prepared: false,
             },
         );
         Ok(id)
@@ -829,11 +846,7 @@ impl Broker {
         now: Instant,
     ) -> Result<LeaseTransition> {
         let run = self.check_run(connection, id, now)?;
-        if !matches!(run.spec.binding.invocation, Invocation::Workflow { .. })
-            || !run.spec.scope.control.contains(&target)
-        {
-            return Err(Error::Unauthorized);
-        }
+        Self::check_lease_target(run, target)?;
         let target_state = self.target(target)?;
         if target_state.writer.is_some() {
             return Err(Error::Busy);
@@ -852,7 +865,8 @@ impl Broker {
     /// install the returned ownership epoch in that controller. If any of those
     /// preconditions fail, DROP the transition; do not call this method.
     pub fn commit_lease(&mut self, transition: LeaseTransition, now: Instant) -> Result<LeaseRef> {
-        self.check_run(transition.connection, transition.run, now)?;
+        let run = self.check_run(transition.connection, transition.run, now)?;
+        Self::check_lease_target(run, transition.target)?;
         let target = self.target(transition.target)?;
         if target.ownership_epoch != transition.observed_epoch || target.writer.is_some() {
             return Err(Error::Busy);
@@ -900,6 +914,41 @@ impl Broker {
         Ok(())
     }
 
+    fn check_lease_target(run: &Run, target: TargetRef) -> Result<()> {
+        match run.spec.binding.invocation {
+            Invocation::Workflow { .. } => {}
+            Invocation::DirectInput {
+                target: approved, ..
+            } => {
+                if target != approved {
+                    return Err(Error::BindingMismatch);
+                }
+                if run.direct_input_prepared {
+                    return Err(Error::Closed);
+                }
+            }
+            Invocation::Direct { .. } => return Err(Error::Unauthorized),
+        }
+        if !run.spec.scope.control.contains(&target) {
+            return Err(Error::Unauthorized);
+        }
+        Ok(())
+    }
+
+    fn check_direct_input(run: &Run, target: TargetRef, input: Digest, bytes: u32) -> Result<()> {
+        if let Invocation::DirectInput {
+            target: approved_target,
+            input: approved_input,
+            bytes: approved_bytes,
+        } = run.spec.binding.invocation
+        {
+            if target != approved_target || input != approved_input || bytes != approved_bytes {
+                return Err(Error::BindingMismatch);
+            }
+        }
+        Ok(())
+    }
+
     fn check_operation(&self, id: RunId, run: &Run, operation: Operation) -> Result<()> {
         let kind_allowed = match run.spec.binding.invocation {
             Invocation::Workflow { .. } => true,
@@ -908,6 +957,7 @@ impl Broker {
                 (DirectKind::Discovery, Operation::Discover { .. })
                     | (DirectKind::Observation, Operation::Observe { .. })
             ),
+            Invocation::DirectInput { .. } => matches!(operation, Operation::Control { .. }),
         };
         if !kind_allowed {
             return Err(Error::Unauthorized);
@@ -929,12 +979,13 @@ impl Broker {
             }
             Operation::Control {
                 lease,
-                input: _,
+                input,
                 bytes,
             } => {
                 if lease.run != id || !run.spec.scope.control.contains(&lease.target) {
                     return Err(Error::Unauthorized);
                 }
+                Self::check_direct_input(run, lease.target, input, bytes)?;
                 if bytes == 0 || bytes > MAX_INPUT_BYTES {
                     return Err(Error::InvalidRequest);
                 }
@@ -966,6 +1017,10 @@ impl Broker {
     ) -> Result<RequestId> {
         self.poll_expiry(now);
         let run = self.check_run(connection, id, now)?;
+        let direct_input = matches!(run.spec.binding.invocation, Invocation::DirectInput { .. });
+        if direct_input && run.direct_input_prepared {
+            return Err(Error::Closed);
+        }
         self.check_operation(id, run, operation)?;
         if self
             .requests
@@ -995,6 +1050,12 @@ impl Broker {
                 committed: false,
             },
         );
+        if direct_input {
+            self.runs
+                .get_mut(&id)
+                .ok_or(Error::Closed)?
+                .direct_input_prepared = true;
+        }
         Ok(request)
     }
 
@@ -1058,13 +1119,19 @@ impl Broker {
         exact_bytes: u32,
         now: Instant,
     ) -> Result<()> {
-        let (request, _) = self.check_request(connection, id, now)?;
+        let (request, run) = self.check_request(connection, id, now)?;
         if request.committed {
             return Err(Error::Closed);
         }
-        let Operation::Control { input, bytes, .. } = request.operation else {
+        let Operation::Control {
+            lease,
+            input,
+            bytes,
+        } = request.operation
+        else {
             return Err(Error::InvalidRequest);
         };
+        Self::check_direct_input(run, lease.target, exact_input, exact_bytes)?;
         if exact_input != input || exact_bytes != bytes {
             return Err(Error::BindingMismatch);
         }
