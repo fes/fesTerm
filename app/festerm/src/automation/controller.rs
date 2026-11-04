@@ -271,6 +271,7 @@ pub(super) fn execute(
             peer.connection.close_under_admission(&guard);
             broker.disconnect(peer.principal, &guard);
         } else {
+            tracing::error!("automation admission lock poisoned; disclosure remains closed");
             peer.connection.closed_flag().store(true, Ordering::Release);
         }
         peer.machine.close();
