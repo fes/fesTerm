@@ -144,9 +144,28 @@ pub(crate) struct FesTermApplication {
     deferred_automation_commands: Vec<crate::automation::NativeWindowCommand>,
     deferred_automation_overflow: bool,
     ime_admission: ImeAdmission,
+    #[cfg(test)]
+    after_automation_dispatch: Option<Arc<std::sync::atomic::AtomicBool>>,
+}
+
+struct AutomationDispatchUnwind<'a> {
+    application: &'a mut FesTermApplication,
+}
+
+impl Drop for AutomationDispatchUnwind<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.application.automation.fail_closed_on_unwind();
+        }
+    }
 }
 
 impl FesTermApplication {
+    fn guarded_ui_dispatch(&mut self, dispatch: impl FnOnce(&mut Self)) {
+        let guard = AutomationDispatchUnwind { application: self };
+        dispatch(guard.application);
+    }
+
     pub(crate) fn new(mut primary: FesTermApp) -> Self {
         primary.set_automation_window(WindowId::PRIMARY);
         primary.initialize_automation_preferences();
@@ -172,6 +191,8 @@ impl FesTermApplication {
             deferred_automation_commands: Vec::new(),
             deferred_automation_overflow: false,
             ime_admission: ImeAdmission::new(),
+            #[cfg(test)]
+            after_automation_dispatch: None,
         }
     }
 
@@ -895,7 +916,14 @@ impl FesTermApplication {
         }
     }
 
+    #[cfg(test)]
     fn settle_windows_and_drive_automation(&mut self, context: &egui::Context) {
+        self.guarded_ui_dispatch(|application| {
+            application.settle_windows_and_drive_automation_inner(context);
+        });
+    }
+
+    fn settle_windows_and_drive_automation_inner(&mut self, context: &egui::Context) {
         let mut commands = std::mem::take(&mut self.deferred_automation_commands);
         let mut overflow = std::mem::take(&mut self.deferred_automation_overflow);
         // A window can close during settlement; collect its stop actions first.
@@ -927,7 +955,8 @@ impl FesTermApplication {
                     crate::automation::NativeCommand::ClearWorkflow
                         | crate::automation::NativeCommand::SafetyStop
                         | crate::automation::NativeCommand::PreferenceChanged {
-                            clear_workflow: true
+                            clear_workflow: true,
+                            ..
                         }
                 )
             })
@@ -950,6 +979,10 @@ impl FesTermApplication {
             self.automation.tick(context, &apps);
             self.automation.commands(commands, context, &apps)
         };
+        #[cfg(test)]
+        if let Some(after_dispatch) = &self.after_automation_dispatch {
+            after_dispatch.store(true, std::sync::atomic::Ordering::Release);
+        }
         if let Some(app) = apps.first().filter(|_| conflicted) {
             app.report_automation_action_conflict();
             context.request_repaint();
@@ -963,26 +996,8 @@ impl FesTermApplication {
             context.request_repaint();
         }
     }
-}
 
-/// How far left of the pointer a detached window's origin is placed, so the
-/// tab the user is still holding lands on the new window's chip row rather
-/// than at its very corner.
-const DETACH_POINTER_INSET: f32 = 60.0;
-
-impl eframe::App for FesTermApplication {
-    fn raw_input_hook(&mut self, context: &egui::Context, input: &mut egui::RawInput) {
-        self.ime_admission.observe(WindowId::PRIMARY, &input.events);
-        eframe::App::raw_input_hook(self.primary_mut(), context, input);
-    }
-
-    fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
-        self.automation.advance_presentation_deadline(context);
-        self.refresh_application_close_context();
-        eframe::App::logic(self.primary_mut(), context, frame);
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+    fn ui_inner(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         ui.ctx()
             .input(|input| self.ime_admission.observe(WindowId::PRIMARY, &input.events));
         if ui.ctx().input(|input| input.viewport().focused) == Some(true) {
@@ -992,7 +1007,7 @@ impl eframe::App for FesTermApplication {
         let context = ui.ctx().clone();
         self.show_secondary_windows(&context);
         festerm_ui_egui::chrome::tab_drag::show_requested_drag_ghost(&context);
-        self.settle_windows_and_drive_automation(&context);
+        self.settle_windows_and_drive_automation_inner(&context);
         self.process_document_activation(&context);
         if !context.will_discard() && self.ime_admission.finish_pass() {
             context.request_repaint();
@@ -1002,6 +1017,36 @@ impl eframe::App for FesTermApplication {
             gui_frame_number = context.cumulative_frame_nr(),
             "built GUI frame"
         );
+    }
+}
+
+/// How far left of the pointer a detached window's origin is placed, so the
+/// tab the user is still holding lands on the new window's chip row rather
+/// than at its very corner.
+const DETACH_POINTER_INSET: f32 = 60.0;
+
+impl eframe::App for FesTermApplication {
+    fn raw_input_hook(&mut self, context: &egui::Context, input: &mut egui::RawInput) {
+        let guard = AutomationDispatchUnwind { application: self };
+        guard
+            .application
+            .ime_admission
+            .observe(WindowId::PRIMARY, &input.events);
+        eframe::App::raw_input_hook(guard.application.primary_mut(), context, input);
+    }
+
+    fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
+        let guard = AutomationDispatchUnwind { application: self };
+        guard
+            .application
+            .automation
+            .advance_presentation_deadline(context);
+        guard.application.refresh_application_close_context();
+        eframe::App::logic(guard.application.primary_mut(), context, frame);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.guarded_ui_dispatch(|application| application.ui_inner(ui, frame));
     }
 }
 
@@ -2721,6 +2766,74 @@ mod tests {
         assert!(!context.has_requested_repaint());
         application.settle_windows_and_drive_automation(&context);
         assert!(context.has_requested_repaint());
+    }
+
+    #[test]
+    fn automation_dispatch_repaint_panic_closes_live_grant() {
+        let (mut coordinator, mut app, target, stop, receive) =
+            crate::automation::preference_application_fixture(true);
+        app.adopt_broadcast_configuration(automation_configuration(Values {
+            mcp: true,
+            javascript: false,
+        }));
+        let (principal, liveness) =
+            crate::automation::application_disclosure_witness(&mut coordinator, target);
+        assert!(liveness.is_live(principal, Instant::now()));
+        let mut application = FesTermApplication::new(app);
+        application.automation = coordinator;
+        application.window_mut(0).set_automation_settings(
+            crate::automation::SettingsSnapshot::with_pending_channel_for_test(7),
+        );
+        let after_dispatch = Arc::new(AtomicBool::new(false));
+        application.after_automation_dispatch = Some(after_dispatch.clone());
+        let callback_entered = Arc::new(AtomicBool::new(false));
+        let authority_live_at_callback = Arc::new(AtomicBool::new(false));
+        let context = egui::Context::default();
+        for _ in 0..4 {
+            context
+                .run_ui(egui::RawInput::default(), |_| {})
+                .drop_without_applying_deltas();
+        }
+        let callback_armed = after_dispatch.clone();
+        let callback_entered_flag = callback_entered.clone();
+        let callback_authority_live = authority_live_at_callback.clone();
+        let callback_liveness = liveness.clone();
+        let callback_stop = stop.clone();
+        context.set_request_repaint_callback(move |_| {
+            if callback_armed.load(Ordering::Acquire) {
+                callback_entered_flag.store(true, Ordering::Release);
+                callback_authority_live.store(
+                    !callback_stop.load(Ordering::Acquire)
+                        && callback_liveness.is_live(principal, Instant::now()),
+                    Ordering::Release,
+                );
+                panic!("application dispatch repaint");
+            }
+        });
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            application.guarded_ui_dispatch(|application| {
+                application.settle_windows_and_drive_automation_inner(&context);
+            });
+        }))
+        .expect_err("dispatch repaint did not panic");
+        assert_eq!(
+            panic.downcast_ref::<&str>(),
+            Some(&"application dispatch repaint")
+        );
+        assert!(after_dispatch.load(Ordering::Acquire));
+        assert!(callback_entered.load(Ordering::Acquire));
+        assert!(authority_live_at_callback.load(Ordering::Acquire));
+        assert!(stop.load(Ordering::Acquire));
+        assert!(!liveness.is_live(principal, Instant::now()));
+        let apps: Vec<_> = application
+            .windows
+            .iter()
+            .map(|window| &window.app)
+            .collect();
+        let snapshot = application.automation.settings(&apps);
+        assert!(snapshot.channels.is_empty());
+        assert!(snapshot.status.contains("Restart MCP explicitly"));
+        assert!(receive().is_none());
     }
 
     #[test]

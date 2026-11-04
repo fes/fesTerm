@@ -1,5 +1,33 @@
 # Milestone Progress Narrative
 
+## Retaining peer completion cleanup
+
+Live observation peers retain one exact run/request cleanup record before
+finishing a response. Admission contention after sending defers subsequent
+peer events and waits until cleanup succeeds, without replaying the response.
+Poison and inconsistent cleanup fail closed; an unwind sentinel closes the
+adapter and privacy flags before a temporarily taken broker is dropped. Focused
+tests cover contention, multiple peers, wait completion, expiry, revocation,
+missing runs, teardown, poison and unwind; execution remains pending.
+Repaint callbacks run before the taken broker is restored, and privacy-loss
+shutdown borrows it until shutdown returns, so a panic in either path still
+closes the flags before broker destruction. A tick-wide borrowing unwind guard
+also closes the flags and drops any broker still in the coordinator if a
+pre-take callback panics, without acquiring admission or suppressing the panic.
+Command and overflow entry points and the surrounding application input,
+logic and UI dispatch have equivalent idempotent unwind cuts, including
+post-dispatch repaint callbacks. A latched enabled MCP setting now visibly
+requires explicit restart rather than appearing disabled.
+It clears startup intents and opt-ins, latches MCP startup closed until an
+explicit restart, atomically disarms workflow selections, and defers retirement
+of pending startup workers and queued selection closures to normal cleanup.
+Workflow selection can independently rearm after cleanup by explicitly
+enabling JavaScript after a disabled state is observed; unchanged settings
+cannot rearm it, and settings show the recovery instruction.
+It does not stop capture work already running or recall an extracted bundle.
+This does not guard the public completion API or other broker cuts, and does
+not establish metadata, enqueue, final-recipient or physical-delivery safety.
+
 ## Closing poison paths before diagnostics
 
 The shared admission-flag helper, privacy gate and MCP stop now apply their

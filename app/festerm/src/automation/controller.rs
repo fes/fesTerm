@@ -959,6 +959,8 @@ pub(super) mod tests {
                 code: VerificationCode::new(&format!("{channel:016x}")).unwrap(),
                 grant: None,
                 waits: Vec::new(),
+                pending_completion: None,
+                after_finish: None,
                 controller,
             },
         );
