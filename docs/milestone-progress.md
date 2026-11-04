@@ -159,6 +159,41 @@ calling the GUI from its watchdog. A future application bridge must drain
 active runs and handle startup and per-frame backlogs; an unresponsive GUI
 cannot block the worker deadline through this channel.
 
+## Framing handshakes before exposing channels
+
+The experimental Noise handshake now has a bounded nonblocking driver for
+both roles. It tolerates fragmented I/O and readiness transitions, refuses
+malformed or truncated frames, and withholds the unverified responder channel
+until its entire reply has actually been written. Raw handshake entry points
+are private, so callers cannot bypass that ordering. The physical writer must
+truthfully report accepted bytes; a buffered queue is not the write boundary.
+
+This is not peer authentication or an MCP activation path. Independent trusted
+human comparison of complete fingerprints, deadlines, cancellation, privacy,
+transport identity and platform qualification remain caller-owned prerequisites.
+
+## Framing verified channels without blocking on full messages
+
+The experimental Noise channel now has a bounded incremental record-framing
+component. It handles partial writes and fragmented input in both directions,
+authenticates complete frames before release, and closes on malformed records,
+truncation or failed partial output. It does not supply I/O deadlines, a
+disclosure guard or a transport, and it does not enable MCP.
+
+## Exploring channel binding without trusting process names
+
+The observation prototype remains disabled because a same-user pipe and an
+executable path cannot prove the identity of a running peer. An independent
+Noise NN channel component now derives a full transcript fingerprint at each
+endpoint, rejects non-contributory X25519 inputs, and bounds authenticated
+records. Adversarial tests cover split handshakes, replay, malformed framing and
+failed fingerprint comparison.
+
+This is not peer authentication by itself. Trusted human confirmation,
+adapter/client integration, relay and disconnect liveness, native privacy
+monitoring and real-platform qualification remain open; the production gate
+has not changed.
+
 ## 0.14.1: Windows Dev Tunnel startup correction
 
 This patch packages #515's Windows host-shell correction. Managed and foreground

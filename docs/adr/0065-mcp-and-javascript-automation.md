@@ -181,9 +181,12 @@ in the design must be visible in implementation/release review.
   tests cover channel separation, exact targets, attenuation, quotas, lease
   epochs, completion cuts and idempotent starts. Configuration tests cover
   independent default-off opt-ins. MCP protocol, private framing, bounded
-  observation, pairing and stale-target tests cover the P1 path. These do not
-  prove native lock behavior, client interoperability, a confined engine or
-  native input ordering. Coordinator lifecycle tests additionally distinguish
+  observation, pairing and stale-target tests cover the P1 path. Incremental
+  Noise handshake tests cover bounded framing, readiness and withholding the
+  unverified channel until outbound handshake bytes are physically written.
+  These do not prove trusted human comparison, native lock behavior, client
+  interoperability, a confined engine or native input ordering. Coordinator
+  lifecycle tests additionally distinguish
   MCP-only cleanup from global privacy revocation; they do not prove an
   integrated JavaScript adapter. Local PTY reservation tests exercise ordered
   commitment, cancellation and expiration, including a stalled callback; they

@@ -73,6 +73,9 @@ use std::io::{self, BufRead, Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod schema;
+pub mod secure_channel;
+pub use secure_channel::handshake_io as secure_handshake_io;
+pub mod secure_record_io;
 
 pub const PROTOCOL_VERSION: &str = "2025-11-25";
 pub const MAX_MESSAGE_BYTES: usize = 65_536;
