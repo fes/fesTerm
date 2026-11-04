@@ -175,9 +175,12 @@ pub(super) fn sign_in_sheet(
             }
             (Some(prompt), None) => {
                 ui.label(
-                    egui::RichText::new("Open GitHub, switch to the account you want to add, enter this code, then return to fesTerm.")
-                        .size(type_scale::CAPTION + 0.5)
-                        .color(color::TEXT_MUTED),
+                    egui::RichText::new(
+                        "Open GitHub, make sure the intended account is signed in, enter this \
+                         code, then return to fesTerm.",
+                    )
+                    .size(type_scale::CAPTION + 0.5)
+                    .color(color::TEXT_MUTED),
                 );
                 card(ui, |ui| {
                     ui.add_space(space::LG);
