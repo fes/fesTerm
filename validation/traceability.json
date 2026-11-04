@@ -269,7 +269,14 @@
         "slot_revocation_preserves_enrollment_and_only_ordinary_cuts_presentation",
         "ordinary_expiry_closes_presentation_without_a_timer_poll",
         "metadata_expiry_does_not_cut_presentation",
-        "direct_input_preserves_its_binding_and_one_effect_with_presented_control"
+        "direct_input_preserves_its_binding_and_one_effect_with_presented_control",
+        "snapshot_preserves_complete_profile_and_separate_trust",
+        "local_sensitive_looking_argument_is_retained_but_not_in_snapshot_debug",
+        "revalidation_checks_profile_account_auth_and_trust_exactly",
+        "ssh_trust_uses_launch_identity_not_raw_saved_host",
+        "unrepresentable_ssh_identity_fails_closed",
+        "removed_and_recreated_profiles_require_a_new_generation",
+        "unsupported_profiles_and_durable_sessions_are_rejected"
       ],
       "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04"],
       "status": "partial",
@@ -277,7 +284,8 @@
         "Control and worker integration require input ownership validation and platform confinement",
         "Native direct-input approval and actual publication-boundary revalidation remain unavailable",
         "Metadata-only native review, explicit cross-flow UI and per-write delivery fences remain unavailable",
-        "Native lifecycle evidence and workflow result delivery remain open"
+        "Native lifecycle evidence and workflow result delivery remain open",
+        "Profile snapshot is data only: configuration revision ownership, native approval, fresh-target attestation, launch fencing and scoped creation authority remain unavailable"
       ]
     },
     {
@@ -2324,6 +2332,9 @@
         "adopting_a_siblings_configuration_leaves_this_windows_tabs_untouched",
         "adopting_a_broadcast_does_not_re_broadcast_it",
         "a_secondary_window_does_not_persist_its_workspace",
+        "new_secondary_preserves_workspace_document_on_profile_save",
+        "restored_secondary_preserves_workspace_document_on_profile_save",
+        "secondary_with_restore_off_scrubs_workspace_before_profile_save",
         "the_native_menu_new_window_command_requests_a_window",
         "an_additional_window_renders_its_own_content_in_a_real_pass",
         "a_release_over_another_windows_chip_names_that_window_and_chip",

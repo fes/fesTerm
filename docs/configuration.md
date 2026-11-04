@@ -521,6 +521,12 @@ saved as one complete replacement, preserving profiles, trust, credentials,
 settings and update bookkeeping. Verified native reattachment seeds save even
 with workspace restoration off; every restorable tab kind saves its own alias
 only with opted-in workspace metadata.
+New secondary windows start on a Launcher, while restored secondary windows
+restore only their own saved tabs. With workspace restore enabled, both retain
+the complete document supplied by the primary window, including the workspace,
+when preparing later saves. With restore disabled, stale workspace metadata is
+discarded. This does not resolve stale cross-window saves or ambiguous
+filesystem outcomes.
 A failed rename/reset save leaves the saved configuration and sibling documents
 unchanged while the local display edit remains usable. Every open window gets
 a visible bounded notice that the changes are not saved; repeating Rename or

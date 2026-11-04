@@ -23,6 +23,7 @@ mod keyboard;
 mod profiles;
 mod session_names;
 mod settings;
+mod snapshot;
 mod workspace;
 pub use errors::{
     ConfigError, ConfigErrorKind, ConfigurationFileError, ConfigurationFileErrorKind,
@@ -45,6 +46,7 @@ pub use settings::{
     InterfaceSettings, ScrollSpeedPreference, ScrollbackLimitPreference, SftpPaneOrderPreference,
     TerminalFontPreference,
 };
+pub use snapshot::{ConfigurationRevision, EffectiveProfileSnapshot, ProfileSnapshotError};
 pub use workspace::{
     LauncherTabConfiguration, ProfilesTabConfiguration, SessionTabConfiguration,
     SettingsTabConfiguration, WorkspaceConfiguration, WorkspaceTab, WorkspaceWindow,

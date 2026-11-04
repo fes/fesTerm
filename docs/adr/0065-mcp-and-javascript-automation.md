@@ -69,6 +69,17 @@ to bypass another's restrictions.
    without refunding lifetime proposal charges. Either slot can be explicitly
    revoked without revoking the other; no source is silently added to a
    control grant.
+   The host-side effective-profile snapshot is review data only: it preserves
+   the complete supported saved profile and separate SSH known-host record,
+   refuses persistent/unsupported types, and compares exact values plus a
+   host-supplied opaque configuration revision. The revision is not yet
+   integrated with configuration adoption or an admission fence. A content
+   digest cannot replace freshness or detect ABA. Snapshot capture neither pins
+   external executable or secret-store contents nor authorizes session opening.
+   Capture never retrieves secret-store contents; the copied profile may itself
+   contain sensitive freeform data. Trusted code must not blindly log or disclose
+   snapshots or accessor results to workers. Redacted snapshot Debug does not
+   sanitize the captured profile.
 4. **Treat observation as disclosure and terminal control as execution.** Data
    reads may disclose passwords, tokens or private output; redaction is best
    effort, not authorization. Arbitrary terminal input grants the target
@@ -268,7 +279,9 @@ in the design must be visible in implementation/release review.
   implemented by those tests.
   They do not expose control in the P1 observation-only MCP checkpoint or
   qualify any real input adapter. Configuration tests cover
-  independent default-off opt-ins. MCP protocol, private framing, bounded
+  snapshot value, trust rotation, revision/ABA limitations and redacted debug;
+  no native launch, approval or policy fencing is exercised. Other configuration
+  tests cover independent default-off opt-ins. MCP protocol, private framing, bounded
   observation, pairing and stale-target tests cover the P1 path. Incremental
   Noise handshake tests cover bounded framing, readiness and withholding the
   unverified channel until outbound handshake bytes are physically written.
