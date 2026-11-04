@@ -407,10 +407,17 @@ pipe, not the MCP adapter: a job-contained helper exercises `PIPE_NOWAIT`,
 physical partial/zero writes, reader closure, and a separate process changing
 the mode through a duplicated writer. Native execution is required, and results
 apply only to the controlled pipe and the tested Windows environment and
-configuration, not other hosts. A duplicated handle may change
-shared state; neither a mode query nor a successful write proves exclusive
-control or prevents a later mode-change race. Mode queries may also require
-rights absent from a write-only anonymous-pipe handle. Microsoft documents
+configuration, not other hosts. Its separate control stream skips only a
+bounded number of empty lines; malformed nonempty output, including a child
+panic, fails with bounded escaped diagnostics. Total control bytes and each
+event's deadline are bounded independently of the physical-write assertions.
+After the final expected frame, the job-contained controller drains the
+control stream to observed EOF and requires a successful child exit within
+the same deadline; temporary emptiness or process exit alone is not EOF.
+A duplicated handle may change shared state; neither a mode query nor a
+successful write proves exclusive control or prevents a later mode-change
+race. Mode queries may also require rights absent from a write-only
+anonymous-pipe handle. Microsoft documents
 [`PIPE_NOWAIT` as a compatibility mode, not asynchronous I/O](https://learn.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-setnamedpipehandlestate).
 
 The current stdio adapter still uses blocking `write_all`/`flush` with a

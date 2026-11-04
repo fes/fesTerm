@@ -2700,6 +2700,10 @@ nonblocking mode, final-recipient privacy fencing, or independent caller
 liveness against a relay. The production stdio and bootstrap gates remain
 unqualified regardless of the probe result. Run it on native Windows with
 `cargo test --locked -p festerm-windows-security --test windows_stdout_probe -- --test-threads=1 --nocapture`.
+Its platform-independent control-parser regressions run with
+`cargo test --locked -p festerm-windows-security --test windows_stdout_probe_control`.
+The native suite also checks clean control-stream EOF, delayed or partial
+trailing output, and a still-open writer under a job-supervised deadline.
 It uses only test-owned pipes and job-contained subprocesses, and deliberately
 stalls one writer to exercise termination and subsequent progress. If a
 write-only handle lacks mode-query rights, the result is reported as unknown;
