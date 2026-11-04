@@ -477,5 +477,7 @@ Saved profiles, the New/Edit profile editor, session chips, the All-sessions
 sheet, the reconnect banner and the host-verification sheet are now backed by
 `festerm-mobile-profiles`. Trust persists across launches and a changed key is a
 hard refusal with no approve action. Reconnect is honest: a plain shell starts
-new, tmux/screen profiles reattach by name. Bottom sheets grow in place up to
+new, tmux/screen profiles reattach by name. Touching and holding a saved
+profile lifts it so it can be dragged into a new order, which is saved at once;
+reordering is off while a search filters the list. Bottom sheets grow in place up to
 88% of the screen and scroll beyond that.
