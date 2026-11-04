@@ -50,6 +50,33 @@ terminal write or platform qualification. P1 remains observation-only; native
 approval and per-write publication fencing require separate integration and
 review.
 
+## Sharing automation preferences across windows
+
+The desktop application now owns the independent, default-off MCP and
+JavaScript preference pair across its windows. Its configuration writes and
+broadcasts overlay that pair, so a stale sibling save cannot undo a successful
+disable. Same-pass conflicting automation actions stop admission and suppress
+approval with visible feedback. Preference-save failure or an uncertain result
+stops both live features for the process and warns that disk may still contain
+an enabled value; explicit retry can save the pair but does not resume it.
+
+This is not a durable failure latch: restart can read an enabled value that
+remained on disk, though prior grants are not restored. Unrelated configuration
+outcomes, external writers and filesystem namespace races remain outside the
+feature-specific fence. Deterministic multi-window and Settings regressions
+cover the owner; native usability and full validation remain pending. No
+controller UI, protocol operation, listener, worker or production qualification
+is added by this preference slice, and the private bootstrap/privacy gates remain
+closed.
+
+The local integration assembly adds a regression for a preference disable or
+failed save while a separately reviewed metadata grant and a presented
+direct-input reservation are live. A successful JavaScript-only disable
+preserves the independent direct-control path; MCP disable or either preference
+save failure closes it. Another regression combines new/restored secondary
+workspace preservation with a stale profile save after a preference disable.
+These synthetic regressions are not native qualification.
+
 ## Binding direct input without a workflow
 
 The shared authority kernel can now bind a direct input invocation to an exact

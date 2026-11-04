@@ -136,11 +136,14 @@ pub(crate) struct FesTermApplication {
     activation_errors: Arc<Mutex<VecDeque<String>>>,
     automation: crate::automation::Coordinator,
     presentation_workspace: crate::automation::WorkspaceRevision,
+    deferred_automation_commands: Vec<crate::automation::NativeCommand>,
+    deferred_automation_overflow: bool,
     ime_admission: ImeAdmission,
 }
 
 impl FesTermApplication {
     pub(crate) fn new(mut primary: FesTermApp) -> Self {
+        primary.initialize_automation_preferences();
         let presentation_workspace = crate::automation::WorkspaceRevision::default();
         primary.set_presentation_workspace(&presentation_workspace);
         let mut automation = crate::automation::Coordinator::default();
@@ -160,6 +163,8 @@ impl FesTermApplication {
             activation_errors: Default::default(),
             automation,
             presentation_workspace,
+            deferred_automation_commands: Vec::new(),
+            deferred_automation_overflow: false,
             ime_admission: ImeAdmission::new(),
         }
     }
@@ -819,20 +824,108 @@ impl FesTermApplication {
             .set_application_live_session_counts(counts);
     }
 
-    fn drive_automation(&mut self, context: &egui::Context) {
+    fn collect_automation_commands(
+        &mut self,
+        commands: &mut Vec<crate::automation::NativeCommand>,
+        overflow: &mut bool,
+    ) {
         for window in &mut self.windows {
+            let (pending, window_overflow) = window.app.take_automation_commands();
+            if window_overflow
+                || commands.len().saturating_add(pending.len())
+                    > crate::automation::MAX_NATIVE_COMMANDS
+            {
+                if !*overflow {
+                    self.automation.close_conflicting_admission();
+                }
+                *overflow = true;
+                commands.clear();
+            } else if !*overflow {
+                commands.extend(pending);
+            }
+        }
+        if !*overflow && crate::automation::NativeCommand::batch_requires_safety_stop(commands) {
+            self.automation.close_conflicting_admission();
+            *overflow = true;
+            commands.clear();
+        } else if !*overflow
+            && commands.iter().any(|command| {
+                matches!(
+                    command,
+                    crate::automation::NativeCommand::PreferenceChanged { .. }
+                )
+            })
+            && self
+                .windows
+                .first()
+                .is_some_and(|window| !window.app.automation_mcp_enabled())
+        {
+            self.automation.close_overflow_admission();
+        }
+        if let Some(window) = self.windows.first().filter(|_| *overflow) {
+            window.app.report_automation_action_conflict();
+        }
+    }
+
+    fn settle_windows_and_drive_automation(&mut self, context: &egui::Context) {
+        let mut commands = std::mem::take(&mut self.deferred_automation_commands);
+        let mut overflow = std::mem::take(&mut self.deferred_automation_overflow);
+        // A window can close during settlement; collect its stop actions first.
+        self.collect_automation_commands(&mut commands, &mut overflow);
+        self.settle_windows(context);
+        if context.will_discard() {
+            // A later layout pass can contain a cancellation from another
+            // window. Do not commit approvals before the frame settles.
+            self.collect_automation_commands(&mut commands, &mut overflow);
+            self.deferred_automation_commands = commands;
+            self.deferred_automation_overflow = overflow;
+            return;
+        }
+        self.drive_automation(context, commands, overflow);
+        self.windows[0].app.finish_automation_preference_pass();
+    }
+
+    fn drive_automation(
+        &mut self,
+        context: &egui::Context,
+        mut commands: Vec<crate::automation::NativeCommand>,
+        mut overflow: bool,
+    ) {
+        self.collect_automation_commands(&mut commands, &mut overflow);
+        if overflow
+            || commands.iter().any(|command| {
+                matches!(
+                    command,
+                    crate::automation::NativeCommand::ClearWorkflow
+                        | crate::automation::NativeCommand::SafetyStop
+                        | crate::automation::NativeCommand::PreferenceChanged {
+                            clear_workflow: true
+                        }
+                )
+            })
+        {
+            for window in &mut self.windows {
+                window.app.cancel_automation_workflow_picker(context);
+            }
+        }
+        for window in &mut self.windows {
+            window.app.sync_automation_preferences();
             window
                 .app
                 .set_automation_ime_epoch(&self.ime_admission.epoch);
         }
         let apps: Vec<_> = self.windows.iter().map(|window| &window.app).collect();
-        self.automation.tick(context, &apps);
-        for window in &mut self.windows {
-            if let Some(command) = window.app.take_automation_command() {
-                self.automation.command(command, context);
-            }
+        let conflicted = if overflow {
+            self.automation.command_overflow_for_apps(&apps);
+            true
+        } else {
+            self.automation.tick(context, &apps);
+            self.automation.commands(commands, context, &apps)
+        };
+        if let Some(app) = apps.first().filter(|_| conflicted) {
+            app.report_automation_action_conflict();
+            context.request_repaint();
         }
-        let apps: Vec<_> = self.windows.iter().map(|window| &window.app).collect();
         let snapshot = self.automation.settings(&apps);
         let mut changed = false;
         for window in &mut self.windows {
@@ -871,8 +964,7 @@ impl eframe::App for FesTermApplication {
         let context = ui.ctx().clone();
         self.show_secondary_windows(&context);
         festerm_ui_egui::chrome::tab_drag::show_requested_drag_ghost(&context);
-        self.settle_windows(&context);
-        self.drive_automation(&context);
+        self.settle_windows_and_drive_automation(&context);
         self.process_document_activation(&context);
         if !context.will_discard() && self.ime_admission.finish_pass() {
             context.request_repaint();
@@ -888,14 +980,1069 @@ impl eframe::App for FesTermApplication {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::automation::preferences::{Feature, Values};
+    use crate::configuration_startup::{
+        ConfigurationReloader, SessionNameConfigurationFixture, TestSaveFailure,
+    };
     use crate::tabs::AppCommand;
     use festerm_config::{Configuration, InterfaceSettings, Profile, TerminalFontPreference};
     use festerm_ui_egui::TerminalFontFamily;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn application() -> (FesTermApplication, egui::Context) {
         let context = egui::Context::default();
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         (FesTermApplication::new(app), context)
+    }
+
+    fn with_feature(mut values: Values, feature: Feature, enabled: bool) -> Values {
+        match feature {
+            Feature::Mcp => values.mcp = enabled,
+            Feature::Javascript => values.javascript = enabled,
+        }
+        values
+    }
+
+    fn other_feature(feature: Feature) -> Feature {
+        match feature {
+            Feature::Mcp => Feature::Javascript,
+            Feature::Javascript => Feature::Mcp,
+        }
+    }
+
+    fn automation_configuration(values: Values) -> Configuration {
+        Configuration::empty()
+            .with_interface_settings(
+                InterfaceSettings::DEFAULT
+                    .with_mcp_enabled(values.mcp)
+                    .with_javascript_enabled(values.javascript),
+            )
+            .unwrap()
+    }
+
+    fn application_with_saved_automation_preferences(
+        values: Values,
+    ) -> (
+        FesTermApplication,
+        egui::Context,
+        SessionNameConfigurationFixture,
+    ) {
+        let fixture = SessionNameConfigurationFixture::new();
+        let configuration = automation_configuration(values);
+        configuration.save_to_path(&fixture.path).unwrap();
+        let mut primary = FesTermApp::for_test_with_configuration(configuration);
+        primary.set_reloader_for_test(ConfigurationReloader::from_path_for_test(
+            fixture.path.clone(),
+        ));
+        let context = egui::Context::default();
+        let mut application = FesTermApplication::new(primary);
+        application.open_window(&context, None);
+        (application, context, fixture)
+    }
+
+    fn assert_saved_automation_preferences(path: &std::path::Path, expected: Values) {
+        let configuration = Configuration::load_from_path(path).unwrap();
+        let settings = configuration.interface_settings();
+        assert_eq!(settings.mcp_enabled(), expected.mcp);
+        assert_eq!(settings.javascript_enabled(), expected.javascript);
+    }
+
+    struct LivePreferenceFixture {
+        application: FesTermApplication,
+        context: egui::Context,
+        file: SessionNameConfigurationFixture,
+        target: festerm_automation::TargetRef,
+        stop: Arc<AtomicBool>,
+        _receive: Box<dyn Fn() -> Option<Vec<u8>>>,
+    }
+
+    fn live_preference_fixture(approved: bool) -> LivePreferenceFixture {
+        let (coordinator, mut primary, target, stop, receive) =
+            crate::automation::preference_application_fixture(approved);
+        let file = SessionNameConfigurationFixture::new();
+        let configuration = automation_configuration(Values {
+            mcp: true,
+            javascript: true,
+        });
+        configuration.save_to_path(&file.path).unwrap();
+        primary.adopt_broadcast_configuration(configuration);
+        primary.set_reloader_for_test(ConfigurationReloader::from_path_for_test(file.path.clone()));
+        let context = egui::Context::default();
+        let mut application = FesTermApplication::new(primary);
+        application.automation = coordinator;
+        application.open_window(&context, None);
+        let apps: Vec<_> = application
+            .windows
+            .iter()
+            .map(|window| &window.app)
+            .collect();
+        let snapshot = application.automation.settings(&apps);
+        assert_eq!(snapshot.channels.len(), 1);
+        for window in &mut application.windows {
+            window.app.set_automation_settings(snapshot.clone());
+        }
+        LivePreferenceFixture {
+            application,
+            context,
+            file,
+            target,
+            stop,
+            _receive: Box::new(receive),
+        }
+    }
+
+    #[test]
+    fn automation_disables_fence_stale_cross_window_saves_and_reload() {
+        for disabled in [Feature::Mcp, Feature::Javascript] {
+            let other = other_feature(disabled);
+            for other_initial in [false, true] {
+                for first_window in [0, 1] {
+                    let initial = with_feature(
+                        with_feature(
+                            Values {
+                                mcp: false,
+                                javascript: false,
+                            },
+                            disabled,
+                            true,
+                        ),
+                        other,
+                        other_initial,
+                    );
+                    let (mut application, context, file) =
+                        application_with_saved_automation_preferences(initial);
+                    let (stale, _, stale_reloader, ..) = application.windows[1 - first_window]
+                        .app
+                        .shared_application_services();
+
+                    application
+                        .window_mut(first_window)
+                        .toggle_automation_preference_for_test(disabled, &context);
+                    let mut expected = with_feature(initial, disabled, false);
+                    assert_saved_automation_preferences(&file.path, expected);
+
+                    application
+                        .window_mut(1 - first_window)
+                        .toggle_automation_preference_for_test(other, &context);
+                    expected = with_feature(expected, other, !other_initial);
+                    assert_saved_automation_preferences(&file.path, expected);
+
+                    let compact = !stale.interface_settings().compact_launcher_grid();
+                    let unrelated = stale
+                        .with_interface_settings(
+                            stale
+                                .interface_settings()
+                                .clone()
+                                .with_compact_launcher_grid(compact),
+                        )
+                        .unwrap();
+                    let saved = stale_reloader.save_configuration(&unrelated).unwrap();
+                    assert_eq!(saved.interface_settings().mcp_enabled(), expected.mcp);
+                    assert_eq!(
+                        saved.interface_settings().javascript_enabled(),
+                        expected.javascript
+                    );
+                    assert_eq!(saved.interface_settings().compact_launcher_grid(), compact);
+                    assert_saved_automation_preferences(&file.path, expected);
+
+                    application.settle_windows_and_drive_automation(&context);
+                    for window in &application.windows {
+                        let configuration = window.app.shared_application_services().0;
+                        assert_eq!(
+                            configuration.interface_settings().mcp_enabled(),
+                            expected.mcp
+                        );
+                        assert_eq!(
+                            configuration.interface_settings().javascript_enabled(),
+                            expected.javascript
+                        );
+                    }
+                    let apps: Vec<_> = application
+                        .windows
+                        .iter()
+                        .map(|window| &window.app)
+                        .collect();
+                    assert!(application
+                        .automation
+                        .settings(&apps)
+                        .status
+                        .contains("may not have been applied"));
+
+                    application.settle_windows_and_drive_automation(&context);
+                    assert_saved_automation_preferences(&file.path, expected);
+                    let loaded = Configuration::load_from_path(&file.path).unwrap();
+                    let restarted =
+                        FesTermApplication::new(FesTermApp::for_test_with_configuration(loaded));
+                    assert_eq!(
+                        restarted.windows[0].app.automation_mcp_enabled(),
+                        expected.mcp
+                    );
+                    assert_eq!(
+                        restarted.windows[0].app.automation_javascript_enabled(),
+                        expected.javascript
+                    );
+                    assert!(restarted
+                        .automation
+                        .settings(&[&restarted.windows[0].app])
+                        .channels
+                        .is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn automation_disables_survive_stale_broadcasts_unrelated_saves_and_close() {
+        let initial = Values {
+            mcp: true,
+            javascript: true,
+        };
+        for disabled in [Feature::Mcp, Feature::Javascript] {
+            for first_window in [0, 1] {
+                let (mut application, context, file) =
+                    application_with_saved_automation_preferences(initial);
+                let stale = application.windows[1 - first_window]
+                    .app
+                    .shared_application_services()
+                    .0;
+                application
+                    .window_mut(first_window)
+                    .toggle_automation_preference_for_test(disabled, &context);
+                assert!(application
+                    .window_mut(1 - first_window)
+                    .save_unrelated_interface_setting_for_test(&context));
+                let expected = with_feature(initial, disabled, false);
+                assert_saved_automation_preferences(&file.path, expected);
+
+                application
+                    .window_mut(1 - first_window)
+                    .broadcast_for_test(stale);
+                if first_window == 1 {
+                    application.window_mut(1).accept_window_close_for_test();
+                }
+                application.settle_windows_and_drive_automation(&context);
+                application.settle_windows_and_drive_automation(&context);
+                assert_saved_automation_preferences(&file.path, expected);
+                for window in &application.windows {
+                    let configuration = window.app.shared_application_services().0;
+                    assert_eq!(
+                        configuration.interface_settings().mcp_enabled(),
+                        expected.mcp
+                    );
+                    assert_eq!(
+                        configuration.interface_settings().javascript_enabled(),
+                        expected.javascript
+                    );
+                    assert_eq!(window.app.automation_mcp_enabled(), expected.mcp);
+                    assert_eq!(
+                        window.app.automation_javascript_enabled(),
+                        expected.javascript
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn automation_preference_save_failures_stay_stopped_and_visible_until_retry() {
+        let initial = Values {
+            mcp: true,
+            javascript: true,
+        };
+        for disabled in [Feature::Mcp, Feature::Javascript] {
+            for failure in [TestSaveFailure::BeforeWrite, TestSaveFailure::AfterWrite] {
+                for first_window in [0, 1] {
+                    let (mut application, context, file) =
+                        application_with_saved_automation_preferences(initial);
+                    let stale = application.windows[1 - first_window]
+                        .app
+                        .shared_application_services()
+                        .0;
+                    application.windows[first_window]
+                        .app
+                        .shared_application_services()
+                        .2
+                        .fail_next_save_for_test(failure);
+                    application
+                        .window_mut(first_window)
+                        .toggle_automation_preference_for_test(disabled, &context);
+                    for window in &application.windows {
+                        assert!(!window.app.automation_mcp_enabled());
+                        assert!(!window.app.automation_javascript_enabled());
+                        let warning = window
+                            .app
+                            .automation_preference_feedback_for_test()
+                            .unwrap();
+                        assert!(warning.contains("outcome is uncertain"));
+                        assert!(warning.contains("may remain on disk"));
+                        assert!(!warning.contains(file.path.to_string_lossy().as_ref()));
+                    }
+                    let desired = with_feature(initial, disabled, false);
+                    let expected_disk = match failure {
+                        TestSaveFailure::BeforeWrite => initial,
+                        TestSaveFailure::AfterWrite => desired,
+                    };
+                    assert_saved_automation_preferences(&file.path, expected_disk);
+                    let loaded = Configuration::load_from_path(&file.path).unwrap();
+                    let restarted =
+                        FesTermApplication::new(FesTermApp::for_test_with_configuration(loaded));
+                    assert!(restarted
+                        .automation
+                        .settings(&[&restarted.windows[0].app])
+                        .channels
+                        .is_empty());
+
+                    application
+                        .window_mut(1 - first_window)
+                        .broadcast_for_test(stale);
+                    application.settle_windows_and_drive_automation(&context);
+                    for window in &application.windows {
+                        let configuration = window.app.shared_application_services().0;
+                        assert_eq!(
+                            configuration.interface_settings().mcp_enabled(),
+                            desired.mcp
+                        );
+                        assert_eq!(
+                            configuration.interface_settings().javascript_enabled(),
+                            desired.javascript
+                        );
+                        assert!(!window.app.automation_mcp_enabled());
+                        assert!(!window.app.automation_javascript_enabled());
+                    }
+                    assert!(application
+                        .window_mut(1 - first_window)
+                        .save_unrelated_interface_setting_for_test(&context));
+                    assert_saved_automation_preferences(&file.path, desired);
+                    assert!(application.windows[0]
+                        .app
+                        .automation_preference_feedback_for_test()
+                        .unwrap()
+                        .contains("outcome is uncertain"));
+                    application.settle_windows_and_drive_automation(&context);
+                    application
+                        .window_mut(0)
+                        .retry_automation_preferences_for_test(&context);
+                    application.settle_windows_and_drive_automation(&context);
+                    for window in &application.windows {
+                        assert!(!window.app.automation_mcp_enabled());
+                        assert!(!window.app.automation_javascript_enabled());
+                        assert!(window
+                            .app
+                            .automation_preference_feedback_for_test()
+                            .unwrap()
+                            .contains("remain stopped until restart"));
+                    }
+                    assert_saved_automation_preferences(&file.path, desired);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn automation_uncertain_enable_is_not_copied_by_an_unrelated_save() {
+        let off = Values {
+            mcp: false,
+            javascript: false,
+        };
+        for feature in [Feature::Mcp, Feature::Javascript] {
+            for failure in [TestSaveFailure::BeforeWrite, TestSaveFailure::AfterWrite] {
+                let (mut application, context, file) =
+                    application_with_saved_automation_preferences(off);
+                application.windows[0]
+                    .app
+                    .shared_application_services()
+                    .2
+                    .fail_next_save_for_test(failure);
+                application
+                    .window_mut(0)
+                    .toggle_automation_preference_for_test(feature, &context);
+                let expected_disk = match failure {
+                    TestSaveFailure::BeforeWrite => off,
+                    TestSaveFailure::AfterWrite => with_feature(off, feature, true),
+                };
+                assert_saved_automation_preferences(&file.path, expected_disk);
+                assert!(!application.windows[0].app.automation_mcp_enabled());
+                assert!(!application.windows[1].app.automation_javascript_enabled());
+                assert!(application
+                    .window_mut(1)
+                    .save_unrelated_interface_setting_for_test(&context));
+                assert_saved_automation_preferences(&file.path, off);
+                assert!(application.windows[1]
+                    .app
+                    .automation_preference_feedback_for_test()
+                    .unwrap()
+                    .contains("outcome is uncertain"));
+            }
+        }
+    }
+
+    #[test]
+    fn automation_same_pass_stale_toggles_and_reset_cannot_reenable() {
+        let initial = Values {
+            mcp: true,
+            javascript: true,
+        };
+        for feature in [Feature::Mcp, Feature::Javascript] {
+            for first_window in [0, 1] {
+                let (mut application, context, file) =
+                    application_with_saved_automation_preferences(initial);
+                application
+                    .window_mut(first_window)
+                    .toggle_automation_preference_for_test(feature, &context);
+                application
+                    .window_mut(1 - first_window)
+                    .toggle_automation_preference_for_test(feature, &context);
+                let disabled = with_feature(initial, feature, false);
+                assert_saved_automation_preferences(&file.path, disabled);
+                assert!(application.windows[0]
+                    .app
+                    .automation_preference_feedback_for_test()
+                    .unwrap()
+                    .contains("may not have been applied"));
+                application.settle_windows_and_drive_automation(&context);
+                assert_saved_automation_preferences(&file.path, disabled);
+
+                application
+                    .window_mut(1 - first_window)
+                    .toggle_automation_preference_for_test(feature, &context);
+                application.settle_windows_and_drive_automation(&context);
+                assert_saved_automation_preferences(&file.path, initial);
+
+                application
+                    .window_mut(first_window)
+                    .reset_automation_preferences_for_test(&context);
+                application
+                    .window_mut(1 - first_window)
+                    .toggle_automation_preference_for_test(feature, &context);
+                let off = Values {
+                    mcp: false,
+                    javascript: false,
+                };
+                assert_saved_automation_preferences(&file.path, off);
+                application.settle_windows_and_drive_automation(&context);
+                assert_saved_automation_preferences(&file.path, off);
+                assert!(application.windows[0]
+                    .app
+                    .automation_preference_feedback_for_test()
+                    .unwrap()
+                    .contains("may not have been applied"));
+            }
+        }
+    }
+
+    #[test]
+    fn automation_cross_window_aba_invalidates_the_old_toggle_interaction() {
+        let off = Values {
+            mcp: false,
+            javascript: false,
+        };
+        for feature in [Feature::Mcp, Feature::Javascript] {
+            let (mut application, context, file) =
+                application_with_saved_automation_preferences(off);
+            let preferences = application.windows[0]
+                .app
+                .shared_application_services()
+                .2
+                .automation_preferences()
+                .unwrap();
+            let old_revision = preferences.ui_revision(feature);
+            application
+                .window_mut(1)
+                .toggle_automation_preference_for_test(feature, &context);
+            application
+                .window_mut(0)
+                .toggle_automation_preference_for_test(feature, &context);
+            assert_ne!(preferences.ui_revision(feature), old_revision);
+            assert_saved_automation_preferences(&file.path, off);
+            application.settle_windows_and_drive_automation(&context);
+            assert_saved_automation_preferences(&file.path, off);
+        }
+    }
+
+    #[test]
+    fn automation_disable_guard_survives_discarded_ui_pass() {
+        let initial = Values {
+            mcp: true,
+            javascript: true,
+        };
+        for feature in [Feature::Mcp, Feature::Javascript] {
+            let (mut application, context, file) =
+                application_with_saved_automation_preferences(initial);
+            context.options_mut(|options| options.max_passes = 2.try_into().unwrap());
+            let mut passes = 0;
+            context
+                .run_ui(egui::RawInput::default(), |ui| {
+                    if passes == 0 {
+                        application
+                            .window_mut(0)
+                            .toggle_automation_preference_for_test(feature, ui.ctx());
+                        ui.ctx().request_discard("preference conflict fixture");
+                    } else {
+                        application
+                            .window_mut(1)
+                            .toggle_automation_preference_for_test(feature, ui.ctx());
+                    }
+                    application.settle_windows_and_drive_automation(ui.ctx());
+                    passes += 1;
+                })
+                .drop_without_applying_deltas();
+            assert_eq!(passes, 2);
+            assert_saved_automation_preferences(&file.path, with_feature(initial, feature, false));
+            assert!(application.windows[0]
+                .app
+                .automation_preference_feedback_for_test()
+                .unwrap()
+                .contains("may not have been applied"));
+        }
+    }
+
+    #[test]
+    fn automation_reset_from_stale_default_window_saves_or_warns() {
+        let off = Values {
+            mcp: false,
+            javascript: false,
+        };
+        for feature in [Feature::Mcp, Feature::Javascript] {
+            for first_window in [0, 1] {
+                for failure in [
+                    None,
+                    Some(TestSaveFailure::BeforeWrite),
+                    Some(TestSaveFailure::AfterWrite),
+                ] {
+                    let (mut application, context, file) =
+                        application_with_saved_automation_preferences(off);
+                    application
+                        .window_mut(first_window)
+                        .toggle_automation_preference_for_test(feature, &context);
+                    let enabled = with_feature(off, feature, true);
+                    assert_saved_automation_preferences(&file.path, enabled);
+                    let resetting = 1 - first_window;
+                    if let Some(failure) = failure {
+                        application.windows[resetting]
+                            .app
+                            .shared_application_services()
+                            .2
+                            .fail_next_save_for_test(failure);
+                    }
+                    application
+                        .window_mut(resetting)
+                        .request_reset_interface_settings_for_test(&context);
+                    let expected_disk = match failure {
+                        Some(TestSaveFailure::BeforeWrite) => enabled,
+                        _ => off,
+                    };
+                    assert_saved_automation_preferences(&file.path, expected_disk);
+                    if failure.is_some() {
+                        assert!(application.windows[resetting]
+                            .app
+                            .automation_preference_feedback_for_test()
+                            .unwrap()
+                            .contains("may remain on disk"));
+                    }
+                    application.settle_windows_and_drive_automation(&context);
+                    for window in &application.windows {
+                        assert!(!window.app.automation_mcp_enabled());
+                        assert!(!window.app.automation_javascript_enabled());
+                    }
+                    assert_saved_automation_preferences(&file.path, expected_disk);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn automation_preferences_remain_independent_for_normal_toggles() {
+        let off = Values {
+            mcp: false,
+            javascript: false,
+        };
+        let (mut application, context, file) = application_with_saved_automation_preferences(off);
+        for (window, feature, expected) in [
+            (0, Feature::Mcp, with_feature(off, Feature::Mcp, true)),
+            (
+                1,
+                Feature::Javascript,
+                Values {
+                    mcp: true,
+                    javascript: true,
+                },
+            ),
+            (
+                0,
+                Feature::Javascript,
+                Values {
+                    mcp: true,
+                    javascript: false,
+                },
+            ),
+            (1, Feature::Mcp, off),
+        ] {
+            application
+                .window_mut(window)
+                .toggle_automation_preference_for_test(feature, &context);
+            application.settle_windows_and_drive_automation(&context);
+            assert_saved_automation_preferences(&file.path, expected);
+            for sibling in &application.windows {
+                assert_eq!(sibling.app.automation_mcp_enabled(), expected.mcp);
+                assert_eq!(
+                    sibling.app.automation_javascript_enabled(),
+                    expected.javascript
+                );
+                assert!(sibling
+                    .app
+                    .automation_preference_feedback_for_test()
+                    .is_none());
+            }
+        }
+        let loaded = Configuration::load_from_path(&file.path).unwrap();
+        let restarted = FesTermApplication::new(FesTermApp::for_test_with_configuration(loaded));
+        assert!(!restarted.windows[0].app.automation_mcp_enabled());
+        assert!(!restarted.windows[0].app.automation_javascript_enabled());
+    }
+
+    #[test]
+    fn automation_conflict_warning_survives_frames_and_unrelated_saves() {
+        let initial = Values {
+            mcp: true,
+            javascript: true,
+        };
+        let (mut application, context, file) =
+            application_with_saved_automation_preferences(initial);
+        application
+            .window_mut(0)
+            .queue_automation_command(crate::automation::NativeCommand::SafetyStop);
+        application.settle_windows_and_drive_automation(&context);
+        assert!(application
+            .window_mut(1)
+            .save_unrelated_interface_setting_for_test(&context));
+        application.settle_windows_and_drive_automation(&context);
+        for window in &application.windows {
+            assert!(window
+                .app
+                .automation_preference_feedback_for_test()
+                .unwrap()
+                .contains("may not have been applied"));
+        }
+        assert_saved_automation_preferences(&file.path, initial);
+
+        application
+            .window_mut(1)
+            .toggle_automation_preference_for_test(Feature::Javascript, &context);
+        application.settle_windows_and_drive_automation(&context);
+        assert_saved_automation_preferences(
+            &file.path,
+            with_feature(initial, Feature::Javascript, false),
+        );
+        assert!(application.windows[0]
+            .app
+            .automation_preference_feedback_for_test()
+            .is_none());
+    }
+
+    #[test]
+    fn automation_failed_disables_stop_live_admission_before_settlement() {
+        use crate::automation::WorkflowView;
+        use festerm_automation_js::snapshot::{ApprovedBundle, Manifest, SourceSnapshot};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        for disabled in [Feature::Mcp, Feature::Javascript] {
+            for failure in [TestSaveFailure::BeforeWrite, TestSaveFailure::AfterWrite] {
+                for first_window in [0, 1] {
+                    let LivePreferenceFixture {
+                        mut application,
+                        context,
+                        file,
+                        stop,
+                        _receive,
+                        ..
+                    } = live_preference_fixture(true);
+                    let bundle = ApprovedBundle::new(SourceSnapshot {
+                        manifest: Manifest {
+                            version: 1,
+                            api_version: 1,
+                            name: "test".into(),
+                            entry: "main.js".into(),
+                            modules: vec!["main.js".into()],
+                            parameters: BTreeMap::new(),
+                            capabilities: BTreeSet::new(),
+                        },
+                        modules: BTreeMap::from([("main.js".into(), "export default 1;".into())]),
+                    })
+                    .unwrap();
+                    let apps: Vec<_> = application
+                        .windows
+                        .iter()
+                        .map(|window| &window.app)
+                        .collect();
+                    let mut snapshot = application.automation.settings(&apps);
+                    assert!(snapshot.channels[0].approved);
+                    snapshot.workflow = WorkflowView::captured_for_test(bundle);
+                    let preview = snapshot.workflow.clone();
+                    for window in &mut application.windows {
+                        window.app.set_automation_settings(snapshot.clone());
+                    }
+                    application.windows[first_window]
+                        .app
+                        .shared_application_services()
+                        .2
+                        .fail_next_save_for_test(failure);
+                    application
+                        .window_mut(first_window)
+                        .toggle_automation_preference_for_test(disabled, &context);
+
+                    assert!(stop.load(Ordering::Acquire));
+                    assert!(preview.current_bundle().is_none());
+                    for window in &application.windows {
+                        assert!(!window.app.automation_mcp_enabled());
+                        assert!(!window.app.automation_javascript_enabled());
+                        assert!(window
+                            .app
+                            .automation_preference_feedback_for_test()
+                            .unwrap()
+                            .contains("may remain on disk"));
+                    }
+                    let apps: Vec<_> = application
+                        .windows
+                        .iter()
+                        .map(|window| &window.app)
+                        .collect();
+                    assert!(application.automation.settings(&apps).channels.is_empty());
+                    let expected_disk = match failure {
+                        TestSaveFailure::BeforeWrite => Values {
+                            mcp: true,
+                            javascript: true,
+                        },
+                        TestSaveFailure::AfterWrite => with_feature(
+                            Values {
+                                mcp: true,
+                                javascript: true,
+                            },
+                            disabled,
+                            false,
+                        ),
+                    };
+                    assert_saved_automation_preferences(&file.path, expected_disk);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn automation_cross_window_disable_blocks_queued_approvals() {
+        use crate::automation::NativeCommand;
+
+        for disabled in [Feature::Mcp, Feature::Javascript] {
+            for first_window in [0, 1] {
+                for approval_first in [false, true] {
+                    for failure in [
+                        None,
+                        Some(TestSaveFailure::BeforeWrite),
+                        Some(TestSaveFailure::AfterWrite),
+                    ] {
+                        let LivePreferenceFixture {
+                            mut application,
+                            context,
+                            file,
+                            target,
+                            stop,
+                            _receive,
+                        } = live_preference_fixture(false);
+                        if let Some(failure) = failure {
+                            application.windows[first_window]
+                                .app
+                                .shared_application_services()
+                                .2
+                                .fail_next_save_for_test(failure);
+                        }
+                        let approval = || NativeCommand::ApproveObservation {
+                            channel: 1,
+                            targets: vec![target],
+                        };
+                        if approval_first {
+                            application
+                                .window_mut(1 - first_window)
+                                .queue_automation_command(approval());
+                        }
+                        application
+                            .window_mut(first_window)
+                            .toggle_automation_preference_for_test(disabled, &context);
+                        if !approval_first {
+                            application
+                                .window_mut(1 - first_window)
+                                .queue_automation_command(approval());
+                        }
+                        application.settle_windows_and_drive_automation(&context);
+                        assert!(stop.load(Ordering::Acquire));
+                        let apps: Vec<_> = application
+                            .windows
+                            .iter()
+                            .map(|window| &window.app)
+                            .collect();
+                        let snapshot = application.automation.settings(&apps);
+                        assert!(snapshot.channels.is_empty());
+                        assert!(snapshot.status.contains("conflicted"));
+                        let initial = Values {
+                            mcp: true,
+                            javascript: true,
+                        };
+                        let expected = match failure {
+                            Some(TestSaveFailure::BeforeWrite) => initial,
+                            _ => with_feature(initial, disabled, false),
+                        };
+                        assert_saved_automation_preferences(&file.path, expected);
+                        application.settle_windows_and_drive_automation(&context);
+                        let apps: Vec<_> = application
+                            .windows
+                            .iter()
+                            .map(|window| &window.app)
+                            .collect();
+                        assert!(application.automation.settings(&apps).channels.is_empty());
+                        assert!(stop.load(Ordering::Acquire));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn automation_discarded_pass_never_approves_before_a_later_disable() {
+        use crate::automation::NativeCommand;
+
+        for disabled in [Feature::Mcp, Feature::Javascript] {
+            for approval_first in [false, true] {
+                let LivePreferenceFixture {
+                    mut application,
+                    context,
+                    file,
+                    target,
+                    stop,
+                    _receive,
+                } = live_preference_fixture(false);
+                context.options_mut(|options| options.max_passes = 2.try_into().unwrap());
+                let mut passes = 0;
+                context
+                    .run_ui(egui::RawInput::default(), |ui| {
+                        if passes == 0 {
+                            ui.ctx().request_discard("approval conflict fixture");
+                        }
+                        if (passes == 0) == approval_first {
+                            application.window_mut(1).queue_automation_command(
+                                NativeCommand::ApproveObservation {
+                                    channel: 1,
+                                    targets: vec![target],
+                                },
+                            );
+                        } else {
+                            application
+                                .window_mut(0)
+                                .toggle_automation_preference_for_test(disabled, ui.ctx());
+                        }
+                        application.settle_windows_and_drive_automation(ui.ctx());
+                        if passes == 0 && approval_first {
+                            let apps: Vec<_> = application
+                                .windows
+                                .iter()
+                                .map(|window| &window.app)
+                                .collect();
+                            let snapshot = application.automation.settings(&apps);
+                            assert_eq!(snapshot.channels.len(), 1);
+                            assert!(!snapshot.channels[0].approved);
+                        }
+                        passes += 1;
+                    })
+                    .drop_without_applying_deltas();
+                assert_eq!(passes, 2);
+                assert!(stop.load(Ordering::Acquire));
+                let apps: Vec<_> = application
+                    .windows
+                    .iter()
+                    .map(|window| &window.app)
+                    .collect();
+                let snapshot = application.automation.settings(&apps);
+                assert!(snapshot.channels.is_empty());
+                assert!(snapshot.status.contains("conflicted"));
+                assert_saved_automation_preferences(
+                    &file.path,
+                    with_feature(
+                        Values {
+                            mcp: true,
+                            javascript: true,
+                        },
+                        disabled,
+                        false,
+                    ),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn automation_discarded_pass_cancellation_suppresses_approval() {
+        use crate::automation::NativeCommand;
+
+        for clear_first in [false, true] {
+            let LivePreferenceFixture {
+                mut application,
+                context,
+                target,
+                stop,
+                file: _file,
+                _receive,
+            } = live_preference_fixture(false);
+            context.options_mut(|options| options.max_passes = 2.try_into().unwrap());
+            let mut passes = 0;
+            context
+                .run_ui(egui::RawInput::default(), |ui| {
+                    if passes == 0 {
+                        ui.ctx().request_discard("cancellation conflict fixture");
+                    }
+                    let command = if (passes == 0) == clear_first {
+                        NativeCommand::ClearWorkflow
+                    } else {
+                        NativeCommand::ApproveObservation {
+                            channel: 1,
+                            targets: vec![target],
+                        }
+                    };
+                    application
+                        .window_mut(passes)
+                        .queue_automation_command(command);
+                    application.settle_windows_and_drive_automation(ui.ctx());
+                    passes += 1;
+                })
+                .drop_without_applying_deltas();
+            assert_eq!(passes, 2);
+            assert!(!stop.load(Ordering::Acquire));
+            let apps: Vec<_> = application
+                .windows
+                .iter()
+                .map(|window| &window.app)
+                .collect();
+            let snapshot = application.automation.settings(&apps);
+            assert_eq!(snapshot.channels.len(), 1);
+            assert!(!snapshot.channels[0].approved);
+            assert!(snapshot.status.contains("blocked"));
+        }
+    }
+
+    #[test]
+    fn automation_cross_window_competing_captures_fail_closed_across_passes() {
+        use crate::automation::{NativeCommand, SelectedWorkflow, WorkflowStatus};
+
+        for identical in [false, true] {
+            for first_window in [0, 1] {
+                for split_passes in [false, true] {
+                    let LivePreferenceFixture {
+                        mut application,
+                        context,
+                        file,
+                        stop,
+                        _receive,
+                        ..
+                    } = live_preference_fixture(false);
+                    let capture =
+                        |path: &str| NativeCommand::CaptureWorkflow(SelectedWorkflow(path.into()));
+                    let complete_capture =
+                        application.automation.pending_workflow_capture_for_test();
+                    application.settle_windows_and_drive_automation(&context);
+                    let apps: Vec<_> = application
+                        .windows
+                        .iter()
+                        .map(|window| &window.app)
+                        .collect();
+                    assert_eq!(
+                        application.automation.settings(&apps).workflow.status,
+                        WorkflowStatus::Capturing
+                    );
+
+                    let second = if identical {
+                        "first.json"
+                    } else {
+                        "second.json"
+                    };
+                    context.options_mut(|options| options.max_passes = 2.try_into().unwrap());
+                    let mut passes = 0;
+                    context
+                        .run_ui(egui::RawInput::default(), |ui| {
+                            if passes == 0 {
+                                ui.ctx().request_discard("competing capture fixture");
+                                application
+                                    .window_mut(first_window)
+                                    .queue_automation_command(capture("first.json"));
+                                if !split_passes {
+                                    application
+                                        .window_mut(1 - first_window)
+                                        .queue_automation_command(capture(second));
+                                }
+                            } else if split_passes {
+                                application
+                                    .window_mut(1 - first_window)
+                                    .queue_automation_command(capture(second));
+                            }
+                            application.settle_windows_and_drive_automation(ui.ctx());
+                            if passes == 0 {
+                                let apps: Vec<_> = application
+                                    .windows
+                                    .iter()
+                                    .map(|window| &window.app)
+                                    .collect();
+                                let preview = application.automation.settings(&apps).workflow;
+                                if split_passes {
+                                    assert!(!stop.load(Ordering::Acquire));
+                                    assert_eq!(preview.status, WorkflowStatus::Capturing);
+                                } else {
+                                    assert!(stop.load(Ordering::Acquire));
+                                    assert_eq!(preview.status, WorkflowStatus::Cancelling);
+                                    assert!(application.windows[0]
+                                        .app
+                                        .automation_preference_feedback_for_test()
+                                        .unwrap()
+                                        .contains("conflicted"));
+                                }
+                            }
+                            passes += 1;
+                        })
+                        .drop_without_applying_deltas();
+                    assert_eq!(passes, 2);
+                    assert!(stop.load(Ordering::Acquire));
+                    let apps: Vec<_> = application
+                        .windows
+                        .iter()
+                        .map(|window| &window.app)
+                        .collect();
+                    let snapshot = application.automation.settings(&apps);
+                    assert!(snapshot.channels.is_empty());
+                    assert!(snapshot.status.contains("conflicted"));
+                    assert_eq!(snapshot.workflow.status, WorkflowStatus::Cancelling);
+                    assert!(snapshot.workflow.current_bundle().is_none());
+                    for window in &application.windows {
+                        assert!(window
+                            .app
+                            .automation_preference_feedback_for_test()
+                            .unwrap()
+                            .contains("conflicted"));
+                    }
+                    assert_saved_automation_preferences(
+                        &file.path,
+                        Values {
+                            mcp: true,
+                            javascript: true,
+                        },
+                    );
+                    complete_capture.send(Err("late result".into())).unwrap();
+                    application.settle_windows_and_drive_automation(&context);
+                    let apps: Vec<_> = application
+                        .windows
+                        .iter()
+                        .map(|window| &window.app)
+                        .collect();
+                    let snapshot = application.automation.settings(&apps);
+                    assert_eq!(snapshot.workflow.status, WorkflowStatus::Empty);
+                    assert!(snapshot.workflow.current_bundle().is_none());
+                    assert!(stop.load(Ordering::Acquire));
+                }
+            }
+        }
     }
 
     #[test]
@@ -1255,7 +2402,7 @@ mod tests {
                 .drop_without_applying_deltas();
         }
         assert!(!context.has_requested_repaint());
-        application.drive_automation(&context);
+        application.settle_windows_and_drive_automation(&context);
         assert!(context.has_requested_repaint());
     }
 

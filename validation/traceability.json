@@ -207,12 +207,40 @@
       "decisions": ["ADR-0065"],
       "automated_tests": [
         "automation_settings_are_independent_explicit_opt_ins",
-        "automation_preferences_do_not_start_unqualified_or_javascript_adapters"
+        "automation_preferences_do_not_start_unqualified_or_javascript_adapters",
+        "automation_settings_ui_persists_toggles_and_displays_save_failure",
+        "automation_disables_fence_stale_cross_window_saves_and_reload",
+        "automation_disables_survive_stale_broadcasts_unrelated_saves_and_close",
+        "secondary_workspace_profile_save_preserves_automation_disable",
+        "automation_preference_save_failures_stay_stopped_and_visible_until_retry",
+        "automation_uncertain_enable_is_not_copied_by_an_unrelated_save",
+        "automation_same_pass_stale_toggles_and_reset_cannot_reenable",
+        "automation_cross_window_aba_invalidates_the_old_toggle_interaction",
+        "automation_disable_guard_survives_discarded_ui_pass",
+        "automation_reset_from_stale_default_window_saves_or_warns",
+        "automation_preferences_remain_independent_for_normal_toggles",
+        "automation_conflict_warning_survives_frames_and_unrelated_saves",
+        "automation_failed_disables_stop_live_admission_before_settlement",
+        "preference_disables_fence_presented_reservation_and_composed_metadata",
+        "automation_cross_window_disable_blocks_queued_approvals",
+        "automation_discarded_pass_never_approves_before_a_later_disable",
+        "automation_discarded_pass_cancellation_suppresses_approval",
+        "automation_same_pass_cancellation_suppresses_approval_and_capture",
+        "automation_competing_workflow_captures_cancel_pending_without_winner",
+        "automation_cross_window_competing_captures_fail_closed_across_passes",
+        "conflicting_automation_actions_are_visible_in_settings",
+        "automation_command_queue_overflow_stops_admission_before_settlement",
+        "automation_toggle_release_cannot_reenable_a_changed_preference",
+        "automation_toggle_release_cannot_reenable_after_same_pass_aba",
+        "exhausted_preference_ui_revision_fails_closed_but_allows_disable",
+        "settings_automation_conflicts_stop_before_approval_or_unrelated_actions",
+        "uncertain_automation_preferences_show_warning_and_safe_retry"
       ],
       "manual_scenarios": ["AUTO-01"],
       "status": "partial",
       "prerequisites": [
-        "Native settings usability remains open under AUTO-01; configuration opt-in is not runtime or platform qualification"
+        "Native multi-window Settings, warning and retry usability remain open under AUTO-01; configuration opt-in is not runtime or platform qualification",
+        "Failed or indeterminate preference saves cannot promise a durable off value across restart; unrelated indeterminate configuration outcomes and external writers remain outside this feature-specific fence"
       ]
     },
     {
@@ -390,6 +418,7 @@
         "direct_action_after_publication_loss_is_unknown_and_not_replayed",
         "direct_action_is_cut_by_pending_human_input",
         "direct_action_reserves_frozen_bytes_in_backend_order",
+        "preference_disables_fence_presented_reservation_and_composed_metadata",
         "direct_action_reservation_refuses_stale_or_wrong_backend",
         "direct_action_backend_reservation_rechecks_modes_at_publication",
         "direct_action_reservation_discards_attachment_replaced_during_backend_call",
@@ -2334,6 +2363,7 @@
         "a_secondary_window_does_not_persist_its_workspace",
         "new_secondary_preserves_workspace_document_on_profile_save",
         "restored_secondary_preserves_workspace_document_on_profile_save",
+        "secondary_workspace_profile_save_preserves_automation_disable",
         "secondary_with_restore_off_scrubs_workspace_before_profile_save",
         "the_native_menu_new_window_command_requests_a_window",
         "an_additional_window_renders_its_own_content_in_a_real_pass",

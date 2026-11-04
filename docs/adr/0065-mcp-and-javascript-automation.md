@@ -200,6 +200,16 @@ to bypass another's restrictions.
 The owner has settled the language choice and separately authorized the P1-P3
 implementation campaign in [issue #501](https://github.com/fes/fesTerm/issues/501).
 MCP and JavaScript have independent settings, both disabled by default.
+The desktop application owns that preference pair across its windows and
+overlays it on its serialized configuration writes and sibling broadcasts.
+A successful disable is not reversed by a stale sibling save. If a preference
+save fails or its outcome is uncertain, both features stop for the current
+process and Settings warns that an enabled value may remain on disk. A failed
+enable may also have reached disk despite the error. A successful explicit
+retry confirms the requested values but does not resume
+automation until restart. This is not a durable failure latch or a general
+configuration transaction owner; unrelated indeterminate saves and external
+writers retain their existing risks.
 The observation-only MCP checkpoint is a distinct PR before JavaScript/control;
 subsequent work continues through P3. P4 remains deferred. Unsupported platform
 capabilities stay unavailable, with no in-process or weaker-confinement fallback.
@@ -281,7 +291,13 @@ in the design must be visible in implementation/release review.
   qualify any real input adapter. Configuration tests cover
   snapshot value, trust rotation, revision/ABA limitations and redacted debug;
   no native launch, approval or policy fencing is exercised. Other configuration
-  tests cover independent default-off opt-ins. MCP protocol, private framing, bounded
+  tests cover independent default-off opt-ins. Application and Settings tests
+  exercise serialized multi-window preference changes, stale broadcasts and
+  unrelated saves, failure and indeterminate outcomes, explicit retry,
+  same-pass conflict handling, competing workflow selections, and cancellation
+  before approval. A persisted
+  disable is checked after reload; failure cannot promise a durable off bit
+  across restart. MCP protocol, private framing, bounded
   observation, pairing and stale-target tests cover the P1 path. Incremental
   Noise handshake tests cover bounded framing, readiness and withholding the
   unverified channel until outbound handshake bytes are physically written.

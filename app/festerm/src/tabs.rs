@@ -2577,6 +2577,7 @@ pub enum AppCommand {
     ToggleAutomaticUpdateChecks,
     ToggleMcpEnabled,
     ToggleJavascriptEnabled,
+    RetryAutomationSettings,
     OpenWorkflowPicker,
     Automation(crate::automation::NativeCommand),
     /// Sets or clears the default starting local directory for new SFTP sessions.
@@ -3544,6 +3545,11 @@ impl AppState {
         self.javascript_enabled
     }
 
+    pub(crate) fn set_automation_preferences(&mut self, mcp: bool, javascript: bool) {
+        self.mcp_enabled = mcp;
+        self.javascript_enabled = javascript;
+    }
+
     pub const fn prefer_powershell(&self) -> bool {
         self.prefer_powershell
     }
@@ -4180,6 +4186,7 @@ impl AppState {
             AppCommand::ToggleJavascriptEnabled => {
                 self.javascript_enabled = !self.javascript_enabled;
             }
+            AppCommand::RetryAutomationSettings => {}
             AppCommand::OpenWorkflowPicker => {}
             AppCommand::Automation(_) => {}
             AppCommand::SetDefaultSftpLocalDirectory(path) => {

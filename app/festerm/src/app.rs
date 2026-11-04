@@ -417,7 +417,8 @@ impl NativeMenuShortcutCache {
 pub struct FesTermApp {
     state: AppState,
     automation_settings: crate::automation::SettingsSnapshot,
-    automation_command: Option<crate::automation::NativeCommand>,
+    automation_commands: Vec<crate::automation::NativeCommand>,
+    automation_command_overflow: bool,
     image_budget: crate::markdown_images::ImageMemoryBudget,
     local_persistence_provider: PersistenceProviderKind,
     /// The deterministic local tab created only for native-window smoke. The
@@ -937,7 +938,8 @@ impl FesTermApp {
             wake_monitor: None,
             wake_requested: Arc::new(AtomicBool::new(false)),
             automation_settings: Default::default(),
-            automation_command: None,
+            automation_commands: Vec::new(),
+            automation_command_overflow: false,
             focus_mode: false,
             terminal_fonts_installed: true,
             effective_terminal_font,
@@ -1407,6 +1409,9 @@ impl FesTermApp {
     /// actually succeeded (`ConfigurationStartupStatus::was_saved`) -
     /// otherwise the in-memory configuration is left untouched and the
     /// caller only learns about the failure via `self.configuration_status`.
+    /// The shared automation preference pair is a narrow exception: it reflects
+    /// the desired in-process state even after a failed save, with separate
+    /// sticky uncertainty feedback and live admission stopped.
     ///
     /// Centralizing this removes seven independently hand-written copies of
     /// the same "commit only on success" check (previously each a
@@ -1429,6 +1434,17 @@ impl FesTermApp {
         ) -> ConfigurationStartupStatus,
     ) -> bool {
         let replacement = match replacement {
+            Ok(replacement) => replacement,
+            Err(_) => {
+                self.configuration_status =
+                    on_invalid(crate::configuration_startup::ConfigurationLoadFailure::Invalid);
+                return false;
+            }
+        };
+        let replacement = match self
+            .configuration_reloader
+            .automation_configuration(&replacement)
+        {
             Ok(replacement) => replacement,
             Err(_) => {
                 self.configuration_status =
@@ -1497,6 +1513,13 @@ impl FesTermApp {
     /// touches no tab, focus, scroll offset, selection, or in-progress text
     /// entry (ADR 0032).
     pub(crate) fn adopt_broadcast_configuration(&mut self, configuration: Configuration) {
+        let Ok(configuration) = self
+            .configuration_reloader
+            .automation_configuration(&configuration)
+        else {
+            self.queue_automation_command(crate::automation::NativeCommand::SafetyStop);
+            return;
+        };
         if !configuration.interface_settings().mcp_enabled() {
             self.automation_settings.disable();
         }
@@ -1789,12 +1812,8 @@ impl FesTermApp {
         else {
             return;
         };
-        if self
-            .configuration_reloader
-            .save_configuration(&replacement)
-            .is_ok()
-        {
-            self.state.replace_configuration(replacement);
+        if let Ok(configuration) = self.configuration_reloader.save_configuration(&replacement) {
+            self.state.replace_configuration(configuration);
         }
     }
 
@@ -1823,12 +1842,8 @@ impl FesTermApp {
         ) else {
             return;
         };
-        if self
-            .configuration_reloader
-            .save_configuration(&replacement)
-            .is_ok()
-        {
-            self.state.replace_configuration(replacement);
+        if let Ok(configuration) = self.configuration_reloader.save_configuration(&replacement) {
+            self.state.replace_configuration(configuration);
         }
     }
 
@@ -1850,14 +1865,14 @@ impl FesTermApp {
     /// applies regardless of whether the write succeeds
     /// (`docs/gui-design.md` "apply immediately"); a failed write only means
     /// the change will not survive a restart.
-    fn persist_interface_settings(&mut self) {
+    fn persist_interface_settings(&mut self) -> bool {
         self.apply_configuration_save(
             self.state
                 .configuration()
                 .with_interface_settings(self.current_interface_settings()),
             ConfigurationStartupStatus::InterfaceSettingsSaveFailure,
             crate::configuration_startup::ConfigurationReloader::save_interface_settings,
-        );
+        )
     }
 
     fn current_interface_settings(&self) -> InterfaceSettings {
@@ -1938,16 +1953,21 @@ impl FesTermApp {
     ) {
         let result = self
             .configuration_reloader
-            .tunnel_import_directory()
-            .map_err(|_| {
-                "The imported profile could not be saved. Configuration location unavailable."
-            })
-            .and_then(|directory| {
-                import.save(self.state.configuration(), &directory, |replacement| {
-                    self.configuration_reloader
-                        .save_configuration(replacement)
-                        .is_ok()
-                })
+            .automation_configuration(self.state.configuration())
+            .map_err(|_| "The imported profile could not be saved. Configuration is invalid.")
+            .and_then(|configuration| {
+                self.configuration_reloader
+                    .tunnel_import_directory()
+                    .map_err(|_| {
+                        "The imported profile could not be saved. Configuration location unavailable."
+                    })
+                    .and_then(|directory| {
+                        import.save(&configuration, &directory, |replacement| {
+                            self.configuration_reloader
+                                .save_configuration(replacement)
+                                .is_ok()
+                        })
+                    })
             });
         match result {
             Ok(configuration) => {
@@ -2000,8 +2020,10 @@ impl FesTermApp {
         if self.current_interface_settings() == InterfaceSettings::DEFAULT {
             self.state
                 .dispatch(AppCommand::ResetInterfaceSettings, context);
-            self.automation_settings.disable();
-            self.automation_settings.workflow.disable();
+            let before = self.reset_automation_preferences(context);
+            if before.mcp || before.javascript || self.automation_preference_retry_available() {
+                self.persist_reset_automation_preferences(before);
+            }
             self.image_budget
                 .set_preference(InterfaceSettings::DEFAULT.image_memory_budget());
             return;
@@ -2419,7 +2441,6 @@ impl FesTermApp {
                     self.configuration_reloader
                         .save_configuration(configuration)
                         .ok()
-                        .map(|_| configuration.clone())
                 });
                 if let Some(configuration) = saved {
                     self.state.replace_configuration(configuration);
@@ -4414,7 +4435,7 @@ impl FesTermApp {
     }
 
     fn open_workflow_file_picker(&mut self, context: &egui::Context) {
-        if !self.state.javascript_enabled() {
+        if !self.automation_javascript_enabled() {
             tracing::warn!("workflow selection refused while JavaScript is disabled");
             return;
         }
@@ -4586,7 +4607,7 @@ impl FesTermApp {
 
     fn show_markdown_file_picker(&mut self, ctx: &egui::Context, _content_rect: egui::Rect) {
         let selecting_workflow = self.overlays.workflow_file_picker;
-        if selecting_workflow && !self.state.javascript_enabled() {
+        if selecting_workflow && !self.automation_javascript_enabled() {
             self.close_markdown_file_picker(ctx);
             return;
         }
@@ -4631,7 +4652,7 @@ impl FesTermApp {
                 self.overlays.workflow_file_picker = false;
                 self.restore_active_terminal_focus();
                 if selecting_workflow {
-                    if self.state.javascript_enabled() {
+                    if self.automation_javascript_enabled() {
                         self.queue_automation_command(
                             crate::automation::NativeCommand::CaptureWorkflow(
                                 crate::automation::SelectedWorkflow(path),
@@ -5973,6 +5994,7 @@ impl FesTermApp {
     /// directly without constructing an `eframe::Frame` (whose fields are
     /// private to `eframe` and not test-constructible).
     pub(crate) fn ui_content(&mut self, ui: &mut egui::Ui) {
+        self.sync_automation_preferences();
         self.image_budget = crate::markdown_images::ImageMemoryBudget::for_context(
             ui.ctx(),
             self.state.image_memory_budget(),
@@ -6261,6 +6283,18 @@ impl FesTermApp {
                             automatic_update_checks: self.state.automatic_update_checks(),
                             mcp_enabled: self.state.mcp_enabled(),
                             javascript_enabled: self.state.javascript_enabled(),
+                            automation_mcp_enabled: self.automation_mcp_enabled(),
+                            automation_javascript_enabled: self.automation_javascript_enabled(),
+                            automation_mcp_ui_revision: self.automation_preference_ui_revision(
+                                crate::automation::preferences::Feature::Mcp,
+                            ),
+                            automation_javascript_ui_revision: self
+                                .automation_preference_ui_revision(
+                                    crate::automation::preferences::Feature::Javascript,
+                                ),
+                            automation_preference_feedback: self.automation_preference_feedback(),
+                            automation_preference_retry_available: self
+                                .automation_preference_retry_available(),
                             automation: self.automation_settings.clone(),
                             default_sftp_local_directory: self
                                 .state
@@ -6758,6 +6792,17 @@ impl FesTermApp {
                 AppCommand::Automation(command) => {
                     self.queue_automation_command(command);
                 }
+                AppCommand::ToggleMcpEnabled => self.toggle_automation_preference(
+                    crate::automation::preferences::Feature::Mcp,
+                    ui.ctx(),
+                ),
+                AppCommand::ToggleJavascriptEnabled => self.toggle_automation_preference(
+                    crate::automation::preferences::Feature::Javascript,
+                    ui.ctx(),
+                ),
+                AppCommand::RetryAutomationSettings => {
+                    self.retry_automation_preferences(ui.ctx());
+                }
                 command @ (AppCommand::ToggleChipLayout
                 | AppCommand::ToggleStatusBar
                 | AppCommand::ToggleShowSessionDetails
@@ -6771,8 +6816,6 @@ impl FesTermApp {
                 | AppCommand::ToggleShowResumableSessions
                 | AppCommand::ToggleDurableSessionInStatusBar
                 | AppCommand::ToggleCustomizeLocalShell
-                | AppCommand::ToggleMcpEnabled
-                | AppCommand::ToggleJavascriptEnabled
                 | AppCommand::SetScrollSpeed(_)
                 | AppCommand::ToggleRectangleCopyTrimTrailingSpaces
                 | AppCommand::SetEditorSettings(_)
@@ -6786,9 +6829,7 @@ impl FesTermApp {
                     }
                     if !self.state.javascript_enabled() {
                         self.automation_settings.workflow.disable();
-                        if self.overlays.workflow_file_picker {
-                            self.close_markdown_file_picker(&context);
-                        }
+                        self.cancel_automation_workflow_picker(&context);
                     }
                     self.persist_interface_settings();
                 }
@@ -7102,8 +7143,11 @@ impl FesTermApp {
 
     pub(crate) fn set_reloader_for_test(
         &mut self,
-        reloader: crate::configuration_startup::ConfigurationReloader,
+        mut reloader: crate::configuration_startup::ConfigurationReloader,
     ) {
+        if let Some(preferences) = self.configuration_reloader.automation_preferences() {
+            reloader.set_automation_preferences(preferences);
+        }
         self.configuration_reloader = reloader;
     }
 
@@ -7404,7 +7448,8 @@ impl FesTermApp {
             wake_monitor: None,
             wake_requested: Arc::new(AtomicBool::new(false)),
             automation_settings: Default::default(),
-            automation_command: None,
+            automation_commands: Vec::new(),
+            automation_command_overflow: false,
             focus_mode: false,
             terminal_fonts_installed: false,
             window_was_focused: true,
@@ -9454,6 +9499,70 @@ mod tests {
         assert!(report.contains("control-interrupt"));
         assert!(!report.contains("fake-token-154"));
         assert!(!report.contains("auth.example.invalid"));
+    }
+
+    #[test]
+    fn automation_settings_ui_persists_toggles_and_displays_save_failure() {
+        use crate::configuration_startup::{SessionNameConfigurationFixture, TestSaveFailure};
+
+        let file = SessionNameConfigurationFixture::new();
+        let configuration = Configuration::empty();
+        configuration.save_to_path(&file.path).unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
+        app.set_reloader_for_test(ConfigurationReloader::from_path_for_test(file.path.clone()));
+        app.initialize_automation_preferences();
+        app.state
+            .dispatch(AppCommand::OpenSettings, &egui::Context::default());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 5200.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable local MCP")
+            .click();
+        harness.run();
+        let settings = Configuration::load_from_path(&file.path).unwrap();
+        assert!(settings.interface_settings().mcp_enabled());
+        assert!(!settings.interface_settings().javascript_enabled());
+        harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable JavaScript workflows")
+            .click();
+        harness.run();
+        let settings = Configuration::load_from_path(&file.path).unwrap();
+        assert!(settings.interface_settings().mcp_enabled());
+        assert!(settings.interface_settings().javascript_enabled());
+
+        harness
+            .state()
+            .configuration_reloader
+            .fail_next_save_for_test(TestSaveFailure::BeforeWrite);
+        harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable local MCP")
+            .click();
+        harness.run();
+        assert!(!harness.state().automation_mcp_enabled());
+        assert!(!harness.state().automation_javascript_enabled());
+        assert!(harness
+            .query_by_label_contains("may remain on disk and be read after restart")
+            .is_some());
+        assert!(Configuration::load_from_path(&file.path)
+            .unwrap()
+            .interface_settings()
+            .mcp_enabled());
+
+        harness
+            .get_by_label("Retry saving automation preferences (stay stopped)")
+            .click();
+        harness.run();
+        let settings = Configuration::load_from_path(&file.path).unwrap();
+        assert!(!settings.interface_settings().mcp_enabled());
+        assert!(settings.interface_settings().javascript_enabled());
+        assert!(!harness.state().automation_mcp_enabled());
+        assert!(!harness.state().automation_javascript_enabled());
+        assert!(harness
+            .query_by_label_contains("remain stopped until restart")
+            .is_some());
     }
 
     #[test]
@@ -14052,6 +14161,63 @@ mod tests {
             window.state.active_tab().content,
             TabContent::Profiles
         ));
+    }
+
+    #[test]
+    fn secondary_workspace_profile_save_preserves_automation_disable() {
+        use crate::automation::preferences::Feature;
+
+        for restored in [false, true] {
+            for disabled in [Feature::Mcp, Feature::Javascript] {
+                let context = egui::Context::default();
+                let file = crate::configuration_startup::SessionNameConfigurationFixture::new();
+                let configuration = secondary_workspace_configuration();
+                let settings = configuration
+                    .interface_settings()
+                    .clone()
+                    .with_mcp_enabled(true)
+                    .with_javascript_enabled(true);
+                let configuration = configuration.with_interface_settings(settings).unwrap();
+                configuration.save_to_path(&file.path).unwrap();
+                let mut primary = FesTermApp::for_test_with_configuration(configuration.clone());
+                primary.set_reloader_for_test(ConfigurationReloader::from_path_for_test(
+                    file.path.clone(),
+                ));
+                primary.initialize_automation_preferences();
+                let (document, status, reloader, secret_store, documents) =
+                    primary.shared_application_services();
+                let mut secondary = FesTermApp::secondary_window(
+                    &context,
+                    document.clone(),
+                    status,
+                    reloader,
+                    secret_store,
+                    documents,
+                );
+                if restored {
+                    secondary
+                        .restore_window_tabs(&context, &document.workspace().unwrap().windows()[0]);
+                }
+                assert_eq!(secondary.state.configuration(), &configuration);
+
+                primary.toggle_automation_preference_for_test(disabled, &context);
+                let profile = Profile::local("new", "sh", vec![], None).unwrap();
+                assert!(secondary.save_profile(profile));
+
+                let saved = Configuration::load_from_path(&file.path).unwrap();
+                assert_eq!(saved.workspace(), configuration.workspace());
+                assert!(saved.profile("new").is_some());
+                assert_eq!(
+                    saved.interface_settings().mcp_enabled(),
+                    disabled != Feature::Mcp
+                );
+                assert_eq!(
+                    saved.interface_settings().javascript_enabled(),
+                    disabled != Feature::Javascript
+                );
+                assert_eq!(secondary.state.configuration(), &saved);
+            }
+        }
     }
 
     #[test]

@@ -1,9 +1,13 @@
 mod ipc;
 mod observation;
+pub(crate) mod preferences;
 pub(crate) mod presentation;
 #[cfg(test)]
 mod tests;
 mod workflow_selection;
+
+#[cfg(test)]
+pub(crate) use tests::preference_application_fixture;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -44,6 +48,8 @@ pub(crate) use ipc::run_stdio;
 pub(crate) use presentation::WorkspaceRevision;
 pub(crate) use workflow_selection::{Status as WorkflowStatus, View as WorkflowView};
 
+pub(crate) const MAX_NATIVE_COMMANDS: usize = 32;
+
 #[derive(Clone)]
 pub(crate) struct SelectedWorkflow(pub(crate) std::path::PathBuf);
 
@@ -56,6 +62,10 @@ impl std::fmt::Debug for SelectedWorkflow {
 #[derive(Clone, Debug)]
 pub(crate) enum NativeCommand {
     RestartMcp,
+    SafetyStop,
+    PreferenceChanged {
+        clear_workflow: bool,
+    },
     ApproveObservation {
         channel: u64,
         targets: Vec<TargetRef>,
@@ -65,6 +75,40 @@ pub(crate) enum NativeCommand {
     },
     CaptureWorkflow(SelectedWorkflow),
     ClearWorkflow,
+}
+
+impl NativeCommand {
+    pub(crate) fn batch_requires_safety_stop(commands: &[Self]) -> bool {
+        commands.len() > MAX_NATIVE_COMMANDS
+            || commands
+                .iter()
+                .any(|command| matches!(command, Self::SafetyStop))
+            || (commands.len() > 1
+                && commands
+                    .iter()
+                    .any(|command| matches!(command, Self::PreferenceChanged { .. })))
+            // Equal paths do not prove the same selection or frozen snapshot.
+            || commands
+                .iter()
+                .filter(|command| matches!(command, Self::CaptureWorkflow(_)))
+                .take(2)
+                .count()
+                == 2
+    }
+
+    fn is_confirmation(&self) -> bool {
+        matches!(self, Self::ApproveObservation { .. })
+    }
+
+    fn is_cancellation(&self) -> bool {
+        matches!(
+            self,
+            Self::RestartMcp
+                | Self::PreferenceChanged { .. }
+                | Self::Revoke { .. }
+                | Self::ClearWorkflow
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -1176,6 +1220,12 @@ impl Coordinator {
             self.privacy_lost();
         }
         match command {
+            NativeCommand::SafetyStop => self.command_overflow(),
+            NativeCommand::PreferenceChanged { clear_workflow } => {
+                if clear_workflow {
+                    self.workflow.cancel();
+                }
+            }
             NativeCommand::RestartMcp if self.enabled && !self.privacy_lost_this_tick => {
                 self.start(context);
             }
@@ -1204,6 +1254,75 @@ impl Coordinator {
             NativeCommand::ClearWorkflow => self.workflow.cancel(),
         }
         context.request_repaint();
+    }
+
+    pub(crate) fn command_overflow(&mut self) {
+        self.stop_mcp();
+        self.workflow.cancel();
+        self.status = "Automation actions overflowed or conflicted; channels and pending selections were closed and workflow previews cancelled. Settings changes may not have been applied; check toggles or reset and restart MCP explicitly.";
+    }
+
+    pub(crate) fn command_overflow_for_apps(&mut self, apps: &[&FesTermApp]) {
+        self.enabled = apps.first().is_some_and(|app| app.automation_mcp_enabled());
+        self.command_overflow();
+    }
+
+    pub(crate) fn close_overflow_admission(&self) {
+        set_admission_flag(&self.stop, true);
+    }
+
+    pub(crate) fn close_conflicting_admission(&mut self) {
+        self.close_overflow_admission();
+        self.workflow.cancel();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_workflow_capture_for_test(
+        &mut self,
+    ) -> mpsc::SyncSender<Result<festerm_automation_js::snapshot::ApprovedBundle, String>> {
+        self.workflow.pending_capture_for_test()
+    }
+
+    pub(crate) fn commands(
+        &mut self,
+        mut commands: Vec<NativeCommand>,
+        context: &egui::Context,
+        apps: &[&FesTermApp],
+    ) -> bool {
+        if NativeCommand::batch_requires_safety_stop(&commands) {
+            self.command_overflow_for_apps(apps);
+            return true;
+        }
+        let cancellation = commands.iter().any(NativeCommand::is_cancellation);
+        let workflow_clear = commands
+            .iter()
+            .any(|command| matches!(command, NativeCommand::ClearWorkflow));
+        let suppressed = commands.iter().any(|command| {
+            (cancellation && command.is_confirmation())
+                || (workflow_clear && matches!(command, NativeCommand::CaptureWorkflow(_)))
+        });
+        commands.sort_by_key(|command| {
+            if command.is_confirmation() {
+                2
+            } else if command.is_cancellation() {
+                1
+            } else {
+                0
+            }
+        });
+        for command in commands {
+            if (cancellation && command.is_confirmation())
+                || (workflow_clear && matches!(&command, NativeCommand::CaptureWorkflow(_)))
+            {
+                continue;
+            }
+            self.command(command, context);
+        }
+        if suppressed && !self.privacy_lost_this_tick && !self.privacy_gate.is_closed() {
+            self.status = "Automation cancellation blocked a same-frame workflow capture or grant approval. Review and retry the blocked action explicitly when available.";
+            context.request_repaint();
+        }
+        suppressed
     }
 
     fn approve(&mut self, channel: u64, targets: Vec<TargetRef>) -> Result<(), Refusal> {

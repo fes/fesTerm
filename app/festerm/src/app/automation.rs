@@ -1,7 +1,11 @@
 use crate::{
-    automation::{NativeCommand, SettingsSnapshot},
+    automation::{
+        preferences::{Feature, Shared, Values},
+        NativeCommand, SettingsSnapshot, MAX_NATIVE_COMMANDS,
+    },
     tabs::{AppCommand, SessionTab, TabContent, TabId},
 };
+use eframe::egui;
 
 use super::FesTermApp;
 
@@ -25,12 +29,204 @@ impl FesTermApp {
         self.state.active() == id
     }
 
+    pub(crate) fn initialize_automation_preferences(&mut self) {
+        self.automation_preferences();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn toggle_automation_preference_for_test(
+        &mut self,
+        feature: Feature,
+        context: &egui::Context,
+    ) {
+        self.toggle_automation_preference(feature, context);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn save_unrelated_interface_setting_for_test(
+        &mut self,
+        context: &egui::Context,
+    ) -> bool {
+        self.state
+            .dispatch(crate::tabs::AppCommand::ToggleStatusBar, context);
+        self.persist_interface_settings()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retry_automation_preferences_for_test(&mut self, context: &egui::Context) {
+        self.retry_automation_preferences(context);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn automation_preference_feedback_for_test(&self) -> Option<&'static str> {
+        self.automation_preference_feedback()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_automation_preferences_for_test(&mut self, context: &egui::Context) {
+        self.state
+            .dispatch(crate::tabs::AppCommand::ResetInterfaceSettings, context);
+        let before = self.reset_automation_preferences(context);
+        self.persist_reset_automation_preferences(before);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn request_reset_interface_settings_for_test(&mut self, context: &egui::Context) {
+        self.request_reset_interface_settings(context);
+    }
+
+    fn automation_preferences(&mut self) -> Shared {
+        if let Some(preferences) = self.configuration_reloader.automation_preferences() {
+            return preferences;
+        }
+        let preferences = Shared::new(Values {
+            mcp: self.state.mcp_enabled(),
+            javascript: self.state.javascript_enabled(),
+        });
+        self.configuration_reloader
+            .set_automation_preferences(preferences.clone());
+        preferences
+    }
+
+    pub(crate) fn sync_automation_preferences(&mut self) {
+        if let Some(preferences) = self.configuration_reloader.automation_preferences() {
+            let values = preferences.values();
+            let settings = self.state.configuration().interface_settings();
+            if settings.mcp_enabled() != values.mcp
+                || settings.javascript_enabled() != values.javascript
+            {
+                match preferences.apply(self.state.configuration()) {
+                    Ok(configuration) => self.state.replace_configuration(configuration),
+                    Err(_) => self.queue_automation_command(NativeCommand::SafetyStop),
+                }
+            }
+            self.state
+                .set_automation_preferences(values.mcp, values.javascript);
+        }
+    }
+
+    pub(crate) fn finish_automation_preference_pass(&self) {
+        if let Some(preferences) = self.configuration_reloader.automation_preferences() {
+            preferences.finish_pass();
+        }
+    }
+
+    pub(super) fn automation_preference_feedback(&self) -> Option<&'static str> {
+        self.configuration_reloader
+            .automation_preferences()
+            .and_then(|preferences| preferences.feedback())
+    }
+
+    pub(super) fn automation_preference_retry_available(&self) -> bool {
+        self.configuration_reloader
+            .automation_preferences()
+            .is_some_and(|preferences| preferences.retry_available())
+    }
+
+    pub(super) fn automation_preference_ui_revision(&self, feature: Feature) -> u64 {
+        self.configuration_reloader
+            .automation_preferences()
+            .map_or(0, |preferences| preferences.ui_revision(feature))
+    }
+
+    pub(crate) fn report_automation_action_conflict(&self) {
+        if let Some(preferences) = self.configuration_reloader.automation_preferences() {
+            preferences.action_conflicted();
+        }
+    }
+
+    fn finish_automation_preference_save(&mut self, before: Values, saved: bool) {
+        let preferences = self.automation_preferences();
+        if saved {
+            preferences.explicit_save_succeeded();
+        } else {
+            preferences.save_failed(before);
+            self.queue_automation_command(NativeCommand::SafetyStop);
+            self.sync_automation_preferences();
+        }
+    }
+
+    pub(super) fn toggle_automation_preference(
+        &mut self,
+        feature: Feature,
+        context: &egui::Context,
+    ) {
+        let preferences = self.automation_preferences();
+        let Some(before) = preferences.toggle(feature) else {
+            self.queue_automation_command(NativeCommand::SafetyStop);
+            context.request_repaint();
+            return;
+        };
+        let effective = preferences.effective();
+        if !effective.mcp {
+            self.automation_settings.disable();
+        }
+        if !effective.javascript {
+            self.automation_settings.workflow.disable();
+            self.cancel_automation_workflow_picker(context);
+        }
+        self.sync_automation_preferences();
+        self.queue_automation_command(NativeCommand::PreferenceChanged {
+            clear_workflow: before.javascript && !effective.javascript,
+        });
+        let saved = self.persist_interface_settings();
+        self.finish_automation_preference_save(before, saved);
+        context.request_repaint();
+    }
+
+    pub(super) fn reset_automation_preferences(&mut self, context: &egui::Context) -> Values {
+        let preferences = self.automation_preferences();
+        let before = preferences.values();
+        preferences.reset();
+        self.automation_settings.disable();
+        self.automation_settings.workflow.disable();
+        self.cancel_automation_workflow_picker(context);
+        self.sync_automation_preferences();
+        self.queue_automation_command(NativeCommand::PreferenceChanged {
+            clear_workflow: true,
+        });
+        before
+    }
+
+    pub(super) fn persist_reset_automation_preferences(&mut self, before: Values) {
+        let saved = self.persist_interface_settings();
+        self.finish_automation_preference_save(before, saved);
+    }
+
+    pub(super) fn retry_automation_preferences(&mut self, context: &egui::Context) {
+        let preferences = self.automation_preferences();
+        if !preferences.retry_available() {
+            return;
+        }
+        let before = preferences.values();
+        self.sync_automation_preferences();
+        self.automation_settings.disable();
+        self.automation_settings.workflow.disable();
+        self.cancel_automation_workflow_picker(context);
+        self.queue_automation_command(NativeCommand::PreferenceChanged {
+            clear_workflow: true,
+        });
+        let saved = self.persist_interface_settings();
+        self.finish_automation_preference_save(before, saved);
+        context.request_repaint();
+    }
+
     pub(crate) fn automation_mcp_enabled(&self) -> bool {
-        self.state.mcp_enabled()
+        self.configuration_reloader
+            .automation_preferences()
+            .map_or_else(
+                || self.state.mcp_enabled(),
+                |preferences| preferences.effective().mcp,
+            )
     }
 
     pub(crate) fn automation_javascript_enabled(&self) -> bool {
-        self.state.javascript_enabled()
+        self.configuration_reloader
+            .automation_preferences()
+            .map_or_else(
+                || self.state.javascript_enabled(),
+                |preferences| preferences.effective().javascript,
+            )
     }
 
     pub(crate) fn automation_session(&self, id: TabId) -> Option<&SessionTab> {
@@ -53,18 +249,68 @@ impl FesTermApp {
         changed
     }
 
+    pub(crate) fn cancel_automation_workflow_picker(&mut self, context: &egui::Context) {
+        if self.overlays.workflow_file_picker {
+            self.close_markdown_file_picker(context);
+        }
+    }
+
+    pub(crate) fn take_automation_commands(&mut self) -> (Vec<NativeCommand>, bool) {
+        (
+            std::mem::take(&mut self.automation_commands),
+            std::mem::take(&mut self.automation_command_overflow),
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn take_automation_command(&mut self) -> Option<NativeCommand> {
-        self.automation_command.take()
+        if self.automation_commands.is_empty() {
+            None
+        } else {
+            Some(self.automation_commands.remove(0))
+        }
     }
 
     pub(crate) fn queue_automation_command(&mut self, command: NativeCommand) {
         match &command {
-            NativeCommand::RestartMcp => self.automation_settings.disable(),
+            NativeCommand::SafetyStop => {
+                self.report_automation_action_conflict();
+                self.automation_settings.disable();
+                self.automation_settings.workflow.disable();
+                self.automation_commands.clear();
+                self.automation_command_overflow = true;
+                return;
+            }
+            NativeCommand::RestartMcp => {
+                self.automation_settings.disable();
+                if let (true, Some(preferences)) = (
+                    !self.automation_command_overflow && self.automation_commands.is_empty(),
+                    self.configuration_reloader.automation_preferences(),
+                ) {
+                    preferences.clear_action_conflict();
+                }
+            }
+            NativeCommand::PreferenceChanged { clear_workflow } => {
+                if *clear_workflow {
+                    self.automation_settings.workflow.disable();
+                }
+            }
             NativeCommand::Revoke { channel } => self.automation_settings.revoke(*channel),
             NativeCommand::ClearWorkflow => self.automation_settings.workflow.disable(),
             NativeCommand::ApproveObservation { .. } | NativeCommand::CaptureWorkflow(_) => {}
         }
-        self.automation_command = Some(command);
+        if self.automation_command_overflow {
+            return;
+        }
+        if self.automation_commands.len() >= MAX_NATIVE_COMMANDS {
+            self.report_automation_action_conflict();
+            self.automation_settings.disable();
+            self.automation_settings.workflow.disable();
+            self.automation_commands.clear();
+            self.automation_command_overflow = true;
+        } else {
+            self.automation_commands.push(command);
+        }
     }
 
     #[cfg(test)]

@@ -214,6 +214,16 @@ struct SelectedConfigurationPath {
 #[derive(Clone)]
 pub(crate) struct ConfigurationReloader {
     selected_path: Result<SelectedConfigurationPath, ConfigurationLoadFailure>,
+    automation_preferences: Option<crate::automation::preferences::Shared>,
+    #[cfg(test)]
+    next_save_failure: std::rc::Rc<std::cell::Cell<Option<TestSaveFailure>>>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(crate) enum TestSaveFailure {
+    BeforeWrite,
+    AfterWrite,
 }
 
 #[cfg(test)]
@@ -259,12 +269,10 @@ impl Drop for SessionNameConfigurationFixture {
 impl ConfigurationReloader {
     #[cfg(test)]
     fn from_selection(selected_path: Result<PathBuf, ConfigurationLoadFailure>) -> Self {
-        Self {
-            selected_path: selected_path.map(|path| SelectedConfigurationPath {
-                path,
-                native_directory: None,
-            }),
-        }
+        Self::from_source_selection(selected_path.map(|path| SelectedConfigurationPath {
+            path,
+            native_directory: None,
+        }))
     }
 
     #[cfg(test)]
@@ -275,11 +283,42 @@ impl ConfigurationReloader {
     fn from_source_selection(
         selected_path: Result<SelectedConfigurationPath, ConfigurationLoadFailure>,
     ) -> Self {
-        Self { selected_path }
+        Self {
+            selected_path,
+            automation_preferences: None,
+            #[cfg(test)]
+            next_save_failure: Default::default(),
+        }
     }
 
     pub(crate) fn unavailable() -> Self {
         Self::from_source_selection(Err(ConfigurationLoadFailure::NativeLocationUnavailable))
+    }
+
+    pub(crate) fn automation_preferences(&self) -> Option<crate::automation::preferences::Shared> {
+        self.automation_preferences.clone()
+    }
+
+    pub(crate) fn set_automation_preferences(
+        &mut self,
+        preferences: crate::automation::preferences::Shared,
+    ) {
+        self.automation_preferences = Some(preferences);
+    }
+
+    pub(crate) fn automation_configuration(
+        &self,
+        configuration: &Configuration,
+    ) -> Result<Configuration, festerm_config::ConfigError> {
+        match &self.automation_preferences {
+            Some(preferences) => preferences.apply(configuration),
+            None => Ok(configuration.clone()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_save_for_test(&self, failure: TestSaveFailure) {
+        self.next_save_failure.set(Some(failure));
     }
 
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -335,7 +374,7 @@ impl ConfigurationReloader {
         configuration: &Configuration,
     ) -> ConfigurationStartupStatus {
         match self.save_configuration(configuration) {
-            Ok(()) => ConfigurationStartupStatus::WorkspaceSaved,
+            Ok(_) => ConfigurationStartupStatus::WorkspaceSaved,
             Err(failure) => ConfigurationStartupStatus::WorkspaceSaveFailure(failure),
         }
     }
@@ -345,7 +384,7 @@ impl ConfigurationReloader {
         configuration: &Configuration,
     ) -> ConfigurationStartupStatus {
         match self.save_configuration(configuration) {
-            Ok(()) => ConfigurationStartupStatus::SessionNamesSaved,
+            Ok(_) => ConfigurationStartupStatus::SessionNamesSaved,
             Err(failure) => ConfigurationStartupStatus::SessionNamesSaveFailure(failure),
         }
     }
@@ -360,7 +399,7 @@ impl ConfigurationReloader {
         configuration: &Configuration,
     ) -> ConfigurationStartupStatus {
         match self.save_configuration(configuration) {
-            Ok(()) => ConfigurationStartupStatus::InterfaceSettingsSaved,
+            Ok(_) => ConfigurationStartupStatus::InterfaceSettingsSaved,
             Err(failure) => ConfigurationStartupStatus::InterfaceSettingsSaveFailure(failure),
         }
     }
@@ -374,7 +413,7 @@ impl ConfigurationReloader {
         configuration: &Configuration,
     ) -> ConfigurationStartupStatus {
         match self.save_configuration(configuration) {
-            Ok(()) => ConfigurationStartupStatus::KnownHostTrustSaved,
+            Ok(_) => ConfigurationStartupStatus::KnownHostTrustSaved,
             Err(failure) => ConfigurationStartupStatus::KnownHostTrustSaveFailure(failure),
         }
     }
@@ -385,7 +424,7 @@ impl ConfigurationReloader {
     /// write, `Configuration::with_profile`).
     pub(crate) fn save_profile(&self, configuration: &Configuration) -> ConfigurationStartupStatus {
         match self.save_configuration(configuration) {
-            Ok(()) => ConfigurationStartupStatus::ProfileSaved,
+            Ok(_) => ConfigurationStartupStatus::ProfileSaved,
             Err(failure) => ConfigurationStartupStatus::ProfileSaveFailure(failure),
         }
     }
@@ -397,7 +436,7 @@ impl ConfigurationReloader {
         configuration: &Configuration,
     ) -> ConfigurationStartupStatus {
         match self.save_configuration(configuration) {
-            Ok(()) => ConfigurationStartupStatus::ProfileDeleted,
+            Ok(_) => ConfigurationStartupStatus::ProfileDeleted,
             Err(failure) => ConfigurationStartupStatus::ProfileDeleteFailure(failure),
         }
     }
@@ -410,7 +449,7 @@ impl ConfigurationReloader {
         configuration: &Configuration,
     ) -> ConfigurationStartupStatus {
         match self.save_configuration(configuration) {
-            Ok(()) => ConfigurationStartupStatus::ProfilesReordered,
+            Ok(_) => ConfigurationStartupStatus::ProfilesReordered,
             Err(failure) => ConfigurationStartupStatus::ProfilesReorderFailure(failure),
         }
     }
@@ -421,7 +460,16 @@ impl ConfigurationReloader {
     pub(crate) fn save_configuration(
         &self,
         configuration: &Configuration,
-    ) -> Result<(), ConfigurationLoadFailure> {
+    ) -> Result<Configuration, ConfigurationLoadFailure> {
+        #[cfg(test)]
+        let failure = self.next_save_failure.take();
+        #[cfg(test)]
+        if matches!(failure, Some(TestSaveFailure::BeforeWrite)) {
+            return Err(ConfigurationLoadFailure::Unreadable);
+        }
+        let configuration = self
+            .automation_configuration(configuration)
+            .map_err(|_| ConfigurationLoadFailure::Invalid)?;
         let selected = match &self.selected_path {
             Ok(selected) => selected,
             Err(failure) => {
@@ -433,10 +481,14 @@ impl ConfigurationReloader {
                 return Err(ConfigurationLoadFailure::Unreadable);
             }
         }
-        match configuration.save_to_path(&selected.path) {
-            Ok(()) => Ok(()),
-            Err(error) => Err(failure_from_file_error(error.kind())),
+        configuration
+            .save_to_path(&selected.path)
+            .map_err(|error| failure_from_file_error(error.kind()))?;
+        #[cfg(test)]
+        if matches!(failure, Some(TestSaveFailure::AfterWrite)) {
+            return Err(ConfigurationLoadFailure::Unreadable);
         }
+        Ok(configuration)
     }
 }
 

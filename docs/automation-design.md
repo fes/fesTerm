@@ -33,6 +33,43 @@ distinct observation-only MCP PR checkpoint before JavaScript/control, then
 continues through P3. PRs remain incomplete until tests, independent limited-context
 security/reliability/scope reviews and required CI pass. P4 remains deferred.
 
+### Desktop preference ownership and failure
+
+The application shares the current MCP/JavaScript preference pair across
+windows. Its synchronous configuration writes and committed broadcasts
+overlay that pair, so stale sibling documents, including unrelated saves,
+cannot restore a successfully saved disable. Individual toggles remain
+independent and are saved normally. In-memory overlays reflect the requested
+pair, not proof of persistence after a failed or uncertain write. Same-pass
+conflicting automation actions or queue overflow close admission, cancel
+pending workflow previews, suppress approval, and visibly report that settings
+changes may not have been applied;
+the user must review and retry. Two workflow capture selections in the same
+batch conflict even when their paths are identical: path equality cannot prove
+the same intent or snapshot. Neither selection wins, and an existing preview is
+cancelled. A single nonconflicting selection still works normally. Each toggle
+has a process-local UI interaction
+revision, not a configuration snapshot revision: a stale release cannot undo
+a sibling change even when its displayed boolean changed and changed back.
+Revision exhaustion stops automation and requires restart. Native actions are
+bounded and held through discarded layout passes, so an approval cannot be
+committed before a cancellation in a later pass of the same frame.
+
+After a failed or indeterminate preference save, both live features are stopped
+for the rest of the process. Settings warns that an enabled value may remain
+or have reached disk and offers an explicit retry. Unrelated later saves cannot
+copy a failed enable, and do not clear that warning. A successful explicit
+preference save or retry confirms the current pair but does not resume
+automation in this process. There is no durable failure latch: on restart a
+value still enabled on disk can be read again; existing connection grants are
+never restored.
+
+The guarantee covers in-process writes through the shared reloader and is
+subject to the existing storage contract. It does not reconcile unknown
+outcomes for unrelated fields, protect against other processes or filesystem
+namespace races, or qualify either adapter. A separate configuration-outcome
+owner/latch remains necessary for broader transaction guarantees.
+
 Initial qualification targets desktop local stdio MCP and manually started,
 reviewed JavaScript workflows. Network MCP, unattended runs, timer/output/login
 triggers, remote workflow installation and iOS execution are separate later
