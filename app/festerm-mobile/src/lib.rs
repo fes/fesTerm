@@ -2,6 +2,7 @@
 
 mod app_lock;
 mod dictation;
+mod document_preview;
 mod documents;
 #[cfg_attr(not(feature = "live-ssh"), allow(dead_code))] // SFTP needs the SSH transport
 mod files;
@@ -1034,7 +1035,8 @@ impl MobileApp {
         self.show_files_sheets(ui.ctx(), bounds);
         self.show_host_setup(ui.ctx(), bounds);
         self.show_dictation(ui.ctx(), bounds);
-        self.documents.show_close(ui.ctx(), bounds);
+        self.documents
+            .show_sheets(ui.ctx(), bounds, self.surface == Surface::Documents);
     }
 
     fn show_host_setup(&mut self, ctx: &egui::Context, bounds: egui::Rect) {

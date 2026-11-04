@@ -19,6 +19,23 @@ reconnect remains pinned to the original session. Isolated regressions cover the
 policy and publication boundaries; signed service and physical-iOS qualification
 remain in DT-05/07. The existing live installation was not changed.
 
+## Shared iOS documents: current Markdown projection and Contents
+
+The next dependent slice connects Edit/Preview to the canonical document
+revision. A bounded read-only worker produces a shared immutable Markdown
+projection, retaining cancelled jobs until actual completion and rejecting old
+results. Views keep their own mode, source selection, scroll and heading
+navigation. Compact Contents uses a revision-bound dismissible sheet; wide
+Preview reuses the existing Contents rail. There are no Edit/Preview split
+panes. The renderer adds no resource loading or path authority.
+
+Tests cover cancellation and close, projection reuse, visible failure/retry,
+mode/history preservation, Contents navigation/view changes, external refresh
+and no terminal input. The actual-widget gallery includes Preview and Contents
+at phone, keyboard-reserved, short-landscape and tablet sizes. These are not
+native keyboard/provider/accessibility acceptance. Source syntax/line numbers,
+Find/Replace, safe local copy/Save As and shared document dictation remain open.
+
 ## Shared iOS documents: local surfaces without terminal ownership
 
 The dependent local-editor slice connects the authorized Files picker and

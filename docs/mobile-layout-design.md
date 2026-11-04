@@ -53,8 +53,20 @@ consuming the editing area. Conflict review displays the external version:
 Keep edits requires a separate Save, Reload explicitly discards edits/history,
 and changed revision/source/access invalidates either decision.
 Actual provider grants and native keyboard behavior still require qualification.
-Live Edit/Preview and Contents, Find/Replace, safe local copy/Save As
-and the shared keyboard-region dictation composer remain subsequent slices.
+The next dependent slice connects Markdown Edit/Preview and Contents to that
+same revision, without a second editor or history. One cancellable, read-only
+parser worker per host produces shared immutable projections; cancelled work
+retains its slot until actual completion. Stale results never become current.
+Each view retains its own mode, source selection, preview scroll and heading
+navigation. Compact Contents is a bounded sheet captured against its view and
+revision; switching views or updating the source dismisses it. Wide Contents
+uses the existing reading rail, never an Edit/Preview split. Short-height mode
+controls join source actions in the scrollable More menu. Parser errors remain
+visible and offer explicit retry without changing source. The reused mobile
+renderer keeps links, images and embedded HTML inert; no resource authority or
+network loading is added.
+Source syntax/line numbers, Find/Replace, safe local copy/Save As and the shared
+keyboard-region dictation composer remain subsequent slices.
 Files URLs require retained authorization and file-provider coordination;
 display paths never grant access. Remote SFTP remains read-only beneath
 the UI, and saving an editable local copy creates a distinct origin/history.

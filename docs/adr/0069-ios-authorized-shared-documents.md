@@ -88,6 +88,15 @@ Markdown Edit and Preview share the same identity and current revision.
 **Edit/Preview split panes are excluded at every viewport size by the
 owner's explicit override.** Contents may use a wide rail. Existing fonts,
 theme and first-party icons remain authoritative over mockup stand-ins.
+The mobile host derives read-only immutable Markdown projections asynchronously
+from the canonical revision. A single worker slot includes cancelled work until
+it actually exits; results must match the requested document and revision.
+Sibling views share the projection but not mode, selection, scroll or heading
+navigation. Closing the final view removes the cache and cancels pending work.
+Contents decisions bind the displayed view/revision and are dismissed on
+navigation or source changes. The existing bounded mobile renderer does not
+load links/images or execute HTML; display-origin paths confer no I/O authority.
+Visible parser failures require explicit retry and never affect text/history.
 
 One existing volatile on-device dictation controller serves all destinations.
 Native speech stays in `festerm-ios-window`; no speech, microphone or
@@ -139,3 +148,11 @@ not native Files-provider or UIKit keyboard acceptance.
 Conflict actions use a measured pinned sheet footer while the external review
 scrolls. A coordinate regression checks all three full touch targets above
 simulated keyboard occlusion at short landscape, phone and narrow widths.
+Projection tests check actual worker-slot retention, stale-result refusal,
+closed-document cancellation/cache teardown, explicit error retry, immutable
+projection sharing and independent heading state. Widget tests check source
+selection/history across mode changes, Contents navigation and view switching,
+external refresh invalidation and absence of terminal input. The opt-in gallery
+adds Preview and Contents at all four viewports; simulated occlusion remains
+non-native evidence. Source syntax/line numbers, Find/Replace, local copy/Save As
+and shared document dictation are still subsequent work.

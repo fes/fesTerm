@@ -664,6 +664,274 @@ fn conflict_actions_stay_above_keyboard_occlusion_at_short_and_narrow_sizes() {
     }
 }
 
+fn wait_preview(harness: &mut Harness<'_, MobileApp>, view: ViewId) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        harness.step();
+        let revision = harness
+            .state()
+            .documents
+            .registry
+            .view(view)
+            .unwrap()
+            .text()
+            .revision();
+        if harness
+            .state()
+            .documents
+            .views
+            .iter()
+            .any(|entry| entry.id == view && entry.preview_revision == Some(revision))
+        {
+            harness.run();
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "preview must become current"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn markdown_edit_preview_keeps_source_selection_and_shared_history() {
+    let mut harness = harness(app(true));
+    harness.run();
+    let view = harness.state().documents.active.unwrap();
+    focus(&mut harness, view, 2);
+    harness.event(egui::Event::Text("X".into()));
+    harness.run();
+    let before = harness
+        .state()
+        .documents
+        .registry
+        .view(view)
+        .unwrap()
+        .text()
+        .to_bytes();
+    let selection = egui::TextEdit::load_state(&harness.ctx, body_id(view))
+        .unwrap()
+        .cursor
+        .char_range();
+    harness.get_by_label("Preview").click();
+    wait_preview(&mut harness, view);
+    assert_eq!(
+        harness
+            .state()
+            .documents
+            .registry
+            .view(view)
+            .unwrap()
+            .text()
+            .to_bytes(),
+        before
+    );
+    assert!(!harness.state().terminal_keyboard_input);
+    assert!(harness.output().platform_output.ime.is_none());
+    harness.get_by_label("Edit").click();
+    harness.run();
+    assert_eq!(
+        egui::TextEdit::load_state(&harness.ctx, body_id(view))
+            .unwrap()
+            .cursor
+            .char_range(),
+        selection
+    );
+    harness.get_by_label("Undo").click();
+    harness.run();
+    assert_eq!(
+        harness
+            .state()
+            .documents
+            .registry
+            .view(view)
+            .unwrap()
+            .text()
+            .to_bytes(),
+        INITIAL
+    );
+}
+
+#[test]
+fn markdown_contents_is_view_local_and_never_mutates_or_sends_terminal_input() {
+    let mut harness = harness(app(true));
+    harness.run();
+    let view = harness.state().documents.active.unwrap();
+    harness.get_by_label("Preview").click();
+    wait_preview(&mut harness, view);
+    harness.get_by_label("Contents").click();
+    harness.run();
+    assert_eq!(
+        harness.state().documents.contents.map(|(owner, _)| owner),
+        Some(view)
+    );
+    let before = harness
+        .state()
+        .documents
+        .registry
+        .view(view)
+        .unwrap()
+        .text()
+        .to_bytes();
+    harness.event(egui::Event::Text("not into source or terminal".into()));
+    harness.run();
+    assert_eq!(
+        harness
+            .state()
+            .documents
+            .registry
+            .view(view)
+            .unwrap()
+            .text()
+            .to_bytes(),
+        before
+    );
+    assert_eq!(harness.state().sink.diagnostics.byte_count, 0);
+    let ticket = harness
+        .state()
+        .documents
+        .registry
+        .read_ticket(view)
+        .unwrap();
+    harness
+        .state_mut()
+        .documents
+        .registry
+        .observe(
+            &ticket,
+            SourceSnapshot {
+                bytes: b"# External\n".to_vec(),
+                version: SourceVersion([2; 32]),
+            },
+        )
+        .unwrap();
+    harness.step();
+    assert!(harness.state().documents.contents.is_none());
+    wait_preview(&mut harness, view);
+    assert!(!harness
+        .state()
+        .documents
+        .registry
+        .view(view)
+        .unwrap()
+        .dirty());
+}
+
+#[test]
+fn markdown_contents_scrolls_to_an_offscreen_heading_without_editing() {
+    let mut app = app(true);
+    let view = app.documents.active.unwrap();
+    let text = format!(
+        "# Start\n\n{}## Destination\n\nFinal section.\n",
+        "A paragraph before the destination.\n\n".repeat(80)
+    );
+    let ticket = app.documents.registry.read_ticket(view).unwrap();
+    app.documents
+        .registry
+        .observe(
+            &ticket,
+            SourceSnapshot {
+                bytes: text.as_bytes().to_vec(),
+                version: SourceVersion([2; 32]),
+            },
+        )
+        .unwrap();
+    let mut harness = harness(app);
+    harness.run();
+    harness.get_by_label("Preview").click();
+    wait_preview(&mut harness, view);
+    assert!(harness.get_by_label("Destination").rect().top() > 844.0);
+    harness.get_by_label("Contents").click();
+    harness.run();
+    harness
+        .get_all_by_label("Destination")
+        .last()
+        .unwrap()
+        .click();
+    harness.run_steps(60);
+    harness.run();
+    assert!(harness.state().documents.contents.is_none());
+    let destination = harness.get_by_label("Destination").rect();
+    assert!(
+        destination.top() >= 0.0 && destination.bottom() <= 844.0,
+        "heading must enter the visible preview: {destination:?}"
+    );
+    let entry = harness.state().documents.registry.view(view).unwrap();
+    assert_eq!(entry.text().text(), text);
+    assert!(!entry.dirty());
+    assert_eq!(harness.state().sink.diagnostics.byte_count, 0);
+}
+
+#[test]
+fn markdown_contents_navigation_and_view_switch_dismiss_the_captured_sheet() {
+    let mut harness = harness(app(true));
+    harness.run();
+    let view = harness.state().documents.active.unwrap();
+    harness.get_by_label("Preview").click();
+    wait_preview(&mut harness, view);
+    harness.get_by_label("Contents").click();
+    harness.run();
+    harness.get_all_by_label("Runbook").last().unwrap().click();
+    harness.run();
+    assert!(harness.state().documents.contents.is_none());
+    {
+        let app = harness.state_mut();
+        app.documents.duplicate(view, &mut app.next_tab);
+    }
+    let sibling = harness.state().documents.active.unwrap();
+    let original_tab = harness
+        .state()
+        .documents
+        .views
+        .iter()
+        .find(|entry| entry.id == view)
+        .unwrap()
+        .tab;
+    let sibling_tab = harness
+        .state()
+        .documents
+        .views
+        .iter()
+        .find(|entry| entry.id == sibling)
+        .unwrap()
+        .tab;
+    harness.state_mut().activate_tab(original_tab);
+    harness.run();
+    harness.get_by_label("Contents").click();
+    harness.run();
+    assert!(harness.state().documents.contents.is_some());
+    harness.state_mut().activate_tab(sibling_tab);
+    harness.run();
+    assert!(harness.state().documents.contents.is_none());
+    assert!(
+        !harness
+            .state()
+            .documents
+            .views
+            .iter()
+            .find(|entry| entry.id == sibling)
+            .unwrap()
+            .previewing
+    );
+    assert_eq!(
+        harness.state().documents.registry.document_for(view),
+        harness.state().documents.registry.document_for(sibling)
+    );
+    assert_eq!(
+        harness
+            .state()
+            .documents
+            .registry
+            .view(sibling)
+            .unwrap()
+            .text()
+            .to_bytes(),
+        INITIAL
+    );
+    assert_eq!(harness.state().sink.diagnostics.byte_count, 0);
+}
+
 #[test]
 #[ignore = "explicit actual-widget capture requires headless wgpu and a fresh output directory"]
 fn capture_document_ui() {
@@ -689,7 +957,15 @@ fn capture_document_ui() {
         ("landscape", 844.0, 390.0, 0.35),
         ("tablet", 1194.0, 834.0, 0.0),
     ] {
-        for state in ["launcher", "source", "dirty", "read-only", "conflict"] {
+        for state in [
+            "launcher",
+            "source",
+            "dirty",
+            "read-only",
+            "conflict",
+            "preview",
+            "contents",
+        ] {
             let mut app = app(state != "read-only");
             let view = app.documents.active.unwrap();
             let ticket = app.documents.registry.read_ticket(view).unwrap();
@@ -721,6 +997,14 @@ fn capture_document_ui() {
                 }).unwrap();
                 app.documents.compare = Some(app.documents.registry.target(view, 0..0).unwrap());
             }
+            if state == "preview" || state == "contents" {
+                app.documents
+                    .views
+                    .iter_mut()
+                    .find(|entry| entry.id == view)
+                    .unwrap()
+                    .previewing = true;
+            }
             let visible_occlusion = if state == "launcher" || state == "read-only" {
                 0.0
             } else {
@@ -736,8 +1020,24 @@ fn capture_document_ui() {
             harness
                 .ctx
                 .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
-            harness.run();
-            if visible_occlusion > 0.0 {
+            if state == "preview" || state == "contents" {
+                wait_preview(&mut harness, view);
+                if state == "contents" {
+                    let revision = harness
+                        .state()
+                        .documents
+                        .registry
+                        .view(view)
+                        .unwrap()
+                        .text()
+                        .revision();
+                    harness.state_mut().documents.contents = Some((view, revision));
+                    harness.run();
+                }
+            } else {
+                harness.run();
+            }
+            if visible_occlusion > 0.0 && matches!(state, "source" | "dirty") {
                 let view = harness.state().documents.active.unwrap();
                 focus(&mut harness, view, 0);
             }

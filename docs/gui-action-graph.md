@@ -282,6 +282,17 @@ review an explicit runtime merge gate when mobile product support is accepted.
 The mobile device descriptor requests downlevel GPU limits to accommodate the
 observed Simulator Metal limit; issue #261 remains the native startup gate.
 
+`MOB-08` also covers current-revision Markdown Edit/Preview and Contents.
+Switch modes after editing and confirm the same history and source selection;
+open Contents and navigate a heading without changing source or terminal bytes.
+Switching document views or changing the captured revision dismisses the sheet.
+Check the wide Contents rail and short-height scrollable More controls, with no
+Edit/Preview split at any size. One worker includes cancelled work until actual
+completion; old/closed-document results cannot become current. Parser errors
+offer explicit retry, and links/images/HTML grant no loading/execution authority.
+Source syntax/line numbers, Find/Replace and local-copy/composer tools remain
+pending; native provider/keyboard/accessibility qualification is unchanged.
+
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
 | `MOB-01` | Cold → fixture | Launch, rotate/resize, select and scroll | Shared ANSI/Unicode grid paints within available area; bounded history remains readable | Reset fixture or relaunch | H, V, N, U |

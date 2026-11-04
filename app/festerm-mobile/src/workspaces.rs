@@ -3,6 +3,7 @@ use festerm_markdown::{
     Block, ListKind, LocalMarkdownSource, MarkdownCancellation, MarkdownDocument, MarkdownLoader,
     TaskState,
 };
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum Workspace {
@@ -40,7 +41,7 @@ enum MarkdownMode {
 pub(crate) struct MarkdownWorkspace {
     name: String,
     location: String,
-    document: MarkdownDocument,
+    document: Arc<MarkdownDocument>,
     mode: MarkdownMode,
     contents_open: bool,
     selected_heading: usize,
@@ -63,7 +64,7 @@ impl Default for MarkdownWorkspace {
         Self {
             name: "Nimbus-Runbook.md".to_owned(),
             location: "LOCAL snapshot".to_owned(),
-            document,
+            document: Arc::new(document),
             mode: MarkdownMode::Preview,
             contents_open: false,
             selected_heading: 0,
@@ -73,6 +74,30 @@ impl Default for MarkdownWorkspace {
 }
 
 impl MarkdownWorkspace {
+    pub(crate) fn from_shared(name: &str, location: &str, document: Arc<MarkdownDocument>) -> Self {
+        Self {
+            name: name.to_owned(),
+            location: location.to_owned(),
+            document,
+            mode: MarkdownMode::Preview,
+            contents_open: false,
+            selected_heading: 0,
+            pending_heading: None,
+        }
+    }
+
+    pub(crate) fn update_shared(&mut self, document: Arc<MarkdownDocument>) {
+        if !Arc::ptr_eq(&self.document, &document) {
+            self.document = document;
+            self.selected_heading = 0;
+            self.pending_heading = None;
+        }
+    }
+
+    pub(crate) fn show_projection(&mut self, ui: &mut egui::Ui) {
+        self.show_projection_tier(ui, LayoutTier::for_size(ui.available_size()));
+    }
+
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
@@ -92,7 +117,7 @@ impl MarkdownWorkspace {
         Ok(Self {
             name: name.to_owned(),
             location: location.to_owned(),
-            document,
+            document: Arc::new(document),
             mode: MarkdownMode::Preview,
             contents_open: false,
             selected_heading: 0,
@@ -121,7 +146,13 @@ impl MarkdownWorkspace {
 
         match self.mode {
             MarkdownMode::Source => self.show_source(ui),
-            MarkdownMode::Preview if tier == LayoutTier::Wide => {
+            MarkdownMode::Preview => self.show_projection_tier(ui, tier),
+        }
+    }
+
+    fn show_projection_tier(&mut self, ui: &mut egui::Ui, tier: LayoutTier) {
+        match tier {
+            LayoutTier::Wide => {
                 let contents_width = 210.0;
                 let height = ui.available_height();
                 let (row, _) = ui.allocate_exact_size(
@@ -144,7 +175,7 @@ impl MarkdownWorkspace {
                     self.show_preview(ui);
                 });
             }
-            MarkdownMode::Preview => {
+            LayoutTier::Compact | LayoutTier::Minimal => {
                 if self.contents_open {
                     let height = (ui.available_height() * 0.34).clamp(110.0, 220.0);
                     ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
@@ -157,7 +188,8 @@ impl MarkdownWorkspace {
         }
     }
 
-    fn show_contents(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn show_contents(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut navigated = false;
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.strong("CONTENTS");
             ui.separator();
@@ -174,11 +206,13 @@ impl MarkdownWorkspace {
                                 self.selected_heading = index;
                                 self.pending_heading = Some(index);
                                 self.contents_open = false;
+                                navigated = true;
                             }
                         });
                     }
                 });
         });
+        navigated
     }
 
     fn show_preview(&mut self, ui: &mut egui::Ui) {
@@ -396,5 +430,25 @@ mod tests {
         assert_eq!(opened.document.headings().len(), 2);
         let huge = "x".repeat(festerm_markdown::MAX_SOURCE_BYTES + 1);
         assert!(MarkdownWorkspace::from_text("big.md", "x", &huge).is_err());
+    }
+
+    #[test]
+    fn shared_markdown_views_reuse_projection_but_keep_navigation_independent() {
+        let mut left = MarkdownWorkspace::default();
+        let mut right = MarkdownWorkspace::from_shared("notes.md", "Local", left.document.clone());
+        assert!(Arc::ptr_eq(&left.document, &right.document));
+        left.selected_heading = 2;
+        left.pending_heading = Some(2);
+        assert_eq!(right.selected_heading, 0);
+        assert_eq!(right.pending_heading, None);
+        right.update_shared(left.document.clone());
+        assert_eq!(left.pending_heading, Some(2));
+        let next = MarkdownWorkspace::from_text("notes.md", "Local", "# Changed\n").unwrap();
+        left.update_shared(next.document.clone());
+        right.update_shared(next.document.clone());
+        assert!(Arc::ptr_eq(&left.document, &right.document));
+        assert_eq!(left.selected_heading, 0);
+        assert_eq!(left.pending_heading, None);
+        assert_eq!(left.document.source_text(), "# Changed\n");
     }
 }
