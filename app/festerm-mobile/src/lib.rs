@@ -329,6 +329,12 @@ struct LiveView {
 }
 
 pub struct MobileApp {
+    #[cfg(all(
+        target_os = "ios",
+        target_abi = "sim",
+        feature = "native-document-smoke"
+    ))]
+    document_smoke: festerm_ios_window::DocumentSmoke,
     reported_first_ui: bool,
     terminal: Terminal,
     view: TerminalView,
@@ -401,6 +407,12 @@ fn mobile_terminal_view() -> TerminalView {
 impl MobileApp {
     pub fn new(lifecycle: Rc<Cell<Lifecycle>>) -> Self {
         Self {
+            #[cfg(all(
+                target_os = "ios",
+                target_abi = "sim",
+                feature = "native-document-smoke"
+            ))]
+            document_smoke: festerm_ios_window::DocumentSmoke::default(),
             reported_first_ui: false,
             terminal: fixture_terminal(),
             view: mobile_terminal_view(),
@@ -543,6 +555,16 @@ impl MobileApp {
     }
 
     fn show_with_occlusion(&mut self, ui: &mut egui::Ui, occlusion: f32) {
+        #[cfg(all(
+            target_os = "ios",
+            target_abi = "sim",
+            feature = "native-document-smoke"
+        ))]
+        {
+            let context = ui.ctx().clone();
+            self.document_smoke
+                .poll(std::sync::Arc::new(move || context.request_repaint()));
+        }
         self.terminal_keyboard_input = false;
         // Accessory taps must not blur the terminal and restart UIKit's keyboard.
         let terminal_surface = self.terminal_surface();

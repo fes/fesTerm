@@ -6,6 +6,12 @@ the desktop application. [ADR 0042](docs/adr/0042-ios-rendering-spike-host.md)
 defines its Phase 1 ownership and validation boundary; it has no session
 backend or credential/persistence path yet.
 
+The phased iOS editor extension in [ADR 0067](docs/adr/0067-ios-authorized-shared-documents.md)
+adds `festerm-mobile-docs -> festerm-document` for a UI-/I/O-free registry over
+the existing text/undo engine. Native source authorities and scheduling stay
+in the mobile composition/native boundary; display paths grant no authority.
+The initial registry slice does not yet wire a native Files picker or editor.
+
 **Status:** Draft
 
 This document defines the proposed subsystem boundaries, dependency direction,

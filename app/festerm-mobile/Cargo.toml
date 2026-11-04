@@ -11,14 +11,17 @@ publish = false
 [features]
 default = []
 live-ssh = ["dep:festerm-session", "dep:festerm-mobile-tunnels", "dep:tokio"]
+native-document-smoke = ["festerm-ios-window/native-document-smoke"]
 
 [dependencies]
 eframe = { version = "=0.36.1", default-features = false, features = ["default_fonts", "wgpu"] }
 festerm-core = { path = "../../crates/festerm-core" }
+festerm-document = { path = "../../crates/festerm-document" }
 festerm-host-setup = { path = "../../crates/festerm-host-setup" }
 festerm-ios-lock = { path = "../../crates/festerm-ios-lock" }
 festerm-ios-window = { path = "../../crates/festerm-ios-window" }
 festerm-markdown = { path = "../../crates/festerm-markdown" }
+festerm-mobile-docs = { path = "../../crates/festerm-mobile-docs" }
 festerm-mobile-profiles = { path = "../../crates/festerm-mobile-profiles" }
 festerm-secret-store = { path = "../../crates/festerm-secret-store" }
 festerm-mobile-tunnels = { path = "../../crates/festerm-mobile-tunnels", optional = true }

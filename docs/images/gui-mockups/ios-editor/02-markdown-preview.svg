@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844">
+<rect x="0" y="0" width="390" height="844" rx="0" fill="#0F141C"/>
+<text x="23" y="32" font-family="Inter" font-size="14" font-weight="600" fill="#E6EDF3" text-anchor="start">12:18</text>
+<rect x="134" y="12" width="122" height="32" rx="17" fill="#000000"/>
+<rect x="306" y="29" width="2.7" height="4" rx="1" fill="#E6EDF3"/>
+<rect x="310" y="27" width="2.7" height="6" rx="1" fill="#E6EDF3"/>
+<rect x="314" y="25" width="2.7" height="8" rx="1" fill="#E6EDF3"/>
+<rect x="318" y="22" width="2.7" height="11" rx="1" fill="#E6EDF3"/>
+<path d="M327 24q7-6 14 0M330 27q4-4 8 0M333 30h2" fill="none" stroke="#E6EDF3" stroke-width="2" stroke-linecap="round"/>
+<rect x="349" y="22" width="24" height="12" rx="3" fill="none" stroke="#AFBDCC" stroke-width="1"/>
+<rect x="351" y="24" width="19" height="8" rx="1.6" fill="#E6EDF3"/>
+<rect x="374" y="26" width="2" height="4" rx="1" fill="#AFBDCC"/>
+<rect x="0" y="58" width="390" height="54" rx="0" fill="#1B2A40"/>
+<g transform="translate(12 74) scale(0.9583333333333334)" fill="none" stroke="#64A7F8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5-7 7 7 7"/></g>
+<rect x="43" y="68" width="182" height="34" rx="12" fill="#234A6C" stroke="#64A7F8" stroke-width="1.2"/>
+<g transform="translate(52 76) scale(0.75)" fill="none" stroke="#64A7F8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m5 15 0-6 3 4 3-4v6M14 10v5m-2-2 2 2 2-2"/></g>
+<text x="77" y="90" font-family="Inter" font-size="13.5" font-weight="500" fill="#E6EDF3" text-anchor="start">RUNBOOK.md</text>
+<rect x="243" y="69" width="64" height="32" rx="10" fill="#23334B" stroke="#344A68" stroke-width="1"/>
+<text x="253" y="90" font-family="Inter" font-size="12" font-weight="400" fill="#AFBDCC" text-anchor="start">All</text>
+<rect x="283" y="73" width="20" height="25" rx="8" fill="#254761"/>
+<text x="293" y="90" font-family="Inter" font-size="12" font-weight="400" fill="#E6EDF3" text-anchor="middle">3</text>
+<g transform="translate(315 75) scale(0.9166666666666666)" fill="none" stroke="#AFBDCC" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M4 12h16"/></g>
+<g transform="translate(355 75) scale(0.875)" fill="none" stroke="#AFBDCC" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></g>
+<rect x="0" y="112" width="390" height="43" rx="0" fill="#0F141C"/>
+<text x="16" y="129" font-family="Inter" font-size="10.5" font-weight="600" fill="#64A7F8" text-anchor="start">ON MY IPHONE</text>
+<text x="16" y="146" font-family="Inter" font-size="12" font-weight="400" fill="#AFBDCC" text-anchor="start">fesTerm / Notes / RUNBOOK.md</text>
+<circle cx="322" cy="136" r="3" fill="#3ECF8E"/>
+<text x="374" y="140" font-family="Inter" font-size="11.3" font-weight="400" fill="#AFBDCC" text-anchor="end">Saved</text>
+<path d="M0 154L390 154" fill="none" stroke="#263746" stroke-width="1" stroke-linecap="round"/>
+<rect x="0" y="155" width="390" height="51" rx="0" fill="#0F141C"/>
+<rect x="16" y="164" width="191" height="33" rx="9" fill="#23334B"/>
+<text x="47.83333333333333" y="185" font-family="Inter" font-size="12.5" font-weight="400" fill="#AFBDCC" text-anchor="middle">Edit</text>
+<rect x="80.66666666666666" y="166" width="61.666666666666664" height="29" rx="8" fill="#30415B"/>
+<text x="111.49999999999999" y="185" font-family="Inter" font-size="12.5" font-weight="600" fill="#E6EDF3" text-anchor="middle">Preview</text>
+<text x="175.16666666666666" y="185" font-family="Inter" font-size="12.5" font-weight="400" fill="#AFBDCC" text-anchor="middle">Split</text>
+<g transform="translate(224 170) scale(0.9166666666666666)" fill="none" stroke="#64A7F8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h12M9 12h12M9 18h12"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></g>
+<g transform="translate(268 171) scale(0.875)" fill="none" stroke="#64A7F8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V3m-5 5 5-5 5 5M4 13v8h16v-8"/></g>
+<text x="371" y="186" font-family="Inter" font-size="13" font-weight="500" fill="#64A7F8" text-anchor="end">Edit</text>
+<path d="M0 206L390 206" fill="none" stroke="#263746" stroke-width="1" stroke-linecap="round"/>
+<rect x="0" y="207" width="390" height="568" rx="0" fill="#0F141C"/>
+<text x="19" y="252" font-family="Inter" font-size="23" font-weight="650" fill="#E6EDF3" text-anchor="start">Remote session recovery</text>
+<text x="19" y="278" font-family="Inter" font-size="13.3" font-weight="400" fill="#AFBDCC" text-anchor="start">Keep work running when connectivity changes.</text>
+<rect x="18" y="293" width="354" height="36" rx="8" fill="#182638"/>
+<g transform="translate(30 302) scale(0.75)" fill="none" stroke="#64A7F8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 10v7M12 7v.4"/></g>
+<text x="57" y="315" font-family="Inter" font-size="11.6" font-weight="400" fill="#AFBDCC" text-anchor="start">Applies to SSH and Dev Tunnel sessions</text>
+<text x="19" y="371" font-family="Inter" font-size="18" font-weight="600" fill="#E6EDF3" text-anchor="start">Overview</text>
+<text x="19" y="401" font-family="Inter" font-size="13.5" font-weight="400" fill="#E6EDF3" text-anchor="start">fesTerm keeps session identity separate from</text>
+<text x="19" y="421" font-family="Inter" font-size="13.5" font-weight="400" fill="#E6EDF3" text-anchor="start">the underlying connection. A short interruption</text>
+<text x="19" y="441" font-family="Inter" font-size="13.5" font-weight="400" fill="#E6EDF3" text-anchor="start">should not require starting a new shell.</text>
+<text x="19" y="484" font-family="Inter" font-size="18" font-weight="600" fill="#E6EDF3" text-anchor="start">Recovery checklist</text>
+<circle cx="24" cy="513" r="3" fill="#64A7F8"/>
+<text x="39" y="518" font-family="Inter" font-size="13.2" font-weight="400" fill="#E6EDF3" text-anchor="start">Preserve the existing attachment</text>
+<circle cx="24" cy="541" r="3" fill="#64A7F8"/>
+<text x="39" y="546" font-family="Inter" font-size="13.2" font-weight="400" fill="#E6EDF3" text-anchor="start">Probe the connection on return</text>
+<circle cx="24" cy="569" r="3" fill="#64A7F8"/>
+<text x="39" y="574" font-family="Inter" font-size="13.2" font-weight="400" fill="#E6EDF3" text-anchor="start">Reattach only after a failed probe</text>
+<text x="19" y="632" font-family="Inter" font-size="18" font-weight="600" fill="#E6EDF3" text-anchor="start">Validation</text>
+<rect x="18" y="649" width="354" height="83" rx="10" fill="#131D27" stroke="#344A68" stroke-width="1"/>
+<text x="32" y="672" font-family="DejaVu Sans Mono" font-size="11.3" font-weight="400" fill="#8ED7AA" text-anchor="start">cargo test -p festerm-mobile-tunnels</text>
+<text x="32" y="694" font-family="DejaVu Sans Mono" font-size="11.2" font-weight="400" fill="#AFBDCC" text-anchor="start">./scripts/smoke-ios-simulator.py</text>
+<g transform="translate(336 661) scale(0.7083333333333334)" fill="none" stroke="#8C9CAC" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></g>
+<rect x="0" y="773" width="390" height="71" rx="0" fill="#1B2A40"/>
+<path d="M0 773L390 773" fill="none" stroke="#344A68" stroke-width="1" stroke-linecap="round"/>
+<text x="16" y="794" font-family="Inter" font-size="11.2" font-weight="400" fill="#AFBDCC" text-anchor="start">Markdown preview</text>
+<text x="373" y="794" font-family="Inter" font-size="11.2" font-weight="400" fill="#8C9CAC" text-anchor="end">3 headings / local source</text>
+<rect x="140.0" y="831" width="110" height="4" rx="2" fill="#E6EDF3"/>
+</svg>

@@ -19,6 +19,34 @@ reconnect remains pinned to the original session. Isolated regressions cover the
 policy and publication boundaries; signed service and physical-iOS qualification
 remain in DT-05/07. The existing live installation was not changed.
 
+## Shared iOS documents: shared ownership and native I/O first
+
+The approved editor handoff asks for an editor, Markdown projection and
+document dictation, but excludes all Edit/Preview split panes. The first
+#570 slice extends the existing UI-free `festerm-mobile-docs` seam with a
+bounded registry over `festerm-document`, rather than copying the desktop
+widget or creating another undo engine. Repeated opens share identity and
+history while delayed edits bind the exact view, revision, selection, origin
+and access epoch. Dirty external changes conflict; Keep edits does not write.
+Save completion marks only the history point actually published, and revoked
+access gates further edits even when an admitted save is finishing.
+
+The native boundary now stages bounded I/O through UIDocument without giving
+it canonical text or undo ownership. A real Simulator fixture proves actual
+safe publication, BOM/CRLF/Unicode preservation, 0600 permissions, stale
+overwrite refusal, external refresh and close/cleanup. App-owned Files
+mutations and SFTP downloads retain admission through actual worker
+publication, excluding a concurrent document save even after a Files view
+closes. Real OpenSSH tests preserve existing round trips and prove refusal
+does not touch existing files. This is intentionally conservative exclusion,
+not per-path scheduling.
+
+This is the ownership/I/O foundation, not a wired Files/editor delivery claim.
+The imported proposed artwork and ADR 0067 preserve the native authorization,
+keyboard, visual and shared-composer gates for the following draft slices.
+The engine now exposes its existing newline normalization for reuse, and the
+mobile admission limit accounts for original encoded line endings and BOM.
+
 ## iOS on-device terminal dictation spike
 
 The owner asked to dictate without leaving either terminal-user keyboard.
