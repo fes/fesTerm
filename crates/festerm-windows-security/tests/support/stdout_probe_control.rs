@@ -1,10 +1,33 @@
 use std::{fmt, time::Instant};
 
 pub(crate) const MARKER: &str = "FESTERM_STDOUT_PROBE";
-pub(crate) const MAX_CONTROL: usize = 4096;
+pub(crate) const MAX_CONTROL: usize = 8192;
 pub(crate) const MAX_EMPTY_LINES: usize = 16;
+pub(crate) const MAX_WRITES: usize = 64;
 const MAX_VALUES: usize = 4;
 const MAX_DIAGNOSTIC_BYTES: usize = 256;
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct FillEvidence {
+    pub(crate) total: usize,
+    pub(crate) partial: bool,
+    pub(crate) full: bool,
+}
+
+impl FillEvidence {
+    pub(crate) fn observe(&mut self, requested: usize, count: usize) -> Result<(), &'static str> {
+        if self.full || requested == 0 || count > requested {
+            return Err("invalid fill write");
+        }
+        self.total = self
+            .total
+            .checked_add(count)
+            .ok_or("fill byte count overflow")?;
+        self.partial |= count > 0 && count < requested;
+        self.full = count == 0;
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ModeAttempt {

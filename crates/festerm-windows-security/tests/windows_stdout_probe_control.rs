@@ -4,12 +4,66 @@ mod stdout_probe_control;
 use std::time::{Duration, Instant};
 
 use stdout_probe_control::{
-    mode_setup, ControlError, ControlParser, ModeAttempt, ModeSetup, MAX_CONTROL, MAX_EMPTY_LINES,
+    mode_setup, ControlError, ControlParser, FillEvidence, ModeAttempt, ModeSetup, MAX_CONTROL,
+    MAX_EMPTY_LINES, MAX_WRITES,
 };
 
 fn time_window() -> (Instant, Instant) {
     let now = Instant::now();
     (now, now + Duration::from_secs(5))
+}
+
+#[test]
+fn stdout_fill_evidence_distinguishes_partial_from_full_then_zero() {
+    let mut partial = FillEvidence::default();
+    partial.observe(16, 16).unwrap();
+    partial.observe(16, 7).unwrap();
+    partial.observe(16, 0).unwrap();
+    assert_eq!(
+        partial,
+        FillEvidence {
+            total: 23,
+            partial: true,
+            full: true,
+        }
+    );
+
+    let mut no_partial = FillEvidence::default();
+    no_partial.observe(16, 16).unwrap();
+    no_partial.observe(16, 0).unwrap();
+    assert!(!no_partial.partial);
+    assert!(no_partial.full);
+    assert!(no_partial.observe(16, 1).is_err());
+    assert!(FillEvidence::default().observe(16, 17).is_err());
+    assert!(FillEvidence::default().observe(0, 0).is_err());
+}
+
+#[test]
+fn stdout_control_accepts_bounded_fill_trace() {
+    let (now, deadline) = time_window();
+    let mut parser = ControlParser::default();
+    let frame = format!(
+        "FESTERM_STDOUT_PROBE FILL_WRITE 1 {} {} {}\n",
+        u32::MAX,
+        u32::MAX,
+        u64::MAX
+    );
+    for _ in 0..MAX_WRITES {
+        parser.push(frame.as_bytes(), now, deadline).unwrap();
+        assert_eq!(
+            parser.next_event("FILL_WRITE", now, deadline),
+            Ok(Some(vec![
+                1,
+                u64::from(u32::MAX),
+                u64::from(u32::MAX),
+                u64::MAX
+            ]))
+        );
+    }
+    parser
+        .push(b"FESTERM_STDOUT_PROBE FULL 1\n", now, deadline)
+        .unwrap();
+    assert_eq!(parser.next_event("FULL", now, deadline), Ok(Some(vec![1])));
 }
 
 #[test]
