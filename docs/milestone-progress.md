@@ -7,8 +7,8 @@ in the authority crate and feed the same app-owned connection and writer.
 This changes ownership only: insertion is not guarded through publication,
 does not bind an enrollment or metadata grant, and proves no revocable enqueue
 or physical delivery. Production qualification and metadata routing remain
-closed. Focused queue and connection regressions have been added but have not
-yet been run.
+closed. Focused queue and connection regressions cover capacity, ordering,
+closure and guard freshness; execution results are tracked with the PR.
 
 ## Wiring non-authorizing controller enrollment
 

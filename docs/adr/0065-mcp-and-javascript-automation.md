@@ -353,8 +353,8 @@ in the design must be visible in implementation/release review.
   across restart. MCP protocol, private framing, bounded
   observation, pairing and stale-target tests cover the P1 path.
   The outbound ownership extraction adds queue capacity/FIFO/disconnect and
-  guard-freshness checks plus app connection full/closed regressions; execution
-  and full local CI-equivalent validation remain pending.
+  guard-freshness checks plus app connection full/closed regressions; their
+  execution and native-platform evidence are tracked with the PR.
   Incremental Noise handshake tests cover bounded framing, readiness and withholding the
   unverified channel until outbound handshake bytes are physically written.
   These do not prove trusted human comparison, native lock behavior, client
