@@ -1250,6 +1250,7 @@ impl MobileApp {
             }
             forms::EditorAction::Delete => self.delete_editor_profile(),
             forms::EditorAction::SignIn
+            | forms::EditorAction::SelectTunnelAccount(_)
             | forms::EditorAction::RefreshTunnels
             | forms::EditorAction::SignOut
             | forms::EditorAction::PickTunnel(_)

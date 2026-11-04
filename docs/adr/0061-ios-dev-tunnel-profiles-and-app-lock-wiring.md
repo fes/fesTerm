@@ -45,3 +45,29 @@ separates native privacy/app-lock state from tunnel lifetime. Established active
 and parked tunnels survive inactivity; an attachment-owned asynchronous host
 probe gates input on foreground return, with bounded safe recovery on failure.
 No native/device evidence is claimed; MOB-03/MOB-06 retain those checks.
+
+## Amendment: multiple GitHub accounts
+
+The iOS Dev Tunnel editor lists stored GitHub accounts and offers **Add GitHub
+account** without signing out another identity. It uses the existing per-account
+credential store; no schema migration is required. Device approval instructions
+ask the user to select the intended GitHub identity in the browser. Reauthorizing
+the same identity retains its account key.
+
+Explicitly switching accounts clears the draft tunnel/session and old discovery
+(including pending jobs and destructive-action state). Saved profiles retain
+their own bindings. A missing bound account never silently selects another
+stored identity. Sign-out removes only the selected account through the existing
+backend; established sessions keep their existing lifecycle.
+
+Signing out the selected account also clears its draft tunnel/session, and Save
+refuses an account that is no longer stored.
+
+Validation impact: `TUNNEL-11`, `MOB-06`; deterministic regressions
+`choosing_another_tunnel_account_clears_discovery_and_preserves_saved_binding`,
+`choosing_the_same_tunnel_account_keeps_the_draft_target`,
+`an_unbound_saved_tunnel_does_not_choose_another_account`,
+`adding_a_github_account_keeps_the_first_and_selects_the_new_identity`,
+`the_editor_lists_every_stored_account_and_shows_the_bound_login` and
+`signing_out_the_selected_account_clears_its_draft_and_it_cannot_be_saved`. Native GitHub approval
+with two accounts and Keychain persistence across relaunch remain manual.
