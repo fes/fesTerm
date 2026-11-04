@@ -70,7 +70,10 @@ supervise its subprocesses. Native execution is required, and results apply
 only to the tested environment and configuration. The probe does not establish
 exclusive mode ownership, final-recipient privacy fencing or caller liveness
 against a relay delaying ciphertext; it does not enable MCP or qualify
-production stdout.
+production stdout. A native CI run instead found `ERROR_PIPE_BUSY` on the
+initial mode-setting call, before physical-write assertions. A bounded
+diagnostic records that first result and any retry after draining observed
+startup bytes, but a successful retry does not erase the initial failure.
 
 ## Verify the Dev Tunnel installer before execution
 

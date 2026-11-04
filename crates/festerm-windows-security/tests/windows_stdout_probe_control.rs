@@ -3,11 +3,50 @@ mod stdout_probe_control;
 
 use std::time::{Duration, Instant};
 
-use stdout_probe_control::{ControlError, ControlParser, MAX_CONTROL, MAX_EMPTY_LINES};
+use stdout_probe_control::{
+    mode_setup, ControlError, ControlParser, ModeAttempt, ModeSetup, MAX_CONTROL, MAX_EMPTY_LINES,
+};
 
 fn time_window() -> (Instant, Instant) {
     let now = Instant::now();
     (now, now + Duration::from_secs(5))
+}
+
+#[test]
+fn stdout_control_classifies_initial_retry_and_double_refusal() {
+    let set = ModeAttempt::from_values(&[1, 0]).unwrap();
+    let refused = ModeAttempt::from_values(&[0, 231]).unwrap();
+    let refused_again = ModeAttempt::from_values(&[0, 5]).unwrap();
+
+    assert_eq!(mode_setup(set, None), Ok(ModeSetup::SetInitially));
+    assert_eq!(
+        mode_setup(refused, Some(set)),
+        Ok(ModeSetup::SetAfterRefusal(231))
+    );
+    assert_eq!(
+        mode_setup(refused, Some(refused_again)),
+        Ok(ModeSetup::Refused(231, 5))
+    );
+    assert!(mode_setup(set, Some(set)).is_err());
+    assert!(mode_setup(refused, None).is_err());
+}
+
+#[test]
+fn stdout_control_rejects_malformed_mode_results() {
+    for values in [
+        &[][..],
+        &[1][..],
+        &[1, 5][..],
+        &[2, 0][..],
+        &[0, u64::from(u32::MAX) + 1][..],
+        &[1, 0, 0][..],
+    ] {
+        assert!(ModeAttempt::from_values(values).is_err());
+    }
+    assert_eq!(
+        ModeAttempt::from_values(&[0, 0]),
+        Ok(ModeAttempt::Refused(0))
+    );
 }
 
 #[test]

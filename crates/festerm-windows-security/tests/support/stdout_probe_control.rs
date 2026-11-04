@@ -6,6 +6,47 @@ pub(crate) const MAX_EMPTY_LINES: usize = 16;
 const MAX_VALUES: usize = 4;
 const MAX_DIAGNOSTIC_BYTES: usize = 256;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ModeAttempt {
+    Set,
+    Refused(u32),
+}
+
+impl ModeAttempt {
+    pub(crate) fn from_values(values: &[u64]) -> Result<Self, &'static str> {
+        match values {
+            [1, 0] => Ok(Self::Set),
+            [0, error] => u32::try_from(*error)
+                .map(Self::Refused)
+                .map_err(|_| "mode error is out of range"),
+            _ => Err("invalid mode attempt"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ModeSetup {
+    SetInitially,
+    SetAfterRefusal(u32),
+    Refused(u32, u32),
+}
+
+pub(crate) fn mode_setup(
+    initial: ModeAttempt,
+    retry: Option<ModeAttempt>,
+) -> Result<ModeSetup, &'static str> {
+    match (initial, retry) {
+        (ModeAttempt::Set, None) => Ok(ModeSetup::SetInitially),
+        (ModeAttempt::Refused(first), Some(ModeAttempt::Set)) => {
+            Ok(ModeSetup::SetAfterRefusal(first))
+        }
+        (ModeAttempt::Refused(first), Some(ModeAttempt::Refused(second))) => {
+            Ok(ModeSetup::Refused(first, second))
+        }
+        _ => Err("mode retry does not match the initial result"),
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ControlError {
     Deadline,

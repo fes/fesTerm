@@ -16,7 +16,9 @@ use std::{
 };
 
 use festerm_windows_job::WindowsJob;
-use stdout_probe_control::{ControlError, ControlParser, MARKER, MAX_CONTROL};
+use stdout_probe_control::{
+    mode_setup, ControlError, ControlParser, ModeAttempt, ModeSetup, MARKER, MAX_CONTROL,
+};
 use windows_sys::Win32::{
     Foundation::{
         DuplicateHandle, DUPLICATE_SAME_ACCESS, ERROR_BROKEN_PIPE, ERROR_NO_DATA,
@@ -26,8 +28,8 @@ use windows_sys::Win32::{
     System::{
         Console::{GetStdHandle, STD_OUTPUT_HANDLE},
         Pipes::{
-            GetNamedPipeHandleStateW, GetNamedPipeInfo, PeekNamedPipe, SetNamedPipeHandleState,
-            PIPE_NOWAIT, PIPE_TYPE_MESSAGE, PIPE_WAIT,
+            CreatePipe, GetNamedPipeHandleStateW, GetNamedPipeInfo, PeekNamedPipe,
+            SetNamedPipeHandleState, PIPE_NOWAIT, PIPE_TYPE_MESSAGE, PIPE_WAIT,
         },
         Threading::{
             CreateEventW, GetCurrentProcess, GetThreadIOPendingFlag, OpenProcess, SetEvent,
@@ -188,6 +190,16 @@ fn report(message: &str) {
     eprintln!("{MARKER} {message}");
 }
 
+fn report_mode(name: &str, result: &io::Result<()>) {
+    match result {
+        Ok(()) => report(&format!("{name} 1 0")),
+        Err(error) => report(&format!(
+            "{name} 0 {}",
+            error.raw_os_error().unwrap_or(-1) as u32
+        )),
+    }
+}
+
 fn report_write(name: &str, write: RawWrite) {
     report(&format!(
         "{name} {} {} {} {}",
@@ -278,17 +290,26 @@ struct Supervised {
 
 impl Supervised {
     fn spawn(role: &str, capture: bool, events: Option<&ControllerEvents>) -> Self {
+        Self::spawn_with_capture(role, capture, capture, events)
+    }
+
+    fn spawn_with_capture(
+        role: &str,
+        capture_stdout: bool,
+        capture_stderr: bool,
+        events: Option<&ControllerEvents>,
+    ) -> Self {
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
             .args(["--exact", HELPER, "--ignored", "--nocapture"])
             .env(ROLE, role)
             .env("RUST_BACKTRACE", "0")
-            .stdout(if capture {
+            .stdout(if capture_stdout {
                 Stdio::piped()
             } else {
                 Stdio::null()
             })
-            .stderr(if capture {
+            .stderr(if capture_stderr {
                 Stdio::piped()
             } else {
                 Stdio::inherit()
@@ -590,7 +611,16 @@ fn probe_child() {
     // SAFETY: the process owns its inherited standard output handle.
     let stdout = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
     check_pipe(stdout).unwrap();
-    set_pipe_mode(stdout, PIPE_NOWAIT).unwrap();
+    let initial = set_pipe_mode(stdout, PIPE_NOWAIT);
+    report_mode("MODE_INITIAL", &initial);
+    command_byte(b'D');
+    if let Err(first) = initial {
+        let retry = set_pipe_mode(stdout, PIPE_NOWAIT);
+        report_mode("MODE_RETRY", &retry);
+        if let Err(second) = retry {
+            panic!("stdout mode was refused initially ({first}) and after draining ({second})");
+        }
+    }
     let (known, mode) = query_pipe_mode(stdout);
     report(&format!("READY {} {known} {mode}", stdout as usize));
 
@@ -723,11 +753,14 @@ impl Observed {
     }
 
     fn drain(&mut self, probe: &mut Probe) -> usize {
+        self.drain_stdout(probe.stdout.as_mut().unwrap())
+    }
+
+    fn drain_stdout<R: Read + AsRawHandle>(&mut self, stdout: &mut R) -> usize {
         let deadline = Instant::now() + STEP_TIMEOUT;
         let mut total = 0;
         loop {
             // Count using the physical read, not the child's reported write alone.
-            let stdout = probe.stdout.as_mut().unwrap();
             let available = available(stdout.as_raw_handle()).unwrap() as usize;
             if available == 0 {
                 break;
@@ -744,7 +777,7 @@ impl Observed {
     }
 }
 
-fn probe_controller() {
+fn probe_controller(stop_after_initial: bool) {
     let _ready = controller_start();
     assert!(check_pipe(ptr::null_mut()).is_err());
     assert!(set_pipe_mode(ptr::null_mut(), PIPE_NOWAIT).is_err());
@@ -756,6 +789,41 @@ fn probe_controller() {
 
     let mut probe = Probe::spawn("probe-child");
     check_byte_pipe(probe.stdout.as_ref().unwrap());
+    let initial_values = probe.event("MODE_INITIAL");
+    let initial =
+        ModeAttempt::from_values(&initial_values).expect("invalid initial stdout mode result");
+    report(&format!(
+        "MODE_INITIAL_OBSERVED {} {}",
+        initial_values[0], initial_values[1]
+    ));
+    if stop_after_initial {
+        report("TEST_STOP_AFTER_INITIAL 1");
+        panic!("injected failure after the initial mode result");
+    }
+    let mut observed = Observed::default();
+    let startup_bytes = observed.drain(&mut probe);
+    eprintln!("Native stdout startup bytes observed and drained: {startup_bytes}");
+    assert_eq!(observed.fill, 0, "unexpected physical fill before setup");
+    assert_eq!(
+        observed.wait, 0,
+        "unexpected physical wait write before setup"
+    );
+    probe.process.send(b"D");
+    let retry = if matches!(initial, ModeAttempt::Refused(_)) {
+        let retry = ModeAttempt::from_values(&probe.event("MODE_RETRY"))
+            .expect("invalid retry stdout mode result");
+        eprintln!("Native stdout mode retry: {retry:?}");
+        Some(retry)
+    } else {
+        None
+    };
+    let setup = mode_setup(initial, retry).expect("invalid stdout mode sequence");
+    eprintln!(
+        "Native stdout mode setup: {setup:?}; observed and drained {startup_bytes} startup bytes"
+    );
+    if let ModeSetup::Refused(first, second) = setup {
+        panic!("stdout mode was refused initially ({first}) and after draining ({second})");
+    }
     let ready = probe.event("READY");
     assert_eq!(ready.len(), 3);
     assert_mode_if_queryable(ready[1], ready[2], PIPE_NOWAIT);
@@ -767,8 +835,7 @@ fn probe_controller() {
     let mut total = usize::try_from(filled[0]).unwrap();
     assert!(total > 0 && total <= CHUNK * MAX_WRITES);
 
-    // The parent has deliberately not read stdout until actual backpressure.
-    let mut observed = Observed::default();
+    // After the bounded startup drain, no reads occur before backpressure.
     let capacity = observed.drain(&mut probe);
     assert_eq!(observed.fill, total);
     assert!(capacity > 0 && capacity <= MAX_PIPE_BYTES);
@@ -842,6 +909,64 @@ fn probe_controller() {
          restored_full_write=0 duplicate_wait_write=1 closed_error={}",
         closed[2]
     );
+    if let ModeSetup::SetAfterRefusal(first) = setup {
+        panic!(
+            "initial stdout mode setup failed ({first}); retry succeeded after draining \
+             {startup_bytes} observed bytes, but the original failure remains unqualified"
+        );
+    }
+}
+
+fn initial_mode_diagnostic_controller() {
+    let _ready = controller_start();
+    let events = ControllerEvents::new();
+    let mut process = Supervised::spawn_with_capture(
+        "probe-controller-fail-after-initial",
+        false,
+        true,
+        Some(&events),
+    );
+    let stderr = process.child.stderr.take().unwrap();
+    let mut controller = Probe {
+        process,
+        stdout: None,
+        stderr,
+        control: ControlParser::default(),
+    };
+    events.start();
+    let initial = controller.event("MODE_INITIAL_OBSERVED");
+    ModeAttempt::from_values(&initial).expect("invalid recorded initial stdout mode result");
+    assert_eq!(controller.event("TEST_STOP_AFTER_INITIAL"), vec![1]);
+    let status = controller
+        .process
+        .wait_until(STEP_TIMEOUT)
+        .expect("injected controller failure did not finish");
+    assert!(!status.success(), "injected controller failure was hidden");
+}
+
+fn startup_drain_controller() {
+    let _ready = controller_start();
+    let mut read_handle = ptr::null_mut();
+    let mut write_handle = ptr::null_mut();
+    // SAFETY: both output pointers are live; the returned handles are owned here.
+    if unsafe { CreatePipe(&mut read_handle, &mut write_handle, ptr::null(), 0) } == 0 {
+        panic!("cannot create test pipe: {}", io::Error::last_os_error());
+    }
+    // SAFETY: CreatePipe returned fresh handles, each transferred exactly once.
+    let mut reader = unsafe { std::fs::File::from_raw_handle(read_handle) };
+    // SAFETY: this is the other fresh handle returned by CreatePipe.
+    let writer = unsafe { OwnedHandle::from_raw_handle(write_handle) };
+    let mut observed = Observed::default();
+    assert_eq!(observed.drain_stdout(&mut reader), 0);
+
+    let write = raw_write(writer.as_raw_handle(), b"abc");
+    assert_prompt_success(write);
+    assert_eq!(write.count, 3);
+    assert_eq!(observed.drain_stdout(&mut reader), 3);
+    assert_eq!(observed.harness, 3);
+    assert_eq!(observed.fill, 0);
+    assert_eq!(observed.wait, 0);
+    assert_eq!(observed.drain_stdout(&mut reader), 0);
 }
 
 fn hanging_writer_child() {
@@ -1024,7 +1149,10 @@ fn park_controller() {
 #[ignore = "subprocess helper; invoked only by the deadline-supervised tests"]
 fn windows_stdout_probe_subprocess() {
     match std::env::var(ROLE).as_deref() {
-        Ok("probe-controller") => probe_controller(),
+        Ok("probe-controller") => probe_controller(false),
+        Ok("probe-controller-fail-after-initial") => probe_controller(true),
+        Ok("initial-mode-diagnostic-controller") => initial_mode_diagnostic_controller(),
+        Ok("startup-drain-controller") => startup_drain_controller(),
         Ok("probe-child") => probe_child(),
         Ok("stall-controller") => stall_controller(),
         Ok("hanging-writer") => hanging_writer_child(),
@@ -1047,6 +1175,23 @@ fn windows_stdout_probe_subprocess() {
 fn windows_stdout_inherited_pipe_nowait_probe() {
     let events = ControllerEvents::new();
     let mut controller = Supervised::spawn("probe-controller", false, Some(&events));
+    events.start();
+    controller.require_success(OUTER_TIMEOUT);
+}
+
+#[test]
+fn windows_stdout_probe_reports_initial_mode_before_later_failure() {
+    let events = ControllerEvents::new();
+    let mut controller =
+        Supervised::spawn("initial-mode-diagnostic-controller", false, Some(&events));
+    events.start();
+    controller.require_success(OUTER_TIMEOUT);
+}
+
+#[test]
+fn windows_stdout_probe_startup_drain_handles_empty_and_actual_bytes() {
+    let events = ControllerEvents::new();
+    let mut controller = Supervised::spawn("startup-drain-controller", false, Some(&events));
     events.start();
     controller.require_success(OUTER_TIMEOUT);
 }

@@ -411,6 +411,12 @@ configuration, not other hosts. Its separate control stream skips only a
 bounded number of empty lines; malformed nonempty output, including a child
 panic, fails with bounded escaped diagnostics. Total control bytes and each
 event's deadline are bounded independently of the physical-write assertions.
+One native CI run received `ERROR_PIPE_BUSY` when setting the inherited writer's
+mode before the physical-write assertions. The probe now records that initial
+result, drains only the stdout bytes observed under a bounded controller, and
+attempts the set once more only after an initial refusal. A successful retry
+still fails the test after the physical checks: the initial refusal remains
+unqualified, and the intervening drain and delay do not establish its cause.
 After the final expected frame, the job-contained controller drains the
 control stream to observed EOF and requires a successful child exit within
 the same deadline; temporary emptiness or process exit alone is not EOF.
