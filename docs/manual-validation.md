@@ -60,6 +60,20 @@ constrained job. These local probes create no cloud tunnels or tasks and do not
 qualify survival after a containing job closes; full native setup remains
 DT-01/#432 evidence.
 
+Windows background hosting has deterministic task-action/legacy-upgrade
+coverage and native, task-free console probes:
+`windows_worker_is_windowless_and_preserves_owned_setup_arguments_and_exit_status`
+checks the actual GUI-subsystem launcher and a console child with
+`GetConsoleWindow() == 0`, exact Unicode/space-bearing arguments and exit status;
+`background_commands_do_not_allocate_a_console` checks the same property for
+noninteractive children. Both passed locally. The ordinary setup executable's
+asInvoker/help regression still verifies interactive output. Bundle checks
+require the new Windows-only helper, and release signing/installer verification
+include it. A live signed upgrade under DT-05 must still prove that the window
+disappears while the tunnel, host fingerprint and exact daemon generation stay
+unchanged; no existing live installation was upgraded by these local tests.
+This does not qualify daemon survival after the originating job closes.
+
 Publication and broader qualification remain gated on clarification of
 standalone fesTerm usage rights, as recorded in ADR 0053. The owner subsequently
 authorized the bounded service-application tests and integration below; the current service terms

@@ -326,6 +326,8 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         return Err(refused("setup.upgrade_requires_an_existing_installation"));
     }
     super::service_install::ensure_unprivileged_user()?;
+    #[cfg(windows)]
+    super::service_install::check_windows_worker(&std::env::current_exe()?)?;
     let directory = setup_storage::private_directory(&state, create)?;
     let installer = lock(&directory, "installer.lock")?;
     installer
@@ -864,7 +866,7 @@ async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
             std::env::consts::EXE_SUFFIX
         ));
     let (variable, base) = daemon_namespace(&record.runtime_root)?;
-    let mut child = Command::new(bridge)
+    let mut child = super::background_command(&bridge)
         .env(variable, base)
         .args([
             "--experimental",

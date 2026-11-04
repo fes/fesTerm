@@ -1,5 +1,27 @@
 # Milestone Progress Narrative
 
+## Windows tunnel hosting without a desktop console
+
+The corrected Windows installer reached READY, but Task Scheduler started the
+console-subsystem setup helper in a new desktop window. That window belonged
+to the live host worker, so closing it could disconnect the tunnel rather than
+merely dismissing setup output.
+
+Windows tasks now start a small GUI-subsystem `festerm-tunnel-worker.exe`.
+It invokes only its sibling setup helper's existing `--serve` path with
+`CREATE_NO_WINDOW`, waits for it, and preserves its exit status. Noninteractive
+CLI and bridge children also suppress console creation. The interactive setup
+binary, device sign-in, stdout/stderr pipes, private worker log, exact daemon
+generation and user-only service policy remain unchanged.
+
+The Windows bundle includes and signs the launcher; Unix bundles are unchanged.
+Explicit upgrades accept only the byte-exact owned legacy task definitions and
+the recorded Scheduler snapshot before replacing the action. Existing live
+hosts are not changed automatically. Native probes verify the built launcher's
+GUI subsystem, console-free child execution, Unicode/space-bearing argument
+delivery and exit propagation without creating cloud resources or tasks.
+Full live-service upgrade and containing-job survival remain separate gates.
+
 ## 0.14.1: Windows Dev Tunnel startup correction
 
 This patch packages #515's Windows host-shell correction. Managed and foreground

@@ -718,6 +718,16 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   the original setup executable filename without a UAC prompt; the manifest
   prevents installer-detection elevation, not the existing elevated-token
   refusal. No executable renaming or administrator fallback is permitted.
+  Windows background-host coverage additionally includes
+  `windows_worker_is_windowless_and_preserves_owned_setup_arguments_and_exit_status`,
+  `background_commands_do_not_allocate_a_console` and
+  `service_windows_windowless_upgrade_accepts_only_exact_owned_legacy_tasks`.
+  `service_windows_plain_rerun_keeps_the_owned_legacy_console_definition`
+  preserves a plain rerun's old worker until an explicit upgrade.
+  The native probes verify actual console absence, argument delivery and exit
+  status without registering a service or provisioning a tunnel. Windows
+  bundles must require/sign the launcher; signed live-service upgrade remains
+  DT-05 evidence rather than a result of these fixtures.
   `private_storage_ancestor_trust_adds_only_the_exact_servicing_sid` distinguishes
   the private-storage exception from unchanged save staging and rejects unrelated
   services/users. `staging_parent_rejects_a_dacl_that_allows_child_substitution`
@@ -801,6 +811,28 @@ Automated tests: `managed_upgrade_switches_helpers_and_keeps_tunnel_target_ident
 installer test `test_upgrade_installs_next_to_the_previous_release_and_passes_the_flag`.
 A real-service upgrade on each platform (daemon shell survives, profile and
 fingerprint unchanged) remains native `DT-05` evidence.
+
+## Amendment: windowless Windows worker launch
+
+The Windows interactive-token task must not expose a console window whose
+close button can terminate hosting. It now executes a dedicated GUI-subsystem
+`festerm-tunnel-worker.exe` from the same immutable, verified release directory.
+The launcher takes only an absolute `--state-dir`, invokes its sibling setup
+helper with fixed `--serve` arguments and `CREATE_NO_WINDOW`, waits, and
+propagates the exit code. Noninteractive CLI/bridge children likewise suppress
+console allocation; the existing interactive setup/sign-in binary is unchanged.
+No shell-command parsing, native FFI, new crate boundary or daemon ownership
+change is introduced.
+
+The launcher is Windows-only in bundles and is covered by the same archive
+allowlist, Authenticode verification and protected release signing as the
+other helpers. Missing/substituted launchers refuse before provisioning.
+Existing installations change only through explicit upgrade. Complete legacy
+UTF-16/BOM and earlier UTF-8 setup-helper task definitions are accepted only
+when their owned file and Scheduler-normalized snapshot match; edited,
+foreign, privileged or differently scoped tasks still refuse. The service
+continues targeting the original exact daemon generation. The launcher fixes
+console hosting, not the originating Windows job's breakaway policy.
 
 ## Amendment: Linux worker restart and private worker log
 

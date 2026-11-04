@@ -28,6 +28,17 @@ fn refused(stage: &'static str) -> io::Error {
     io::Error::other(stage)
 }
 
+fn background_command(path: &Path) -> Command {
+    let command = Command::new(path);
+    #[cfg(windows)]
+    let command = {
+        let mut command = command;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        command
+    };
+    command
+}
+
 #[derive(Deserialize)]
 struct Account {
     status: String,
@@ -86,7 +97,7 @@ fn split_created_id(value: &str, expected: &str) -> io::Result<(String, String)>
 }
 
 async fn cli(path: &Path, args: &[&str], stage: &'static str) -> io::Result<Zeroizing<Vec<u8>>> {
-    let mut child = Command::new(path)
+    let mut child = background_command(path)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -436,6 +447,33 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn background_commands_do_not_allocate_a_console() {
+        let powershell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        let output = timeout(
+            Duration::from_secs(15),
+            background_command(&powershell)
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class ConsoleProbe { [DllImport(\"kernel32.dll\")] public static extern IntPtr GetConsoleWindow(); }'; [ConsoleProbe]::GetConsoleWindow().ToInt64(); exit 37",
+                ])
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .expect("console probe exceeded its deadline")
+        .expect("console probe must launch");
+        assert_eq!(output.status.code(), Some(37), "{output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "0");
+    }
 
     #[cfg(unix)]
     #[test]
