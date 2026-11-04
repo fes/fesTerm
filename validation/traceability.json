@@ -147,6 +147,7 @@
         "windows_stdout_probe_stalled_processes_are_supervised",
         "windows_stdout_probe_requires_clean_control_eof",
         "stdout_fill_evidence_distinguishes_partial_from_full_then_zero",
+        "stdout_refill_after_a_drain_requires_observed_partial_and_zero",
         "stdout_control_accepts_bounded_fill_trace",
         "stdout_control_classifies_initial_retry_and_double_refusal",
         "stdout_control_rejects_malformed_mode_results",

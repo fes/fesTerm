@@ -48,7 +48,7 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(5);
 const OUTER_TIMEOUT: Duration = Duration::from_secs(25);
 const IO_LIMIT: Duration = Duration::from_secs(2);
 const CHUNK: usize = 64 * 1024;
-const MAX_PIPE_BYTES: usize = CHUNK * MAX_WRITES + MAX_CONTROL;
+const MAX_PIPE_BYTES: usize = CHUNK * (2 * MAX_WRITES + 1) + MAX_CONTROL;
 const FILL_BYTE: u8 = 0xa5;
 const WAIT_BYTE: u8 = 0xb6;
 
@@ -642,6 +642,27 @@ fn probe_child() {
     );
     report(&format!("FULL {}", fill.total));
 
+    command_byte(b'P');
+    let mut refill = FillEvidence::default();
+    let write = raw_write(stdout, &bytes);
+    report_write("PARTIAL_WRITE", write);
+    assert_prompt_success(write);
+    refill.observe(bytes.len(), write.count as usize).unwrap();
+    for _ in 0..MAX_WRITES {
+        if refill.full {
+            break;
+        }
+        let write = raw_write(stdout, &bytes);
+        report_write("REFILL_WRITE", write);
+        assert_prompt_success(write);
+        refill.observe(bytes.len(), write.count as usize).unwrap();
+    }
+    assert!(
+        refill.full,
+        "bounded pipe backpressure was not re-established"
+    );
+    report(&format!("REFILLED {}", refill.total));
+
     command_byte(b'W');
     let (known, mode) = query_pipe_mode(stdout);
     let (start, receive) = mpsc::sync_channel::<()>(0);
@@ -738,6 +759,21 @@ impl Observed {
 
     fn drain(&mut self, probe: &mut Probe) -> usize {
         self.drain_stdout(probe.stdout.as_mut().unwrap())
+    }
+
+    fn drain_limited(&mut self, probe: &mut Probe, limit: usize) -> usize {
+        let stdout = probe.stdout.as_mut().unwrap();
+        let available = available(stdout.as_raw_handle()).unwrap() as usize;
+        let mut bytes = [0; 4096];
+        let wanted = available.min(limit).min(bytes.len());
+        assert!(
+            wanted > 0,
+            "no stdout bytes were available for the diagnostic read"
+        );
+        let count = stdout.read(&mut bytes[..wanted]).unwrap();
+        assert_ne!(count, 0);
+        self.add(&bytes[..count]);
+        count
     }
 
     fn drain_stdout<R: Read + AsRawHandle>(&mut self, stdout: &mut R) -> usize {
@@ -837,7 +873,39 @@ fn probe_controller(stop_after_initial: bool) {
         "Native stdout fill: total={}, partial_observed={}",
         fill.total, fill.partial
     );
-    let mut total = fill.total;
+    let diagnostic_read = observed.drain_limited(&mut probe, 4096);
+    eprintln!(
+        "Native stdout diagnostic read: total={diagnostic_read}, fill={}, harness={}",
+        observed.fill, observed.harness
+    );
+    probe.process.send(b"P");
+    let mut refill = FillEvidence::default();
+    let write = probe.event("PARTIAL_WRITE");
+    eprintln!("Native stdout diagnostic write requested={CHUNK}, observed={write:?}");
+    assert_eq!(write.len(), 4);
+    let count = u32::try_from(write[1]).expect("diagnostic count does not fit u32");
+    assert_write_event(&write, true, count);
+    refill.observe(CHUNK, count as usize).unwrap();
+    for _ in 0..MAX_WRITES {
+        if refill.full {
+            break;
+        }
+        let write = probe.event("REFILL_WRITE");
+        eprintln!("Native stdout refill write requested={CHUNK}, observed={write:?}");
+        assert_eq!(write.len(), 4);
+        let count = u32::try_from(write[1]).expect("refill count does not fit u32");
+        assert_write_event(&write, true, count);
+        refill.observe(CHUNK, count as usize).unwrap();
+    }
+    assert!(
+        refill.full,
+        "bounded pipe backpressure was not re-established"
+    );
+    let refilled = probe.event("REFILLED");
+    assert_eq!(refilled.len(), 1);
+    assert_eq!(usize::try_from(refilled[0]).unwrap(), refill.total);
+    let mut total = fill.total.checked_add(refill.total).unwrap();
+    let partial = fill.partial || refill.partial;
 
     set_pipe_mode(writer.as_raw_handle(), PIPE_WAIT).unwrap();
     probe.process.send(b"W");
@@ -898,10 +966,10 @@ fn probe_controller(stop_after_initial: bool) {
     eprintln!(
         "Native stdout probe: total={total} partial_observed={} full_write=0 \
          restored_full_write=0 duplicate_wait_write=1 closed_error={}",
-        fill.partial, closed[2]
+        partial, closed[2]
     );
     assert!(
-        fill.partial,
+        partial,
         "positive partial write was not observed; stdout remains unqualified"
     );
     if let ModeSetup::SetAfterRefusal(first) = setup {
