@@ -2700,12 +2700,14 @@ guards still require the native and interoperability evidence in AUTO-04.
 Terminal-request encoding has deterministic text, key, mode and refusal tests.
 Actual input admission, takeover and platform behavior still require AUTO-03.
 
-Controller enrollment has deterministic, non-authorizing kernel tests only.
-Native selection of identically labelled local sessions, separately approved
-metadata, real attachment/disconnect races, confirmed presentation (including
-Windows activation refusal), input-time presentation revalidation and explicit
-human handoff/disarm remain deferred under AUTO-01, AUTO-03 and AUTO-04. No
-controller UI, MCP operation or native-platform evidence is claimed.
+Controller enrollment has deterministic, non-authorizing kernel tests and a
+dormant opt-in protocol schema; the application does not expose its controller
+operations. Native selection of identically labelled local sessions, separately
+approved metadata, real attachment/disconnect races, confirmed presentation
+(including Windows activation refusal), input-time presentation revalidation
+and explicit human handoff/disarm remain deferred under AUTO-01, AUTO-03 and
+AUTO-04. No controller UI, integrated controller MCP operation, association-handle
+metadata consumer or native-platform evidence is claimed.
 
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |

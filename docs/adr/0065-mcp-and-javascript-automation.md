@@ -107,6 +107,12 @@ to bypass another's restrictions.
    exact target generation. Its fresh association reference is not authority;
    native UI, independently authorized metadata and all presentation/input
    integration remain open under [#524](https://github.com/fes/fesTerm/issues/524).
+   A separately opted-in protocol catalog describes bounded, non-authorizing
+   controller registration and status, but the application does not select
+   that catalog or implement those operations. No association-handle metadata
+   consumer exists, so its feature availability remains false regardless of
+   enrollment availability or grants; the schema alone enables no listener,
+   approval or effect.
 8. **Gate execution and platform claims in stages.** The full contract,
    capability matrix, limits, threat model, outcomes and validation plan live
    in [the companion design](../automation-design.md), which is part of this
@@ -179,7 +185,8 @@ in the design must be visible in implementation/release review.
   workflows/control. `AUT-05` covers independent default-off settings,
   `AUT-06` the shared authority kernel, and `AUT-07` the partial local MCP
   observation path and native pairing/revocation. `AUT-08` covers the
-  non-authorizing controller-enrollment kernel prerequisite only.
+  non-authorizing controller-enrollment kernel and dormant protocol schema;
+  native selection and an application MCP adapter remain deferred.
 - **Automated tests required:** The future acceptance matrix in
   [automation design](../automation-design.md#validation-plan) covers delegation,
   replay, disclosure, imports, resource bounds, confinement, cancellation,
@@ -203,10 +210,12 @@ in the design must be visible in implementation/release review.
   strict decoding, path/link refusal and frozen invocation identity. Desktop
   selection provides a non-authorizing metadata and captured-source preview;
   approval, execution, iOS selection and platform qualification remain open.
-  Controller-enrollment tests cover exact selections, principal isolation,
-  registration bounds, stale decisions and lifecycle invalidation; they do not
-  prove a native selector, backend liveness, metadata authorization, presentation
-  or controller input.
+  Controller-enrollment kernel tests cover exact selections, principal isolation,
+  registration bounds, stale decisions and lifecycle invalidation. The
+  opt-in protocol tests cover bounded inputs, typed non-authorizing results,
+  default-catalog compatibility and host refusal, not an integrated client.
+  They do not prove a native selector, backend liveness, metadata authorization
+  or association-handle consumption, presentation or controller input.
   Run the traceability gate and documentation checks.
 - **Worker process entry:** The desktop executable has a private
   `--automation-worker` entry before application initialization, exercised by

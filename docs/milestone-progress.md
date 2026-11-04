@@ -1,5 +1,17 @@
 # Milestone Progress Narrative
 
+## Specifying a dormant controller protocol
+
+The MCP protocol crate now has an explicitly selected catalog for bounded,
+typed controller registration and status requests. The default observation
+catalog is unchanged, and the application refuses controller operations even
+if given the optional catalog. Requests cannot open a native prompt or grant
+authority. This is a protocol seam, not a controller service: no listener or
+native selection is enabled, and association IDs have no metadata consumer.
+The metadata feature is reported unavailable regardless of enrollment or grant
+status. Private bootstrap, privacy qualification and client integration remain
+open.
+
 ## Selecting exact controller targets without granting authority
 
 An external controller's local registration can now be represented as bounded,
@@ -12,7 +24,8 @@ privacy revocation, closure, replacement and broker restart discard affected
 associations. Identical session labels play no role.
 
 This is a non-authorizing foundation for [#524](https://github.com/fes/fesTerm/issues/524),
-not a client feature: there is no native enrollment UI or MCP operation.
+not a client feature: there is no native enrollment UI or integrated controller
+MCP operation.
 Separately approved metadata, confirmed presentation and admission-time
 revalidation, native handoff/disarm, uncertain-outcome/no-replay handling,
 JavaScript-independent operation and platform/backend capability reporting

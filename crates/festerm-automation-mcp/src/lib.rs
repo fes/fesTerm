@@ -1,11 +1,15 @@
-//! Observation-only MCP 2025-11-25 protocol state machine.
+//! Bounded MCP 2025-11-25 protocol state machine.
 //!
 //! This library owns neither transport nor authorization. A connection is not a
 //! grant. Client metadata is validated, discarded, and never an identity. The
 //! caller must bind each machine to authenticated private IPC, authorize every
 //! operation and disclosure, impose deadlines/shared budgets, and cancel backend
 //! work on cancellation, disconnect, revocation, or expiry. Keep enablement off
-//! by default. No HTTP, execution, workflows, resources, or prompts are exposed.
+//! by default. [`Machine::new`] is observation-only. An explicitly selected
+//! catalog describes later controller registration, but does not implement it.
+//! The application currently refuses these operations; association handles have
+//! no metadata consumer. No HTTP, execution, workflows, resources, or prompts
+//! are exposed.
 //!
 //! Backend observation data is explicitly authorized **untrusted content**, not
 //! instructions. Neither input, output nor client cancellation reasons are logged.
@@ -89,6 +93,7 @@ pub const MAX_VALUE_NODES: usize = 2_048;
 pub const MAX_REFERENCE_CHARS: usize = 256;
 pub const MAX_ID_BYTES: usize = 256;
 pub const VERIFICATION_CODE_LEN: usize = 16;
+pub const MAX_CONTROLLER_LOCAL_ID_BYTES: usize = 128;
 
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(0);
 
@@ -137,11 +142,71 @@ impl fmt::Debug for RequestKey {
     }
 }
 
+/// A connection-local correlation value, not a target, credential, or grant.
+///
+/// The application must generate independent random bytes, ensure uniqueness,
+/// and bind the identifier to the originating connection. This type validates
+/// encoding only; it creates neither an association nor authority.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ControllerId([u8; 16]);
+
+impl ControllerId {
+    pub fn from_random_bytes(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        if value.len() != 32
+            || !value
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            return None;
+        }
+        let mut bytes = [0; 16];
+        for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+            let nibble = |byte: u8| match byte {
+                b'0'..=b'9' => byte - b'0',
+                b'a'..=b'f' => byte - b'a' + 10,
+                _ => unreachable!("hex was checked"),
+            };
+            bytes[index] = (nibble(pair[0]) << 4) | nibble(pair[1]);
+        }
+        Some(Self(bytes))
+    }
+
+    pub fn to_wire(self) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut encoded = String::with_capacity(32);
+        for byte in self.0 {
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+        encoded
+    }
+}
+
+impl fmt::Debug for ControllerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ControllerId(<redacted>)")
+    }
+}
+
 /// Session references and scrollback cursors are opaque, not validated targets
 /// or bearer credentials. The backend must resolve and authorize them anew.
 #[derive(Clone, PartialEq, Eq)]
 pub enum Operation {
     PairingStatus,
+    ControllerCapabilities,
+    ControllerRegister {
+        local_id: String,
+    },
+    ControllerStatus {
+        registration_id: ControllerId,
+    },
+    ControllerUnregister {
+        registration_id: ControllerId,
+    },
     SessionsList,
     SessionsGet {
         session_ref: String,
@@ -173,6 +238,18 @@ impl fmt::Debug for Operation {
 }
 
 impl Operation {
+    fn is_observation(&self) -> bool {
+        matches!(
+            self,
+            Self::SessionsList
+                | Self::SessionsGet { .. }
+                | Self::TerminalReadScreen { .. }
+                | Self::TerminalReadScrollback { .. }
+                | Self::TerminalGetSelection { .. }
+                | Self::TerminalWaitForChange { .. }
+        )
+    }
+
     fn result_limit(&self) -> usize {
         match self {
             Self::TerminalReadScreen { max_bytes, .. }
@@ -269,6 +346,20 @@ impl Refusal {
 
 pub enum BackendResult {
     PairingStatus(PairingStatus),
+    /// The backend must independently establish enrollment feature availability,
+    /// not authorization. Metadata via association handles remains unavailable
+    /// regardless of grants until its consumer is implemented.
+    ControllerCapabilities {
+        enrollment_available: bool,
+    },
+    /// Only the submitting connection's non-authorizing correlation identifiers.
+    ControllerStatus {
+        registration_id: ControllerId,
+        association_id: Option<ControllerId>,
+    },
+    ControllerUnregistered {
+        registration_id: ControllerId,
+    },
     /// The backend has authorized release to this connection at completion.
     /// Must be an object; all fields remain untrusted data. Do not pass a raw
     /// backend error here. Reads count encoded data bytes against max_bytes.
@@ -315,6 +406,7 @@ struct Pending {
 pub struct Machine {
     lifecycle: Lifecycle,
     pending: Vec<Pending>,
+    controller_enrollment: bool,
 }
 
 impl Default for Machine {
@@ -328,6 +420,17 @@ impl Machine {
         Self {
             lifecycle: Lifecycle::New,
             pending: Vec::with_capacity(MAX_IN_FLIGHT),
+            controller_enrollment: false,
+        }
+    }
+
+    /// Selects the dormant controller schema for a later application adapter.
+    /// This does not register clients, open prompts, qualify private bootstrap,
+    /// or implement a consumer for association handles.
+    pub fn with_controller_enrollment() -> Self {
+        Self {
+            controller_enrollment: true,
+            ..Self::new()
         }
     }
 
@@ -445,10 +548,13 @@ impl Machine {
                 if !schema::empty_params(params) {
                     return self.error(Some(&id), ProtocolError::InvalidParams);
                 }
-                Event::Reply(success(&id, json!({"tools": schema::tools()})))
+                Event::Reply(success(
+                    &id,
+                    json!({"tools": schema::tools(self.controller_enrollment)}),
+                ))
             }
             "tools/call" => {
-                let operation = match schema::call(params) {
+                let operation = match schema::call(params, self.controller_enrollment) {
                     Ok(operation) => operation,
                     Err(schema::CallError::Protocol) => {
                         return self.error(Some(&id), ProtocolError::InvalidParams);
@@ -512,10 +618,54 @@ impl Machine {
                 "observation_enabled": status.observation_enabled,
                 "verification_code": status.verification_code.as_str()
             }),
-            (Operation::PairingStatus, _) | (_, BackendResult::PairingStatus(_)) => {
-                return Some(tool_refusal(&key.id, Refusal::InvalidBackendResult));
+            (
+                Operation::ControllerCapabilities,
+                BackendResult::ControllerCapabilities {
+                    enrollment_available,
+                },
+            ) => json!({
+                "enrollment_available": enrollment_available,
+                "metadata_available": false,
+                "metadata_requires_separate_grant": true,
+                "presentation_available": false,
+                "input_available": false,
+            }),
+            (
+                Operation::ControllerRegister { .. },
+                BackendResult::ControllerStatus {
+                    registration_id,
+                    association_id,
+                },
+            ) => json!({
+                "registration_id": registration_id.to_wire(),
+                "association_id": association_id.map(ControllerId::to_wire),
+            }),
+            (
+                Operation::ControllerStatus {
+                    registration_id: expected,
+                },
+                BackendResult::ControllerStatus {
+                    registration_id,
+                    association_id,
+                },
+            ) if expected == &registration_id => json!({
+                "registration_id": registration_id.to_wire(),
+                "association_id": association_id.map(ControllerId::to_wire),
+            }),
+            (
+                Operation::ControllerUnregister {
+                    registration_id: expected,
+                },
+                BackendResult::ControllerUnregistered { registration_id },
+            ) if expected == &registration_id => {
+                json!({"registration_id": registration_id.to_wire(), "removed": true})
             }
-            (_, BackendResult::AuthorizedObservation(data)) => data,
+            (operation, BackendResult::AuthorizedObservation(data))
+                if operation.is_observation() =>
+            {
+                data
+            }
+            _ => return Some(tool_refusal(&key.id, Refusal::InvalidBackendResult)),
         };
         if !data.is_object() {
             return Some(tool_refusal(&key.id, Refusal::InvalidBackendResult));

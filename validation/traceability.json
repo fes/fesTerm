@@ -246,12 +246,20 @@
         "controller_enrollment_invalidates_on_replacement_close_and_broker_restart",
         "controller_registrations_are_bounded_and_capacity_is_reclaimed",
         "controller_enrollment_never_authorizes_discovery_observation_or_control",
-        "global_revocation_discards_controller_enrollments"
+        "global_revocation_discards_controller_enrollments",
+        "wire_catalog_contains_only_exact_observation_schemas_and_hints",
+        "controller_catalog_is_opt_in_and_preserves_observation_compatibility",
+        "controller_inputs_are_bounded_and_do_not_accept_authority_claims",
+        "controller_results_are_typed_and_expose_only_correlation_ids",
+        "controller_metadata_capability_is_unavailable_even_with_enrollment",
+        "controller_requests_share_pending_limits_and_cancellation",
+        "dormant_controller_operations_are_refused_without_host_effects"
       ],
       "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04"],
       "status": "partial",
       "prerequisites": [
-        "Native selection, local-backend eligibility, authenticated client integration and separately authorized metadata-only disclosure remain unavailable",
+        "Native selection, local-backend eligibility, authenticated client integration and separately authorized metadata-only disclosure remain unavailable; the opt-in controller schema has no application adapter",
+        "Association-handle resolution by sessions.get is not implemented and requires separate metadata authorization and disclosure fences",
         "Confirmed presentation, admission-time presentation revalidation, native handoff and explicit disarm require independent implementation and native lifecycle evidence",
         "No-replay uncertainty handling, JavaScript-independent client operation and platform/backend capability reporting remain unqualified"
       ]

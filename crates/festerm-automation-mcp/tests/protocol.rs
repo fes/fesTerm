@@ -1,8 +1,8 @@
 use festerm_automation_mcp::{
-    read_bounded_line, BackendRequest, BackendResult, Event, Lifecycle, LineError, Machine,
-    Operation, PairingStatus, Refusal, Response, VerificationCode, MAX_COLLECTION_ITEMS, MAX_DEPTH,
-    MAX_ID_BYTES, MAX_IN_FLIGHT, MAX_MESSAGE_BYTES, MAX_READ_BYTES, MAX_STRING_BYTES,
-    MAX_VALUE_NODES, MAX_WAIT_MS, PROTOCOL_VERSION,
+    read_bounded_line, BackendRequest, BackendResult, ControllerId, Event, Lifecycle, LineError,
+    Machine, Operation, PairingStatus, Refusal, Response, VerificationCode, MAX_COLLECTION_ITEMS,
+    MAX_CONTROLLER_LOCAL_ID_BYTES, MAX_DEPTH, MAX_ID_BYTES, MAX_IN_FLIGHT, MAX_MESSAGE_BYTES,
+    MAX_READ_BYTES, MAX_STRING_BYTES, MAX_VALUE_NODES, MAX_WAIT_MS, PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use std::{cmp::Ordering, collections::BTreeSet, io::Cursor};
@@ -110,6 +110,7 @@ fn schema_matches(schema: &Value, value: &Value) -> bool {
             | "minLength"
             | "maxLength"
             | "maxItems"
+            | "pattern"
     )));
     let has_type = |name: &str| match name {
         "object" => value.is_object(),
@@ -164,6 +165,20 @@ fn schema_matches(schema: &Value, value: &Value) -> bool {
                 .is_some_and(|maximum| length > maximum.as_u64().unwrap())
         {
             return false;
+        }
+        if let Some(pattern) = schema.get("pattern").and_then(Value::as_str) {
+            let expected = match pattern {
+                "^[0-9a-f]{16}$" => 16,
+                "^[0-9a-f]{32}$" => 32,
+                _ => panic!("unsupported schema pattern"),
+            };
+            if string.len() != expected
+                || !string
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            {
+                return false;
+            }
         }
     }
     if let Some(object) = value.as_object() {
@@ -1438,4 +1453,430 @@ fn line_reader_stops_after_max_plus_one_and_handles_eof_crlf() {
         read_bounded_line(&mut Cursor::new(b"{}")),
         Err(LineError::Unterminated)
     );
+}
+
+fn ready_controller() -> Machine {
+    let mut machine = Machine::with_controller_enrollment();
+    initialize(&mut machine, PROTOCOL_VERSION);
+    assert!(matches!(
+        machine.process_value(json!({"jsonrpc":"2.0","method":"notifications/initialized"})),
+        Event::NoReply
+    ));
+    machine
+}
+
+#[test]
+fn controller_catalog_is_opt_in_and_preserves_observation_compatibility() {
+    let mut original = ready();
+    let mut controller = ready_controller();
+    let original_catalog =
+        reply(original.process_value(request(json!(2), "tools/list", json!({}))));
+    let controller_catalog =
+        reply(controller.process_value(request(json!(2), "tools/list", json!({}))));
+    let original_tools = original_catalog["result"]["tools"].as_array().unwrap();
+    let tools = controller_catalog["result"]["tools"].as_array().unwrap();
+    assert_eq!(original_tools.len(), 7);
+    assert_eq!(tools.len(), 11);
+    assert_eq!(original_tools.as_slice(), &tools[..7]);
+    let mut default = Machine::default();
+    initialize(&mut default, PROTOCOL_VERSION);
+    assert!(matches!(
+        default.process_value(json!({"jsonrpc":"2.0","method":"notifications/initialized"})),
+        Event::NoReply
+    ));
+    let default_catalog = reply(default.process_value(request(json!(2), "tools/list", json!({}))));
+    assert_eq!(
+        original_catalog["result"]["tools"],
+        default_catalog["result"]["tools"]
+    );
+    let names: Vec<_> = tools[7..]
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "festerm_controller_capabilities",
+            "festerm_controller_register",
+            "festerm_controller_status",
+            "festerm_controller_unregister"
+        ]
+    );
+    assert!(tools[9]["description"]
+        .as_str()
+        .unwrap()
+        .contains("no association-handle metadata consumer"));
+    assert_eq!(
+        tools[8]["annotations"],
+        json!({
+            "readOnlyHint":false,"destructiveHint":false,
+            "openWorldHint":false,"idempotentHint":true
+        })
+    );
+    assert_eq!(
+        tools[10]["annotations"],
+        json!({
+            "readOnlyHint":false,"destructiveHint":true,
+            "openWorldHint":false,"idempotentHint":false
+        })
+    );
+    let registration_id = "12".repeat(16);
+    for (name, arguments) in [
+        ("festerm_controller_capabilities", json!({})),
+        ("festerm_controller_register", json!({"local_id":"client"})),
+        (
+            "festerm_controller_status",
+            json!({"registration_id": registration_id.as_str()}),
+        ),
+        (
+            "festerm_controller_unregister",
+            json!({"registration_id": registration_id.as_str()}),
+        ),
+    ] {
+        error(
+            original.process_value(call(json!(3), name, arguments)),
+            -32602,
+        );
+        assert_eq!(original.in_flight(), 0);
+    }
+    assert!(matches!(
+        controller.process_value(json!({
+            "jsonrpc":"2.0", "method":"tools/call",
+            "params":{"name":"festerm_controller_register","arguments":{"local_id":"client"}}
+        })),
+        Event::NoReply
+    ));
+    assert_eq!(controller.in_flight(), 0);
+
+    let original_request =
+        backend(original.process_value(call(json!(4), "festerm_sessions_list", json!({}))));
+    let controller_request =
+        backend(controller.process_value(call(json!(4), "festerm_sessions_list", json!({}))));
+    let observation =
+        || BackendResult::AuthorizedObservation(json!({"sessions":[],"untrusted":true}));
+    assert_eq!(
+        decode(
+            original
+                .complete(&original_request.key, observation())
+                .unwrap()
+        ),
+        decode(
+            controller
+                .complete(&controller_request.key, observation())
+                .unwrap()
+        )
+    );
+}
+
+#[test]
+fn controller_inputs_are_bounded_and_do_not_accept_authority_claims() {
+    let mut machine = ready_controller();
+    for arguments in [
+        json!({"local_id":"client", "gesture":true}),
+        json!({"local_id":"client", "target":"tab 1"}),
+        json!({"local_id":"client", "pid":1}),
+        json!({"local_id":"client", "approve":true}),
+    ] {
+        tool_error(
+            machine.process_value(call(json!(3), "festerm_controller_register", arguments)),
+            "INVALID_ARGUMENTS",
+        );
+    }
+    let registration_id = "12".repeat(16);
+    for (tool, arguments) in [
+        ("festerm_controller_capabilities", json!({"gesture":true})),
+        (
+            "festerm_controller_status",
+            json!({"registration_id":registration_id.as_str(), "target":"tab 1"}),
+        ),
+        (
+            "festerm_controller_unregister",
+            json!({"registration_id":registration_id.as_str(), "approved":true}),
+        ),
+    ] {
+        tool_error(
+            machine.process_value(call(json!(3), tool, arguments)),
+            "INVALID_ARGUMENTS",
+        );
+    }
+    for local_id in [
+        String::new(),
+        "x".repeat(MAX_CONTROLLER_LOCAL_ID_BYTES + 1),
+        "é".repeat(MAX_CONTROLLER_LOCAL_ID_BYTES / 2 + 1),
+    ] {
+        tool_error(
+            machine.process_value(call(
+                json!(4),
+                "festerm_controller_register",
+                json!({"local_id": local_id}),
+            )),
+            "INVALID_ARGUMENTS",
+        );
+    }
+    for local_id in [
+        "x".repeat(MAX_CONTROLLER_LOCAL_ID_BYTES),
+        "é".repeat(MAX_CONTROLLER_LOCAL_ID_BYTES / 2),
+        "private\n\u{202e}registration".to_owned(),
+    ] {
+        let pending = backend(machine.process_value(call(
+            json!(5),
+            "festerm_controller_register",
+            json!({"local_id": local_id.as_str()}),
+        )));
+        assert!(matches!(
+            &pending.operation,
+            Operation::ControllerRegister { local_id: value } if value == &local_id
+        ));
+        assert!(!format!("{pending:?}").contains(local_id.as_str()));
+        let response = decode(
+            machine
+                .complete(&pending.key, BackendResult::Refused(Refusal::Unavailable))
+                .unwrap(),
+        );
+        assert_eq!(
+            response["result"]["structuredContent"],
+            json!({"status":"refused","code":"UNAVAILABLE"})
+        );
+        assert!(!response.to_string().contains(local_id.as_str()));
+        assert!(!response.to_string().contains("private"));
+    }
+    for bad in [
+        String::new(),
+        "1".into(),
+        "A".repeat(32),
+        "g".repeat(32),
+        "é".repeat(16),
+    ] {
+        for tool in ["festerm_controller_status", "festerm_controller_unregister"] {
+            tool_error(
+                machine.process_value(call(
+                    json!(6),
+                    tool,
+                    json!({"registration_id": bad.as_str()}),
+                )),
+                "INVALID_ARGUMENTS",
+            );
+        }
+    }
+    assert_eq!(machine.in_flight(), 0);
+}
+
+#[test]
+fn controller_results_are_typed_and_expose_only_correlation_ids() {
+    let mut machine = ready_controller();
+    let catalog = reply(machine.process_value(request(json!(1), "tools/list", json!({}))));
+    let tools = catalog["result"]["tools"].as_array().unwrap();
+    let registration = ControllerId::from_random_bytes([0x12; 16]);
+    let association = ControllerId::from_random_bytes([0xab; 16]);
+    assert_eq!(
+        ControllerId::parse(&registration.to_wire()),
+        Some(registration)
+    );
+    assert!(!format!("{registration:?}").contains(&registration.to_wire()));
+    let cases = [
+        (
+            7,
+            json!({}),
+            BackendResult::ControllerCapabilities {
+                enrollment_available: false,
+            },
+            json!({
+                "enrollment_available":false, "metadata_available":false,
+                "metadata_requires_separate_grant":true,
+                "presentation_available":false, "input_available":false
+            }),
+        ),
+        (
+            8,
+            json!({"local_id":"untrusted\nclient"}),
+            BackendResult::ControllerStatus {
+                registration_id: registration,
+                association_id: None,
+            },
+            json!({"registration_id":registration.to_wire(),"association_id":null}),
+        ),
+        (
+            9,
+            json!({"registration_id":registration.to_wire()}),
+            BackendResult::ControllerStatus {
+                registration_id: registration,
+                association_id: Some(association),
+            },
+            json!({"registration_id":registration.to_wire(),"association_id":association.to_wire()}),
+        ),
+        (
+            10,
+            json!({"registration_id":registration.to_wire()}),
+            BackendResult::ControllerUnregistered {
+                registration_id: registration,
+            },
+            json!({"registration_id":registration.to_wire(),"removed":true}),
+        ),
+    ];
+    for (index, arguments, result, expected) in cases {
+        let name = tools[index]["name"].as_str().unwrap();
+        let pending = backend(machine.process_value(call(json!(2), name, arguments)));
+        let response = decode(machine.complete(&pending.key, result).unwrap());
+        let structured = &response["result"]["structuredContent"];
+        assert_eq!(structured, &json!({"status":"ok","data":expected}));
+        assert!(schema_matches(&tools[index]["outputSchema"], structured));
+        assert!(!response.to_string().contains("untrusted"));
+    }
+
+    let wrong = ControllerId::from_random_bytes([0xcd; 16]);
+    for (tool, result) in [
+        (
+            "festerm_controller_status",
+            BackendResult::ControllerStatus {
+                registration_id: wrong,
+                association_id: None,
+            },
+        ),
+        (
+            "festerm_controller_unregister",
+            BackendResult::ControllerUnregistered {
+                registration_id: wrong,
+            },
+        ),
+    ] {
+        let pending = backend(machine.process_value(call(
+            json!(3),
+            tool,
+            json!({"registration_id":registration.to_wire()}),
+        )));
+        let response = decode(machine.complete(&pending.key, result).unwrap());
+        assert_eq!(
+            response["result"]["structuredContent"]["code"],
+            "INVALID_BACKEND_RESULT"
+        );
+        assert!(!response.to_string().contains(&wrong.to_wire()));
+    }
+    let pending = backend(machine.process_value(call(
+        json!(4),
+        "festerm_controller_register",
+        json!({"local_id":"client"}),
+    )));
+    let response = decode(
+        machine
+            .complete(
+                &pending.key,
+                BackendResult::AuthorizedObservation(json!({"label":"must-not-leak"})),
+            )
+            .unwrap(),
+    );
+    assert_eq!(
+        response["result"]["structuredContent"]["code"],
+        "INVALID_BACKEND_RESULT"
+    );
+    assert!(!response.to_string().contains("must-not-leak"));
+    let pending =
+        backend(machine.process_value(call(json!(5), "festerm_sessions_list", json!({}))));
+    let response = decode(
+        machine
+            .complete(
+                &pending.key,
+                BackendResult::ControllerStatus {
+                    registration_id: registration,
+                    association_id: None,
+                },
+            )
+            .unwrap(),
+    );
+    assert_eq!(
+        response["result"]["structuredContent"]["code"],
+        "INVALID_BACKEND_RESULT"
+    );
+    assert!(!response.to_string().contains(&registration.to_wire()));
+}
+
+#[test]
+fn controller_metadata_capability_is_unavailable_even_with_enrollment() {
+    let mut machine = ready_controller();
+    let catalog = reply(machine.process_value(request(json!(1), "tools/list", json!({}))));
+    let capability = catalog["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "festerm_controller_capabilities")
+        .unwrap();
+    let schema = &capability["outputSchema"];
+    let metadata_schema =
+        &schema["oneOf"][0]["properties"]["data"]["properties"]["metadata_available"];
+    assert_eq!(metadata_schema["type"], "boolean");
+    assert_eq!(metadata_schema["const"], false);
+
+    let pending = backend(machine.process_value(call(
+        json!(2),
+        "festerm_controller_capabilities",
+        json!({}),
+    )));
+    let response = decode(
+        machine
+            .complete(
+                &pending.key,
+                BackendResult::ControllerCapabilities {
+                    enrollment_available: true,
+                },
+            )
+            .unwrap(),
+    );
+    assert_eq!(response["result"]["isError"], false);
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(
+        structured,
+        &json!({
+            "status":"ok",
+            "data":{
+                "enrollment_available":true, "metadata_available":false,
+                "metadata_requires_separate_grant":true,
+                "presentation_available":false, "input_available":false
+            }
+        })
+    );
+    assert!(schema_matches(schema, structured));
+    let mut incorrect = structured.clone();
+    incorrect["data"]["metadata_available"] = json!(true);
+    assert!(!schema_matches(schema, &incorrect));
+}
+
+#[test]
+fn controller_requests_share_pending_limits_and_cancellation() {
+    let mut machine = ready_controller();
+    let mut pending = Vec::new();
+    for index in 0..MAX_IN_FLIGHT {
+        pending.push(backend(machine.process_value(call(
+            json!(index),
+            "festerm_controller_register",
+            json!({"local_id":format!("client-{index}")}),
+        ))));
+    }
+    error(
+        machine.process_value(call(
+            json!(MAX_IN_FLIGHT),
+            "festerm_controller_capabilities",
+            json!({}),
+        )),
+        -32004,
+    );
+    let Event::Cancelled(cancelled) = machine.process_value(json!({
+        "jsonrpc":"2.0", "method":"notifications/cancelled", "params":{"requestId":0}
+    })) else {
+        panic!("expected cancellation");
+    };
+    assert_eq!(cancelled, pending[0].key);
+    assert!(machine
+        .complete(&cancelled, BackendResult::Refused(Refusal::Unavailable))
+        .is_none());
+    let replacement = backend(machine.process_value(call(
+        json!(MAX_IN_FLIGHT),
+        "festerm_controller_capabilities",
+        json!({}),
+    )));
+    assert_eq!(machine.in_flight(), MAX_IN_FLIGHT);
+    for request in pending.iter().skip(1).chain(std::iter::once(&replacement)) {
+        assert!(machine
+            .complete(&request.key, BackendResult::Refused(Refusal::Unavailable))
+            .is_some());
+    }
+    assert_eq!(machine.in_flight(), 0);
 }

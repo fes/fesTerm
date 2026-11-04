@@ -606,18 +606,54 @@ or decision is required; matching bytes do not restore an association.
 Per-connection grant revocation alone leaves these non-authorizing registrations
 intact; unpairing must unregister them or disconnect.
 
-This is only an internal kernel prerequisite. There is no enrollment UI, wire
-operation or supported controller workflow. The returned reference identifies
-an association; it does not authorize disclosure of even target metadata, or
-screen, scrollback, selection, input, presentation or workflow invocation.
-It starts no listener or worker and enables neither MCP nor JavaScript. The
-application must deliver target/connection lifecycle transitions to the broker
-and, before any future use or disclosure, revalidate real attachment liveness
-under its admission boundary; the kernel cannot observe backend transitions on
-its own. Queued work must capture its original enrollment ID and resolve that
+This is an internal kernel prerequisite, not a supported controller workflow.
+There is no enrollment UI or application controller MCP adapter. The returned
+reference identifies an association; it does not authorize disclosure of even
+target metadata, or screen, scrollback, selection, input, presentation or
+workflow invocation. It starts no listener or worker and enables neither MCP
+nor JavaScript. The application must deliver target/connection lifecycle
+transitions to the broker and, before any future use or disclosure, revalidate
+real attachment liveness under its admission boundary; the kernel cannot
+observe backend transitions on its own. Queued work must capture its original
+enrollment ID and resolve that
 same ID again at admission, never resolve the then-current association in its
 place. It is backend-neutral, not an implementation of #524's local-session
 eligibility policy.
+
+The protocol crate separately offers `Machine::with_controller_enrollment()`
+for a **dormant, opt-in schema and state machine**. The production application
+continues to construct `Machine::new()` with the observation-only catalog.
+Even if the opt-in catalog is fed to the existing host, all four controller
+operations receive `UNAVAILABLE` before grant admission, registration, native
+prompting or any broker effect. The opt-in machine only validates a request
+and emits a typed backend event; it does not implement a registration service.
+
+| Later-stage tool | Bounded, non-authorizing contract |
+| --- | --- |
+| `festerm_controller_capabilities` | No arguments; reports backend-qualified enrollment feature availability, not grant status. Association-handle metadata, presentation and input are unavailable. |
+| `festerm_controller_register` | Untrusted `local_id`, 1–128 encoded UTF-8 bytes; returns an opaque registration ID and optional association ID, without selecting a target or triggering a prompt. |
+| `festerm_controller_status` | A connection-local registration ID; returns only that registration and its optional association ID. |
+| `festerm_controller_unregister` | A connection-local registration ID; a future backend removes only that registration and association. |
+
+Unknown fields, including claimed gestures, PIDs, targets or approvals, are
+rejected. IDs are 128-bit values encoded as 32 lowercase hexadecimal characters.
+The type checks their encoding; a future host must generate unpredictable,
+unique IDs, bind them to the submitting connection, enforce lifecycle and
+capacity limits, and never log or persist the registration bytes. Neither ID is
+a credential, target reference or grant. Protocol-supplied backend results are
+not proof that any platform, privacy gate or native flow is qualified.
+
+**No association-handle metadata consumer is implemented.** In particular,
+`festerm_sessions_get` does not resolve an association ID in this slice.
+`metadata_available` is always false, even when enrollment is available or a
+separate metadata grant exists; it reports feature availability, not grant
+status. A separate grant alone does not make the handle usable here. Future
+integration must capture the exact connection,
+registration and enrollment, resolve that same enrollment at preparation and
+disclosure, and enforce the separately reviewed grant and physical-write
+privacy/liveness fences. No name, position or current-association fallback is
+permitted. Registration and status must never return terminal metadata or
+other clients' records.
 
 The remaining #524 contract is deliberately open:
 
