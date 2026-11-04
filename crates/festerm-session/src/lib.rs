@@ -12,6 +12,8 @@ pub use automation_input::{
 
 use std::{
     fmt,
+    marker::PhantomData,
+    rc::Rc,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, MutexGuard, TryLockError,
@@ -28,11 +30,49 @@ pub const MAX_IO_CHUNK_BYTES: usize = 64 * 1024;
 
 static AUTOMATION_ADMISSION: Mutex<()> = Mutex::new(());
 
-/// An opaque guard for the process-wide admission boundary. It cannot be
-/// constructed from a different mutex.
+/// An opaque, thread-confined guard for the process-wide admission boundary.
+/// It cannot be constructed from a different mutex or shared with another
+/// thread, even by reference.
+///
+/// The caller must not re-enter or interleave transitions of protected state
+/// between a freshness check and its associated admission or disclosure.
+/// Holding the guard does not prevent such interleaving on the same thread.
+///
+/// ```compile_fail
+/// use festerm_session::automation_admission_lock;
+///
+/// let guard = automation_admission_lock().unwrap();
+/// std::thread::scope(|scope| {
+///     let borrowed = &guard;
+///     scope.spawn(move || {
+///         std::hint::black_box(borrowed);
+///     });
+/// });
+/// ```
+///
+/// ```compile_fail
+/// use festerm_session::automation_admission_lock;
+///
+/// let guard = automation_admission_lock().unwrap();
+/// std::thread::scope(|scope| {
+///     scope.spawn(move || {
+///         std::hint::black_box(guard);
+///     });
+/// });
+/// ```
 #[derive(Debug)]
 pub struct AutomationAdmissionGuard {
     _guard: MutexGuard<'static, ()>,
+    _thread_confined: PhantomData<Rc<()>>,
+}
+
+impl AutomationAdmissionGuard {
+    fn new(guard: MutexGuard<'static, ()>) -> Self {
+        Self {
+            _guard: guard,
+            _thread_confined: PhantomData,
+        }
+    }
 }
 
 /// Serializes automation admission and disclosure with backend transitions.
@@ -47,7 +87,7 @@ pub fn automation_admission_lock() -> Option<AutomationAdmissionGuard> {
     AUTOMATION_ADMISSION
         .lock()
         .ok()
-        .map(|guard| AutomationAdmissionGuard { _guard: guard })
+        .map(AutomationAdmissionGuard::new)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,7 +102,7 @@ pub fn try_automation_admission_lock(
 ) -> Result<AutomationAdmissionGuard, AutomationAdmissionTryError> {
     AUTOMATION_ADMISSION
         .try_lock()
-        .map(|guard| AutomationAdmissionGuard { _guard: guard })
+        .map(AutomationAdmissionGuard::new)
         .map_err(|error| match error {
             TryLockError::WouldBlock => AutomationAdmissionTryError::Busy,
             TryLockError::Poisoned(_) => AutomationAdmissionTryError::Poisoned,
