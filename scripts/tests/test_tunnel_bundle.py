@@ -35,7 +35,7 @@ class TunnelBundleTests(unittest.TestCase):
         self.binaries = self.root / "bin"
         self.binaries.mkdir()
         for platform in bundle.PLATFORMS:
-            for name in bundle.entry_names(platform)[:3]:
+            for name in bundle.binary_names(platform):
                 (self.binaries / name).write_bytes(f"mock binary {name}".encode())
         dependency = self.root / "dependency"
         dependency.mkdir()
@@ -100,7 +100,7 @@ class TunnelBundleTests(unittest.TestCase):
                         self.assertTrue(stat.S_ISREG(mode))
                         self.assertEqual(
                             stat.S_IMODE(mode),
-                            0o755 if name in bundle.entry_names(platform)[:3] else 0o644,
+                            0o755 if name in bundle.binary_names(platform) else 0o644,
                         )
                     checksum = archive.with_name(archive.name + ".sha256")
                     self.assertEqual(
@@ -125,6 +125,15 @@ class TunnelBundleTests(unittest.TestCase):
         (self.binaries / "unexpected-dir").mkdir()
         archive = self.build()
         self.assertEqual(set(self.contents(archive, "linux")), set(bundle.entry_names("linux")))
+
+    def test_windows_worker_is_required_only_for_windows_payloads(self):
+        worker = self.binaries / "festerm-tunnel-worker.exe"
+        worker.unlink()
+        with self.assertRaisesRegex(ValueError, "festerm-tunnel-worker.exe"):
+            self.build("windows")
+        self.assertFalse((self.root / "dist").exists())
+        archive = self.build("linux")
+        self.assertNotIn("festerm-tunnel-worker.exe", self.contents(archive, "linux"))
 
     def test_missing_empty_or_symlinked_binaries_fail_before_output(self):
         for kind in ("missing", "empty", "symlink"):

@@ -543,7 +543,7 @@ jobs:
           )
           destination = Path("helper-input")
           destination.mkdir()
-          for name in bundle.entry_names("windows")[:3]:
+          for name in bundle.binary_names("windows"):
               source = Path("target/release") / name
               if source.is_symlink() or not source.is_file() or source.stat().st_size == 0:
                   raise ValueError(f"Missing regular helper executable: {name}")
@@ -682,7 +682,7 @@ jobs:
           }
           $expected = @(
             'festerm-sessiond.exe', 'festerm-tunnel-bridge.exe',
-            'festerm-tunnel-setup.exe', 'THIRD_PARTY_NOTICES.txt', 'VERSION'
+            'festerm-tunnel-setup.exe', 'festerm-tunnel-worker.exe', 'THIRD_PARTY_NOTICES.txt', 'VERSION'
           )
           $actual = @(Get-ChildItem helper-input -Force)
           if ($actual.Count -ne $expected.Count -or
@@ -721,13 +721,14 @@ jobs:
             ${{ github.workspace }}\helper-input\festerm-sessiond.exe
             ${{ github.workspace }}\helper-input\festerm-tunnel-bridge.exe
             ${{ github.workspace }}\helper-input\festerm-tunnel-setup.exe
+            ${{ github.workspace }}\helper-input\festerm-tunnel-worker.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
       - name: Verify Authenticode and package signed helpers
         shell: pwsh
         run: |
-          foreach ($name in @('festerm-sessiond', 'festerm-tunnel-bridge', 'festerm-tunnel-setup')) {
+          foreach ($name in @('festerm-sessiond', 'festerm-tunnel-bridge', 'festerm-tunnel-setup', 'festerm-tunnel-worker')) {
             if ((Get-AuthenticodeSignature "helper-input/$name.exe").Status -ne 'Valid') {
               throw "Helper is not Authenticode-valid: $name"
             }

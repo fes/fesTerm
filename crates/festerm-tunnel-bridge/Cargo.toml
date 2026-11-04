@@ -42,6 +42,11 @@ name = "festerm-tunnel-setup"
 path = "src/setup.rs"
 required-features = ["relay"]
 
+[[bin]]
+name = "festerm-tunnel-worker"
+path = "src/worker.rs"
+required-features = ["relay"]
+
 [lints]
 workspace = true
 

@@ -102,7 +102,8 @@ try {
         throw 'Helper archive SHA-256 mismatch; nothing executed.'
     }
     $allowed = @('LICENSE', 'THIRD_PARTY_NOTICES.txt', 'VERSION',
-        'festerm-sessiond.exe', 'festerm-tunnel-bridge.exe', 'festerm-tunnel-setup.exe')
+        'festerm-sessiond.exe', 'festerm-tunnel-bridge.exe', 'festerm-tunnel-setup.exe',
+        'festerm-tunnel-worker.exe')
     $seen = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
     try {
@@ -119,7 +120,8 @@ try {
     if ([IO.File]::ReadAllText((Join-Path $helpers 'VERSION')) -cne "$Version`n") {
         throw 'Bundle version mismatch.'
     }
-    foreach ($name in @('festerm-sessiond.exe', 'festerm-tunnel-bridge.exe', 'festerm-tunnel-setup.exe')) {
+    foreach ($name in @('festerm-sessiond.exe', 'festerm-tunnel-bridge.exe', 'festerm-tunnel-setup.exe',
+        'festerm-tunnel-worker.exe')) {
         if ((Get-AuthenticodeSignature -LiteralPath (Join-Path $helpers $name)).Status -ne 'Valid') {
             throw "Helper is not Authenticode-valid: $name"
         }

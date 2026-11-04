@@ -254,6 +254,14 @@ and keeps the old helpers; an interrupted upgrade is completed by rerunning
 with `--upgrade`. Daemon-side improvements apply only to a daemon started by a
 release that includes them.
 
+Windows tasks use a signed, windowless `festerm-tunnel-worker.exe` launcher;
+the setup helper and device-code sign-in still run in the invoking console.
+The launcher waits for the existing `--serve` worker and preserves its exit
+status, while noninteractive children suppress console creation. An older
+installation's visible worker console must remain open until an explicit
+upgrade switches its owned task to the new launcher. This does not fix a
+daemon's inability to break away from the original terminal's Windows job.
+
 When setup finishes, the installer prints the public connection JSON, saves it
 as `festerm-profile.json` in the private state directory (`~/.local/share/festerm-tunnels/state`
 or `fesTerm-tunnels\state` under the per-user local app data folder) and copies it to the clipboard when one is
@@ -299,7 +307,8 @@ apps, tunnels or services. Required license/notice texts accompany the binaries.
 First setup opens official GitHub **device-code authentication**, creates a new
 private 30-day tunnel, marks one virtual bridge port and starts one uniquely
 named daemon session running your login shell (`$SHELL -l`, falling back to
-`/bin/sh`) or Windows `cmd.exe`, started in your home directory. It requests a scoped **host**
+`/bin/sh`) or the daemon's Windows default shell (preferring `pwsh.exe`, with
+COMSPEC/Windows PowerShell fallback), started in your home directory. It requests a scoped **host**
 token into bounded, zeroized memory and passes it only through the bridge's
 stdin. No token is printed, placed in argv/environment or saved by fesTerm.
 The official CLI owns its own sign-in/cache policy; the installer does not read
