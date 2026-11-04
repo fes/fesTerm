@@ -63,6 +63,20 @@ its backend cannot yet invalidate automation authority at that boundary. Other
 session types retain their own attachment-generation checks. All MCP bootstrap
 paths remain fail-closed pending authenticated native pairing.
 
+The Windows privacy monitor's listener previously released its permit before
+TLS teardown and could detach a worker or silently leak a notification buffer
+after uncertain cancellation. A separate ownership prerequisite now uses one
+process-lifetime reaper and a single listener slot, keeps native outcomes and
+the notification buffer owned through actual join, and exposes pending/unknown
+cleanup without blocking monitor close. Its fault-injection fixtures target
+stalled teardown, failed-submission storage and once-latched supervisor
+callback attempts. The portable fixtures passed on macOS; Windows code was
+cross-checked but not run natively. A callback can
+block on the admission lock while an admitted operation continues. Neither
+cleanup status nor callback delivery qualifies admission, privacy, or
+final-recipient fencing; the coordinator remains unqualified and bootstrap
+remains closed.
+
 ## Verify the Dev Tunnel installer before execution
 
 The setup panel could display the exact embedded installer for review, but its

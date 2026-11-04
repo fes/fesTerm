@@ -2689,9 +2689,29 @@ The P1 implementation adds native settings/pairing, private local transport
 and bounded observation (`AUT-05`–`AUT-07`), but refuses activation on every
 platform until private peer authentication is qualified. macOS and Linux also
 require reliable lock monitoring. Windows requires its native privacy guard to
-initialize; its real-platform behavior is not yet validated. Deterministic
-tests are not native pairing, settings usability, containment or input-ordering
-evidence. JavaScript and terminal control remain unavailable.
+initialize; its real-platform behavior is not yet validated. Neither monitor
+cleanup status nor callback delivery qualifies admission, privacy, or physical
+final-recipient fencing; bootstrap remains closed. Deterministic tests are not
+native pairing, settings usability, containment or input-ordering evidence.
+JavaScript and terminal control remain unavailable.
+
+The Windows monitor's ownership model has local fault-injection fixtures for
+stalled TLS destruction, a held model admission lock, repeated monitor-slot
+reservation, supervisor callback attempts and retained failed-submission
+storage. The portable fixtures passed on macOS, and the Windows code was
+cross-checked but not run natively. These fixtures are not native cancellation
+or UI evidence.
+Before qualification, `AUTO-03` must additionally verify real Windows listener
+registration/cancellation and pending/unknown cleanup reporting, including
+shutdown/restart with a stalled listener. The current coordinator does not
+consume the monitor's cleanup status and retains independent blocking paths;
+it must be redesigned before UI responsiveness or a physical recipient fence
+can be claimed. In the model, unknown cleanup and callback entry can coexist
+with an already-admitted operation while the callback waits for the lock. The
+fixtures cannot qualify admission, privacy, or final-recipient fencing, and
+callback delivery is not proof of those fences. Panic hooks may observe caught
+callback payloads. Bootstrap remains closed, and native privacy remains
+unqualified.
 
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |

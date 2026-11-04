@@ -143,6 +143,10 @@
         "full_windows_pipe_retries_only_after_rechecking_revocation",
         "current_user_pipe_is_protected_and_supports_successive_instances",
         "revocation_serializes_with_an_in_flight_write_admission",
+        "submission_failure_exposes_unknown_cleanup",
+        "monitor_ownership_fault_models_use_killable_subprocesses",
+        "native_loss_dispatch_attempts_callback_once_after_dispatch",
+        "ordinary_active_shutdown_disarms_the_failure_guard",
         "automation_ascii_selection_uses_its_actual_encoded_size",
         "automation_wait_observes_applied_persistent_recovery_sync",
         "settings_can_disconnect_an_unapproved_mcp_channel",
@@ -154,7 +158,8 @@
       "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04"],
       "status": "partial",
       "prerequisites": [
-        "Native Windows pairing, lock/suspend, packaging and client interoperability remain unverified",
+        "Windows monitor cleanup status and callback delivery do not qualify admission, privacy or physical-recipient fencing; MCP bootstrap remains closed",
+        "Native Windows pairing, lock/suspend, registration cancellation, coordinator cleanup, packaging and client interoperability remain unverified",
         "macOS and Linux activation remains unavailable until reliable screen-lock monitoring is qualified",
         "JavaScript, control, mobile hosting and network MCP require their separate stages"
       ]

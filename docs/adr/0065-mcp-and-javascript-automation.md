@@ -97,6 +97,19 @@ to bypass another's restrictions.
    resolved; no indefinite background execution or App Store acceptance is
    promised.
 
+The Windows privacy-monitor ownership prerequisite uses one process-wide
+listener slot and one process-lifetime reaper. Cleanup is complete only after
+successful native cancellation and actual listener join, including TLS
+destructors; an unresolved cancellation is permanently quarantined rather than
+detached or reused. A listener spawn, wait or join failure attempts once-latched
+revocation outside native dispatch, and a failed reserved submission retains
+its complete job in the bounded quarantine. Closing the monitor is nonblocking
+and exposes a cleanup status. A callback may block on the admission lock while
+an already-admitted operation continues. Neither cleanup status nor callback
+delivery qualifies admission, privacy, or a physical final-recipient fence.
+Those boundaries and the application coordinator's shutdown remain separate
+qualification work; MCP bootstrap remains closed.
+
 The owner has settled the language choice and separately authorized the P1-P3
 implementation campaign in [issue #501](https://github.com/fes/fesTerm/issues/501).
 MCP and JavaScript have independent settings, both disabled by default.
@@ -136,8 +149,9 @@ P1 is observation-only and preserves existing terminal semantics and the
 sessiond wire protocol. MCP activation is unavailable until private peer
 authentication is qualified; macOS and Linux also require qualified screen-lock
 monitoring. Windows requires its native privacy monitor and real-platform
-validation. iOS exposure remains deferred. Later
-stages would add worker packaging and workflow-specific grant, queuing,
+validation, but monitor status and callback delivery do not qualify admission,
+privacy, or final-recipient fencing; bootstrap remains closed. iOS exposure
+remains deferred. Later stages would add worker packaging and workflow-specific grant, queuing,
 cancellation and protocol conformance obligations. The engine and platform
 containment remain substantial qualification work, not checklist claims.
 Desktop and mobile may qualify at different times.
@@ -169,7 +183,12 @@ in the design must be visible in implementation/release review.
   independent default-off opt-ins. MCP protocol, private framing, bounded
   observation, pairing and stale-target tests cover the P1 path. These do not
   prove native lock behavior, client interoperability, a confined engine or
-  native input ordering. Run the traceability gate and documentation checks.
+  native input ordering. Windows monitor ownership has local model and
+  fault-injection tests for true join, bounded monitor-slot acquisition,
+  callback attempts and uncertain cleanup. They do not prove native API
+  contracts, admission/privacy fencing or physical final-recipient writes;
+  callback delivery is not such proof and bootstrap remains closed. Run the
+  traceability gate and documentation checks.
 - **Native/manual evidence required:** `AUTO-01` through `AUTO-04` remain open;
   observation requires real platform/client/lock evidence, and later stages
   additionally require engine, platform sandbox and input-ownership evidence.

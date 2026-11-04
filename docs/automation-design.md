@@ -391,14 +391,84 @@ OS user identity alone grants no visibility. A process that can control or
 relay the approved client remains outside the pairing's containment claim.
 The native UI lists channels and supports independent disconnect, including
 before approval. macOS and Linux also require qualified privacy monitoring.
-Startup and teardown run off the UI thread;
-admission stays closed until monitoring and the private endpoint are ready.
+The design requires startup and teardown off the UI thread, with admission
+closed until monitoring and the private endpoint are ready; the current
+coordinator still has the blocking paths described below.
+The Windows monitor's separate ownership prerequisite reserves one
+process-wide listener slot before registration. One process-lifetime reaper
+owns that listener through its actual join, including thread-local
+destructors. The reaper first waits on the listener's owned Windows thread
+handle; a failed native wait quarantines that still-owned handle instead of
+consuming it. Once running, the reaper also attempts the once-latched
+revocation callback outside native dispatch on listener spawn, wait or join
+failure, including a wait failure after activation. Ordinary successful
+owner-requested shutdown does not itself invoke that callback. A signaled
+handle is followed by the actual Rust join, not a pre-TLS completion signal.
+Monitor close only requests cancellation; its cleanup status is pending until
+native cleanup and join complete. A failed
+native cancellation, listener failure or other uncertain cleanup permanently
+quarantines the slot and retains the uncertain resources. Class, WTS and
+suspend-registration failure paths also quarantine when no
+safe cancellation of a possibly partial registration can be established; a
+retry then requires a new process. The service-notification buffer has process
+lifetime; successful cancellation stops
+new APCs, and joining the listener disposes of APCs already queued to it
+before the buffer can be reused.
+This relies on the documented
+[`NotifyServiceStatusChangeW`](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-notifyservicestatuschangew)
+cancellation and
+[`QueueUserAPC`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-queueuserapc)
+thread-exit behavior; native validation and review are still required.
+Installation errors can expose the cleanup status, and a process-wide
+ownership status remains queryable. If a reserved job cannot be submitted or
+its supervisor started, the slot becomes unknown and permanently retains that
+entire job in one tracked process-wide quarantine. A listener spawn failure
+likewise retains its unstarted task and callback on the reaper. Inputs rejected
+before reservation instead remain in the returned installation error for the
+caller to retain or dispose of; dropping that error or those inputs can run
+arbitrary destructors and is not guaranteed nonblocking. This distinction
+prevents arbitrarily many rejected inputs from becoming unbounded global
+quarantine. If submission or reaper startup fails before a listener is
+started, no callback runs on the submitting thread; the caller must keep
+admission closed and handle the returned unknown status. At its own deadline
+an owner can turn pending cleanup into sticky unknown quarantine without
+waiting; this timeout is not scheduled by the monitor or current coordinator.
+The listener uses a 50 ms alertable wait to observe cancellation without a
+UI-side native-handle operation; its power/wakeup cost also needs native validation. Native
+APC/window callbacks only mark the listener's loss; the application callback
+runs outside native dispatch, so it cannot make SCM/RPC calls from inside an
+APC. The once latch prevents duplicate callback entry, not proof that a
+blocked or panicking callback completed.
+
+This is not an end-to-end privacy or UI-responsiveness qualification. The
+current application coordinator does not retain or present that cleanup status
+and still has separate blocking admission-lock and worker-join paths. A callback
+can itself wait on that admission lock while an already-admitted operation
+continues. An `Unknown` or `Complete` cleanup status, callback entry, or callback
+completion does **not** qualify admission, privacy, or a physical final-recipient
+fence. Atomic monitor cancellation cannot fence a physical write already
+admitted, and the bounded local model tests are not evidence of such a fence.
+MCP bootstrap remains closed. The process panic hook runs before
+`catch_unwind` and may record a callback's panic payload, so catching a panic
+does not establish content-free hook handling. Native callback behavior,
+notification cancellation and the complete admission/recipient boundary
+remain unqualified; no monitor state opens the bootstrap gate.
+
+An active relay can keep IPC open and forward previously valid ciphertext
+after the genuine caller exits. EOF, timeout, or encrypted heartbeats do not
+prove caller liveness against it; any future OS-pinned direct-process channel
+must be independently bound to the authenticated handshake and cannot be
+nominated or kept alive by the relay. Socket acceptance also does not prove a
+guarded physical write to the final stdout recipient. Both boundaries remain
+separate prerequisites, not properties of the monitor.
+
 Backend-owned attachment generations advance before transport loss, even if a
 bounded lifecycle-event queue drops notifications. Text-mode SFTP has no
 qualified transport/subsystem-loss signal and is excluded from automation
 observation even while its terminal remains usable. Revocation and each
-nonblocking reply write share an admission boundary; bytes already written to
-the private channel cannot be recalled. The stdio input reader buffers at most
+nonblocking private-channel reply write share a prototype admission lock, not
+yet a qualified bounded physical-recipient fence; bytes already written to the
+private channel cannot be recalled. The stdio input reader buffers at most
 64 bounded frames independently of private-channel backpressure, so it can
 observe EOF and revoke while forwarding is stalled; overflow closes the channel.
 
