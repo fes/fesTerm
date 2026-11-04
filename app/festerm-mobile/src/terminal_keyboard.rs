@@ -137,7 +137,7 @@ impl TerminalKeyboard {
             ui.spacing_mut().interact_size.y = height;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                let width = (ui.available_width() - 4.0 * 10.0) / 11.0;
+                let width = (ui.available_width() - 4.0 * 11.0) / 12.0;
                 for (label, key) in [("Esc", Key::Escape), ("Tab", Key::Tab)] {
                     let response = draw_key(ui, width, utility_height, label, None, false, true);
                     if let Some(key) =
@@ -174,6 +174,11 @@ impl TerminalKeyboard {
                 let extended = glyph_key(ui, width, utility_height, "Extended keys", Glyph::Grid);
                 if self.keys.toggle(ui, &extended, Glyph::Grid) {
                     output.action = KeyRowAction::TogglePanel;
+                }
+                let mic = draw_key(ui, width, utility_height, "Mic", None, false, true)
+                    .on_hover_text("On-device dictation");
+                if self.keys.toggle(ui, &mic, Glyph::text("Mic")) {
+                    output.action = KeyRowAction::Dictate;
                 }
                 let hide =
                     terminal_chrome::keyboard_visibility_button(ui, width, utility_height, true);

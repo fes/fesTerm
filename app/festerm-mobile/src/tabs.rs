@@ -76,6 +76,7 @@ impl MobileApp {
 
     /// Moves the active terminal (and its worker) into its tab.
     pub(super) fn park_active(&mut self) {
+        self.cancel_dictation();
         let Some(id) = self.active_tab.take() else {
             return;
         };
@@ -95,6 +96,7 @@ impl MobileApp {
 
     /// Makes `id` the active terminal without touching its connection.
     pub(super) fn activate_tab(&mut self, id: u64) {
+        self.cancel_dictation();
         if self.active_tab == Some(id) {
             self.workspace = workspaces::Workspace::Terminal;
             return;

@@ -19,6 +19,23 @@ reconnect remains pinned to the original session. Isolated regressions cover the
 policy and publication boundaries; signed service and physical-iOS qualification
 remain in DT-05/07. The existing live installation was not changed.
 
+## iOS on-device terminal dictation spike
+
+The owner asked to dictate without leaving either terminal-user keyboard.
+The existing native input boundary now adds public Speech/AVFAudio capture,
+while the mobile composition root owns a volatile review/Insert sheet. Local
+capability checks and per-request on-device enforcement exclude cloud fallback.
+Revisions replace rather than append, native recording has a 45-second limit,
+and explicit Insert rejects line breaks/controls and reuses core paste encoding
+without modifiers or an implicit Return. Generation and source-tab checks,
+native lifecycle cancellation and navigation cleanup prevent late replay.
+
+The owner changed delivery from a physical iPhone to Simulator. An explicitly
+labelled manual editor can exercise review there if Apple's local recognizer
+is unavailable; it does not fabricate recognition evidence. ADR 0066 and #564
+keep device/language/model, offline audio, permission and privacy qualification
+separate from portable tests and a Simulator build/launch.
+
 ## 0.14.2: iOS field editing and Dev Tunnel resiliency
 
 This patch packages five fixes. iOS profile form fields now support the native

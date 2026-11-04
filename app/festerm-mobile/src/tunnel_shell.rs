@@ -155,6 +155,7 @@ impl MobileApp {
         tab: Option<u64>,
         automatic: bool,
     ) {
+        self.cancel_dictation();
         self.notice = None;
         self.tunnel.attach_error = None;
         let Some(spec) = self

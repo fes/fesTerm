@@ -1,6 +1,7 @@
 //! iOS feasibility host: offline by default, with opt-in transient live SSH.
 
 mod app_lock;
+mod dictation;
 #[cfg_attr(not(feature = "live-ssh"), allow(dead_code))] // SFTP needs the SSH transport
 mod files;
 #[cfg(test)]
@@ -285,6 +286,8 @@ pub struct MobileApp {
     last_custom_keyboard: terminal_keyboard::KeyboardKind,
     terminal_keyboard: terminal_keyboard::TerminalKeyboard,
     terminal_keyboard_input: bool,
+    dictation: Option<festerm_ios_window::Dictation>,
+    dictation_tab: Option<u64>,
     #[cfg(feature = "live-ssh")]
     tunnel: tunnel_link::TunnelUi,
     caps: model::Capabilities,
@@ -355,6 +358,8 @@ impl MobileApp {
             last_custom_keyboard: terminal_keyboard::KeyboardKind::HoldSymbols,
             terminal_keyboard: terminal_keyboard::TerminalKeyboard::default(),
             terminal_keyboard_input: false,
+            dictation: None,
+            dictation_tab: None,
             caps: model::Capabilities::production(),
             tabs: Vec::new(),
             active_tab: None,
@@ -842,6 +847,16 @@ impl MobileApp {
 
     fn show_content(&mut self, ui: &mut egui::Ui) {
         let lifecycle = self.lifecycle.get();
+        let authorizing = self.dictation.as_ref().is_some_and(|speech| {
+            speech.phase() == festerm_ios_window::DictationPhase::Authorizing
+        });
+        if !self.terminal_surface()
+            || !self.terminal_input_ready(lifecycle)
+            || self.dictation_tab != self.active_tab
+            || (lifecycle.suspensions != self.observed_suspensions && !authorizing)
+        {
+            self.cancel_dictation();
+        }
         if !self.terminal_surface() || !lifecycle.active || !ui.input(|input| input.focused) {
             self.terminal_keyboard.cancel();
         }
@@ -882,6 +897,7 @@ impl MobileApp {
             let hidden = lock.gate(ui, lifecycle.active);
             lock.frame_presented();
             if hidden {
+                self.cancel_dictation();
                 self.gestures.cancel();
                 self.terminal_keyboard.cancel();
                 self.clear_sticky_modifiers();
@@ -902,6 +918,7 @@ impl MobileApp {
         self.show_sheets(ui.ctx(), bounds);
         self.show_files_sheets(ui.ctx(), bounds);
         self.show_host_setup(ui.ctx(), bounds);
+        self.show_dictation(ui.ctx(), bounds);
     }
 
     fn show_host_setup(&mut self, ctx: &egui::Context, bounds: egui::Rect) {
@@ -1514,6 +1531,7 @@ impl MobileApp {
     }
 
     fn switch_workspace(&mut self, workspace: workspaces::Workspace) {
+        self.cancel_dictation();
         if self.workspace == workspace {
             return;
         }
@@ -1528,6 +1546,7 @@ impl MobileApp {
     }
 
     fn reset_fixture(&mut self) {
+        self.cancel_dictation();
         self.switch_workspace(workspaces::Workspace::Terminal);
         self.gestures.cancel();
         if self.active_is_local() {
@@ -1719,7 +1738,7 @@ impl MobileApp {
     }
 
     fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
-        let input_ready = self.terminal_input_ready(lifecycle);
+        let input_ready = self.terminal_input_ready(lifecycle) && !self.dictation_open();
         #[cfg(feature = "live-ssh")]
         let read_only = self
             .sink
@@ -1828,7 +1847,11 @@ impl MobileApp {
                 return;
             }
         }
-        let history_ready = lifecycle.active && !self.editor.open && (input_ready || read_only);
+        let input_ready = input_ready && !self.dictation_open();
+        let history_ready = lifecycle.active
+            && !self.editor.open
+            && !self.dictation_open()
+            && (input_ready || read_only);
         if self.menu_open || !ui.input(|input| input.focused) {
             self.terminal_keyboard.cancel();
         }
@@ -1911,6 +1934,9 @@ impl MobileApp {
 
     fn apply_key_row(&mut self, ctx: &egui::Context, action: terminal_chrome::KeyRowAction) {
         use terminal_chrome::KeyRowAction;
+        if self.dictation_open() {
+            return;
+        }
         match action {
             KeyRowAction::None => {}
             KeyRowAction::Key(Key::Character(character)) => {
@@ -1936,6 +1962,7 @@ impl MobileApp {
                     self.input_notice = Some("The clipboard has no text to paste");
                 }
             }
+            KeyRowAction::Dictate => self.begin_dictation(ctx),
             KeyRowAction::Escape => self.send_key(Key::Escape),
             KeyRowAction::Tab => self.send_key(Key::Tab),
             KeyRowAction::ToggleControl => self.control = !self.control,

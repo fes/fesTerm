@@ -200,6 +200,7 @@ pub enum KeyRowAction {
     ToggleAlt,
     ToggleShift,
     Paste,
+    Dictate,
     TogglePanel,
     ToggleKeyboard,
     SwitchKeyboard,

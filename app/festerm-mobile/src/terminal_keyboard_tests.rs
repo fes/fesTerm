@@ -39,6 +39,43 @@ fn pointer(pressed: bool, pos: egui::Pos2) -> egui::Event {
 }
 
 #[test]
+fn terminal_keyboards_offer_dictation_as_one_non_repeating_action() {
+    for kind in [KeyboardKind::HoldSymbols, KeyboardKind::ShellRow] {
+        for width in [320.0, 390.0, 768.0] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, 844.0))
+                .build_ui_state(
+                    move |ui, (keyboard, actions): &mut (TerminalKeyboard, Vec<KeyRowAction>)| {
+                        let output = keyboard.show(
+                            ui,
+                            kind,
+                            &KeyRowState {
+                                control: false,
+                                alt: false,
+                                shift: false,
+                                panel_open: false,
+                                keyboard_visible: true,
+                                paste: true,
+                            },
+                            700.0,
+                        );
+                        if output.action != KeyRowAction::None {
+                            actions.push(output.action);
+                        }
+                    },
+                    (TerminalKeyboard::default(), Vec::new()),
+                );
+            harness.run();
+            let mic = harness.get_by_label("Mic").rect();
+            assert!(mic.left() >= 0.0 && mic.right() <= width);
+            harness.get_by_label("Mic").click();
+            harness.run();
+            assert_eq!(harness.state().1, [KeyRowAction::Dictate]);
+        }
+    }
+}
+
+#[test]
 fn terminal_keyboard_hold_emits_one_alternate_and_never_its_base_on_release() {
     let mut harness = harness();
     harness.run();

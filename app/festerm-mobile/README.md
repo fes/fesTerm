@@ -163,8 +163,14 @@ All retain a number row, QWERTY, Ctrl/Alt/Shift and a symbols layer. Set the
 startup choice in **Settings → Default keyboard**; **More → Keyboard** switches
 without changing it. The plain keyboard icon hides input; the centered Space
 bar is unobstructed by switching controls. More also offers Paste and Extended
-keys. Character presses show enlarged key previews. For dictation, switch to
-the built-in keyboard and use its microphone. Forms keep
+keys. Character presses show enlarged key previews. Both terminal keyboards
+offer **Mic** for the [on-device dictation spike](../../docs/adr/0066-ios-on-device-terminal-dictation.md):
+Stop and review, edit, then Insert; no Return is generated. Capability/permission
+failure is explicit, never a cloud fallback. Capture stops after 45 seconds
+and on native background/lock/interruption or navigation. Audio/transcripts
+are not saved or logged. Simulator may lack a local recognizer; its labelled
+manual preview editor is not speech-validation evidence (`MOB-07`, #564).
+The built-in keyboard retains its existing system microphone. Forms keep
 the native keyboard. See the [layout contract](../../docs/mobile-layout-design.md#optional-terminal-user-keyboards)
 for responsive behavior and outstanding native/touch/accessibility checks.
 

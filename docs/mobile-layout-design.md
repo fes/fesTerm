@@ -7,6 +7,24 @@ Companion to ADR 0031 and
 narrow-width precedent to phone/tablet form factors rather than introducing
 a separate device-specific layout system.
 
+## On-device dictation
+
+The experimental Hold symbols and Shell row keyboards add **Mic** to the pinned
+utility row. Dictation replaces terminal input with a bounded review sheet:
+explicit permission/capability checks, visible Listening, **Stop and review**,
+editable single-line text, **Insert**, and **Cancel**. Insert never presses
+Return; the user submits separately. It rejects control characters and line
+breaks, clears modifiers and revalidates the original ready session.
+
+Audio stays on-device, capture has a native 45-second maximum, and only the
+latest 4096-byte transcript revision is retained. Background/lock/interruption,
+navigation and session replacement stop and cancel without replay. No audio
+or transcript is saved or logged. Unsupported recognition fails explicitly,
+without cloud fallback. **Edit text manually** permits preview-flow testing
+on Simulator but does not simulate or qualify speech recognition.
+See [ADR 0066](adr/0066-ios-on-device-terminal-dictation.md), `MOB-07` and
+[#564](https://github.com/fes/fesTerm/issues/564) for the remaining native gates.
+
 ## Principle: key layout off measured breakpoints, not device type
 
 `docs/sftp-ui-design.md` already documents a narrow-width fallback for the
