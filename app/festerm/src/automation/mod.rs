@@ -580,6 +580,7 @@ impl Coordinator {
                 }
             }
         } else if needs_guard {
+            tracing::error!("automation admission lock poisoned; disclosure remains closed");
             for peer in peers.values() {
                 peer.connection.closed_flag().store(true, Ordering::Release);
             }
