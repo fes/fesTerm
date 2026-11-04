@@ -6,8 +6,10 @@ An external controller's local registration can now be represented as bounded,
 connection-owned opaque bytes in the application-owned kernel. A typed native
 decision binds one registration to one exact existing target generation and
 returns a fresh association ID. Rebinding invalidates old IDs and stale
-decisions; disconnect, privacy revocation, closure, replacement and broker
-restart discard affected associations. Identical session labels play no role.
+decisions; even a new selection whose target has just gone stale invalidates
+older pending decisions without disturbing the current binding. Disconnect,
+privacy revocation, closure, replacement and broker restart discard affected
+associations. Identical session labels play no role.
 
 This is a non-authorizing foundation for [#524](https://github.com/fes/fesTerm/issues/524),
 not a client feature: there is no native enrollment UI or MCP operation.

@@ -108,8 +108,10 @@ fresh `ControllerEnrollmentId`. Do not construct this decision from IPC or a
 client's claim of approval. A rebind, even to the same target, needs a new
 native decision and invalidates the old enrollment ID; outstanding decisions
 against the old registration revision cannot overwrite it. Preparing a newer
-native selection supersedes earlier pending decisions but leaves the current
-association intact until approval. Resolve only the exact connection,
+native selection supersedes earlier pending decisions even when the new target
+is already stale, but leaves the current association intact until approval.
+The native UI must serialize selection changes and cancellation before queued
+decisions reach the broker. Resolve only the exact connection,
 registration and current enrollment ID together. The kernel does not queue
 proposals; future native UI must bound and cancel its own pending reviews, and
 registration alone must not trigger a prompt.

@@ -338,6 +338,39 @@ fn controller_rebinding_invalidates_old_references_and_review_decisions() {
 }
 
 #[test]
+fn stale_new_controller_selection_cancels_pending_decision_not_current_binding() {
+    let mut f = Fixture::new();
+    let registration = f
+        .broker
+        .register_controller_session(f.connection, b"agent")
+        .unwrap();
+    let current = enroll_controller(&mut f.broker, f.connection, registration, f.a);
+    let pending = f
+        .broker
+        .prepare_controller_enrollment(f.connection, registration, f.b)
+        .unwrap();
+    let stale_target = f.broker.attach_target(3, 1).unwrap();
+    f.broker.close_target(stale_target).unwrap();
+
+    assert_eq!(
+        f.broker
+            .prepare_controller_enrollment(f.connection, registration, stale_target)
+            .unwrap_err(),
+        Error::StaleTarget
+    );
+    assert_eq!(
+        f.broker
+            .approve_controller_enrollment(f.connection, NativeControllerEnrollment::new(pending)),
+        Err(Error::BindingMismatch)
+    );
+    assert_eq!(
+        f.broker
+            .resolve_controller_enrollment(f.connection, registration, current),
+        Ok(f.a)
+    );
+}
+
+#[test]
 fn controller_enrollment_invalidates_on_replacement_close_and_broker_restart() {
     let mut f = Fixture::new();
     let other_connection = f.broker.accept_connection().unwrap();

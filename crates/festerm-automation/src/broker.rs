@@ -232,9 +232,10 @@ impl Broker {
             .ok_or(Error::Unauthorized)
     }
 
-    /// Freeze the latest native-selected candidate for review, superseding any
-    /// older candidate without changing the existing association. A candidate
-    /// is not an association and may not become an IPC-supplied decision.
+    /// Attempt to freeze the latest native-selected candidate for review.
+    /// Once the registration is verified, even a stale target supersedes older
+    /// candidates without changing the existing association. A candidate is not
+    /// an association and may not become an IPC-supplied decision.
     pub fn prepare_controller_enrollment(
         &mut self,
         connection: ConnectionId,
@@ -245,7 +246,6 @@ impl Broker {
             .get(&connection)
             .and_then(|principal| principal.controller_registrations.get(&registration))
             .ok_or(Error::Unauthorized)?;
-        self.target(target)?;
         let revision = self.mint()?;
         let record = self
             .principals
@@ -253,6 +253,7 @@ impl Broker {
             .and_then(|principal| principal.controller_registrations.get_mut(&registration))
             .ok_or(Error::Unauthorized)?;
         record.revision = revision;
+        self.target(target)?;
         Ok(ControllerEnrollmentProposal {
             connection,
             registration,

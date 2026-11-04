@@ -592,18 +592,19 @@ registration, the real `ConnectionId`, the user's explicitly selected live
 never construct it from an IPC claim. Committing it associates precisely that
 target generation and mints a fresh broker-owned enrollment ID. A later binding
 requires another native decision, invalidates the old ID and rejects older
-in-flight review decisions. Preparing a newer native selection supersedes an
-earlier pending decision without changing an existing association. The kernel
-does not queue proposals; future native UI must bound and cancel its own pending
-reviews and sanitize displayed registration bytes. Identical labels and changes
-in display ordering never retarget an association. Unregister, disconnect and
-global privacy revocation remove registrations; close or attachment replacement
-removes registrations bound to that target and invalidates review candidates
-naming its old generation. A fresh broker instance with a fresh unpredictable instance nonce
-invalidates all records. A new registration or decision is required; matching
-bytes do not restore an association. Per-connection grant revocation alone
-leaves these non-authorizing registrations intact; unpairing must unregister
-them or disconnect.
+in-flight review decisions. Attempting a newer native selection supersedes an
+earlier pending decision even if the new target is stale, without changing an
+existing association. The kernel does not queue proposals; future native UI
+must serialize selection changes and cancellation before queued decisions,
+bound its pending reviews and sanitize displayed registration bytes. Identical
+labels and changes in display ordering never retarget an association. Unregister,
+disconnect and global privacy revocation remove registrations; close or
+attachment replacement removes registrations bound to that target and invalidates
+review candidates naming its old generation. A fresh broker instance with a
+fresh unpredictable instance nonce invalidates all records. A new registration
+or decision is required; matching bytes do not restore an association.
+Per-connection grant revocation alone leaves these non-authorizing registrations
+intact; unpairing must unregister them or disconnect.
 
 This is only an internal kernel prerequisite. There is no enrollment UI, wire
 operation or supported controller workflow. The returned reference identifies
