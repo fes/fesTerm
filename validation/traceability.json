@@ -256,6 +256,7 @@
         "invalid_tampered_and_truncated_records_close_the_channel",
         "record_io_requires_a_fresh_verified_channel",
         "partial_write_failure_closes_without_reusing_cipher_state",
+        "panicking_physical_write_closes_without_replaying_unknown_bytes",
         "tampering_reflection_and_out_of_order_records_permanently_close",
         "invalid_lengths_and_malformed_handshakes_fail_closed",
         "verification_requires_the_complete_independent_fingerprint",

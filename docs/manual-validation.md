@@ -2693,6 +2693,10 @@ initialize; its real-platform behavior is not yet validated. Deterministic
 tests are not native pairing, settings usability, containment or input-ordering
 evidence. JavaScript and terminal control remain unavailable.
 
+The record-framing tests cover a writer panic after an unknown partial write
+and prevent channel reuse. Disposal of the real stream and per-write privacy
+guards still require the native and interoperability evidence in AUTO-04.
+
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
 | AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts. | Deferred native + usability | Partial implementation: observation pairing/native grant UI, desktop file selection and non-authorizing captured-source review, and frozen-workflow binding components. Desktop source-view usability, iOS security-scoped access, pending-approval invalidation and platform path behavior still need qualification. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. No native evidence collected for intake or workflow approval. |
