@@ -6505,7 +6505,7 @@ impl FesTermApp {
                             &ui.ctx().clone(),
                         );
                     } else {
-                        self.secure_storage_feedback = Some("Native connect credential storage is unavailable. Use the profile editor's connect-once option.");
+                        self.secure_storage_feedback = Some("Secure storage is unavailable, so this legacy Dev Tunnel profile cannot connect. Use New Session > Connect once with its tunnel name.");
                     }
                     #[cfg(not(feature = "experimental-dev-tunnels"))]
                     {

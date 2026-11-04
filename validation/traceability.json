@@ -201,6 +201,7 @@
         "dev_tunnel_form_can_decline_takeover_and_save_a_named_profile",
         "dev_tunnel_form_offers_running_tunnels_and_submits_with_enter",
         "form_connect_without_save_as_is_ephemeral_and_keeps_the_choice_of_takeover",
+        "a_saved_profile_connects_without_keeping_its_sign_in_when_secure_storage_is_unavailable",
         "host_setup_toggles_change_the_generated_command",
         "download_commands_pin_the_embedded_script_digest",
         "unix_download_verifies_before_execution_and_cleans_up",
