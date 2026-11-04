@@ -635,6 +635,35 @@ fn short_document_view_moves_touch_sized_actions_into_more() {
 }
 
 #[test]
+fn conflict_actions_stay_above_keyboard_occlusion_at_short_and_narrow_sizes() {
+    for (width, height, occlusion) in [
+        (844.0, 390.0, 0.35),
+        (390.0, 844.0, 0.35),
+        (320.0, 568.0, 0.35),
+    ] {
+        let mut app = changed_app();
+        let view = app.documents.active.unwrap();
+        app.documents.compare = Some(app.documents.registry.target(view, 0..0).unwrap());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(width, height))
+            .build_ui_state(
+                move |ui, app: &mut MobileApp| app.show_with_occlusion(ui, occlusion),
+                app,
+            );
+        harness.run();
+        let bottom = height * (1.0 - occlusion);
+        for label in ["Keep my edits", "Reload and discard edits", "Cancel"] {
+            let rect = harness.get_by_label(label).rect();
+            assert!(
+                rect.top() >= 0.0 && rect.bottom() <= bottom,
+                "{label} {rect:?} must clear keyboard boundary {bottom}"
+            );
+            assert!(rect.height() >= space::TOUCH);
+        }
+    }
+}
+
+#[test]
 #[ignore = "explicit actual-widget capture requires headless wgpu and a fresh output directory"]
 fn capture_document_ui() {
     use sha2::{Digest, Sha256};

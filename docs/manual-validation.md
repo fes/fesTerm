@@ -755,6 +755,8 @@ Additional regressions cover a focused 1,024,000-character document with cached
 linear caret geometry, hardware Tab, stale-refresh requeue and permission
 downgrades, explicit target-bound Compare/Keep/Reload, and document-chip close
 from a terminal without background input. Short-height actions live in More.
+Conflict actions stay pinned above keyboard occlusion; automated coordinates
+check complete touch-target visibility at landscape, phone and narrow widths.
 Its deterministic tests prove shared
 identity/history, independent selection targets, exact multiline Unicode/BOM/
 line-ending undo, read-only/revoked mutation refusal, encoded bounds, last-view

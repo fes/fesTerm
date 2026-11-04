@@ -3756,7 +3756,8 @@
         "conflict_keep_requires_review_and_leaves_save_explicit_and_version_bound",
         "conflict_reload_discards_only_after_explicit_review_and_refuses_stale_decisions",
         "document_chip_close_from_terminal_uses_dirty_guard_and_blocks_background_input",
-        "short_document_view_moves_touch_sized_actions_into_more"
+        "short_document_view_moves_touch_sized_actions_into_more",
+        "conflict_actions_stay_above_keyboard_occlusion_at_short_and_narrow_sizes"
       ],
       "manual_scenarios": ["MOB-08"],
       "status": "partial",

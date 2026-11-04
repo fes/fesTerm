@@ -741,7 +741,7 @@ impl DocumentHost {
         };
         let mut discard = false;
         let mut cancel = false;
-        widgets::bottom_sheet(ctx, "document-dirty-close", bounds, |ui| {
+        let sheet = widgets::bottom_sheet(ctx, "document-dirty-close", bounds, |ui| {
             cancel |= widgets::sheet_title(ui, "Unsaved document", None);
             widgets::footnote(ui, &label);
             ui.label("Discard unsaved changes in the last view? This cannot be undone.");
@@ -751,7 +751,7 @@ impl DocumentHost {
         });
         if discard {
             self.close_view(view, true, ctx);
-        } else if cancel {
+        } else if cancel || sheet.dismissed {
             self.close = None;
         }
     }
@@ -806,53 +806,61 @@ impl DocumentHost {
             .is_ok_and(|entry| entry.writable());
         let mut decision = None;
         let mut cancel = false;
-        widgets::bottom_sheet(ctx, "document-compare", bounds, |ui| {
-            cancel |= widgets::sheet_title(ui, "File changed outside fesTerm", None);
-            widgets::footnote(ui, "External version (read-only)");
-            egui::ScrollArea::vertical()
-                .max_height(bounds.height() * 0.3)
-                .show(ui, |ui| {
-                    ui.add(egui::Label::new(egui::RichText::new(&outside).monospace()).wrap());
+        let mut header_close = false;
+        let sheet = widgets::bottom_sheet_with_footer(
+            ctx,
+            "document-compare",
+            bounds,
+            |ui| {
+                header_close |= widgets::sheet_title(ui, "File changed outside fesTerm", None);
+                widgets::footnote(ui, "External version (read-only)");
+                egui::ScrollArea::vertical()
+                    .max_height(bounds.height() * 0.3)
+                    .show(ui, |ui| {
+                        ui.add(egui::Label::new(egui::RichText::new(&outside).monospace()).wrap());
+                    });
+                widgets::footnote(ui, "Keep edits preserves your buffer. A later explicit Save replaces this external version. Reload discards your edits and history.");
+            },
+            |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if widgets::button_sized(
+                        ui,
+                        ButtonKind::Primary,
+                        "Keep my edits",
+                        writable,
+                        egui::vec2(160.0, space::BUTTON_HEIGHT),
+                    )
+                    .clicked()
+                    {
+                        decision = Some(true);
+                    }
+                    if widgets::button_sized(
+                        ui,
+                        ButtonKind::Destructive,
+                        "Reload and discard edits",
+                        true,
+                        egui::vec2(244.0, space::BUTTON_HEIGHT),
+                    )
+                    .clicked()
+                    {
+                        decision = Some(false);
+                    }
+                    cancel |= widgets::button_sized(
+                        ui,
+                        ButtonKind::Secondary,
+                        "Cancel",
+                        true,
+                        egui::vec2(96.0, space::BUTTON_HEIGHT),
+                    )
+                    .clicked();
                 });
-            widgets::footnote(ui, "Keep edits preserves your buffer. A later explicit Save replaces this external version. Reload discards your edits and history.");
-            ui.horizontal_wrapped(|ui| {
-                if widgets::button_sized(
-                    ui,
-                    ButtonKind::Primary,
-                    "Keep my edits",
-                    writable,
-                    egui::vec2(160.0, space::BUTTON_HEIGHT),
-                )
-                .clicked()
-                {
-                    decision = Some(true);
-                }
-                if widgets::button_sized(
-                    ui,
-                    ButtonKind::Destructive,
-                    "Reload and discard edits",
-                    true,
-                    egui::vec2(244.0, space::BUTTON_HEIGHT),
-                )
-                .clicked()
-                {
-                    decision = Some(false);
-                }
-                cancel |= widgets::button_sized(
-                    ui,
-                    ButtonKind::Secondary,
-                    "Cancel",
-                    true,
-                    egui::vec2(96.0, space::BUTTON_HEIGHT),
-                )
-                .clicked();
-            });
-        });
+            },
+        );
         if let Some(keep) = decision {
             let result = self.resolve(&target, keep);
             self.record(result);
             self.compare = None;
-        } else if cancel {
+        } else if cancel || header_close || sheet.dismissed {
             self.compare = None;
         }
     }

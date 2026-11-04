@@ -136,3 +136,6 @@ target-bound explicit conflict decisions, terminal-side document-chip close,
 short-height action reachability and large-document geometry/cache reuse.
 Headless images are widget/theme evidence,
 not native Files-provider or UIKit keyboard acceptance.
+Conflict actions use a measured pinned sheet footer while the external review
+scrolls. A coordinate regression checks all three full touch targets above
+simulated keyboard occlusion at short landscape, phone and narrow widths.

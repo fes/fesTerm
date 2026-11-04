@@ -1040,6 +1040,26 @@ pub fn bottom_sheet(
     bounds: Rect,
     content: impl FnOnce(&mut Ui),
 ) -> SheetOutcome {
+    bottom_sheet_inner(ctx, id, bounds, content, None::<fn(&mut Ui)>)
+}
+
+pub fn bottom_sheet_with_footer(
+    ctx: &egui::Context,
+    id: &str,
+    bounds: Rect,
+    content: impl FnOnce(&mut Ui),
+    footer: impl FnOnce(&mut Ui),
+) -> SheetOutcome {
+    bottom_sheet_inner(ctx, id, bounds, content, Some(footer))
+}
+
+fn bottom_sheet_inner(
+    ctx: &egui::Context,
+    id: &str,
+    bounds: Rect,
+    content: impl FnOnce(&mut Ui),
+    footer: Option<impl FnOnce(&mut Ui)>,
+) -> SheetOutcome {
     let mut outcome = SheetOutcome::default();
     let scrim_id = Id::new(("sheet-scrim", id));
     egui::Area::new(scrim_id)
@@ -1099,7 +1119,15 @@ pub fn bottom_sheet(
                     );
                     // A ScrollArea sizes itself from last frame's content, so the
                     // content height is tracked here to follow in-place changes.
-                    let cap = max_height - 40.0;
+                    let footer_id = Id::new(("sheet-footer-height", id));
+                    let reserved = if footer.is_some() {
+                        ctx.data_mut(|data| data.get_temp::<f32>(footer_id))
+                            .unwrap_or(space::BUTTON_HEIGHT)
+                            + ui.spacing().item_spacing.y
+                    } else {
+                        0.0
+                    };
+                    let cap = (max_height - 40.0 - reserved).max(0.0);
                     ui.set_max_height(cap);
                     let content_id = Id::new(("sheet-content", id));
                     let known = ctx.data_mut(|data| data.get_temp::<f32>(content_id));
@@ -1115,6 +1143,14 @@ pub fn bottom_sheet(
                     if known.is_none_or(|known| (known - content_height).abs() > 0.5) {
                         ctx.data_mut(|data| data.insert_temp(content_id, content_height));
                         ctx.request_repaint();
+                    }
+                    if let Some(footer) = footer {
+                        let height = ui.scope(footer).response.rect.height();
+                        let previous = ctx.data_mut(|data| data.get_temp::<f32>(footer_id));
+                        if previous.is_none_or(|previous| (previous - height).abs() > 0.5) {
+                            ctx.data_mut(|data| data.insert_temp(footer_id, height));
+                            ctx.request_repaint();
+                        }
                     }
                 });
             frame.response.rect.height()
