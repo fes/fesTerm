@@ -1937,3 +1937,1721 @@ fn exact_five_minute_grant_expiry_never_restores_a_run_on_reapproval() {
         Err(Error::Revoked)
     );
 }
+
+fn metadata_request(targets: &[TargetRef]) -> MetadataGrantRequest {
+    MetadataGrantRequest {
+        targets: targets.iter().copied().collect(),
+    }
+}
+
+fn metadata_spec(targets: &[TargetRef], deadline: Instant) -> MetadataRunSpec {
+    MetadataRunSpec {
+        parameters: digest(99),
+        targets: targets.iter().copied().collect(),
+        budget: Budget::default(),
+        deadline,
+    }
+}
+
+fn approve_metadata(
+    f: &mut Fixture,
+    targets: &[TargetRef],
+    controls: &[TargetRef],
+    lifetime: Duration,
+) {
+    let request = metadata_request(targets);
+    let id = f
+        .broker
+        .request_metadata_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    let mut approval = NativeMetadataApproval::new(request.clone(), lifetime);
+    for control in controls {
+        approval = approval.accept_control_disclosure(*control, request.targets.clone());
+    }
+    f.broker
+        .approve_metadata(f.connection, id, approval, f.now)
+        .unwrap();
+}
+
+fn metadata_run(f: &mut Fixture, targets: &[TargetRef], deadline: Instant) -> RunId {
+    f.broker
+        .admit_metadata_run(f.connection, metadata_spec(targets, deadline), f.now)
+        .unwrap()
+}
+
+fn shared_control_scope(f: &Fixture) -> Scope {
+    Scope {
+        discover: BTreeSet::from([f.a]),
+        control: BTreeSet::from([f.b]),
+        ..Scope::default()
+    }
+}
+
+fn approve_control(f: &mut Fixture, lifetime: Duration) {
+    let scope = shared_control_scope(f);
+    let request = GrantRequest {
+        scope: scope.clone(),
+        bindings: BTreeSet::from([direct_input(f.b, digest(3), 10)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let id = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    f.broker
+        .approve(
+            f.connection,
+            id,
+            NativeApproval::new(request, lifetime).accept_control_handoff(f.b, scope.sources()),
+            f.now,
+        )
+        .unwrap();
+}
+
+fn committed_discovery(f: &mut Fixture, run: RunId) -> DisclosureLiveness {
+    let request = f
+        .broker
+        .prepare_request(
+            f.connection,
+            run,
+            Operation::Discover { max_bytes: 64 },
+            f.now,
+        )
+        .unwrap();
+    assert_eq!(
+        f.broker.discovery_targets(f.connection, request, f.now),
+        Ok(vec![f.a])
+    );
+    f.broker
+        .commit_disclosure(f.connection, request, 10, f.now)
+        .unwrap();
+    let liveness = f
+        .broker
+        .disclosure_liveness(f.connection, request, f.now)
+        .unwrap();
+    f.broker.settle_request(f.connection, request).unwrap();
+    f.broker
+        .complete(f.connection, run, Completion::Returned, f.now)
+        .unwrap();
+    f.broker.forget_run(f.connection, run).unwrap();
+    liveness
+}
+
+#[test]
+fn metadata_and_control_require_separate_grants_and_reviewed_closure() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let b = f.b;
+    let metadata = metadata_request(&[a]);
+    let pending = f
+        .broker
+        .request_metadata_approval(f.connection, metadata.clone(), f.now)
+        .unwrap();
+    let other = f.broker.accept_connection().unwrap();
+    assert_eq!(
+        f.broker.approve_metadata(
+            other,
+            pending,
+            NativeMetadataApproval::new(metadata.clone(), MAX_GRANT_LIFETIME),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker
+        .approve_metadata(
+            f.connection,
+            pending,
+            NativeMetadataApproval::new(metadata, MAX_GRANT_LIFETIME),
+            f.now,
+        )
+        .unwrap();
+
+    let action = direct_input(b, digest(3), 10);
+    let request = GrantRequest {
+        scope: input_scope(b),
+        bindings: BTreeSet::from([action]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let pending = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            pending,
+            NativeApproval::new(request, MAX_GRANT_LIFETIME)
+                .accept_control_handoff(b, BTreeSet::new()),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker.reject_approval(f.connection, pending).unwrap();
+    approve_control(&mut f, MAX_GRANT_LIFETIME);
+
+    let control = f.run(input_scope(b), action);
+    let lease = f.lease(control, b);
+    let deadline = f.now + Duration::from_secs(60);
+    let metadata = metadata_run(&mut f, &[a], deadline);
+    for operation in [
+        Operation::Observe {
+            target: a,
+            max_bytes: 1,
+        },
+        input_operation(lease, digest(3), 10),
+        Operation::Result { max_bytes: 1 },
+    ] {
+        assert_eq!(
+            f.broker
+                .prepare_request(f.connection, metadata, operation, f.now),
+            Err(Error::Unauthorized)
+        );
+    }
+    assert!(matches!(
+        f.broker.prepare_lease(f.connection, metadata, b, f.now),
+        Err(Error::Unauthorized)
+    ));
+    assert_eq!(
+        f.broker.start_workflow(
+            f.connection,
+            metadata,
+            StartKey([9; 16]),
+            f.spec(Scope::default(), binding(1)),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.status(f.connection, metadata, f.now),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.admit_run(
+            f.connection,
+            None,
+            f.spec(
+                Scope {
+                    discover: BTreeSet::from([a]),
+                    ..Scope::default()
+                },
+                direct(DirectKind::Discovery),
+            ),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.admit_metadata_run(
+            f.connection,
+            metadata_spec(&[b], f.now + Duration::from_secs(60)),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    let token = committed_discovery(&mut f, metadata);
+    assert!(token.is_live(f.connection, f.now));
+    assert!(!token.is_live(other, f.now));
+    let request = f.write(control, lease);
+    f.broker
+        .commit_control(f.connection, request, digest(3), 10, f.now)
+        .unwrap();
+}
+
+#[test]
+fn metadata_approval_requires_explicit_current_control_flow_and_ownership() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let b = f.b;
+    let action = direct_input(b, digest(3), 10);
+    let request = GrantRequest {
+        scope: input_scope(b),
+        bindings: BTreeSet::from([action]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let pending = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    f.broker
+        .approve(
+            f.connection,
+            pending,
+            NativeApproval::new(request, MAX_GRANT_LIFETIME)
+                .accept_control_handoff(b, BTreeSet::from([a])),
+            f.now,
+        )
+        .unwrap();
+    let proposal = metadata_request(&[a]);
+    let pending = f
+        .broker
+        .request_metadata_approval(f.connection, proposal.clone(), f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker.approve_metadata(
+            f.connection,
+            pending,
+            NativeMetadataApproval::new(proposal.clone(), MAX_GRANT_LIFETIME)
+                .accept_control_disclosure(b, BTreeSet::from([a])),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker.reject_approval(f.connection, pending).unwrap();
+    approve_control(&mut f, MAX_GRANT_LIFETIME);
+    let pending = f
+        .broker
+        .request_metadata_approval(f.connection, proposal.clone(), f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker.approve_metadata(
+            f.connection,
+            pending,
+            NativeMetadataApproval::new(proposal.clone(), MAX_GRANT_LIFETIME),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.approve_metadata(
+            f.connection,
+            pending,
+            NativeMetadataApproval::new(proposal.clone(), MAX_GRANT_LIFETIME)
+                .accept_control_disclosure(b, BTreeSet::from([b])),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    let run = f.run(input_scope(b), action);
+    f.lease(run, b);
+    assert_eq!(
+        f.broker.approve_metadata(
+            f.connection,
+            pending,
+            NativeMetadataApproval::new(proposal.clone(), MAX_GRANT_LIFETIME)
+                .accept_control_disclosure(b, BTreeSet::from([a])),
+            f.now,
+        ),
+        Err(Error::Revoked)
+    );
+    f.broker.reject_approval(f.connection, pending).unwrap();
+    approve_metadata(&mut f, &[a], &[b], MAX_GRANT_LIFETIME);
+}
+
+#[test]
+fn metadata_closure_requires_every_source_at_every_control_sink() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let b = f.b;
+    let c = f.broker.attach_target(3, 1).unwrap();
+    let sources = BTreeSet::from([a, b]);
+    let scope = Scope {
+        discover: sources.clone(),
+        control: BTreeSet::from([b, c]),
+        ..Scope::default()
+    };
+    let proposal = GrantRequest {
+        scope,
+        bindings: BTreeSet::from([direct_input(b, digest(3), 10)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let pending = f
+        .broker
+        .request_approval(f.connection, proposal.clone(), f.now)
+        .unwrap();
+    f.broker
+        .approve(
+            f.connection,
+            pending,
+            NativeApproval::new(proposal, MAX_GRANT_LIFETIME)
+                .accept_control_handoff(b, sources.clone())
+                .accept_control_handoff(c, sources.clone()),
+            f.now,
+        )
+        .unwrap();
+    let request = metadata_request(&[a, b]);
+    let pending = f
+        .broker
+        .request_metadata_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker.approve_metadata(
+            f.connection,
+            pending,
+            NativeMetadataApproval::new(request.clone(), MAX_GRANT_LIFETIME)
+                .accept_control_disclosure(b, BTreeSet::from([a]))
+                .accept_control_disclosure(c, sources.clone()),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.approve_metadata(
+            f.connection,
+            pending,
+            NativeMetadataApproval::new(request.clone(), MAX_GRANT_LIFETIME)
+                .accept_control_disclosure(b, sources.clone()),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker
+        .approve_metadata(
+            f.connection,
+            pending,
+            NativeMetadataApproval::new(request, MAX_GRANT_LIFETIME)
+                .accept_control_disclosure(b, sources.clone())
+                .accept_control_disclosure(c, sources),
+            f.now,
+        )
+        .unwrap();
+    let deadline = f.now + Duration::from_secs(60);
+    let run = metadata_run(&mut f, &[a], deadline);
+    assert!(committed_discovery(&mut f, run).is_live(f.connection, f.now));
+}
+
+#[test]
+fn metadata_reapproval_and_takeover_preserve_the_other_grant() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let b = f.b;
+    let deadline = f.now + Duration::from_secs(60);
+    let action = direct_input(b, digest(3), 10);
+    approve_control(&mut f, MAX_GRANT_LIFETIME);
+    let control = f.run(input_scope(b), action);
+    let lease = f.lease(control, b);
+    let input = f.write(control, lease);
+    approve_metadata(&mut f, &[a], &[b], MAX_GRANT_LIFETIME);
+    let run = metadata_run(&mut f, &[a], deadline);
+    let old_delivery = committed_discovery(&mut f, run);
+    assert!(old_delivery.is_live(f.connection, f.now));
+
+    approve_metadata(&mut f, &[a], &[b], MAX_GRANT_LIFETIME);
+    assert!(!old_delivery.is_live(f.connection, f.now));
+    let run = metadata_run(&mut f, &[a], deadline);
+    let current_delivery = committed_discovery(&mut f, run);
+    f.broker
+        .commit_control(f.connection, input, digest(3), 10, f.now)
+        .unwrap();
+
+    f.broker.human_takeover(b).unwrap();
+    assert!(current_delivery.is_live(f.connection, f.now));
+    assert!(f
+        .broker
+        .prepare_lease(f.connection, control, b, f.now)
+        .is_err());
+    let run = metadata_run(&mut f, &[a], deadline);
+    assert!(committed_discovery(&mut f, run).is_live(f.connection, f.now));
+
+    approve_control(&mut f, MAX_GRANT_LIFETIME);
+    assert!(current_delivery.is_live(f.connection, f.now));
+    assert!(f
+        .broker
+        .prepare_lease(f.connection, control, b, f.now)
+        .is_err());
+    let fresh = f.run(input_scope(b), action);
+    f.lease(fresh, b);
+}
+
+#[test]
+fn metadata_revocation_cuts_delivery_without_interrupting_pending_control() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let b = f.b;
+    approve_control(&mut f, MAX_GRANT_LIFETIME);
+    approve_metadata(&mut f, &[a], &[b], MAX_GRANT_LIFETIME);
+    let control = f.run(input_scope(b), direct_input(b, digest(3), 10));
+    let lease = f.lease(control, b);
+    let input = f.write(control, lease);
+    let deadline = f.now + Duration::from_secs(60);
+    let metadata = metadata_run(&mut f, &[a], deadline);
+    let disclosure = f
+        .broker
+        .prepare_request(
+            f.connection,
+            metadata,
+            Operation::Discover { max_bytes: 64 },
+            f.now,
+        )
+        .unwrap();
+    f.broker
+        .commit_disclosure(f.connection, disclosure, 10, f.now)
+        .unwrap();
+    let delivery = f
+        .broker
+        .disclosure_liveness(f.connection, disclosure, f.now)
+        .unwrap();
+    assert!(delivery.is_live(f.connection, f.now));
+
+    f.broker.revoke_metadata(f.connection);
+    assert!(!delivery.is_live(f.connection, f.now));
+    assert_eq!(
+        f.broker
+            .commit_disclosure(f.connection, disclosure, 10, f.now),
+        Err(Error::Closed)
+    );
+    f.broker
+        .commit_control(f.connection, input, digest(3), 10, f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .commit_control(f.connection, input, digest(3), 10, f.now),
+        Err(Error::Closed)
+    );
+    f.broker.settle_request(f.connection, input).unwrap();
+    let status = f
+        .broker
+        .complete(f.connection, control, Completion::Returned, f.now)
+        .unwrap();
+    assert_eq!(status.state, RunState::Completed);
+    assert_eq!(status.admitted_effects, 1);
+    assert!(status.execution_outcome_unknown);
+}
+
+#[test]
+fn metadata_reapproval_preserves_existing_ordinary_workflow_lineage() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let b = f.b;
+    let mut scope = f.scope();
+    scope.control.insert(b);
+    f.approve(scope.clone(), &[binding(1), binding(2)]);
+    approve_metadata(&mut f, &[a], &[b], MAX_GRANT_LIFETIME);
+    let parent = f.run(scope.clone(), binding(1));
+    let child = f
+        .broker
+        .admit_run(f.connection, Some(parent), f.spec(scope, binding(2)), f.now)
+        .unwrap();
+    let lease = f.lease(child, b);
+    let request = f.write(child, lease);
+    approve_metadata(&mut f, &[a], &[b], MAX_GRANT_LIFETIME);
+    f.broker
+        .commit_control(f.connection, request, digest(3), 10, f.now)
+        .unwrap();
+    f.broker.settle_request(f.connection, request).unwrap();
+    assert_eq!(
+        f.broker
+            .complete(f.connection, child, Completion::Returned, f.now)
+            .unwrap()
+            .state,
+        RunState::Completed
+    );
+    assert_eq!(
+        f.broker.status(f.connection, parent, f.now).unwrap().state,
+        RunState::Running
+    );
+}
+
+#[test]
+fn metadata_delivery_liveness_and_routing_never_fall_back_to_another_grant() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let scope = Scope {
+        discover: BTreeSet::from([a]),
+        ..Scope::default()
+    };
+    let deadline = f.now + Duration::from_secs(60);
+    f.approve(scope.clone(), &[direct(DirectKind::Discovery)]);
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+
+    let ordinary_run = f.run(scope.clone(), direct(DirectKind::Discovery));
+    let ordinary_delivery = committed_discovery(&mut f, ordinary_run);
+    let metadata = metadata_run(&mut f, &[a], deadline);
+    let old_metadata_delivery = committed_discovery(&mut f, metadata);
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    assert!(ordinary_delivery.is_live(f.connection, f.now));
+    assert!(!old_metadata_delivery.is_live(f.connection, f.now));
+
+    let metadata = metadata_run(&mut f, &[a], deadline);
+    let metadata_delivery = committed_discovery(&mut f, metadata);
+    f.approve(scope.clone(), &[direct(DirectKind::Discovery)]);
+    assert!(!ordinary_delivery.is_live(f.connection, f.now));
+    assert!(metadata_delivery.is_live(f.connection, f.now));
+
+    f.broker.revoke_metadata(f.connection);
+    assert!(!metadata_delivery.is_live(f.connection, f.now));
+    assert_eq!(
+        f.broker
+            .admit_metadata_run(f.connection, metadata_spec(&[a], deadline), f.now,),
+        Err(Error::Revoked)
+    );
+    let ordinary_run = f.run(scope, direct(DirectKind::Discovery));
+    assert!(committed_discovery(&mut f, ordinary_run).is_live(f.connection, f.now));
+
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    let metadata = metadata_run(&mut f, &[a], deadline);
+    let request = f
+        .broker
+        .prepare_request(
+            f.connection,
+            metadata,
+            Operation::Discover { max_bytes: 64 },
+            f.now,
+        )
+        .unwrap();
+    assert!(matches!(
+        f.broker.disclosure_liveness(f.connection, request, f.now),
+        Err(Error::InvalidRequest)
+    ));
+    f.broker
+        .commit_disclosure(f.connection, request, 10, f.now)
+        .unwrap();
+    let delivery = f
+        .broker
+        .disclosure_liveness(f.connection, request, f.now)
+        .unwrap();
+    f.broker.cancel_run(f.connection, metadata, f.now).unwrap();
+    assert!(!delivery.is_live(f.connection, f.now));
+}
+
+#[test]
+fn disclosure_liveness_tracks_forgotten_workflow_ancestors() {
+    for cancel in [true, false] {
+        let mut f = Fixture::new();
+        let scope = f.scope();
+        f.approve(scope.clone(), &[binding(1), binding(2)]);
+        let parent = f.run(scope.clone(), binding(1));
+        let parent_request = f
+            .broker
+            .prepare_request(
+                f.connection,
+                parent,
+                Operation::Discover { max_bytes: 64 },
+                f.now,
+            )
+            .unwrap();
+        f.broker
+            .commit_disclosure(f.connection, parent_request, 10, f.now)
+            .unwrap();
+        let parent_delivery = f
+            .broker
+            .disclosure_liveness(f.connection, parent_request, f.now)
+            .unwrap();
+        f.broker
+            .settle_request(f.connection, parent_request)
+            .unwrap();
+        let child = f
+            .broker
+            .admit_run(f.connection, Some(parent), f.spec(scope, binding(2)), f.now)
+            .unwrap();
+        let delivery = committed_discovery(&mut f, child);
+        assert!(delivery.is_live(f.connection, f.now));
+
+        if cancel {
+            f.broker.cancel_run(f.connection, parent, f.now).unwrap();
+        } else {
+            f.broker
+                .complete(f.connection, parent, Completion::Returned, f.now)
+                .unwrap();
+        }
+        assert!(!delivery.is_live(f.connection, f.now));
+        assert_eq!(parent_delivery.is_live(f.connection, f.now), !cancel);
+    }
+}
+
+#[test]
+fn metadata_and_ordinary_approval_snapshots_reject_slot_aba() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let b = f.b;
+    let metadata = metadata_request(&[a]);
+    let pending = f
+        .broker
+        .request_metadata_approval(f.connection, metadata.clone(), f.now)
+        .unwrap();
+    let action = direct_input(b, digest(3), 10);
+    f.approve(input_scope(b), &[action]);
+    f.broker.human_takeover(b).unwrap();
+    assert_eq!(
+        f.broker.approve_metadata(
+            f.connection,
+            pending,
+            NativeMetadataApproval::new(metadata, MAX_GRANT_LIFETIME),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+
+    let mut f = Fixture::new();
+    let a = f.a;
+    let request = GrantRequest {
+        scope: Scope {
+            discover: BTreeSet::from([a]),
+            ..Scope::default()
+        },
+        bindings: BTreeSet::from([direct(DirectKind::Discovery)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let pending = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker.approve_metadata(
+            f.connection,
+            pending,
+            NativeMetadataApproval::new(metadata_request(&[a]), MAX_GRANT_LIFETIME),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    f.broker.revoke_metadata(f.connection);
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            pending,
+            NativeApproval::new(request, MAX_GRANT_LIFETIME),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+}
+
+#[test]
+fn slot_revision_cuts_reclaim_principal_pending_capacity_without_refunds() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let b = f.b;
+    let proposal = metadata_request(&[a]);
+    approve_control(&mut f, MAX_GRANT_LIFETIME);
+    approve_metadata(&mut f, &[a], &[b], MAX_GRANT_LIFETIME);
+    let stale: Vec<_> = (0..2)
+        .map(|_| {
+            f.broker
+                .request_metadata_approval(f.connection, proposal.clone(), f.now)
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(
+        f.broker
+            .request_metadata_approval(f.connection, proposal.clone(), f.now),
+        Err(Error::QuotaExceeded)
+    );
+
+    f.broker.human_takeover(b).unwrap();
+    let fresh: Vec<_> = (0..2)
+        .map(|_| {
+            f.broker
+                .request_metadata_approval(f.connection, proposal.clone(), f.now)
+                .unwrap()
+        })
+        .collect();
+    for id in &stale {
+        assert_eq!(
+            f.broker.approve_metadata(
+                f.connection,
+                *id,
+                NativeMetadataApproval::new(proposal.clone(), MAX_GRANT_LIFETIME),
+                f.now,
+            ),
+            Err(Error::Unauthorized)
+        );
+    }
+    for id in fresh {
+        f.broker.reject_approval(f.connection, id).unwrap();
+    }
+
+    approve_control(&mut f, MAX_GRANT_LIFETIME);
+    for id in stale {
+        assert_eq!(
+            f.broker.approve_metadata(
+                f.connection,
+                id,
+                NativeMetadataApproval::new(proposal.clone(), MAX_GRANT_LIFETIME)
+                    .accept_control_disclosure(b, BTreeSet::from([a])),
+                f.now,
+            ),
+            Err(Error::Unauthorized)
+        );
+    }
+    let eighth = f
+        .broker
+        .request_metadata_approval(f.connection, proposal.clone(), f.now)
+        .unwrap();
+    f.broker.reject_approval(f.connection, eighth).unwrap();
+    assert_eq!(
+        f.broker
+            .request_metadata_approval(f.connection, proposal, f.now),
+        Err(Error::QuotaExceeded)
+    );
+}
+
+#[test]
+fn slot_revision_cuts_reclaim_global_pending_capacity_for_other_principals() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let b = f.b;
+    let proposal = metadata_request(&[a]);
+    approve_control(&mut f, MAX_GRANT_LIFETIME);
+    approve_metadata(&mut f, &[a], &[b], MAX_GRANT_LIFETIME);
+    for _ in 0..2 {
+        f.broker
+            .request_metadata_approval(f.connection, proposal.clone(), f.now)
+            .unwrap();
+    }
+    let mut unaffected = None;
+    for _ in 0..7 {
+        let connection = f.broker.accept_connection().unwrap();
+        let id = f
+            .broker
+            .request_metadata_approval(connection, proposal.clone(), f.now)
+            .unwrap();
+        unaffected.get_or_insert((connection, id));
+        f.broker
+            .request_metadata_approval(connection, proposal.clone(), f.now)
+            .unwrap();
+    }
+    let first = f.broker.accept_connection().unwrap();
+    assert_eq!(
+        f.broker
+            .request_metadata_approval(first, proposal.clone(), f.now),
+        Err(Error::QuotaExceeded)
+    );
+    f.broker.human_takeover(b).unwrap();
+    let first_pending = f
+        .broker
+        .request_metadata_approval(first, proposal.clone(), f.now)
+        .unwrap();
+    let second = f.broker.accept_connection().unwrap();
+    f.broker
+        .request_metadata_approval(second, proposal.clone(), f.now)
+        .unwrap();
+    let third = f.broker.accept_connection().unwrap();
+    assert_eq!(
+        f.broker
+            .request_metadata_approval(third, proposal.clone(), f.now),
+        Err(Error::QuotaExceeded)
+    );
+
+    let (owner, pending) = unaffected.unwrap();
+    f.broker
+        .approve_metadata(
+            owner,
+            pending,
+            NativeMetadataApproval::new(proposal.clone(), MAX_GRANT_LIFETIME),
+            f.now,
+        )
+        .unwrap();
+    f.broker
+        .request_metadata_approval(third, proposal.clone(), f.now)
+        .unwrap();
+    f.broker
+        .approve_metadata(
+            first,
+            first_pending,
+            NativeMetadataApproval::new(proposal, MAX_GRANT_LIFETIME),
+            f.now,
+        )
+        .unwrap();
+}
+
+#[test]
+fn slot_installations_reclaim_opposite_slot_proposals() {
+    for install_ordinary in [true, false] {
+        let mut f = Fixture::new();
+        let a = f.a;
+        let b = f.b;
+        let metadata = metadata_request(&[a]);
+        let ordinary = GrantRequest {
+            scope: shared_control_scope(&f),
+            bindings: BTreeSet::from([direct_input(b, digest(3), 10)]),
+            direct_read_calls: BTreeSet::new(),
+        };
+        if install_ordinary {
+            let stale = f
+                .broker
+                .request_metadata_approval(f.connection, metadata.clone(), f.now)
+                .unwrap();
+            approve_control(&mut f, MAX_GRANT_LIFETIME);
+            for _ in 0..2 {
+                f.broker
+                    .request_metadata_approval(f.connection, metadata.clone(), f.now)
+                    .unwrap();
+            }
+            assert_eq!(
+                f.broker.approve_metadata(
+                    f.connection,
+                    stale,
+                    NativeMetadataApproval::new(metadata, MAX_GRANT_LIFETIME)
+                        .accept_control_disclosure(b, BTreeSet::from([a])),
+                    f.now,
+                ),
+                Err(Error::Unauthorized)
+            );
+        } else {
+            let stale = f
+                .broker
+                .request_approval(f.connection, ordinary.clone(), f.now)
+                .unwrap();
+            approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+            for _ in 0..2 {
+                f.broker
+                    .request_approval(f.connection, ordinary.clone(), f.now)
+                    .unwrap();
+            }
+            assert_eq!(
+                f.broker.approve(
+                    f.connection,
+                    stale,
+                    NativeApproval::new(ordinary, MAX_GRANT_LIFETIME)
+                        .accept_control_handoff(b, BTreeSet::from([a])),
+                    f.now,
+                ),
+                Err(Error::Unauthorized)
+            );
+        }
+    }
+}
+
+#[test]
+fn slot_expiry_reclaims_stale_opposite_slot_proposals() {
+    for metadata_expires_first in [false, true] {
+        let mut f = Fixture::new();
+        let a = f.a;
+        let b = f.b;
+        let short = Duration::from_secs(10);
+        let long = Duration::from_secs(120);
+        approve_control(&mut f, if metadata_expires_first { long } else { short });
+        approve_metadata(
+            &mut f,
+            &[a],
+            &[b],
+            if metadata_expires_first { short } else { long },
+        );
+        let metadata = metadata_request(&[a]);
+        let ordinary = GrantRequest {
+            scope: shared_control_scope(&f),
+            bindings: BTreeSet::from([direct_input(b, digest(3), 10)]),
+            direct_read_calls: BTreeSet::new(),
+        };
+        let stale: Vec<_> = (0..2)
+            .map(|_| {
+                if metadata_expires_first {
+                    f.broker
+                        .request_approval(f.connection, ordinary.clone(), f.now)
+                } else {
+                    f.broker
+                        .request_metadata_approval(f.connection, metadata.clone(), f.now)
+                }
+                .unwrap()
+            })
+            .collect();
+        f.now += short;
+        f.broker.poll_expiry(f.now);
+        for _ in 0..2 {
+            if metadata_expires_first {
+                f.broker
+                    .request_approval(f.connection, ordinary.clone(), f.now)
+            } else {
+                f.broker
+                    .request_metadata_approval(f.connection, metadata.clone(), f.now)
+            }
+            .unwrap();
+        }
+        for id in stale {
+            let result = if metadata_expires_first {
+                f.broker.approve(
+                    f.connection,
+                    id,
+                    NativeApproval::new(ordinary.clone(), MAX_GRANT_LIFETIME)
+                        .accept_control_handoff(b, BTreeSet::from([a])),
+                    f.now,
+                )
+            } else {
+                f.broker.approve_metadata(
+                    f.connection,
+                    id,
+                    NativeMetadataApproval::new(metadata.clone(), MAX_GRANT_LIFETIME),
+                    f.now,
+                )
+            };
+            assert_eq!(result, Err(Error::Unauthorized));
+        }
+    }
+}
+
+#[test]
+fn reclaimed_stale_approvals_do_not_refund_global_lifetime_limit() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let b = f.b;
+    let proposal = metadata_request(&[a]);
+    approve_control(&mut f, MAX_GRANT_LIFETIME);
+    approve_metadata(&mut f, &[a], &[b], MAX_GRANT_LIFETIME);
+    for _ in 0..2 {
+        f.broker
+            .request_metadata_approval(f.connection, proposal.clone(), f.now)
+            .unwrap();
+    }
+    f.broker.human_takeover(b).unwrap();
+    for _ in 0..4 {
+        let id = f
+            .broker
+            .request_metadata_approval(f.connection, proposal.clone(), f.now)
+            .unwrap();
+        f.broker.reject_approval(f.connection, id).unwrap();
+    }
+    let mut connections = Vec::new();
+    for _ in 0..15 {
+        let connection = f.broker.accept_connection().unwrap();
+        connections.push(connection);
+        for _ in 0..8 {
+            let id = f
+                .broker
+                .request_metadata_approval(connection, proposal.clone(), f.now)
+                .unwrap();
+            f.broker.reject_approval(connection, id).unwrap();
+        }
+    }
+    f.broker.disconnect(connections[0]);
+    let new = f.broker.accept_connection().unwrap();
+    assert_eq!(
+        f.broker.request_metadata_approval(new, proposal, f.now),
+        Err(Error::QuotaExceeded)
+    );
+}
+
+#[test]
+fn empty_slot_revocation_preserves_unaffected_opposite_proposals() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let metadata = metadata_request(&[a]);
+    let ordinary = GrantRequest {
+        scope: Scope {
+            discover: BTreeSet::from([a]),
+            ..Scope::default()
+        },
+        bindings: BTreeSet::from([direct(DirectKind::Discovery)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    let metadata_pending = f
+        .broker
+        .request_metadata_approval(f.connection, metadata.clone(), f.now)
+        .unwrap();
+    let ordinary_pending = f
+        .broker
+        .request_approval(f.connection, ordinary.clone(), f.now)
+        .unwrap();
+    f.broker.revoke_ordinary(f.connection);
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            ordinary_pending,
+            NativeApproval::new(ordinary.clone(), MAX_GRANT_LIFETIME),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker
+        .approve_metadata(
+            f.connection,
+            metadata_pending,
+            NativeMetadataApproval::new(metadata.clone(), MAX_GRANT_LIFETIME),
+            f.now,
+        )
+        .unwrap();
+
+    let mut f = Fixture::new();
+    let a = f.a;
+    let metadata = metadata_request(&[a]);
+    let ordinary = GrantRequest {
+        scope: Scope {
+            discover: BTreeSet::from([a]),
+            ..Scope::default()
+        },
+        bindings: BTreeSet::from([direct(DirectKind::Discovery)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    f.approve(ordinary.scope.clone(), &[direct(DirectKind::Discovery)]);
+    let ordinary_pending = f
+        .broker
+        .request_approval(f.connection, ordinary.clone(), f.now)
+        .unwrap();
+    let metadata_pending = f
+        .broker
+        .request_metadata_approval(f.connection, metadata.clone(), f.now)
+        .unwrap();
+    f.broker.revoke_metadata(f.connection);
+    assert_eq!(
+        f.broker.approve_metadata(
+            f.connection,
+            metadata_pending,
+            NativeMetadataApproval::new(metadata, MAX_GRANT_LIFETIME),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker
+        .approve(
+            f.connection,
+            ordinary_pending,
+            NativeApproval::new(ordinary, MAX_GRANT_LIFETIME),
+            f.now,
+        )
+        .unwrap();
+}
+
+#[test]
+fn slot_revocation_isolates_observation_metadata_and_pending_delivery() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let other = f.broker.accept_connection().unwrap();
+    let deadline = f.now + Duration::from_secs(60);
+    let scope = Scope {
+        observe: BTreeSet::from([a]),
+        ..Scope::default()
+    };
+    let binding = direct(DirectKind::Observation);
+    let ordinary = GrantRequest {
+        scope: scope.clone(),
+        bindings: BTreeSet::from([binding]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let metadata = metadata_request(&[a]);
+    f.approve(scope.clone(), &[binding]);
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+
+    let observation = f.run(scope.clone(), binding);
+    let observe = Operation::Observe {
+        target: a,
+        max_bytes: 64,
+    };
+    let committed = f
+        .broker
+        .prepare_request(f.connection, observation, observe, f.now)
+        .unwrap();
+    f.broker
+        .commit_disclosure(f.connection, committed, 10, f.now)
+        .unwrap();
+    let ordinary_delivery = f
+        .broker
+        .disclosure_liveness(f.connection, committed, f.now)
+        .unwrap();
+    f.broker.settle_request(f.connection, committed).unwrap();
+    let ordinary_pending = f
+        .broker
+        .prepare_request(f.connection, observation, observe, f.now)
+        .unwrap();
+
+    let metadata_context = metadata_run(&mut f, &[a], deadline);
+    let discover = Operation::Discover { max_bytes: 64 };
+    let committed = f
+        .broker
+        .prepare_request(f.connection, metadata_context, discover, f.now)
+        .unwrap();
+    f.broker
+        .commit_disclosure(f.connection, committed, 10, f.now)
+        .unwrap();
+    let metadata_delivery = f
+        .broker
+        .disclosure_liveness(f.connection, committed, f.now)
+        .unwrap();
+    f.broker.settle_request(f.connection, committed).unwrap();
+    let metadata_pending = f
+        .broker
+        .prepare_request(f.connection, metadata_context, discover, f.now)
+        .unwrap();
+    let metadata_approval = f
+        .broker
+        .request_metadata_approval(f.connection, metadata.clone(), f.now)
+        .unwrap();
+    let ordinary_approval = f
+        .broker
+        .request_approval(f.connection, ordinary.clone(), f.now)
+        .unwrap();
+
+    f.broker.revoke_ordinary(other);
+    assert!(ordinary_delivery.is_live(f.connection, f.now));
+    assert!(metadata_delivery.is_live(f.connection, f.now));
+    f.broker.revoke_ordinary(f.connection);
+    assert!(!ordinary_delivery.is_live(f.connection, f.now));
+    assert!(metadata_delivery.is_live(f.connection, f.now));
+    assert_eq!(
+        f.broker
+            .commit_disclosure(f.connection, ordinary_pending, 10, f.now),
+        Err(Error::Closed)
+    );
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            ordinary_approval,
+            NativeApproval::new(ordinary, MAX_GRANT_LIFETIME),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    assert_eq!(
+        f.broker.approve_metadata(
+            f.connection,
+            metadata_approval,
+            NativeMetadataApproval::new(metadata, MAX_GRANT_LIFETIME),
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    f.broker
+        .commit_disclosure(f.connection, metadata_pending, 10, f.now)
+        .unwrap();
+    let current_metadata_delivery = f
+        .broker
+        .disclosure_liveness(f.connection, metadata_pending, f.now)
+        .unwrap();
+    f.broker
+        .settle_request(f.connection, metadata_pending)
+        .unwrap();
+    let metadata_late = f
+        .broker
+        .prepare_request(f.connection, metadata_context, discover, f.now)
+        .unwrap();
+
+    f.approve(scope.clone(), &[binding]);
+    assert_eq!(
+        f.broker
+            .prepare_request(f.connection, observation, observe, f.now),
+        Err(Error::Revoked)
+    );
+    let new_observation = f.run(scope, binding);
+    let committed = f
+        .broker
+        .prepare_request(f.connection, new_observation, observe, f.now)
+        .unwrap();
+    f.broker
+        .commit_disclosure(f.connection, committed, 10, f.now)
+        .unwrap();
+    let new_ordinary_delivery = f
+        .broker
+        .disclosure_liveness(f.connection, committed, f.now)
+        .unwrap();
+    f.broker.settle_request(f.connection, committed).unwrap();
+    let ordinary_late = f
+        .broker
+        .prepare_request(f.connection, new_observation, observe, f.now)
+        .unwrap();
+
+    f.broker.revoke_metadata(f.connection);
+    assert!(!metadata_delivery.is_live(f.connection, f.now));
+    assert!(!current_metadata_delivery.is_live(f.connection, f.now));
+    assert!(new_ordinary_delivery.is_live(f.connection, f.now));
+    assert_eq!(
+        f.broker
+            .commit_disclosure(f.connection, metadata_late, 10, f.now),
+        Err(Error::Closed)
+    );
+    f.broker
+        .commit_disclosure(f.connection, ordinary_late, 10, f.now)
+        .unwrap();
+    f.broker
+        .settle_request(f.connection, ordinary_late)
+        .unwrap();
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    let metadata = metadata_run(&mut f, &[a], deadline);
+    let final_metadata_delivery = committed_discovery(&mut f, metadata);
+    f.broker.revoke_all();
+    assert!(!new_ordinary_delivery.is_live(f.connection, f.now));
+    assert!(!final_metadata_delivery.is_live(f.connection, f.now));
+}
+
+#[test]
+fn ordinary_control_revocation_preserves_metadata_and_unknown_outcomes() {
+    for admitted in [false, true] {
+        let mut f = Fixture::new();
+        let a = f.a;
+        let b = f.b;
+        let deadline = f.now + Duration::from_secs(60);
+        let binding = direct_input(b, digest(3), 10);
+        let mut scope = shared_control_scope(&f);
+        scope.return_results = true;
+        f.approve(scope.clone(), &[binding]);
+        approve_metadata(&mut f, &[a], &[b], MAX_GRANT_LIFETIME);
+        let control = f.run(input_scope(b), binding);
+        let lease = f.lease(control, b);
+        let input = f.write(control, lease);
+        if admitted {
+            f.broker
+                .commit_control(f.connection, input, digest(3), 10, f.now)
+                .unwrap();
+            let status = f.broker.status(f.connection, control, f.now).unwrap();
+            assert_eq!(status.admitted_effects, 1);
+            assert!(status.execution_outcome_unknown);
+        }
+
+        let metadata = metadata_run(&mut f, &[a], deadline);
+        let delivery = committed_discovery(&mut f, metadata);
+        let metadata = metadata_run(&mut f, &[a], deadline);
+        let pending = f
+            .broker
+            .prepare_request(
+                f.connection,
+                metadata,
+                Operation::Discover { max_bytes: 64 },
+                f.now,
+            )
+            .unwrap();
+        f.broker.revoke_ordinary(f.connection);
+        assert!(delivery.is_live(f.connection, f.now));
+        assert_eq!(
+            f.broker
+                .commit_control(f.connection, input, digest(3), 10, f.now),
+            Err(Error::Closed)
+        );
+        assert!(matches!(
+            f.broker.prepare_lease(f.connection, control, b, f.now),
+            Err(Error::Revoked)
+        ));
+        f.broker
+            .commit_disclosure(f.connection, pending, 10, f.now)
+            .unwrap();
+
+        f.approve(scope, &[binding]);
+        assert!(delivery.is_live(f.connection, f.now));
+        assert!(matches!(
+            f.broker.prepare_lease(f.connection, control, b, f.now),
+            Err(Error::Revoked)
+        ));
+        let fresh = f.run(input_scope(b), binding);
+        let fresh_lease = f.lease(fresh, b);
+        assert_ne!(fresh_lease.ownership_epoch(), lease.ownership_epoch());
+    }
+}
+
+#[test]
+fn metadata_and_control_expire_independently_at_their_exact_deadlines() {
+    for metadata_expires_first in [false, true] {
+        let mut f = Fixture::new();
+        let a = f.a;
+        let b = f.b;
+        let short = Duration::from_secs(10);
+        let long = Duration::from_secs(120);
+        let control_lifetime = if metadata_expires_first { long } else { short };
+        let metadata_lifetime = if metadata_expires_first { short } else { long };
+        approve_control(&mut f, control_lifetime);
+        approve_metadata(&mut f, &[a], &[b], metadata_lifetime);
+        let action = direct_input(b, digest(3), 10);
+        let mut spec = f.spec(input_scope(b), action);
+        spec.deadline = f.now + control_lifetime.min(Duration::from_secs(60));
+        let control = f.broker.admit_run(f.connection, None, spec, f.now).unwrap();
+        let deadline = f.now + metadata_lifetime.min(Duration::from_secs(60));
+        let run = metadata_run(&mut f, &[a], deadline);
+        let delivery = committed_discovery(&mut f, run);
+        let expiry = f.now + short;
+        assert_eq!(
+            delivery.is_live(f.connection, expiry),
+            !metadata_expires_first
+        );
+        f.broker.poll_expiry(expiry);
+        if metadata_expires_first {
+            assert!(f
+                .broker
+                .prepare_lease(f.connection, control, b, expiry)
+                .is_ok());
+            assert_eq!(
+                f.broker.admit_metadata_run(
+                    f.connection,
+                    metadata_spec(&[a], expiry + short),
+                    expiry,
+                ),
+                Err(Error::Revoked)
+            );
+        } else {
+            assert!(f
+                .broker
+                .prepare_lease(f.connection, control, b, expiry)
+                .is_err());
+            assert!(f
+                .broker
+                .admit_metadata_run(f.connection, metadata_spec(&[a], expiry + short), expiry,)
+                .is_ok());
+        }
+    }
+}
+
+#[test]
+fn metadata_lifecycle_cuts_affected_generations_privacy_and_connections() {
+    for event in 0..5 {
+        let mut f = Fixture::new();
+        let a = f.a;
+        let b = f.b;
+        let deadline = f.now + Duration::from_secs(60);
+        approve_control(&mut f, MAX_GRANT_LIFETIME);
+        approve_metadata(&mut f, &[a], &[b], MAX_GRANT_LIFETIME);
+        let control = f.run(input_scope(b), direct_input(b, digest(3), 10));
+        let run = metadata_run(&mut f, &[a], deadline);
+        let delivery = committed_discovery(&mut f, run);
+        match event {
+            0 => {
+                let replacement = f.broker.attach_target(a.session(), 2).unwrap();
+                assert_ne!(replacement, a);
+                assert!(!delivery.is_live(f.connection, f.now));
+                assert_eq!(
+                    f.broker
+                        .request_metadata_approval(f.connection, metadata_request(&[a]), f.now,),
+                    Err(Error::StaleTarget)
+                );
+                assert!(f
+                    .broker
+                    .prepare_lease(f.connection, control, b, f.now)
+                    .is_err());
+            }
+            1 => {
+                f.broker.attach_target(b.session(), 2).unwrap();
+                assert!(delivery.is_live(f.connection, f.now));
+                assert!(f
+                    .broker
+                    .prepare_lease(f.connection, control, b, f.now)
+                    .is_err());
+                let run = metadata_run(&mut f, &[a], deadline);
+                assert!(committed_discovery(&mut f, run).is_live(f.connection, f.now));
+            }
+            2 => {
+                f.broker.revoke_all();
+                assert!(!delivery.is_live(f.connection, f.now));
+            }
+            3 => {
+                f.broker.revoke(f.connection);
+                assert!(!delivery.is_live(f.connection, f.now));
+            }
+            _ => {
+                let old = f.connection;
+                f.broker.disconnect(old);
+                let new = f.broker.accept_connection().unwrap();
+                assert_ne!(old, new);
+                assert!(!delivery.is_live(old, f.now));
+                assert!(!delivery.is_live(new, f.now));
+                assert_eq!(
+                    f.broker
+                        .admit_metadata_run(new, metadata_spec(&[a], deadline), f.now),
+                    Err(Error::Revoked)
+                );
+            }
+        }
+    }
+
+    let mut f = Fixture::new();
+    let a = f.a;
+    let deadline = f.now + Duration::from_secs(60);
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    let run = metadata_run(&mut f, &[a], deadline);
+    let delivery = committed_discovery(&mut f, run);
+    drop(f.broker);
+    assert!(!delivery.is_live(f.connection, f.now));
+
+    let forged = serde_json::json!({"targets": [a], "control": [a]});
+    assert!(serde_json::from_value::<MetadataGrantRequest>(forged).is_err());
+}
+
+#[test]
+fn metadata_takeover_and_principal_revocation_remain_isolated() {
+    let mut f = Fixture::new();
+    let first = f.connection;
+    let second = f.broker.accept_connection().unwrap();
+    let a = f.a;
+    let b = f.b;
+    let deadline = f.now + Duration::from_secs(60);
+    approve_control(&mut f, MAX_GRANT_LIFETIME);
+    approve_metadata(&mut f, &[a], &[b], MAX_GRANT_LIFETIME);
+    let first_run = metadata_run(&mut f, &[a], deadline);
+    let first_delivery = committed_discovery(&mut f, first_run);
+
+    f.connection = second;
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    let second_run = metadata_run(&mut f, &[a], deadline);
+    assert_eq!(
+        f.broker.prepare_request(
+            first,
+            second_run,
+            Operation::Discover { max_bytes: 1 },
+            f.now,
+        ),
+        Err(Error::Unauthorized)
+    );
+    let second_delivery = committed_discovery(&mut f, second_run);
+    f.broker.human_takeover(b).unwrap();
+    assert!(first_delivery.is_live(first, f.now));
+    assert!(second_delivery.is_live(second, f.now));
+
+    f.broker.revoke(first);
+    assert!(!first_delivery.is_live(first, f.now));
+    assert!(second_delivery.is_live(second, f.now));
+    let run = metadata_run(&mut f, &[a], deadline);
+    assert!(committed_discovery(&mut f, run).is_live(second, f.now));
+    f.broker.revoke_all();
+    assert!(!second_delivery.is_live(second, f.now));
+}
+
+#[test]
+fn metadata_and_ordinary_reapproval_cannot_replenish_each_other() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let b = f.b;
+    let deadline = f.now + Duration::from_secs(60);
+    approve_control(&mut f, MAX_GRANT_LIFETIME);
+    approve_metadata(&mut f, &[a], &[b], MAX_GRANT_LIFETIME);
+    for _ in 0..16 {
+        let run = metadata_run(&mut f, &[a], deadline);
+        let request = f
+            .broker
+            .prepare_request(
+                f.connection,
+                run,
+                Operation::Discover {
+                    max_bytes: MAX_PAYLOAD_BYTES,
+                },
+                f.now,
+            )
+            .unwrap();
+        f.broker.settle_request(f.connection, request).unwrap();
+        f.broker
+            .complete(f.connection, run, Completion::Returned, f.now)
+            .unwrap();
+        f.broker.forget_run(f.connection, run).unwrap();
+    }
+    approve_control(&mut f, MAX_GRANT_LIFETIME);
+    let run = metadata_run(&mut f, &[a], deadline);
+    assert_eq!(
+        f.broker.prepare_request(
+            f.connection,
+            run,
+            Operation::Discover { max_bytes: 1 },
+            f.now
+        ),
+        Err(Error::QuotaExceeded)
+    );
+
+    let mut f = Fixture::new();
+    let a = f.a;
+    let scope = Scope {
+        discover: BTreeSet::from([a]),
+        ..Scope::default()
+    };
+    f.approve(scope.clone(), &[direct(DirectKind::Discovery)]);
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    for _ in 0..16 {
+        let run = f.run(scope.clone(), direct(DirectKind::Discovery));
+        let request = f
+            .broker
+            .prepare_request(
+                f.connection,
+                run,
+                Operation::Discover {
+                    max_bytes: MAX_PAYLOAD_BYTES,
+                },
+                f.now,
+            )
+            .unwrap();
+        f.broker.settle_request(f.connection, request).unwrap();
+        f.broker
+            .complete(f.connection, run, Completion::Returned, f.now)
+            .unwrap();
+        f.broker.forget_run(f.connection, run).unwrap();
+    }
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    let run = f.run(scope.clone(), direct(DirectKind::Discovery));
+    assert_eq!(
+        f.broker.prepare_request(
+            f.connection,
+            run,
+            Operation::Discover { max_bytes: 1 },
+            f.now
+        ),
+        Err(Error::QuotaExceeded)
+    );
+    f.broker.revoke_metadata(f.connection);
+    f.approve(scope.clone(), &[direct(DirectKind::Discovery)]);
+    let run = f.run(scope, direct(DirectKind::Discovery));
+    assert!(f
+        .broker
+        .prepare_request(
+            f.connection,
+            run,
+            Operation::Discover { max_bytes: 1 },
+            f.now
+        )
+        .is_ok());
+
+    let mut f = Fixture::new();
+    let a = f.a;
+    let deadline = f.now + Duration::from_secs(60);
+    let scope = Scope {
+        discover: BTreeSet::from([a]),
+        ..Scope::default()
+    };
+    f.approve(scope.clone(), &[direct(DirectKind::Discovery)]);
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    for _ in 0..128 {
+        let ordinary = f.run(scope.clone(), direct(DirectKind::Discovery));
+        let metadata = metadata_run(&mut f, &[a], deadline);
+        for run in [ordinary, metadata] {
+            f.broker
+                .complete(f.connection, run, Completion::Returned, f.now)
+                .unwrap();
+            f.broker.forget_run(f.connection, run).unwrap();
+        }
+    }
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    assert_eq!(
+        f.broker.admit_run(
+            f.connection,
+            None,
+            f.spec(scope, direct(DirectKind::Discovery)),
+            f.now,
+        ),
+        Err(Error::QuotaExceeded)
+    );
+}
+
+#[test]
+fn metadata_shares_pending_and_direct_context_limits() {
+    let mut f = Fixture::new();
+    let a = f.a;
+    let ordinary = GrantRequest {
+        scope: Scope {
+            discover: BTreeSet::from([a]),
+            ..Scope::default()
+        },
+        bindings: BTreeSet::from([direct(DirectKind::Discovery)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let first = f
+        .broker
+        .request_approval(f.connection, ordinary.clone(), f.now)
+        .unwrap();
+    let second = f
+        .broker
+        .request_metadata_approval(f.connection, metadata_request(&[a]), f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker
+            .request_metadata_approval(f.connection, metadata_request(&[a]), f.now),
+        Err(Error::QuotaExceeded)
+    );
+    f.broker.reject_approval(f.connection, first).unwrap();
+    f.broker.reject_approval(f.connection, second).unwrap();
+    for _ in 0..6 {
+        let id = f
+            .broker
+            .request_metadata_approval(f.connection, metadata_request(&[a]), f.now)
+            .unwrap();
+        f.broker.reject_approval(f.connection, id).unwrap();
+    }
+    assert_eq!(
+        f.broker.request_approval(f.connection, ordinary, f.now),
+        Err(Error::QuotaExceeded)
+    );
+
+    let mut f = Fixture::new();
+    let a = f.a;
+    let mut connections = vec![f.connection];
+    for _ in 0..7 {
+        connections.push(f.broker.accept_connection().unwrap());
+    }
+    for connection in connections {
+        for _ in 0..2 {
+            f.broker
+                .request_metadata_approval(connection, metadata_request(&[a]), f.now)
+                .unwrap();
+        }
+    }
+    let ninth = f.broker.accept_connection().unwrap();
+    assert_eq!(
+        f.broker
+            .request_metadata_approval(ninth, metadata_request(&[a]), f.now),
+        Err(Error::QuotaExceeded)
+    );
+
+    let mut f = Fixture::new();
+    let a = f.a;
+    let deadline = f.now + Duration::from_secs(60);
+    let scope = Scope {
+        discover: BTreeSet::from([a]),
+        ..Scope::default()
+    };
+    f.approve(scope.clone(), &[direct(DirectKind::Discovery)]);
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    f.run(scope.clone(), direct(DirectKind::Discovery));
+    f.run(scope, direct(DirectKind::Discovery));
+    metadata_run(&mut f, &[a], deadline);
+    metadata_run(&mut f, &[a], deadline);
+    assert_eq!(
+        f.broker
+            .admit_metadata_run(f.connection, metadata_spec(&[a], deadline), f.now),
+        Err(Error::QuotaExceeded)
+    );
+
+    let mut f = Fixture::new();
+    let a = f.a;
+    let mut connections = vec![f.connection];
+    for _ in 0..15 {
+        connections.push(f.broker.accept_connection().unwrap());
+    }
+    for connection in &connections {
+        for _ in 0..8 {
+            let id = f
+                .broker
+                .request_metadata_approval(*connection, metadata_request(&[a]), f.now)
+                .unwrap();
+            f.broker.reject_approval(*connection, id).unwrap();
+        }
+    }
+    f.broker.disconnect(connections[0]);
+    let new = f.broker.accept_connection().unwrap();
+    assert_eq!(
+        f.broker
+            .request_metadata_approval(new, metadata_request(&[a]), f.now),
+        Err(Error::QuotaExceeded)
+    );
+}
+
+#[test]
+fn metadata_and_ordinary_work_share_global_lifetime_quotas() {
+    let limits = Limits {
+        global_operations: 4,
+        ..Limits::default()
+    };
+    let mut f = Fixture::with_limits(limits);
+    let a = f.a;
+    let deadline = f.now + Duration::from_secs(60);
+    let scope = Scope {
+        discover: BTreeSet::from([a]),
+        ..Scope::default()
+    };
+    f.approve(scope.clone(), &[direct(DirectKind::Discovery)]);
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    let metadata = metadata_run(&mut f, &[a], deadline);
+    committed_discovery(&mut f, metadata);
+    let ordinary = f.run(scope.clone(), direct(DirectKind::Discovery));
+    committed_discovery(&mut f, ordinary);
+    f.approve(scope, &[direct(DirectKind::Discovery)]);
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    assert_eq!(
+        f.broker
+            .admit_metadata_run(f.connection, metadata_spec(&[a], deadline), f.now),
+        Err(Error::QuotaExceeded)
+    );
+
+    let limits = Limits {
+        global_disclosed_bytes: 64,
+        ..Limits::default()
+    };
+    let mut f = Fixture::with_limits(limits);
+    let a = f.a;
+    let deadline = f.now + Duration::from_secs(60);
+    let scope = Scope {
+        discover: BTreeSet::from([a]),
+        ..Scope::default()
+    };
+    f.approve(scope.clone(), &[direct(DirectKind::Discovery)]);
+    approve_metadata(&mut f, &[a], &[], MAX_GRANT_LIFETIME);
+    let metadata = metadata_run(&mut f, &[a], deadline);
+    committed_discovery(&mut f, metadata);
+    let ordinary = f.run(scope, direct(DirectKind::Discovery));
+    assert_eq!(
+        f.broker.prepare_request(
+            f.connection,
+            ordinary,
+            Operation::Discover { max_bytes: 1 },
+            f.now,
+        ),
+        Err(Error::QuotaExceeded)
+    );
+}

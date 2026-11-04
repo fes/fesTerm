@@ -1,5 +1,9 @@
 use crate::types::*;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Instant;
 
 #[derive(Clone, Copy, Default)]
@@ -8,9 +12,39 @@ struct Usage {
     bytes: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GrantSlot {
+    Ordinary,
+    Metadata,
+}
+
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+struct GrantRevisions {
+    ordinary: u64,
+    metadata: u64,
+}
+
 struct Principal {
     grant: Option<Grant>,
+    metadata: Option<MetadataGrant>,
+    revisions: GrantRevisions,
+    cross_consent: Option<(u64, u64)>,
+    usage: Usage,
     approvals_requested: u32,
+}
+
+struct DeliveryEpoch(Arc<AtomicBool>);
+
+impl DeliveryEpoch {
+    fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(true)))
+    }
+}
+
+impl Drop for DeliveryEpoch {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 struct Grant {
@@ -19,13 +53,44 @@ struct Grant {
     handoffs: BTreeMap<TargetRef, BTreeSet<TargetRef>>,
     expires: Instant,
     usage: Usage,
+    delivery: DeliveryEpoch,
+}
+
+struct MetadataGrant {
+    epoch: u64,
+    targets: BTreeSet<TargetRef>,
+    expires: Instant,
+    usage: Usage,
+    delivery: DeliveryEpoch,
+}
+
+enum PendingProposal {
+    Ordinary(GrantRequest),
+    Metadata(MetadataGrantRequest),
+}
+
+impl PendingProposal {
+    fn slot(&self) -> GrantSlot {
+        match self {
+            Self::Ordinary(_) => GrantSlot::Ordinary,
+            Self::Metadata(_) => GrantSlot::Metadata,
+        }
+    }
+
+    fn contains_target(&self, target: TargetRef) -> bool {
+        match self {
+            Self::Ordinary(request) => request.scope.targets().contains(&target),
+            Self::Metadata(request) => request.targets.contains(&target),
+        }
+    }
 }
 
 struct PendingApproval {
     connection: ConnectionId,
-    request: GrantRequest,
+    proposal: PendingProposal,
     expires: Instant,
     ownership: BTreeMap<TargetRef, (u64, Option<LeaseRef>)>,
+    revisions: GrantRevisions,
 }
 
 struct Target {
@@ -37,6 +102,7 @@ struct Target {
 
 struct Run {
     connection: ConnectionId,
+    slot: GrantSlot,
     grant_epoch: u64,
     parent: Option<RunId>,
     spec: RunSpec,
@@ -46,6 +112,55 @@ struct Run {
     status: RunStatus,
     started_workflow: Option<(StartKey, RunId)>,
     direct_input_prepared: bool,
+    delivery: Arc<AtomicBool>,
+    descendant_delivery: Arc<AtomicBool>,
+}
+
+enum GrantRef<'a> {
+    Ordinary(&'a Grant),
+    Metadata(&'a MetadataGrant),
+}
+
+impl GrantRef<'_> {
+    fn epoch(&self) -> u64 {
+        match self {
+            Self::Ordinary(grant) => grant.epoch,
+            Self::Metadata(grant) => grant.epoch,
+        }
+    }
+
+    fn expires(&self) -> Instant {
+        match self {
+            Self::Ordinary(grant) => grant.expires,
+            Self::Metadata(grant) => grant.expires,
+        }
+    }
+
+    fn usage(&self) -> Usage {
+        match self {
+            Self::Ordinary(grant) => grant.usage,
+            Self::Metadata(grant) => grant.usage,
+        }
+    }
+
+    fn delivery(&self) -> Arc<AtomicBool> {
+        match self {
+            Self::Ordinary(grant) => grant.delivery.0.clone(),
+            Self::Metadata(grant) => grant.delivery.0.clone(),
+        }
+    }
+
+    fn validate_closure(
+        &self,
+        sources: &BTreeSet<TargetRef>,
+        controls: &BTreeSet<TargetRef>,
+    ) -> Result<()> {
+        match self {
+            Self::Ordinary(grant) => Broker::validate_closure(sources, controls, &grant.handoffs),
+            Self::Metadata(_) if controls.is_empty() => Ok(()),
+            Self::Metadata(_) => Err(Error::Unauthorized),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -133,6 +248,10 @@ impl Broker {
             connection,
             Principal {
                 grant: None,
+                metadata: None,
+                revisions: GrantRevisions::default(),
+                cross_consent: None,
+                usage: Usage::default(),
                 approvals_requested: 0,
             },
         );
@@ -220,22 +339,31 @@ impl Broker {
     }
 
     fn invalidate_target_grants(&mut self, target: TargetRef) {
-        let connections: Vec<_> = self
+        let grants: Vec<_> = self
             .principals
             .iter()
-            .filter_map(|(id, principal)| {
-                principal
+            .flat_map(|(id, principal)| {
+                let ordinary = principal
                     .grant
                     .as_ref()
-                    .filter(|grant| grant.request.scope.targets().contains(&target))
-                    .map(|_| *id)
+                    .is_some_and(|grant| grant.request.scope.targets().contains(&target));
+                let metadata = principal
+                    .metadata
+                    .as_ref()
+                    .is_some_and(|grant| grant.targets.contains(&target));
+                [
+                    ordinary.then_some((*id, GrantSlot::Ordinary)),
+                    metadata.then_some((*id, GrantSlot::Metadata)),
+                ]
+                .into_iter()
+                .flatten()
             })
             .collect();
-        for connection in connections {
-            self.revoke(connection);
+        for (connection, slot) in grants {
+            self.revoke_slot(connection, slot);
         }
         self.pending
-            .retain(|_, pending| !pending.request.scope.targets().contains(&target));
+            .retain(|_, pending| !pending.proposal.contains_target(target));
     }
 
     fn validate_scope(&self, scope: &Scope) -> Result<()> {
@@ -278,6 +406,41 @@ impl Broker {
         Ok(())
     }
 
+    fn validate_metadata_targets(&self, targets: &BTreeSet<TargetRef>) -> Result<()> {
+        if targets.is_empty() || targets.len() > MAX_SCOPE_TARGETS {
+            return Err(Error::InvalidRequest);
+        }
+        for target in targets {
+            self.target(*target)?;
+        }
+        Ok(())
+    }
+
+    fn revisions(&self, connection: ConnectionId) -> Result<GrantRevisions> {
+        let revisions = self
+            .principals
+            .get(&connection)
+            .ok_or(Error::Unauthorized)?
+            .revisions;
+        if revisions.ordinary == u64::MAX || revisions.metadata == u64::MAX {
+            return Err(Error::QuotaExceeded);
+        }
+        Ok(revisions)
+    }
+
+    fn ownership_snapshot(
+        &self,
+        controls: &BTreeSet<TargetRef>,
+    ) -> Result<BTreeMap<TargetRef, (u64, Option<LeaseRef>)>> {
+        controls
+            .iter()
+            .map(|reference| {
+                let target = self.target(*reference)?;
+                Ok((*reference, (target.ownership_epoch, target.writer)))
+            })
+            .collect()
+    }
+
     /// Only an explicit paired-client/user invocation may be routed here by the
     /// application. This records a bounded proposal, not authority or a dialog.
     pub fn request_approval(
@@ -288,6 +451,48 @@ impl Broker {
     ) -> Result<ApprovalId> {
         self.poll_expiry(now);
         self.validate_request(&request)?;
+        let ownership = self.ownership_snapshot(&request.scope.control)?;
+        self.request_pending(
+            connection,
+            PendingProposal::Ordinary(request),
+            ownership,
+            now,
+        )
+    }
+
+    /// Records a bounded metadata-only proposal, not authority or a dialog.
+    pub fn request_metadata_approval(
+        &mut self,
+        connection: ConnectionId,
+        request: MetadataGrantRequest,
+        now: Instant,
+    ) -> Result<ApprovalId> {
+        self.poll_expiry(now);
+        self.validate_metadata_targets(&request.targets)?;
+        let principal = self
+            .principals
+            .get(&connection)
+            .ok_or(Error::Unauthorized)?;
+        let controls = principal
+            .grant
+            .as_ref()
+            .map_or_else(BTreeSet::new, |grant| grant.request.scope.control.clone());
+        let ownership = self.ownership_snapshot(&controls)?;
+        self.request_pending(
+            connection,
+            PendingProposal::Metadata(request),
+            ownership,
+            now,
+        )
+    }
+
+    fn request_pending(
+        &mut self,
+        connection: ConnectionId,
+        proposal: PendingProposal,
+        ownership: BTreeMap<TargetRef, (u64, Option<LeaseRef>)>,
+        now: Instant,
+    ) -> Result<ApprovalId> {
         let principal = self
             .principals
             .get(&connection)
@@ -304,18 +509,10 @@ impl Broker {
         {
             return Err(Error::QuotaExceeded);
         }
+        let revisions = self.revisions(connection)?;
         let expires = now
             .checked_add(MAX_GRANT_LIFETIME)
             .ok_or(Error::InvalidRequest)?;
-        let ownership = request
-            .scope
-            .control
-            .iter()
-            .map(|reference| {
-                let target = self.target(*reference)?;
-                Ok((*reference, (target.ownership_epoch, target.writer)))
-            })
-            .collect::<Result<_>>()?;
         let id = ApprovalId {
             instance: self.instance,
             sequence: self.mint()?,
@@ -324,9 +521,10 @@ impl Broker {
             id,
             PendingApproval {
                 connection,
-                request,
+                proposal,
                 expires,
                 ownership,
+                revisions,
             },
         );
         self.principals
@@ -350,8 +548,7 @@ impl Broker {
     }
 
     /// Native-only decision, bound to the exact pending channel/proposal.
-    /// Reapproval revokes all old runs; only this explicit native decision resets
-    /// that principal's shared counters. Global counters never reset.
+    /// Reapproval cuts ordinary runs, but does not replace a metadata grant.
     /// Approval does not transfer another principal's writer lease.
     pub fn approve(
         &mut self,
@@ -362,18 +559,21 @@ impl Broker {
     ) -> Result<()> {
         self.poll_expiry(now);
         let pending = self.pending.get(&id).ok_or(Error::Unauthorized)?;
+        let PendingProposal::Ordinary(proposal) = &pending.proposal else {
+            return Err(Error::Unauthorized);
+        };
         if pending.connection != connection
-            || !approval.request.scope.subset_of(&pending.request.scope)
-            || !approval
-                .request
-                .bindings
-                .is_subset(&pending.request.bindings)
+            || !approval.request.scope.subset_of(&proposal.scope)
+            || !approval.request.bindings.is_subset(&proposal.bindings)
             || !approval
                 .request
                 .direct_read_calls
-                .is_subset(&pending.request.direct_read_calls)
+                .is_subset(&proposal.direct_read_calls)
         {
             return Err(Error::Unauthorized);
+        }
+        if pending.revisions != self.revisions(connection)? {
+            return Err(Error::Revoked);
         }
         self.validate_request(&approval.request)?;
         for reference in &approval.request.scope.control {
@@ -390,22 +590,143 @@ impl Broker {
             &approval.request.scope.control,
             &approval.handoffs,
         )?;
+        let principal = self
+            .principals
+            .get(&connection)
+            .ok_or(Error::Unauthorized)?;
+        let metadata_epoch = if let Some(metadata) = &principal.metadata {
+            self.validate_metadata_targets(&metadata.targets)?;
+            Self::validate_cross_closure(
+                &approval.request.scope,
+                &approval.handoffs,
+                &metadata.targets,
+            )?;
+            (!approval.request.scope.control.is_empty()).then_some(metadata.epoch)
+        } else {
+            None
+        };
+        self.validate_revision_transition(connection, GrantSlot::Ordinary)?;
         let expires = now
             .checked_add(approval.lifetime)
             .ok_or(Error::InvalidRequest)?;
         let epoch = self.mint()?;
-        self.revoke(connection);
+        self.revoke_slot(connection, GrantSlot::Ordinary);
         let principal = self
             .principals
             .get_mut(&connection)
             .ok_or(Error::Unauthorized)?;
+        if principal.metadata.is_none() {
+            principal.usage = Usage::default();
+        }
+        principal.revisions.ordinary += 1;
         principal.grant = Some(Grant {
             epoch,
             request: approval.request,
             handoffs: approval.handoffs,
             expires,
             usage: Usage::default(),
+            delivery: DeliveryEpoch::new(),
         });
+        principal.cross_consent = metadata_epoch.map(|metadata| (epoch, metadata));
+        self.discard_stale_proposals(connection);
+        Ok(())
+    }
+
+    /// Native-only decision for the separate discovery-only slot.
+    pub fn approve_metadata(
+        &mut self,
+        connection: ConnectionId,
+        id: ApprovalId,
+        approval: NativeMetadataApproval,
+        now: Instant,
+    ) -> Result<()> {
+        self.poll_expiry(now);
+        let pending = self.pending.get(&id).ok_or(Error::Unauthorized)?;
+        let PendingProposal::Metadata(proposal) = &pending.proposal else {
+            return Err(Error::Unauthorized);
+        };
+        if pending.connection != connection
+            || !approval.request.targets.is_subset(&proposal.targets)
+        {
+            return Err(Error::Unauthorized);
+        }
+        if pending.revisions != self.revisions(connection)? {
+            return Err(Error::Revoked);
+        }
+        self.validate_metadata_targets(&approval.request.targets)?;
+        if approval.lifetime.is_zero() || approval.lifetime > MAX_GRANT_LIFETIME {
+            return Err(Error::InvalidRequest);
+        }
+        let principal = self
+            .principals
+            .get(&connection)
+            .ok_or(Error::Unauthorized)?;
+        let controls = principal
+            .grant
+            .as_ref()
+            .map_or_else(BTreeSet::new, |grant| grant.request.scope.control.clone());
+        if pending.ownership != self.ownership_snapshot(&controls)? {
+            return Err(Error::Revoked);
+        }
+        if approval.control_disclosures.len() != controls.len()
+            || controls.iter().any(|target| {
+                approval.control_disclosures.get(target) != Some(&approval.request.targets)
+            })
+        {
+            return Err(Error::Unauthorized);
+        }
+        let ordinary_epoch = if let Some(grant) = &principal.grant {
+            Self::validate_cross_closure(
+                &grant.request.scope,
+                &grant.handoffs,
+                &approval.request.targets,
+            )?;
+            (!controls.is_empty()).then_some(grant.epoch)
+        } else {
+            None
+        };
+        self.validate_revision_transition(connection, GrantSlot::Metadata)?;
+        let expires = now
+            .checked_add(approval.lifetime)
+            .ok_or(Error::InvalidRequest)?;
+        let epoch = self.mint()?;
+        self.revoke_slot(connection, GrantSlot::Metadata);
+        let principal = self
+            .principals
+            .get_mut(&connection)
+            .ok_or(Error::Unauthorized)?;
+        if principal.grant.is_none() {
+            principal.usage = Usage::default();
+        }
+        principal.revisions.metadata += 1;
+        principal.metadata = Some(MetadataGrant {
+            epoch,
+            targets: approval.request.targets,
+            expires,
+            usage: Usage::default(),
+            delivery: DeliveryEpoch::new(),
+        });
+        principal.cross_consent = ordinary_epoch.map(|ordinary| (ordinary, epoch));
+        self.discard_stale_proposals(connection);
+        Ok(())
+    }
+
+    fn validate_revision_transition(
+        &self,
+        connection: ConnectionId,
+        slot: GrantSlot,
+    ) -> Result<()> {
+        let principal = self
+            .principals
+            .get(&connection)
+            .ok_or(Error::Unauthorized)?;
+        let (revision, present) = match slot {
+            GrantSlot::Ordinary => (principal.revisions.ordinary, principal.grant.is_some()),
+            GrantSlot::Metadata => (principal.revisions.metadata, principal.metadata.is_some()),
+        };
+        revision
+            .checked_add(1 + u64::from(present))
+            .ok_or(Error::QuotaExceeded)?;
         Ok(())
     }
 
@@ -425,6 +746,43 @@ impl Broker {
         Ok(())
     }
 
+    fn validate_cross_closure(
+        ordinary: &Scope,
+        handoffs: &BTreeMap<TargetRef, BTreeSet<TargetRef>>,
+        metadata: &BTreeSet<TargetRef>,
+    ) -> Result<()> {
+        if !ordinary.control.is_empty() && !metadata.is_subset(&ordinary.sources()) {
+            return Err(Error::Unauthorized);
+        }
+        Self::validate_closure(metadata, &ordinary.control, handoffs)
+    }
+
+    fn validate_live_cross_closure(&self, connection: ConnectionId, now: Instant) -> Result<()> {
+        let principal = self
+            .principals
+            .get(&connection)
+            .ok_or(Error::Unauthorized)?;
+        let ordinary = principal.grant.as_ref().filter(|grant| now < grant.expires);
+        let metadata = principal
+            .metadata
+            .as_ref()
+            .filter(|grant| now < grant.expires);
+        if let (Some(ordinary), Some(metadata)) = (ordinary, metadata) {
+            if !ordinary.request.scope.control.is_empty() {
+                if principal.cross_consent != Some((ordinary.epoch, metadata.epoch)) {
+                    return Err(Error::Revoked);
+                }
+                self.validate_metadata_targets(&metadata.targets)?;
+                Self::validate_cross_closure(
+                    &ordinary.request.scope,
+                    &ordinary.handoffs,
+                    &metadata.targets,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     fn grant(&self, connection: ConnectionId, now: Instant) -> Result<&Grant> {
         let principal = self
             .principals
@@ -437,23 +795,95 @@ impl Broker {
         Ok(grant)
     }
 
-    pub fn revoke(&mut self, connection: ConnectionId) {
-        if let Some(principal) = self.principals.get_mut(&connection) {
-            principal.grant = None;
+    fn slot_grant(
+        &self,
+        connection: ConnectionId,
+        slot: GrantSlot,
+        now: Instant,
+    ) -> Result<GrantRef<'_>> {
+        let principal = self
+            .principals
+            .get(&connection)
+            .ok_or(Error::Unauthorized)?;
+        let grant = match slot {
+            GrantSlot::Ordinary => {
+                GrantRef::Ordinary(principal.grant.as_ref().ok_or(Error::Revoked)?)
+            }
+            GrantSlot::Metadata => {
+                GrantRef::Metadata(principal.metadata.as_ref().ok_or(Error::Revoked)?)
+            }
+        };
+        if now >= grant.expires() {
+            return Err(Error::Expired);
         }
-        self.pending
-            .retain(|_, pending| pending.connection != connection);
+        Ok(grant)
+    }
+
+    fn discard_stale_proposals(&mut self, connection: ConnectionId) {
+        let revisions = self
+            .principals
+            .get(&connection)
+            .map(|principal| principal.revisions);
+        self.pending.retain(|_, pending| {
+            pending.connection != connection || Some(pending.revisions) == revisions
+        });
+    }
+
+    fn revoke_slot(&mut self, connection: ConnectionId, slot: GrantSlot) {
+        if let Some(principal) = self.principals.get_mut(&connection) {
+            let removed = match slot {
+                GrantSlot::Ordinary => principal.grant.take().is_some(),
+                GrantSlot::Metadata => principal.metadata.take().is_some(),
+            };
+            if removed {
+                let revision = match slot {
+                    GrantSlot::Ordinary => &mut principal.revisions.ordinary,
+                    GrantSlot::Metadata => &mut principal.revisions.metadata,
+                };
+                *revision = revision.saturating_add(1);
+                principal.cross_consent = None;
+            }
+        }
+        self.pending.retain(|_, pending| {
+            pending.connection != connection || pending.proposal.slot() != slot
+        });
+        self.discard_stale_proposals(connection);
         let runs: Vec<_> = self
             .runs
             .iter()
             .filter(|(_, run)| {
-                run.connection == connection && run.status.state == RunState::Running
+                run.connection == connection
+                    && run.slot == slot
+                    && run.status.state == RunState::Running
             })
             .map(|(id, _)| *id)
             .collect();
         for id in runs {
             self.cut(id, RunState::Interrupted, Some(Error::Revoked));
         }
+    }
+
+    /// Revoke this connection's ordinary grant, runs and leases without
+    /// revoking its independently approved metadata grant. Ordinary proposals
+    /// are discarded; if a live grant changes revision, stale opposite-slot
+    /// proposals are also discarded. Lifetime proposal charges are not refunded.
+    pub fn revoke_ordinary(&mut self, connection: ConnectionId) {
+        self.revoke_slot(connection, GrantSlot::Ordinary);
+    }
+
+    /// Revoke only the independently approved metadata grant. Metadata proposals
+    /// are discarded; if a live grant changes revision, stale opposite-slot
+    /// proposals are also discarded. Lifetime proposal charges are not refunded.
+    pub fn revoke_metadata(&mut self, connection: ConnectionId) {
+        self.revoke_slot(connection, GrantSlot::Metadata);
+    }
+
+    /// Revoke all authority and pending approvals for this connection.
+    pub fn revoke(&mut self, connection: ConnectionId) {
+        self.revoke_slot(connection, GrantSlot::Ordinary);
+        self.revoke_slot(connection, GrantSlot::Metadata);
+        self.pending
+            .retain(|_, pending| pending.connection != connection);
     }
 
     /// Lock/suspend/privacy loss is a global revocation, never a pause/resume.
@@ -477,19 +907,28 @@ impl Broker {
         for id in expired {
             self.cut(id, RunState::TimedOut, Some(Error::Expired));
         }
-        let connections: Vec<_> = self
+        let grants: Vec<_> = self
             .principals
             .iter()
-            .filter_map(|(id, principal)| {
-                principal
+            .flat_map(|(id, principal)| {
+                let ordinary = principal
                     .grant
                     .as_ref()
-                    .filter(|grant| now >= grant.expires)
-                    .map(|_| *id)
+                    .is_some_and(|grant| now >= grant.expires);
+                let metadata = principal
+                    .metadata
+                    .as_ref()
+                    .is_some_and(|grant| now >= grant.expires);
+                [
+                    ordinary.then_some((*id, GrantSlot::Ordinary)),
+                    metadata.then_some((*id, GrantSlot::Metadata)),
+                ]
+                .into_iter()
+                .flatten()
             })
             .collect();
-        for connection in connections {
-            self.revoke(connection);
+        for (connection, slot) in grants {
+            self.revoke_slot(connection, slot);
         }
     }
 
@@ -498,8 +937,8 @@ impl Broker {
         if run.connection != connection {
             return Err(Error::Unauthorized);
         }
-        let grant = self.grant(connection, now)?;
-        if run.grant_epoch != grant.epoch {
+        let grant = self.slot_grant(connection, run.slot, now)?;
+        if run.grant_epoch != grant.epoch() {
             return Err(Error::Revoked);
         }
         if now >= run.spec.deadline {
@@ -514,7 +953,8 @@ impl Broker {
         if let Some(parent) = run.parent {
             self.check_run(connection, parent, now)?;
         }
-        Self::validate_closure(&run.frozen_sources, &run.frozen_controls, &grant.handoffs)?;
+        self.validate_live_cross_closure(connection, now)?;
+        grant.validate_closure(&run.frozen_sources, &run.frozen_controls)?;
         Ok(run)
     }
 
@@ -533,6 +973,7 @@ impl Broker {
     fn charge(
         &mut self,
         connection: ConnectionId,
+        slot: GrantSlot,
         lineage: &[RunId],
         operations: u32,
         bytes: u32,
@@ -548,31 +989,47 @@ impl Broker {
                     .checked_add(bytes)
                     .is_some_and(|value| value <= budget.disclosed_bytes)
         };
+        let principal = self
+            .principals
+            .get(&connection)
+            .ok_or(Error::Unauthorized)?;
         if !fits(
             self.global,
             Budget {
                 operations: self.limits.global_operations,
                 disclosed_bytes: self.limits.global_disclosed_bytes,
             },
-        ) || !fits(self.grant(connection, now)?.usage, Budget::default())
+        ) || !fits(principal.usage, Budget::default())
+            || !fits(
+                self.slot_grant(connection, slot, now)?.usage(),
+                Budget::default(),
+            )
         {
             return Err(Error::QuotaExceeded);
         }
         for id in lineage {
             let run = self.check_run(connection, *id, now)?;
+            if run.slot != slot {
+                return Err(Error::Unauthorized);
+            }
             if !fits(run.usage, run.spec.budget) {
                 return Err(Error::QuotaExceeded);
             }
         }
         self.global.operations += operations;
         self.global.bytes += bytes;
-        let grant = self
+        let principal = self
             .principals
             .get_mut(&connection)
-            .and_then(|principal| principal.grant.as_mut())
-            .ok_or(Error::Revoked)?;
-        grant.usage.operations += operations;
-        grant.usage.bytes += bytes;
+            .ok_or(Error::Unauthorized)?;
+        principal.usage.operations += operations;
+        principal.usage.bytes += bytes;
+        let grant_usage = match slot {
+            GrantSlot::Ordinary => &mut principal.grant.as_mut().ok_or(Error::Revoked)?.usage,
+            GrantSlot::Metadata => &mut principal.metadata.as_mut().ok_or(Error::Revoked)?.usage,
+        };
+        grant_usage.operations += operations;
+        grant_usage.bytes += bytes;
         for id in lineage {
             let run = self.runs.get_mut(id).ok_or(Error::Unauthorized)?;
             run.usage.operations += operations;
@@ -594,20 +1051,77 @@ impl Broker {
         spec: RunSpec,
         now: Instant,
     ) -> Result<RunId> {
+        self.admit_in_slot(connection, GrantSlot::Ordinary, parent, spec, now)
+    }
+
+    /// Admit a direct discovery root using only the separate metadata grant.
+    pub fn admit_metadata_run(
+        &mut self,
+        connection: ConnectionId,
+        spec: MetadataRunSpec,
+        now: Instant,
+    ) -> Result<RunId> {
+        let spec = RunSpec {
+            binding: InvocationBinding {
+                api_version: 1,
+                invocation: Invocation::Direct {
+                    operation: DirectKind::Discovery,
+                },
+                parameters: spec.parameters,
+            },
+            scope: Scope {
+                discover: spec.targets,
+                ..Scope::default()
+            },
+            budget: spec.budget,
+            deadline: spec.deadline,
+        };
+        self.admit_in_slot(connection, GrantSlot::Metadata, None, spec, now)
+    }
+
+    fn admit_in_slot(
+        &mut self,
+        connection: ConnectionId,
+        slot: GrantSlot,
+        parent: Option<RunId>,
+        spec: RunSpec,
+        now: Instant,
+    ) -> Result<RunId> {
         self.poll_expiry(now);
         self.validate_scope(&spec.scope)?;
         if spec.binding.api_version != 1 {
             return Err(Error::InvalidRequest);
         }
-        let grant = self.grant(connection, now)?;
-        let binding_approved = grant.request.bindings.contains(&spec.binding)
-            || matches!(
-                spec.binding.invocation,
-                Invocation::Direct { operation }
-                    if grant.request.direct_read_calls.contains(&operation)
-            );
-        if !spec.scope.subset_of(&grant.request.scope) || !binding_approved {
-            return Err(Error::Unauthorized);
+        let grant = self.slot_grant(connection, slot, now)?;
+        self.validate_live_cross_closure(connection, now)?;
+        match &grant {
+            GrantRef::Ordinary(grant) => {
+                let binding_approved = grant.request.bindings.contains(&spec.binding)
+                    || matches!(
+                        spec.binding.invocation,
+                        Invocation::Direct { operation }
+                            if grant.request.direct_read_calls.contains(&operation)
+                    );
+                if !spec.scope.subset_of(&grant.request.scope) || !binding_approved {
+                    return Err(Error::Unauthorized);
+                }
+            }
+            GrantRef::Metadata(grant) => {
+                if parent.is_some()
+                    || spec.binding.invocation
+                        != (Invocation::Direct {
+                            operation: DirectKind::Discovery,
+                        })
+                    || spec.scope.discover.is_empty()
+                    || !spec.scope.discover.is_subset(&grant.targets)
+                    || !spec.scope.observe.is_empty()
+                    || !spec.scope.control.is_empty()
+                    || spec.scope.invoke_workflows
+                    || spec.scope.return_results
+                {
+                    return Err(Error::Unauthorized);
+                }
+            }
         }
         if let Invocation::DirectInput { target, .. } = spec.binding.invocation {
             if !spec.scope.control.contains(&target) {
@@ -615,7 +1129,7 @@ impl Broker {
             }
         }
         if spec.deadline <= now
-            || spec.deadline > grant.expires
+            || spec.deadline > grant.expires()
             || spec.budget.operations == 0
             || spec.budget.operations > Budget::default().operations
             || spec.budget.disclosed_bytes > Budget::default().disclosed_bytes
@@ -623,7 +1137,9 @@ impl Broker {
             return Err(Error::InvalidRequest);
         }
         let workflow = matches!(spec.binding.invocation, Invocation::Workflow { .. });
-        if workflow && !grant.request.scope.invoke_workflows {
+        if workflow
+            && !matches!(&grant, GrantRef::Ordinary(grant) if grant.request.scope.invoke_workflows)
+        {
             return Err(Error::Unauthorized);
         }
         let active = self
@@ -644,12 +1160,13 @@ impl Broker {
         {
             return Err(Error::QuotaExceeded);
         }
-        let grant_epoch = grant.epoch;
+        let grant_epoch = grant.epoch();
         let mut frozen_sources = spec.scope.sources();
         let mut frozen_controls = spec.scope.control.clone();
         let lineage = if let Some(parent) = parent {
             let parent_run = self.check_run(connection, parent, now)?;
-            if !workflow
+            if parent_run.slot != slot
+                || !workflow
                 || !matches!(
                     parent_run.spec.binding.invocation,
                     Invocation::Workflow { .. }
@@ -672,16 +1189,17 @@ impl Broker {
         } else {
             Vec::new()
         };
-        Self::validate_closure(&frozen_sources, &frozen_controls, &grant.handoffs)?;
+        grant.validate_closure(&frozen_sources, &frozen_controls)?;
         let id = RunId {
             instance: self.instance,
             sequence: self.mint()?,
         };
-        self.charge(connection, &lineage, 1, 0, now)?;
+        self.charge(connection, slot, &lineage, 1, 0, now)?;
         self.runs.insert(
             id,
             Run {
                 connection,
+                slot,
                 grant_epoch,
                 parent,
                 spec,
@@ -699,6 +1217,8 @@ impl Broker {
                 },
                 started_workflow: None,
                 direct_input_prepared: false,
+                delivery: Arc::new(AtomicBool::new(true)),
+                descendant_delivery: Arc::new(AtomicBool::new(true)),
             },
         );
         Ok(id)
@@ -721,10 +1241,11 @@ impl Broker {
     ) -> Result<RunId> {
         self.poll_expiry(now);
         let caller = self.check_run(connection, context, now)?;
-        if caller.spec.binding.invocation
-            != (Invocation::Direct {
-                operation: DirectKind::WorkflowStart,
-            })
+        if caller.slot != GrantSlot::Ordinary
+            || caller.spec.binding.invocation
+                != (Invocation::Direct {
+                    operation: DirectKind::WorkflowStart,
+                })
             || !caller.spec.scope.invoke_workflows
             || !spec.scope.subset_of(&caller.spec.scope)
             || !matches!(spec.binding.invocation, Invocation::Workflow { .. })
@@ -748,7 +1269,14 @@ impl Broker {
                 return Err(Error::BindingMismatch);
             }
             let run = receipt.run;
-            self.charge(connection, &self.lineage(context), 1, 0, now)?;
+            self.charge(
+                connection,
+                GrantSlot::Ordinary,
+                &self.lineage(context),
+                1,
+                0,
+                now,
+            )?;
             self.runs
                 .get_mut(&context)
                 .ok_or(Error::Closed)?
@@ -758,7 +1286,14 @@ impl Broker {
         if self.starts.len() >= 128 {
             return Err(Error::QuotaExceeded);
         }
-        self.charge(connection, &self.lineage(context), 1, 0, now)?;
+        self.charge(
+            connection,
+            GrantSlot::Ordinary,
+            &self.lineage(context),
+            1,
+            0,
+            now,
+        )?;
         let run = self.admit_run(connection, None, spec.clone(), now)?;
         let admitted = self.runs.get_mut(&run).ok_or(Error::Closed)?;
         admitted.frozen_sources.extend(inherited_sources);
@@ -813,11 +1348,14 @@ impl Broker {
             return Err(Error::Unauthorized);
         }
         let grant = self.grant(connection, now)?;
-        if run.grant_epoch != grant.epoch || !grant.request.scope.return_results {
+        if run.slot != GrantSlot::Ordinary
+            || run.grant_epoch != grant.epoch
+            || !grant.request.scope.return_results
+        {
             return Err(Error::Unauthorized);
         }
         let status = run.status;
-        self.charge(connection, &[], 1, 256, now)?;
+        self.charge(connection, GrantSlot::Ordinary, &[], 1, 256, now)?;
         Ok(status)
     }
 
@@ -903,7 +1441,7 @@ impl Broker {
             })
             .collect();
         for connection in connections {
-            self.revoke(connection);
+            self.revoke_slot(connection, GrantSlot::Ordinary);
         }
         let target = self
             .targets
@@ -1017,6 +1555,7 @@ impl Broker {
     ) -> Result<RequestId> {
         self.poll_expiry(now);
         let run = self.check_run(connection, id, now)?;
+        let slot = run.slot;
         let direct_input = matches!(run.spec.binding.invocation, Invocation::DirectInput { .. });
         if direct_input && run.direct_input_prepared {
             return Err(Error::Closed);
@@ -1037,6 +1576,7 @@ impl Broker {
         };
         self.charge(
             connection,
+            slot,
             &self.lineage(id),
             1,
             operation.reserved_bytes(),
@@ -1105,6 +1645,39 @@ impl Broker {
         }
         self.requests.get_mut(&id).ok_or(Error::Closed)?.committed = true;
         Ok(())
+    }
+
+    /// Capture the original grant/run liveness for this committed response.
+    /// This does not authorize other data or replace the application's
+    /// serialized privacy, attachment, cancellation and publication checks.
+    pub fn disclosure_liveness(
+        &self,
+        connection: ConnectionId,
+        id: RequestId,
+        now: Instant,
+    ) -> Result<DisclosureLiveness> {
+        let (request, run) = self.check_request(connection, id, now)?;
+        if !request.committed || matches!(request.operation, Operation::Control { .. }) {
+            return Err(Error::InvalidRequest);
+        }
+        let ancestors = self
+            .lineage(request.run)
+            .into_iter()
+            .skip(1)
+            .map(|id| {
+                self.runs
+                    .get(&id)
+                    .map(|run| run.descendant_delivery.clone())
+                    .ok_or(Error::Closed)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(DisclosureLiveness {
+            connection,
+            deadline: run.spec.deadline,
+            grant: self.slot_grant(connection, run.slot, now)?.delivery(),
+            run: run.delivery.clone(),
+            ancestors,
+        })
     }
 
     /// At the serialized transport admission boundary: reserve an infallible
@@ -1182,12 +1755,17 @@ impl Broker {
         }
         for child in descendants {
             if let Some(run) = self.runs.get_mut(&child) {
+                run.descendant_delivery.store(false, Ordering::Release);
+                let child_state = if child == id {
+                    state
+                } else {
+                    RunState::Cancelled
+                };
+                if child_state != RunState::Completed {
+                    run.delivery.store(false, Ordering::Release);
+                }
                 if run.status.state == RunState::Running {
-                    run.status.state = if child == id {
-                        state
-                    } else {
-                        RunState::Cancelled
-                    };
+                    run.status.state = child_state;
                     run.status.failure = failure;
                 }
             }
@@ -1275,7 +1853,7 @@ impl Broker {
         if run.connection != connection {
             return Err(Error::Unauthorized);
         }
-        if run.grant_epoch != self.grant(connection, now)?.epoch {
+        if run.grant_epoch != self.slot_grant(connection, run.slot, now)?.epoch() {
             return Err(Error::Revoked);
         }
         let started_workflow = run.started_workflow;

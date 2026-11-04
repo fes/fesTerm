@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 
 pub const MAX_GRANT_LIFETIME: Duration = Duration::from_secs(300);
@@ -140,6 +144,14 @@ pub struct GrantRequest {
     pub direct_read_calls: BTreeSet<DirectKind>,
 }
 
+/// A separate proposal for discovery of exactly these target generations.
+/// It carries no observation, control, workflow or result authority.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetadataGrantRequest {
+    pub targets: BTreeSet<TargetRef>,
+}
+
 /// Native UI decision. Deliberately neither serializable nor deserializable.
 /// Only trusted application code may construct this after showing exact scopes,
 /// invocation bindings, parameter/input digests and the caller identity.
@@ -172,6 +184,39 @@ impl NativeApproval {
     }
 }
 
+/// Native-only decision for a metadata proposal. Never construct this from IPC.
+///
+/// ```compile_fail
+/// use festerm_automation::NativeMetadataApproval;
+/// let _ = serde_json::from_str::<NativeMetadataApproval>("{}");
+/// ```
+pub struct NativeMetadataApproval {
+    pub(crate) request: MetadataGrantRequest,
+    pub(crate) lifetime: Duration,
+    pub(crate) control_disclosures: BTreeMap<TargetRef, BTreeSet<TargetRef>>,
+}
+
+impl NativeMetadataApproval {
+    pub fn new(request: MetadataGrantRequest, lifetime: Duration) -> Self {
+        Self {
+            request,
+            lifetime,
+            control_disclosures: BTreeMap::new(),
+        }
+    }
+
+    /// Explicitly review these metadata sources flowing through a currently
+    /// authorized control target. This does not acquire or transfer a writer.
+    pub fn accept_control_disclosure(
+        mut self,
+        target: TargetRef,
+        metadata_sources: BTreeSet<TargetRef>,
+    ) -> Self {
+        self.control_disclosures.insert(target, metadata_sources);
+        self
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Budget {
     pub operations: u32,
@@ -193,6 +238,44 @@ pub struct RunSpec {
     pub scope: Scope,
     pub budget: Budget,
     pub deadline: Instant,
+}
+
+/// A direct discovery root routed only to the independently approved metadata
+/// grant. The application computes `parameters` from the validated operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MetadataRunSpec {
+    pub parameters: Digest,
+    pub targets: BTreeSet<TargetRef>,
+    pub budget: Budget,
+    pub deadline: Instant,
+}
+
+/// Liveness of one committed disclosure's original grant and run.
+///
+/// This is not a disclosure permit and contains no response bytes. The app
+/// must retain the original authorized response and serialize revocation with
+/// publication under its own admission fence. It must also check privacy,
+/// attachment and request cancellation at the actual delivery boundary.
+#[derive(Clone, Debug)]
+pub struct DisclosureLiveness {
+    pub(crate) connection: ConnectionId,
+    pub(crate) deadline: Instant,
+    pub(crate) grant: Arc<AtomicBool>,
+    pub(crate) run: Arc<AtomicBool>,
+    pub(crate) ancestors: Vec<Arc<AtomicBool>>,
+}
+
+impl DisclosureLiveness {
+    pub fn is_live(&self, connection: ConnectionId, now: Instant) -> bool {
+        self.connection == connection
+            && now < self.deadline
+            && self.grant.load(Ordering::Acquire)
+            && self.run.load(Ordering::Acquire)
+            && self
+                .ancestors
+                .iter()
+                .all(|ancestor| ancestor.load(Ordering::Acquire))
+    }
 }
 
 /// Per-channel idempotency reference; not a credential or execution authority.

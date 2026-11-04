@@ -180,6 +180,64 @@ observation-only: this change adds no MCP input tool, workflow tool, enrollment
 or presentation feature, native approval UI, real terminal write or feature
 activation. Those paths and desktop qualification remain separately gated.
 
+The kernel also has a separately native-approved, discovery-only metadata slot
+on the same connection. It binds exact target generations and has its own epoch,
+expiry and revocation. A typed metadata root uses only that slot; the ordinary
+root API uses only the ordinary grant. Metadata grants do not authorize
+observation, control, workflow execution or result content. Each request still
+binds application-computed canonical parameters and projects only its approved
+target subset. Neither slot is an implicit fallback for the other.
+
+The slots do not independently compose into unreviewed authority. If control
+is live, its already reviewed scope must contain every metadata target as a
+source and its handoffs must approve each source at every control sink. Native
+metadata approval must also explicitly acknowledge the exact metadata sources
+for every current control sink. If metadata is approved first, a subsequent
+native control approval must include those sources and explicitly accept their
+handoff to each sink. A handoff's extra source not present in the ordinary
+scope is insufficient; incompatible combinations refuse rather than expanding
+an active grant. Changing the closure requires a fresh reviewed ordinary grant.
+Both slot revisions and relevant target ownership are frozen in pending
+decisions, so even an add/remove ABA transition makes an old decision stale.
+A revision change immediately discards that connection's stale pending
+decisions and releases their principal/global pending capacity; it does not
+refund lifetime proposal charges or invalidate other principals' decisions.
+Revoking an already empty slot still discards that slot's proposals, but does
+not invalidate a still-current opposite-slot proposal.
+The ordinary source scope does not itself permit discovery without an approved
+discovery or workflow invocation. Separate discovery authority deliberately
+approved in the ordinary grant survives metadata-slot revocation; no route
+silently falls back. Native code must retain and display both current scopes and
+the exact cross-flows under its controller fence, and reject stale decisions.
+
+Both slots share the existing principal/global budgets, pending-approval
+limits and direct-context ceiling. Reapproval of one cannot refill the other:
+the shared principal allowance resets only when the other slot is absent.
+Human takeover and an explicit ordinary-slot cut close affected ordinary runs,
+leases and delivery liveness while preserving an otherwise live metadata grant.
+A metadata-only cut preserves ordinary authority; a principal-wide `revoke`,
+lock/privacy loss and disconnect cut both. Pending decisions depending on a
+changed slot are discarded even when the other grant survives. Expiry and
+exact-generation replacement cut affected slots. A
+non-serializable disclosure-liveness handle binds a committed response to its
+original connection, grant/run/ancestor liveness and deadline, including after
+the run's normal completion. It is not a disclosure permit or a substitute for the
+application's serialized privacy, request-cancellation and actual attachment
+checks. A future adapter must bind the original response and per-grant handle
+to the existing bounded queue and recheck under the same nonblocking fence as
+revocation at every write; contention must defer without blocking the controller
+or watchdog. A partial frame interrupted by revocation, expiry or cancellation
+requires connection closure, not unauthorized continuation or replay.
+
+This is also kernel-only. There is no metadata-only native UI, MCP routing or
+enrollment implementation in this slice. Future metadata projection must use a
+reviewed bounded schema, never relabel observation or workflow-result content
+as metadata. Native UI must separately explain the metadata recipients,
+lifetime and repeatability, cross-flow consent and control repetition/handoff.
+Real attachment eligibility, presentation, input/IME and mode revalidation,
+native lifecycle behavior, client interoperability and independent review
+remain open; no OS platform is qualified by this primitive.
+
 A direct `workflows.start` request is an admission transaction, not the lifetime
 parent of the workflow it creates. At the serialized start boundary the broker
 atomically reserves capacity/idempotency receipt and creates a **distinct

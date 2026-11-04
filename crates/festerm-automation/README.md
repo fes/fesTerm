@@ -108,10 +108,85 @@ platforms and unqualified adapters disabled in the application.
    content is stored or made available by run ID after completion.
 10. Call `human_takeover` **before** human admission. It revokes every control
     grant for that target, including pending lease acquisitions. Old runs stay
-    permanently ineligible even after explicit reapproval. Call `revoke_all`
+    permanently ineligible even after explicit reapproval. An independently
+    approved metadata grant is not revoked by takeover alone. Call `revoke_all`
     on lock/suspend/privacy loss, `disconnect` on channel loss, and `poll_expiry`
-    from the deadline timer. Cancel/reap workers and waits externally with bounded
-    watchdogs. Kernel closure is synchronous; it is not process cleanup.
+    from the deadline timer. Cancel/reap workers and waits externally with
+    bounded watchdogs. Kernel closure is synchronous; it is not process cleanup.
+
+## Independent metadata prerequisite
+
+The kernel has one separate, native-approved metadata slot per connection.
+`MetadataGrantRequest` contains only exact target generations; it cannot grant
+observation, control, workflow invocation or result disclosure. Only a
+user-started or explicitly paired-client proposal may enter
+`request_metadata_approval`, and trusted native code alone may construct
+`NativeMetadataApproval`. `admit_metadata_run` routes a direct discovery root
+exclusively to this slot. The application computes its canonical parameter
+digest and projects only `discovery_targets`; neither route falls back to the
+ordinary grant. Ordinary `admit_run` still uses only the ordinary grant. The
+metadata grant permits repeated new discovery invocations during its approved
+lifetime and within its budgets, not a single one-shot query.
+
+The two slots do **not** bypass source-to-sink closure. If the ordinary grant
+has control targets, its already reviewed scope must include every metadata
+target as a source and its native handoffs must cover every such source at
+every controlled target. When approving metadata while control is live,
+`accept_control_disclosure` must additionally name the exact metadata sources
+for every current control sink. When control is approved later, its native
+handoff must explicitly review those existing metadata sources. A changed
+closure needs a new ordinary grant, not an in-place expansion; the ordinary
+source scope alone does not enable discovery without an approved invocation
+binding or direct-read policy. Metadata never requires observation scope.
+Incompatible combinations refuse, even if a handoff lists extra sources that
+were not in the reviewed ordinary scope. Pending decisions snapshot both slot
+revisions and the relevant writer ownership; changed or ABA-replaced authority
+requires a fresh proposal. A slot revision change immediately discards stale
+pending decisions for that connection, releasing principal and global pending
+capacity without refunding their lifetime proposal charges. Other principals'
+decisions remain untouched, as do opposite-slot decisions when an already
+empty slot is revoked. Ownership changes are still checked when deciding a
+proposal; one made unapprovable solely by an ownership change is not
+automatically reclaimed and must be rejected or expire. The future native
+adapter must retain and present the current approved slot scopes and exact
+cross-flows under its controller fence, and refuse rather than infer consent
+from stale state.
+
+Reapproval cuts runs in the replaced slot but leaves the other grant live.
+`revoke_ordinary` cuts only that connection's ordinary grant, runs, leases and
+delivery liveness; `revoke_metadata` cuts only its metadata grant and delivery
+liveness. The other grant's otherwise-live runs and committed-delivery liveness
+remain valid, although its pending approvals become stale if a live slot changed.
+`revoke` cuts both slots for a principal, `revoke_all` cuts both globally, and
+`disconnect` cuts both before removing the connection. Revoking metadata does
+not remove separate discovery authority explicitly granted in the ordinary
+slot. No revocation represents already admitted input as rolled back.
+Expiry and target replacement cut affected slots, including an ordinary grant
+whose frozen source scope names the replaced metadata target. Exact generations
+are never retargeted. The caller must separately enforce any controller
+enrollment/eligibility policy; this branch adds no enrollment integration.
+
+Immediately after a successful `commit_disclosure` and before settling the
+request, `disclosure_liveness` can capture a non-serializable handle to its
+original connection, grant epoch, run, ancestor cuts and deadline. It remains
+usable after the run's successful completion/forgetting but fails after grant
+revocation/reapproval, run cancellation/failure, an ancestor cut, expiry or
+broker drop. `is_live` is **not** a disclosure permit: the adapter must retain
+only the original bounded response, check its own request cancellation and
+privacy/attachment/target guards, and serialize broker changes and every
+nonblocking publication with the same application admission fence. If the
+fence is contended, defer rather than blocking the controller or watchdog.
+Atomic flags alone cannot close a write/revocation race. Drop an unstarted
+stale frame. If revocation, expiry or cancellation interrupts a partial frame,
+never send its remaining bytes; close the connection and revoke both grants.
+Bytes already sent cannot be recalled.
+
+This is kernel-only: no native metadata UI, MCP routing, controller enrollment,
+terminal input or production gate is added. Future metadata projection must use
+a reviewed, bounded metadata schema and never put screen, scrollback, selection
+or workflow-result content in its fields. Native UI must explain the metadata
+recipients, repeatability, lifetime and each approved control flow. P1 remains
+observation-only.
 
 ## Accounting and boundaries
 
@@ -125,8 +200,11 @@ platforms and unqualified adapters disabled in the application.
 - Every child charge reaches all ancestors. Maximum disclosure is reserved
   cumulatively before snapshot work and is not refunded, including on abort.
   Forgetting terminal runs or opening many short calls cannot reset counters.
-  Only fresh **native** approval resets principal counters. Global lifetime
-  ceilings (4096 operations / 16 MiB) do not reset through reapproval/reconnect.
+  Both slots charge one shared principal ceiling as well as their own grant
+  ceilings. Native reapproval resets the principal counters only when the other
+  slot is absent; reapproving either slot cannot replenish the other. Global
+  lifetime ceilings (4096 operations / 16 MiB) do not reset through
+  reapproval/reconnect.
   `Limits` only lowers these ceilings. Exhaustion is an explicit refusal.
 - Content-free `status` requires live ownership and native result scope and
   charges shared counters. It never returns output, parameters or exceptions.

@@ -2705,6 +2705,20 @@ native consent UI or input dispatch. Actual queue
 publication, takeover and platform behavior still require AUTO-03; P1 remains
 observation-only.
 
+The broker now has a separately approved discovery-only metadata slot with
+independent delivery liveness, shared quotas and explicit cross-slot closure.
+Its tests do not implement a metadata UI, MCP route or enrollment. AUTO-01 must
+verify that users separately understand metadata disclosure, every approved
+metadata-to-control flow, grant lifetimes and repeatable intentional control.
+AUTO-03 must race each slot's expiry, takeover, target replacement and global
+privacy/disconnect cuts against real publication, including ordinary-only and
+metadata-only revocation while the other slot remains live. AUTO-01 must dismiss
+revision-stale approval prompts without replenishing lifetime approval limits.
+AUTO-04 must verify original
+grant/connection fences at every nonblocking frame write, closure after an
+interrupted partial frame and no automatic retry of uncertain input. Native
+evidence for these integrations remains uncollected.
+
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
 | AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts. | Deferred native + usability | Partial implementation: observation pairing/native grant UI, desktop file selection and non-authorizing captured-source review, and frozen-workflow binding components. Desktop source-view usability, iOS security-scoped access, pending-approval invalidation and platform path behavior still need qualification. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. A future direct-input approval must explicitly explain the target, remote-state uncertainty, expiry/budgets and that the approved action may be intentionally repeated throughout the live grant; obtain native handoff rather than accepting a device's claimed gesture, and distinguish approval from an explicit ownership cut. No native evidence collected for intake or workflow approval. |

@@ -1,5 +1,23 @@
 # Milestone Progress Narrative
 
+## Separating metadata approval from terminal control
+
+The broker can now hold a narrow discovery-only grant independently of its
+ordinary grant on the same connection. Separate epochs, expiry and delivery
+liveness allow human takeover to cut control without automatically losing
+metadata. Both slots still share principal/global ceilings, and reapproving one
+cannot refill the other. The kernel refuses combined metadata and control unless
+native decisions explicitly cover every source-to-sink flow; stale decisions
+cannot survive slot or ownership changes. Independent ordinary/metadata cuts
+preserve the other live grant; revision-stale pending proposals release bounded
+capacity without refunding their lifetime charges.
+
+Deterministic tests cover routing, closure, takeover, revocation, exact target
+replacement and quotas. This is not a metadata UI, MCP tool, enrollment,
+terminal write or platform qualification. P1 remains observation-only; native
+approval and per-write publication fencing require separate integration and
+review.
+
 ## Binding direct input without a workflow
 
 The shared authority kernel can now bind a direct input invocation to an exact

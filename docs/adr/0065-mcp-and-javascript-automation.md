@@ -59,6 +59,16 @@ to bypass another's restrictions.
    JavaScript nor observation scope and can prepare only one control request;
    abort, settlement or commit does not permit a second effect in that run.
    This primitive adds no MCP tool, native approval UI or terminal write path.
+   A separate kernel-only metadata grant can authorize direct discovery of exact
+   target generations without observation or workflow authority. It has its own
+   epoch, expiry and delivery-liveness fence, but shares principal/global
+   quotas. Its coexistence with control requires explicitly reviewed
+   source-to-every-sink consent in both the ordinary handoff and, when control
+   is already live, the metadata decision. Changed slot/ownership snapshots
+   refuse stale approvals; slot revisions discard stale pending decisions
+   without refunding lifetime proposal charges. Either slot can be explicitly
+   revoked without revoking the other; no source is silently added to a
+   control grant.
 4. **Treat observation as disclosure and terminal control as execution.** Data
    reads may disclose passwords, tokens or private output; redaction is best
    effort, not authorization. Arbitrary terminal input grants the target
@@ -204,6 +214,10 @@ in the design must be visible in implementation/release review.
   cover the exact approved binding, single-request cut, repeatable new
   invocations, explicit takeover and lifecycle revocation without workflow or
   observation scope. They also verify approval does not steal another writer.
+  Separate metadata-slot tests cover explicit cross-slot closure, routing,
+  per-grant delivery liveness, takeover/expiry/replacement, stale decisions and
+  shared quotas. Native metadata UI and per-write publication fencing are not
+  implemented by those tests.
   They do not expose control in the P1 observation-only MCP checkpoint or
   qualify any real input adapter. Configuration tests cover
   independent default-off opt-ins. MCP protocol, private framing, bounded

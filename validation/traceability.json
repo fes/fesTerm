@@ -59,7 +59,18 @@
         "pending_paste_and_file_drop_hold_the_automation_fence_until_cancelled",
         "prepared_input_matches_core_encoding_without_mutating_the_queue",
         "prepared_input_refuses_entire_invalid_batch_without_touching_input",
-        "prepared_input_bounds_include_normalization_and_paste_markers"
+        "prepared_input_bounds_include_normalization_and_paste_markers",
+        "metadata_reapproval_and_takeover_preserve_the_other_grant",
+        "metadata_revocation_cuts_delivery_without_interrupting_pending_control",
+        "metadata_and_control_expire_independently_at_their_exact_deadlines",
+        "metadata_lifecycle_cuts_affected_generations_privacy_and_connections",
+        "metadata_takeover_and_principal_revocation_remain_isolated",
+        "metadata_delivery_liveness_and_routing_never_fall_back_to_another_grant",
+        "disclosure_liveness_tracks_forgotten_workflow_ancestors",
+        "slot_revision_cuts_reclaim_principal_pending_capacity_without_refunds",
+        "slot_expiry_reclaims_stale_opposite_slot_proposals",
+        "slot_revocation_isolates_observation_metadata_and_pending_delivery",
+        "ordinary_control_revocation_preserves_metadata_and_unknown_outcomes"
       ],
       "manual_scenarios": [
         "AUTO-01",
@@ -73,6 +84,7 @@
         "P1 authenticated broker/adapter and observation gates; P2 engine plus per-platform OS confinement qualification",
         "P3 writer-lease/lifecycle/unknown-outcome and native grant UI qualification before control",
         "Controller input-epoch integration with broker cut and worker disclosure remains unavailable",
+        "Independent metadata UI, enrollment and per-grant transport delivery fencing remain unavailable",
         "P4 separate review for command jobs, HTTP, file APIs, unattended grants/triggers and iOS execution"
       ]
     },
@@ -230,13 +242,37 @@
         "control_approval_preserves_other_pending_snapshots_without_a_writer",
         "explicit_takeover_cuts_cross_principal_control_and_stale_approvals",
         "direct_input_lifecycle_revocation_never_restores_old_runs",
-        "direct_input_charges_run_principal_and_global_budgets_across_invocations"
+        "direct_input_charges_run_principal_and_global_budgets_across_invocations",
+        "metadata_and_control_require_separate_grants_and_reviewed_closure",
+        "metadata_approval_requires_explicit_current_control_flow_and_ownership",
+        "metadata_closure_requires_every_source_at_every_control_sink",
+        "metadata_reapproval_and_takeover_preserve_the_other_grant",
+        "metadata_revocation_cuts_delivery_without_interrupting_pending_control",
+        "metadata_reapproval_preserves_existing_ordinary_workflow_lineage",
+        "metadata_delivery_liveness_and_routing_never_fall_back_to_another_grant",
+        "disclosure_liveness_tracks_forgotten_workflow_ancestors",
+        "metadata_and_ordinary_approval_snapshots_reject_slot_aba",
+        "slot_revision_cuts_reclaim_principal_pending_capacity_without_refunds",
+        "slot_revision_cuts_reclaim_global_pending_capacity_for_other_principals",
+        "slot_installations_reclaim_opposite_slot_proposals",
+        "slot_expiry_reclaims_stale_opposite_slot_proposals",
+        "reclaimed_stale_approvals_do_not_refund_global_lifetime_limit",
+        "empty_slot_revocation_preserves_unaffected_opposite_proposals",
+        "slot_revocation_isolates_observation_metadata_and_pending_delivery",
+        "ordinary_control_revocation_preserves_metadata_and_unknown_outcomes",
+        "metadata_and_control_expire_independently_at_their_exact_deadlines",
+        "metadata_lifecycle_cuts_affected_generations_privacy_and_connections",
+        "metadata_takeover_and_principal_revocation_remain_isolated",
+        "metadata_and_ordinary_reapproval_cannot_replenish_each_other",
+        "metadata_shares_pending_and_direct_context_limits",
+        "metadata_and_ordinary_work_share_global_lifetime_quotas"
       ],
       "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04"],
       "status": "partial",
       "prerequisites": [
         "Control and worker integration require input ownership validation and platform confinement",
         "Native direct-input approval and actual publication-boundary revalidation remain unavailable",
+        "Metadata-only native review, explicit cross-flow UI and per-write delivery fences remain unavailable",
         "Native lifecycle evidence and workflow result delivery remain open"
       ]
     },
