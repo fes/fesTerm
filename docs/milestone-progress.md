@@ -28,9 +28,8 @@ unconditionally closed: synthetic peers and injected qualification are not
 platform or client evidence. Metadata association-handle consumption,
 separate metadata grant UI/publication fencing, presentation, input, and native
 handoff remain unimplemented or unqualified. The controller and presentation
-catalogs are separate and `Machine::new()` remains observation-only. New
-regressions have been added but their execution and independent review remain
-pending; #506 is untouched.
+catalogs are separate and `Machine::new()` remains observation-only. The
+integration remains subject to combined-tree validation; #506 is untouched.
 
 The assembly's preference-disable regression observes metadata liveness only
 after a direct-input commit triggers coordinator revocation, not at an
@@ -57,7 +56,10 @@ and retry tests cover these in-memory boundaries.
 When combined with native enrollment, target and controller reconciliation
 share the same try-acquired guard; a busy tick does not replay a controller
 confirmation. Controller settings report an incomplete view while admission
-is busy. These integration changes still require combined-tree validation.
+is busy. Native controller actions now distinguish pre-mutation contention
+from other refusals and ask the user to retry; they are never automatically
+replayed. Test helpers retry only that proven-busy refusal or an incomplete
+snapshot. These integration changes still require combined-tree validation.
 
 This is only a prerequisite: there is no enrollment witness or metadata-grant
 binding, no final-recipient/write fence or native consent, and no production
