@@ -141,6 +141,32 @@ to bypass another's restrictions.
    invalidates the fence before delivery. This is not a lease: integration must
    still cut the broker grant and worker, check the exact fence at every effect
    and disclosure boundary, and obtain native handoff.
+   The existing process-wide admission mutex, opaque guard and attachment epoch
+   now live in dependency-neutral `festerm-admission`, shared by the session
+   abstraction and authority kernel. Session re-exports the existing APIs;
+   the kernel can name the same guard without depending on a session backend.
+   Guard-taking freshness is additive. Lock scope, poison and epoch exhaustion
+   remain unchanged. This ownership extraction binds no grant, changes no
+   broker authorization and enables no metadata or output path.
+   As a separate precursor to a possible enrollment witness, live broker
+   registration membership, enrollment identity/target and proposal revision
+   changes now require that same opaque guard, including retirement by target
+   replacement, closure, disconnect and global revocation. Presentation review
+   and presentation-grant changes alone are not covered by this invariant.
+   Host lifecycle cuts retain the guard across the corresponding in-memory
+   flag and registry changes and release it before cleanup. UI reconciliation
+   attempts the guard without waiting, captures the current attachment epoch
+   under it, and defers the tick's broker/peer work on contention. A fresh
+   observation approval is refused rather than replayed while reconciliation
+   is pending; its connection, privacy, exact targets, attachment epochs and
+   broker/host grant installation are checked under one try-guard. Startup
+   defers its admission-dependent binding without consuming pending state.
+   Mandatory active lifecycle cuts and the existing `Connection::send` can
+   still wait for admission after reconciliation. Fixing response delivery
+   requires bounded retained-response semantics; this is not a general
+   UI-responsiveness claim.
+   No enrollment witness is implemented, and this does not bind metadata grants
+   or delivery liveness, fence physical recipients, or qualify native consent.
    At the real input queue publication boundary the future application adapter
    must revalidate privacy, attachment/generation, terminal modes, human
    input/IME fences, any required presentation condition, and the same immutable
@@ -242,6 +268,9 @@ per-stage acceptance, independent reviews or platform evidence.
   before a reviewed artifact/manifest exists. P1 MCP is observation-only; named,
   immutable workflow invocation follows P2 runtime qualification and the P3
   authorization gates, and never accepts caller-supplied source.
+- **Make the authority kernel depend on session implementations or add a
+  second admission mutex:** rejected. A dependency-neutral shared boundary
+  retains the existing process-wide serialization and non-forgeable guard.
 
 ## Consequences
 
@@ -345,6 +374,17 @@ in the design must be visible in implementation/release review.
   later-stage MCP contract explicitly refuses presentation while unqualified.
   These tests do not establish native activation/event ordering, response
   admission, a real presentation provider or an exposed controller-input path.
+  The shared-admission extraction retains existing epoch and poison coverage,
+  relocates the private-field exhaustion test, and adds a bounded cross-crate
+  contention and isolated poison test. Focused tests and strict Clippy passed;
+  independent source review found no significant issue. These tests do not
+  establish metadata liveness or disclosure fencing.
+  The subsequent enrollment-identity guard migration adds a compile-fail
+  contract and a focused contention, identity-ABA and lifecycle-retirement
+  test. The nonblocking-reconciliation correction adds tests for busy
+  deferral, retry and dormant shutdown; additional focused tests cover startup
+  and approval contention. These focused tests passed, and an independent
+  narrow review found no significant issue in the changed boundaries.
   Run the traceability gate and documentation checks.
 - **Worker process entry:** The desktop executable has a private
   `--automation-worker` entry before application initialization, exercised by

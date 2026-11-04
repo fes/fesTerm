@@ -181,7 +181,12 @@ fn public_registration(peer: &Peer, internal: ControllerRegistrationId) -> Optio
 }
 
 // All record flags are changed under the admission lock.
-fn remove_locked(broker: &mut Broker, peer: &mut Peer, id: ControllerId) -> bool {
+fn remove_locked(
+    broker: &mut Broker,
+    peer: &mut Peer,
+    id: ControllerId,
+    guard: &festerm_session::AutomationAdmissionGuard,
+) -> bool {
     let Some(record) = peer.controller.registrations.remove(&id) else {
         return false;
     };
@@ -194,7 +199,7 @@ fn remove_locked(broker: &mut Broker, peer: &mut Peer, id: ControllerId) -> bool
     {
         peer.controller.selection = None;
     }
-    let _ = broker.unregister_controller_session(peer.principal, record.internal);
+    let _ = broker.unregister_controller_session(peer.principal, record.internal, guard);
     true
 }
 
@@ -204,6 +209,7 @@ fn status_locked(
     peer: &mut Peer,
     id: ControllerId,
     apps: &[&FesTermApp],
+    guard: &festerm_session::AutomationAdmissionGuard,
 ) -> Result<Reply, Refusal> {
     let record = peer
         .controller
@@ -225,7 +231,7 @@ fn status_locked(
             .is_err()
         || (association.is_some() && target.is_none())
     {
-        remove_locked(broker, peer, id);
+        remove_locked(broker, peer, id, guard);
         return Err(Refusal::NotAuthorized);
     }
     Ok(Reply {
@@ -261,15 +267,19 @@ pub(super) fn execute(
     now: Instant,
 ) {
     if peer.controller.requests >= MAX_CONTROLLER_REQUESTS {
-        peer.connection.close();
+        if let Some(guard) = festerm_session::automation_admission_lock() {
+            peer.connection.close_under_admission(&guard);
+            broker.disconnect(peer.principal, &guard);
+        } else {
+            peer.connection.closed_flag().store(true, Ordering::Release);
+        }
         peer.machine.close();
-        broker.disconnect(peer.principal);
         peer.controller = PeerState::default();
         return;
     }
     peer.controller.requests += 1;
     let key = request.key;
-    let result = if let Some(_guard) = festerm_session::automation_admission_lock() {
+    let result = if let Some(guard) = festerm_session::automation_admission_lock() {
         let open =
             !privacy.is_closed() && !stop.load(Ordering::Acquire) && !peer.connection.is_closed();
         match request.operation {
@@ -280,14 +290,21 @@ pub(super) fn execute(
             }
             _ if !open || !qualified => Err(Refusal::Unavailable),
             Operation::ControllerRegister { local_id } => {
-                match broker.register_controller_session(peer.principal, local_id.as_bytes()) {
+                match broker.register_controller_session(
+                    peer.principal,
+                    local_id.as_bytes(),
+                    &guard,
+                ) {
                     Ok(internal) => {
                         let existing = public_registration(peer, internal);
                         let id = match existing {
                             Some(id) => Ok(id),
                             None => mint_id(peer).inspect_err(|_| {
-                                let _ =
-                                    broker.unregister_controller_session(peer.principal, internal);
+                                let _ = broker.unregister_controller_session(
+                                    peer.principal,
+                                    internal,
+                                    &guard,
+                                );
                             }),
                         };
                         id.and_then(|id| {
@@ -301,17 +318,17 @@ pub(super) fn execute(
                                     },
                                 );
                             }
-                            status_locked(broker, targets, peer, id, apps)
+                            status_locked(broker, targets, peer, id, apps, &guard)
                         })
                     }
                     Err(error) => Err(refusal(error)),
                 }
             }
             Operation::ControllerStatus { registration_id } => {
-                status_locked(broker, targets, peer, registration_id, apps)
+                status_locked(broker, targets, peer, registration_id, apps, &guard)
             }
             Operation::ControllerUnregister { registration_id } => {
-                if remove_locked(broker, peer, registration_id) {
+                if remove_locked(broker, peer, registration_id, &guard) {
                     Ok(Reply::plain(BackendResult::ControllerUnregistered {
                         registration_id,
                     }))
@@ -347,16 +364,11 @@ pub(super) fn reconcile(
     peers: &mut BTreeMap<u64, Peer>,
     apps: &[&FesTermApp],
     workspace_revision: Option<u64>,
+    guard: &festerm_session::AutomationAdmissionGuard,
 ) {
     if peers.is_empty() {
         return;
     }
-    let Some(_guard) = festerm_session::automation_admission_lock() else {
-        for peer in peers.values() {
-            peer.connection.close();
-        }
-        return;
-    };
     let (candidates, incomplete) = local_candidates(targets, apps);
     for peer in peers.values_mut() {
         let stale: Vec<_> = peer
@@ -384,7 +396,7 @@ pub(super) fn reconcile(
             .map(|(id, _)| *id)
             .collect();
         for id in stale {
-            remove_locked(broker, peer, id);
+            remove_locked(broker, peer, id, guard);
         }
         if peer.controller.selection.as_ref().is_some_and(|selection| {
             public_registration(peer, selection.registration()).is_none()
@@ -423,8 +435,26 @@ pub(super) fn command(
     action: NativeCommand,
     apps: &[&FesTermApp],
 ) -> Result<(), Refusal> {
-    let Some(_guard) = festerm_session::automation_admission_lock() else {
-        return Err(Refusal::Unavailable);
+    if let NativeCommand::CancelController {
+        channel,
+        registration,
+    } = &action
+    {
+        let peer = coordinator.peers.get_mut(channel).ok_or(Refusal::Closed)?;
+        if peer
+            .controller
+            .selection
+            .as_ref()
+            .is_some_and(|pending| pending.registration() == *registration)
+        {
+            peer.controller.selection = None;
+        }
+        return Ok(());
+    }
+    let guard = if matches!(&action, NativeCommand::UnregisterController { .. }) {
+        festerm_session::automation_admission_lock().ok_or(Refusal::Unavailable)?
+    } else {
+        festerm_session::try_automation_admission_lock().map_err(|_| Refusal::Unavailable)?
     };
     let qualified = coordinator.controller_qualified();
     let available = qualified && coordinator.controller_opted_in;
@@ -517,7 +547,7 @@ pub(super) fn command(
             peer.controller.selection = None;
             let token = next_selection(&mut coordinator.controller_selection_revision)?;
             let proposal = broker
-                .prepare_controller_enrollment(peer.principal, registration, target)
+                .prepare_controller_enrollment(peer.principal, registration, target, &guard)
                 .map_err(refusal)?;
             peer.controller.selection = Some(Selection::Reviewing {
                 registration,
@@ -574,6 +604,7 @@ pub(super) fn command(
                 .approve_controller_enrollment(
                     peer.principal,
                     NativeControllerEnrollment::new(proposal),
+                    &guard,
                 )
                 .map_err(refusal)?;
             if broker
@@ -581,7 +612,7 @@ pub(super) fn command(
                 .ok()
                 != Some(target)
             {
-                remove_locked(broker, peer, id);
+                remove_locked(broker, peer, id, &guard);
                 return Err(Refusal::NotAuthorized);
             }
             let record = peer
@@ -598,27 +629,13 @@ pub(super) fn command(
                 window,
             });
         }
-        NativeCommand::CancelController {
-            channel,
-            registration,
-        } => {
-            let peer = coordinator.peers.get_mut(&channel).ok_or(Refusal::Closed)?;
-            if peer
-                .controller
-                .selection
-                .as_ref()
-                .is_some_and(|pending| pending.registration() == registration)
-            {
-                peer.controller.selection = None;
-            }
-        }
         NativeCommand::UnregisterController {
             channel,
             registration,
         } => {
             let peer = coordinator.peers.get_mut(&channel).ok_or(Refusal::Closed)?;
             if let Some(id) = public_registration(peer, registration) {
-                remove_locked(broker, peer, id);
+                remove_locked(broker, peer, id, &guard);
             }
         }
         _ => return Err(Refusal::InvalidArguments),
@@ -644,7 +661,7 @@ pub(super) fn invalidate_location(
     let Some(broker) = broker else {
         return false;
     };
-    let Some(_guard) = festerm_session::automation_admission_lock() else {
+    let Some(guard) = festerm_session::automation_admission_lock() else {
         return false;
     };
     for peer in peers.values_mut() {
@@ -661,7 +678,7 @@ pub(super) fn invalidate_location(
             .map(|(id, _)| *id)
             .collect();
         for id in stale {
-            remove_locked(broker, peer, id);
+            remove_locked(broker, peer, id, &guard);
         }
         if peer.controller.selection.as_ref().is_some_and(|selection| {
             target.is_some()
@@ -734,7 +751,7 @@ pub(super) fn settings(
     if !mcp_open {
         return (Vec::new(), Vec::new(), false);
     }
-    let Some(_guard) = festerm_session::automation_admission_lock() else {
+    let Ok(_guard) = festerm_session::try_automation_admission_lock() else {
         return (Vec::new(), Vec::new(), true);
     };
     let Some(broker) = coordinator.broker.as_ref() else {
@@ -812,14 +829,6 @@ pub(super) mod tests {
             let snapshot = coordinator.settings(&[]);
             coordinator.controller_target_moving(TabId::from_chip_id(1));
             coordinator.controller_window_closing(WindowId::for_test(1));
-            let mut broker = Broker::new([0; 16]);
-            reconcile(
-                &mut broker,
-                &BTreeMap::new(),
-                &mut BTreeMap::new(),
-                &[],
-                None,
-            );
             finished
                 .send(!snapshot.controller_targets_incomplete)
                 .unwrap();
@@ -949,12 +958,22 @@ pub(super) mod tests {
     }
 
     fn row(coordinator: &Coordinator, apps: &[&FesTermApp], channel: u64) -> ControllerRow {
-        coordinator
-            .settings(apps)
-            .controllers
-            .into_iter()
-            .find(|row| row.channel == channel)
-            .expect("registration is visible")
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let snapshot = coordinator.settings(apps);
+            if let Some(row) = snapshot
+                .controllers
+                .into_iter()
+                .find(|row| row.channel == channel)
+            {
+                return row;
+            }
+            assert!(
+                snapshot.controller_targets_incomplete && Instant::now() < deadline,
+                "registration is visible"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 
     fn native(
@@ -1032,6 +1051,163 @@ pub(super) mod tests {
                 selection: token,
             },
         );
+    }
+
+    #[test]
+    fn controller_busy_review_defers_and_stale_target_is_retired_on_retry() {
+        let (mut app, tab) = FesTermApp::automation_local_fixture();
+        let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+        app.adopt_broadcast_configuration(
+            festerm_config::Configuration::empty()
+                .with_interface_settings(settings)
+                .unwrap(),
+        );
+        let mut coordinator = fixture(&[&app]);
+        let receive = add_peer(&mut coordinator, 1);
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_controller_register",
+            json!({"local_id": "client"}),
+        );
+        response(&receive);
+        let registration = row(&coordinator, &[&app], 1).registration;
+        let target = coordinator.targets[&tab.chip_id()].reference;
+        let token = review(
+            &mut coordinator,
+            &[&app],
+            WindowId::PRIMARY,
+            1,
+            registration,
+            target,
+        );
+        let principal = coordinator.peers[&1].principal;
+        app.automation_session_mut(tab)
+            .controller
+            .advance_lifecycle_generation();
+
+        let (held_tx, held_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+        let worker = std::thread::spawn(move || {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv_timeout(Duration::from_secs(3));
+        });
+        held_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let before = Instant::now();
+        assert_eq!(
+            command(
+                &mut coordinator,
+                WindowId::PRIMARY,
+                NativeCommand::ConfirmController {
+                    channel: 1,
+                    registration,
+                    selection: token,
+                },
+                &[&app],
+            ),
+            Err(Refusal::Unavailable)
+        );
+        let context = egui::Context::default();
+        coordinator.tick(&context, &[&app]);
+        confirm(
+            &mut coordinator,
+            &[&app],
+            WindowId::PRIMARY,
+            registration,
+            token,
+        );
+        let incomplete = coordinator.settings(&[&app]).controller_targets_incomplete;
+        let deferred = coordinator.reconciliation_deferred;
+        let unchanged = coordinator.peers[&1]
+            .controller
+            .registrations
+            .values()
+            .all(|record| record.association.is_none());
+        let elapsed = before.elapsed();
+        let _ = release_tx.send(());
+        worker.join().unwrap();
+        assert!(elapsed < Duration::from_secs(1));
+        assert!(deferred && incomplete && unchanged);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while coordinator.reconciliation_deferred {
+            coordinator.tick(&context, &[&app]);
+            assert!(Instant::now() < deadline, "reconciliation did not retry");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        confirm(
+            &mut coordinator,
+            &[&app],
+            WindowId::PRIMARY,
+            registration,
+            token,
+        );
+        assert!(coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .controller_registration(principal, registration)
+            .is_ok());
+        assert!(coordinator.peers[&1]
+            .controller
+            .registrations
+            .values()
+            .all(|record| record.association.is_none()));
+        assert_ne!(coordinator.targets[&tab.chip_id()].reference, target);
+        assert!(coordinator.peers[&1].grant.is_none());
+    }
+
+    #[test]
+    fn controller_cancel_clears_review_while_admission_is_busy() {
+        let (app, tab) = FesTermApp::automation_local_fixture();
+        let mut coordinator = fixture(&[&app]);
+        let receive = add_peer(&mut coordinator, 1);
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_controller_register",
+            json!({"local_id": "client"}),
+        );
+        response(&receive);
+        let registration = row(&coordinator, &[&app], 1).registration;
+        let target = coordinator.targets[&tab.chip_id()].reference;
+        review(
+            &mut coordinator,
+            &[&app],
+            WindowId::PRIMARY,
+            1,
+            registration,
+            target,
+        );
+
+        let (held_tx, held_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+        let worker = std::thread::spawn(move || {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv_timeout(Duration::from_secs(3));
+        });
+        held_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let before = Instant::now();
+        let result = command(
+            &mut coordinator,
+            WindowId::PRIMARY,
+            NativeCommand::CancelController {
+                channel: 1,
+                registration,
+            },
+            &[&app],
+        );
+        let cleared = coordinator.peers[&1].controller.selection.is_none();
+        let elapsed = before.elapsed();
+        let _ = release_tx.send(());
+        worker.join().unwrap();
+        assert!(elapsed < Duration::from_secs(1));
+        assert_eq!(result, Ok(()));
+        assert!(cleared);
     }
 
     #[test]
@@ -1690,16 +1866,6 @@ pub(super) mod tests {
 
             let mut broker = coordinator.broker.take().unwrap();
             coordinator.reconcile(&mut broker, &[&app]);
-            reconcile(
-                &mut broker,
-                &coordinator.targets,
-                &mut coordinator.peers,
-                &[&app],
-                coordinator
-                    .presentation_workspace
-                    .as_ref()
-                    .and_then(WorkspaceRevision::current),
-            );
             coordinator.broker = Some(broker);
             let replacement = coordinator.targets[&replacement_tab.chip_id()].reference;
             assert_ne!(old, replacement);

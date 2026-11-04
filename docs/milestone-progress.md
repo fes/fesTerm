@@ -29,6 +29,45 @@ check the shared stop/privacy/recipient and discovery-grant fences itself.
 The existing preference owner still cannot promise a durable off bit after an
 arbitrary failed or indeterminate save.
 
+## Guarding enrollment identity mutation
+
+The broker now requires the existing shared opaque admission guard for
+registration membership, enrollment identity and proposal-revision changes,
+including target and connection retirement and global revocation. Host
+lifecycle cuts keep related flags and registry changes together; reconciliation
+captures current attachment epochs under that guard. Reconciliation try-locks:
+a busy tick retains the broker, defers peer/disclosure processing and schedules
+a retry, refusing transient approval rather than replaying it. Observation
+approval checks and installs its grant under one try-guard, and startup defers
+admission-dependent binding without losing pending state. Completely dormant
+shutdown skips the new guard acquisition. Presentation-only updates and
+ordinary grant APIs remain separate. Focused contention, lifecycle, startup
+and retry tests cover these in-memory boundaries.
+
+When combined with native enrollment, target and controller reconciliation
+share the same try-acquired guard; a busy tick does not replay a controller
+confirmation. Controller settings report an incomplete view while admission
+is busy. These integration changes still require combined-tree validation.
+
+This is only a prerequisite: there is no enrollment witness or metadata-grant
+binding, no final-recipient/write fence or native consent, and no production
+qualification change. Mandatory lifecycle cuts and existing response sends can
+still wait for the guard. Nonblocking response delivery needs bounded retained
+responses, not a lossy shortcut.
+
+## Sharing the existing automation admission boundary
+
+The existing process-wide admission mutex, opaque guard and attachment epoch
+now live in a small dependency-neutral crate shared by the session abstraction
+and authority kernel. Session retains its original APIs; both crates name the
+same guard. Existing private-field exhaustion coverage moves with its epoch,
+and a bounded cross-crate test covers contention and isolated poison. Focused
+crate tests and strict Clippy passed; independent source review found no
+significant issue.
+
+This is a behavior-preserving boundary extraction, not a metadata grant link,
+native consent or delivery fence. Production automation gates are unchanged.
+
 ## Freezing direct input through backend reservation
 
 The host-only seam prepares bounded text or keys with the exact tab's core

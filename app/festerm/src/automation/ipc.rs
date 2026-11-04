@@ -74,6 +74,10 @@ impl Connection {
         super::set_admission_flag(&self.closed, true);
     }
 
+    pub fn close_under_admission(&self, _guard: &festerm_session::AutomationAdmissionGuard) {
+        self.closed.store(true, Ordering::Release);
+    }
+
     pub fn closed_flag(&self) -> Arc<AtomicBool> {
         self.closed.clone()
     }
@@ -884,6 +888,19 @@ fn proxy_stdio(
     };
     super::set_admission_flag(&closed, true);
     result
+}
+
+#[cfg(test)]
+pub(super) fn test_server(stop: Arc<AtomicBool>) -> (Server, SyncSender<Event>) {
+    let (sender, events) = mpsc::sync_channel(4);
+    (
+        Server {
+            events,
+            stop,
+            thread: None,
+        },
+        sender,
+    )
 }
 
 #[cfg(test)]

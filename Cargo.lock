@@ -2296,9 +2296,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "festerm-admission"
+version = "0.14.1"
+
+[[package]]
 name = "festerm-automation"
 version = "0.14.1"
 dependencies = [
+ "festerm-admission",
+ "festerm-session",
  "serde",
  "serde_json",
 ]
@@ -2554,6 +2560,9 @@ dependencies = [
 [[package]]
 name = "festerm-session"
 version = "0.14.1"
+dependencies = [
+ "festerm-admission",
+]
 
 [[package]]
 name = "festerm-sessiond"

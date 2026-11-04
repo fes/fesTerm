@@ -1,4 +1,5 @@
 use crate::types::*;
+use festerm_admission::AutomationAdmissionGuard;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -221,6 +222,15 @@ struct StartReceipt {
 ///
 /// Keep this value exclusively in the application-owned controller. Methods
 /// accepting native decisions MUST NOT be projected onto a worker/wire API.
+/// Registration membership, enrollment identity and proposal revision changes
+/// require the shared admission guard, including target and connection cuts.
+/// Presentation state and ordinary grant mutations are separate.
+///
+/// ```compile_fail
+/// let mut broker = festerm_automation::Broker::new([1; 16]);
+/// let connection = broker.accept_connection().unwrap();
+/// broker.register_controller_session(connection, b"controller").unwrap();
+/// ```
 pub struct Broker {
     instance: [u8; 16],
     sequence: u64,
@@ -309,7 +319,7 @@ impl Broker {
         Ok(connection)
     }
 
-    pub fn disconnect(&mut self, connection: ConnectionId) {
+    pub fn disconnect(&mut self, connection: ConnectionId, _guard: &AutomationAdmissionGuard) {
         self.revoke(connection);
         self.principals.remove(&connection);
         self.runs.retain(|_, run| run.connection != connection);
@@ -323,6 +333,7 @@ impl Broker {
         &mut self,
         connection: ConnectionId,
         local_id: &[u8],
+        _guard: &AutomationAdmissionGuard,
     ) -> Result<ControllerRegistrationId> {
         let principal = self
             .principals
@@ -393,6 +404,7 @@ impl Broker {
         connection: ConnectionId,
         registration: ControllerRegistrationId,
         target: TargetRef,
+        _guard: &AutomationAdmissionGuard,
     ) -> Result<ControllerEnrollmentProposal> {
         self.principals
             .get(&connection)
@@ -421,6 +433,7 @@ impl Broker {
         &mut self,
         connection: ConnectionId,
         decision: NativeControllerEnrollment,
+        _guard: &AutomationAdmissionGuard,
     ) -> Result<ControllerEnrollmentId> {
         let proposal = decision.proposal;
         if proposal.connection != connection {
@@ -488,6 +501,7 @@ impl Broker {
         &mut self,
         connection: ConnectionId,
         registration: ControllerRegistrationId,
+        _guard: &AutomationAdmissionGuard,
     ) -> Result<()> {
         self.principals
             .get_mut(&connection)
@@ -499,7 +513,12 @@ impl Broker {
 
     /// Attachment generations must strictly increase, including after
     /// close/reconnect. Closed IDs remain tombstoned until explicitly forgotten.
-    pub fn attach_target(&mut self, session: u64, generation: u64) -> Result<TargetRef> {
+    pub fn attach_target(
+        &mut self,
+        session: u64,
+        generation: u64,
+        guard: &AutomationAdmissionGuard,
+    ) -> Result<TargetRef> {
         if let Some(old) = self.targets.get(&session) {
             if generation <= old.reference.generation {
                 return Err(Error::StaleTarget);
@@ -514,7 +533,7 @@ impl Broker {
         }
         let epoch = self.mint()?;
         if let Some(old) = self.targets.get(&session) {
-            self.invalidate_target(old.reference);
+            self.invalidate_target(old.reference, guard);
         }
         let reference = TargetRef {
             instance: self.instance,
@@ -540,9 +559,13 @@ impl Broker {
             .ok_or(Error::StaleTarget)
     }
 
-    pub fn close_target(&mut self, reference: TargetRef) -> Result<()> {
+    pub fn close_target(
+        &mut self,
+        reference: TargetRef,
+        guard: &AutomationAdmissionGuard,
+    ) -> Result<()> {
         self.target(reference)?;
-        self.invalidate_target(reference);
+        self.invalidate_target(reference, guard);
         if let Some(target) = self.targets.get_mut(&reference.session) {
             target.active = false;
             target.writer = None;
@@ -570,7 +593,7 @@ impl Broker {
         Ok(())
     }
 
-    fn invalidate_target(&mut self, target: TargetRef) {
+    fn invalidate_target(&mut self, target: TargetRef, _guard: &AutomationAdmissionGuard) {
         self.cancel_presentation_for_target(target);
         for principal in self.principals.values_mut() {
             principal
@@ -1187,7 +1210,7 @@ impl Broker {
     }
 
     /// Lock/suspend/privacy loss is a global revocation, never a pause/resume.
-    pub fn revoke_all(&mut self) {
+    pub fn revoke_all(&mut self, _guard: &AutomationAdmissionGuard) {
         let connections: Vec<_> = self.principals.keys().copied().collect();
         for connection in connections {
             self.revoke(connection);

@@ -311,8 +311,20 @@ mod tests {
     #[test]
     fn frozen_bindings_include_code_parameters_and_exact_target_mapping() {
         let mut broker = Broker::new([1; 16]);
-        let a = broker.attach_target(1, 1).unwrap();
-        let b = broker.attach_target(2, 2).unwrap();
+        let a = broker
+            .attach_target(
+                1,
+                1,
+                &festerm_automation::automation_admission_lock().unwrap(),
+            )
+            .unwrap();
+        let b = broker
+            .attach_target(
+                2,
+                2,
+                &festerm_automation::automation_admission_lock().unwrap(),
+            )
+            .unwrap();
         let source = "export function main() { return 1; }";
         let approved = bundle(source, &[Capability::ReadScreen]);
         let scope = Scope {
@@ -358,8 +370,20 @@ mod tests {
     #[test]
     fn manifest_and_frozen_target_scopes_attenuate_host_calls() {
         let mut broker = Broker::new([2; 16]);
-        let a = broker.attach_target(1, 5).unwrap();
-        let b = broker.attach_target(2, 6).unwrap();
+        let a = broker
+            .attach_target(
+                1,
+                5,
+                &festerm_automation::automation_admission_lock().unwrap(),
+            )
+            .unwrap();
+        let b = broker
+            .attach_target(
+                2,
+                6,
+                &festerm_automation::automation_admission_lock().unwrap(),
+            )
+            .unwrap();
         let capabilities = [
             Capability::Observe,
             Capability::ReadScreen,
@@ -475,7 +499,13 @@ mod tests {
     fn projection_does_not_replace_broker_approval_or_completion_cut() {
         let mut broker = Broker::new([3; 16]);
         let connection = broker.accept_connection().unwrap();
-        let target = broker.attach_target(1, 1).unwrap();
+        let target = broker
+            .attach_target(
+                1,
+                1,
+                &festerm_automation::automation_admission_lock().unwrap(),
+            )
+            .unwrap();
         let scope = Scope {
             observe: BTreeSet::from([target]),
             invoke_workflows: true,

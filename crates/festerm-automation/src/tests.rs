@@ -2,6 +2,239 @@ use crate::*;
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
+struct Broker(crate::Broker);
+
+impl std::ops::Deref for Broker {
+    type Target = crate::Broker;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Broker {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Broker {
+    fn new(instance: [u8; 16]) -> Self {
+        Self(crate::Broker::new(instance))
+    }
+
+    fn with_limits(instance: [u8; 16], limits: Limits) -> Self {
+        Self(crate::Broker::with_limits(instance, limits))
+    }
+
+    fn register_controller_session(
+        &mut self,
+        connection: ConnectionId,
+        local_id: &[u8],
+    ) -> Result<ControllerRegistrationId> {
+        let guard = automation_admission_lock().unwrap();
+        self.0
+            .register_controller_session(connection, local_id, &guard)
+    }
+
+    fn prepare_controller_enrollment(
+        &mut self,
+        connection: ConnectionId,
+        registration: ControllerRegistrationId,
+        target: TargetRef,
+    ) -> Result<ControllerEnrollmentProposal> {
+        let guard = automation_admission_lock().unwrap();
+        self.0
+            .prepare_controller_enrollment(connection, registration, target, &guard)
+    }
+
+    fn approve_controller_enrollment(
+        &mut self,
+        connection: ConnectionId,
+        decision: NativeControllerEnrollment,
+    ) -> Result<ControllerEnrollmentId> {
+        let guard = automation_admission_lock().unwrap();
+        self.0
+            .approve_controller_enrollment(connection, decision, &guard)
+    }
+
+    fn unregister_controller_session(
+        &mut self,
+        connection: ConnectionId,
+        registration: ControllerRegistrationId,
+    ) -> Result<()> {
+        let guard = automation_admission_lock().unwrap();
+        self.0
+            .unregister_controller_session(connection, registration, &guard)
+    }
+
+    fn attach_target(&mut self, session: u64, generation: u64) -> Result<TargetRef> {
+        let guard = automation_admission_lock().unwrap();
+        self.0.attach_target(session, generation, &guard)
+    }
+
+    fn close_target(&mut self, target: TargetRef) -> Result<()> {
+        let guard = automation_admission_lock().unwrap();
+        self.0.close_target(target, &guard)
+    }
+
+    fn disconnect(&mut self, connection: ConnectionId) {
+        let guard = automation_admission_lock().unwrap();
+        self.0.disconnect(connection, &guard);
+    }
+
+    fn revoke_all(&mut self) {
+        let guard = automation_admission_lock().unwrap();
+        self.0.revoke_all(&guard);
+    }
+
+    fn admit_run(
+        &mut self,
+        connection: ConnectionId,
+        parent: Option<RunId>,
+        spec: RunSpec,
+        now: Instant,
+    ) -> Result<RunId> {
+        self.0.admit_run(connection, parent, spec, now)
+    }
+
+    fn start_workflow(
+        &mut self,
+        connection: ConnectionId,
+        context: RunId,
+        key: StartKey,
+        spec: RunSpec,
+        now: Instant,
+    ) -> Result<RunId> {
+        self.0.start_workflow(connection, context, key, spec, now)
+    }
+}
+
+#[test]
+fn enrollment_registry_mutations_share_the_admission_boundary() {
+    let (start_tx, start_rx) = std::sync::mpsc::sync_channel(1);
+    let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+    let worker = std::thread::spawn(move || {
+        start_rx.recv().unwrap();
+        result_tx
+            .send(matches!(
+                try_automation_admission_lock(),
+                Err(AutomationAdmissionTryError::Busy)
+            ))
+            .unwrap();
+    });
+    let guard = automation_admission_lock().unwrap();
+    start_tx.send(()).unwrap();
+    let observed = result_rx.recv_timeout(Duration::from_secs(2));
+    drop(guard);
+    worker.join().unwrap();
+    assert!(observed.unwrap());
+
+    let guard = automation_admission_lock().unwrap();
+    for action in 0..6 {
+        let mut broker = crate::Broker::new([7; 16]);
+        let first = broker.accept_connection().unwrap();
+        let other = broker.accept_connection().unwrap();
+        let target = broker.attach_target(1, 1, &guard).unwrap();
+        let other_target = broker.attach_target(2, 1, &guard).unwrap();
+        let now = Instant::now();
+        let ordinary_scope = Scope {
+            discover: BTreeSet::from([target]),
+            invoke_workflows: true,
+            ..Scope::default()
+        };
+        let ordinary_request = GrantRequest {
+            scope: ordinary_scope.clone(),
+            bindings: BTreeSet::from([binding(1)]),
+            direct_read_calls: BTreeSet::new(),
+        };
+        let approval = broker
+            .request_approval(first, ordinary_request.clone(), now)
+            .unwrap();
+        broker
+            .approve(
+                first,
+                approval,
+                NativeApproval::new(ordinary_request, Duration::from_secs(60)),
+                now,
+            )
+            .unwrap();
+        let registration = broker
+            .register_controller_session(first, b"same label", &guard)
+            .unwrap();
+        let other_registration = broker
+            .register_controller_session(other, b"same label", &guard)
+            .unwrap();
+        let proposal = broker
+            .prepare_controller_enrollment(first, registration, target, &guard)
+            .unwrap();
+        let enrollment = broker
+            .approve_controller_enrollment(first, NativeControllerEnrollment::new(proposal), &guard)
+            .unwrap();
+        let proposal = broker
+            .prepare_controller_enrollment(other, other_registration, other_target, &guard)
+            .unwrap();
+        let other_enrollment = broker
+            .approve_controller_enrollment(other, NativeControllerEnrollment::new(proposal), &guard)
+            .unwrap();
+        match action {
+            0 => {
+                let stale = broker
+                    .prepare_controller_enrollment(first, registration, target, &guard)
+                    .unwrap();
+                let proposal = broker
+                    .prepare_controller_enrollment(first, registration, target, &guard)
+                    .unwrap();
+                assert!(broker
+                    .approve_controller_enrollment(
+                        first,
+                        NativeControllerEnrollment::new(stale),
+                        &guard
+                    )
+                    .is_err());
+                let replacement = broker
+                    .approve_controller_enrollment(
+                        first,
+                        NativeControllerEnrollment::new(proposal),
+                        &guard,
+                    )
+                    .unwrap();
+                assert_ne!(replacement, enrollment);
+            }
+            1 => broker
+                .unregister_controller_session(first, registration, &guard)
+                .unwrap(),
+            2 => broker.close_target(target, &guard).unwrap(),
+            3 => {
+                broker.attach_target(1, 2, &guard).unwrap();
+            }
+            4 => broker.disconnect(first, &guard),
+            5 => broker.revoke_all(&guard),
+            _ => unreachable!(),
+        }
+        assert!(broker
+            .resolve_controller_enrollment(first, registration, enrollment)
+            .is_err());
+        if action <= 1 {
+            let spec = RunSpec {
+                binding: binding(1),
+                scope: ordinary_scope,
+                budget: Budget::default(),
+                deadline: now + Duration::from_secs(30),
+            };
+            assert!(broker.admit_run(first, None, spec, now).is_ok());
+        }
+        assert_eq!(
+            broker.resolve_controller_enrollment(other, other_registration, other_enrollment),
+            if action == 5 {
+                Err(Error::Unauthorized)
+            } else {
+                Ok(other_target)
+            }
+        );
+    }
+}
+
 fn digest(value: u8) -> Digest {
     Digest([value; 32])
 }

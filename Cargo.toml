@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/festerm-admission",
     "crates/festerm-automation",
     "crates/festerm-automation-js",
     "crates/festerm-automation-mcp",

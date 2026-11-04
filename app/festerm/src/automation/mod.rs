@@ -330,12 +330,14 @@ impl SettingsSnapshot {
     ) {
         let mut broker = Broker::new([7; 16]);
         let principal = broker.accept_connection().unwrap();
+        let guard = festerm_session::automation_admission_lock().unwrap();
         let registration = broker
-            .register_controller_session(principal, b"untrusted")
+            .register_controller_session(principal, b"untrusted", &guard)
             .unwrap();
-        let first = broker.attach_target(101, 1).unwrap();
-        let second = broker.attach_target(102, 1).unwrap();
-        let other_window = broker.attach_target(103, 1).unwrap();
+        let first = broker.attach_target(101, 1, &guard).unwrap();
+        let second = broker.attach_target(102, 1, &guard).unwrap();
+        let other_window = broker.attach_target(103, 1, &guard).unwrap();
+        drop(guard);
         (
             Self {
                 channels: vec![ChannelRow {
@@ -521,12 +523,12 @@ impl PrivacyGate {
         }
     }
 
-    fn bind_mcp(&self, stop: &Arc<AtomicBool>) -> bool {
-        let Some(_guard) = festerm_session::automation_admission_lock() else {
-            self.close();
-            stop.store(true, Ordering::Release);
-            return false;
-        };
+    fn bind_mcp_under_admission(
+        &self,
+        stop: &Arc<AtomicBool>,
+        _guard: &festerm_session::AutomationAdmissionGuard,
+    ) -> bool {
+        // Every non-poisoned access to this mutex holds the admission guard.
         let mut current = match self.mcp_stop.lock() {
             Ok(current) => current,
             Err(error) => {
@@ -548,6 +550,16 @@ impl PrivacyGate {
             }
         }
         true
+    }
+
+    #[cfg(test)]
+    fn bind_mcp(&self, stop: &Arc<AtomicBool>) -> bool {
+        let Some(guard) = festerm_session::automation_admission_lock() else {
+            self.close();
+            stop.store(true, Ordering::Release);
+            return false;
+        };
+        self.bind_mcp_under_admission(stop, &guard)
     }
 }
 
@@ -596,6 +608,7 @@ pub(crate) struct Coordinator {
     stop: Arc<AtomicBool>,
     enabled: bool,
     privacy_lost_this_tick: bool,
+    reconciliation_deferred: bool,
     status: &'static str,
     peers: BTreeMap<u64, Peer>,
     targets: BTreeMap<u64, Target>,
@@ -629,6 +642,7 @@ impl Default for Coordinator {
             stop: Arc::new(AtomicBool::new(true)),
             enabled: false,
             privacy_lost_this_tick: false,
+            reconciliation_deferred: false,
             status: SettingsSnapshot::default().status,
             peers: BTreeMap::new(),
             targets: BTreeMap::new(),
@@ -710,13 +724,14 @@ fn stamp(session: &SessionTab) -> Stamp {
     }
 }
 
-fn retire_target(broker: &mut Broker, target: Target) {
-    set_admission_flag(&target.registration, false);
-    if broker.close_target(target.reference).is_err() {
-        tracing::warn!("automation target closure refused");
-    } else if broker.forget_closed_target(target.reference).is_err() {
-        tracing::warn!("automation target retirement refused");
-    }
+fn retire_target(
+    broker: &mut Broker,
+    target: Target,
+    guard: &festerm_session::AutomationAdmissionGuard,
+) -> bool {
+    target.registration.store(false, Ordering::Release);
+    broker.close_target(target.reference, guard).is_ok()
+        && broker.forget_closed_target(target.reference).is_ok()
 }
 
 fn retire(retiring: &mut Retirement, name: &str, cleanup: impl FnOnce() -> bool + Send + 'static) {
@@ -832,19 +847,34 @@ impl Coordinator {
     }
 
     fn stop_mcp(&mut self) {
+        let needs_guard = !self.stop.load(Ordering::Acquire) || !self.peers.is_empty();
+        let guard = needs_guard
+            .then(festerm_session::automation_admission_lock)
+            .flatten();
         self.want_start = false;
         self.controller_opted_in = false;
-        set_admission_flag(&self.stop, true);
+        self.stop.store(true, Ordering::Release);
         self.control_handoffs.clear();
         self.pending_control_reviews.clear();
         self.metadata_grants.clear();
         self.pending_metadata_reviews.clear();
-        for (_, mut peer) in std::mem::take(&mut self.peers) {
-            peer.connection.close();
-            peer.machine.close();
-            if let Some(broker) = &mut self.broker {
-                broker.disconnect(peer.principal);
+        let peers = std::mem::take(&mut self.peers);
+        if let Some(guard) = guard.as_ref() {
+            for peer in peers.values() {
+                peer.connection.close_under_admission(guard);
+                if let Some(broker) = &mut self.broker {
+                    broker.disconnect(peer.principal, guard);
+                }
             }
+        } else if needs_guard {
+            for peer in peers.values() {
+                peer.connection.closed_flag().store(true, Ordering::Release);
+            }
+            self.broker = None;
+        }
+        drop(guard);
+        for (_, mut peer) in peers {
+            peer.machine.close();
         }
         let starting = self.mcp_starting.take();
         let server = self.server.take();
@@ -866,17 +896,35 @@ impl Coordinator {
     }
 
     fn close_shared_admission(&mut self) {
-        self.privacy_gate.close();
-        if let Some(broker) = &mut self.broker {
-            broker.revoke_all();
+        let dormant = self.privacy_gate.is_closed()
+            && self.stop.load(Ordering::Acquire)
+            && self.broker.is_none()
+            && self.targets.is_empty()
+            && self.peers.is_empty()
+            && self.server.is_none()
+            && self.privacy.is_none()
+            && self.starting.is_none()
+            && self.mcp_starting.is_none();
+        if !dormant {
+            self.privacy_gate.close();
+        }
+        if self.broker.is_some() || !self.targets.is_empty() {
+            let guard = festerm_session::automation_admission_lock();
+            if let Some(guard) = guard.as_ref() {
+                if let Some(broker) = &mut self.broker {
+                    broker.revoke_all(guard);
+                }
+            } else {
+                self.broker = None;
+            }
+            for target in self.targets.values() {
+                target.registration.store(false, Ordering::Release);
+            }
         }
         self.control_handoffs.clear();
         self.pending_control_reviews.clear();
         self.metadata_grants.clear();
         self.pending_metadata_reviews.clear();
-        for target in self.targets.values() {
-            set_admission_flag(&target.registration, false);
-        }
     }
 
     fn shutdown(&mut self) {
@@ -1016,20 +1064,34 @@ impl Coordinator {
             return;
         }
         if self.want_shared_start && self.broker.is_none() && self.starting.is_none() {
+            let guard = match festerm_session::try_automation_admission_lock() {
+                Ok(guard) => guard,
+                Err(festerm_session::AutomationAdmissionTryError::Busy) => {
+                    self.reconciliation_deferred = true;
+                    context.request_repaint_after(Duration::from_millis(50));
+                    return;
+                }
+                Err(festerm_session::AutomationAdmissionTryError::Poisoned) => {
+                    self.want_shared_start = false;
+                    self.privacy_gate = Arc::new(PrivacyGate::new(false));
+                    self.shared_start_failed(StartFailure::Privacy);
+                    return;
+                }
+            };
             self.want_shared_start = false;
             self.privacy_gate = Arc::new(PrivacyGate::new(false));
-            if festerm_session::automation_admission_lock().is_none() {
-                self.shared_start_failed(StartFailure::Privacy);
-                return;
-            }
             if self.want_start
                 && !self.stop.load(Ordering::Acquire)
-                && !self.privacy_gate.bind_mcp(&self.stop)
+                && !self
+                    .privacy_gate
+                    .bind_mcp_under_admission(&self.stop, &guard)
                 && self.privacy_gate.is_closed()
             {
+                drop(guard);
                 self.shared_start_failed(StartFailure::Privacy);
                 return;
             }
+            drop(guard);
             let gate = self.privacy_gate.clone();
             let notify = context.clone();
             let (send, result) = mpsc::sync_channel(1);
@@ -1130,7 +1192,23 @@ impl Coordinator {
             && self.server.is_none()
             && self.mcp_starting.is_none()
         {
-            if !self.privacy_gate.bind_mcp(&self.stop) {
+            let guard = match festerm_session::try_automation_admission_lock() {
+                Ok(guard) => guard,
+                Err(festerm_session::AutomationAdmissionTryError::Busy) => {
+                    self.reconciliation_deferred = true;
+                    context.request_repaint_after(Duration::from_millis(50));
+                    return;
+                }
+                Err(festerm_session::AutomationAdmissionTryError::Poisoned) => {
+                    self.privacy_lost();
+                    return;
+                }
+            };
+            let bound = self
+                .privacy_gate
+                .bind_mcp_under_admission(&self.stop, &guard);
+            drop(guard);
+            if !bound {
                 if self.privacy_gate.is_closed() {
                     self.privacy_lost();
                 } else {
@@ -1183,7 +1261,13 @@ impl Coordinator {
     }
 
     fn advance_start(&mut self, context: &egui::Context) {
+        if self.reconciliation_deferred {
+            return;
+        }
         self.advance_shared(context);
+        if self.reconciliation_deferred {
+            return;
+        }
         if self.broker.is_some() && self.privacy_gate.is_closed() {
             self.privacy_lost();
             return;
@@ -1193,6 +1277,7 @@ impl Coordinator {
 
     pub(crate) fn tick(&mut self, context: &egui::Context, apps: &[&FesTermApp]) {
         self.privacy_lost_this_tick = false;
+        self.reconciliation_deferred = false;
         let javascript_enabled =
             !apps.is_empty() && apps.iter().all(|app| app.automation_javascript_enabled());
         if self.javascript_enabled && !javascript_enabled {
@@ -1211,24 +1296,36 @@ impl Coordinator {
             }
         }
         self.advance_start(context);
+        if self.reconciliation_deferred {
+            return;
+        }
         if self.server.as_ref().is_some_and(ipc::Server::failed) {
             self.mcp_failed();
         }
         let Some(mut broker) = self.broker.take() else {
             return;
         };
+        match self.try_reconcile(&mut broker, apps) {
+            Ok(()) => {}
+            Err(festerm_session::AutomationAdmissionTryError::Busy) => {
+                self.broker = Some(broker);
+                self.reconciliation_deferred = true;
+                context.request_repaint_after(Duration::from_millis(50));
+                return;
+            }
+            Err(festerm_session::AutomationAdmissionTryError::Poisoned) => {
+                self.broker = Some(broker);
+                self.privacy_lost();
+                return;
+            }
+        }
+        if self.privacy_gate.is_closed() {
+            self.broker = Some(broker);
+            self.privacy_lost();
+            return;
+        }
         let now = Instant::now();
         broker.poll_expiry(now);
-        self.reconcile(&mut broker, apps);
-        controller::reconcile(
-            &mut broker,
-            &self.targets,
-            &mut self.peers,
-            apps,
-            self.presentation_workspace
-                .as_ref()
-                .and_then(WorkspaceRevision::current),
-        );
         self.metadata_grants.retain(|principal, bound| {
             broker.native_metadata_grant(*principal, now) == Ok(bound.grant)
         });
@@ -1256,10 +1353,16 @@ impl Coordinator {
             })
             .collect();
         for key in closed {
+            let Some(guard) = festerm_session::automation_admission_lock() else {
+                self.broker = Some(broker);
+                self.privacy_lost();
+                return;
+            };
             if let Some(mut peer) = self.peers.remove(&key) {
-                peer.connection.close();
+                peer.connection.close_under_admission(&guard);
+                broker.disconnect(peer.principal, &guard);
+                drop(guard);
                 peer.machine.close();
-                broker.disconnect(peer.principal);
                 self.control_handoffs.remove(&peer.principal);
                 self.pending_control_reviews
                     .retain(|_, review| review.principal != peer.principal);
@@ -1304,7 +1407,14 @@ impl Coordinator {
                             );
                         }
                         (Ok(principal), _) => {
-                            broker.disconnect(principal);
+                            let Some(guard) = festerm_session::automation_admission_lock() else {
+                                connection.close();
+                                self.broker = Some(broker);
+                                self.privacy_lost();
+                                return;
+                            };
+                            broker.disconnect(principal, &guard);
+                            drop(guard);
                             connection.close();
                             tracing::warn!("automation connection identity refused");
                         }
@@ -1345,8 +1455,11 @@ impl Coordinator {
         }
     }
 
-    fn reconcile(&mut self, broker: &mut Broker, apps: &[&FesTermApp]) {
-        let mut current = BTreeSet::new();
+    fn try_reconcile(
+        &mut self,
+        broker: &mut Broker,
+        apps: &[&FesTermApp],
+    ) -> Result<(), festerm_session::AutomationAdmissionTryError> {
         let mut candidates = Vec::new();
         for (id, session) in apps.iter().flat_map(|app| app.automation_sessions()) {
             let Some(controller_instance) = session.controller.automation_instance() else {
@@ -1354,9 +1467,6 @@ impl Coordinator {
             };
             let liveness = session.controller.automation_liveness();
             let Some(attachment) = session.controller.automation_attachment_epoch() else {
-                continue;
-            };
-            let Some(attachment_generation) = attachment.capture() else {
                 continue;
             };
             if !matches!(
@@ -1369,16 +1479,21 @@ impl Coordinator {
                 continue;
             }
             let id = id.chip_id();
-            current.insert(id);
-            candidates.push((
-                id,
-                session,
-                controller_instance,
-                liveness,
-                attachment,
-                attachment_generation,
-            ));
+            candidates.push((id, session, controller_instance, liveness, attachment));
         }
+        let guard = festerm_session::try_automation_admission_lock()?;
+        let candidates: Vec<_> = candidates
+            .into_iter()
+            .filter_map(|(id, session, instance, liveness, attachment)| {
+                if !liveness.load(Ordering::Acquire) {
+                    return None;
+                }
+                let generation = attachment.capture_under_admission(&guard)?;
+                Some((id, session, instance, liveness, attachment, generation))
+            })
+            .collect();
+        let current: BTreeSet<_> = candidates.iter().map(|(id, ..)| *id).collect();
+        let mut retirement_refused = false;
         let stale: Vec<_> = self
             .targets
             .keys()
@@ -1387,7 +1502,7 @@ impl Coordinator {
             .collect();
         for id in stale {
             if let Some(target) = self.targets.remove(&id) {
-                retire_target(broker, target);
+                retirement_refused |= !retire_target(broker, target, &guard);
             }
         }
 
@@ -1416,20 +1531,21 @@ impl Coordinator {
                         target.stamp = stamp;
                     } else {
                         let target = self.targets.remove(&id).expect("target was checked");
-                        retire_target(broker, target);
+                        retirement_refused |= !retire_target(broker, target, &guard);
                     }
                 }
             } else {
                 if let Some(target) = self.targets.remove(&id) {
-                    retire_target(broker, target);
+                    retirement_refused |= !retire_target(broker, target, &guard);
                 }
                 let Some(next) = self.generation.checked_add(1) else {
+                    drop(guard);
                     self.privacy_gate.close();
                     tracing::warn!("automation target generations exhausted");
-                    return;
+                    return Ok(());
                 };
                 self.generation = next;
-                match broker.attach_target(id, next) {
+                match broker.attach_target(id, next, &guard) {
                     Ok(reference) => {
                         self.targets.insert(
                             id,
@@ -1448,13 +1564,27 @@ impl Coordinator {
                         );
                     }
                     Err(_) => {
-                        if !registration_refused && self.status != REGISTRATION_REFUSED {
-                            tracing::warn!("automation target registration refused");
-                        }
                         registration_refused = true;
                     }
                 }
             }
+        }
+        controller::reconcile(
+            broker,
+            &self.targets,
+            &mut self.peers,
+            apps,
+            self.presentation_workspace
+                .as_ref()
+                .and_then(WorkspaceRevision::current),
+            &guard,
+        );
+        drop(guard);
+        if retirement_refused {
+            tracing::warn!("automation target retirement refused");
+        }
+        if registration_refused && self.status != REGISTRATION_REFUSED {
+            tracing::warn!("automation target registration refused");
         }
         if self.server.is_some() && !self.stop.load(Ordering::Acquire) {
             if registration_refused {
@@ -1464,6 +1594,23 @@ impl Coordinator {
                     "MCP observation-only listener active. No terminal access until native approval.";
             }
         }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn reconcile(&mut self, broker: &mut Broker, apps: &[&FesTermApp]) {
+        retry_automation_busy(|| {
+            self.try_reconcile(broker, apps)
+                .map_err(|error| match error {
+                    festerm_session::AutomationAdmissionTryError::Busy => {
+                        festerm_automation::Error::Busy
+                    }
+                    festerm_session::AutomationAdmissionTryError::Poisoned => {
+                        festerm_automation::Error::Unavailable
+                    }
+                })
+        })
+        .unwrap();
     }
 
     pub(crate) fn command(&mut self, command: NativeCommand, context: &egui::Context) {
@@ -1487,6 +1634,10 @@ impl Coordinator {
                 }
             }
             NativeCommand::ApproveObservation { .. } if self.privacy_lost_this_tick => {}
+            NativeCommand::ApproveObservation { .. } if self.reconciliation_deferred => {
+                self.status =
+                    "MCP approval refused while target reconciliation is pending. Try again.";
+            }
             NativeCommand::ApproveObservation { channel, targets } => {
                 if self.approve(channel, targets).is_err() {
                     self.status = "MCP approval refused: channel, target, lifetime or authority limit changed. No access was granted.";
@@ -1584,6 +1735,11 @@ impl Coordinator {
                 if self.privacy_lost_this_tick {
                     continue;
                 }
+                if self.reconciliation_deferred && command.is_confirmation() {
+                    self.status = "Controller action refused while target reconciliation is pending. Try again.";
+                    context.request_repaint();
+                    continue;
+                }
                 if controller::command(self, window, command, apps).is_err() {
                     self.status = "Controller selection refused: the connection, registration, window or local terminal changed. No association was approved.";
                 }
@@ -1638,6 +1794,8 @@ impl Coordinator {
     }
 
     fn approve(&mut self, channel: u64, targets: Vec<TargetRef>) -> Result<(), Refusal> {
+        let guard =
+            festerm_session::try_automation_admission_lock().map_err(|_| Refusal::Unavailable)?;
         if self.stop.load(Ordering::Acquire)
             || self.privacy_gate.is_closed()
             || targets.is_empty()
@@ -1662,7 +1820,9 @@ impl Coordinator {
             self.targets.get(&reference.session()).is_none_or(|target| {
                 target.reference != *reference
                     || !target.liveness.load(Ordering::Acquire)
-                    || target.attachment.capture() != Some(target.attachment_generation)
+                    || !target.registration.load(Ordering::Acquire)
+                    || target.attachment.capture_under_admission(&guard)
+                        != Some(target.attachment_generation)
             })
         }) {
             return Err(Refusal::StaleTarget);

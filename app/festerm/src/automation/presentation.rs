@@ -248,11 +248,11 @@ impl Coordinator {
     fn admission_principal_locked(
         &mut self,
         channel: u64,
-        _guard: &AutomationAdmissionGuard,
+        guard: &AutomationAdmissionGuard,
     ) -> festerm_automation::Result<ConnectionId> {
         if self.privacy_gate.is_closed() {
             if let Some(broker) = self.broker.as_mut() {
-                broker.revoke_all();
+                broker.revoke_all(guard);
             }
             self.control_handoffs.clear();
             self.pending_control_reviews.clear();
@@ -264,7 +264,7 @@ impl Coordinator {
         let principal = peer.principal;
         if peer.connection.is_closed() || self.stop.load(Ordering::Acquire) {
             if let Some(broker) = self.broker.as_mut() {
-                broker.disconnect(principal);
+                broker.disconnect(principal, guard);
             }
             self.control_handoffs.remove(&principal);
             self.pending_control_reviews
@@ -472,7 +472,7 @@ impl Coordinator {
                     .expect("target was checked");
                 target.registration.store(false, Ordering::Release);
             }
-            match broker.close_target(*source) {
+            match broker.close_target(*source, guard) {
                 Ok(()) => {
                     if broker.forget_closed_target(*source).is_err() {
                         tracing::warn!("automation source retirement refused");
@@ -482,7 +482,7 @@ impl Coordinator {
                 // proposals. Its successor must not be retired here.
                 Err(Error::StaleTarget) => {}
                 Err(_) => {
-                    broker.revoke_all();
+                    broker.revoke_all(guard);
                     self.control_handoffs.clear();
                     self.pending_control_reviews.clear();
                     self.metadata_grants.clear();
@@ -498,7 +498,7 @@ impl Coordinator {
                 // proposal containing this exact retired target.
                 Err(Error::StaleTarget) => {}
                 Err(_) => {
-                    broker.revoke_all();
+                    broker.revoke_all(guard);
                     self.control_handoffs.clear();
                     self.pending_control_reviews.clear();
                     self.metadata_grants.clear();
@@ -1146,15 +1146,21 @@ impl Coordinator {
         target.local_pty = true;
         let reference = target.reference;
         let principal = broker.accept_connection().unwrap();
+        let guard = festerm_session::automation_admission_lock().unwrap();
         let registration = broker
-            .register_controller_session(principal, b"controller")
+            .register_controller_session(principal, b"controller", &guard)
             .unwrap();
         let proposal = broker
-            .prepare_controller_enrollment(principal, registration, reference)
+            .prepare_controller_enrollment(principal, registration, reference, &guard)
             .unwrap();
         let enrollment = broker
-            .approve_controller_enrollment(principal, NativeControllerEnrollment::new(proposal))
+            .approve_controller_enrollment(
+                principal,
+                NativeControllerEnrollment::new(proposal),
+                &guard,
+            )
             .unwrap();
+        drop(guard);
         let now = Instant::now();
         let proposal = broker
             .prepare_controller_presentation_approval(principal, registration, enrollment, now)
@@ -1491,7 +1497,7 @@ impl Coordinator {
         }
         if !self.live_presentation_target(target, &guard) {
             if let Some(broker) = self.broker.as_mut() {
-                let _ = broker.close_target(target);
+                let _ = broker.close_target(target, &guard);
             }
             return Err(refused(Error::StaleTarget));
         }
