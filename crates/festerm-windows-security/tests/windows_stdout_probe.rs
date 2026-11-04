@@ -2,8 +2,11 @@
 
 #![cfg(windows)]
 
+#[path = "support/stdout_probe_control.rs"]
+mod stdout_probe_control;
+
 use std::{
-    io::{self, Read},
+    io::{self, Read, Write},
     os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio},
     ptr,
@@ -13,6 +16,7 @@ use std::{
 };
 
 use festerm_windows_job::WindowsJob;
+use stdout_probe_control::{ControlError, ControlParser, MARKER, MAX_CONTROL};
 use windows_sys::Win32::{
     Foundation::{
         DuplicateHandle, DUPLICATE_SAME_ACCESS, ERROR_BROKEN_PIPE, ERROR_NO_DATA,
@@ -37,13 +41,11 @@ const EVENT_OWNER: &str = "FESTERM_NATIVE_STDOUT_PROBE_EVENT_OWNER";
 const START_EVENT: &str = "FESTERM_NATIVE_STDOUT_PROBE_START_EVENT";
 const READY_EVENT: &str = "FESTERM_NATIVE_STDOUT_PROBE_READY_EVENT";
 const HELPER: &str = "windows_stdout_probe_subprocess";
-const MARKER: &str = "FESTERM_STDOUT_PROBE";
 const STEP_TIMEOUT: Duration = Duration::from_secs(5);
 const OUTER_TIMEOUT: Duration = Duration::from_secs(25);
 const IO_LIMIT: Duration = Duration::from_secs(2);
 const CHUNK: usize = 64 * 1024;
 const MAX_WRITES: usize = 64;
-const MAX_CONTROL: usize = 4096;
 const MAX_PIPE_BYTES: usize = CHUNK * MAX_WRITES + MAX_CONTROL;
 const FILL_BYTE: u8 = 0xa5;
 const WAIT_BYTE: u8 = 0xb6;
@@ -379,7 +381,13 @@ struct Probe {
     process: Supervised,
     stdout: Option<ChildStdout>,
     stderr: ChildStderr,
-    control: Vec<u8>,
+    control: ControlParser,
+}
+
+enum ControlRead {
+    Pending,
+    Bytes(usize),
+    Eof,
 }
 
 impl Probe {
@@ -392,42 +400,147 @@ impl Probe {
             process,
             stdout: Some(stdout),
             stderr,
-            control: Vec::new(),
+            control: ControlParser::default(),
         }
     }
 
     fn event(&mut self, expected: &str) -> Vec<u64> {
         let deadline = Instant::now() + STEP_TIMEOUT;
         loop {
-            if let Some(end) = self.control.iter().position(|byte| *byte == b'\n') {
-                let line: Vec<u8> = self.control.drain(..=end).collect();
-                let line = std::str::from_utf8(&line).expect("invalid test control frame");
-                let mut words = line.split_whitespace();
-                assert_eq!(words.next(), Some(MARKER), "unexpected test control frame");
-                assert_eq!(
-                    words.next(),
-                    Some(expected),
-                    "unexpected test control event"
-                );
-                return words
-                    .map(|word| word.parse().expect("invalid test control value"))
-                    .collect();
+            let event = match self.control.next_event(expected, Instant::now(), deadline) {
+                Ok(event) => event,
+                Err(error) => self.control_error(expected, error),
+            };
+            if let Some(values) = event {
+                return values;
             }
-            let count = available(self.stderr.as_raw_handle()).expect("test control pipe closed");
-            if count > 0 {
-                let mut bytes = [0; 512];
+            let mut bytes = [0; 512];
+            match self.read_control(&mut bytes) {
+                Ok(ControlRead::Bytes(read)) => {
+                    if let Err(error) = self.control.push(&bytes[..read], Instant::now(), deadline)
+                    {
+                        self.control_error(expected, error);
+                    }
+                }
+                Ok(ControlRead::Pending) => {
+                    if Instant::now() >= deadline {
+                        self.control_error(expected, ControlError::Deadline);
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Ok(ControlRead::Eof) => self.control_closed(expected, "control pipe reached EOF"),
+                Err(error) => {
+                    self.control_closed(expected, format_args!("control read failed: {error}"))
+                }
+            }
+        }
+    }
+
+    fn read_control(&mut self, bytes: &mut [u8]) -> io::Result<ControlRead> {
+        match available(self.stderr.as_raw_handle()) {
+            Ok(0) => Ok(ControlRead::Pending),
+            Ok(count) => {
                 let take = bytes.len().min(count as usize);
-                let read = self.stderr.read(&mut bytes[..take]).unwrap();
-                assert_ne!(read, 0, "test control pipe closed");
-                self.control.extend_from_slice(&bytes[..read]);
-                assert!(self.control.len() <= MAX_CONTROL, "test control overflow");
+                match self.stderr.read(&mut bytes[..take])? {
+                    0 => Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "available control bytes disappeared before reading",
+                    )),
+                    read => Ok(ControlRead::Bytes(read)),
+                }
+            }
+            Err(error) if error.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) => {
+                // Confirm EOF with a read: any previously buffered pipe
+                // bytes must still be checked before accepting closure.
+                match self.stderr.read(bytes) {
+                    Ok(0) => Ok(ControlRead::Eof),
+                    Ok(read) => Ok(ControlRead::Bytes(read)),
+                    Err(error) if error.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) => {
+                        Ok(ControlRead::Eof)
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn control_error(&self, expected: &str, error: ControlError) -> ! {
+        if matches!(&error, ControlError::UnexpectedFrame { .. }) {
+            panic!("test control {expected}: {error}");
+        }
+        self.control_closed(expected, error);
+    }
+
+    fn control_closed(&self, expected: &str, reason: impl std::fmt::Display) -> ! {
+        if let Some(frame) = self.control.unfinished() {
+            panic!("test control {expected}: {reason}; {frame}");
+        }
+        panic!("test control {expected}: {reason}");
+    }
+
+    fn drain_failure(&self, kind: io::ErrorKind, reason: impl std::fmt::Display) -> io::Error {
+        if let Some(frame) = self.control.unfinished() {
+            return io::Error::new(kind, format!("{reason}; {frame}"));
+        }
+        io::Error::new(kind, reason.to_string())
+    }
+
+    fn trailing_error(&self, error: ControlError) -> io::Error {
+        let kind = if matches!(&error, ControlError::Deadline) {
+            io::ErrorKind::TimedOut
+        } else {
+            io::ErrorKind::InvalidData
+        };
+        if matches!(&error, ControlError::UnexpectedFrame { .. }) {
+            return io::Error::new(kind, error.to_string());
+        }
+        self.drain_failure(kind, error)
+    }
+
+    fn check_trailing(&mut self, eof: bool, deadline: Instant) -> io::Result<()> {
+        let result = self.control.trailing(eof, Instant::now(), deadline);
+        result.map_err(|error| self.trailing_error(error))
+    }
+
+    fn append_trailing(&mut self, bytes: &[u8], deadline: Instant) -> io::Result<()> {
+        if let Err(error) = self.control.push(bytes, Instant::now(), deadline) {
+            let kind = if matches!(&error, ControlError::Deadline) {
+                io::ErrorKind::TimedOut
             } else {
-                assert!(
-                    self.process.child.try_wait().unwrap().is_none(),
-                    "probe exited before its control event"
-                );
-                assert!(Instant::now() < deadline, "probe control deadline expired");
-                thread::sleep(Duration::from_millis(10));
+                io::ErrorKind::InvalidData
+            };
+            let rejected = ControlParser::rejected(bytes);
+            return Err(self.drain_failure(kind, format!("{error}; rejected {rejected}")));
+        }
+        Ok(())
+    }
+
+    fn drain_control_to_eof(&mut self, deadline: Instant) -> io::Result<()> {
+        self.drain_control_to_eof_with_idle(deadline, |_| {})
+    }
+
+    fn drain_control_to_eof_with_idle(
+        &mut self,
+        deadline: Instant,
+        on_idle: impl FnOnce(&mut Supervised),
+    ) -> io::Result<()> {
+        let mut on_idle = Some(on_idle);
+        loop {
+            self.check_trailing(false, deadline)?;
+            let mut bytes = [0; 512];
+            match self.read_control(&mut bytes) {
+                Ok(ControlRead::Pending) => {
+                    if let Some(on_idle) = on_idle.take() {
+                        on_idle(&mut self.process);
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Ok(ControlRead::Bytes(read)) => {
+                    self.append_trailing(&bytes[..read], deadline)?;
+                }
+                Ok(ControlRead::Eof) => return self.check_trailing(true, deadline),
+                Err(error) => return Err(self.drain_failure(error.kind(), error)),
             }
         }
     }
@@ -713,7 +826,17 @@ fn probe_controller() {
         [ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_PIPE_NOT_CONNECTED].contains(&(closed[2] as u32)),
         "unexpected error after the last reader closed"
     );
-    probe.process.require_success(STEP_TIMEOUT);
+    let control_deadline = Instant::now() + STEP_TIMEOUT;
+    probe
+        .drain_control_to_eof(control_deadline)
+        .expect("trailing test control output or unresolved EOF");
+    let remaining = control_deadline.saturating_duration_since(Instant::now());
+    assert!(!remaining.is_zero(), "probe control deadline expired");
+    probe.process.require_success(remaining);
+    assert!(
+        Instant::now() < control_deadline,
+        "probe exit exceeded the control deadline"
+    );
     eprintln!(
         "Native stdout probe: total={total} partial={partial} full_write=0 \
          restored_full_write=0 duplicate_wait_write=1 closed_error={}",
@@ -756,6 +879,139 @@ fn stall_controller() {
     next.process.require_success(STEP_TIMEOUT);
 }
 
+fn control_tail_child(role: &str) {
+    command_byte(b'G');
+    let mut stderr = io::stderr();
+    match role {
+        "tail-clean" => stderr
+            .write_all(b"FESTERM_STDOUT_PROBE TAIL 1\n\n\r\n")
+            .unwrap(),
+        "tail-immediate-garbage" => stderr
+            .write_all(b"FESTERM_STDOUT_PROBE TAIL 1\ngarbage\n")
+            .unwrap(),
+        "tail-immediate-partial" => stderr
+            .write_all(b"FESTERM_STDOUT_PROBE TAIL 1\n\x1b")
+            .unwrap(),
+        "tail-late-garbage" | "tail-late-partial" => {
+            report("TAIL 1");
+            command_byte(b'T');
+            let bytes: &[u8] = if role == "tail-late-garbage" {
+                b"garbage\n"
+            } else {
+                b"\r"
+            };
+            stderr.write_all(bytes).unwrap();
+        }
+        "tail-exit-before-event" | "tail-exit-with-garbage" | "tail-exit-with-partial" => {
+            let bytes: &[u8] = match role {
+                "tail-exit-with-garbage" => b"FESTERM_STDOUT_PROBE TAIL 1\ngarbage\n",
+                "tail-exit-with-partial" => b"FESTERM_STDOUT_PROBE TAIL 1\n\x1b",
+                _ => b"FESTERM_STDOUT_PROBE TAIL 1\n",
+            };
+            stderr.write_all(bytes).unwrap();
+            std::process::exit(0);
+        }
+        "tail-deadline" => report("TAIL 1"),
+        "tail-deadline-partial" => stderr
+            .write_all(b"FESTERM_STDOUT_PROBE TAIL 1\n\r")
+            .unwrap(),
+        _ => panic!("unknown test tail role"),
+    }
+    command_byte(b'Q');
+    std::process::exit(0);
+}
+
+fn wait_for_trailing_cr(probe: &mut Probe) {
+    let deadline = Instant::now() + STEP_TIMEOUT;
+    loop {
+        probe.check_trailing(false, deadline).unwrap();
+        if let Some(fragment) = probe.control.unfinished() {
+            assert!(fragment.to_string().contains("\\r"));
+            return;
+        }
+        let mut bytes = [0; 512];
+        match probe.read_control(&mut bytes).unwrap() {
+            ControlRead::Pending => thread::sleep(Duration::from_millis(10)),
+            ControlRead::Bytes(read) => probe.append_trailing(&bytes[..read], deadline).unwrap(),
+            ControlRead::Eof => panic!("control writer closed before sending its fragment"),
+        }
+    }
+}
+
+fn control_tail_controller() {
+    let _ready = controller_start();
+    for (role, late, bad) in [
+        ("tail-clean", false, None),
+        ("tail-immediate-garbage", false, Some("garbage")),
+        ("tail-immediate-partial", false, Some("\\x1b")),
+        ("tail-late-garbage", true, Some("garbage")),
+        ("tail-late-partial", true, Some("\\r")),
+    ] {
+        let mut probe = Probe::spawn(role);
+        assert_eq!(probe.event("TAIL"), vec![1]);
+        let deadline = Instant::now() + STEP_TIMEOUT;
+        let result = if late {
+            // Release the child only after the drain has observed an empty
+            // pipe, so this output is deterministically later than the frame.
+            probe.drain_control_to_eof_with_idle(deadline, |process| process.send(b"TQ"))
+        } else {
+            probe.process.send(b"Q");
+            probe.drain_control_to_eof(deadline)
+        };
+        if let Some(expected) = bad {
+            let error = result.expect_err("nonempty trailing control output was accepted");
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            assert!(error.to_string().contains(expected));
+        } else {
+            result.expect("clean control output did not reach EOF");
+        }
+        probe.process.require_success(STEP_TIMEOUT);
+    }
+
+    for (role, partial) in [("tail-deadline", false), ("tail-deadline-partial", true)] {
+        let mut probe = Probe::spawn(role);
+        assert_eq!(probe.event("TAIL"), vec![1]);
+        if partial {
+            wait_for_trailing_cr(&mut probe);
+        }
+        let error = probe
+            .drain_control_to_eof(Instant::now() + Duration::from_millis(200))
+            .expect_err("an open control writer must not be mistaken for EOF");
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        if partial {
+            assert!(error.to_string().contains("\\r"));
+        }
+        probe.process.send(b"Q");
+        let result = probe.drain_control_to_eof(Instant::now() + STEP_TIMEOUT);
+        if partial {
+            let error = result.expect_err("partial output at EOF was accepted");
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            assert!(error.to_string().contains("\\r"));
+        } else {
+            result.expect("released control writer did not close");
+        }
+        probe.process.require_success(STEP_TIMEOUT);
+    }
+
+    for (role, bad) in [
+        ("tail-exit-before-event", None),
+        ("tail-exit-with-garbage", Some("garbage")),
+        ("tail-exit-with-partial", Some("\\x1b")),
+    ] {
+        let mut exited = Probe::spawn(role);
+        exited.process.require_success(STEP_TIMEOUT);
+        assert_eq!(exited.event("TAIL"), vec![1]);
+        let result = exited.drain_control_to_eof(Instant::now() + STEP_TIMEOUT);
+        if let Some(expected) = bad {
+            let error = result.expect_err("post-exit control output was accepted");
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            assert!(error.to_string().contains(expected));
+        } else {
+            result.expect("control output was not drained after child exit");
+        }
+    }
+}
+
 fn park_controller() {
     let event = controller_start();
     // SAFETY: event is a live event with modification access.
@@ -772,6 +1028,8 @@ fn windows_stdout_probe_subprocess() {
         Ok("probe-child") => probe_child(),
         Ok("stall-controller") => stall_controller(),
         Ok("hanging-writer") => hanging_writer_child(),
+        Ok("tail-controller") => control_tail_controller(),
+        Ok(role) if role.starts_with("tail-") => control_tail_child(role),
         Ok("park-controller") => park_controller(),
         Ok("controller-ping") => {
             let _ready = controller_start();
@@ -811,4 +1069,12 @@ fn windows_stdout_probe_stalled_processes_are_supervised() {
     let mut next = Supervised::spawn("controller-ping", false, Some(&next_events));
     next_events.start();
     next.require_success(STEP_TIMEOUT);
+}
+
+#[test]
+fn windows_stdout_probe_requires_clean_control_eof() {
+    let events = ControllerEvents::new();
+    let mut controller = Supervised::spawn("tail-controller", false, Some(&events));
+    events.start();
+    controller.require_success(OUTER_TIMEOUT);
 }
