@@ -438,6 +438,32 @@ impl Broker {
         )
     }
 
+    /// Identify the current exact-enrollment grant without authorizing a read.
+    pub fn native_enrollment_metadata_grant(
+        &self,
+        connection: ConnectionId,
+        registration: ControllerRegistrationId,
+        enrollment: ControllerEnrollmentId,
+        now: Instant,
+    ) -> Result<NativeEnrollmentMetadataGrant> {
+        let target = self.resolve_controller_enrollment(connection, registration, enrollment)?;
+        let GrantRef::Metadata(grant) = self.slot_grant(
+            connection,
+            GrantSlot::EnrollmentMetadata(registration, enrollment),
+            now,
+        )?
+        else {
+            return Err(Error::Revoked);
+        };
+        Ok(NativeEnrollmentMetadataGrant {
+            connection,
+            registration,
+            enrollment,
+            target,
+            epoch: grant.epoch,
+        })
+    }
+
     /// Revoke this exact grant, pending decisions, runs and liveness only.
     pub fn revoke_enrollment_metadata_grant(
         &mut self,

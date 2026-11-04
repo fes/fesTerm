@@ -186,6 +186,12 @@ to bypass another's restrictions.
    the unbound slot as authority or enable metadata transport. No enrollment
    publication witness is implemented, and the kernel does not fence physical
    recipients or qualify native consent.
+   A dormant host review now binds a separate metadata decision to the exact
+   peer, enrollment, local attachment and workspace revision before installing
+   its broker grant. It refuses to compose with active control or the legacy
+   observation adapter; host-side two-sided consent and per-slot delivery
+   fencing are still required. Synthetic decisions do not constitute native UI
+   or enable a metadata consumer.
    The existing capacity-four app outbound channel and its frame and target
    guards now reside in the authority crate and remain connected to the same
    app writer. The app retains the existing admission validation, size and

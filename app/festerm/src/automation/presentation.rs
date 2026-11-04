@@ -1,7 +1,8 @@
 use super::*;
 use festerm_automation::{
-    ApprovalId, ControllerEnrollmentId, ControllerRegistrationId, Error, LeaseRef,
-    MetadataGrantRequest, NativeControlGrant, NativeMetadataApproval, NativeMetadataGrant,
+    ApprovalId, ControllerEnrollmentId, ControllerRegistrationId, EnrollmentMetadataGrantProposal,
+    Error, LeaseRef, MetadataGrantRequest, NativeControlGrant, NativeEnrollmentMetadataGrant,
+    NativeEnrollmentMetadataGrantApproval, NativeMetadataApproval, NativeMetadataGrant,
     NativePresentationObservation, PresentationAttempt, PresentationWindowId,
 };
 use festerm_session::{
@@ -116,6 +117,27 @@ pub(super) struct BoundMetadataReview {
     control_sources: BTreeSet<TargetRef>,
 }
 
+pub(super) type EnrollmentMetadataKey = (
+    ConnectionId,
+    ControllerRegistrationId,
+    ControllerEnrollmentId,
+);
+
+pub(super) struct BoundEnrollmentMetadataGrant {
+    pub(super) grant: NativeEnrollmentMetadataGrant,
+    association: controller::FrozenAssociation,
+    source: FrozenSource,
+}
+
+pub(super) struct BoundEnrollmentMetadataReview {
+    pub(super) principal: ConnectionId,
+    association: controller::FrozenAssociation,
+    source: FrozenSource,
+    proposal: EnrollmentMetadataGrantProposal,
+    lifetime: Duration,
+    workspace_revision: u64,
+}
+
 struct FrozenSource {
     reference: TargetRef,
     controller_instance: u64,
@@ -174,6 +196,22 @@ pub(crate) struct PendingMetadataReview {
 
 /// A native decision for one displayed metadata review.
 pub(crate) struct NativeMetadataDecision {
+    principal: ConnectionId,
+    approval_id: ApprovalId,
+}
+
+/// A host-only review of one exact controller association.
+pub(crate) struct PendingEnrollmentMetadataReview {
+    principal: ConnectionId,
+    approval_id: ApprovalId,
+    registration: ControllerRegistrationId,
+    enrollment: ControllerEnrollmentId,
+    target: TargetRef,
+    lifetime: Duration,
+}
+
+/// A native decision for one displayed enrollment metadata review.
+pub(crate) struct NativeEnrollmentMetadataDecision {
     principal: ConnectionId,
     approval_id: ApprovalId,
 }
@@ -237,6 +275,55 @@ impl PendingMetadataReview {
     }
 }
 
+#[allow(dead_code)]
+impl PendingEnrollmentMetadataReview {
+    pub(crate) fn registration(&self) -> ControllerRegistrationId {
+        self.registration
+    }
+
+    pub(crate) fn enrollment(&self) -> ControllerEnrollmentId {
+        self.enrollment
+    }
+
+    pub(crate) fn target(&self) -> TargetRef {
+        self.target
+    }
+
+    pub(crate) fn lifetime(&self) -> Duration {
+        self.lifetime
+    }
+
+    pub(crate) fn accept_from_native(&self) -> NativeEnrollmentMetadataDecision {
+        NativeEnrollmentMetadataDecision {
+            principal: self.principal,
+            approval_id: self.approval_id,
+        }
+    }
+}
+
+pub(super) fn prune_stale_enrollment_metadata_reviews_locked(
+    pending: &mut BTreeMap<ApprovalId, BoundEnrollmentMetadataReview>,
+    broker: &mut Broker,
+    workspace_revision: Option<u64>,
+    now: Instant,
+    _guard: &AutomationAdmissionGuard,
+) -> festerm_automation::Result<()> {
+    let stale: Vec<_> = pending
+        .iter()
+        .filter_map(|(id, review)| {
+            (Some(review.workspace_revision) != workspace_revision)
+                .then_some((*id, review.principal))
+        })
+        .collect();
+    for (id, principal) in stale {
+        if broker.pending_approval_is_active(principal, id, now) {
+            broker.reject_approval(principal, id)?;
+        }
+        pending.remove(&id);
+    }
+    Ok(())
+}
+
 fn try_admission() -> festerm_automation::Result<AutomationAdmissionGuard> {
     festerm_session::try_automation_admission_lock().map_err(|error| match error {
         AutomationAdmissionTryError::Busy => Error::Busy,
@@ -258,6 +345,8 @@ impl Coordinator {
             self.pending_control_reviews.clear();
             self.metadata_grants.clear();
             self.pending_metadata_reviews.clear();
+            self.enrollment_metadata_grants.clear();
+            self.pending_enrollment_metadata_reviews.clear();
             return Err(Error::Revoked);
         }
         let peer = self.peers.get(&channel).ok_or(Error::Closed)?;
@@ -271,6 +360,10 @@ impl Coordinator {
                 .retain(|_, review| review.principal != principal);
             self.metadata_grants.remove(&principal);
             self.pending_metadata_reviews
+                .retain(|_, review| review.principal != principal);
+            self.enrollment_metadata_grants
+                .retain(|(connection, _, _), _| *connection != principal);
+            self.pending_enrollment_metadata_reviews
                 .retain(|_, review| review.principal != principal);
             return Err(Error::Revoked);
         }
@@ -383,15 +476,33 @@ impl Coordinator {
         now: Instant,
         guard: &AutomationAdmissionGuard,
     ) -> festerm_automation::Result<()> {
+        let workspace_revision = self
+            .presentation_workspace
+            .as_ref()
+            .and_then(WorkspaceRevision::current);
         let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
         broker.poll_expiry(now);
+        prune_stale_enrollment_metadata_reviews_locked(
+            &mut self.pending_enrollment_metadata_reviews,
+            broker,
+            workspace_revision,
+            now,
+            guard,
+        )?;
         self.pending_control_reviews
             .retain(|id, review| broker.pending_approval_is_active(review.principal, *id, now));
         self.pending_metadata_reviews
             .retain(|id, review| broker.pending_approval_is_active(review.principal, *id, now));
+        self.pending_enrollment_metadata_reviews
+            .retain(|id, review| broker.pending_approval_is_active(review.principal, *id, now));
         self.metadata_grants.retain(|principal, bound| {
             broker.native_metadata_grant(*principal, now) == Ok(bound.grant)
         });
+        self.enrollment_metadata_grants
+            .retain(|(principal, registration, enrollment), bound| {
+                broker.native_enrollment_metadata_grant(*principal, *registration, *enrollment, now)
+                    == Ok(bound.grant)
+            });
         // A metadata slot installed outside this host seam has no proven
         // native review or attachment binding. Do not retain a control grant
         // that could consume it; leave the independently owned metadata alone.
@@ -437,6 +548,16 @@ impl Coordinator {
                 self.pending_metadata_reviews
                     .values()
                     .flat_map(|review| &review.sources),
+            )
+            .chain(
+                self.enrollment_metadata_grants
+                    .values()
+                    .map(|grant| &grant.source),
+            )
+            .chain(
+                self.pending_enrollment_metadata_reviews
+                    .values()
+                    .map(|review| &review.source),
             )
             .filter_map(|source| {
                 if source.is_current(&self.targets, guard) {
@@ -487,6 +608,8 @@ impl Coordinator {
                     self.pending_control_reviews.clear();
                     self.metadata_grants.clear();
                     self.pending_metadata_reviews.clear();
+                    self.enrollment_metadata_grants.clear();
+                    self.pending_enrollment_metadata_reviews.clear();
                     return Err(Error::Revoked);
                 }
             }
@@ -503,6 +626,8 @@ impl Coordinator {
                     self.pending_control_reviews.clear();
                     self.metadata_grants.clear();
                     self.pending_metadata_reviews.clear();
+                    self.enrollment_metadata_grants.clear();
+                    self.pending_enrollment_metadata_reviews.clear();
                     return Err(Error::Revoked);
                 }
             }
@@ -530,9 +655,16 @@ impl Coordinator {
         });
         self.pending_metadata_reviews
             .retain(|id, review| broker.pending_approval_is_active(review.principal, *id, now));
+        self.pending_enrollment_metadata_reviews
+            .retain(|id, review| broker.pending_approval_is_active(review.principal, *id, now));
         self.metadata_grants.retain(|principal, bound| {
             broker.native_metadata_grant(*principal, now) == Ok(bound.grant)
         });
+        self.enrollment_metadata_grants
+            .retain(|(principal, registration, enrollment), bound| {
+                broker.native_enrollment_metadata_grant(*principal, *registration, *enrollment, now)
+                    == Ok(bound.grant)
+            });
         Ok(())
     }
 
@@ -552,6 +684,13 @@ impl Coordinator {
         let now = Instant::now();
         self.synchronize_control_handoffs_locked(now, &guard)?;
         if self.peers[&channel].grant.is_some() {
+            return Err(Error::Unavailable);
+        }
+        if self
+            .enrollment_metadata_grants
+            .keys()
+            .any(|(connection, _, _)| *connection == principal)
+        {
             return Err(Error::Unavailable);
         }
         if request.scope.control.len() != 1 || !request.scope.control.contains(&target) {
@@ -1028,6 +1167,276 @@ impl Coordinator {
             .reject_approval(principal, review.approval_id);
         self.pending_metadata_reviews.remove(&review.approval_id);
         result
+    }
+
+    /// Freeze one live local association before displaying a separate review.
+    #[allow(dead_code)]
+    pub(crate) fn prepare_enrollment_metadata_review(
+        &mut self,
+        channel: u64,
+        registration: ControllerRegistrationId,
+        enrollment: ControllerEnrollmentId,
+        lifetime: Duration,
+        apps: &[&FesTermApp],
+    ) -> festerm_automation::Result<PendingEnrollmentMetadataReview> {
+        let guard = try_admission()?;
+        let principal = self.admission_principal_locked(channel, &guard)?;
+        let now = Instant::now();
+        self.synchronize_control_handoffs_locked(now, &guard)?;
+        if !self.controller_opted_in
+            || !self.controller_qualified()
+            || self.peers[&channel].grant.is_some()
+            || self.control_handoffs.contains_key(&principal)
+        {
+            return Err(Error::Unavailable);
+        }
+        if lifetime.is_zero() || lifetime > festerm_automation::MAX_GRANT_LIFETIME {
+            return Err(Error::InvalidRequest);
+        }
+        let workspace_revision = self
+            .presentation_workspace
+            .as_ref()
+            .and_then(WorkspaceRevision::current)
+            .ok_or(Error::Unavailable)?;
+        let association = controller::freeze_association(
+            self.broker.as_ref().ok_or(Error::Unavailable)?,
+            &self.targets,
+            &self.peers[&channel],
+            registration,
+            enrollment,
+            apps,
+            &guard,
+        )?;
+        let target = association.target();
+        let source = self
+            .freeze_sources_locked(&BTreeSet::from([target]), &guard)?
+            .pop()
+            .ok_or(Error::StaleTarget)?;
+        let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
+        let proposal = broker.request_enrollment_metadata_approval(
+            principal,
+            registration,
+            enrollment,
+            now,
+            &guard,
+        )?;
+        if proposal.target() != target
+            || proposal.control_grant().is_some()
+            || proposal.control_sinks().next().is_some()
+        {
+            broker.reject_approval(principal, proposal.approval_id())?;
+            return Err(Error::Unavailable);
+        }
+        let approval_id = proposal.approval_id();
+        self.pending_enrollment_metadata_reviews.insert(
+            approval_id,
+            BoundEnrollmentMetadataReview {
+                principal,
+                association,
+                source,
+                proposal,
+                lifetime,
+                workspace_revision,
+            },
+        );
+        Ok(PendingEnrollmentMetadataReview {
+            principal,
+            approval_id,
+            registration,
+            enrollment,
+            target,
+            lifetime,
+        })
+    }
+
+    /// Install only the displayed decision; it does not authorize delivery.
+    #[allow(dead_code)]
+    pub(crate) fn approve_enrollment_metadata_review(
+        &mut self,
+        channel: u64,
+        review: &PendingEnrollmentMetadataReview,
+        decision: &NativeEnrollmentMetadataDecision,
+        apps: &[&FesTermApp],
+    ) -> festerm_automation::Result<()> {
+        let guard = try_admission()?;
+        let principal = self.admission_principal_locked(channel, &guard)?;
+        if review.principal != principal
+            || decision.principal != principal
+            || decision.approval_id != review.approval_id
+        {
+            return Err(Error::Unauthorized);
+        }
+        let now = Instant::now();
+        self.synchronize_control_handoffs_locked(now, &guard)?;
+        let bound = self
+            .pending_enrollment_metadata_reviews
+            .get(&review.approval_id)
+            .ok_or(Error::Revoked)?;
+        if bound.principal != principal
+            || bound.proposal.registration() != review.registration
+            || bound.proposal.enrollment() != review.enrollment
+            || bound.proposal.target() != review.target
+            || bound.lifetime != review.lifetime
+        {
+            return Err(Error::Unauthorized);
+        }
+        let current = self.controller_opted_in
+            && self.controller_qualified()
+            && self.peers[&channel].grant.is_none()
+            && self
+                .presentation_workspace
+                .as_ref()
+                .and_then(WorkspaceRevision::current)
+                == Some(bound.workspace_revision)
+            && bound.source.is_current(&self.targets, &guard)
+            && bound.association.is_current(
+                self.broker.as_ref().ok_or(Error::Unavailable)?,
+                &self.targets,
+                &self.peers[&channel],
+                apps,
+                &guard,
+            );
+        if !current {
+            self.pending_enrollment_metadata_reviews
+                .remove(&review.approval_id);
+            self.broker
+                .as_mut()
+                .ok_or(Error::Unavailable)?
+                .reject_approval(principal, review.approval_id)?;
+            return Err(Error::Revoked);
+        }
+        let bound = self
+            .pending_enrollment_metadata_reviews
+            .remove(&review.approval_id)
+            .ok_or(Error::Revoked)?;
+        let approval = NativeEnrollmentMetadataGrantApproval::new(bound.proposal, bound.lifetime);
+        let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
+        if let Err(error) =
+            broker.approve_enrollment_metadata_grant(principal, approval, now, &guard)
+        {
+            if broker.pending_approval_is_active(principal, review.approval_id, now) {
+                broker.reject_approval(principal, review.approval_id)?;
+            }
+            return Err(error);
+        }
+        let key = (principal, review.registration, review.enrollment);
+        let grant = match broker.native_enrollment_metadata_grant(
+            principal,
+            review.registration,
+            review.enrollment,
+            Instant::now(),
+        ) {
+            Ok(grant) => grant,
+            Err(error) => {
+                self.enrollment_metadata_grants.remove(&key);
+                if let Err(revoke_error) = broker.revoke_enrollment_metadata_grant(
+                    principal,
+                    review.registration,
+                    review.enrollment,
+                    &guard,
+                ) {
+                    self.peers[&channel]
+                        .connection
+                        .close_under_admission(&guard);
+                    broker.disconnect(principal, &guard);
+                    return Err(revoke_error);
+                }
+                return Err(error);
+            }
+        };
+        self.enrollment_metadata_grants.insert(
+            key,
+            BoundEnrollmentMetadataGrant {
+                grant,
+                association: bound.association,
+                source: bound.source,
+            },
+        );
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn cancel_enrollment_metadata_review(
+        &mut self,
+        channel: u64,
+        review: &PendingEnrollmentMetadataReview,
+    ) -> festerm_automation::Result<()> {
+        let guard = try_admission()?;
+        let principal = self.admission_principal_locked(channel, &guard)?;
+        if review.principal != principal
+            || self
+                .pending_enrollment_metadata_reviews
+                .get(&review.approval_id)
+                .is_none_or(|bound| bound.principal != principal)
+        {
+            return Err(Error::Unauthorized);
+        }
+        self.pending_enrollment_metadata_reviews
+            .remove(&review.approval_id);
+        self.broker
+            .as_mut()
+            .ok_or(Error::Unavailable)?
+            .reject_approval(principal, review.approval_id)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn revoke_enrollment_metadata_grant(
+        &mut self,
+        channel: u64,
+        registration: ControllerRegistrationId,
+        enrollment: ControllerEnrollmentId,
+    ) -> festerm_automation::Result<()> {
+        let guard = try_admission()?;
+        let principal = self.admission_principal_locked(channel, &guard)?;
+        let result = self
+            .broker
+            .as_mut()
+            .ok_or(Error::Unavailable)?
+            .revoke_enrollment_metadata_grant(principal, registration, enrollment, &guard);
+        self.enrollment_metadata_grants
+            .remove(&(principal, registration, enrollment));
+        result
+    }
+
+    /// This binding check is not disclosure authority or a delivery fence.
+    #[allow(dead_code)]
+    pub(super) fn enrollment_metadata_binding_is_current_locked(
+        &self,
+        channel: u64,
+        registration: ControllerRegistrationId,
+        enrollment: ControllerEnrollmentId,
+        apps: &[&FesTermApp],
+        now: Instant,
+        guard: &AutomationAdmissionGuard,
+    ) -> bool {
+        let Some(peer) = self.peers.get(&channel) else {
+            return false;
+        };
+        let Some(broker) = self.broker.as_ref() else {
+            return false;
+        };
+        let Some(bound) =
+            self.enrollment_metadata_grants
+                .get(&(peer.principal, registration, enrollment))
+        else {
+            return false;
+        };
+        self.controller_opted_in
+            && self.controller_qualified()
+            && !self.privacy_gate.is_closed()
+            && !self.stop.load(Ordering::Acquire)
+            && !peer.connection.is_closed()
+            && peer.grant.is_none()
+            && bound.source.is_current(&self.targets, guard)
+            && bound
+                .association
+                .is_current(broker, &self.targets, peer, apps, guard)
+            && broker.native_enrollment_metadata_grant(
+                peer.principal,
+                registration,
+                enrollment,
+                now,
+            ) == Ok(bound.grant)
     }
 
     #[allow(dead_code)]

@@ -20,6 +20,84 @@ struct Association {
     window: WindowId,
 }
 
+pub(super) struct FrozenAssociation {
+    principal: ConnectionId,
+    registration: ControllerRegistrationId,
+    enrollment: ControllerEnrollmentId,
+    public: ControllerId,
+    target: TargetRef,
+    window: WindowId,
+    valid: Arc<AtomicBool>,
+}
+
+impl FrozenAssociation {
+    pub(super) fn target(&self) -> TargetRef {
+        self.target
+    }
+
+    pub(super) fn is_current(
+        &self,
+        broker: &Broker,
+        targets: &BTreeMap<u64, Target>,
+        peer: &Peer,
+        apps: &[&FesTermApp],
+        _guard: &festerm_session::AutomationAdmissionGuard,
+    ) -> bool {
+        peer.principal == self.principal
+            && self.valid.load(Ordering::Acquire)
+            && peer.controller.registrations.values().any(|record| {
+                record.internal == self.registration
+                    && Arc::ptr_eq(&record.valid, &self.valid)
+                    && record.association.is_some_and(|association| {
+                        association.public == self.public
+                            && association.enrollment == self.enrollment
+                            && association.target == self.target
+                            && association.window == self.window
+                    })
+            })
+            && broker.resolve_controller_enrollment(
+                self.principal,
+                self.registration,
+                self.enrollment,
+            ) == Ok(self.target)
+            && exact_target(targets, self.target, self.window, apps).is_some()
+    }
+}
+
+pub(super) fn freeze_association(
+    broker: &Broker,
+    targets: &BTreeMap<u64, Target>,
+    peer: &Peer,
+    registration: ControllerRegistrationId,
+    enrollment: ControllerEnrollmentId,
+    apps: &[&FesTermApp],
+    guard: &festerm_session::AutomationAdmissionGuard,
+) -> festerm_automation::Result<FrozenAssociation> {
+    let record = peer
+        .controller
+        .registrations
+        .values()
+        .find(|record| record.internal == registration)
+        .ok_or(festerm_automation::Error::Unauthorized)?;
+    let association = record
+        .association
+        .filter(|association| association.enrollment == enrollment)
+        .ok_or(festerm_automation::Error::Revoked)?;
+    let frozen = FrozenAssociation {
+        principal: peer.principal,
+        registration,
+        enrollment,
+        public: association.public,
+        target: association.target,
+        window: association.window,
+        valid: record.valid.clone(),
+    };
+    if !frozen.is_current(broker, targets, peer, apps, guard) {
+        return Err(festerm_automation::Error::Revoked);
+    }
+    Ok(frozen)
+}
+
 enum Selection {
     Choosing {
         registration: ControllerRegistrationId,
@@ -1030,6 +1108,19 @@ pub(super) mod tests {
         }
     }
 
+    fn registration_row(
+        coordinator: &Coordinator,
+        apps: &[&FesTermApp],
+        channel: u64,
+        registration: ControllerRegistrationId,
+    ) -> ControllerRow {
+        stable_settings(coordinator, apps)
+            .controllers
+            .into_iter()
+            .find(|row| row.channel == channel && row.registration == registration)
+            .expect("registration is visible")
+    }
+
     fn native(
         coordinator: &mut Coordinator,
         apps: &[&FesTermApp],
@@ -1073,7 +1164,7 @@ pub(super) mod tests {
             },
         );
         let ControllerSelectionView::Choosing { token, .. } =
-            row(coordinator, apps, channel).selection
+            registration_row(coordinator, apps, channel, registration).selection
         else {
             panic!("native chooser was not opened");
         };
@@ -1092,7 +1183,7 @@ pub(super) mod tests {
             token,
             target: selected,
             ..
-        } = row(coordinator, apps, channel).selection
+        } = registration_row(coordinator, apps, channel, registration).selection
         else {
             panic!("native choice was not reviewed");
         };
@@ -1117,6 +1208,618 @@ pub(super) mod tests {
                 selection: token,
             },
         );
+    }
+
+    fn metadata_fixture() -> (
+        Coordinator,
+        FesTermApp,
+        TabId,
+        ControllerRegistrationId,
+        ControllerEnrollmentId,
+    ) {
+        let (app, tab) = FesTermApp::automation_local_fixture();
+        let mut coordinator = fixture(&[&app]);
+        let receive = add_peer(&mut coordinator, 1);
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_controller_register",
+            json!({"local_id": "metadata fixture"}),
+        );
+        response(&receive);
+        let registration = row(&coordinator, &[&app], 1).registration;
+        let target = coordinator.targets[&tab.chip_id()].reference;
+        let token = review(
+            &mut coordinator,
+            &[&app],
+            WindowId::PRIMARY,
+            1,
+            registration,
+            target,
+        );
+        confirm(
+            &mut coordinator,
+            &[&app],
+            WindowId::PRIMARY,
+            registration,
+            token,
+        );
+        let enrollment = coordinator.peers[&1]
+            .controller
+            .registrations
+            .values()
+            .find(|record| record.internal == registration)
+            .unwrap()
+            .association
+            .unwrap()
+            .enrollment;
+        (coordinator, app, tab, registration, enrollment)
+    }
+
+    #[test]
+    fn enrollment_metadata_host_keeps_identical_labels_independent() {
+        let (mut app, first_tab) = FesTermApp::automation_local_fixture();
+        let (mut donor, second_tab) = FesTermApp::automation_local_fixture();
+        app.automation_session_mut(first_tab).label = "identical".into();
+        donor.automation_session_mut(second_tab).label = "identical".into();
+        app.adopt_tab(donor.detach_tab(second_tab).unwrap(), None);
+        let mut coordinator = fixture(&[&app]);
+        let receive = add_peer(&mut coordinator, 1);
+        let mut bindings = Vec::new();
+        for (index, tab) in [first_tab, second_tab].into_iter().enumerate() {
+            call(
+                &mut coordinator,
+                1,
+                &[&app],
+                "festerm_controller_register",
+                json!({"local_id": format!("registration-{index}")}),
+            );
+            response(&receive);
+            let registration = coordinator.peers[&1]
+                .controller
+                .registrations
+                .values()
+                .map(|record| record.internal)
+                .find(|registration| {
+                    !bindings
+                        .iter()
+                        .any(|(previous, _, _)| previous == registration)
+                })
+                .unwrap();
+            let target = coordinator.targets[&tab.chip_id()].reference;
+            let token = review(
+                &mut coordinator,
+                &[&app],
+                WindowId::PRIMARY,
+                1,
+                registration,
+                target,
+            );
+            confirm(
+                &mut coordinator,
+                &[&app],
+                WindowId::PRIMARY,
+                registration,
+                token,
+            );
+            let enrollment = coordinator.peers[&1]
+                .controller
+                .registrations
+                .values()
+                .find(|record| record.internal == registration)
+                .unwrap()
+                .association
+                .unwrap()
+                .enrollment;
+            let pending = retry_automation_busy(|| {
+                coordinator.prepare_enrollment_metadata_review(
+                    1,
+                    registration,
+                    enrollment,
+                    Duration::from_secs(60),
+                    &[&app],
+                )
+            })
+            .unwrap();
+            assert_eq!(pending.target(), target);
+            let decision = pending.accept_from_native();
+            retry_automation_busy(|| {
+                coordinator.approve_enrollment_metadata_review(1, &pending, &decision, &[&app])
+            })
+            .unwrap();
+            bindings.push((registration, enrollment, target));
+        }
+        assert_ne!(bindings[0].2, bindings[1].2);
+        assert!(!app.automation_javascript_enabled());
+        assert!(coordinator.peers[&1].grant.is_none());
+        let principal = coordinator.peers[&1].principal;
+        for (registration, enrollment, target) in &bindings {
+            assert_eq!(
+                coordinator
+                    .broker
+                    .as_ref()
+                    .unwrap()
+                    .native_enrollment_metadata_grant(
+                        principal,
+                        *registration,
+                        *enrollment,
+                        Instant::now(),
+                    )
+                    .unwrap()
+                    .target(),
+                *target
+            );
+        }
+        retry_automation_busy(|| {
+            coordinator.revoke_enrollment_metadata_grant(1, bindings[0].0, bindings[0].1)
+        })
+        .unwrap();
+        let broker = coordinator.broker.as_ref().unwrap();
+        assert!(broker
+            .native_enrollment_metadata_grant(
+                principal,
+                bindings[0].0,
+                bindings[0].1,
+                Instant::now(),
+            )
+            .is_err());
+        assert!(broker
+            .native_enrollment_metadata_grant(
+                principal,
+                bindings[1].0,
+                bindings[1].1,
+                Instant::now(),
+            )
+            .is_ok());
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        let current = coordinator.enrollment_metadata_binding_is_current_locked(
+            1,
+            bindings[1].0,
+            bindings[1].1,
+            &[&app],
+            Instant::now(),
+            &guard,
+        );
+        drop(guard);
+        assert!(current);
+    }
+
+    #[test]
+    fn enrollment_metadata_host_rejects_stale_and_cross_connection_decisions() {
+        use festerm_automation::Error;
+
+        for change in ["rebind", "attachment", "disconnect"] {
+            let (mut coordinator, app, tab, registration, enrollment) = metadata_fixture();
+            let _other = add_peer(&mut coordinator, 2);
+            let principal = coordinator.peers[&1].principal;
+            let target = coordinator.targets[&tab.chip_id()].reference;
+            let pending = retry_automation_busy(|| {
+                coordinator.prepare_enrollment_metadata_review(
+                    1,
+                    registration,
+                    enrollment,
+                    Duration::from_secs(60),
+                    &[&app],
+                )
+            })
+            .unwrap();
+            let decision = pending.accept_from_native();
+            assert_eq!(
+                retry_automation_busy(|| coordinator.approve_enrollment_metadata_review(
+                    2,
+                    &pending,
+                    &decision,
+                    &[&app],
+                )),
+                Err(Error::Unauthorized)
+            );
+            match change {
+                "rebind" => {
+                    let token = review(
+                        &mut coordinator,
+                        &[&app],
+                        WindowId::PRIMARY,
+                        1,
+                        registration,
+                        target,
+                    );
+                    confirm(
+                        &mut coordinator,
+                        &[&app],
+                        WindowId::PRIMARY,
+                        registration,
+                        token,
+                    );
+                }
+                "attachment" => {
+                    let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+                        app.automation_session(tab).unwrap().controller.session()
+                    else {
+                        panic!("expected synthetic local attachment");
+                    };
+                    backend.replace_attachment_without_event();
+                }
+                "disconnect" => coordinator.peers[&1].connection.close(),
+                _ => unreachable!(),
+            }
+            assert!(
+                matches!(
+                    retry_automation_busy(|| coordinator.approve_enrollment_metadata_review(
+                        1,
+                        &pending,
+                        &decision,
+                        &[&app],
+                    )),
+                    Err(Error::Revoked | Error::Closed)
+                ),
+                "{change}"
+            );
+            assert!(coordinator
+                .broker
+                .as_ref()
+                .unwrap()
+                .native_enrollment_metadata_grant(
+                    principal,
+                    registration,
+                    enrollment,
+                    Instant::now(),
+                )
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn enrollment_metadata_host_retires_approved_attachment_replacement() {
+        let (mut coordinator, app, tab, registration, enrollment) = metadata_fixture();
+        let principal = coordinator.peers[&1].principal;
+        let pending = retry_automation_busy(|| {
+            coordinator.prepare_enrollment_metadata_review(
+                1,
+                registration,
+                enrollment,
+                Duration::from_secs(60),
+                &[&app],
+            )
+        })
+        .unwrap();
+        let decision = pending.accept_from_native();
+        retry_automation_busy(|| {
+            coordinator.approve_enrollment_metadata_review(1, &pending, &decision, &[&app])
+        })
+        .unwrap();
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        let current = coordinator.enrollment_metadata_binding_is_current_locked(
+            1,
+            registration,
+            enrollment,
+            &[&app],
+            Instant::now(),
+            &guard,
+        );
+        drop(guard);
+        assert!(current);
+        let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+            app.automation_session(tab).unwrap().controller.session()
+        else {
+            panic!("expected synthetic local attachment");
+        };
+        backend.replace_attachment_without_event();
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        let current = coordinator.enrollment_metadata_binding_is_current_locked(
+            1,
+            registration,
+            enrollment,
+            &[&app],
+            Instant::now(),
+            &guard,
+        );
+        drop(guard);
+        assert!(!current);
+        let mut broker = coordinator.broker.take().unwrap();
+        coordinator.reconcile(&mut broker, &[&app]);
+        assert!(broker
+            .native_enrollment_metadata_grant(principal, registration, enrollment, Instant::now())
+            .is_err());
+        coordinator.broker = Some(broker);
+    }
+
+    #[test]
+    fn enrollment_metadata_host_cancellation_and_workspace_change_consume_review() {
+        use festerm_automation::Error;
+
+        let (mut coordinator, app, _tab, registration, enrollment) = metadata_fixture();
+        let prepare = |coordinator: &mut Coordinator| {
+            retry_automation_busy(|| {
+                coordinator.prepare_enrollment_metadata_review(
+                    1,
+                    registration,
+                    enrollment,
+                    Duration::from_secs(60),
+                    &[&app],
+                )
+            })
+            .unwrap()
+        };
+        let cancelled = prepare(&mut coordinator);
+        let decision = cancelled.accept_from_native();
+        retry_automation_busy(|| coordinator.cancel_enrollment_metadata_review(1, &cancelled))
+            .unwrap();
+        assert_eq!(
+            retry_automation_busy(|| coordinator.approve_enrollment_metadata_review(
+                1,
+                &cancelled,
+                &decision,
+                &[&app],
+            )),
+            Err(Error::Revoked)
+        );
+        let stale = prepare(&mut coordinator);
+        let other_stale = prepare(&mut coordinator);
+        let decision = stale.accept_from_native();
+        let other_decision = other_stale.accept_from_native();
+        coordinator
+            .presentation_workspace
+            .as_ref()
+            .unwrap()
+            .changed();
+        let fresh = prepare(&mut coordinator);
+        assert_eq!(
+            retry_automation_busy(|| coordinator.approve_enrollment_metadata_review(
+                1,
+                &stale,
+                &decision,
+                &[&app],
+            )),
+            Err(Error::Revoked)
+        );
+        assert_eq!(
+            retry_automation_busy(|| coordinator.approve_enrollment_metadata_review(
+                1,
+                &other_stale,
+                &other_decision,
+                &[&app],
+            )),
+            Err(Error::Revoked)
+        );
+        let fresh_decision = fresh.accept_from_native();
+        retry_automation_busy(|| {
+            coordinator.approve_enrollment_metadata_review(1, &fresh, &fresh_decision, &[&app])
+        })
+        .unwrap();
+        assert_eq!(
+            retry_automation_busy(|| coordinator.approve_enrollment_metadata_review(
+                1,
+                &fresh,
+                &fresh_decision,
+                &[&app],
+            )),
+            Err(Error::Revoked)
+        );
+    }
+
+    #[test]
+    fn enrollment_metadata_stale_reviews_do_not_block_observation() {
+        for reconcile_first in [false, true] {
+            let (mut coordinator, app, tab, registration, enrollment) = metadata_fixture();
+            let target = coordinator.targets[&tab.chip_id()].reference;
+            for _ in 0..2 {
+                retry_automation_busy(|| {
+                    coordinator.prepare_enrollment_metadata_review(
+                        1,
+                        registration,
+                        enrollment,
+                        Duration::from_secs(60),
+                        &[&app],
+                    )
+                })
+                .unwrap();
+            }
+            coordinator
+                .presentation_workspace
+                .as_ref()
+                .unwrap()
+                .changed();
+            if reconcile_first {
+                let mut broker = coordinator.broker.take().unwrap();
+                coordinator.reconcile(&mut broker, &[&app]);
+                coordinator.broker = Some(broker);
+                assert!(coordinator.pending_enrollment_metadata_reviews.is_empty());
+            }
+            super::super::tests::approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+            assert!(coordinator.pending_enrollment_metadata_reviews.is_empty());
+            assert!(coordinator.peers[&1].grant.is_some());
+        }
+    }
+
+    #[test]
+    fn enrollment_metadata_host_refuses_unreviewed_control_composition() {
+        use festerm_automation::Error;
+
+        let (mut coordinator, mut app, tab, registration, enrollment) = metadata_fixture();
+        let principal = coordinator.peers[&1].principal;
+        let target = coordinator.targets[&tab.chip_id()].reference;
+        let ime = Arc::new(festerm_session::AutomationEpoch::new());
+        ime.transition(true);
+        app.set_automation_ime_epoch(&ime);
+        let mut scope = Scope::default();
+        scope.control.insert(target);
+        scope.discover.insert(target);
+        scope.invoke_workflows = true;
+        scope.return_results = true;
+        let binding = InvocationBinding {
+            api_version: 1,
+            invocation: Invocation::Workflow {
+                bundle: Digest([1; 32]),
+                manifest: Digest([2; 32]),
+            },
+            parameters: Digest([3; 32]),
+        };
+        let request = GrantRequest {
+            scope,
+            bindings: BTreeSet::from([binding]),
+            direct_read_calls: BTreeSet::new(),
+        };
+        let control = retry_automation_busy(|| {
+            coordinator.prepare_control_handoff_review(
+                1,
+                target,
+                request.clone(),
+                Duration::from_secs(60),
+                &mut app.automation_session_mut(tab).controller,
+            )
+        })
+        .unwrap();
+        let control_decision = control.accept_from_native();
+        retry_automation_busy(|| {
+            coordinator.approve_control_handoff(1, &control, &control_decision)
+        })
+        .unwrap();
+        for _ in 0..10 {
+            assert!(matches!(
+                retry_automation_busy(|| coordinator.prepare_enrollment_metadata_review(
+                    1,
+                    registration,
+                    enrollment,
+                    Duration::from_secs(60),
+                    &[&app],
+                )),
+                Err(Error::Unavailable)
+            ));
+        }
+        assert!(coordinator.pending_enrollment_metadata_reviews.is_empty());
+        retry_automation_busy(|| coordinator.revoke_control_handoff(1)).unwrap();
+        let pending = retry_automation_busy(|| {
+            coordinator.prepare_enrollment_metadata_review(
+                1,
+                registration,
+                enrollment,
+                Duration::from_secs(60),
+                &[&app],
+            )
+        })
+        .unwrap();
+        let decision = pending.accept_from_native();
+        retry_automation_busy(|| {
+            coordinator.approve_enrollment_metadata_review(1, &pending, &decision, &[&app])
+        })
+        .unwrap();
+        let metadata = coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .native_enrollment_metadata_grant(principal, registration, enrollment, Instant::now())
+            .unwrap();
+        for _ in 0..10 {
+            assert!(matches!(
+                retry_automation_busy(|| coordinator.prepare_control_handoff_review(
+                    1,
+                    target,
+                    request.clone(),
+                    Duration::from_secs(60),
+                    &mut app.automation_session_mut(tab).controller,
+                )),
+                Err(Error::Unavailable)
+            ));
+        }
+        assert_eq!(
+            coordinator
+                .broker
+                .as_ref()
+                .unwrap()
+                .native_enrollment_metadata_grant(
+                    principal,
+                    registration,
+                    enrollment,
+                    Instant::now(),
+                ),
+            Ok(metadata)
+        );
+        retry_automation_busy(|| {
+            coordinator.revoke_enrollment_metadata_grant(1, registration, enrollment)
+        })
+        .unwrap();
+        let control = retry_automation_busy(|| {
+            coordinator.prepare_control_handoff_review(
+                1,
+                target,
+                request.clone(),
+                Duration::from_secs(60),
+                &mut app.automation_session_mut(tab).controller,
+            )
+        })
+        .unwrap();
+        let control_decision = control.accept_from_native();
+        retry_automation_busy(|| {
+            coordinator.approve_control_handoff(1, &control, &control_decision)
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn enrollment_metadata_host_never_waits_for_admission() {
+        const CHILD: &str = "FESTERM_ENROLLMENT_METADATA_BUSY_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "automation::controller::tests::enrollment_metadata_host_never_waits_for_admission",
+                ])
+                .env(CHILD, "1")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                if child.try_wait().unwrap().is_some() {
+                    let output = child.wait_with_output().unwrap();
+                    assert!(
+                        output.status.success(),
+                        "isolated metadata admission test failed:\n{}\n{}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    assert!(String::from_utf8_lossy(&output.stdout).contains("running 1 test"));
+                    return;
+                }
+                if Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("isolated metadata admission test timed out");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let (mut coordinator, app, _tab, registration, enrollment) = metadata_fixture();
+        let pending = retry_automation_busy(|| {
+            coordinator.prepare_enrollment_metadata_review(
+                1,
+                registration,
+                enrollment,
+                Duration::from_secs(60),
+                &[&app],
+            )
+        })
+        .unwrap();
+        let decision = pending.accept_from_native();
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        let prepare = coordinator.prepare_enrollment_metadata_review(
+            1,
+            registration,
+            enrollment,
+            Duration::from_secs(60),
+            &[&app],
+        );
+        let approve =
+            coordinator.approve_enrollment_metadata_review(1, &pending, &decision, &[&app]);
+        drop(guard);
+        assert!(matches!(prepare, Err(festerm_automation::Error::Busy)));
+        assert_eq!(approve, Err(festerm_automation::Error::Busy));
+        retry_automation_busy(|| {
+            coordinator.approve_enrollment_metadata_review(1, &pending, &decision, &[&app])
+        })
+        .unwrap();
     }
 
     #[test]

@@ -2728,8 +2728,12 @@ Controller enrollment now has a dormant application/native route as well as
 non-authorizing kernel and protocol tests. The native Settings opt-in, chooser
 and confirmation can be exercised with controlled synthetic peers; production
 qualification and private bootstrap are still closed, so no real controller
-client is supported. New local enrollment regressions require execution and
-review and do not establish native evidence.
+client is supported. A separate synthetic host review now installs an
+exact-enrollment metadata grant only after revalidating its association,
+attachment and workspace revision. Tests cover two identically labelled
+enrollments, scoped revocation and stale/cross-connection decisions. It refuses
+active control and legacy observation composition. These are not a native
+metadata consent UI or metadata delivery evidence.
 The separately granted presentation state machine, app-command routing,
 workspace revision and presented-input admission seam have deterministic
 synthetic-source tests, including original-handoff/lease binding, wrong-backend

@@ -1,5 +1,15 @@
 # Milestone Progress Narrative
 
+## Binding enrollment metadata review to the host association
+
+The dormant coordinator can now freeze one exact local association and its
+attachment before a separate metadata review, then install the matching broker
+grant only if that binding and the workspace revision remain current. Two
+identically labelled enrolled terminals retain independent grants and cuts.
+The seam refuses active control and legacy observation composition pending
+reviewed host cross-consent and delivery fencing. It adds no native consent UI,
+MCP metadata route, recipient fence or production qualification.
+
 ## Adding exact-enrollment metadata authority in the broker
 
 The kernel adds separate discovery-only grants and quota-charged runs for exact

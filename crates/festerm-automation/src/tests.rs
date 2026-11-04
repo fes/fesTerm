@@ -6154,6 +6154,29 @@ fn enrollment_metadata_authority_is_exact_and_independently_revocable() {
     .is_err());
     let proposal = authority_proposal(&mut f, second, second_enrollment);
     authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    let first_grant = f
+        .broker
+        .native_enrollment_metadata_grant(f.connection, first, first_enrollment, f.now)
+        .unwrap();
+    let second_grant = f
+        .broker
+        .native_enrollment_metadata_grant(f.connection, second, second_enrollment, f.now)
+        .unwrap();
+    assert_eq!(first_grant.target(), a);
+    assert_eq!(second_grant.target(), b);
+    assert!(f
+        .broker
+        .native_enrollment_metadata_grant(f.connection, first, second_enrollment, f.now)
+        .is_err());
+    assert_eq!(
+        f.broker.native_enrollment_metadata_grant(
+            f.connection,
+            second,
+            second_enrollment,
+            f.now + MAX_GRANT_LIFETIME,
+        ),
+        Err(Error::Expired)
+    );
     assert!(authority_run(&mut f, first, first_enrollment, b, Duration::from_secs(30)).is_err());
     let first_run =
         authority_run(&mut f, first, first_enrollment, a, Duration::from_secs(30)).unwrap();
@@ -6192,6 +6215,12 @@ fn enrollment_metadata_authority_is_exact_and_independently_revocable() {
     let second_live = committed_authority_discovery(&mut f, second_run, b);
     let proposal = authority_proposal(&mut f, first, first_enrollment);
     authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+    assert_ne!(
+        f.broker
+            .native_enrollment_metadata_grant(f.connection, first, first_enrollment, f.now)
+            .unwrap(),
+        first_grant
+    );
     assert!(!first_live.is_live(f.connection, f.now));
     assert!(second_live.is_live(f.connection, f.now));
     let current_run =
@@ -6205,6 +6234,15 @@ fn enrollment_metadata_authority_is_exact_and_independently_revocable() {
     assert!(!first_live.is_live(f.connection, f.now));
     assert!(!current_live.is_live(f.connection, f.now));
     assert!(second_live.is_live(f.connection, f.now));
+    assert!(f
+        .broker
+        .native_enrollment_metadata_grant(f.connection, first, first_enrollment, f.now)
+        .is_err());
+    assert_eq!(
+        f.broker
+            .native_enrollment_metadata_grant(f.connection, second, second_enrollment, f.now),
+        Ok(second_grant)
+    );
     assert!(f
         .broker
         .commit_disclosure(f.connection, request, 8, f.now)

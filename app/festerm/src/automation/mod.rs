@@ -594,6 +594,11 @@ fn prepare_shared<P>(
     result
 }
 
+enum ReconcileError {
+    Admission(festerm_session::AutomationAdmissionTryError),
+    Authority(festerm_automation::Error),
+}
+
 pub(crate) struct Coordinator {
     workflow: workflow_selection::Selection,
     javascript_enabled: bool,
@@ -604,6 +609,10 @@ pub(crate) struct Coordinator {
     metadata_grants: BTreeMap<ConnectionId, presentation::BoundMetadataGrant>,
     pending_metadata_reviews:
         BTreeMap<festerm_automation::ApprovalId, presentation::BoundMetadataReview>,
+    enrollment_metadata_grants:
+        BTreeMap<presentation::EnrollmentMetadataKey, presentation::BoundEnrollmentMetadataGrant>,
+    pending_enrollment_metadata_reviews:
+        BTreeMap<festerm_automation::ApprovalId, presentation::BoundEnrollmentMetadataReview>,
     broker: Option<Broker>,
     server: Option<ipc::Server>,
     privacy: Option<PrivacyMonitor>,
@@ -640,6 +649,8 @@ impl Default for Coordinator {
             pending_control_reviews: BTreeMap::new(),
             metadata_grants: BTreeMap::new(),
             pending_metadata_reviews: BTreeMap::new(),
+            enrollment_metadata_grants: BTreeMap::new(),
+            pending_enrollment_metadata_reviews: BTreeMap::new(),
             broker: None,
             server: None,
             privacy: None,
@@ -871,6 +882,8 @@ impl Coordinator {
         self.pending_control_reviews.clear();
         self.metadata_grants.clear();
         self.pending_metadata_reviews.clear();
+        self.enrollment_metadata_grants.clear();
+        self.pending_enrollment_metadata_reviews.clear();
         let peers = std::mem::take(&mut self.peers);
         if let Some(guard) = guard.as_ref() {
             for peer in peers.values() {
@@ -942,6 +955,8 @@ impl Coordinator {
         self.pending_control_reviews.clear();
         self.metadata_grants.clear();
         self.pending_metadata_reviews.clear();
+        self.enrollment_metadata_grants.clear();
+        self.pending_enrollment_metadata_reviews.clear();
     }
 
     fn shutdown(&mut self) {
@@ -1324,15 +1339,23 @@ impl Coordinator {
         };
         match self.try_reconcile(&mut broker, apps) {
             Ok(()) => {}
-            Err(festerm_session::AutomationAdmissionTryError::Busy) => {
+            Err(ReconcileError::Admission(festerm_session::AutomationAdmissionTryError::Busy)) => {
                 self.broker = Some(broker);
                 self.reconciliation_deferred = true;
                 context.request_repaint_after(Duration::from_millis(50));
                 return;
             }
-            Err(festerm_session::AutomationAdmissionTryError::Poisoned) => {
+            Err(ReconcileError::Admission(
+                festerm_session::AutomationAdmissionTryError::Poisoned,
+            )) => {
                 self.broker = Some(broker);
                 self.privacy_lost();
+                return;
+            }
+            Err(ReconcileError::Authority(error)) => {
+                self.broker = Some(broker);
+                self.privacy_lost();
+                tracing::error!(?error, "stale enrollment metadata review cleanup failed");
                 return;
             }
         }
@@ -1373,6 +1396,13 @@ impl Coordinator {
         });
         self.pending_metadata_reviews
             .retain(|id, review| broker.pending_approval_is_active(review.principal, *id, now));
+        self.enrollment_metadata_grants
+            .retain(|(principal, registration, enrollment), bound| {
+                broker.native_enrollment_metadata_grant(*principal, *registration, *enrollment, now)
+                    == Ok(bound.grant)
+            });
+        self.pending_enrollment_metadata_reviews
+            .retain(|id, review| broker.pending_approval_is_active(review.principal, *id, now));
         if self.privacy_gate.is_closed() {
             self.broker = Some(broker);
             self.privacy_lost();
@@ -1410,6 +1440,10 @@ impl Coordinator {
                     .retain(|_, review| review.principal != peer.principal);
                 self.metadata_grants.remove(&peer.principal);
                 self.pending_metadata_reviews
+                    .retain(|_, review| review.principal != peer.principal);
+                self.enrollment_metadata_grants
+                    .retain(|(principal, _, _), _| *principal != peer.principal);
+                self.pending_enrollment_metadata_reviews
                     .retain(|_, review| review.principal != peer.principal);
             }
         }
@@ -1517,7 +1551,7 @@ impl Coordinator {
         &mut self,
         broker: &mut Broker,
         apps: &[&FesTermApp],
-    ) -> Result<(), festerm_session::AutomationAdmissionTryError> {
+    ) -> Result<(), ReconcileError> {
         let mut candidates = Vec::new();
         for (id, session) in apps.iter().flat_map(|app| app.automation_sessions()) {
             let Some(controller_instance) = session.controller.automation_instance() else {
@@ -1539,7 +1573,18 @@ impl Coordinator {
             let id = id.chip_id();
             candidates.push((id, session, controller_instance, liveness, attachment));
         }
-        let guard = festerm_session::try_automation_admission_lock()?;
+        let guard =
+            festerm_session::try_automation_admission_lock().map_err(ReconcileError::Admission)?;
+        presentation::prune_stale_enrollment_metadata_reviews_locked(
+            &mut self.pending_enrollment_metadata_reviews,
+            broker,
+            self.presentation_workspace
+                .as_ref()
+                .and_then(WorkspaceRevision::current),
+            Instant::now(),
+            &guard,
+        )
+        .map_err(ReconcileError::Authority)?;
         let candidates: Vec<_> = candidates
             .into_iter()
             .filter_map(|(id, session, instance, liveness, attachment)| {
@@ -1660,12 +1705,13 @@ impl Coordinator {
         retry_automation_busy(|| {
             self.try_reconcile(broker, apps)
                 .map_err(|error| match error {
-                    festerm_session::AutomationAdmissionTryError::Busy => {
-                        festerm_automation::Error::Busy
-                    }
-                    festerm_session::AutomationAdmissionTryError::Poisoned => {
-                        festerm_automation::Error::Unavailable
-                    }
+                    ReconcileError::Admission(
+                        festerm_session::AutomationAdmissionTryError::Busy,
+                    ) => festerm_automation::Error::Busy,
+                    ReconcileError::Admission(
+                        festerm_session::AutomationAdmissionTryError::Poisoned,
+                    ) => festerm_automation::Error::Unavailable,
+                    ReconcileError::Authority(error) => error,
                 })
         })
         .unwrap();
@@ -1888,11 +1934,21 @@ impl Coordinator {
         {
             return Err(Refusal::NotAuthorized);
         }
+        let now = Instant::now();
+        presentation::prune_stale_enrollment_metadata_reviews_locked(
+            &mut self.pending_enrollment_metadata_reviews,
+            self.broker.as_mut().ok_or(Refusal::Unavailable)?,
+            self.presentation_workspace
+                .as_ref()
+                .and_then(WorkspaceRevision::current),
+            now,
+            &guard,
+        )
+        .map_err(refusal)?;
         let peer = self.peers.get_mut(&channel).ok_or(Refusal::Closed)?;
         if peer.connection.is_closed() || peer.grant.is_some() {
             return Err(Refusal::Closed);
         }
-        let now = Instant::now();
         if self
             .broker
             .as_ref()

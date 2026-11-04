@@ -832,11 +832,20 @@ ordinary control decision must explicitly review the then-current exact
 enrollments and their complete source/sink closure.
 Cancellation, principal revocation, disconnect and privacy loss
 use the existing broker lifecycle. Legacy unbound metadata is never a fallback
-for this path. All broker grant and request results are internal and do not
-establish recipient delivery or native consent. Native review, production
-transport, application attachment/privacy revalidation and enrollment-bound
-per-write recipient fencing remain unimplemented; no gate or metadata
-capability is enabled.
+for this path.
+
+A dormant application seam separately prepares and approves one exact
+enrollment metadata grant. It freezes the connection, registration,
+association, local target and attachment, plus the workspace revision at
+review, and revalidates them before installing the grant under admission.
+The host retains that binding with the exact broker grant epoch. Cancellation,
+stale decisions and cross-connection decisions do not authorize a replacement.
+For now the seam refuses active control and legacy observation composition;
+both need their own reviewed host integration and delivery fences. This is
+synthetic review machinery, not a native consent UI or a metadata route. A
+binding check is not disclosure authority. Qualified privacy, application
+revalidation at publication and enrollment-bound per-write recipient fencing
+remain unimplemented; no production gate or metadata capability is enabled.
 
 The hardware-controller use case in [#524](https://github.com/fes/fesTerm/issues/524)
 begins with an ordinary untrusted MCP connection, not a privileged device.
