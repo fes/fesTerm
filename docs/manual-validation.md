@@ -751,7 +751,8 @@ Its deterministic tests prove shared
 identity/history, independent selection targets, exact multiline Unicode/BOM/
 line-ending undo, read-only/revoked mutation refusal, encoded bounds, last-view
 close, stale reads and save completion. A Simulator-only native smoke proves
-actual BOM/CRLF/Unicode publication, preservation of 0600 permissions, stale
+actual BOM/CRLF/Unicode publication through a Unicode/space-bearing filename,
+preservation of 0600 permissions, stale
 overwrite refusal, external refresh and asynchronous close/fixture cleanup.
 Writer-admission tests cover save/mutation exclusion and worker lifetimes;
 real OpenSSH integration additionally checks refused downloads/mutations leave
