@@ -2050,6 +2050,24 @@ impl Broker {
         Ok((lease, grant))
     }
 
+    /// Returns the immutable direct-action binding for a prepared control
+    /// request. This is not an admission decision.
+    pub fn prepared_direct_input_binding(
+        &self,
+        connection: ConnectionId,
+        id: RequestId,
+        now: Instant,
+    ) -> Result<InvocationBinding> {
+        let (request, run) = self.check_request(connection, id, now)?;
+        if request.committed
+            || !matches!(request.operation, Operation::Control { .. })
+            || !matches!(run.spec.binding.invocation, Invocation::DirectInput { .. })
+        {
+            return Err(Error::InvalidRequest);
+        }
+        Ok(run.spec.binding)
+    }
+
     /// Commits a request that froze a presentation requirement. The observation
     /// must come from a fresh qualified native barrier, under the same host
     /// admission boundary as the attachment, privacy and human-input fences.

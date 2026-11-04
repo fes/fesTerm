@@ -1,4 +1,7 @@
-use super::presentation::{NativePresentationBarrier, PendingControlReview, PendingMetadataReview};
+use super::presentation::{
+    DirectAction, DirectInputReservation, NativePresentationBarrier, PendingControlReview,
+    PendingMetadataReview, ReserveDirectInputError,
+};
 use super::*;
 use crate::session_controller::SessionController;
 use serde_json::{json, Value};
@@ -153,6 +156,45 @@ fn reserve_for_binding(
             }
             result => return result.unwrap(),
         }
+    }
+}
+
+fn reserve_direct_input_with_retry(
+    coordinator: &mut Coordinator,
+    channel: u64,
+    request: RequestId,
+    tab: &SessionTab,
+) -> Result<DirectInputReservation, ReserveDirectInputError> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let result = coordinator.reserve_direct_input(channel, request, tab);
+        if matches!(
+            &result,
+            Err(ReserveDirectInputError::Authority(
+                festerm_automation::Error::Busy
+            )) | Err(ReserveDirectInputError::Backend(
+                festerm_session::ReserveAutomationInputError::Busy
+            ))
+        ) {
+            assert!(
+                Instant::now() < deadline,
+                "automation reservation stayed busy"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        } else {
+            return result;
+        }
+    }
+}
+
+fn retry_busy_case(mut attempt: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !attempt() {
+        assert!(
+            Instant::now() < deadline,
+            "automation admission stayed busy"
+        );
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -354,6 +396,69 @@ fn commit_presented_input_retry(
     })
 }
 
+fn commit_direct_input_with_retry<B: NativePresentationBarrier>(
+    coordinator: &mut Coordinator,
+    channel: u64,
+    request: RequestId,
+    mut barrier: Option<&mut B>,
+    mut reserve: impl FnMut(
+        &Coordinator,
+    ) -> (
+        festerm_session::ReservedAutomationInput,
+        festerm_session::PendingAutomationInput,
+    ),
+    tab: &SessionTab,
+) -> (
+    std::result::Result<(), festerm_session::CommitAutomationInputError<festerm_automation::Error>>,
+    festerm_session::PendingAutomationInput,
+) {
+    use festerm_automation::Error;
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let (reservation, mut pending) = reserve(coordinator);
+        let result = coordinator.commit_direct_input(
+            channel,
+            request,
+            DirectInputReservation::for_test(reservation, channel, request),
+            tab,
+            barrier.as_deref_mut(),
+        );
+        if matches!(
+            result,
+            Err(CommitAutomationInputError::Refused(Error::Busy))
+        ) && Instant::now() < deadline
+        {
+            assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+            std::thread::sleep(Duration::from_millis(1));
+        } else {
+            return (result, pending);
+        }
+    }
+}
+
+fn commit_direct_input_retry(
+    coordinator: &mut Coordinator,
+    channel: u64,
+    request: RequestId,
+    barrier: &mut SimulatedPresentationBarrier,
+    bytes: &[u8],
+    tab: &SessionTab,
+) -> (
+    std::result::Result<(), festerm_session::CommitAutomationInputError<festerm_automation::Error>>,
+    festerm_session::PendingAutomationInput,
+) {
+    let target = barrier.target;
+    commit_direct_input_with_retry(
+        coordinator,
+        channel,
+        request,
+        Some(barrier),
+        |coordinator| reserve_presented_input(coordinator, target, bytes),
+        tab,
+    )
+}
+
 fn control_review_fixture() -> (
     Coordinator,
     FesTermApp,
@@ -425,17 +530,6 @@ fn presented_input_fixture_with_options(
     let principal = coordinator.peers[&1].principal;
     let now = Instant::now();
     let (mut request, mut scope, mut binding) = presentation_control_request(target);
-    if direct_input {
-        scope.invoke_workflows = false;
-        scope.return_results = false;
-        binding.invocation = Invocation::DirectInput {
-            target,
-            input: Digest(Sha256::digest(b"test").into()),
-            bytes: 4,
-        };
-        request.scope = scope.clone();
-        request.bindings = BTreeSet::from([binding]);
-    }
     for (app, tab, discover) in sources {
         assert!(app.automation_session(*tab).is_some());
         let source = coordinator.targets[&tab.chip_id()].reference;
@@ -448,13 +542,34 @@ fn presented_input_fixture_with_options(
     if include_target_source {
         request.scope.discover.insert(target);
     }
-    let review = prepare_control_review(
-        &mut coordinator,
-        1,
-        target,
-        &request,
-        &mut app.automation_session_mut(tab).controller,
-    );
+    let review = if direct_input {
+        let review = retry_automation_busy(|| {
+            coordinator.prepare_direct_action_review_with_sources(
+                1,
+                target,
+                DirectAction::Text {
+                    text: "test",
+                    submit: false,
+                },
+                Duration::from_secs(60),
+                app.automation_session_mut(tab),
+                &request.scope,
+            )
+        })
+        .unwrap();
+        request = review.request().clone();
+        scope = request.scope.clone();
+        binding = *request.bindings.first().unwrap();
+        review
+    } else {
+        prepare_control_review(
+            &mut coordinator,
+            1,
+            target,
+            &request,
+            &mut app.automation_session_mut(tab).controller,
+        )
+    };
     approve_control_review(&mut coordinator, 1, &review).unwrap();
     let run = coordinator
         .broker
@@ -687,24 +802,52 @@ fn presentation_input_admits_only_the_reviewed_direct_action_once() {
 
     let _serial = presentation_admission_test_guard();
     let mut fixture = presented_input_fixture_with_binding(&[], true);
-    let (wrong, mut rejected) = commit_presented_input_retry(
+    let (wrong, mut rejected) = commit_direct_input_retry(
         &mut fixture.coordinator,
         1,
         fixture.request,
         &mut fixture.barrier,
         b"nope",
+        fixture.app.automation_session(fixture.tab).unwrap(),
     );
     assert_eq!(
         wrong,
         Err(CommitAutomationInputError::Refused(Error::BindingMismatch))
     );
     assert!(matches!(rejected.poll(), AutomationInputStatus::Cancelled));
-    let (accepted, mut pending) = commit_presented_input_retry(
+    let (wrong, mut rejected) = commit_presented_input_retry(
         &mut fixture.coordinator,
         1,
         fixture.request,
         &mut fixture.barrier,
         b"test",
+    );
+    assert_eq!(
+        wrong,
+        Err(CommitAutomationInputError::Refused(Error::BindingMismatch))
+    );
+    assert!(matches!(rejected.poll(), AutomationInputStatus::Cancelled));
+    let target = fixture.barrier.target;
+    let (wrong, mut rejected) = commit_direct_input_with_retry::<SimulatedPresentationBarrier>(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        None,
+        |coordinator| reserve_presented_input(coordinator, target, b"test"),
+        fixture.app.automation_session(fixture.tab).unwrap(),
+    );
+    assert_eq!(
+        wrong,
+        Err(CommitAutomationInputError::Refused(Error::BindingMismatch))
+    );
+    assert!(matches!(rejected.poll(), AutomationInputStatus::Cancelled));
+    let (accepted, mut pending) = commit_direct_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+        fixture.app.automation_session(fixture.tab).unwrap(),
     );
     accepted.unwrap();
     match pending.poll() {
@@ -740,6 +883,686 @@ fn presentation_input_admits_only_the_reviewed_direct_action_once() {
 }
 
 #[test]
+fn direct_action_refuses_changed_modes_or_a_different_terminal() {
+    use festerm_automation::Error;
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    let mut fixture = presented_input_fixture_with_binding(&[], true);
+    fixture
+        .app
+        .automation_session_mut(fixture.tab)
+        .terminal
+        .ingest(b"\x1b[?2004h");
+    let (result, mut pending) = commit_direct_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+        fixture.app.automation_session(fixture.tab).unwrap(),
+    );
+    assert_eq!(
+        result,
+        Err(CommitAutomationInputError::Refused(Error::BindingMismatch))
+    );
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+
+    let mut fixture = presented_input_fixture_with_binding(&[], true);
+    let (_, other, other_tab, _) = self::fixture();
+    let (result, mut pending) = commit_direct_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+        other.automation_session(other_tab).unwrap(),
+    );
+    assert_eq!(
+        result,
+        Err(CommitAutomationInputError::Refused(Error::BindingMismatch))
+    );
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+}
+
+#[test]
+fn direct_action_review_freezes_real_key_encoding_and_supersedes_old_action() {
+    use festerm_automation::Error;
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    let mut fixture = presented_input_fixture_with_binding(&[], true);
+    let keys = vec!["ctrl:c".to_owned(), "alt:ArrowLeft".to_owned()];
+    let target = fixture.barrier.target;
+    let review = retry_automation_busy(|| {
+        fixture.coordinator.prepare_direct_action_review(
+            1,
+            target,
+            DirectAction::Keys(&keys),
+            Duration::from_secs(60),
+            fixture.app.automation_session_mut(fixture.tab),
+        )
+    })
+    .unwrap();
+    let binding = *review.request().bindings.first().unwrap();
+    assert!(matches!(
+        binding.invocation,
+        Invocation::DirectInput { input, bytes: 7, .. }
+            if input == Digest(Sha256::digest(b"\x03\x1b[1;3D").into())
+    ));
+    approve_control_review(&mut fixture.coordinator, 1, &review).unwrap();
+    let (result, mut pending) = commit_direct_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+        fixture.app.automation_session(fixture.tab).unwrap(),
+    );
+    assert!(matches!(
+        result,
+        Err(CommitAutomationInputError::Refused(
+            Error::Revoked | Error::Closed | Error::BindingMismatch
+        ))
+    ));
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+}
+
+#[test]
+fn direct_action_review_refuses_invalid_or_oversize_input() {
+    let _serial = presentation_admission_test_guard();
+    let (mut coordinator, mut app, tab, _ime, target) = control_review_fixture();
+    let large = "x".repeat(festerm_automation::MAX_INPUT_BYTES as usize + 1);
+    let invalid = vec!["ctrl:ctrl:c".to_owned()];
+    for action in [
+        DirectAction::Text {
+            text: &large,
+            submit: false,
+        },
+        DirectAction::Keys(&invalid),
+    ] {
+        assert!(matches!(
+            coordinator.prepare_direct_action_review(
+                1,
+                target,
+                action,
+                Duration::from_secs(60),
+                app.automation_session_mut(tab),
+            ),
+            Err(festerm_automation::Error::InvalidRequest)
+        ));
+    }
+    assert!(coordinator.pending_control_reviews.is_empty());
+}
+
+#[test]
+fn direct_action_without_presentation_admits_core_bytes_once() {
+    use festerm_automation::Error;
+    use festerm_session::AutomationInputStatus;
+
+    let _serial = presentation_admission_test_guard();
+    let (mut coordinator, mut app, tab, _ime, target) = control_review_fixture();
+    app.automation_session_mut(tab)
+        .terminal
+        .ingest(b"\x1b[?2004h");
+    let review = retry_automation_busy(|| {
+        coordinator.prepare_direct_action_review(
+            1,
+            target,
+            DirectAction::Text {
+                text: "hello",
+                submit: true,
+            },
+            Duration::from_secs(60),
+            app.automation_session_mut(tab),
+        )
+    })
+    .unwrap();
+    let binding = *review.request().bindings.first().unwrap();
+    let scope = review.request().scope.clone();
+    approve_control_review(&mut coordinator, 1, &review).unwrap();
+    let principal = coordinator.peers[&1].principal;
+    let now = Instant::now();
+    let run = coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .admit_run(
+            principal,
+            None,
+            RunSpec {
+                binding,
+                scope,
+                budget: Budget::default(),
+                deadline: now + Duration::from_secs(30),
+            },
+            now,
+        )
+        .unwrap();
+    let lease =
+        retry_automation_busy(|| coordinator.acquire_control_lease(1, run, target)).unwrap();
+    let input = b"\x1b[200~hello\x1b[201~\r";
+    let operation = AuthorityOperation::Control {
+        lease,
+        input: Digest(Sha256::digest(input).into()),
+        bytes: input.len() as u32,
+        presentation: None,
+    };
+    let request = coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .prepare_request(principal, run, operation, Instant::now())
+        .unwrap();
+    let (result, mut pending) = commit_direct_input_with_retry::<SimulatedPresentationBarrier>(
+        &mut coordinator,
+        1,
+        request,
+        None,
+        |coordinator| reserve_presented_input(coordinator, target, input),
+        app.automation_session(tab).unwrap(),
+    );
+    result.unwrap();
+    assert!(matches!(pending.poll(), AutomationInputStatus::Ready(bytes) if &*bytes == input));
+    assert_eq!(
+        coordinator.broker.as_mut().unwrap().prepare_request(
+            principal,
+            run,
+            operation,
+            Instant::now(),
+        ),
+        Err(Error::Closed)
+    );
+}
+
+#[test]
+fn direct_action_after_publication_loss_is_unknown_and_not_replayed() {
+    use festerm_automation::Error;
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    let mut fixture = presented_input_fixture_with_binding(&[], true);
+    fixture.barrier.fail_after_operation = true;
+    let (result, mut pending) = commit_direct_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+        fixture.app.automation_session(fixture.tab).unwrap(),
+    );
+    assert_eq!(result, Err(CommitAutomationInputError::LostAfterCommit));
+    assert!(matches!(pending.poll(), AutomationInputStatus::Ready(bytes) if &*bytes == b"test"));
+    let principal = fixture.coordinator.peers[&1].principal;
+    assert_eq!(
+        fixture
+            .coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .prepare_request(
+                principal,
+                fixture.run,
+                AuthorityOperation::Control {
+                    lease: fixture.lease,
+                    input: Digest(Sha256::digest(b"test").into()),
+                    bytes: 4,
+                    presentation: Some(fixture.requirement),
+                },
+                Instant::now(),
+            ),
+        Err(Error::Closed)
+    );
+}
+
+#[test]
+fn direct_action_is_cut_by_pending_human_input() {
+    use festerm_automation::Error;
+    use festerm_session::AutomationInputStatus;
+    use festerm_session::CommitAutomationInputError;
+
+    let _serial = presentation_admission_test_guard();
+    let mut fixture = presented_input_fixture_with_binding(&[], true);
+    let _human = fixture
+        .app
+        .automation_session_mut(fixture.tab)
+        .controller
+        .begin_pending_human_input();
+    let (result, mut pending) = commit_direct_input_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        &mut fixture.barrier,
+        b"test",
+        fixture.app.automation_session(fixture.tab).unwrap(),
+    );
+    assert!(result.is_err());
+    assert!(!matches!(
+        result,
+        Err(CommitAutomationInputError::Refused(Error::Busy))
+    ));
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+}
+
+#[test]
+fn direct_action_reserves_frozen_bytes_in_backend_order() {
+    use festerm_automation::Error;
+    use festerm_session::CommitAutomationInputError;
+
+    let _serial = presentation_admission_test_guard();
+    retry_busy_case(|| {
+        let mut fixture = presented_input_fixture_with_binding(&[], true);
+        let tab = fixture.app.automation_session(fixture.tab).unwrap();
+        let Some(crate::tabs::ApplicationSession::TestSsh(backend)) = tab.controller.session()
+        else {
+            panic!("expected controlled backend");
+        };
+        backend.enable_ordered_test_input();
+        backend.enqueue_ordered_test_input(b"before");
+        let reservation =
+            reserve_direct_input_with_retry(&mut fixture.coordinator, 1, fixture.request, tab)
+                .unwrap();
+        backend.enqueue_ordered_test_input(b"after");
+        assert_eq!(backend.drain_ordered_test_input(), vec![b"before".to_vec()]);
+        assert!(backend.drain_ordered_test_input().is_empty());
+        let result = fixture.coordinator.commit_direct_input(
+            1,
+            fixture.request,
+            reservation,
+            tab,
+            Some(&mut fixture.barrier),
+        );
+        if matches!(
+            result,
+            Err(CommitAutomationInputError::Refused(Error::Busy))
+        ) {
+            assert_eq!(backend.drain_ordered_test_input(), vec![b"after".to_vec()]);
+            return false;
+        }
+        result.unwrap();
+        assert_eq!(
+            backend.drain_ordered_test_input(),
+            vec![b"test".to_vec(), b"after".to_vec()]
+        );
+        assert!(backend.drain_ordered_test_input().is_empty());
+        true
+    });
+}
+
+#[test]
+fn direct_action_reservation_refuses_stale_or_wrong_backend() {
+    use festerm_automation::Error;
+    use festerm_session::ReserveAutomationInputError;
+
+    let _serial = presentation_admission_test_guard();
+    let mut fixture = presented_input_fixture_with_binding(&[], true);
+    let tab = fixture.app.automation_session(fixture.tab).unwrap();
+    assert!(matches!(
+        reserve_direct_input_with_retry(&mut fixture.coordinator, 1, fixture.request, tab),
+        Err(ReserveDirectInputError::Backend(
+            ReserveAutomationInputError::Unsupported
+        ))
+    ));
+    let (_, other, other_tab, _) = self::fixture();
+    assert!(matches!(
+        reserve_direct_input_with_retry(
+            &mut fixture.coordinator,
+            1,
+            fixture.request,
+            other.automation_session(other_tab).unwrap()
+        ),
+        Err(ReserveDirectInputError::Authority(Error::BindingMismatch))
+    ));
+    fixture
+        .app
+        .automation_session_mut(fixture.tab)
+        .terminal
+        .ingest(b"\x1b[?2004h");
+    assert!(matches!(
+        reserve_direct_input_with_retry(
+            &mut fixture.coordinator,
+            1,
+            fixture.request,
+            fixture.app.automation_session(fixture.tab).unwrap()
+        ),
+        Err(ReserveDirectInputError::Authority(Error::BindingMismatch))
+    ));
+}
+
+#[test]
+fn direct_action_backend_reservation_rechecks_modes_at_publication() {
+    use festerm_automation::Error;
+    use festerm_session::CommitAutomationInputError;
+
+    let _serial = presentation_admission_test_guard();
+    retry_busy_case(|| {
+        let mut fixture = presented_input_fixture_with_binding(&[], true);
+        let tab = fixture.app.automation_session(fixture.tab).unwrap();
+        let Some(crate::tabs::ApplicationSession::TestSsh(backend)) = tab.controller.session()
+        else {
+            panic!("expected controlled backend");
+        };
+        let backend = backend.clone();
+        backend.enable_ordered_test_input();
+        let reservation =
+            reserve_direct_input_with_retry(&mut fixture.coordinator, 1, fixture.request, tab)
+                .unwrap();
+        backend.enqueue_ordered_test_input(b"after");
+        fixture
+            .app
+            .automation_session_mut(fixture.tab)
+            .terminal
+            .ingest(b"\x1b[?2004h");
+        let result = fixture.coordinator.commit_direct_input(
+            1,
+            fixture.request,
+            reservation,
+            fixture.app.automation_session(fixture.tab).unwrap(),
+            Some(&mut fixture.barrier),
+        );
+        if matches!(
+            result,
+            Err(CommitAutomationInputError::Refused(Error::Busy))
+        ) {
+            assert_eq!(backend.drain_ordered_test_input(), vec![b"after".to_vec()]);
+            return false;
+        }
+        assert_eq!(
+            result,
+            Err(CommitAutomationInputError::Refused(Error::BindingMismatch))
+        );
+        assert_eq!(backend.drain_ordered_test_input(), vec![b"after".to_vec()]);
+        true
+    });
+}
+
+#[test]
+fn direct_action_reservation_discards_attachment_replaced_during_backend_call() {
+    let _serial = presentation_admission_test_guard();
+    let mut fixture = presented_input_fixture_with_binding(&[], true);
+    let tab = fixture.app.automation_session(fixture.tab).unwrap();
+    let target = &fixture.coordinator.targets[&fixture.barrier.target.session()];
+    let attachment = target.attachment.clone();
+    let generation = target.attachment_generation;
+    let Some(crate::tabs::ApplicationSession::TestSsh(backend)) = tab.controller.session() else {
+        panic!("expected controlled backend");
+    };
+    backend.enable_ordered_test_input();
+    backend.invalidate_after_test_reservation();
+    assert!(matches!(
+        reserve_direct_input_with_retry(&mut fixture.coordinator, 1, fixture.request, tab),
+        Err(ReserveDirectInputError::Authority(_))
+    ));
+    assert!(!attachment.is_current(generation));
+    backend.enqueue_ordered_test_input(b"after");
+    assert_eq!(backend.drain_ordered_test_input(), vec![b"after".to_vec()]);
+}
+
+#[test]
+fn direct_action_metadata_first_requires_reviewed_closure_and_current_slot() {
+    use festerm_automation::Error;
+    use festerm_session::CommitAutomationInputError;
+
+    let _serial = presentation_admission_test_guard();
+    retry_busy_case(|| {
+        let (source_app, source_tab) = FesTermApp::automation_fixture();
+        let (mut coordinator, mut app, tab, _ime, target) =
+            control_review_fixture_with_sources(&[&source_app]);
+        let source = coordinator.targets[&source_tab.chip_id()].reference;
+        let principal = coordinator.peers[&1].principal;
+        let metadata = prepare_metadata_review(&mut coordinator, 1, &[source]);
+        approve_metadata_review(&mut coordinator, 1, &metadata).unwrap();
+        let (_, _, delivery) = metadata_disclosure(&mut coordinator, 1, &[source]);
+        assert!(matches!(
+            retry_automation_busy(|| coordinator.prepare_direct_action_review(
+                1,
+                target,
+                DirectAction::Text {
+                    text: "test",
+                    submit: false
+                },
+                Duration::from_secs(60),
+                app.automation_session_mut(tab),
+            )),
+            Err(Error::Unauthorized)
+        ));
+        assert!(delivery.is_live(principal, Instant::now()));
+        let sources = Scope {
+            discover: BTreeSet::from([source]),
+            ..Scope::default()
+        };
+        let review = retry_automation_busy(|| {
+            coordinator.prepare_direct_action_review_with_sources(
+                1,
+                target,
+                DirectAction::Text {
+                    text: "test",
+                    submit: false,
+                },
+                Duration::from_secs(60),
+                app.automation_session_mut(tab),
+                &sources,
+            )
+        })
+        .unwrap();
+        assert_eq!(review.metadata_sources(), &BTreeSet::from([source]));
+        assert_eq!(review.request().scope.discover, BTreeSet::from([source]));
+        assert!(review.request().direct_read_calls.is_empty());
+        let replacement = prepare_metadata_review(&mut coordinator, 1, &[source]);
+        approve_metadata_review(&mut coordinator, 1, &replacement).unwrap();
+        assert!(!delivery.is_live(principal, Instant::now()));
+        assert_eq!(
+            approve_control_review(&mut coordinator, 1, &review),
+            Err(Error::Revoked)
+        );
+        let (_, _, current) = metadata_disclosure(&mut coordinator, 1, &[source]);
+        let fresh = retry_automation_busy(|| {
+            coordinator.prepare_direct_action_review_with_sources(
+                1,
+                target,
+                DirectAction::Text {
+                    text: "test",
+                    submit: false,
+                },
+                Duration::from_secs(60),
+                app.automation_session_mut(tab),
+                &sources,
+            )
+        })
+        .unwrap();
+        assert_eq!(fresh.metadata_sources(), &BTreeSet::from([source]));
+        let binding = *fresh.request().bindings.first().unwrap();
+        let scope = fresh.request().scope.clone();
+        approve_control_review(&mut coordinator, 1, &fresh).unwrap();
+        let now = Instant::now();
+        let run = coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .admit_run(
+                principal,
+                None,
+                RunSpec {
+                    binding,
+                    scope,
+                    budget: Budget::default(),
+                    deadline: now + Duration::from_secs(30),
+                },
+                now,
+            )
+            .unwrap();
+        let lease =
+            retry_automation_busy(|| coordinator.acquire_control_lease(1, run, target)).unwrap();
+        let request = coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .prepare_request(
+                principal,
+                run,
+                AuthorityOperation::Control {
+                    lease,
+                    input: Digest(Sha256::digest(b"test").into()),
+                    bytes: 4,
+                    presentation: None,
+                },
+                Instant::now(),
+            )
+            .unwrap();
+        let session = app.automation_session(tab).unwrap();
+        let Some(crate::tabs::ApplicationSession::TestSsh(backend)) = session.controller.session()
+        else {
+            panic!("expected controlled backend");
+        };
+        backend.enable_ordered_test_input();
+        let reservation =
+            reserve_direct_input_with_retry(&mut coordinator, 1, request, session).unwrap();
+        retry_automation_busy(|| coordinator.revoke_metadata_grant(1)).unwrap();
+        assert!(!current.is_live(principal, Instant::now()));
+        let result = coordinator.commit_direct_input::<SimulatedPresentationBarrier>(
+            1,
+            request,
+            reservation,
+            session,
+            None,
+        );
+        if matches!(
+            result,
+            Err(CommitAutomationInputError::Refused(Error::Busy))
+        ) {
+            return false;
+        }
+        result.unwrap();
+        assert_eq!(backend.drain_ordered_test_input(), vec![b"test".to_vec()]);
+        assert!(reserve_direct_input_with_retry(&mut coordinator, 1, request, session).is_err());
+        true
+    });
+}
+
+#[test]
+fn direct_action_reserved_input_is_cut_by_metadata_source_retirement() {
+    use festerm_automation::Error;
+    use festerm_session::CommitAutomationInputError;
+
+    let _serial = presentation_admission_test_guard();
+    retry_busy_case(|| {
+        let (source_app, source_tab) = FesTermApp::automation_fixture();
+        let mut fixture =
+            presented_input_fixture_with_binding(&[(&source_app, source_tab, true)], true);
+        let source = fixture.coordinator.targets[&source_tab.chip_id()].reference;
+        let review = prepare_metadata_review(&mut fixture.coordinator, 1, &[source]);
+        approve_metadata_review(&mut fixture.coordinator, 1, &review).unwrap();
+        let principal = fixture.coordinator.peers[&1].principal;
+        let (_, _, delivery) = metadata_disclosure(&mut fixture.coordinator, 1, &[source]);
+        let tab = fixture.app.automation_session(fixture.tab).unwrap();
+        let Some(crate::tabs::ApplicationSession::TestSsh(backend)) = tab.controller.session()
+        else {
+            panic!("expected controlled backend");
+        };
+        backend.enable_ordered_test_input();
+        let reservation =
+            reserve_direct_input_with_retry(&mut fixture.coordinator, 1, fixture.request, tab)
+                .unwrap();
+        replace_source_attachment_without_event(&source_app, source_tab);
+        let result = fixture.coordinator.commit_direct_input(
+            1,
+            fixture.request,
+            reservation,
+            tab,
+            Some(&mut fixture.barrier),
+        );
+        if matches!(
+            result,
+            Err(CommitAutomationInputError::Refused(Error::Busy))
+        ) {
+            return false;
+        }
+        assert!(result.is_err());
+        assert!(backend.drain_ordered_test_input().is_empty());
+        assert!(!delivery.is_live(principal, Instant::now()));
+        true
+    });
+}
+
+#[test]
+fn direct_action_ordinary_expiry_cuts_presentation_and_reservation_not_metadata() {
+    use festerm_automation::Error;
+    use festerm_session::CommitAutomationInputError;
+
+    let _serial = presentation_admission_test_guard();
+    for reserve_before_expiry in [false, true] {
+        retry_busy_case(|| {
+            let (source_app, source_tab) = FesTermApp::automation_fixture();
+            let mut fixture =
+                presented_input_fixture_with_binding(&[(&source_app, source_tab, true)], true);
+            let source = fixture.coordinator.targets[&source_tab.chip_id()].reference;
+            let principal = fixture.coordinator.peers[&1].principal;
+            let review = retry_automation_busy(|| {
+                fixture.coordinator.prepare_metadata_review(
+                    1,
+                    festerm_automation::MetadataGrantRequest {
+                        targets: BTreeSet::from([source]),
+                    },
+                    Duration::from_secs(120),
+                )
+            })
+            .unwrap();
+            approve_metadata_review(&mut fixture.coordinator, 1, &review).unwrap();
+            let (_, _, delivery) = metadata_disclosure_with_deadline(
+                &mut fixture.coordinator,
+                1,
+                &[source],
+                Duration::from_secs(90),
+            );
+            let tab = fixture.app.automation_session(fixture.tab).unwrap();
+            let Some(crate::tabs::ApplicationSession::TestSsh(backend)) = tab.controller.session()
+            else {
+                panic!("expected controlled backend");
+            };
+            backend.enable_ordered_test_input();
+            let reservation = reserve_before_expiry.then(|| {
+                reserve_direct_input_with_retry(&mut fixture.coordinator, 1, fixture.request, tab)
+                    .unwrap()
+            });
+            let future = Instant::now() + Duration::from_secs(61);
+            fixture
+                .coordinator
+                .broker
+                .as_mut()
+                .unwrap()
+                .poll_expiry(future);
+            if let Some(reservation) = reservation {
+                let result = fixture.coordinator.commit_direct_input(
+                    1,
+                    fixture.request,
+                    reservation,
+                    tab,
+                    Some(&mut fixture.barrier),
+                );
+                if matches!(
+                    result,
+                    Err(CommitAutomationInputError::Refused(Error::Busy))
+                ) {
+                    return false;
+                }
+                assert!(result.is_err());
+            } else {
+                assert!(reserve_direct_input_with_retry(
+                    &mut fixture.coordinator,
+                    1,
+                    fixture.request,
+                    tab
+                )
+                .is_err());
+            }
+            assert!(backend.drain_ordered_test_input().is_empty());
+            assert!(delivery.is_live(principal, future));
+            true
+        });
+    }
+}
+
+#[test]
 fn presentation_metadata_revocation_preserves_pending_direct_input_without_replay() {
     use festerm_automation::{Error, RunState};
     use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
@@ -759,24 +1582,26 @@ fn presentation_metadata_revocation_preserves_pending_direct_input_without_repla
     assert!(metadata.is_live(principal, Instant::now()));
     assert!(!fixture.coordinator.javascript_enabled);
 
-    let (wrong_target, mut pending) = commit_presented_input_with_retry(
+    let (wrong_target, mut pending) = commit_direct_input_with_retry(
         &mut fixture.coordinator,
         1,
         fixture.request,
-        &mut fixture.barrier,
+        Some(&mut fixture.barrier),
         |coordinator| reserve_presented_input(coordinator, source, b"test"),
+        fixture.app.automation_session(fixture.tab).unwrap(),
     );
     assert_eq!(
         wrong_target,
         Err(CommitAutomationInputError::Refused(Error::BindingMismatch))
     );
     assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
-    let (wrong_bytes, mut pending) = commit_presented_input_retry(
+    let (wrong_bytes, mut pending) = commit_direct_input_retry(
         &mut fixture.coordinator,
         1,
         fixture.request,
         &mut fixture.barrier,
         b"nope",
+        fixture.app.automation_session(fixture.tab).unwrap(),
     );
     assert_eq!(
         wrong_bytes,
@@ -787,24 +1612,26 @@ fn presentation_metadata_revocation_preserves_pending_direct_input_without_repla
     retry_automation_busy(|| fixture.coordinator.revoke_metadata_grant(1)).unwrap();
     assert!(!metadata.is_live(principal, Instant::now()));
     fixture.barrier.fail_after_operation = true;
-    let (result, mut pending) = commit_presented_input_retry(
+    let (result, mut pending) = commit_direct_input_retry(
         &mut fixture.coordinator,
         1,
         fixture.request,
         &mut fixture.barrier,
         b"test",
+        fixture.app.automation_session(fixture.tab).unwrap(),
     );
     assert_eq!(result, Err(CommitAutomationInputError::LostAfterCommit));
     assert!(matches!(
         pending.poll(),
         AutomationInputStatus::Ready(bytes) if &*bytes == b"test"
     ));
-    let (replay, mut pending) = commit_presented_input_retry(
+    let (replay, mut pending) = commit_direct_input_retry(
         &mut fixture.coordinator,
         1,
         fixture.request,
         &mut fixture.barrier,
         b"test",
+        fixture.app.automation_session(fixture.tab).unwrap(),
     );
     assert!(replay.is_err());
     assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
@@ -874,12 +1701,13 @@ fn presentation_metadata_and_control_expire_independently() {
             metadata_expires
         );
 
-        let (result, mut pending) = commit_presented_input_retry(
+        let (result, mut pending) = commit_direct_input_retry(
             &mut fixture.coordinator,
             1,
             fixture.request,
             &mut fixture.barrier,
             b"test",
+            fixture.app.automation_session(fixture.tab).unwrap(),
         );
         if metadata_expires {
             assert_eq!(result, Ok(()));
@@ -1006,12 +1834,13 @@ fn presentation_metadata_reapproval_cannot_widen_frozen_control_sources() {
         Err(Error::Unauthorized)
     ));
     assert!(current_delivery.is_live(principal, Instant::now()));
-    let (result, mut pending) = commit_presented_input_retry(
+    let (result, mut pending) = commit_direct_input_retry(
         &mut fixture.coordinator,
         1,
         fixture.request,
         &mut fixture.barrier,
         b"test",
+        fixture.app.automation_session(fixture.tab).unwrap(),
     );
     assert_eq!(result, Ok(()));
     assert!(matches!(
@@ -1064,12 +1893,13 @@ fn presentation_control_cuts_preserve_metadata_and_reclaim_stale_reviews() {
             Err(Error::QuotaExceeded)
         ));
 
-        let (foreign, mut foreign_pending) = commit_presented_input_retry(
+        let (foreign, mut foreign_pending) = commit_direct_input_retry(
             &mut fixture.coordinator,
             2,
             fixture.request,
             &mut fixture.barrier,
             b"test",
+            fixture.app.automation_session(fixture.tab).unwrap(),
         );
         assert!(matches!(
             foreign,
@@ -1084,12 +1914,13 @@ fn presentation_control_cuts_preserve_metadata_and_reclaim_stale_reviews() {
         } else {
             retry_automation_busy(|| fixture.coordinator.revoke_control_handoff(1)).unwrap();
         }
-        let (result, mut pending) = commit_presented_input_retry(
+        let (result, mut pending) = commit_direct_input_retry(
             &mut fixture.coordinator,
             1,
             fixture.request,
             &mut fixture.barrier,
             b"test",
+            fixture.app.automation_session(fixture.tab).unwrap(),
         );
         assert!(result.is_err());
         assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
@@ -1135,12 +1966,13 @@ fn presentation_takeover_preserves_metadata_for_the_same_exact_target() {
     let (_, _, delivery) = metadata_disclosure(&mut fixture.coordinator, 1, &[target]);
 
     type_in_presentation_tab(&mut fixture.app, fixture.tab);
-    let (result, mut pending) = commit_presented_input_retry(
+    let (result, mut pending) = commit_direct_input_retry(
         &mut fixture.coordinator,
         1,
         fixture.request,
         &mut fixture.barrier,
         b"test",
+        fixture.app.automation_session(fixture.tab).unwrap(),
     );
     assert!(result.is_err());
     assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
@@ -1200,12 +2032,13 @@ fn presentation_metadata_review_and_slot_cuts_never_wait_for_admission() {
     );
     drop(guard);
     approve_metadata_review(&mut fixture.coordinator, 1, &review).unwrap();
-    let (result, mut pending) = commit_presented_input_retry(
+    let (result, mut pending) = commit_direct_input_retry(
         &mut fixture.coordinator,
         1,
         fixture.request,
         &mut fixture.barrier,
         b"test",
+        fixture.app.automation_session(fixture.tab).unwrap(),
     );
     assert_eq!(result, Ok(()));
     assert!(matches!(pending.poll(), AutomationInputStatus::Ready(_)));
@@ -1239,12 +2072,13 @@ fn presentation_metadata_sources_are_frozen_before_consent_and_through_publicati
             if !after_consent {
                 assert!(approve_metadata_review(&mut fixture.coordinator, 1, &review).is_err());
             }
-            let (result, mut pending) = commit_presented_input_retry(
+            let (result, mut pending) = commit_direct_input_retry(
                 &mut fixture.coordinator,
                 1,
                 fixture.request,
                 &mut fixture.barrier,
                 b"test",
+                fixture.app.automation_session(fixture.tab).unwrap(),
             );
             assert!(result.is_err());
             assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
@@ -1297,12 +2131,13 @@ fn presentation_unbound_metadata_replacement_cuts_control_without_revoking_metad
         .unwrap();
     let unbound = broker.native_metadata_grant(principal, now).unwrap();
     assert!(!old_delivery.is_live(principal, now));
-    let (result, mut pending) = commit_presented_input_retry(
+    let (result, mut pending) = commit_direct_input_retry(
         &mut fixture.coordinator,
         1,
         fixture.request,
         &mut fixture.barrier,
         b"test",
+        fixture.app.automation_session(fixture.tab).unwrap(),
     );
     assert!(result.is_err());
     assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
@@ -1360,12 +2195,13 @@ fn presentation_metadata_privacy_and_disconnect_cut_the_right_principals() {
         } else {
             fixture.coordinator.peers[&1].connection.close();
         }
-        let (result, mut pending) = commit_presented_input_retry(
+        let (result, mut pending) = commit_direct_input_retry(
             &mut fixture.coordinator,
             1,
             fixture.request,
             &mut fixture.barrier,
             b"test",
+            fixture.app.automation_session(fixture.tab).unwrap(),
         );
         assert!(result.is_err());
         assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
@@ -1686,7 +2522,8 @@ fn presentation_metadata_source_transition_is_ordered_after_direct_publication()
     });
     let PresentedInputFixture {
         mut coordinator,
-        app: _app,
+        app,
+        tab,
         request,
         barrier,
         ..
@@ -1700,10 +2537,14 @@ fn presentation_metadata_source_transition_is_ordered_after_direct_publication()
         saw_busy: false,
         finished_before_return: false,
     };
-    let (result, mut pending) =
-        commit_presented_input_with_retry(&mut coordinator, 1, request, &mut barrier, |host| {
-            reserve_presented_input(host, target, b"test")
-        });
+    let (result, mut pending) = commit_direct_input_with_retry(
+        &mut coordinator,
+        1,
+        request,
+        Some(&mut barrier),
+        |host| reserve_presented_input(host, target, b"test"),
+        app.automation_session(tab).unwrap(),
+    );
     assert_eq!(result, Ok(()));
     assert!(matches!(pending.poll(), AutomationInputStatus::Ready(_)));
     transition.join().unwrap();
@@ -1714,8 +2555,14 @@ fn presentation_metadata_source_transition_is_ordered_after_direct_publication()
         .recv_timeout(Duration::from_secs(2))
         .unwrap();
 
-    let (replay, mut pending) =
-        commit_presented_input_retry(&mut coordinator, 1, request, &mut barrier.inner, b"test");
+    let (replay, mut pending) = commit_direct_input_retry(
+        &mut coordinator,
+        1,
+        request,
+        &mut barrier.inner,
+        b"test",
+        app.automation_session(tab).unwrap(),
+    );
     assert!(replay.is_err());
     assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
     assert!(!delivery.is_live(principal, Instant::now()));

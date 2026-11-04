@@ -301,8 +301,12 @@ already queued OS focus request can be undone.
 
 Production leaves the monitor uninstalled and the client presentation tool
 refuses; the separate injected-source tests do not establish native OS behavior.
-Native grant/enrollment UI, response-admission wiring and direct input remain
-unimplemented. See the [design](../../docs/automation-design.md#bounded-confirmed-presentation-seam)
+Native grant/enrollment UI, response-admission wiring and an exposed direct
+input adapter remain unimplemented. The app has a host-only modeled seam that
+freezes core-encoded bytes and modes before review, reserves those bytes on the
+matching tab's backend without returning them to the caller, and checks them
+during reserved publication; it does not install the controller writer epoch or
+qualify native review or client delivery. See the [design](../../docs/automation-design.md#bounded-confirmed-presentation-seam)
 for the client contract and qualification blockers.
 
 ## Accounting and boundaries

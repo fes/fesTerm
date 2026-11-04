@@ -156,6 +156,12 @@ to bypass another's restrictions.
    privacy loss and disconnect cut both. The legacy observation adapter cannot
    compose with this seam until its queued frames carry per-slot delivery
    fences. This is a modeled seam, not native UI or metadata routing.
+   The host-only direct-action seam freezes core-encoded bytes, modes and
+   host-derived binding with a specific review and reserves those bytes on
+   the exact tab backend. It revalidates around reservation and at publication.
+   Explicitly requested readable sources remain part of the reviewed ordinary
+   scope; metadata grants never implicitly enlarge it. This does not install
+   a writer epoch or qualify native review, recipient fencing or MCP.
    The application-owned kernel also has a bounded, connection-owned
    controller-registration association with an explicitly native-selected
    exact target generation. Its fresh association reference is not authority.
@@ -284,6 +290,10 @@ in the design must be visible in implementation/release review.
   registration changes, ordered publication, and unrelated-principal survival
   after target retirement. They also force an error after publication, check
   no replay, and exercise nonblocking contention. The
+  host-only direct-action tests additionally cover ordered backend reservation,
+  changed modes, another controller, a superseding review and core key
+  encoding; these are synthetic
+  admission tests, not native evidence. The
   later-stage MCP contract explicitly refuses presentation while unqualified.
   These tests do not establish native activation/event ordering, response
   admission, a real presentation provider or an exposed controller-input path.

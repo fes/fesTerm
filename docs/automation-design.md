@@ -175,6 +175,24 @@ new intent from a replay. No adapter may automatically replay a lost response;
 the #524 client owns the durable uncertain-action interlock and disarm/reapproval
 flow. Admitted input remains outcome-unknown, not command completion.
 
+The host-only direct-action seam prepares bounded text or keys with the exact
+tab's core encoder before review, freezing the encoded bytes, terminal modes
+and host-computed binding with that review. It can reserve those bytes on the
+same tab's backend without exposing them to a caller. The reservation takes
+the admission lock itself, so the host validates both before and after the
+backend call, and independently checks the binding, exact bytes, modes, target,
+attachment and existing human/IME, privacy and optional presentation fences
+at publication. The opaque reservation is bound to the channel and request.
+Backend failures remain distinct from authority refusals; loss after admission
+is unknown, not evidence of command completion.
+
+The host may explicitly propose readable sources as part of the ordinary
+handoff review. Existing metadata sources must fit that reviewed closure;
+they are never added automatically. The native decision freezes the exact
+cross-flow and grant epochs, and ordinary-grant expiry also cuts presentation.
+The host seam models these checks but does not install a writer epoch, handle
+MCP cancellation or response delivery, or qualify native UI or recipients.
+
 This direct-input binding is a prerequisite, not a feature. #524's P1
 checkpoint remains observation-only: there is no MCP input tool, native control
 approval UI, real terminal write or feature activation. The separate modeled

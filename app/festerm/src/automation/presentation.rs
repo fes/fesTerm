@@ -6,12 +6,51 @@ use festerm_automation::{
 };
 use festerm_session::{
     AutomationAdmissionGuard, AutomationAdmissionTryError, CommitAutomationInputError,
-    ReservedAutomationInput, Session,
+    ReserveAutomationInputError, ReservedAutomationInput, Session,
 };
 use sha2::Digest as _;
 use std::{cell::Cell, rc::Rc};
 
 use crate::session_controller::{AutomationInputFence, SessionController};
+
+/// Host-validated input. This is not a native decision or an IPC credential.
+#[allow(dead_code)]
+pub(crate) enum DirectAction<'a> {
+    Text { text: &'a str, submit: bool },
+    Keys(&'a [String]),
+}
+
+struct FrozenDirectAction {
+    binding: InvocationBinding,
+    input: festerm_core::PreparedInput,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(super) enum ReserveDirectInputError {
+    Authority(Error),
+    Backend(ReserveAutomationInputError),
+}
+
+pub(super) struct DirectInputReservation {
+    reservation: ReservedAutomationInput,
+    channel: u64,
+    request: RequestId,
+}
+
+#[cfg(test)]
+impl DirectInputReservation {
+    pub(super) fn for_test(
+        reservation: ReservedAutomationInput,
+        channel: u64,
+        request: RequestId,
+    ) -> Self {
+        Self {
+            reservation,
+            channel,
+            request,
+        }
+    }
+}
 
 /// Shared by every window on the UI thread. The `Rc` prevents moving an input
 /// barrier to another thread while UI selection can change. `u64::MAX`
@@ -53,6 +92,7 @@ pub(super) struct BoundControlHandoff {
     fence: AutomationInputFence,
     sources: Vec<FrozenSource>,
     lease: Option<LeaseRef>,
+    direct_action: Option<FrozenDirectAction>,
 }
 
 pub(super) struct BoundControlReview {
@@ -61,6 +101,7 @@ pub(super) struct BoundControlReview {
     fence: AutomationInputFence,
     sources: Vec<FrozenSource>,
     metadata: Option<NativeMetadataGrant>,
+    direct_action: Option<FrozenDirectAction>,
 }
 
 pub(super) struct BoundMetadataGrant {
@@ -561,6 +602,7 @@ impl Coordinator {
                 fence,
                 sources,
                 metadata: metadata.map(|(grant, _)| grant),
+                direct_action: None,
             },
         );
         Ok(PendingControlReview {
@@ -670,9 +712,122 @@ impl Coordinator {
                 fence: bound.fence,
                 sources: bound.sources,
                 lease: None,
+                direct_action: bound.direct_action,
             },
         );
         Ok(())
+    }
+
+    /// Freeze both canonical parameters and core-encoded input before creating
+    /// the native review. Only this host-owned path can bind a direct action
+    /// to its original review and handoff.
+    #[allow(dead_code)]
+    pub(crate) fn prepare_direct_action_review(
+        &mut self,
+        channel: u64,
+        target: TargetRef,
+        action: DirectAction<'_>,
+        lifetime: Duration,
+        tab: &mut SessionTab,
+    ) -> festerm_automation::Result<PendingControlReview> {
+        self.prepare_direct_action_review_with_sources(
+            channel,
+            target,
+            action,
+            lifetime,
+            tab,
+            &Scope::default(),
+        )
+    }
+
+    /// Explicit source scopes are reviewed as part of the ordinary handoff.
+    /// They are never inferred from an independently granted metadata slot.
+    #[allow(dead_code)]
+    pub(crate) fn prepare_direct_action_review_with_sources(
+        &mut self,
+        channel: u64,
+        target: TargetRef,
+        action: DirectAction<'_>,
+        lifetime: Duration,
+        tab: &mut SessionTab,
+        sources: &Scope,
+    ) -> festerm_automation::Result<PendingControlReview> {
+        let current = self
+            .targets
+            .get(&target.session())
+            .ok_or(Error::StaleTarget)?;
+        if current.reference != target
+            || tab.controller.automation_instance() != Some(current.controller_instance)
+        {
+            return Err(Error::BindingMismatch);
+        }
+        let (input, canonical) = match action {
+            DirectAction::Text { text, submit } => {
+                if text.is_empty() || text.len() > festerm_automation::MAX_INPUT_BYTES as usize {
+                    return Err(Error::InvalidRequest);
+                }
+                let mut events = vec![festerm_core::InputEvent::Paste(text.to_owned())];
+                if submit {
+                    events.push(festerm_core::InputEvent::Key(festerm_core::Key::Enter));
+                }
+                let input = tab
+                    .terminal
+                    .prepare_input(&events, festerm_automation::MAX_INPUT_BYTES as usize)
+                    .map_err(|_| Error::InvalidRequest)?;
+                (
+                    input,
+                    serde_json::json!({"version": 1, "operation": "send_text", "text": text, "submit": submit}),
+                )
+            }
+            DirectAction::Keys(keys) => {
+                let input = festerm_automation_workflow::terminal_input::prepare_send_keys(
+                    &tab.terminal,
+                    keys,
+                )
+                .map_err(|_| Error::InvalidRequest)?;
+                (
+                    input,
+                    serde_json::json!({"version": 1, "operation": "send_keys", "keys": keys}),
+                )
+            }
+        };
+        let bytes = u32::try_from(input.bytes().len()).map_err(|_| Error::InvalidRequest)?;
+        if bytes == 0 {
+            return Err(Error::InvalidRequest);
+        }
+        let canonical = serde_json::to_vec(&canonical).map_err(|_| Error::InvalidRequest)?;
+        let binding = InvocationBinding {
+            api_version: 1,
+            invocation: Invocation::DirectInput {
+                target,
+                input: Digest(Sha256::digest(input.bytes()).into()),
+                bytes,
+            },
+            parameters: Digest(Sha256::digest(canonical).into()),
+        };
+        let request = GrantRequest {
+            scope: Scope {
+                control: BTreeSet::from([target]),
+                discover: sources.discover.clone(),
+                observe: sources.observe.clone(),
+                ..Scope::default()
+            },
+            bindings: BTreeSet::from([binding]),
+            direct_read_calls: BTreeSet::new(),
+        };
+        let review = self.prepare_control_handoff_review(
+            channel,
+            target,
+            request,
+            lifetime,
+            &mut tab.controller,
+        )?;
+        let bound = self
+            .pending_control_reviews
+            .get_mut(&review.approval_id)
+            .ok_or(Error::Revoked)?;
+        bound.direct_action = Some(FrozenDirectAction { binding, input });
+        Ok(review)
     }
 
     #[allow(dead_code)]
@@ -1169,6 +1324,141 @@ impl Coordinator {
         reservation: ReservedAutomationInput,
         barrier: &mut B,
     ) -> std::result::Result<(), CommitAutomationInputError<Error>> {
+        self.commit_input(channel, request, reservation, None, Some(barrier))
+    }
+
+    fn validate_direct_input_locked(
+        &mut self,
+        channel: u64,
+        request: RequestId,
+        tab: &SessionTab,
+        guard: &AutomationAdmissionGuard,
+    ) -> festerm_automation::Result<&FrozenDirectAction> {
+        let principal = self.admission_principal_locked(channel, guard)?;
+        self.synchronize_control_handoffs_locked(Instant::now(), guard)?;
+        let broker = self.broker.as_ref().ok_or(Error::Unavailable)?;
+        let (lease, grant) = broker.prepared_control_binding(principal, request, Instant::now())?;
+        let binding = broker.prepared_direct_input_binding(principal, request, Instant::now())?;
+        let target = lease.target();
+        let handoff = self
+            .control_handoffs
+            .get(&principal)
+            .ok_or(Error::Revoked)?;
+        if handoff.target != target || handoff.grant != grant || handoff.lease != Some(lease) {
+            return Err(Error::BindingMismatch);
+        }
+        if !handoff
+            .sources
+            .iter()
+            .all(|source| source.is_current(&self.targets, guard))
+            || !self.live_presentation_target(target, guard)
+        {
+            return Err(Error::StaleTarget);
+        }
+        let current = self
+            .targets
+            .get(&target.session())
+            .ok_or(Error::StaleTarget)?;
+        let frozen = handoff
+            .direct_action
+            .as_ref()
+            .ok_or(Error::BindingMismatch)?;
+        let attachment = tab
+            .controller
+            .automation_attachment_epoch()
+            .ok_or(Error::Unavailable)?;
+        if frozen.binding != binding
+            || tab.controller.automation_instance() != Some(current.controller_instance)
+            || !Arc::ptr_eq(&attachment, &current.attachment)
+            || !attachment.is_current(current.attachment_generation)
+            || tab.terminal.modes() != frozen.input.modes()
+        {
+            return Err(Error::BindingMismatch);
+        }
+        Ok(frozen)
+    }
+
+    /// Reserve only the bytes frozen into the live handoff, on that tab's own
+    /// backend. Backend reservation acquires the admission lock itself, so the
+    /// checks on either side deliberately use separate lock acquisitions.
+    #[allow(dead_code)]
+    pub(super) fn reserve_direct_input(
+        &mut self,
+        channel: u64,
+        request: RequestId,
+        tab: &SessionTab,
+    ) -> std::result::Result<DirectInputReservation, ReserveDirectInputError> {
+        let guard = try_admission().map_err(ReserveDirectInputError::Authority)?;
+        let frozen = self
+            .validate_direct_input_locked(channel, request, tab, &guard)
+            .map_err(ReserveDirectInputError::Authority)?;
+        drop(guard);
+        let reservation = tab
+            .controller
+            .reserve_automation_input(frozen.input.bytes())
+            .map_err(ReserveDirectInputError::Backend)?;
+        let guard = try_admission().map_err(ReserveDirectInputError::Authority)?;
+        self.validate_direct_input_locked(channel, request, tab, &guard)
+            .map_err(ReserveDirectInputError::Authority)?;
+        let principal = self
+            .admission_principal_locked(channel, &guard)
+            .map_err(ReserveDirectInputError::Authority)?;
+        let (lease, _) = self
+            .broker
+            .as_ref()
+            .ok_or(ReserveDirectInputError::Authority(Error::Unavailable))?
+            .prepared_control_binding(principal, request, Instant::now())
+            .map_err(ReserveDirectInputError::Authority)?;
+        let current = self
+            .targets
+            .get(&lease.target().session())
+            .ok_or(ReserveDirectInputError::Authority(Error::StaleTarget))?;
+        if !reservation.matches_attachment(
+            current.controller_instance,
+            &current.attachment,
+            current.attachment_generation,
+            &guard,
+        ) {
+            return Err(ReserveDirectInputError::Authority(Error::BindingMismatch));
+        }
+        Ok(DirectInputReservation {
+            reservation,
+            channel,
+            request,
+        })
+    }
+
+    /// Commits only the action frozen into this handoff. The borrowed tab
+    /// keeps its terminal state stable through the reservation callback.
+    #[allow(dead_code)]
+    pub(super) fn commit_direct_input<B: NativePresentationBarrier>(
+        &mut self,
+        channel: u64,
+        request: RequestId,
+        reservation: DirectInputReservation,
+        tab: &SessionTab,
+        barrier: Option<&mut B>,
+    ) -> std::result::Result<(), CommitAutomationInputError<Error>> {
+        if reservation.channel != channel || reservation.request != request {
+            return Err(CommitAutomationInputError::Refused(Error::BindingMismatch));
+        }
+        self.commit_input(
+            channel,
+            request,
+            reservation.reservation,
+            Some(tab),
+            barrier,
+        )
+    }
+
+    fn commit_input<B: NativePresentationBarrier>(
+        &mut self,
+        channel: u64,
+        request: RequestId,
+        reservation: ReservedAutomationInput,
+        tab: Option<&SessionTab>,
+        barrier: Option<&mut B>,
+    ) -> std::result::Result<(), CommitAutomationInputError<Error>> {
         let refused = CommitAutomationInputError::Refused;
         let guard = try_admission().map_err(refused)?;
         let principal = self
@@ -1176,10 +1466,6 @@ impl Coordinator {
             .map_err(refused)?;
         self.synchronize_control_handoffs_locked(Instant::now(), &guard)
             .map_err(refused)?;
-        let Some(workspace) = self.presentation_workspace.clone() else {
-            self.invalidate_presentation_locked();
-            return Err(refused(Error::Unavailable));
-        };
         let broker = self
             .broker
             .as_ref()
@@ -1212,6 +1498,25 @@ impl Coordinator {
             .targets
             .get(&target.session())
             .ok_or_else(|| refused(Error::StaleTarget))?;
+        let direct_binding =
+            broker.prepared_direct_input_binding(principal, request, Instant::now());
+        let frozen = match (direct_binding, tab) {
+            (Ok(binding), Some(tab)) => {
+                let frozen = handoff
+                    .direct_action
+                    .as_ref()
+                    .ok_or_else(|| refused(Error::BindingMismatch))?;
+                if frozen.binding != binding
+                    || tab.controller.automation_instance() != Some(current.controller_instance)
+                    || tab.terminal.modes() != frozen.input.modes()
+                {
+                    return Err(refused(Error::BindingMismatch));
+                }
+                Some((frozen, tab))
+            }
+            (Ok(_), None) | (Err(_), Some(_)) => return Err(refused(Error::BindingMismatch)),
+            (Err(_), None) => None,
+        };
         if !reservation.matches_attachment(
             current.controller_instance,
             &current.attachment,
@@ -1224,6 +1529,50 @@ impl Coordinator {
             .broker
             .as_mut()
             .ok_or_else(|| refused(Error::Unavailable))?;
+        let commit = |broker: &mut Broker,
+                      observation,
+                      workspace: Option<(&WorkspaceRevision, u64)>| {
+            reservation.commit_with(|bytes| {
+                if let Some((workspace, revision)) = workspace {
+                    if workspace.current() != Some(revision) {
+                        broker.invalidate_presentation_monitoring();
+                        return Err(Error::Revoked);
+                    }
+                }
+                if let Some((frozen, tab)) = frozen {
+                    if tab.terminal.modes() != frozen.input.modes() || bytes != frozen.input.bytes()
+                    {
+                        return Err(Error::BindingMismatch);
+                    }
+                }
+                let exact_bytes = u32::try_from(bytes.len()).map_err(|_| Error::InvalidRequest)?;
+                let digest = Digest(Sha256::digest(bytes).into());
+                match observation {
+                    Some(observation) => broker.commit_presented_control(
+                        principal,
+                        request,
+                        digest,
+                        exact_bytes,
+                        observation,
+                        Instant::now(),
+                    ),
+                    None => broker.commit_control(
+                        principal,
+                        request,
+                        digest,
+                        exact_bytes,
+                        Instant::now(),
+                    ),
+                }
+            })
+        };
+        let Some(barrier) = barrier else {
+            return commit(broker, None, None);
+        };
+        let Some(workspace) = self.presentation_workspace.clone() else {
+            broker.invalidate_presentation_monitoring();
+            return Err(refused(Error::Unavailable));
+        };
         let Some(workspace_revision) = workspace.current() else {
             broker.invalidate_presentation_monitoring();
             return Err(refused(Error::Unavailable));
@@ -1231,23 +1580,11 @@ impl Coordinator {
         let mut admission = None;
         let outcome =
             barrier.with_observation(broker, workspace_revision, |broker, observation| {
-                admission = Some(reservation.commit_with(|bytes| {
-                    if workspace.current() != Some(workspace_revision) {
-                        broker.invalidate_presentation_monitoring();
-                        return Err(Error::Revoked);
-                    }
-                    let exact_bytes =
-                        u32::try_from(bytes.len()).map_err(|_| Error::InvalidRequest)?;
-                    let digest = Digest(Sha256::digest(bytes).into());
-                    broker.commit_presented_control(
-                        principal,
-                        request,
-                        digest,
-                        exact_bytes,
-                        observation,
-                        Instant::now(),
-                    )
-                }));
+                admission = Some(commit(
+                    broker,
+                    Some(observation),
+                    Some((&workspace, workspace_revision)),
+                ));
             });
         match (outcome, admission) {
             (Ok(()), Some(result)) => result,

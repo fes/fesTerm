@@ -1927,8 +1927,15 @@ pub(crate) mod fake {
         operations: Mutex<Vec<FakeSshOperation>>,
         add_port_forward_error: Mutex<Option<SshPortForwardRequestError>>,
         terminal_file_identity: Mutex<(Option<String>, Option<String>)>,
+        ordered_test_input: Mutex<Option<VecDeque<TestInput>>>,
+        invalidate_after_test_reservation: std::sync::atomic::AtomicBool,
         #[cfg(all(windows, target_arch = "x86_64"))]
         notifier: Mutex<Option<Arc<dyn festerm_session::SessionEventNotifier>>>,
+    }
+
+    enum TestInput {
+        Bytes(Vec<u8>),
+        Reserved(festerm_session::PendingAutomationInput),
     }
 
     #[derive(Clone)]
@@ -1950,6 +1957,8 @@ pub(crate) mod fake {
                     operations: Mutex::new(Vec::new()),
                     add_port_forward_error: Mutex::new(None),
                     terminal_file_identity: Mutex::new((None, None)),
+                    ordered_test_input: Mutex::new(None),
+                    invalidate_after_test_reservation: std::sync::atomic::AtomicBool::new(false),
                     #[cfg(all(windows, target_arch = "x86_64"))]
                     notifier: Mutex::new(None),
                 }),
@@ -1987,6 +1996,46 @@ pub(crate) mod fake {
 
         pub fn sent(&self) -> Vec<Vec<u8>> {
             self.inner.sent.lock().expect("fake ssh sent lock").clone()
+        }
+
+        pub fn enable_ordered_test_input(&self) {
+            *self.inner.ordered_test_input.lock().unwrap() = Some(VecDeque::new());
+        }
+
+        pub fn invalidate_after_test_reservation(&self) {
+            self.inner
+                .invalidate_after_test_reservation
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+
+        pub fn enqueue_ordered_test_input(&self, bytes: &[u8]) {
+            self.inner
+                .ordered_test_input
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .push_back(TestInput::Bytes(bytes.to_vec()));
+        }
+
+        pub fn drain_ordered_test_input(&self) -> Vec<Vec<u8>> {
+            let mut queue = self.inner.ordered_test_input.lock().unwrap();
+            let queue = queue.as_mut().unwrap();
+            let mut output = Vec::new();
+            while let Some(item) = queue.front_mut() {
+                match item {
+                    TestInput::Bytes(bytes) => output.push(std::mem::take(bytes)),
+                    TestInput::Reserved(pending) => match pending.poll() {
+                        festerm_session::AutomationInputStatus::Pending => break,
+                        festerm_session::AutomationInputStatus::Ready(bytes) => {
+                            output.push(bytes.to_vec())
+                        }
+                        festerm_session::AutomationInputStatus::Cancelled => {}
+                    },
+                }
+                queue.pop_front();
+            }
+            output
         }
 
         #[cfg(all(windows, target_arch = "x86_64"))]
@@ -2140,6 +2189,39 @@ pub(crate) mod fake {
                 .expect("fake ssh sent lock")
                 .push(bytes.to_vec());
             Ok(())
+        }
+
+        fn reserve_automation_input(
+            &self,
+            controller_instance: u64,
+            bytes: &[u8],
+        ) -> Result<
+            festerm_session::ReservedAutomationInput,
+            festerm_session::ReserveAutomationInputError,
+        > {
+            let (reservation, pending) = festerm_session::automation_input_slot(
+                bytes,
+                controller_instance,
+                self.inner.automation_epoch.clone(),
+            )?;
+            let mut queue_guard = self
+                .inner
+                .ordered_test_input
+                .lock()
+                .map_err(|_| festerm_session::ReserveAutomationInputError::Unavailable)?;
+            let queue = queue_guard
+                .as_mut()
+                .ok_or(festerm_session::ReserveAutomationInputError::Unsupported)?;
+            queue.push_back(TestInput::Reserved(pending));
+            drop(queue_guard);
+            if self
+                .inner
+                .invalidate_after_test_reservation
+                .swap(false, std::sync::atomic::Ordering::AcqRel)
+            {
+                self.replace_attachment_without_event();
+            }
+            Ok(reservation)
         }
 
         fn try_resize(&self, _size: TerminalSize) -> Result<(), SessionSendError> {

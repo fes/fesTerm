@@ -1,5 +1,20 @@
 # Milestone Progress Narrative
 
+## Freezing direct input through backend reservation
+
+The host-only seam prepares bounded text or keys with the exact tab's core
+encoder before modeled review, freezing the bytes, terminal modes and binding
+with that handoff. It reserves those bytes on the same tab's backend and
+revalidates authority, attachment, modes and publication fences; admission
+means queueing only, and post-admission loss is unknown rather than a replay
+permit. Synthetic tests exercise the seam, not native behavior.
+
+Independent metadata grants never automatically widen the reviewed readable
+closure: cross-flow requires explicit consent and current grant epochs.
+Production MCP input, native UI and presentation sources remain unqualified;
+writer-epoch installation, recipient fencing and MCP cancellation remain open.
+P1 stays observation-only.
+
 ## Composing metadata and modeled controller handoff
 
 The inactive host seam freezes exact metadata source guards and the current
