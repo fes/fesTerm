@@ -63,6 +63,15 @@ its backend cannot yet invalidate automation authority at that boundary. Other
 session types retain their own attachment-generation checks. All MCP bootstrap
 paths remain fail-closed pending authenticated native pairing.
 
+A separate test-owned Windows stdout probe investigates inherited-pipe
+backpressure, partial/zero `PIPE_NOWAIT` writes, reader closure and mode changes
+through a duplicated writer. It uses kill-on-close jobs and deadlines to
+supervise its subprocesses. Native execution is required, and results apply
+only to the tested environment and configuration. The probe does not establish
+exclusive mode ownership, final-recipient privacy fencing or caller liveness
+against a relay delaying ciphertext; it does not enable MCP or qualify
+production stdout.
+
 ## Verify the Dev Tunnel installer before execution
 
 The setup panel could display the exact embedded installer for review, but its
