@@ -1,5 +1,17 @@
 # Milestone Progress Narrative
 
+## Characterizing SSH channel backpressure
+
+An encrypted in-memory client/server fixture characterizes the current
+connection-wide head-of-line stall: a decoded packet waits behind a full
+channel receiver while a global response, unrelated channel output and peer
+disconnect remain unobserved. It synchronizes the peer cut and a scheduler
+quiescence witness after the stall, then drains and accounts for both
+channels' bytes. A control with room for both packets receives those events
+without draining. This describes a transport limitation, not a liveness or
+lossless-retirement fix, and changes no automation startup or platform
+qualification.
+
 ## Keeping SSH global replies matched to requests
 
 The vendored SSH peers could both create phantom global-request replies:

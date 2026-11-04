@@ -1579,6 +1579,8 @@
         "command_poll_progress_does_not_require_the_sleep_branch_to_win",
         "command_poll_reschedules_only_after_control_processing",
         "command_poll_skips_missed_ticks_without_a_busy_catch_up_loop",
+        "saturated_inbound_channel_blocks_unrelated_data_reply_and_peer_cut_until_drained",
+        "unsaturated_inbound_channel_allows_unrelated_data_reply_and_peer_cut_before_drain",
         "mixed_global_requests_correlate_over_a_real_duplex_connection_in_both_directions",
         "live_shell_control_and_shutdown_progress_with_busy_output_and_a_full_event_queue"
       ],
