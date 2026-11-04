@@ -169,7 +169,9 @@
         "timely_admission_remains_ready_after_the_backend_deadline",
         "reservation_enforces_input_bounds_and_expiry_before_authority",
         "automation_reservation_preserves_order_and_releases_cancelled_slots",
-        "local_pty_automation_reservation_cannot_send_cancelled_bytes"
+        "local_pty_automation_reservation_cannot_send_cancelled_bytes",
+        "worker_argument_with_extra_arguments_refuses_before_gui_startup",
+        "application_worker_reports_qualification_before_receiving_source"
       ],
       "manual_scenarios": ["AUTO-02", "AUTO-03"],
       "status": "partial",

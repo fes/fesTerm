@@ -54,9 +54,11 @@ flowchart LR
 
 Modules/crates include `festerm-automation` (data types, authorization, quotas
 and run state) and `festerm-automation-mcp` (observation protocol adapter).
-`festerm-automation-js` and an install-owned worker remain future-stage names.
-The application composition root owns the broker and native approvals. Its
-coordinator remains the one owner of product actions and presented terminals.
+`festerm-automation-js` supplies a confined worker component and the desktop
+executable has an early private worker entry, but no application launcher or
+qualified install provenance. The application composition root owns the broker
+and native approvals. Its coordinator remains the one owner of product actions
+and presented terminals.
 The terminal core remains UI/runtime/protocol-adapter independent.
 
 The coordinator's broker and privacy monitor have a shared lifetime separate

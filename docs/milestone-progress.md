@@ -65,6 +65,36 @@ slot until I/O finishes, and discards cancelled or superseded results. This is
 not approval: source review within approval, parameter/target selection,
 worker execution, iOS selection and native platform qualification remain open.
 
+## Packaging a separate Linux automation worker
+
+The Linux AppImage and Debian package definitions now include the smaller
+standalone JavaScript helper, rather than relying on the GUI executable fitting
+under the worker's hard address-space ceiling. Package smoke checks its native
+Ready frame before providing any source, both from the extracted AppImage and
+the installed Debian package. The smoke harness requires Linux procfs and
+pidfds for bounded descendant cleanup, and does not execute the helper until
+the launcher has a pidfd. A stalled launch, abrupt outer termination, or pidfd
+exhaustion during cleanup can still prevent reaping; such failures require
+quarantining the test environment rather than assuming cleanup succeeded.
+
+Packaging the helper does not establish trusted executable provenance, approve
+a workflow or activate JavaScript. Those application, privacy and native
+qualification gates remain open.
+
+## Early application worker entry without authority
+
+The desktop executable now recognizes the private worker argument before any
+GUI or application initialization, using the same confined stdio entry and
+content-free failure frames as the standalone helper. Extra arguments are
+refused. Subprocess tests exercise the real application binary, including
+explicit unavailability or the qualified worker's loading deadline and a
+supervised, authority-free script.
+
+This does not launch a workflow or establish install provenance. Linux rejects
+an application executable whose initial mappings exceed the hard process limit,
+so a separate packaged helper may still be necessary. Native confinement,
+privacy monitoring, approval and broker integration remain separate gates.
+
 ## Capturing a selected workflow before consent
 
 The P2 composition crate can now ingest one explicitly user-selected JSON

@@ -8,10 +8,12 @@ mod engine;
 pub mod platform;
 pub mod protocol;
 pub mod snapshot;
+mod stdio;
 mod supervisor;
 #[cfg(not(target_os = "ios"))]
 mod worker;
 
+pub use stdio::worker_stdio;
 pub use supervisor::{
     cleanup_failed, event_wake_channel, AdmissionPermit, DisclosureGuard, DisclosurePermit, Event,
     EventWake, Supervisor, WorkerProgram,
