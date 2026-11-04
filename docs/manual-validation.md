@@ -26,9 +26,21 @@ The expected SHA-256 is derived from the app's embedded installer, not fetched
 with the download.
 
 The standard Dev Tunnel cards, shared code/action buttons and distinct tunnel
-mark have structural/geometry regressions. Native dark/light and 1x/2x visual
-comparison, including selected/disabled rows, keyboard focus and accessibility,
-remains manual DT-01/07 evidence, not an accepted result of those tests.
+mark have structural/geometry regressions. The Name/Tunnel profile editor also
+has deterministic structural coverage for its cleanup: the **Back** control,
+the single action row ordered **Save**, **Save and Connect**, **Cancel** with
+**Advanced** above it, removal of the duplicate bottom row and both transient
+"Connect once" affordances, Back/Cancel returning to the list without
+saving/connecting, **Save** emitting `SaveDevTunnelProfile` and closing to the
+list only on a reported persistence success while retaining the exact draft and
+an actionable error on failure, **Save and Connect** preserving the
+save/authenticate/connect command, the legacy Advanced **Store token** state,
+and header/control bounds at narrow width. Themed fixture-only render artifacts
+(default and narrow) accompany this as visual-alignment aids. These do not
+promote native theming/scale/accessibility acceptance; native dark/light and
+1x/2x visual comparison, including selected/disabled rows, keyboard focus and
+accessibility, plus live sign-in/persistence, remain manual DT-01/07 evidence,
+not an accepted result of those tests.
 
 Windows managed-host qualification must exercise servicing-owned system
 ancestors and refuse foreign directory-delete, child-delete and ACL/owner

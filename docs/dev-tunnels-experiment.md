@@ -471,14 +471,15 @@ picker. The running-tunnel list follows `show_running_dev_tunnels`. See
 
 The preferred client needs no CLI, metadata transfer or token paste.
 Choose **New profile → Dev Tunnel**, enter **Name** and **Tunnel** (logical
-alias or `tunnel-id.cluster`), and **Save profile**. Choose **Sign in with
-GitHub**, then click the code button to copy it and open GitHub in one action.
+alias or `tunnel-id.cluster`), and **Save** to persist and return to the
+profile list, or **Save and Connect** to sign in and connect in one step.
+On sign-in, click the code button to copy it and open GitHub in one action.
 Authorize **Microsoft Dev Tunnels** using the intended account.
 Displaying the dialog does not modify the clipboard or open a browser, and
 clicking the code does not approve or finish sign-in.
 Verify the displayed account and host fingerprint against the remote
-operator before approval; Cancel is the default. **Connect** also starts sign-in
-when necessary. Launcher and Profiles use the same commands.
+operator before approval; Cancel is the default. **Save and Connect** starts
+sign-in when necessary. Launcher and Profiles use the same commands.
 
 Default builds use the service's published GitHub App,
 `Iv1.e7b89e013f801f03`. Users do not register an application or configure a
@@ -594,9 +595,12 @@ launch recipe. The tab/Inspector explicitly say Experimental Dev Tunnel.
 
 For the advanced legacy route, choose **New profile → Dev Tunnel → Advanced →
 Use destination file**, enter a name and trusted destination JSON path, then
-**Save profile**. Reopen its editor's Advanced section, enter the connect token
+**Save**. Reopen its editor's Advanced section, enter the connect token
 in the hidden field and choose **Store token**. Saving metadata alone does not
-save that field. Launch through Launcher or Profiles, or use **Connect once**.
+save that field. Launch the saved profile through Launcher or Profiles. For a
+one-off attach without saving a profile, use the New Session Dev Tunnel card's
+**Connect once**; the profile editor itself no longer offers a transient
+connect.
 
 Configuration contains only the destination-file path and opaque native-store
 reference. Each saved profile has its own reference; duplication clears it.

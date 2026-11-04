@@ -1,5 +1,40 @@
 # Milestone Progress Narrative
 
+## Dev Tunnel profile editor cleanup and theme alignment
+
+The native Dev Tunnel profile editor was pruned to a single, consistent form.
+The heading now carries a standard **Back** control, the stale "profile
+created" banner and the "Save & connect signs in…" explainer are gone
+(actionable validation, authentication and persistence errors stay), and
+**Advanced** sits directly above one action row ordered **Save**, **Save and
+Connect**, **Cancel**. The duplicate bottom Save/Cancel row and both transient
+"Connect once" affordances were removed from this form (one-off attaches remain
+on the New Session surface); the scoped-token **Store token** action stays.
+
+**Save** now routes through the composition root's real persistence: the editor
+emits the dedicated `SaveDevTunnelProfile` command, and its handler returns to
+the profile list only after the configuration write succeeds, keeping the exact
+draft and an actionable failure message when the write fails. It never connects,
+signs in, or closes the window. **Save and Connect** preserves the explicit
+save/authenticate/connect flow; **Cancel**/**Back** never save or connect.
+Form chrome, fonts, spacing and the accent-primary Save button reuse the shared
+approved theming, and the narrow layout wraps the header instead of clipping it.
+
+Coverage is automated via deterministic structural render tests for button
+presence/order, duplicate removal, Back/Cancel navigation, Save
+close-without-connect versus Save and Connect, persistence-failure draft
+retention, the legacy Advanced state, and header/control bounds at narrow width,
+plus fixture-only themed render artifacts (default and narrow). Native GitHub
+device sign-in, live account/host acceptance and cross-platform service gates
+are not exercised here and remain tracked under
+[#432](https://github.com/fes/fesTerm/issues/432) and
+[#429](https://github.com/fes/fesTerm/issues/429).
+
+Save acknowledgements are bound to their source tab and pending request;
+stale results cannot close another or replacement draft. A new profile's name
+remains editable after a failed write. Regression tests exercise actual disk
+success/failure as well as editor acknowledgements and stale-result rejection.
+
 ## Windows tunnel recovery after a relay disconnect
 
 A Windows host reached READY and worked, then its relay transport disconnected.

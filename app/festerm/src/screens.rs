@@ -43,6 +43,7 @@ mod path_autocomplete;
 mod profiles;
 use destination::{DestinationFields, DestinationPane, FieldOptions, FieldStyle, DEFAULT_SSH_PORT};
 use path_autocomplete::{local_executable_field, local_working_directory_field};
+pub(crate) use profiles::report_dev_tunnel_save_outcome;
 pub(crate) use profiles::show_profiles;
 use profiles::{profile_text_edit_with_id, serial_enum_combo};
 mod settings;
