@@ -348,6 +348,9 @@ pub(super) fn reconcile(
     apps: &[&FesTermApp],
     workspace_revision: Option<u64>,
 ) {
+    if peers.is_empty() {
+        return;
+    }
     let Some(_guard) = festerm_session::automation_admission_lock() else {
         for peer in peers.values() {
             peer.connection.close();
@@ -635,11 +638,14 @@ pub(super) fn invalidate_location(
     target: Option<TabId>,
     window: Option<WindowId>,
 ) -> bool {
-    let Some(_guard) = festerm_session::automation_admission_lock() else {
+    if peers.is_empty() {
+        return true;
+    }
+    let Some(broker) = broker else {
         return false;
     };
-    let Some(broker) = broker else {
-        return peers.is_empty();
+    let Some(_guard) = festerm_session::automation_admission_lock() else {
+        return false;
     };
     for peer in peers.values_mut() {
         let stale: Vec<_> = peer
@@ -725,12 +731,12 @@ pub(super) fn settings(
     apps: &[&FesTermApp],
     mcp_open: bool,
 ) -> (Vec<ControllerRow>, Vec<ControllerTargetRow>, bool) {
-    let Some(_guard) = festerm_session::automation_admission_lock() else {
-        return (Vec::new(), Vec::new(), true);
-    };
     if !mcp_open {
         return (Vec::new(), Vec::new(), false);
     }
+    let Some(_guard) = festerm_session::automation_admission_lock() else {
+        return (Vec::new(), Vec::new(), true);
+    };
     let Some(broker) = coordinator.broker.as_ref() else {
         return (Vec::new(), Vec::new(), false);
     };
@@ -794,6 +800,36 @@ pub(super) fn settings(
 pub(super) mod tests {
     use super::*;
     use serde_json::{json, Value};
+
+    #[test]
+    fn disabled_controller_ui_does_not_wait_for_admission() {
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        let (started, ready) = mpsc::sync_channel(0);
+        let (finished, result) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut coordinator = Coordinator::default();
+            started.send(()).unwrap();
+            let snapshot = coordinator.settings(&[]);
+            coordinator.controller_target_moving(TabId::from_chip_id(1));
+            coordinator.controller_window_closing(WindowId::for_test(1));
+            let mut broker = Broker::new([0; 16]);
+            reconcile(
+                &mut broker,
+                &BTreeMap::new(),
+                &mut BTreeMap::new(),
+                &[],
+                None,
+            );
+            finished
+                .send(!snapshot.controller_targets_incomplete)
+                .unwrap();
+        });
+        ready.recv().unwrap();
+        let completed = result.recv_timeout(Duration::from_secs(5));
+        drop(guard);
+        worker.join().unwrap();
+        assert_eq!(completed, Ok(true));
+    }
 
     fn ready_controller_machine(mut machine: Machine) -> Machine {
         assert!(matches!(

@@ -344,6 +344,7 @@
         "controller_quoted_labels_preserve_unicode_escape_spoofing_and_bound_length",
         "controller_label_display_respects_utf8_registration_and_terminal_limits",
         "controller_catalog_requires_qualified_native_opt_in_and_resets_on_stop",
+        "disabled_controller_ui_does_not_wait_for_admission",
         "controller_wire_path_uses_exact_native_choice_without_authority_or_javascript",
         "controller_review_refuses_stale_attachment_context_and_newer_choice",
         "controller_close_recreate_and_backend_reconnect_never_retarget",
