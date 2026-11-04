@@ -8,6 +8,10 @@ mod broker;
 mod types;
 
 pub use broker::*;
+pub use festerm_admission::{
+    automation_admission_lock, try_automation_admission_lock, AutomationAdmissionGuard,
+    AutomationAdmissionTryError,
+};
 pub use types::*;
 
 #[cfg(test)]

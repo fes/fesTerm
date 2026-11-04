@@ -130,6 +130,13 @@ to bypass another's restrictions.
    invalidates the fence before delivery. This is not a lease: integration must
    still cut the broker grant and worker, check the exact fence at every effect
    and disclosure boundary, and obtain native handoff.
+   The existing process-wide admission mutex, opaque guard and attachment epoch
+   now live in dependency-neutral `festerm-admission`, shared by the session
+   abstraction and authority kernel. Session re-exports the existing APIs;
+   the kernel can name the same guard without depending on a session backend.
+   Guard-taking freshness is additive. Lock scope, poison and epoch exhaustion
+   remain unchanged. This ownership extraction binds no grant, changes no
+   broker authorization and enables no metadata or output path.
    At the real input queue publication boundary the future application adapter
    must revalidate privacy, attachment/generation, terminal modes, human
    input/IME fences, any required presentation condition, and the same immutable
@@ -216,6 +223,9 @@ per-stage acceptance, independent reviews or platform evidence.
   before a reviewed artifact/manifest exists. P1 MCP is observation-only; named,
   immutable workflow invocation follows P2 runtime qualification and the P3
   authorization gates, and never accepts caller-supplied source.
+- **Make the authority kernel depend on session implementations or add a
+  second admission mutex:** rejected. A dependency-neutral shared boundary
+  retains the existing process-wide serialization and non-forgeable guard.
 
 ## Consequences
 
@@ -308,6 +318,11 @@ in the design must be visible in implementation/release review.
   later-stage MCP contract explicitly refuses presentation while unqualified.
   These tests do not establish native activation/event ordering, response
   admission, a real presentation provider or an exposed controller-input path.
+  The shared-admission extraction retains existing epoch and poison coverage,
+  relocates the private-field exhaustion test, and adds a bounded cross-crate
+  contention and isolated poison test. Focused tests and strict Clippy passed;
+  independent source review found no significant issue. These tests do not
+  establish metadata liveness or disclosure fencing.
   Run the traceability gate and documentation checks.
 - **Worker process entry:** The desktop executable has a private
   `--automation-worker` entry before application initialization, exercised by

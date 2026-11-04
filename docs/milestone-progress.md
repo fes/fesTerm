@@ -1,5 +1,18 @@
 # Milestone Progress Narrative
 
+## Sharing the existing automation admission boundary
+
+The existing process-wide admission mutex, opaque guard and attachment epoch
+now live in a small dependency-neutral crate shared by the session abstraction
+and authority kernel. Session retains its original APIs; both crates name the
+same guard. Existing private-field exhaustion coverage moves with its epoch,
+and a bounded cross-crate test covers contention and isolated poison. Focused
+crate tests and strict Clippy passed; independent source review found no
+significant issue.
+
+This is a behavior-preserving boundary extraction, not a metadata grant link,
+native consent or delivery fence. Production automation gates are unchanged.
+
 ## Freezing direct input through backend reservation
 
 The host-only seam prepares bounded text or keys with the exact tab's core
