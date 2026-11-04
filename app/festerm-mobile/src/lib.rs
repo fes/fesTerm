@@ -482,6 +482,7 @@ impl MobileApp {
             ui.set_style(mobile_style(ui.style()));
             ui.painter()
                 .rect_filled(safe_rect, 0.0, ui.visuals().panel_fill);
+            apply_field_edit(ui.ctx());
             self.show_content(ui);
         });
         self.keep_field_keyboard(ui.ctx());
@@ -3251,4 +3252,46 @@ mod tests {
         assert_eq!(app.terminal.row_text(0), before);
         assert_eq!(app.observed_memory_warnings, 1);
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_CLIPBOARD: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(all(test, feature = "live-ssh"))]
+fn set_test_clipboard(text: Option<&str>) {
+    TEST_CLIPBOARD.with(|clipboard| *clipboard.borrow_mut() = text.map(str::to_owned));
+}
+
+fn clipboard_text() -> Option<String> {
+    #[cfg(test)]
+    if let Some(text) = TEST_CLIPBOARD.with(|clipboard| clipboard.borrow().clone()) {
+        return Some(text);
+    }
+    festerm_ios_window::clipboard_text()
+}
+
+/// Replays an edit chosen from a form field's menu as the clipboard or
+/// keyboard event egui's `TextEdit` already understands.
+fn apply_field_edit(ctx: &egui::Context) {
+    let Some(edit) = widgets::take_field_edit(ctx) else {
+        return;
+    };
+    let event = match edit {
+        widgets::FieldEdit::Paste => match clipboard_text() {
+            Some(text) if !text.is_empty() => egui::Event::Paste(text),
+            _ => return,
+        },
+        widgets::FieldEdit::Copy => egui::Event::Copy,
+        widgets::FieldEdit::Cut => egui::Event::Cut,
+        widgets::FieldEdit::SelectAll => egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        },
+    };
+    ctx.input_mut(|input| input.events.push(event));
 }
