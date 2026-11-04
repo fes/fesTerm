@@ -110,66 +110,20 @@ fn temporary_path(parent: &Path, extension: &str) -> PathBuf {
     ))
 }
 
-#[cfg(not(windows))]
 pub(crate) fn replace_file(temporary: &Path, target: &Path) -> Result<(), ConfigurationFileError> {
-    fs::rename(temporary, target)
-        .map_err(|_| ConfigurationFileError::new(ConfigurationFileErrorKind::Replace))
+    replace_file_with(temporary, target, |source, destination| {
+        fs::rename(source, destination)
+    })
 }
 
-#[cfg(windows)]
-pub(crate) fn replace_file(temporary: &Path, target: &Path) -> Result<(), ConfigurationFileError> {
-    match fs::rename(temporary, target) {
-        Ok(()) => Ok(()),
-        Err(_) if target.exists() => replace_existing_windows_file(temporary, target),
-        Err(_) => Err(ConfigurationFileError::new(
-            ConfigurationFileErrorKind::Replace,
-        )),
-    }
-}
-
-#[cfg(windows)]
-fn replace_existing_windows_file(
+pub(crate) fn replace_file_with(
     temporary: &Path,
     target: &Path,
+    rename: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
 ) -> Result<(), ConfigurationFileError> {
-    let parent = parent_directory(target)?;
-    let previous = rename_previous_windows_file(target, parent)?;
-
-    if fs::rename(temporary, target).is_err() {
-        return match fs::rename(&previous, target) {
-            Ok(()) => Err(ConfigurationFileError::new(
-                ConfigurationFileErrorKind::Replace,
-            )),
-            Err(_) => Err(ConfigurationFileError::new(
-                ConfigurationFileErrorKind::RestorePrevious,
-            )),
-        };
-    }
-
-    fs::remove_file(previous)
-        .map_err(|_| ConfigurationFileError::new(ConfigurationFileErrorKind::CleanupPrevious))
-}
-
-#[cfg(windows)]
-fn rename_previous_windows_file(
-    target: &Path,
-    parent: &Path,
-) -> Result<PathBuf, ConfigurationFileError> {
-    for _ in 0..TEMPORARY_FILE_ATTEMPTS {
-        let previous = temporary_path(parent, "previous");
-        match fs::rename(target, &previous) {
-            Ok(()) => return Ok(previous),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(_) => {
-                return Err(ConfigurationFileError::new(
-                    ConfigurationFileErrorKind::Replace,
-                ));
-            }
-        }
-    }
-    Err(ConfigurationFileError::new(
-        ConfigurationFileErrorKind::Replace,
-    ))
+    // An error may follow installation; a second rename could overwrite it.
+    rename(temporary, target)
+        .map_err(|_| ConfigurationFileError::new(ConfigurationFileErrorKind::Replace))
 }
 
 #[cfg(unix)]

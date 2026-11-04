@@ -314,7 +314,7 @@ impl fmt::Display for ConfigurationFileError {
                 "configuration replacement file could not be synced"
             }
             ConfigurationFileErrorKind::Replace => {
-                "configuration replacement could not be installed"
+                "configuration replacement could not be confirmed"
             }
             ConfigurationFileErrorKind::RestorePrevious => {
                 "configuration replacement failed and the prior file could not be restored"

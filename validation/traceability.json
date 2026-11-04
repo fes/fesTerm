@@ -3489,14 +3489,16 @@
       ],
       "automated_tests": [
         "invalid_workspace_reload_retains_the_previous_workspace",
-        "failed_workspace_save_is_content_free"
+        "failed_workspace_save_is_content_free",
+        "ambiguous_replacement_does_not_restore_over_installed_configuration"
       ],
       "manual_scenarios": [
         "CP-01"
       ],
       "status": "partial",
       "prerequisites": [
-        "full recovery and unsaved-close surfaces"
+        "full recovery and unsaved-close surfaces",
+        "temporary-path aliases, indeterminate save outcomes and credential reconciliation remain unqualified"
       ]
     },
     {
