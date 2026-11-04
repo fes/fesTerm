@@ -3732,7 +3732,7 @@
       "manual_scenarios": ["MOB-07"],
       "status": "partial",
       "prerequisites": [
-        "Issue #564: physical-device local speech model/language availability, denied/granted permissions, offline recognition, native microphone/deadline/interruption/background/lock cancellation without another UI frame, session replacement and actual terminal/TUI/touch/accessibility qualification remain required. Simulator unsupported/manual-preview flow and portable tests are not native speech recognition or privacy acceptance."
+        "Issue #564: physical-device local speech model/language availability, denied/granted permissions, offline recognition, native microphone/deadline/interruption/background/lock cancellation without another UI frame, session replacement and actual terminal/TUI/touch/accessibility qualification remain required, including the microphone icon after Left/Up/Down/Right. Simulator unsupported/manual-preview flow and portable tests are not native speech recognition or privacy acceptance."
       ]
     }
   ]

@@ -43,6 +43,7 @@ pub enum Icon {
     Clear,
     Diagnostics,
     KeyboardShortcuts,
+    Microphone,
     ThemeAppearance,
     TypographyFont,
     SecretStorage,
@@ -229,6 +230,7 @@ mod tests {
             Icon::Clear,
             Icon::Diagnostics,
             Icon::KeyboardShortcuts,
+            Icon::Microphone,
             Icon::ThemeAppearance,
             Icon::TypographyFont,
             Icon::SecretStorage,
@@ -259,7 +261,7 @@ mod tests {
             Icon::SectionExpanded,
             Icon::SortOrder,
         ];
-        assert_eq!(icons.len(), 58);
+        assert_eq!(icons.len(), 59);
         let sources =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/source");
         assert_eq!(std::fs::read_dir(sources).unwrap().count(), icons.len());
@@ -272,6 +274,7 @@ mod tests {
         for size in [16.0, 20.0, 24.0, 28.0, 42.0, 50.0] {
             let rect = Rect::from_min_size(Pos2::ZERO, egui::Vec2::splat(size));
             for (icon, source_width) in [
+                (Icon::Microphone, 1.75),
                 (Icon::SshRemote, 1.0),
                 (Icon::RemoteGlobe, 1.0),
                 (Icon::DevTunnel, 1.0),

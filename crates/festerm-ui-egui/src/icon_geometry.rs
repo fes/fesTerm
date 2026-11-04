@@ -466,6 +466,30 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
         Icon::Maximize => &[
             Primitive::Rectangle { x: 5.0, y: 5.0, width: 14.0, height: 14.0, radius: 1.0 },
         ],
+        Icon::Microphone => &[
+            Primitive::Rectangle { x: 9.0, y: 3.0, width: 6.0, height: 11.0, radius: 3.0 },
+            Primitive::Polyline(&[
+                (5.5, 10.0),
+                (5.5, 11.5),
+                (5.9948, 13.9874),
+                (7.4038, 16.0962),
+                (9.5126, 17.5052),
+                (12.0, 18.0),
+                (14.4874, 17.5052),
+                (16.5962, 16.0962),
+                (18.0052, 13.9874),
+                (18.5, 11.5),
+                (18.5, 10.0),
+            ]),
+            Primitive::Polyline(&[
+                (12.0, 18.0),
+                (12.0, 21.0),
+            ]),
+            Primitive::Polyline(&[
+                (8.5, 21.0),
+                (15.5, 21.0),
+            ]),
+        ],
         Icon::Minimize => &[
             Primitive::Polyline(&[
                 (5.0, 17.0),

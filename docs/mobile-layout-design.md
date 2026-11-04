@@ -9,8 +9,10 @@ a separate device-specific layout system.
 
 ## On-device dictation
 
-The experimental Hold symbols and Shell row keyboards add **Mic** to the pinned
-utility row. Dictation replaces terminal input with a bounded review sheet:
+The experimental Hold symbols and Shell row keyboards add a microphone icon
+(accessible name **Mic**) immediately after the Left/Up/Down/Right arrows in the
+pinned utility row, before Extended keys. Dictation replaces terminal input
+with a bounded review sheet:
 explicit permission/capability checks, visible Listening, **Stop and review**,
 editable single-line text, **Insert**, and **Cancel**. Insert never presses
 Return; the user submits separately. It rejects control characters and line
@@ -112,7 +114,7 @@ Forms and authentication
 continue to use the native keyboard regardless of the terminal preference.
 
 Both terminal layouts follow the owner's 2026-11-02 keyboard bundle: a grouped
-Esc/Tab/Ctrl/Alt/Shift utility strip with Left/Down/Up/Right arrows, permanent
+Esc/Tab/Ctrl/Alt/Shift utility strip with Left/Up/Down/Right arrows, permanent
 number row, QWERTY with an inset middle row, synchronized lower Shift and
 Backspace, and a symbols/ABC layer, comma, Space, period and Return. Shell row
 adds directly tappable `/ \ - _ ' " | & $ ~`. Hold symbols instead shows those
