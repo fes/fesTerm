@@ -1,5 +1,14 @@
 # Milestone Progress Narrative
 
+## Closing poison paths before diagnostics
+
+The shared admission-flag helper, privacy gate and MCP stop now apply their
+atomic closure and broker-drop cuts before reporting admission poison, without
+logging under admission. An isolated panic-subscriber regression covers the
+asynchronous privacy callback, both flag directions, multiple peers and
+metadata disclosure liveness. Later cleanup may still be interrupted; this
+does not qualify a platform adapter or add a final-recipient delivery fence.
+
 ## Guarding enrollment identity mutation
 
 The broker now requires the existing shared opaque admission guard for

@@ -72,6 +72,13 @@ before a global loss is discarded; a later explicit restart is required.
 Cleanup runs outside the UI thread; if cleanup cannot be started or fails,
 the affected service remains closed until the application is restarted.
 
+When admission is poisoned, privacy closure stores both its closed flag and
+the bound MCP stop before logging. MCP stop closes each peer and drops the
+broker before logging; the shared flag helper also applies its requested cut
+first. These diagnostics run without admission held. A panicking subscriber
+can still interrupt later cleanup; this ordering does not establish a
+final-recipient or physical-delivery fence.
+
 Only an actual adapter may request shared startup. The JavaScript preference
 alone starts neither the broker nor an MCP listener, and there is no integrated
 JavaScript adapter in this slice. Future worker integration must serialize its
