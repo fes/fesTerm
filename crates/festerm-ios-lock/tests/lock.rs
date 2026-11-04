@@ -370,5 +370,8 @@ fn system_clock_is_monotonic() {
     use festerm_ios_lock::{MonotonicClock, SystemClock};
     let a = SystemClock.now();
     let b = SystemClock.now();
-    assert!(b >= a && a > Duration::ZERO);
+    assert!(b >= a);
+    // The portable fallback measures from its first call, so it may read zero.
+    #[cfg(unix)]
+    assert!(a > Duration::ZERO);
 }
