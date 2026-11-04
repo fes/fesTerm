@@ -167,6 +167,24 @@ to bypass another's restrictions.
    UI-responsiveness claim.
    No enrollment witness is implemented, and this does not bind metadata grants
    or delivery liveness, fence physical recipients, or qualify native consent.
+   The existing capacity-four app outbound channel and its frame and target
+   guards now reside in the authority crate and remain connected to the same
+   app writer. The app retains the existing admission validation, size and
+   expiry checks, connection closure and physical writes. The legacy sender
+   accepts host-constructed frames without enforcing broker authority, and its
+   insertion still occurs after the admission guard is released. This
+   extraction is not a metadata witness or revocable enqueue; any such future
+   path must prevent bypass and account for all liveness and delivery cuts.
+   An alternative is app-owned insertion under the same admission boundary,
+   with its own carefully specified authority and revocation contract. This
+   extraction enables a future authority-owned insertion without crossing the
+   crate boundary through an arbitrary callback; it does not by itself make
+   that path safe. It uses the same standard-library channel and introduces no
+   dependency or platform-specific implementation; the thin endpoint wrappers
+   do not change its capacity or intended runtime behavior. Existing IPC
+   regressions remain applicable, with focused coverage for the relocated queue
+   and connection failure paths. This extends, rather than supersedes, this
+   decision.
    At the real input queue publication boundary the future application adapter
    must revalidate privacy, attachment/generation, terminal modes, human
    input/IME fences, any required presentation condition, and the same immutable
@@ -333,8 +351,11 @@ in the design must be visible in implementation/release review.
   before approval. A persisted
   disable is checked after reload; failure cannot promise a durable off bit
   across restart. MCP protocol, private framing, bounded
-  observation, pairing and stale-target tests cover the P1 path. Incremental
-  Noise handshake tests cover bounded framing, readiness and withholding the
+  observation, pairing and stale-target tests cover the P1 path.
+  The outbound ownership extraction adds queue capacity/FIFO/disconnect and
+  guard-freshness checks plus app connection full/closed regressions; execution
+  and full local CI-equivalent validation remain pending.
+  Incremental Noise handshake tests cover bounded framing, readiness and withholding the
   unverified channel until outbound handshake bytes are physically written.
   These do not prove trusted human comparison, native lock behavior, client
   interoperability, a confined engine or native input ordering. Coordinator

@@ -1,5 +1,15 @@
 # Milestone Progress Narrative
 
+## Outbound queue ownership extraction
+
+The existing four-frame IPC response queue and its frame/target guards now live
+in the authority crate and feed the same app-owned connection and writer.
+This changes ownership only: insertion is not guarded through publication,
+does not bind an enrollment or metadata grant, and proves no revocable enqueue
+or physical delivery. Production qualification and metadata routing remain
+closed. Focused queue and connection regressions have been added but have not
+yet been run.
+
 ## Wiring non-authorizing controller enrollment
 
 The local integration work adds an application adapter from an explicitly

@@ -66,6 +66,12 @@ can name the same guard without depending on session implementations. This
 changes dependency ownership, not terminal ownership or lock scope. See
 [ADR 0065](docs/adr/0065-mcp-and-javascript-automation.md).
 
+`festerm-automation` also owns the existing four-frame in-memory outbound
+queue and its inert frame and target-guard representation; the application
+still owns transport, size/deadline and admission checks, and shutdown. Queue
+insertion is not an authorization or revocation fence and does not qualify
+metadata routing or physical delivery.
+
 The Windows Direct2D experiment adds an app-owned
 `festerm-windows-direct2d` graphics boundary consuming egui primitives, not
 terminal state. On supported Windows x64 DX12 CPU-adapter targets with

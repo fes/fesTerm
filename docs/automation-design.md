@@ -744,6 +744,15 @@ the private channel cannot be recalled. The stdio input reader buffers at most
 64 bounded frames independently of private-channel backpressure, so it can
 observe EOF and revoke while forwarding is stalled; overflow closes the channel.
 
+The existing capacity-four outbound queue and its frame/target-guard
+representation live in `festerm-automation`, while the app retains the same
+connection and writer. The frame limit and expiration remain host checks; the
+queue itself does not authorize or bound frame bytes. In particular,
+`Connection::send_guarded` releases its admission guard before queue insertion,
+and the publicly constructible legacy frames and sender are not an enrollment
+witness or revocable metadata publication boundary. A future bound path must
+prevent bypass and establish all relevant lifetime and final-recipient fences.
+
 The handwritten adapter implements the MCP `2025-11-25` protocol baseline;
 native client interoperability is not yet qualified. Support only negotiated versions;
 do not combine lifecycle/metadata rules from different spec generations.

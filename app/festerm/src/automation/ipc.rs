@@ -1,3 +1,5 @@
+pub(super) use festerm_automation::OutboundTargetGuard as TargetGuard;
+use festerm_automation::{outbound_channel, OutboundFrame, OutboundReceiver, OutboundSender};
 use std::{
     collections::BTreeMap,
     io::{self, Read, Write},
@@ -28,41 +30,10 @@ fn next_connection_key(counter: &AtomicU64) -> Option<u64> {
 }
 
 #[derive(Clone)]
-pub(super) struct TargetGuard {
-    pub liveness: Arc<AtomicBool>,
-    pub registration: Arc<AtomicBool>,
-    pub attachment: Arc<festerm_session::AutomationEpoch>,
-    pub generation: u64,
-}
-
-impl TargetGuard {
-    /// The caller retains the admission boundary through the protected action.
-    pub(super) fn is_valid(&self) -> bool {
-        self.liveness.load(Ordering::Acquire)
-            && self.registration.load(Ordering::Acquire)
-            && self.attachment.is_current(self.generation)
-    }
-}
-
-struct Outbound {
-    bytes: Vec<u8>,
-    expires: Instant,
-    targets: Vec<TargetGuard>,
-    flags: Vec<Arc<AtomicBool>>,
-}
-
-impl Outbound {
-    fn is_valid(&self) -> bool {
-        self.targets.iter().all(TargetGuard::is_valid)
-            && self.flags.iter().all(|flag| flag.load(Ordering::Acquire))
-    }
-}
-
-#[derive(Clone)]
 pub(super) struct Connection {
     pub key: u64,
     closed: Arc<AtomicBool>,
-    output: SyncSender<Outbound>,
+    output: OutboundSender,
 }
 
 impl Connection {
@@ -110,7 +81,7 @@ impl Connection {
             return Err(io::ErrorKind::BrokenPipe.into());
         }
         self.output
-            .try_send(Outbound {
+            .try_send(OutboundFrame {
                 bytes,
                 expires,
                 targets: targets.to_vec(),
@@ -174,7 +145,7 @@ impl Server {
                                 break;
                             };
                             let closed = Arc::new(AtomicBool::new(false));
-                            let (output, receiver) = mpsc::sync_channel(4);
+                            let (output, receiver) = outbound_channel();
                             let connection = Connection {
                                 key,
                                 closed,
@@ -249,7 +220,7 @@ impl Drop for Server {
 fn serve_peer(
     mut stream: Stream,
     connection: Connection,
-    output: Receiver<Outbound>,
+    output: OutboundReceiver,
     events: SyncSender<Event>,
     wake: Waker,
     stop: Arc<AtomicBool>,
@@ -905,7 +876,7 @@ pub(super) fn test_server(stop: Arc<AtomicBool>) -> (Server, SyncSender<Event>) 
 
 #[cfg(test)]
 pub(super) fn test_connection(key: u64) -> (Connection, impl Fn() -> Option<Vec<u8>>) {
-    let (output, receiver) = mpsc::sync_channel::<Outbound>(4);
+    let (output, receiver) = outbound_channel();
     (
         Connection {
             key,
@@ -920,6 +891,49 @@ pub(super) fn test_connection(key: u64) -> (Connection, impl Fn() -> Option<Vec<
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn connection_closes_on_extracted_queue_full_or_disconnected() {
+        let (output, receiver) = outbound_channel();
+        let connection = Connection {
+            key: 1,
+            closed: Arc::new(AtomicBool::new(false)),
+            output,
+        };
+        let expiry = Instant::now() + Duration::from_secs(30);
+        for byte in 0..4 {
+            connection.send(vec![byte], expiry, &[]).unwrap();
+        }
+        assert_eq!(
+            connection.send(vec![4], expiry, &[]).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        assert!(connection.is_closed());
+        for byte in 0..4 {
+            assert_eq!(receiver.try_recv().unwrap().bytes, [byte]);
+        }
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        assert_eq!(
+            connection.send(vec![5], expiry, &[]).unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+
+        let (output, receiver) = outbound_channel();
+        let connection = Connection {
+            key: 2,
+            closed: Arc::new(AtomicBool::new(false)),
+            output,
+        };
+        drop(receiver);
+        assert_eq!(
+            connection.send(vec![1], expiry, &[]).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        assert!(connection.is_closed());
+    }
 
     #[test]
     fn unqualified_bootstrap_refuses_server_and_stdio_before_ipc() {
@@ -1632,7 +1646,7 @@ mod tests {
         let (server, mut client) = std::os::unix::net::UnixStream::pair().unwrap();
         server.set_read_timeout(Some(IO_SLICE)).unwrap();
         server.set_write_timeout(Some(IO_SLICE)).unwrap();
-        let (output, replies) = mpsc::sync_channel(4);
+        let (output, replies) = outbound_channel();
         let connection = Connection {
             key: 8,
             closed: Arc::new(AtomicBool::new(false)),
@@ -1675,7 +1689,7 @@ mod tests {
     fn queued_controller_reply_closes_when_registration_is_invalidated() {
         let (server, mut client) = std::os::unix::net::UnixStream::pair().unwrap();
         server.set_read_timeout(Some(IO_SLICE)).unwrap();
-        let (output, replies) = mpsc::sync_channel(4);
+        let (output, replies) = outbound_channel();
         let connection = Connection {
             key: 9,
             closed: Arc::new(AtomicBool::new(false)),
@@ -1725,7 +1739,7 @@ mod tests {
         server.set_write_timeout(Some(IO_SLICE)).unwrap();
         client.set_read_timeout(Some(IO_SLICE)).unwrap();
         client.set_write_timeout(Some(IO_SLICE)).unwrap();
-        let (output, replies) = mpsc::sync_channel(4);
+        let (output, replies) = outbound_channel();
         let connection = Connection {
             key: 7,
             closed: Arc::new(AtomicBool::new(false)),
