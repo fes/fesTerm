@@ -1764,6 +1764,7 @@ pub(super) mod tests {
             app: &FesTermApp,
             receive: &impl Fn() -> Option<Vec<u8>>,
             association: &str,
+            target: &str,
         ) {
             call(
                 coordinator,
@@ -1794,6 +1795,19 @@ pub(super) mod tests {
             assert_eq!(data["enrollment_available"], true);
             assert_eq!(data["presentation"]["available"], false);
             assert_eq!(data["input_available"], false);
+            for reference in [association, target] {
+                call(
+                    coordinator,
+                    1,
+                    &[app],
+                    "festerm_sessions_get",
+                    json!({"session_ref": reference}),
+                );
+                assert_eq!(
+                    response(receive)["result"]["structuredContent"]["code"],
+                    "NOT_AUTHORIZED"
+                );
+            }
             call(
                 coordinator,
                 1,
@@ -1810,6 +1824,24 @@ pub(super) mod tests {
         let (app, tab) = FesTermApp::automation_local_fixture();
         let mut coordinator = fixture(&[&app]);
         let receive = add_peer(&mut coordinator, 1);
+        let Event::Reply(tools) = coordinator
+            .peers
+            .get_mut(&1)
+            .unwrap()
+            .machine
+            .process_value(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
+        else {
+            panic!("expected combined tool catalog");
+        };
+        let catalog: Value = serde_json::from_slice(tools.as_bytes()).unwrap();
+        assert!(catalog["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|tool| !matches!(
+                tool["name"].as_str(),
+                Some("festerm_terminal_send_text" | "festerm_terminal_send_keys")
+            )));
         call(
             &mut coordinator,
             1,
@@ -1845,6 +1877,7 @@ pub(super) mod tests {
             .unwrap();
         let enrollment = association.enrollment;
         let association = association.public.to_wire();
+        let target = serde_json::to_string(&target).unwrap();
         let principal = coordinator.peers[&1].principal;
         coordinator.synthetic_enrollment_metadata_ui_qualified = true;
         metadata_command_with_retry(
@@ -1859,7 +1892,7 @@ pub(super) mod tests {
         )
         .unwrap();
         let token = metadata_review_token(&coordinator, &app, registration);
-        assert_unavailable(&mut coordinator, &app, &receive, &association);
+        assert_unavailable(&mut coordinator, &app, &receive, &association, &target);
         assert_eq!(
             metadata_review_token(&coordinator, &app, registration),
             token
@@ -1881,7 +1914,7 @@ pub(super) mod tests {
             .unwrap()
             .native_enrollment_metadata_grant(principal, registration, enrollment, Instant::now())
             .is_ok());
-        assert_unavailable(&mut coordinator, &app, &receive, &association);
+        assert_unavailable(&mut coordinator, &app, &receive, &association, &target);
         assert!(!app.automation_javascript_enabled());
         assert!(coordinator.peers[&1].grant.is_none());
 
@@ -1902,7 +1935,7 @@ pub(super) mod tests {
             .native_enrollment_metadata_grant(principal, registration, enrollment, Instant::now())
             .is_err());
         coordinator.broker = Some(broker);
-        assert_unavailable(&mut coordinator, &app, &receive, &association);
+        assert_unavailable(&mut coordinator, &app, &receive, &association, &target);
     }
 
     #[test]
