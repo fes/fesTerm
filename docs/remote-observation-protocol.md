@@ -111,6 +111,10 @@ volume/file index), not names or unrelated stat calls. Revisions are scoped to
 the stream-local retained-object/cache token and change on mutation or replacement,
 preventing a
 retired handle from authorizing bytes after replacement or cache eviction.
+Mutation is detected from identity, size and change time, so a same-size
+rewrite within one filesystem timestamp tick (about 15.6 ms on Windows, the
+coarse kernel clock on Linux) cannot be distinguished; appends, truncation and
+replacement are always detected.
 Clients do not infer an append-only history after a gap: they rescan/reconcile.
 
 ## Client and broker contract

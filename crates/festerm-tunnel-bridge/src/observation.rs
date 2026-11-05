@@ -1115,6 +1115,9 @@ mod tests {
         };
         assert_ne!(replaced.identity, truncated.identity);
         assert_eq!(read(&mut state, &root, &replaced, 0, 4).1.unwrap(), b"repl");
+        // Same-size rewrites are detected by change time; let the filesystem's
+        // timestamp tick advance (about 15.6 ms on Windows) before rewriting.
+        std::thread::sleep(std::time::Duration::from_millis(100));
         std::fs::write(path.join("large"), b"same length").unwrap();
         let (Reply::Changed { metadata: changed }, None) = read(&mut state, &root, &replaced, 0, 4)
         else {
