@@ -4578,7 +4578,8 @@
         "microphone_meter_measures_samples_not_transcription",
         "resumed_partials_replace_only_the_new_segment_and_keep_utf8_bounds",
         "dictation_refuses_a_replacement_transport_in_the_same_tab",
-        "dictation_close_frame_never_replays_queued_local_text_into_terminal"
+        "dictation_close_frame_never_replays_queued_local_text_into_terminal",
+        "dictation_review_text_has_consistent_inset_padding_at_compact_and_phone_sizes"
       ],
       "manual_scenarios": ["MOB-07"],
       "status": "partial",

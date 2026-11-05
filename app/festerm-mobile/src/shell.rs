@@ -241,7 +241,6 @@ fn profiles_screen(
                             .size(type_scale::BODY)
                             .strong(),
                     );
-                    footnote(ui, "Create an SSH profile to connect.");
                     ui.add_space(space::XS);
                     if button(ui, ButtonKind::Primary, "New profile", true).clicked() {
                         actions.push(ShellAction::NewProfile);

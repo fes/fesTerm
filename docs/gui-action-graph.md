@@ -305,6 +305,9 @@ Preview long press exposes Copy/Select All for the selected plain rendering
 without requesting an editing keyboard; projection replacement clears selection.
 Mic waits for the current local edit batch before binding/resuming. Document
 Insert quarantines draft events and publishes source IME in the handoff frame.
+Review text uses a 12-point horizontal / 8-point vertical inset inside its
+rounded field, checked against actual painted geometry at narrow, phone and
+landscape sizes with both native and custom keyboard preferences.
 Switch modes after editing and confirm the same history and source selection;
 open Contents and navigate a heading without changing source or terminal bytes.
 Switching document views or changing the captured revision dismisses the sheet.

@@ -358,6 +358,10 @@ impl MobileApp {
                                         egui::TextEdit::multiline(&mut buffer)
                                             .desired_width(ui.available_width())
                                             .desired_rows(if panel_height <= 110.0 { 1 } else { 2 })
+                                            .margin(egui::vec2(
+                                                super::theme::space::MD,
+                                                super::theme::space::SM,
+                                            ))
                                             .hint_text("Text to insert"),
                                         false,
                                         true,

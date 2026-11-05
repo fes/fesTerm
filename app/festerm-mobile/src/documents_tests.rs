@@ -9,6 +9,75 @@ use std::{
 const INITIAL: &[u8] = b"\xef\xbb\xbf# Runbook\r\none two\r\n";
 
 #[test]
+fn dictation_review_text_has_consistent_inset_padding_at_compact_and_phone_sizes() {
+    use crate::{terminal_keyboard::KeyboardKind, theme};
+    use festerm_ios_window::DictationPhase;
+    for (width, height) in [(320.0, 568.0), (390.0, 844.0), (844.0, 390.0)] {
+        for kind in [KeyboardKind::Native, KeyboardKind::HoldSymbols] {
+            let mut app = app(true);
+            app.choose_keyboard(kind);
+            let view = app.documents.active.unwrap();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, height))
+                .build_ui_state(
+                    |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+                    app,
+                );
+            harness.run();
+            focus(&mut harness, view, 0);
+            let context = harness.ctx.clone();
+            harness.state_mut().begin_dictation(&context);
+            harness
+                .state()
+                .dictation
+                .as_ref()
+                .unwrap()
+                .with_text(|draft| {
+                    draft.phase = DictationPhase::Review;
+                    draft.text = "Dictation alignment".to_owned();
+                });
+            harness.run();
+            let shapes = &harness.output().shapes;
+            let text = shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text)
+                        if text.galley.text() == "Dictation alignment" =>
+                    {
+                        Some(text)
+                    }
+                    _ => None,
+                })
+                .expect("actual draft text is painted");
+            let field = shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Rect(rect)
+                        if rect.fill == theme::color::FIELD && rect.rect.contains(text.pos) =>
+                    {
+                        Some(rect.rect)
+                    }
+                    _ => None,
+                })
+                .min_by(|left, right| left.area().total_cmp(&right.area()))
+                .expect("draft has a text-field frame");
+            assert!(
+                (text.pos.x - field.left() - theme::space::MD).abs() <= 0.5,
+                "horizontal inset at {width} {kind:?}: {field:?}, {:?}",
+                text.pos
+            );
+            assert!(
+                (text.pos.y - field.top() - theme::space::SM).abs() <= 0.5,
+                "vertical inset at {width} {kind:?}: {field:?}, {:?}",
+                text.pos
+            );
+            assert!(field.contains_rect(text.galley.rect.translate(text.pos.to_vec2())));
+            assert_eq!(harness.state().sink.diagnostics.byte_count, 0);
+        }
+    }
+}
+
+#[test]
 fn mic_transition_commits_same_frame_native_text_before_binding_or_resuming() {
     let pending = Rc::new(RefCell::new(Vec::new()));
     let mic = Rc::new(Cell::new(false));
@@ -752,6 +821,9 @@ fn documents_browse_belongs_to_sessions_not_profiles() {
     harness.run();
     assert!(harness.query_by_label("Documents").is_none());
     assert!(harness.query_by_label("Continue working").is_none());
+    assert!(harness
+        .query_by_label("Create an SSH profile to connect.")
+        .is_none());
     harness.get_by_label("Sessions").click();
     harness.run();
     assert_eq!(harness.state().surface, Surface::Tabs);

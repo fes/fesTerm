@@ -135,7 +135,8 @@ result; it is not evidence that native speech works.
   `locked_document_clears_field_keyboard_and_never_replays_local_input`,
   `mic_transition_commits_same_frame_native_text_before_binding_or_resuming`,
   `document_dictation_insert_hands_off_ime_without_replaying_draft_events`,
-  `dictation_close_frame_never_replays_queued_local_text_into_terminal`.
+  `dictation_close_frame_never_replays_queued_local_text_into_terminal`,
+  `dictation_review_text_has_consistent_inset_padding_at_compact_and_phone_sizes`.
   The affected graph/traceability now also includes `MOB-08`.
 - **Native/manual evidence required:** `MOB-07` physical-device permissions,
   offline recognition, language/model availability, microphone indicator,
