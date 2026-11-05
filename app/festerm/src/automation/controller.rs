@@ -1730,6 +1730,10 @@ pub(super) fn dispatch_direct_input(
     drop(guard);
 
     let attempted = (|| {
+        #[cfg(test)]
+        if std::mem::take(&mut coordinator.synthetic_direct_input_busy_after_admit_once) {
+            return Err(Error::Busy);
+        }
         let lease = coordinator.acquire_control_lease(preparation.channel, run, target)?;
         let guard =
             festerm_session::try_automation_admission_lock().map_err(|error| match error {
@@ -4094,6 +4098,22 @@ pub(super) mod tests {
             token,
             receive,
         )
+    }
+
+    pub(in crate::automation) fn direct_input_outcome_for_test(
+        coordinator: &Coordinator,
+        token: u64,
+    ) -> BackendResult {
+        let pending = coordinator.peers[&1]
+            .controller
+            .direct_input
+            .as_ref()
+            .filter(|pending| pending.token == token)
+            .expect("expected the dispatched input");
+        let DirectInputPhase::Settling { outcome, .. } = &pending.phase else {
+            panic!("expected an input disposition");
+        };
+        outcome.result()
     }
 
     pub(in crate::automation) fn settle_direct_input_for_test(

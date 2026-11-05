@@ -12,6 +12,7 @@ use crate::{
     tabs::{ApplicationSession, TabId},
 };
 use festerm_automation::ControllerRegistrationId;
+use festerm_automation_mcp::{BackendResult, InputDisposition, Refusal};
 use rmcp::{model::CallToolRequestParams, service::Peer, RoleClient};
 use serde_json::{json, Value};
 use std::{
@@ -61,6 +62,7 @@ pub(super) fn fixture() -> (FesTermApp, Coordinator, SyncSender<ipc::Event>, Hos
     coordinator.synthetic_enrollment_metadata_ui_qualified = true;
     coordinator.synthetic_enrollment_metadata_delivery_qualified = true;
     coordinator.synthetic_direct_input_qualified = true;
+    coordinator.synthetic_direct_input_busy_after_admit_once = true;
     let (server, events) = ipc::test_server(coordinator.stop.clone());
     coordinator.server = Some(server);
     (
@@ -145,7 +147,7 @@ fn approve_and_dispatch_input(
     row: &ControllerRow,
     text: &str,
     unknown: bool,
-) -> u64 {
+) -> Option<u64> {
     assert_eq!(
         row.associated_target,
         Some(coordinator.targets[&state.second_tab.chip_id()].reference)
@@ -214,13 +216,25 @@ fn approve_and_dispatch_input(
         )
     })
     .unwrap();
+    let outcome = host::tests::direct_input_outcome_for_test(coordinator, token);
     host::tests::settle_direct_input_for_test(coordinator, token, app);
-    assert_eq!(
-        state.second_backend.drain_ordered_test_input(),
-        vec![format!("{text}\r").into_bytes()]
-    );
+    let delivered = state.second_backend.drain_ordered_test_input();
     assert!(state.first_backend.drain_ordered_test_input().is_empty());
-    token
+    match outcome {
+        BackendResult::Refused(Refusal::Unavailable) => {
+            assert!(delivered.is_empty());
+            None
+        }
+        BackendResult::InputDisposition(InputDisposition::Admitted) if !unknown => {
+            assert_eq!(delivered, vec![format!("{text}\r").into_bytes()]);
+            Some(token)
+        }
+        BackendResult::InputDisposition(InputDisposition::OutcomeUnknown) if unknown => {
+            assert_eq!(delivered, vec![format!("{text}\r").into_bytes()]);
+            Some(token)
+        }
+        _ => panic!("unexpected direct input disposition"),
+    }
 }
 
 pub(super) async fn host(
@@ -237,6 +251,7 @@ pub(super) async fn host(
     let mut metadata_approvals = 0;
     let mut moved = false;
     let mut inputs = 0;
+    let mut refused_after_dispatch = 0;
     loop {
         coordinator.tick(&context, &[app]);
         if let Some((public_id, text, unknown)) = &expected_input {
@@ -250,20 +265,24 @@ pub(super) async fn host(
                     text,
                     *unknown,
                 );
-                if *unknown {
-                    let current = host::tests::registration_row(
-                        coordinator,
-                        &[app],
-                        CHANNEL,
-                        candidate.registration,
-                    );
-                    assert!(current.control.is_none());
-                    armed = None;
+                if let Some(token) = token {
+                    if *unknown {
+                        let current = host::tests::registration_row(
+                            coordinator,
+                            &[app],
+                            CHANNEL,
+                            candidate.registration,
+                        );
+                        assert!(current.control.is_none());
+                        armed = None;
+                    } else {
+                        armed = Some((candidate.registration, token));
+                    }
+                    inputs += 1;
+                    expected_input = None;
                 } else {
-                    armed = Some((candidate.registration, token));
+                    refused_after_dispatch += 1;
                 }
-                inputs += 1;
-                expected_input = None;
             }
         }
         tokio::select! {
@@ -355,6 +374,8 @@ pub(super) async fn host(
     assert_eq!(metadata_approvals, 2);
     assert!(moved);
     assert_eq!(inputs, 2);
+    assert!(refused_after_dispatch > 0);
+    assert!(!coordinator.synthetic_direct_input_busy_after_admit_once);
     assert!(expected_input.is_none());
     assert!(armed.is_none());
     assert!(coordinator.peers[&CHANNEL].grant.is_none());
@@ -548,7 +569,10 @@ pub(super) async fn client(
             )
             .await;
             let body = result.structured_content.unwrap();
-            if body["status"] == "refused" && body["code"] == "UNAVAILABLE" {
+            if result.is_error == Some(true)
+                && body["status"] == "refused"
+                && body["code"] == "UNAVAILABLE"
+            {
                 assert!(Instant::now() < deadline, "SDK input stayed unavailable");
                 tokio::time::sleep(Duration::from_millis(1)).await;
                 continue;

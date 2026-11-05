@@ -1006,6 +1006,8 @@ pub(crate) struct Coordinator {
     synthetic_direct_input_qualified: bool,
     #[cfg(test)]
     synthetic_direct_input_lost_after_commit: bool,
+    #[cfg(test)]
+    synthetic_direct_input_busy_after_admit_once: bool,
 }
 
 impl Default for Coordinator {
@@ -1061,6 +1063,8 @@ impl Default for Coordinator {
             synthetic_direct_input_qualified: false,
             #[cfg(test)]
             synthetic_direct_input_lost_after_commit: false,
+            #[cfg(test)]
+            synthetic_direct_input_busy_after_admit_once: false,
         }
     }
 }
