@@ -492,12 +492,26 @@ pub(super) async fn client(
     .structured_content
     .unwrap();
     assert_eq!(current["data"]["sessions"][0]["session_ref"], handles[1]);
-    let stale_input = call(
-        client,
-        "festerm_terminal_send_text",
-        json!({"enrollment_ref": &handles[0], "text": "never sent"}),
-    )
-    .await;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let stale_input = loop {
+        let result = call(
+            client,
+            "festerm_terminal_send_text",
+            json!({"enrollment_ref": &handles[0], "text": "never sent"}),
+        )
+        .await;
+        if result.is_error == Some(true)
+            && result
+                .structured_content
+                .as_ref()
+                .is_some_and(|body| body["status"] == "refused" && body["code"] == "UNAVAILABLE")
+        {
+            assert!(Instant::now() < deadline, "stale input stayed unavailable");
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            continue;
+        }
+        break result;
+    };
     assert_eq!(stale_input.is_error, Some(true));
     assert_eq!(
         stale_input.structured_content.unwrap()["code"],
