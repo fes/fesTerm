@@ -1,5 +1,16 @@
 # Milestone Progress Narrative
 
+## Repairing an already-dead legacy tunnel host
+
+A 0.15.0 helper upgrade encountered a dead 0.14.1 daemon. The refusal was
+correct for generation-preserving upgrade, but neither upgrade nor conservative
+automatic recovery offered an explicit operator recovery path for missing
+legacy lifecycle evidence. ADR 0071 adds separately authorized fresh-shell
+repair, keeping the tunnel, host key and grants. One generation is journaled
+before launch; interruption reconciles that exact shell or refuses without
+creating another. Live sessions remain untouched and clients reconnect
+explicitly. Signed/native cross-platform qualification remains DT-05 work.
+
 ## 0.15.0: iOS dictation and documents, Dev Tunnel host files and observation
 
 This minor release packages the reviewed iOS and Dev Tunnel work since 0.14.2.

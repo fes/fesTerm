@@ -3,11 +3,12 @@ set -euo pipefail
 umask 077
 
 fail() { printf 'fesTerm tunnel setup: %s\n' "$*" >&2; exit 1; }
-usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected] [--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files] [--observe-root ABSOLUTE_DIRECTORY ... | --disable-observation]'
+usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade] [--repair-session] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected] [--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files] [--observe-root ABSOLUTE_DIRECTORY ... | --disable-observation]'
 version=
 install_dependencies=false
 no_takeover=false
 upgrade=false
+repair_session=false
 friendly_name=
 file_root=
 file_write=false
@@ -41,6 +42,9 @@ while (($#)); do
         [[ -z $restart_unexpected ]] || fail 'Choose only one unexpected-failure restart policy.'
         restart_unexpected=$1
         shift
+    elif [[ $1 == --repair-session ]] && ! "$repair_session"; then
+        repair_session=true
+        shift
     elif [[ $1 == --upgrade ]]; then
         # Switch an existing host's service to this release's helpers,
         # keeping its tunnel, host key and running daemon session.
@@ -57,6 +61,7 @@ while (($#)); do
     fi
 done
 setup_extra=()
+if "$repair_session"; then setup_extra+=(--repair-session); fi
 if "$disable_files" && { [[ -n $file_root ]] || "$file_write"; }; then
     fail 'Use --file-root with optional --allow-file-write, or --disable-files.'
 fi

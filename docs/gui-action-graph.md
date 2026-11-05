@@ -606,6 +606,12 @@ read/write grants, same-host enable/reconfigure/revoke, independent bounded file
 streams and no reconnect replay. Existing GUI actions remain unchanged; client
 browsing/recursive-transfer UI and native DT-07 evidence are separate work.
 
+ADR 0071 adds explicit CLI-only dead-session repair to those host setup and
+recovery edges. It verifies account/key/host authority, stops only owned
+workers, and journals one new shell generation without changing tunnel/key or
+grants. A live target and uncertain duplicate creation refuse. Upgrade alone
+and automatic recovery keep their existing rules; clients reconnect explicitly.
+
 ADR 0070 and `docs/remote-observation-protocol.md` extend those same host
 edges with independent read-only roots, identity/revision-checked offset reads,
 bounded native watches and non-authorizing daemon generation correlation.
