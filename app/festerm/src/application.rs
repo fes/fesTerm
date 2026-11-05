@@ -987,6 +987,9 @@ impl FesTermApplication {
             app.report_automation_action_conflict();
             context.request_repaint();
         }
+        if !conflicted {
+            self.automation.stage_reusable_direct_inputs(&apps, context);
+        }
         let preparations = if conflicted {
             Vec::new()
         } else {

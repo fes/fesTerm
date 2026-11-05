@@ -1,13 +1,21 @@
 # Milestone Progress Narrative
 
+## Reusing a synthetic direct-input handoff
+
+A new matching wire invocation can reuse the same still-live synthetic handoff
+after the original action, association, sources, modes and safety fences are
+revalidated. Its original expiry and shared budgets are retained; disarm,
+queued cancellation and unknown outcomes do not cause automatic replay. A
+different action still needs review. This does not qualify production input.
+
 ## Dispatching one synthetic direct-input action
 
 The test-qualified MCP route can explicitly confirm a frozen review, reserve
 the exact local test backend queue and settle one input as refused, admitted or
 unknown. Queued cancellation is ordered before publication and settlement;
-disarm targets the original control grant. A successful grant may remain armed,
-but a later wire invocation still needs a fresh review. No production input,
-native presentation or private bootstrap is qualified by these tests.
+disarm targets the original control grant. At this checkpoint, a later wire
+invocation still needed a fresh review. No production input, native presentation
+or private bootstrap is qualified by these tests.
 
 ## Staging direct-input reviews
 

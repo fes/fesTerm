@@ -242,9 +242,10 @@ One successfully prepared direct-input request consumes the invocation's sole
 action even if the request is aborted or settled; an already committed request
 cannot be committed again. A live native grant can authorize later **new
 intentional** invocations of the same approved action, subject to its original
-lifetime and shared budgets. The future native UI must explain this repetition
-and obtain explicit handoff; a client assertion about a hardware gesture is not
-proof of consent. The kernel has no persistent input receipt and cannot tell a
+lifetime and shared budgets. The synthetic review explains this repetition;
+qualified native UI must do so and obtain explicit handoff. A client assertion
+about a hardware gesture is not proof of consent. The kernel has no persistent
+input receipt and cannot tell a
 new intent from a replay. No adapter may automatically replay a lost response;
 the #524 client owns the durable uncertain-action interlock and disarm/reapproval
 flow. Admitted input remains outcome-unknown, not command completion.
@@ -288,11 +289,15 @@ is replaced or removed. Under synthetic qualification, explicit confirmation
 revalidates the full display and admits one frozen action to the exact ordered
 backend queue. Queued inbound messages precede publication and final settlement;
 the result distinguishes refusal, admission and unknown without replay. A
-successful grant may stay armed and can be explicitly disarmed, but the adapter
-does not yet reuse it for later wire invocations without a fresh review. There
-is no production control approval UI, MCP input publication or feature
-activation; the modeled enrollment and presentation foundations do not qualify
-those paths or a desktop.
+successful grant may stay armed and can be explicitly disarmed. A later wire
+invocation may reuse it only for the same action and association, after checking
+the original source descriptions, modes, human/IME and workspace fences,
+qualification and queued cancellation. The original expiry and shared budgets
+are not renewed. A different action needs a fresh review; an unknown outcome
+disarms and is never automatically replayed. There is no production control
+approval UI, MCP input publication or feature activation; the modeled
+enrollment and presentation foundations do not qualify those paths or a
+desktop.
 
 The kernel also has a separately native-approved, discovery-only metadata slot
 on the same connection. It binds exact target generations and has its own epoch,

@@ -211,9 +211,13 @@ to bypass another's restrictions.
    frozen action to its exact test backend and reports refusal, queue admission
    or unknown outcome. Queued inbound cancellation is processed before a
    later publication or settlement, and an exact-token disarm cuts its grant.
-   A successful handoff can remain armed, but later wire invocations still
-   require review. Production consent and per-slot delivery fencing remain
-   unqualified. A separate current-window
+   A successful handoff can remain armed for a newly received, intentional
+   invocation of the same action, but only with the original association,
+   source descriptions, modes, fences, expiry and shared budgets. Changed
+   actions require a new review; cancellation and disarm precede reuse, and an
+   unknown outcome disarms without replay. The synthetic review explains
+   repetition and uncertainty. Production consent and per-slot delivery
+   fencing remain unqualified. A separate current-window
    metadata Settings review is exercised with synthetic qualification only:
    cancellation invalidates stale
    snapshots immediately, and proposal cleanup and scoped revocation defer

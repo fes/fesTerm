@@ -39,6 +39,29 @@ impl FrozenAssociation {
         self.target
     }
 
+    pub(super) fn same_identity(&self, other: &Self) -> bool {
+        self.principal == other.principal
+            && self.registration == other.registration
+            && self.enrollment == other.enrollment
+            && self.public == other.public
+            && self.target == other.target
+            && self.window == other.window
+            && Arc::ptr_eq(&self.valid, &other.valid)
+    }
+
+    pub(super) fn owns_direct_control(
+        &self,
+        peer: &Peer,
+        grant: NativeControlGrant,
+        token: u64,
+    ) -> bool {
+        peer.controller.registrations.values().any(|record| {
+            record.internal == self.registration
+                && Arc::ptr_eq(&record.valid, &self.valid)
+                && record.direct_control == Some((self.target, grant, token))
+        })
+    }
+
     pub(super) fn bind_direct_control_grant(
         &self,
         peer: &mut Peer,
@@ -234,7 +257,7 @@ impl PendingDirectInput {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-struct DirectInputReviewCapture {
+pub(super) struct DirectInputReviewCapture {
     candidate: ControllerTargetRow,
     workspace_revision: u64,
     modes: festerm_core::TerminalModes,
@@ -1476,6 +1499,126 @@ pub(super) fn direct_input_dispatches(coordinator: &Coordinator) -> Vec<DirectIn
         .collect()
 }
 
+pub(super) fn stage_reusable_direct_inputs(
+    coordinator: &mut Coordinator,
+    apps: &[&FesTermApp],
+) -> festerm_automation::Result<bool> {
+    use festerm_automation::Error;
+    if coordinator.reconciliation_deferred
+        || !coordinator.direct_input_qualified()
+        || !coordinator.controller_opted_in
+        || coordinator.stop.load(Ordering::Acquire)
+        || coordinator.privacy_gate.is_closed()
+    {
+        return Ok(false);
+    }
+    let candidates: Vec<_> = coordinator
+        .peers
+        .iter()
+        .filter_map(|(channel, peer)| {
+            let pending = peer.controller.direct_input.as_ref()?;
+            (pending.valid.get()
+                && matches!(pending.phase, DirectInputPhase::Requested)
+                && coordinator.has_reusable_direct_handoff(*channel, &pending.association))
+            .then_some((*channel, pending.token))
+        })
+        .collect();
+    let mut changed = false;
+    let mut busy = false;
+    for (channel, token) in candidates {
+        let guard = match festerm_session::try_automation_admission_lock() {
+            Ok(guard) => guard,
+            Err(festerm_session::AutomationAdmissionTryError::Busy) => {
+                busy = true;
+                continue;
+            }
+            Err(festerm_session::AutomationAdmissionTryError::Poisoned) => {
+                return Err(Error::Unavailable);
+            }
+        };
+        let peer = coordinator.peers.get(&channel).ok_or(Error::Closed)?;
+        if !peer_is_open(peer, &coordinator.privacy_gate, &coordinator.stop) {
+            continue;
+        }
+        let Some(pending) = peer
+            .controller
+            .direct_input
+            .as_ref()
+            .filter(|pending| pending.token == token && pending.valid.get())
+        else {
+            continue;
+        };
+        if !matches!(pending.phase, DirectInputPhase::Requested)
+            || !coordinator.has_reusable_direct_handoff(channel, &pending.association)
+        {
+            continue;
+        }
+        if peer.pending_completion.is_some()
+            || peer.connection.has_pending_input(&guard)
+            || !peer.controller.direct_control_revocations.is_empty()
+        {
+            busy = true;
+            continue;
+        }
+        let capture = match capture_direct_input_review(
+            coordinator,
+            channel,
+            pending.association.window,
+            pending,
+            apps,
+            &guard,
+        ) {
+            Ok(capture) => capture,
+            Err(error) => {
+                let association = pending.association.clone();
+                coordinator.revoke_reusable_direct_handoff_locked(channel, &association, &guard)?;
+                drop(guard);
+                tracing::warn!(?error, "armed direct input no longer matches its review");
+                coordinator.status = "The control handoff changed; review is required.";
+                changed = true;
+                continue;
+            }
+        };
+        let association = pending.association.clone();
+        let request = presentation::DirectRequestFence {
+            association: association.clone(),
+            valid: pending.valid.clone(),
+            deadline: pending.deadline,
+            token,
+            capture: capture.clone(),
+            operation: pending.request.operation.clone(),
+        };
+        let Some((binding, scope, deadline)) =
+            coordinator.bind_reused_direct_input_locked(channel, request, &guard)?
+        else {
+            if !coordinator.has_reusable_direct_handoff(channel, &association) {
+                coordinator.status = "The control handoff changed; review is required.";
+                changed = true;
+            }
+            continue;
+        };
+        let pending = coordinator
+            .peers
+            .get_mut(&channel)
+            .and_then(|peer| peer.controller.direct_input.as_mut())
+            .filter(|pending| pending.token == token && pending.valid.get())
+            .ok_or(Error::Revoked)?;
+        pending.deadline = deadline;
+        pending.phase = DirectInputPhase::Approved {
+            capture,
+            binding,
+            scope,
+        };
+        coordinator.status = "Submitting a new request under the existing control handoff.";
+        changed = true;
+    }
+    if !changed && busy {
+        Err(Error::Busy)
+    } else {
+        Ok(changed)
+    }
+}
+
 fn input_refusal(error: festerm_automation::Error) -> Refusal {
     match error {
         festerm_automation::Error::Busy | festerm_automation::Error::Unavailable => {
@@ -1821,10 +1964,14 @@ pub(super) fn prepare_direct_input_review(
     )?;
     if let Err(error) = coordinator.bind_direct_request_review(
         &review,
-        association,
-        valid.clone(),
-        deadline,
-        preparation.token,
+        presentation::DirectRequestFence {
+            association,
+            valid: valid.clone(),
+            deadline,
+            token: preparation.token,
+            capture: capture.clone(),
+            operation,
+        },
     ) {
         valid.set(false);
         if let Err(cleanup) =
@@ -3197,13 +3344,23 @@ pub(super) mod tests {
         arguments: &Value,
         receive: &impl Fn() -> Option<festerm_automation::OutboundFrame>,
     ) {
+        queue_direct_input_with_id_retry(coordinator, app, 9, arguments, receive);
+    }
+
+    fn queue_direct_input_with_id_retry(
+        coordinator: &mut Coordinator,
+        app: &FesTermApp,
+        id: u64,
+        arguments: &Value,
+        receive: &impl Fn() -> Option<festerm_automation::OutboundFrame>,
+    ) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             call_with_id(
                 coordinator,
                 1,
                 &[app],
-                json!(9),
+                json!(id),
                 "festerm_terminal_send_text",
                 arguments.clone(),
             );
@@ -3341,6 +3498,588 @@ pub(super) mod tests {
     ) -> Value {
         settle_direct_input_for_test(coordinator, token, app);
         frame_response(&receive().expect("expected input disposition"))
+    }
+
+    fn armed_direct_input_fixture(
+        metadata_lifetime: Option<Duration>,
+    ) -> (
+        Coordinator,
+        FesTermApp,
+        TabId,
+        ControllerRegistrationId,
+        u64,
+        Instant,
+        impl Fn() -> Option<festerm_automation::OutboundFrame>,
+    ) {
+        let retry_deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (mut coordinator, app, tab, registration, _, token, receive) =
+                reviewing_input_fixture("armed input", metadata_lifetime, None);
+            let original_deadline = coordinator.peers[&1]
+                .controller
+                .direct_input
+                .as_ref()
+                .unwrap()
+                .deadline;
+            let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+                app.automation_session(tab).unwrap().controller.session()
+            else {
+                panic!("expected synthetic local backend");
+            };
+            let backend = backend.clone();
+            backend.enable_ordered_test_input();
+            native(
+                &mut coordinator,
+                &[&app],
+                WindowId::PRIMARY,
+                NativeCommand::ConfirmControllerInput {
+                    channel: 1,
+                    registration,
+                    input: token,
+                },
+            );
+            let dispatch = direct_input_dispatches(&coordinator)[0];
+            retry_automation_busy(|| {
+                dispatch_direct_input(
+                    &mut coordinator,
+                    dispatch,
+                    app.automation_session(tab).unwrap(),
+                    &[&app],
+                )
+            })
+            .unwrap();
+            let response = finish_direct_input_for_test(&mut coordinator, token, &app, &receive);
+            let content = &response["result"]["structuredContent"];
+            let delivered = backend.drain_ordered_test_input();
+            if content["status"] == "refused" && content["code"] == "UNAVAILABLE" {
+                assert!(delivered.is_empty());
+                assert!(
+                    Instant::now() < retry_deadline,
+                    "input dispatch stayed busy"
+                );
+                continue;
+            }
+            assert_eq!(content["data"]["disposition"], "admitted");
+            assert_eq!(delivered, vec![b"armed input\r".to_vec()]);
+            assert!(registration_row(&coordinator, &[&app], 1, registration)
+                .control
+                .is_some());
+            return (
+                coordinator,
+                app,
+                tab,
+                registration,
+                token,
+                original_deadline,
+                receive,
+            );
+        }
+    }
+
+    fn queue_later_input(
+        coordinator: &mut Coordinator,
+        app: &FesTermApp,
+        registration: ControllerRegistrationId,
+        id: u64,
+        text: &str,
+        receive: &impl Fn() -> Option<festerm_automation::OutboundFrame>,
+    ) -> u64 {
+        let arguments = json!({
+            "enrollment_ref": metadata_handle(coordinator, registration),
+            "text": text,
+            "submit": true,
+        });
+        queue_direct_input_with_id_retry(coordinator, app, id, &arguments, receive);
+        coordinator.peers[&1]
+            .controller
+            .direct_input
+            .as_ref()
+            .unwrap()
+            .token
+    }
+
+    #[test]
+    fn direct_input_reuse_admits_only_a_new_matching_action_without_extending_the_handoff() {
+        let retry_deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (
+                mut coordinator,
+                app,
+                tab,
+                registration,
+                original_token,
+                original_deadline,
+                receive,
+            ) = armed_direct_input_fixture(Some(Duration::from_secs(60)));
+            let principal = coordinator.peers[&1].principal;
+            let target = coordinator.targets[&tab.chip_id()].reference;
+            let grant = coordinator
+                .broker
+                .as_ref()
+                .unwrap()
+                .native_control_grant(principal, target, Instant::now())
+                .unwrap();
+            let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+                app.automation_session(tab).unwrap().controller.session()
+            else {
+                panic!("expected synthetic local backend");
+            };
+            let backend = backend.clone();
+            let token = queue_later_input(
+                &mut coordinator,
+                &app,
+                registration,
+                10,
+                "armed input",
+                &receive,
+            );
+            assert_ne!(token, original_token);
+            assert!(retry_automation_busy(|| {
+                stage_reusable_direct_inputs(&mut coordinator, &[&app])
+            })
+            .unwrap());
+            let pending = coordinator.peers[&1]
+                .controller
+                .direct_input
+                .as_ref()
+                .unwrap();
+            assert!(matches!(pending.phase, DirectInputPhase::Approved { .. }));
+            assert!(pending.deadline <= original_deadline);
+            let dispatch = direct_input_dispatches(&coordinator)[0];
+            retry_automation_busy(|| {
+                dispatch_direct_input(
+                    &mut coordinator,
+                    dispatch,
+                    app.automation_session(tab).unwrap(),
+                    &[&app],
+                )
+            })
+            .unwrap();
+            let response = finish_direct_input_for_test(&mut coordinator, token, &app, &receive);
+            let content = &response["result"]["structuredContent"];
+            let delivered = backend.drain_ordered_test_input();
+            if content["status"] == "refused" && content["code"] == "UNAVAILABLE" {
+                assert!(delivered.is_empty());
+                assert!(
+                    Instant::now() < retry_deadline,
+                    "input dispatch stayed busy"
+                );
+                continue;
+            }
+            assert_eq!(content["data"]["disposition"], "admitted");
+            assert_eq!(delivered, vec![b"armed input\r".to_vec()]);
+            assert_eq!(
+                coordinator.broker.as_ref().unwrap().native_control_grant(
+                    principal,
+                    target,
+                    Instant::now()
+                ),
+                Ok(grant)
+            );
+            assert_eq!(
+                registration_row(&coordinator, &[&app], 1, registration)
+                    .control
+                    .unwrap()
+                    .token,
+                original_token
+            );
+
+            queue_later_input(
+                &mut coordinator,
+                &app,
+                registration,
+                11,
+                "different",
+                &receive,
+            );
+            assert!(!retry_automation_busy(|| {
+                stage_reusable_direct_inputs(&mut coordinator, &[&app])
+            })
+            .unwrap());
+            assert!(matches!(
+                coordinator.peers[&1]
+                    .controller
+                    .direct_input
+                    .as_ref()
+                    .unwrap()
+                    .phase,
+                DirectInputPhase::Requested
+            ));
+            assert!(direct_input_dispatches(&coordinator).is_empty());
+            assert!(backend.drain_ordered_test_input().is_empty());
+            assert_eq!(
+                coordinator.broker.as_ref().unwrap().native_control_grant(
+                    principal,
+                    target,
+                    Instant::now()
+                ),
+                Ok(grant)
+            );
+            break;
+        }
+    }
+
+    #[test]
+    fn direct_input_reuse_keeps_original_expiry_and_shared_budget() {
+        let (mut coordinator, app, tab, registration, _, original_deadline, receive) =
+            armed_direct_input_fixture(None);
+        queue_later_input(
+            &mut coordinator,
+            &app,
+            registration,
+            10,
+            "armed input",
+            &receive,
+        );
+        assert!(retry_automation_busy(|| {
+            stage_reusable_direct_inputs(&mut coordinator, &[&app])
+        })
+        .unwrap());
+        let pending = coordinator.peers[&1]
+            .controller
+            .direct_input
+            .as_ref()
+            .unwrap();
+        let DirectInputPhase::Approved { binding, scope, .. } = &pending.phase else {
+            panic!("expected reused approval");
+        };
+        assert!(pending.deadline <= original_deadline);
+        let spec = RunSpec {
+            binding: *binding,
+            scope: scope.clone(),
+            budget: Budget::default(),
+            deadline: pending.deadline,
+        };
+        let principal = coordinator.peers[&1].principal;
+        let broker = coordinator.broker.as_mut().unwrap();
+        let mut exhausted = false;
+        for _ in 0..=Budget::default().operations {
+            let now = Instant::now();
+            match broker.admit_run(principal, None, spec.clone(), now) {
+                Ok(run) => {
+                    broker
+                        .complete(principal, run, Completion::Returned, now)
+                        .unwrap();
+                    broker.forget_run(principal, run).unwrap();
+                }
+                Err(festerm_automation::Error::QuotaExceeded) => {
+                    exhausted = true;
+                    break;
+                }
+                Err(error) => panic!("unexpected budget exhaustion result: {error:?}"),
+            }
+        }
+        assert!(exhausted, "the original shared budget was replenished");
+        let dispatch = direct_input_dispatches(&coordinator)[0];
+        assert_eq!(
+            retry_automation_busy(|| {
+                dispatch_direct_input(
+                    &mut coordinator,
+                    dispatch,
+                    app.automation_session(tab).unwrap(),
+                    &[&app],
+                )
+            }),
+            Err(festerm_automation::Error::QuotaExceeded)
+        );
+        let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+            app.automation_session(tab).unwrap().controller.session()
+        else {
+            panic!("expected synthetic local backend");
+        };
+        assert!(backend.drain_ordered_test_input().is_empty());
+
+        let (mut coordinator, app, tab, registration, _, original_deadline, receive) =
+            armed_direct_input_fixture(None);
+        queue_later_input(
+            &mut coordinator,
+            &app,
+            registration,
+            10,
+            "armed input",
+            &receive,
+        );
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .poll_expiry(original_deadline);
+        drop(guard);
+        retry_automation_busy(|| stage_reusable_direct_inputs(&mut coordinator, &[&app])).unwrap();
+        assert!(direct_input_dispatches(&coordinator).is_empty());
+        assert!(matches!(
+            coordinator.peers[&1]
+                .controller
+                .direct_input
+                .as_ref()
+                .unwrap()
+                .phase,
+            DirectInputPhase::Requested
+        ));
+        let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+            app.automation_session(tab).unwrap().controller.session()
+        else {
+            panic!("expected synthetic local backend");
+        };
+        assert!(backend.drain_ordered_test_input().is_empty());
+    }
+
+    #[test]
+    fn direct_input_reuse_yields_to_queued_cancellation_and_original_disarm() {
+        for action in ["cancel", "disarm"] {
+            let (mut coordinator, mut app, tab, registration, original_token, _, receive) =
+                armed_direct_input_fixture(None);
+            let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+                app.automation_session(tab).unwrap().controller.session()
+            else {
+                panic!("expected synthetic local backend");
+            };
+            let backend = backend.clone();
+            let token = queue_later_input(
+                &mut coordinator,
+                &app,
+                registration,
+                10,
+                "armed input",
+                &receive,
+            );
+            if action == "cancel" {
+                let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+                app.adopt_broadcast_configuration(
+                    festerm_config::Configuration::empty()
+                        .with_interface_settings(settings)
+                        .unwrap(),
+                );
+                let (server, events) = ipc::test_server(coordinator.stop.clone());
+                coordinator.server = Some(server);
+                coordinator.peers[&1]
+                    .connection
+                    .enqueue_message(
+                        &events,
+                        br#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":10}}"#
+                            .to_vec(),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    stage_reusable_direct_inputs(&mut coordinator, &[&app]),
+                    Err(festerm_automation::Error::Busy)
+                );
+                assert!(direct_input_dispatches(&coordinator).is_empty());
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    coordinator.tick(&egui::Context::default(), &[&app]);
+                    if coordinator.peers[&1].controller.direct_input.is_none()
+                        && !coordinator.reconciliation_deferred
+                    {
+                        break;
+                    }
+                    assert!(Instant::now() < deadline, "cancellation stayed busy");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                assert!(receive().is_none());
+            } else {
+                native(
+                    &mut coordinator,
+                    &[&app],
+                    WindowId::PRIMARY,
+                    NativeCommand::DisarmControllerInput {
+                        channel: 1,
+                        registration,
+                        input: original_token,
+                    },
+                );
+                let pending = coordinator.peers[&1]
+                    .controller
+                    .direct_input
+                    .as_ref()
+                    .unwrap();
+                assert_eq!(pending.token, token);
+                assert!(!pending.valid.get());
+                assert!(!retry_automation_busy(|| {
+                    stage_reusable_direct_inputs(&mut coordinator, &[&app])
+                })
+                .unwrap());
+                let principal = coordinator.peers[&1].principal;
+                let target = coordinator.targets[&tab.chip_id()].reference;
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    let mut broker = coordinator.broker.take().unwrap();
+                    coordinator.reconcile(&mut broker, &[&app]);
+                    let disarmed = broker
+                        .native_control_grant(principal, target, Instant::now())
+                        .is_err();
+                    coordinator.broker = Some(broker);
+                    if disarmed {
+                        break;
+                    }
+                    assert!(Instant::now() < deadline, "disarm stayed busy");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+            assert!(direct_input_dispatches(&coordinator).is_empty());
+            assert!(backend.drain_ordered_test_input().is_empty(), "{action}");
+        }
+    }
+
+    #[test]
+    fn direct_input_reuse_disarms_changed_fences_and_source_descriptions() {
+        for change in ["human", "ime", "mode", "source", "workspace", "association"] {
+            let (mut coordinator, mut app, tab, registration, _, _, receive) =
+                armed_direct_input_fixture(Some(Duration::from_secs(60)));
+            let principal = coordinator.peers[&1].principal;
+            let target = coordinator.targets[&tab.chip_id()].reference;
+            let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+                app.automation_session(tab).unwrap().controller.session()
+            else {
+                panic!("expected synthetic local backend");
+            };
+            let backend = backend.clone();
+            queue_later_input(
+                &mut coordinator,
+                &app,
+                registration,
+                10,
+                "armed input",
+                &receive,
+            );
+            let human = if change == "human" {
+                Some(
+                    app.automation_session_mut(tab)
+                        .controller
+                        .begin_pending_human_input(),
+                )
+            } else {
+                None
+            };
+            let ime = if change == "ime" {
+                let ime = Arc::new(festerm_session::AutomationEpoch::new());
+                ime.transition(true);
+                app.set_automation_ime_epoch(&ime);
+                Some(ime)
+            } else {
+                None
+            };
+            match change {
+                "mode" => app
+                    .automation_session_mut(tab)
+                    .terminal
+                    .ingest(b"\x1b[?2004h"),
+                "source" => app.automation_session_mut(tab).label = "changed source".to_owned(),
+                "workspace" => coordinator
+                    .presentation_workspace
+                    .as_ref()
+                    .unwrap()
+                    .changed(),
+                "association" => coordinator.controller_target_moving(tab),
+                _ => {}
+            }
+            retry_automation_busy(|| stage_reusable_direct_inputs(&mut coordinator, &[&app]))
+                .unwrap();
+            assert!(direct_input_dispatches(&coordinator).is_empty(), "{change}");
+            assert!(backend.drain_ordered_test_input().is_empty(), "{change}");
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let mut broker = coordinator.broker.take().unwrap();
+                coordinator.reconcile(&mut broker, &[&app]);
+                let disarmed = broker
+                    .native_control_grant(principal, target, Instant::now())
+                    .is_err();
+                coordinator.broker = Some(broker);
+                if disarmed {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "{change} did not disarm");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            drop((human, ime));
+        }
+    }
+
+    #[test]
+    fn direct_input_reuse_unknown_outcome_disarms_and_never_replays() {
+        let retry_deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (mut coordinator, app, tab, registration, _, _, receive) =
+                armed_direct_input_fixture(None);
+            let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+                app.automation_session(tab).unwrap().controller.session()
+            else {
+                panic!("expected synthetic local backend");
+            };
+            let backend = backend.clone();
+            let token = queue_later_input(
+                &mut coordinator,
+                &app,
+                registration,
+                10,
+                "armed input",
+                &receive,
+            );
+            assert!(retry_automation_busy(|| {
+                stage_reusable_direct_inputs(&mut coordinator, &[&app])
+            })
+            .unwrap());
+            coordinator.synthetic_direct_input_lost_after_commit = true;
+            let dispatch = direct_input_dispatches(&coordinator)[0];
+            retry_automation_busy(|| {
+                dispatch_direct_input(
+                    &mut coordinator,
+                    dispatch,
+                    app.automation_session(tab).unwrap(),
+                    &[&app],
+                )
+            })
+            .unwrap();
+            let response = finish_direct_input_for_test(&mut coordinator, token, &app, &receive);
+            let content = &response["result"]["structuredContent"];
+            let delivered = backend.drain_ordered_test_input();
+            if content["status"] == "refused" && content["code"] == "UNAVAILABLE" {
+                assert!(delivered.is_empty());
+                assert!(
+                    Instant::now() < retry_deadline,
+                    "input dispatch stayed busy"
+                );
+                continue;
+            }
+            assert_eq!(content["data"]["disposition"], "outcome_unknown");
+            assert_eq!(response["result"]["isError"], true);
+            assert_eq!(delivered, vec![b"armed input\r".to_vec()]);
+            assert!(registration_row(&coordinator, &[&app], 1, registration)
+                .control
+                .is_none());
+            assert!(!retry_automation_busy(|| {
+                stage_reusable_direct_inputs(&mut coordinator, &[&app])
+            })
+            .unwrap());
+            assert!(direct_input_dispatches(&coordinator).is_empty());
+            assert!(backend.drain_ordered_test_input().is_empty());
+
+            queue_later_input(
+                &mut coordinator,
+                &app,
+                registration,
+                11,
+                "armed input",
+                &receive,
+            );
+            assert!(!retry_automation_busy(|| {
+                stage_reusable_direct_inputs(&mut coordinator, &[&app])
+            })
+            .unwrap());
+            assert!(matches!(
+                coordinator.peers[&1]
+                    .controller
+                    .direct_input
+                    .as_ref()
+                    .unwrap()
+                    .phase,
+                DirectInputPhase::Requested
+            ));
+            assert!(direct_input_dispatches(&coordinator).is_empty());
+            assert!(backend.drain_ordered_test_input().is_empty());
+            break;
+        }
     }
 
     #[test]

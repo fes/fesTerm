@@ -2744,10 +2744,12 @@ source-window move. Its simulated decision is not a native handoff UI.
 A synthetic-only input-review stage shows the complete escaped action and all
 metadata sources, bounds each peer to one pending request, and exercises
 cancellation, expiry, human/IME and terminal-mode changes, source retirement
-and stale pointer/accessibility actions. The review has no approval or send
-action. Native usability must verify that long actions and every source can
-actually be read, and a future approval must explain repetition, budgets and
-uncertainty before publication.
+and stale pointer/accessibility actions. Synthetic confirmation can admit one
+action and retain its original bounded handoff for a later new matching wire
+invocation. Tests cover changed actions and fences, original expiry and shared
+budgets, queued cancellation, disarm and unknown outcomes without automatic
+replay. Native usability must verify that long actions and every source can
+actually be read and that repetition, budgets and uncertainty are understood.
 A synthetic-qualified
 current-window Settings review separately describes label and lifecycle status,
 requires explicit confirmation and models cancellation and queued scoped

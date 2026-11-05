@@ -1573,8 +1573,11 @@ fn automation_settings(
                             }
                             ssh_paragraph(
                                 ui,
-                                "Approval permits this exact input to enter the terminal queue. \
-                                 Queue admission does not mean a command completed.",
+                                "Approval sends this exact input to the terminal queue and permits \
+                                 new intentional requests for the same action while armed, for at \
+                                 most five minutes and subject to shared operation budgets. Queue \
+                                 admission does not mean a command completed. Never automatically \
+                                 replay after an unknown or lost response.",
                             );
                             ui.push_id(("controller-input-confirm", *token), |ui| {
                                 if ui
@@ -1630,6 +1633,12 @@ fn automation_settings(
                         control.target.session(),
                         control.target.generation(),
                     ));
+                    ssh_paragraph(
+                        ui,
+                        "The same approved action may be requested again until the original \
+                         expiry or shared budgets are reached. Disarming stops later input but \
+                         cannot undo input already admitted.",
+                    );
                     ui.push_id(("controller-input-disarm", row.channel, control.token), |ui| {
                         if ui.button("Disarm terminal control").clicked() {
                             record_automation_action(
@@ -2602,6 +2611,12 @@ mod tests {
             .is_some());
         assert!(harness
             .query_by_label("Enrollment source: exact metadata terminal")
+            .is_some());
+        assert!(harness
+            .query_by_label_contains("new intentional requests for the same action")
+            .is_some());
+        assert!(harness
+            .query_by_label_contains("Never automatically replay after an unknown or lost response")
             .is_some());
         harness.get_by_label("Approve and send this input").click();
         harness.step();

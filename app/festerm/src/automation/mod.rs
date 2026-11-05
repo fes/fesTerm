@@ -2571,6 +2571,27 @@ impl Coordinator {
         controller::direct_input_dispatches(self)
     }
 
+    pub(crate) fn stage_reusable_direct_inputs(
+        &mut self,
+        apps: &[&FesTermApp],
+        context: &egui::Context,
+    ) {
+        let guard = CoordinatorUnwind { coordinator: self };
+        match controller::stage_reusable_direct_inputs(guard.coordinator, apps) {
+            Ok(true) => context.request_repaint(),
+            Ok(false) => {}
+            Err(festerm_automation::Error::Busy) => {
+                context.request_repaint_after(Duration::from_millis(50));
+            }
+            Err(error) => {
+                tracing::warn!(?error, "reusable control handoff could not be reconciled");
+                guard.coordinator.stop_mcp();
+                guard.coordinator.status = "MCP stopped because control could not be reconciled.";
+                context.request_repaint();
+            }
+        }
+    }
+
     pub(crate) fn dispatch_direct_input(
         &mut self,
         preparation: DirectInputPreparation,

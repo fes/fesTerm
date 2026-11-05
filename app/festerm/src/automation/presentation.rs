@@ -122,12 +122,23 @@ pub(super) struct BoundControlHandoff {
     direct_action: Option<FrozenDirectAction>,
     association: Option<controller::FrozenAssociation>,
     pending_request: Option<DirectRequestFence>,
+    direct_reuse: Option<DirectReuse>,
 }
 
-struct DirectRequestFence {
-    association: controller::FrozenAssociation,
-    valid: Rc<Cell<bool>>,
-    deadline: Instant,
+pub(super) struct DirectRequestFence {
+    pub(super) association: controller::FrozenAssociation,
+    pub(super) valid: Rc<Cell<bool>>,
+    pub(super) deadline: Instant,
+    pub(super) token: u64,
+    pub(super) capture: controller::DirectInputReviewCapture,
+    pub(super) operation: Operation,
+}
+
+struct DirectReuse {
+    capture: controller::DirectInputReviewCapture,
+    operation: Operation,
+    scope: Scope,
+    expires: Instant,
     token: u64,
 }
 
@@ -751,10 +762,7 @@ impl Coordinator {
     pub(super) fn bind_direct_request_review(
         &mut self,
         review: &PendingControlReview,
-        association: controller::FrozenAssociation,
-        valid: Rc<Cell<bool>>,
-        deadline: Instant,
-        token: u64,
+        request: DirectRequestFence,
     ) -> festerm_automation::Result<()> {
         let bound = self
             .pending_control_reviews
@@ -762,19 +770,120 @@ impl Coordinator {
             .ok_or(Error::Revoked)?;
         if bound.principal != review.principal
             || bound.target != review.target
-            || bound.target != association.target()
+            || bound.target != request.association.target()
             || bound.direct_action.is_none()
             || bound.direct_request.is_some()
         {
             return Err(Error::BindingMismatch);
         }
-        bound.direct_request = Some(DirectRequestFence {
-            association,
-            valid,
-            deadline,
-            token,
-        });
+        bound.direct_request = Some(request);
         Ok(())
+    }
+
+    pub(super) fn has_reusable_direct_handoff(
+        &self,
+        channel: u64,
+        association: &controller::FrozenAssociation,
+    ) -> bool {
+        self.peers
+            .get(&channel)
+            .and_then(|peer| self.control_handoffs.get(&peer.principal))
+            .is_some_and(|handoff| {
+                handoff.direct_reuse.is_some()
+                    && handoff.pending_request.is_none()
+                    && handoff
+                        .association
+                        .as_ref()
+                        .is_some_and(|bound| bound.same_identity(association))
+            })
+    }
+
+    pub(super) fn revoke_reusable_direct_handoff_locked(
+        &mut self,
+        channel: u64,
+        association: &controller::FrozenAssociation,
+        guard: &AutomationAdmissionGuard,
+    ) -> festerm_automation::Result<()> {
+        let principal = self.admission_principal_locked(channel, guard)?;
+        let Some(handoff) = self.control_handoffs.get(&principal).filter(|handoff| {
+            handoff.direct_reuse.is_some()
+                && handoff
+                    .association
+                    .as_ref()
+                    .is_some_and(|bound| bound.same_identity(association))
+        }) else {
+            return Ok(());
+        };
+        let (target, grant) = (handoff.target, handoff.grant);
+        let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
+        if broker.native_control_grant(principal, target, Instant::now()) == Ok(grant) {
+            broker.revoke_ordinary(principal, guard);
+        }
+        self.control_handoffs.remove(&principal);
+        Ok(())
+    }
+
+    pub(super) fn bind_reused_direct_input_locked(
+        &mut self,
+        channel: u64,
+        mut request: DirectRequestFence,
+        guard: &AutomationAdmissionGuard,
+    ) -> festerm_automation::Result<Option<(InvocationBinding, Scope, Instant)>> {
+        let principal = self.admission_principal_locked(channel, guard)?;
+        let now = Instant::now();
+        self.synchronize_control_handoffs_locked(now, guard)?;
+        let peer = self.peers.get(&channel).ok_or(Error::Closed)?;
+        let broker = self.broker.as_ref().ok_or(Error::Unavailable)?;
+        let Some(handoff) = self.control_handoffs.get(&principal) else {
+            return Ok(None);
+        };
+        let Some(reuse) = &handoff.direct_reuse else {
+            return Ok(None);
+        };
+        if handoff.pending_request.is_some()
+            || !handoff
+                .association
+                .as_ref()
+                .is_some_and(|bound| bound.same_identity(&request.association))
+        {
+            return Ok(None);
+        }
+        let current = self.direct_input_qualified()
+            && self.controller_opted_in
+            && peer.grant.is_none()
+            && request.valid.get()
+            && request
+                .association
+                .is_bound(broker, &self.targets, peer, guard)
+            && request
+                .association
+                .owns_direct_control(peer, handoff.grant, reuse.token)
+            && broker.native_control_grant(principal, handoff.target, now) == Ok(handoff.grant)
+            && now < reuse.expires
+            && request.capture == reuse.capture;
+        if !current {
+            self.revoke_reusable_direct_handoff_locked(channel, &request.association, guard)?;
+            return Ok(None);
+        }
+        if request.operation != reuse.operation {
+            return Ok(None);
+        }
+        let binding = handoff
+            .direct_action
+            .as_ref()
+            .map(|action| action.binding)
+            .ok_or(Error::BindingMismatch)?;
+        let scope = reuse.scope.clone();
+        request.deadline = request.deadline.min(reuse.expires);
+        if now >= request.deadline {
+            return Ok(None);
+        }
+        let deadline = request.deadline;
+        self.control_handoffs
+            .get_mut(&principal)
+            .ok_or(Error::Revoked)?
+            .pending_request = Some(request);
+        Ok(Some((binding, scope, deadline)))
     }
 
     fn enrollment_sources_locked(
@@ -1226,6 +1335,9 @@ impl Coordinator {
         if lifetime.is_zero() {
             return Err(Error::Expired);
         }
+        let expires = approval_now
+            .checked_add(lifetime)
+            .ok_or(Error::InvalidRequest)?;
         let mut approval = NativeApproval::new_for_enrollment(
             review.request.clone(),
             lifetime,
@@ -1279,6 +1391,13 @@ impl Coordinator {
             }
         };
         let pending_request = bound.direct_request;
+        let direct_reuse = pending_request.as_ref().map(|request| DirectReuse {
+            capture: request.capture.clone(),
+            operation: request.operation.clone(),
+            scope: review.request.scope.clone(),
+            expires,
+            token: request.token,
+        });
         let association = pending_request
             .as_ref()
             .map(|fence| fence.association.clone());
@@ -1305,6 +1424,7 @@ impl Coordinator {
                 direct_action: bound.direct_action,
                 association,
                 pending_request,
+                direct_reuse,
             },
         );
         Ok(())

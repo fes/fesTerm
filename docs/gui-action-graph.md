@@ -329,9 +329,11 @@ action, exact sink and every current metadata source after an explicit review
 request. Cancellation, stale actions, human/IME input, terminal mode changes
 and source expiry or retirement reject the staged review. Synthetic confirmation
 can publish one frozen action to the controlled backend and exposes disarm; its
-response is admission, refusal or unknown, not command completion. Subsequent
-wire invocations still require review. Native consent, publication and
-usability remain deferred.
+response is admission, refusal or unknown, not command completion. A newly
+received matching action can reuse its still-live handoff only with the original
+target, sources, modes, fences, expiry and shared budgets. Changed actions need
+review, cancellation/disarm precede reuse, and unknown outcomes disarm without
+replay. Native consent, publication and usability remain deferred.
 
 Prospective scoped-creation review has only non-authorizing profile/policy
 snapshot tests. Capture does not retrieve secret-store contents, but full
