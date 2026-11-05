@@ -7580,3 +7580,14 @@ input outcome against a synthetic host; cancellation, partial writes and queue
 limits close the connection without automatic replay. This does not open a
 listener or qualify human verification, privacy, the real peer or caller
 liveness. Windows and iOS transport feasibility remain open.
+
+## Connecting the direct channel to the host queue
+
+The dormant direct host bridge now preserves the original coordinator frame
+through each encrypted socket write, including target, disclosure and expiry
+checks under the existing admission fence. It announces a connection only after
+mutual confirmation, refuses stopped input and wakes its owner after queued
+output. A single-process Rust SDK test reaches the real coordinator and a
+controlled session with simulated comparison and approval; revocation tests
+cover contention and partially written replies. There is still no production
+listener or qualified native caller, privacy, recipient or lifecycle boundary.

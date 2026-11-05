@@ -4480,6 +4480,7 @@ pub(super) mod tests {
                         &events,
                         br#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":10}}"#
                             .to_vec(),
+                        &coordinator.stop,
                     )
                     .unwrap();
                 assert_eq!(
@@ -5145,6 +5146,7 @@ pub(super) mod tests {
                     &events,
                     br#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":9}}"#
                         .to_vec(),
+                    &coordinator.stop,
                 )
                 .unwrap();
                 if stage == "admitted" {

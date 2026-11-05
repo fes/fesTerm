@@ -2250,6 +2250,7 @@ dependencies = [
  "festerm-automation",
  "festerm-automation-js",
  "festerm-automation-mcp",
+ "festerm-automation-mcp-client",
  "festerm-automation-workflow",
  "festerm-config",
  "festerm-core",

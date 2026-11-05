@@ -780,7 +780,7 @@ bootstrap, observation and control remain closed.
 
 The separate experimental `festerm-automation-mcp-client` crate adapts an
 already-connected Unix socket to the official Rust SDK without adding that SDK
-as an application dependency. It waits on socket readiness and explicit native
+as a production application dependency. It waits on socket readiness and explicit native
 or admission wakeups, bounds each direction to four queued messages, and closes
 on backpressure, invalid frames or cancellation. A send completes only after
 the encrypted frame's physical socket write; it is not an admission receipt.
@@ -788,9 +788,28 @@ The client retains a separate completion/cleanup handle and can disconnect on
 a local lifecycle cut. Its native verifier and per-write privacy fence are
 caller-supplied and unqualified. Socket-pair tests use simulated comparisons and
 a synthetic protocol host, not a production listener, separate process or native
-authority. Windows transport and iOS cross-application feasibility remain
-unqualified. Unknown actions are not replayed; #524's durable uncertainty
-interlock remains the external client's responsibility.
+authority. The connector cross-compiles for iOS device and Simulator targets
+with an iOS 15 deployment floor, but that is not runtime or distribution
+evidence. Apple documents [App Group IPC](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.application-groups)
+between apps from one development team, with Unix sockets inside the shared
+container; that is not a general endpoint for arbitrary third-party clients.
+Windows transport and iOS cross-application feasibility remain unqualified.
+Unknown actions are not replayed; #524's durable uncertainty interlock remains
+the external client's responsibility.
+
+A dormant direct host bridge connects that channel to the existing connection
+and coordinator event queues. It announces a peer only after both comparisons
+and receipts, refuses incoming frames after stop, and retains the original
+outbound frame while rechecking its target, flags, disclosure and expiry under
+admission through each physical write. Queue insertion wakes the owner after
+the admission guard is released. The owner must independently provide native
+caller/recipient admission, lifecycle wakeups and effect-boundary fencing; an
+opaque bootstrap gate cannot be obtained in production until qualification.
+The bridge is not attached to a listener.
+A single-process official SDK test reaches the actual coordinator and a
+controlled session using simulated comparison and native approval. It is not
+evidence of an authenticated separate process, screen-lock behavior or
+production end-to-end availability.
 
 Once bootstrap is qualified, the application binds a distinct broker principal
 to the accepted handle; neither `clientInfo`, a wire ID nor a copied code owns

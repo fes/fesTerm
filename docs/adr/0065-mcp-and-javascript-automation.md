@@ -102,12 +102,16 @@ to bypass another's restrictions.
    connector; it can be pursued first but does not replace stdio or relax its
    gates. An experimental Unix-only `festerm-automation-mcp-client` crate
    depends on the MCP protocol/channel crate and the official Rust SDK, not the
-   application; the application does not depend on the client crate. Its
+   application; the application uses the client crate only in tests. Its
    bounded, readiness-driven connector takes an already-connected socket,
    independent native verifier and client-side write fence. It closes on
    cancelled sends and reports physical-write completion separately from broker
    admission; it does not authenticate the peer, qualify privacy or provide a
-   production endpoint. Windows and iOS feasibility remain unqualified.
+   production endpoint. A dormant host bridge retains the original guarded
+   frame through each encrypted write and passes inbound frames to the existing
+   coordinator queue. A single-process SDK/coordinator test uses simulated
+   comparisons and approval; no production listener or native boundary is
+   qualified. Windows and iOS feasibility remain unqualified.
    Neither binding grants session access on connection. The P1 checkpoint
    exposes bounded observation only. Named, reviewed workflow invocation follows
    P2 runtime qualification and the P3 control/authorization gates; no tool

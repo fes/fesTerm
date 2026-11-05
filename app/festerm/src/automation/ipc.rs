@@ -12,6 +12,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
+#[allow(dead_code)]
+mod direct;
+
 const MAX_FRAME: usize = 65_536;
 const MAX_CONNECTIONS: usize = 8;
 const MAX_BUFFERED_INPUT: usize = 64;
@@ -48,6 +52,8 @@ pub(super) struct Connection {
     closed: Arc<AtomicBool>,
     pending_input: Arc<AtomicUsize>,
     output: OutboundSender,
+    #[cfg(unix)]
+    output_wake: Option<direct::Wake>,
 }
 
 impl Connection {
@@ -57,6 +63,14 @@ impl Connection {
 
     pub fn close(&self) {
         super::set_admission_flag(&self.closed, true);
+        self.wake_output();
+    }
+
+    fn wake_output(&self) {
+        #[cfg(unix)]
+        if let Some(wake) = &self.output_wake {
+            wake.notify();
+        }
     }
 
     pub fn close_under_admission(&self, _guard: &festerm_session::AutomationAdmissionGuard) {
@@ -75,12 +89,17 @@ impl Connection {
         &self,
         events: &SyncSender<Event>,
         bytes: Vec<u8>,
+        stop: &AtomicBool,
     ) -> io::Result<()> {
         let Some(guard) = festerm_session::automation_admission_lock() else {
             self.closed.store(true, Ordering::Release);
+            self.wake_output();
             return Err(io::ErrorKind::BrokenPipe.into());
         };
-        if self.is_closed() {
+        if self.is_closed() || stop.load(Ordering::Acquire) {
+            self.close_under_admission(&guard);
+            drop(guard);
+            self.wake_output();
             return Err(io::ErrorKind::BrokenPipe.into());
         }
         if self
@@ -91,6 +110,8 @@ impl Connection {
             .is_err()
         {
             self.close_under_admission(&guard);
+            drop(guard);
+            self.wake_output();
             return Err(io::ErrorKind::BrokenPipe.into());
         }
         if events
@@ -101,6 +122,8 @@ impl Connection {
             .is_err()
         {
             self.close_under_admission(&guard);
+            drop(guard);
+            self.wake_output();
             return Err(io::ErrorKind::WouldBlock.into());
         }
         Ok(())
@@ -180,6 +203,8 @@ impl Connection {
             || !frame.is_valid()
         {
             self.close_under_admission(&guard);
+            drop(guard);
+            self.wake_output();
             return Err(io::ErrorKind::BrokenPipe.into());
         }
         #[cfg(test)]
@@ -193,8 +218,12 @@ impl Connection {
         });
         if self.output.try_send(frame, &guard).is_err() {
             self.close_under_admission(&guard);
+            drop(guard);
+            self.wake_output();
             return Err(io::ErrorKind::WouldBlock.into());
         }
+        drop(guard);
+        self.wake_output();
         Ok(())
     }
 }
@@ -256,6 +285,8 @@ impl Server {
                                 closed,
                                 pending_input: Arc::new(AtomicUsize::new(0)),
                                 output,
+                                #[cfg(unix)]
+                                output_wake: None,
                             };
                             let peer = connection.clone();
                             let events = sender.clone();
@@ -371,7 +402,7 @@ fn serve_peer(
             while !connection.is_closed() && !stop.load(Ordering::Acquire) {
                 match read_frame(&mut stream, &connection.closed, &stop) {
                     Ok(Some(bytes)) => {
-                        if connection.enqueue_message(&events, bytes).is_err() {
+                        if connection.enqueue_message(&events, bytes, &stop).is_err() {
                             break;
                         }
                         wake();
@@ -990,6 +1021,8 @@ pub(super) fn test_connection_with_frames(
             closed: Arc::new(AtomicBool::new(false)),
             pending_input: Arc::new(AtomicUsize::new(0)),
             output,
+            #[cfg(unix)]
+            output_wake: None,
         },
         move || receiver.try_recv().ok(),
     )
@@ -1007,6 +1040,24 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
+    fn connection_refuses_incoming_events_after_stop() {
+        let (connection, _) = test_connection(47);
+        let (events, incoming) = mpsc::sync_channel(1);
+        let stop = AtomicBool::new(true);
+        assert_eq!(
+            connection
+                .enqueue_message(&events, b"request".to_vec(), &stop)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        assert!(connection.is_closed());
+        assert!(incoming.try_recv().is_err());
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        assert!(!connection.has_pending_input(&guard));
+    }
+
+    #[test]
     fn connection_closes_on_extracted_queue_full_or_disconnected() {
         let (output, receiver) = outbound_channel();
         let connection = Connection {
@@ -1014,6 +1065,8 @@ mod tests {
             closed: Arc::new(AtomicBool::new(false)),
             pending_input: Arc::new(AtomicUsize::new(0)),
             output,
+            #[cfg(unix)]
+            output_wake: None,
         };
         let expiry = Instant::now() + Duration::from_secs(30);
         for byte in 0..4 {
@@ -1042,6 +1095,8 @@ mod tests {
             closed: Arc::new(AtomicBool::new(false)),
             pending_input: Arc::new(AtomicUsize::new(0)),
             output,
+            #[cfg(unix)]
+            output_wake: None,
         };
         drop(receiver);
         assert_eq!(
@@ -1065,6 +1120,8 @@ mod tests {
             closed: Arc::new(AtomicBool::new(false)),
             pending_input: Arc::new(AtomicUsize::new(0)),
             output,
+            #[cfg(unix)]
+            output_wake: None,
         };
         let valid = Arc::new(AtomicBool::new(true));
         let (entered, entered_rx) = mpsc::sync_channel(1);
@@ -1845,6 +1902,7 @@ mod tests {
             closed: Arc::new(AtomicBool::new(false)),
             pending_input: Arc::new(AtomicUsize::new(0)),
             output,
+            output_wake: None,
         };
         let attachment = Arc::new(festerm_session::AutomationEpoch::new());
         attachment.transition(true);
@@ -1889,6 +1947,7 @@ mod tests {
             closed: Arc::new(AtomicBool::new(false)),
             pending_input: Arc::new(AtomicUsize::new(0)),
             output,
+            output_wake: None,
         };
         let valid = Arc::new(AtomicBool::new(true));
         connection
@@ -1940,6 +1999,7 @@ mod tests {
             closed: Arc::new(AtomicBool::new(false)),
             pending_input: Arc::new(AtomicUsize::new(0)),
             output,
+            output_wake: None,
         };
         let (events, incoming) = mpsc::sync_channel(4);
         let stop = Arc::new(AtomicBool::new(false));
