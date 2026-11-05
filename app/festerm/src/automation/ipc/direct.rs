@@ -962,7 +962,11 @@ mod tests {
             match client.poll(|| Ok(())) {
                 Ok(Progress::Frame(_)) => panic!("queued frame was delivered after UI-owner loss"),
                 Ok(_) => {}
-                Err(secure_transport::Error::PeerClosed) => break,
+                // Linux may reset a Unix socket closed with unread request bytes.
+                Err(
+                    secure_transport::Error::PeerClosed
+                    | secure_transport::Error::Io(std::io::ErrorKind::ConnectionReset),
+                ) => break,
                 Err(error) => panic!("unexpected client error: {error}"),
             }
             assert!(Instant::now() < deadline, "client did not observe closure");
