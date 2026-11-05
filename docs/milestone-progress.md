@@ -1,5 +1,28 @@
 # Milestone Progress Narrative
 
+## Recovering iOS unlock without retiring the session
+
+The November 5 P0 handoff exposed two portable defects: the lock screen's
+full-screen input barrier intercepted both buttons, and an old authentication
+success could consume a replacement request after device lock. Actual pointer
+and deferred-callback regressions failed before the fix. Controls now remain
+usable, request IDs fence both unlock and disable, and cancellation owns the
+native context without a reply/owner cycle. System passcode uses an ephemeral
+access control, not an app field or stored credential. Dialog inactivity,
+genuine background and automatic foreground prompting are tracked separately.
+Distinct-frame shield wakeups and visible settings-write failure complete this
+slice without changing transport ownership. Portable tests and Apple-target
+compilation do not qualify physical Face ID/passcode, compositor/snapshot
+timing or rapid switching; those remain MOB-09/MOB-06 acceptance gates.
+Keyboard/dictation, navigation and Markdown UX priorities remain separate.
+The focused implementation and physical acceptance boundary are tracked in
+[#620](https://github.com/fes/fesTerm/issues/620).
+Review also caught authentication-induced plain-SSH shutdown: the existing
+system-prompt exemption now covers owner authentication, including replies
+before winit's callback. Actual background keeps its existing shutdown policy.
+Short-height captures exposed hidden title/error text behind the controls;
+compact spacing and scrolling keep both actions reachable without smaller targets.
+
 ## Opening the desktop MCP beta
 
 The owner accepted a desktop MCP beta. macOS now has a privacy monitor that

@@ -179,14 +179,15 @@ impl SuspensionHandle {
 /// Applies native lifecycle callbacks to the shared [`Lifecycle`] and live sessions.
 ///
 /// winit reports `applicationWillResignActive` as `Suspended`. A dictation
-/// permission alert only resigns active, so that suspension is deferred: live
-/// sessions and dictation survive the alert. If the app then really enters the
+/// permission or owner-authentication alert only resigns active, so that
+/// suspension is deferred. If the app then really enters the
 /// background, the deferred suspension is applied as before.
 pub struct NativeLifecycle {
     lifecycle: Rc<Cell<Lifecycle>>,
     #[cfg(feature = "live-ssh")]
     suspension: SuspensionHandle,
     deferred: bool,
+    app_lock: Option<festerm_ios_lock::AppLock>,
 }
 
 impl NativeLifecycle {
@@ -199,7 +200,13 @@ impl NativeLifecycle {
             #[cfg(feature = "live-ssh")]
             suspension,
             deferred: false,
+            app_lock: None,
         }
+    }
+
+    pub fn with_app_lock(mut self, lock: festerm_ios_lock::AppLock) -> Self {
+        self.app_lock = Some(lock);
+        self
     }
 
     pub fn get(&self) -> Lifecycle {
@@ -222,9 +229,14 @@ impl NativeLifecycle {
     }
 
     /// Returns whether the app was suspended (false when deferred for a
-    /// dictation permission alert).
+    /// system permission/authentication alert).
     pub fn suspended(&mut self, permission_prompt: bool) -> bool {
-        if permission_prompt {
+        if permission_prompt
+            || self
+                .app_lock
+                .as_ref()
+                .is_some_and(festerm_ios_lock::AppLock::authentication_prompt_in_flight)
+        {
             self.deferred = true;
             return false;
         }
@@ -1006,7 +1018,7 @@ impl MobileApp {
         let bounds = ui.max_rect();
         if let Some(lock) = self.lock.as_mut() {
             let hidden = lock.gate(ui, lifecycle.active);
-            lock.frame_presented();
+            lock.frame_presented(ui.ctx());
             if hidden {
                 self.cancel_dictation();
                 self.gestures.cancel();

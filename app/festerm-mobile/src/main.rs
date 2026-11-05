@@ -52,7 +52,7 @@ impl ApplicationHandler<eframe::UserEvent> for MobileHost<'_> {
     }
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
-        // A dictation permission alert resigns active without backgrounding.
+        // System permission/authentication alerts need not suspend transports.
         let prompt = festerm_ios_window::dictation_permission_prompt_in_flight();
         if self.lifecycle.suspended(prompt) {
             self.app.suspended(event_loop);
@@ -160,6 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The lock exists before the window so a cold launch never draws content.
     let repaint: Arc<OnceLock<eframe::egui::Context>> = Arc::new(OnceLock::new());
     let lock = build_lock(repaint.clone());
+    let lifecycle_lock = lock.clone();
     let keys = HardwareKeys::default();
     let app_keys = keys.clone();
     let host_repaint = repaint.clone();
@@ -212,7 +213,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             lifecycle,
             #[cfg(feature = "live-ssh")]
             suspension,
-        ),
+        )
+        .with_app_lock(lifecycle_lock),
         keys,
         repaint: host_repaint,
     })?;
