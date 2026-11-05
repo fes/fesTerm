@@ -2727,6 +2727,13 @@ frames with a synthetic protocol host over that socket and exercises cancellatio
 and bounded queues. It provides no production endpoint; the actual peer, trusted
 comparison, relay-resistant caller liveness and physical-recipient boundaries
 remain unqualified.
+A Windows-only fixture now drives the same experimental SDK and dormant host
+through a local synchronous named pipe, including a queued response cut after
+simulated privacy loss. It requires execution on Windows and does not qualify a
+production endpoint or native authority. Before production use, measure the
+20 ms retry loop's idle wakeups, energy and scaling, and qualify actual
+client-exit, privacy and recipient fencing; the retry timer is not an
+event-driven native lifecycle monitor.
 A dormant host bridge now connects the SDK socket to the real coordinator in a
 single-process test with simulated comparisons and observation approval. It
 retains the original outbound frame and rechecks it through each physical

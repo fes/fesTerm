@@ -14,6 +14,8 @@ use festerm_automation_mcp::{
     },
     MAX_DEPTH, MAX_MESSAGE_BYTES,
 };
+#[cfg(windows)]
+use festerm_windows_security::named_pipe::Pipe as DirectStream;
 use rmcp::{
     model::{ClientJsonRpcMessage, ServerJsonRpcMessage},
     transport::Transport,
@@ -21,13 +23,16 @@ use rmcp::{
 };
 use serde::Serialize;
 use serde_json::ser::Formatter;
-use tokio::{
-    net::UnixStream,
-    sync::{mpsc, oneshot, watch, Notify},
-};
+#[cfg(windows)]
+use std::sync::Mutex;
+#[cfg(unix)]
+use tokio::net::UnixStream as DirectStream;
+use tokio::sync::{mpsc, oneshot, watch, Notify};
 
 const QUEUE_CAPACITY: usize = 4;
 const FAIRNESS_BUDGET: usize = 32;
+#[cfg(windows)]
+const PIPE_RETRY: Duration = Duration::from_millis(20);
 
 /// Wake the driver when a native decision or write-admission state changes.
 #[derive(Clone, Default)]
@@ -284,17 +289,44 @@ fn encode(item: &ClientJsonRpcMessage) -> Result<Vec<u8>, Error> {
     Ok(mem::take(&mut writer.bytes))
 }
 
-struct RegisteredStream(Arc<UnixStream>);
+#[cfg(unix)]
+type SharedStream = DirectStream;
+#[cfg(windows)]
+type SharedStream = Mutex<DirectStream>;
+
+struct RegisteredStream(Arc<SharedStream>);
 
 impl Read for RegisteredStream {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-        self.0.try_read(bytes)
+        #[cfg(unix)]
+        {
+            self.0.try_read(bytes)
+        }
+        #[cfg(windows)]
+        {
+            let mut pipe = self
+                .0
+                .try_lock()
+                .map_err(|_| io::Error::other("named pipe ownership unavailable"))?;
+            pipe.try_read(bytes)
+        }
     }
 }
 
 impl Write for RegisteredStream {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.try_write(bytes)
+        #[cfg(unix)]
+        {
+            self.0.try_write(bytes)
+        }
+        #[cfg(windows)]
+        {
+            let mut pipe = self
+                .0
+                .try_lock()
+                .map_err(|_| io::Error::other("named pipe ownership unavailable"))?;
+            pipe.try_write(bytes)
+        }
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -324,7 +356,7 @@ fn cleanup_admission<A: ClientWriteAdmission>(mut admission: A) -> bool {
     cancelled && dropped
 }
 
-/// An SDK transport over an exclusively owned, already-connected Unix socket.
+/// An SDK transport over an exclusively owned, already-connected local stream.
 pub struct DirectClientTransport {
     outgoing: mpsc::Sender<Pending>,
     incoming: mpsc::Receiver<ServerJsonRpcMessage>,
@@ -336,11 +368,13 @@ impl DirectClientTransport {
     /// Construct inside a Tokio runtime with I/O and time drivers enabled.
     ///
     /// `boundaries` creates the independent native verifier and client write
-    /// fence after the socket has been accepted. They must use the supplied
+    /// fence after the stream has been connected. They must use the supplied
     /// wake handle whenever a pending decision or temporary fence changes.
-    /// The socket must not have duplicated descriptors or other readers/writers.
+    /// The stream must not have duplicated handles or other readers/writers.
+    /// Windows retries synchronous nonblocking pipe I/O every 20 ms while
+    /// awaiting peer activity; its idle power cost is not qualified.
     pub fn new<N, A>(
-        socket: UnixStream,
+        socket: DirectStream,
         bootstrap_duration: Duration,
         frame_duration: Duration,
         boundaries: impl FnOnce(BoundaryWake) -> (N, A),
@@ -351,6 +385,8 @@ impl DirectClientTransport {
     {
         let runtime =
             tokio::runtime::Handle::try_current().map_err(|_| Error::RuntimeUnavailable)?;
+        #[cfg(windows)]
+        let socket = { Mutex::new(socket) };
         let socket = Arc::new(socket);
         let wake = BoundaryWake::default();
         let (native, admission) = boundaries(wake.clone());
@@ -497,7 +533,7 @@ impl Drop for DirectClientTransport {
 
 struct Driver<N: TrustedNativeVerification, A: ClientWriteAdmission> {
     channel: Option<SecureTransport<RegisteredStream, N>>,
-    socket: Option<Arc<UnixStream>>,
+    socket: Option<Arc<SharedStream>>,
     admission: Option<A>,
     frame_duration: Duration,
     pending: mpsc::Receiver<Pending>,
@@ -613,7 +649,9 @@ impl<N: TrustedNativeVerification, A: ClientWriteAdmission> Driver<N, A> {
         let channel = self.channel.as_ref().ok_or(Error::DriverStopped)?;
         let interest = channel.io_interest();
         let deadline = channel.next_deadline().ok_or(Error::Closed)?;
+        #[cfg(unix)]
         let socket = self.socket.as_ref().ok_or(Error::DriverStopped)?;
+        #[cfg(unix)]
         tokio::select! {
             biased;
             _ = self.shared.wake.0.notified() => Ok(()),
@@ -623,6 +661,14 @@ impl<N: TrustedNativeVerification, A: ClientWriteAdmission> Driver<N, A> {
             result = socket.writable(), if interest.writable && !admission_blocked => {
                 result.map_err(|error| Error::Io(error.kind()))
             }
+            _ = tokio::time::sleep_until(deadline.into()) => Ok(()),
+        }
+        #[cfg(windows)]
+        tokio::select! {
+            biased;
+            _ = self.shared.wake.0.notified() => Ok(()),
+            _ = tokio::time::sleep(PIPE_RETRY),
+                if interest.readable || (interest.writable && !admission_blocked) => Ok(()),
             _ = tokio::time::sleep_until(deadline.into()) => Ok(()),
         }
     }
@@ -660,7 +706,7 @@ impl<N: TrustedNativeVerification, A: ClientWriteAdmission> Drop for Driver<N, A
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use festerm_automation_mcp::secure_transport::{
@@ -673,6 +719,7 @@ mod tests {
         },
         thread,
     };
+    use tokio::net::UnixStream;
 
     struct Native;
 

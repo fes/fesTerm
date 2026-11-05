@@ -108,6 +108,22 @@ impl Pipe {
         self.write_timeout = timeout;
     }
 
+    /// Performs one synchronous read without waiting or leaving I/O pending.
+    pub fn try_read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let timeout = std::mem::replace(&mut self.read_timeout, Duration::ZERO);
+        let result = self.read(buffer);
+        self.read_timeout = timeout;
+        timeout_is_would_block(result)
+    }
+
+    /// Performs one synchronous write without waiting or leaving I/O pending.
+    pub fn try_write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let timeout = std::mem::replace(&mut self.write_timeout, Duration::ZERO);
+        let result = self.write(buffer);
+        self.write_timeout = timeout;
+        timeout_is_would_block(result)
+    }
+
     pub fn try_clone(&self) -> io::Result<Self> {
         Ok(Self {
             handle: self.handle.try_clone()?,
@@ -341,6 +357,16 @@ fn check_cancelled(cancelled: &AtomicBool) -> io::Result<()> {
     }
 }
 
+fn timeout_is_would_block<T>(result: io::Result<T>) -> io::Result<T> {
+    result.map_err(|error| {
+        if error.kind() == io::ErrorKind::TimedOut {
+            io::ErrorKind::WouldBlock.into()
+        } else {
+            error
+        }
+    })
+}
+
 fn wait_again(started: Instant, timeout: Duration) -> io::Result<()> {
     let remaining = timeout.saturating_sub(started.elapsed());
     if remaining.is_zero() {
@@ -376,6 +402,46 @@ mod tests {
         let client = Pipe::connect(name, Duration::from_secs(1), &AtomicBool::new(false)).unwrap();
         let server = listener.accept(&AtomicBool::new(false)).unwrap();
         (server, client)
+    }
+
+    #[test]
+    fn try_io_never_queues_a_blocked_pipe_write() {
+        let (mut server, mut client) = connected_pair(&pipe_name());
+        let mut read = [0; 4096];
+        assert_eq!(
+            server.try_read(&mut read).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+
+        let chunk = [b'x'; 4096];
+        let mut accepted = Vec::new();
+        let mut blocked = false;
+        for _ in 0..1024 {
+            match client.try_write(&chunk) {
+                Ok(count) => accepted.extend_from_slice(&chunk[..count]),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    blocked = true;
+                    break;
+                }
+                Err(error) => panic!("unexpected pipe write failure: {error}"),
+            }
+        }
+        assert!(blocked, "pipe did not apply backpressure");
+        assert_eq!(
+            client.try_write(b"not admitted").unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+
+        let mut received = Vec::new();
+        loop {
+            match server.try_read(&mut read) {
+                Ok(0) => panic!("connected pipe unexpectedly closed"),
+                Ok(count) => received.extend_from_slice(&read[..count]),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                Err(error) => panic!("unexpected pipe read failure: {error}"),
+            }
+        }
+        assert_eq!(received, accepted);
     }
 
     #[test]

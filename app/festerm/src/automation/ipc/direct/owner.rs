@@ -1,29 +1,66 @@
-//! Readiness-driven ownership for one dormant direct host peer.
+//! Readiness- or retry-driven ownership for one dormant direct host peer.
 
 use super::{
     retire_admission, Error, HostVerification, NativeAdmission, Peer, PeerContext, Step, Wake,
 };
-use festerm_automation_mcp::secure_transport::{self, Role, SecureTransport};
+#[cfg(unix)]
+use festerm_automation_mcp::secure_transport;
+use festerm_automation_mcp::secure_transport::{Role, SecureTransport};
+#[cfg(windows)]
+use festerm_windows_security::named_pipe::Pipe as HostStream;
+#[cfg(windows)]
+use std::sync::Mutex;
 use std::{
     io::{self, Read, Write},
     sync::Arc,
     time::Duration,
 };
-use tokio::{net::UnixStream, sync::watch};
+#[cfg(unix)]
+use tokio::net::UnixStream as HostStream;
+use tokio::sync::watch;
 
 const FAIRNESS_BUDGET: usize = 32;
+#[cfg(windows)]
+const PIPE_RETRY: Duration = Duration::from_millis(20);
 
-struct RegisteredStream(Arc<UnixStream>);
+#[cfg(unix)]
+type SharedStream = HostStream;
+#[cfg(windows)]
+type SharedStream = Mutex<HostStream>;
+
+struct RegisteredStream(Arc<SharedStream>);
 
 impl Read for RegisteredStream {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-        self.0.try_read(bytes)
+        #[cfg(unix)]
+        {
+            self.0.try_read(bytes)
+        }
+        #[cfg(windows)]
+        {
+            let mut pipe = self
+                .0
+                .try_lock()
+                .map_err(|_| io::Error::other("named pipe ownership unavailable"))?;
+            pipe.try_read(bytes)
+        }
     }
 }
 
 impl Write for RegisteredStream {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.try_write(bytes)
+        #[cfg(unix)]
+        {
+            self.0.try_write(bytes)
+        }
+        #[cfg(windows)]
+        {
+            let mut pipe = self
+                .0
+                .try_lock()
+                .map_err(|_| io::Error::other("named pipe ownership unavailable"))?;
+            pipe.try_write(bytes)
+        }
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -62,7 +99,7 @@ impl Status {
 /// must also be observed.
 pub(super) struct Owner<N: HostVerification, A: NativeAdmission> {
     peer: Peer<RegisteredStream, N, A>,
-    socket: Option<Arc<UnixStream>>,
+    socket: Option<Arc<SharedStream>>,
     wake: Wake,
     completion: watch::Sender<Option<Result<(), Error>>>,
     finished: bool,
@@ -70,13 +107,15 @@ pub(super) struct Owner<N: HostVerification, A: NativeAdmission> {
 
 impl<N: HostVerification, A: NativeAdmission> Owner<N, A> {
     pub(super) fn new(
-        socket: UnixStream,
+        socket: HostStream,
         native: N,
         admission: A,
         context: PeerContext,
         bootstrap_duration: Duration,
         frame_duration: Duration,
     ) -> Result<(Self, Status), Error> {
+        #[cfg(windows)]
+        let socket = { Mutex::new(socket) };
         let socket = Arc::new(socket);
         let owner_liveness = native.owner_liveness();
         let channel = match SecureTransport::new(
@@ -136,9 +175,11 @@ impl<N: HostVerification, A: NativeAdmission> Owner<N, A> {
     }
 
     async fn wait(&mut self) -> Result<(), Error> {
+        #[cfg(unix)]
         let socket = self.socket.as_ref().ok_or(Error::Closed)?;
         let interest = self.peer.io_interest();
         let deadline = self.peer.next_deadline().ok_or(Error::Closed)?;
+        #[cfg(unix)]
         tokio::select! {
             biased;
             _ = self.wake.notified() => Ok(()),
@@ -148,6 +189,14 @@ impl<N: HostVerification, A: NativeAdmission> Owner<N, A> {
             result = socket.writable(), if interest.writable => {
                 result.map_err(|error| Error::Channel(secure_transport::Error::Io(error.kind())))
             }
+            _ = tokio::time::sleep_until(deadline.into()) => Ok(()),
+        }
+        #[cfg(windows)]
+        tokio::select! {
+            biased;
+            _ = self.wake.notified() => Ok(()),
+            _ = tokio::time::sleep(PIPE_RETRY),
+                if interest.readable || interest.writable => Ok(()),
             _ = tokio::time::sleep_until(deadline.into()) => Ok(()),
         }
     }

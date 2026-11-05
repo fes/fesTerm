@@ -779,22 +779,28 @@ it does not itself solve that relay or caller-liveness problem. Production
 bootstrap, observation and control remain closed.
 
 The separate experimental `festerm-automation-mcp-client` crate adapts an
-already-connected Unix socket to the official Rust SDK without adding that SDK
-as a production application dependency. It waits on socket readiness and
-explicit native or admission wakeups, bounds each direction to four queued
-messages, and closes on backpressure, invalid frames or cancellation. A send
-completes only after the encrypted frame's physical socket write; it is not an
-admission receipt.
+already-connected Unix socket or Windows named pipe to the official Rust SDK
+without adding that SDK as a production application dependency. Unix waits on
+socket readiness. The Windows path uses synchronous `PIPE_NOWAIT` operations,
+not buffered overlapped writes, and retries blocked I/O every 20 ms alongside
+explicit native or admission wakeups and deadlines. This polling also occurs
+while an established peer is idle; its power and scaling costs are not
+qualified. Both paths bound each direction to four queued messages and close on
+backpressure, invalid frames or cancellation. A send completes only after the
+encrypted frame's physical stream write; it is not an admission receipt.
 The client retains a separate completion/cleanup handle and can disconnect on
 a local lifecycle cut. Its native verifier and per-write privacy fence are
 caller-supplied and unqualified. Socket-pair tests use simulated comparisons and
-a synthetic protocol host, not a production listener or native authority. The
+a synthetic protocol host, not a production listener or native authority. A
+Windows-only fixture exercises the SDK and dormant host over a local named
+pipe with simulated comparison and admission; native execution is required to
+establish its result. The
 connector cross-compiles for iOS device and Simulator targets
 with an iOS 15 deployment floor, but that is not runtime or distribution
 evidence. Apple documents [App Group IPC](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.application-groups)
 between apps from one development team, with Unix sockets inside the shared
 container; that is not a general endpoint for arbitrary third-party clients.
-Windows transport and iOS cross-application feasibility remain unqualified.
+Windows endpoint and iOS cross-application feasibility remain unqualified.
 Unknown actions are not replayed; #524's durable uncertainty interlock remains
 the external client's responsibility.
 
@@ -805,7 +811,7 @@ outbound frame while rechecking its target, flags, disclosure and expiry under
 admission through each physical write. Queue insertion and guarded closure of
 an announced connection wake the owner after the admission guard is released.
 A dormant Tokio owner drives the peer from
-socket readiness, explicit wakeups and deadlines, yielding after bounded
+socket readiness or Windows pipe retries, explicit wakeups and deadlines, yielding after bounded
 progress. It publishes cleanup completion even when its task is cancelled;
 failed or unobserved cleanup quarantines the native surface. Its caller must
 independently provide native caller/recipient admission, wake it after other

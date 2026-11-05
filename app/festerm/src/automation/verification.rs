@@ -490,7 +490,7 @@ pub(super) struct Verifier {
     cancelled: bool,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Verifier {
     pub(super) fn owner_liveness(&self) -> OwnerLiveness {
         self.surface.0.owner_alive.clone()

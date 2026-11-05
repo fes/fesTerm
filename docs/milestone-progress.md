@@ -1,5 +1,15 @@
 # Milestone Progress Narrative
 
+## Extending the dormant direct transport to Windows pipes
+
+The experimental Rust SDK connector and dormant host owner can use an
+already-connected synchronous Windows named pipe without pending overlapped
+writes. A Windows-only fixture exercises encrypted bidirectional messages and
+an observed privacy cut with simulated native decisions; it must still run on
+Windows. Blocked and idle pipe I/O is retried every 20 ms, whose power and
+scaling costs are unqualified. No production endpoint, caller identity,
+client-exit monitor or final-recipient boundary is established.
+
 ## Exploring a direct authenticated MCP channel
 
 The owner authorized an additional direct local-socket connector so an MCP

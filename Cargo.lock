@@ -2342,6 +2342,7 @@ name = "festerm-automation-mcp-client"
 version = "0.14.1"
 dependencies = [
  "festerm-automation-mcp",
+ "festerm-windows-security",
  "rmcp",
  "serde",
  "serde_json",

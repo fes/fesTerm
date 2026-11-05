@@ -2,8 +2,10 @@
 //! native caller, privacy monitor, recipient, or effect boundary.
 
 mod owner;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod process_tests;
+#[cfg(all(test, windows))]
+mod windows_tests;
 
 use super::super::verification::{OwnerLiveness, Verifier};
 use super::{Connection, Event, Waker};
@@ -127,7 +129,7 @@ impl Drop for HeldFrame {
 /// every encrypted byte has been physically written or the channel is closed.
 ///
 /// The I/O owner calls `step` immediately after progress and waits on socket
-/// readiness, `wake`, or `next_deadline` after `Blocked`. It must notify `wake`
+/// readiness or pipe retry, `wake`, or `next_deadline` after `Blocked`. It must notify `wake`
 /// after native decisions, admission changes and lifecycle cuts that do not
 /// close an announced connection. Guarded connection closes defer their wake
 /// until admission is released. Run this off the UI thread: the existing host
@@ -373,7 +375,7 @@ fn retire_admission<A: NativeAdmission>(mut admission: A) -> bool {
     cancelled && dropped
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::super::super::{verification, PrivacyGate};
     use super::*;

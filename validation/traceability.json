@@ -622,6 +622,8 @@
         "direct_peer_never_finishes_a_partially_written_revoked_frame",
         "direct_peer_stops_partial_frame_after_observed_privacy_loss",
         "direct_peer_reports_native_admission_cleanup_failure",
+        "windows_direct_pipe_exchanges_sdk_frames_and_cuts_queued_output",
+        "try_io_never_queues_a_blocked_pipe_write",
         "direct_owner_wakes_on_stop_and_reports_cleanup",
         "direct_owner_expires_without_socket_activity",
         "direct_owner_reports_cleanup_after_task_cancellation",
@@ -757,6 +759,7 @@
       "prerequisites": [
         "Private peer authentication, trusted human comparison and relay/disconnect liveness must be qualified before activation",
         "Windows monitor cleanup status and callback delivery do not qualify admission, privacy or physical-recipient fencing; MCP bootstrap remains closed",
+        "Windows direct pipe retry power and scaling, native caller-exit monitoring and final-recipient fencing remain unqualified",
         "Native Windows pairing, lock/suspend, registration cancellation, coordinator cleanup, packaging and client interoperability remain unverified",
         "macOS and Linux activation remains unavailable until reliable screen-lock monitoring is qualified",
         "JavaScript, control, mobile hosting and network MCP require their separate stages"

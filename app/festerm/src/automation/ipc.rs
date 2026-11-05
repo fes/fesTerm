@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[allow(dead_code)]
 mod direct;
 
@@ -27,7 +27,7 @@ type Connections = BTreeMap<u64, (Connection, JoinHandle<()>)>;
 
 #[must_use = "release admission and wake the direct owner"]
 pub(super) struct DeferredCloseWake {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     wake: Option<direct::Wake>,
 }
 
@@ -38,7 +38,7 @@ pub(super) fn wake_after_admission(
 ) {
     drop(guard);
     for wake in wakes {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if let Some(wake) = wake.wake {
             wake.notify();
         }
@@ -74,7 +74,7 @@ pub(super) struct Connection {
     closed: Arc<AtomicBool>,
     pending_input: Arc<AtomicUsize>,
     output: OutboundSender,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     output_wake: Option<direct::Wake>,
 }
 
@@ -90,7 +90,7 @@ impl Connection {
 
     /// Call only after releasing the application admission guard.
     pub(super) fn wake_output(&self) {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if let Some(wake) = &self.output_wake {
             wake.notify();
         }
@@ -102,7 +102,7 @@ impl Connection {
     ) -> DeferredCloseWake {
         self.closed.store(true, Ordering::Release);
         DeferredCloseWake {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             wake: self.output_wake.clone(),
         }
     }
@@ -320,7 +320,7 @@ impl Server {
                                 closed,
                                 pending_input: Arc::new(AtomicUsize::new(0)),
                                 output,
-                                #[cfg(unix)]
+                                #[cfg(any(unix, windows))]
                                 output_wake: None,
                             };
                             let peer = connection.clone();
@@ -1096,7 +1096,7 @@ pub(super) fn test_connection_with_frames(
             closed: Arc::new(AtomicBool::new(false)),
             pending_input: Arc::new(AtomicUsize::new(0)),
             output,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             output_wake: None,
         },
         move || receiver.try_recv().ok(),
@@ -1204,7 +1204,7 @@ mod tests {
             closed: Arc::new(AtomicBool::new(false)),
             pending_input: Arc::new(AtomicUsize::new(0)),
             output,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             output_wake: None,
         };
         let expiry = Instant::now() + Duration::from_secs(30);
@@ -1234,7 +1234,7 @@ mod tests {
             closed: Arc::new(AtomicBool::new(false)),
             pending_input: Arc::new(AtomicUsize::new(0)),
             output,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             output_wake: None,
         };
         drop(receiver);
@@ -1259,7 +1259,7 @@ mod tests {
             closed: Arc::new(AtomicBool::new(false)),
             pending_input: Arc::new(AtomicUsize::new(0)),
             output,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             output_wake: None,
         };
         let valid = Arc::new(AtomicBool::new(true));

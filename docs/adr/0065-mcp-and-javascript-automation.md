@@ -100,17 +100,20 @@ to bypass another's restrictions.
    authenticated private IPC. The owner also authorized an additional direct
    authenticated local-socket binding for clients using a fesTerm-specific
    connector; it can be pursued first but does not replace stdio or relax its
-   gates. An experimental Unix-only `festerm-automation-mcp-client` crate
+   gates. An experimental `festerm-automation-mcp-client` crate
    depends on the MCP protocol/channel crate and the official Rust SDK, not the
    application; the application uses the client crate only in tests. Its
-   bounded, readiness-driven connector takes an already-connected socket,
-   independent native verifier and client-side write fence. It closes on
+   bounded connector takes an already-connected Unix socket or synchronous
+   Windows named pipe, independent native verifier and client-side write fence.
+   Unix waits on readiness; Windows retries `PIPE_NOWAIT` I/O every 20 ms,
+   including while idle, without leaving overlapped writes pending. Its power
+   and scaling costs remain unqualified. It closes on
    cancelled sends and reports physical-write completion separately from broker
    admission; it does not authenticate the peer, qualify privacy or provide a
    production endpoint. A dormant host bridge retains the original guarded
    frame through each encrypted write and passes inbound frames to the existing
-   coordinator queue. A dormant readiness-driven owner waits for socket events,
-   deadlines and explicit lifecycle wakeups, and reports cleanup on
+   coordinator queue. A dormant owner waits for Unix socket events or Windows
+   pipe retries, deadlines and explicit lifecycle wakeups, and reports cleanup on
    cancellation. Guarded closure of an announced connection wakes that owner
    only after admission is released. A reserved verifier also wakes on
    normal coordinator stop or UI-owner destruction before fingerprint display.
