@@ -3717,7 +3717,7 @@
       "id": "ios-shared-documents",
       "edges": ["MOB-08"],
       "requirements": ["docs/mobile-layout-design.md#shared-ios-document-editor", "docs/text-editor-design.md"],
-      "decisions": ["ADR-0067", "ADR-0034", "ADR-0058"],
+      "decisions": ["ADR-0069", "ADR-0034", "ADR-0058"],
       "automated_tests": [
         "mobile_document_identity_and_undo_are_shared_without_shared_selection",
         "mobile_document_multiline_replacement_is_one_exact_encoded_undo",

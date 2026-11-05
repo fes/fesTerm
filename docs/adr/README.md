@@ -53,7 +53,7 @@ Architecture decision records preserve decisions that affect the project across 
 
 - [ADR 0066: Opt-in Managed Daemon Recovery](0066-opt-in-managed-daemon-recovery.md) - bounded private lifecycle evidence, explicit unexpected-daemon replacement consent and unchanged client generation pins
 - [ADR 0068: On-device Dictation for iOS Terminal Keyboards](0068-ios-on-device-terminal-dictation.md) - explicit, bounded native speech capture with no cloud fallback, volatile review and source-bound paste insertion; Simulator spike and physical-device qualification remain distinct
-- [ADR 0067: Authorized Shared Documents in the iOS Host](0067-ios-authorized-shared-documents.md) - shared engine and bounded mobile registry; phased authorized Files/editor, Markdown and shared dictation integration; no iOS Edit/Preview split panes
+- [ADR 0069: Authorized Shared Documents in the iOS Host](0069-ios-authorized-shared-documents.md) - shared engine and bounded mobile registry; phased authorized Files/editor, Markdown and shared dictation integration; no iOS Edit/Preview split panes
 
 - [ADR 0053: Separate Dev Tunnels Bridge for Remote Persistent Sessions](0053-separate-dev-tunnels-session-bridge.md) - direct transport with a separate same-user bridge; scoped-token bootstrap, daemon ownership preserved, implementation and hosted/native qualification pending
 - [ADR 0054: iOS Keychain Secret Backend and Mobile Profile Store](0054-ios-keychain-and-mobile-profile-store.md) - Keychain-backed secret store for iOS and a UI-agnostic secret-free profile, host-trust and SSH-key crate

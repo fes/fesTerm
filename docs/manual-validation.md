@@ -745,7 +745,7 @@ row fit, local Ctrl+Shift+C selection-copy output, Ctrl+Shift+P clipboard-read
 and paste ordering, and More → Force redraw without terminal input or reset.
 ### Shared iOS documents
 
-The first #570/ADR 0067 slice implements the portable document registry and
+The first #570/ADR 0069 slice implements the portable document registry and
 native I/O boundary, not the native editor or a wired Files picker.
 Its deterministic tests prove shared
 identity/history, independent selection targets, exact multiline Unicode/BOM/

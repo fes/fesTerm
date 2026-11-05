@@ -1,4 +1,4 @@
-//! Mobile ownership over the shared document engine (ADR 0067).
+//! Mobile ownership over the shared document engine (ADR 0069).
 //! Native file authorities stay outside this registry; display paths grant no access.
 
 use std::borrow::Cow;

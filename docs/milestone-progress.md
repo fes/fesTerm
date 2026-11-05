@@ -42,7 +42,7 @@ does not touch existing files. This is intentionally conservative exclusion,
 not per-path scheduling.
 
 This is the ownership/I/O foundation, not a wired Files/editor delivery claim.
-The imported proposed artwork and ADR 0067 preserve the native authorization,
+The imported proposed artwork and ADR 0069 preserve the native authorization,
 keyboard, visual and shared-composer gates for the following draft slices.
 The engine now exposes its existing newline normalization for reuse, and the
 mobile admission limit accounts for original encoded line endings and BOM.

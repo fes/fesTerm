@@ -1,4 +1,4 @@
-# ADR 0067: Authorized Shared Documents in the iOS Host
+# ADR 0069: Authorized Shared Documents in the iOS Host
 
 - **Status:** Proposed
 - **Date:** 2026-11-04

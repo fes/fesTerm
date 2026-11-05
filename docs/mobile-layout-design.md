@@ -11,7 +11,7 @@ a separate device-specific layout system.
 
 The owner-approved November 4 handoff is tracked in
 [#570](https://github.com/fes/fesTerm/issues/570) and
-[ADR 0067](adr/0067-ios-authorized-shared-documents.md). Numbered PNGs and
+[ADR 0069](adr/0069-ios-authorized-shared-documents.md). Numbered PNGs and
 matching SVGs in `images/gui-mockups/ios-editor/` are proposed UI references,
 not screenshots of implemented or accepted native behavior. Their source is
 the owner-supplied `festerm-ios-editor-markdown.zip`, SHA-256

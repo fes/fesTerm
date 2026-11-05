@@ -15,6 +15,7 @@ mod dictation;
 pub use dictation::{
     dictation_permission_prompt_in_flight, Dictation, DictationPhase, DictationText,
     MAX_DICTATION_BYTES,
+};
 mod document;
 #[cfg(all(
     target_os = "ios",

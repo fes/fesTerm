@@ -1,4 +1,4 @@
-//! Bounded document models for the iOS host (ADRs 0058 and 0067).
+//! Bounded document models for the iOS host (ADRs 0058 and 0069).
 //!
 //! Input is bytes from the app sandbox or an SFTP read (anything `Read`),
 //! read under a hard size cap. Output is a `festerm_markdown::MarkdownDocument`
