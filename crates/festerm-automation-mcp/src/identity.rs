@@ -93,10 +93,9 @@ impl ClientIdentityProof {
         if self.challenge != expected.nonce {
             return Err(IdentityError::ChallengeMismatch);
         }
-        let public_key = decode_hex::<32>(&self.public_key)
-            .ok_or(IdentityError::InvalidEncoding)?;
-        let signature = decode_hex::<64>(&self.signature)
-            .ok_or(IdentityError::InvalidEncoding)?;
+        let public_key =
+            decode_hex::<32>(&self.public_key).ok_or(IdentityError::InvalidEncoding)?;
+        let signature = decode_hex::<64>(&self.signature).ok_or(IdentityError::InvalidEncoding)?;
         let key = VerifyingKey::from_bytes(&public_key).map_err(|_| IdentityError::InvalidKey)?;
         key.verify_strict(&expected.message()?, &Signature::from_bytes(&signature))
             .map_err(|_| IdentityError::InvalidSignature)?;

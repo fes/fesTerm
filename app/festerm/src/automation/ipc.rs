@@ -262,7 +262,10 @@ pub(super) enum Event {
         connection: Connection,
         identity: Option<festerm_automation_mcp::identity::VerifiedClientIdentity>,
     },
-    Message { key: u64, bytes: Vec<u8> },
+    Message {
+        key: u64,
+        bytes: Vec<u8>,
+    },
 }
 
 pub(super) struct Server {
@@ -512,8 +515,9 @@ fn authenticate_server_peer(
         || !connection.is_closed() && !stop.load(Ordering::Acquire),
     )?;
 
-    let response = read_frame(stream, &connection.closed, stop)?
-        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "MCP identity proof missing"))?;
+    let response = read_frame(stream, &connection.closed, stop)?.ok_or_else(|| {
+        io::Error::new(io::ErrorKind::UnexpectedEof, "MCP identity proof missing")
+    })?;
     if response.len() > 1024
         || connection.is_closed()
         || stop.load(Ordering::Acquire)
@@ -2272,9 +2276,7 @@ mod tests {
         });
 
         let closed = AtomicBool::new(false);
-        let challenge_bytes = read_frame(&mut client, &closed, &stop)
-            .unwrap()
-            .unwrap();
+        let challenge_bytes = read_frame(&mut client, &closed, &stop).unwrap().unwrap();
         let challenge: festerm_automation_mcp::identity::AuthChallenge =
             serde_json::from_slice(&challenge_bytes).unwrap();
         let identity =

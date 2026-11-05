@@ -593,7 +593,9 @@ mod tests {
                 self.pump();
                 if let Ok(event) = self.events.try_recv() {
                     match event {
-                        Event::Connected { connection: peer, .. } => connection = Some(peer),
+                        Event::Connected {
+                            connection: peer, ..
+                        } => connection = Some(peer),
                         Event::Message { .. } => panic!("message preceded connection"),
                     }
                 }
