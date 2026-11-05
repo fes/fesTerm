@@ -1,5 +1,20 @@
 # Milestone Progress Narrative
 
+## 0.15.0: iOS dictation and documents, Dev Tunnel host files and observation
+
+This minor release packages the reviewed iOS and Dev Tunnel work since 0.14.2.
+iOS gains on-device terminal dictation with review-before-insert (#565, ADR
+0068), drag-to-reorder saved profiles (#554), and authorized shared documents
+with local editing, guarded conflict recovery and Markdown preview (#575, #579,
+#581, ADR 0069). Dev Tunnel hosts gain opt-in managed daemon recovery (#566,
+ADR 0066), a default-off rooted host filesystem with managed grants (#585, ADR
+0067), and independently authorized read-only observation for external
+controllers (#593, ADR 0070). The relay host now keeps up to four concurrently
+open forwarded channels per client so observation streams share the verified
+transport, and grant and recovery changes are journaled and fenced so an
+interrupted revocation persists. An SSH lifecycle test wait was also hardened
+(#583).
+
 ## Read-only remote evidence for external controllers
 
 An external Copilot-status controller needs to tail large remote logs without
