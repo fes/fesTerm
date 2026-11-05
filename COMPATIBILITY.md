@@ -6,6 +6,12 @@ fesTerm measures compatibility in terms of observable application behavior. Reco
 
 ## Compatibility Baseline
 
+The experimental iOS terminal keyboards include an on-device-only dictation
+spike with explicit bounded review/Insert (no implicit Return or cloud fallback).
+Portable tests and Simulator launch are not physical-device speech/privacy
+qualification; that remains `MOB-07` under
+[#564](https://github.com/fes/fesTerm/issues/564).
+
 The [Dev Tunnels subset](docs/dev-tunnels-experiment.md), included in default desktop builds, implements
 peer profiles, independently bound scoped credentials, exact-generation
 daemon attach/detach and optional bounded remote file snapshots. It is
@@ -13,7 +19,7 @@ experimental; `DT-01`–`DT-06` real-service/native qualification remains open.
 An explicit default-off rooted host filesystem service adds enumeration,
 metadata, streamed read/write and mkdir under ADR 0067; its desktop/iOS clients
 and native transfer qualification remain separate, not accepted capabilities.
-Independent read-only observation under ADR 0068 adds approved roots,
+Independent read-only observation under ADR 0070 adds approved roots,
 identity/revision-checked offset reads, bounded watch/rescan semantics and
 daemon generation correlation. Separate exact-caller/tab/root MCP consent is
 implemented in a dependent broker slice; native DT/AUTO qualification is still

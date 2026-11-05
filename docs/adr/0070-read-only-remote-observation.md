@@ -1,4 +1,4 @@
-# ADR 0068: Read-only Remote Observation Through Exact-Target Grants
+# ADR 0070: Read-only Remote Observation Through Exact-Target Grants
 
 - **Status:** Proposed
 - **Date:** 2026-11-04

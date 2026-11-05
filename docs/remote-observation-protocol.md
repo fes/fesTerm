@@ -1,6 +1,6 @@
 # Read-only remote observation protocol
 
-This is the implementation contract for #584 and ADR 0068. It extends the
+This is the implementation contract for #584 and ADR 0070. It extends the
 host filesystem foundation in #585 without granting general browsing, writes,
 terminal output, terminal control, JavaScript, credentials or remote execution.
 The application-owned broker is the only MCP authority.

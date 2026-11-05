@@ -1,4 +1,4 @@
-//! Portable, independently consented read-only observation protocol (ADR 0068).
+//! Portable, independently consented read-only observation protocol (ADR 0070).
 use crate::{file_protocol, protocol::Target};
 use serde::{Deserialize, Serialize};
 

@@ -1050,6 +1050,45 @@ mod tests {
     }
 
     #[test]
+    fn mobile_live_ssh_dictation_permission_alert_keeps_plain_session_until_background() {
+        use crate::{Lifecycle, MobileApp, NativeLifecycle, SuspensionHandle};
+        use std::{cell::Cell, rc::Rc};
+
+        let lifecycle = Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        }));
+        let suspension = SuspensionHandle::default();
+        let app = MobileApp::new_terminal(lifecycle.clone()).with_suspension(suspension.clone());
+        let mut native = NativeLifecycle::new(lifecycle.clone(), suspension);
+        let session = Arc::new(FakeSession::default());
+        *app.sink.live.connection.borrow_mut() = Some(connection(session.clone()));
+
+        // Speech/Microphone alert: resign-active only, then active again.
+        assert!(!native.suspended(true));
+        assert!(!native.resumed());
+        assert!(lifecycle.get().active);
+        assert_eq!(lifecycle.get().suspensions, 0);
+        assert!(app.terminal_input_ready(lifecycle.get()));
+        assert_eq!(*session.shutdowns.lock().unwrap(), 0);
+
+        // A genuine background while the alert is up still retires the shell.
+        assert!(!native.suspended(true));
+        assert!(native.entered_background());
+        assert!(!lifecycle.get().active);
+        assert_eq!(*session.shutdowns.lock().unwrap(), 1);
+        assert!(app
+            .sink
+            .live
+            .connection
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .status
+            .starts_with("Suspended"));
+    }
+
+    #[test]
     fn mobile_live_ssh_input_refusal_retires_session_without_replay() {
         let session = Arc::new(FakeSession {
             rejected: true,

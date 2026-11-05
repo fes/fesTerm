@@ -5,7 +5,7 @@
 An external Copilot-status controller needs to tail large remote logs without
 whole-file copies or terminal scraping. The rooted transfer service alone
 could not authorize disclosure to an MCP caller or guarantee safe saved-offset
-reads after replacement. ADR 0068 separates default-off observation roots from
+reads after replacement. ADR 0070 separates default-off observation roots from
 browsing/writes, checks native identity and revision before releasing chunks,
 and bounds native watches with explicit rescan/ended results.
 
@@ -21,24 +21,6 @@ native per-controller/exact-tab/root approval and completion-time revocation
 fences, with JavaScript disabled. External controllers still own parsing,
 offsets and privacy. Signed-host, native grant/lock, live controller and
 physical-device qualification remain explicit gates, not inferred from fixtures.
-
-## Rooted Dev Tunnel host filesystem
-
-The bridge's opt-in known-file snapshot reader could not support browsing or
-large transfers. The host now has a separately negotiated, default-off rooted
-filesystem service: bounded directory pages, metadata, chunked read/write and
-mkdir, independent of terminal attachment. Operators choose the root and
-read-only/write grant explicitly, including on an existing managed tunnel;
-revocation stops the owned hosting workers without replacing the tunnel, key
-or daemon shell.
-
-Uploads stage private files and publish without clobbering concurrent creates;
-explicit replacement binds to a previously opened file and checks for changes,
-preserving a recovery backup when restoration is unsafe. ADR 0067 and the
-[wire contract](dev-tunnel-files-protocol.md) define the host/client boundary.
-Deterministic tests cover legacy negotiation, streamed files above the old
-snapshot bound, conflicts, cancellation and link refusal. Desktop/iOS clients
-and signed-host/native transfer qualification remain separate work.
 
 ## Diagnosing dead tunnel targets and opting into fresh-shell recovery
 
@@ -58,6 +40,118 @@ operator stop, missing evidence and uncertain creation refuse; automatic client
 reconnect remains pinned to the original session. Isolated regressions cover the
 policy and publication boundaries; signed service and physical-iOS qualification
 remain in DT-05/07. The existing live installation was not changed.
+
+## Shared iOS documents: current Markdown projection and Contents
+
+The next dependent slice connects Edit/Preview to the canonical document
+revision. A bounded read-only worker produces a shared immutable Markdown
+projection, retaining cancelled jobs until actual completion and rejecting old
+results. Views keep their own mode, source selection, scroll and heading
+navigation. Compact Contents uses a revision-bound dismissible sheet; wide
+Preview reuses the existing Contents rail. There are no Edit/Preview split
+panes. The renderer adds no resource loading or path authority.
+
+Tests cover cancellation and close, projection reuse, visible failure/retry,
+mode/history preservation, Contents navigation/view changes, external refresh
+and no terminal input. The actual-widget gallery includes Preview and Contents
+at phone, keyboard-reserved, short-landscape and tablet sizes. These are not
+native keyboard/provider/accessibility acceptance. Source syntax/line numbers,
+Find/Replace, safe local copy/Save As and shared document dictation remain open.
+
+## Shared iOS documents: local surfaces without terminal ownership
+
+The dependent local-editor slice connects the authorized Files picker and
+document registry to a Documents launcher inside the existing shell. Source
+views join session chips and the Sessions inventory without becoming terminal
+tabs or acquiring workers. Native input, shared undo/redo, dirty markers and
+last-view close use the same canonical engine across views. Fresh Files
+authority preserves dirty bytes and observes conflicts rather than replacing
+content. Failed saves remain dirty; closed native instances are discarded,
+not reopened.
+Explicit conflict review now offers Keep edits followed by a separate Save or
+Reload and discard. Decisions refuse if their captured revision/source/access
+changes. Stale refreshes requeue and cannot restore obsolete authority;
+terminal-side document-chip closes use the same dirty guard and input gating.
+
+Multiline editing extends the existing form-field responder's caret geometry
+and Return mirroring instead of adding another UIKit text stack. Tests replay
+local native edits, guard read-only views and modal input, and keep widget
+selection independent of shared history. Actual-widget capture is available
+at phone/tablet/short-landscape sizes, including conflict review. A bounded
+million-character regression checks complete linear geometry and unchanged
+cache reuse; short-height actions move into More. This is not provider, physical IME or
+accessibility acceptance; Markdown tools and shared dictation follow.
+
+## Shared iOS documents: shared ownership and native I/O first
+
+The approved editor handoff asks for an editor, Markdown projection and
+document dictation, but excludes all Edit/Preview split panes. The first
+#570 slice extends the existing UI-free `festerm-mobile-docs` seam with a
+bounded registry over `festerm-document`, rather than copying the desktop
+widget or creating another undo engine. Repeated opens share identity and
+history while delayed edits bind the exact view, revision, selection, origin
+and access epoch. Dirty external changes conflict; Keep edits does not write.
+Save completion marks only the history point actually published, and revoked
+access gates further edits even when an admitted save is finishing.
+
+The native boundary now stages bounded I/O through UIDocument without giving
+it canonical text or undo ownership. A real Simulator fixture proves actual
+safe publication, BOM/CRLF/Unicode preservation, 0600 permissions, stale
+overwrite refusal, external refresh and close/cleanup. App-owned Files
+mutations and SFTP downloads retain admission through actual worker
+publication, excluding a concurrent document save even after a Files view
+closes. Real OpenSSH tests preserve existing round trips and prove refusal
+does not touch existing files. This is intentionally conservative exclusion,
+not per-path scheduling.
+
+This is the ownership/I/O foundation, not a wired Files/editor delivery claim.
+The imported proposed artwork and ADR 0069 preserve the native authorization,
+keyboard, visual and shared-composer gates for the following draft slices.
+The engine now exposes its existing newline normalization for reuse, and the
+mobile admission limit accounts for original encoded line endings and BOM.
+
+## iOS on-device terminal dictation spike
+
+The owner asked to dictate without leaving either terminal-user keyboard.
+The existing native input boundary now adds public Speech/AVFAudio capture,
+while the mobile composition root owns a volatile review/Insert sheet. Local
+capability checks and per-request on-device enforcement exclude cloud fallback.
+Revisions replace rather than append, native recording has a 45-second limit,
+and explicit Insert rejects line breaks/controls and reuses core paste encoding
+without modifiers or an implicit Return. Generation and source-tab checks,
+native lifecycle cancellation and navigation cleanup prevent late replay.
+
+The owner changed delivery from a physical iPhone to Simulator. An explicitly
+labelled manual editor can exercise review there if Apple's local recognizer
+is unavailable; it does not fabricate recognition evidence. ADR 0068 and #564
+keep device/language/model, offline audio, permission and privacy qualification
+separate from portable tests and a Simulator build/launch.
+
+Review found two lifecycle defects. winit maps `applicationWillResignActive` to
+`Suspended`, so the first Speech/Microphone permission alert stopped plain SSH
+and cancelled dictation; the host now defers that one suspension while a
+permission request is in flight and applies it only if the app really enters
+the background. Stop also cancelled the recognition task immediately after
+ending audio, so review showed the last lagging partial; a short `Finishing`
+phase now waits for the final result, an error or a 1.5-second grace timer.
+
+## Rooted Dev Tunnel host filesystem
+
+The bridge's opt-in known-file snapshot reader could not support browsing or
+large transfers. The host now has a separately negotiated, default-off rooted
+filesystem service: bounded directory pages, metadata, chunked read/write and
+mkdir, independent of terminal attachment. Operators choose the root and
+read-only/write grant explicitly, including on an existing managed tunnel;
+revocation stops the owned hosting workers without replacing the tunnel, key
+or daemon shell.
+
+Uploads stage private files and publish without clobbering concurrent creates;
+explicit replacement binds to a previously opened file and checks for changes,
+preserving a recovery backup when restoration is unsafe. ADR 0067 and the
+[wire contract](dev-tunnel-files-protocol.md) define the host/client boundary.
+Deterministic tests cover legacy negotiation, streamed files above the old
+snapshot bound, conflicts, cancellation and link refusal. Desktop/iOS clients
+and signed-host/native transfer qualification remain separate work.
 
 ## 0.14.2: iOS field editing and Dev Tunnel resiliency
 

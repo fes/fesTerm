@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +14,35 @@ SPEC.loader.exec_module(build)
 
 
 class IosSshDependencyTests(unittest.TestCase):
+    def test_native_document_smoke_is_an_explicit_simulator_build_feature(self):
+        for live, smoke, expected in (
+            (False, False, None),
+            (True, False, "live-ssh"),
+            (False, True, "native-document-smoke"),
+            (True, True, "live-ssh,native-document-smoke"),
+        ):
+            arguments = ["build"]
+            if live:
+                arguments.append("--live-ssh")
+            if smoke:
+                arguments.append("--native-document-smoke")
+            with self.subTest(live=live, smoke=smoke), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(build, "ROOT", Path(temporary)), \
+                    patch.object(build.sys, "argv", arguments), \
+                    patch.object(build.platform, "system", return_value="Darwin"), \
+                    patch.object(build.platform, "machine", return_value="arm64"), \
+                    patch.object(build, "check_dependencies"), \
+                    patch.object(build.shutil, "copy2"), \
+                    patch.object(build.shutil, "make_archive"), \
+                    patch.object(build, "run", return_value=subprocess.CompletedProcess([], 0, "/sdk")) as run:
+                self.assertEqual(build.main(), 0)
+                cargo = next(call.args for call in run.call_args_list
+                             if call.args[:2] == ("cargo", "build"))
+                if expected is None:
+                    self.assertNotIn("--features", cargo)
+                else:
+                    self.assertEqual(cargo[cargo.index("--features") + 1], expected)
+
     def test_only_live_bundle_declares_local_network_use_for_selected_ssh_hosts(self):
         self.assertNotIn("NSLocalNetworkUsageDescription", build.bundle_info())
         self.assertIn("SSH hosts you choose", build.bundle_info(True)["NSLocalNetworkUsageDescription"])
@@ -20,6 +50,13 @@ class IosSshDependencyTests(unittest.TestCase):
     def test_bundle_declares_face_id_usage_for_app_lock(self):
         self.assertIn("Face ID", build.bundle_info()["NSFaceIDUsageDescription"])
         self.assertIn("NSFaceIDUsageDescription", build.bundle_info(True))
+
+    def test_bundle_declares_explicit_on_device_dictation_permissions(self):
+        for live in (False, True):
+            info = build.bundle_info(live)
+            self.assertIn("on-device dictation", info["NSMicrophoneUsageDescription"])
+            self.assertIn("not saved or sent", info["NSMicrophoneUsageDescription"])
+            self.assertIn("review", info["NSSpeechRecognitionUsageDescription"])
 
     def test_live_feature_graph_is_checked_for_both_mobile_targets(self):
         with patch.object(build.sys, "argv", ["build", "--check-dependencies", "--live-ssh"]), \

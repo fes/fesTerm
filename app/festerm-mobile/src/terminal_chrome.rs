@@ -134,8 +134,9 @@ pub enum ChipAction {
 fn chip_dot(surface: &SurfaceSummary) -> Dot {
     match (surface.kind, surface.state) {
         (SurfaceKind::Local, _) => Dot::Idle,
+        (SurfaceKind::Document, SurfaceState::Connected) => Dot::Idle,
         (_, SurfaceState::Connected) => Dot::Connected,
-        (_, SurfaceState::Connecting) => Dot::Warning,
+        (_, SurfaceState::Connecting | SurfaceState::Modified) => Dot::Warning,
         (_, SurfaceState::Disconnected) => Dot::Danger,
     }
 }
@@ -200,6 +201,7 @@ pub enum KeyRowAction {
     ToggleAlt,
     ToggleShift,
     Paste,
+    Dictate,
     TogglePanel,
     ToggleKeyboard,
     SwitchKeyboard,

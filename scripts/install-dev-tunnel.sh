@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 
 fail() { printf 'fesTerm tunnel setup: %s\n' "$*" >&2; exit 1; }
-usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade] [--friendly-name NAME] [--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files] [--observe-root ABSOLUTE_DIRECTORY ... | --disable-observation] [--restart-unexpected|--no-restart-unexpected]'
+usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected] [--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files] [--observe-root ABSOLUTE_DIRECTORY ... | --disable-observation]'
 version=
 install_dependencies=false
 no_takeover=false

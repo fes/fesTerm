@@ -61,7 +61,7 @@ transfer, cancellation and overwrite-confirmation evidence is deferred behind
 the separate client implementation. No live installation was changed by these
 isolated tests.
 
-Read-only observation (ADR 0068/#584) is independent of the transfer grant.
+Read-only observation (ADR 0070/#584) is independent of the transfer grant.
 Automated coverage targets strict negotiation, bounded root/page/read/watch
 admission, same-handle identity/revision checks and explicit change/rescan/ended
 results, plus managed consent preservation/revocation and daemon generation
@@ -778,6 +778,82 @@ navigation grid to Home/Up/End/PgUp, Left/Down/Right/PgDn and
 Insert/Delete/Shift+Tab/Return. Actual-widget tests cover that order and narrow
 row fit, local Ctrl+Shift+C selection-copy output, Ctrl+Shift+P clipboard-read
 and paste ordering, and More → Force redraw without terminal input or reset.
+### Shared iOS documents
+
+The first #570/ADR 0069 slice implements the portable document registry and
+native I/O boundary (draft #575). Its dependent local-editor slice wires the
+Documents launcher/Browse in Files and shared local source views into the
+existing shell. Local multiline replay, shared undo/redo, independent view
+selection, read-only refusal and dirty-close input gating have actual-widget
+tests; native keyboard/IME and picker/provider qualification remain open.
+Additional regressions cover a focused 1,024,000-character document with cached
+linear caret geometry, hardware Tab, stale-refresh requeue and permission
+downgrades, explicit target-bound Compare/Keep/Reload, and document-chip close
+from a terminal without background input. Short-height actions live in More.
+Conflict actions stay pinned above keyboard occlusion; automated coordinates
+check complete touch-target visibility at landscape, phone and narrow widths.
+Its deterministic tests prove shared
+identity/history, independent selection targets, exact multiline Unicode/BOM/
+line-ending undo, read-only/revoked mutation refusal, encoded bounds, last-view
+close, stale reads and save completion. A Simulator-only native smoke proves
+actual BOM/CRLF/Unicode publication through a Unicode/space-bearing filename,
+preservation of 0600 permissions, stale
+overwrite refusal, external refresh and asynchronous close/fixture cleanup.
+The extended fixture induces a real oversized-file revert failure, verifies
+that refresh/save/reopen on the failed instance refuse without a UIKit
+exception, then recovers with a fresh native instance and verifies actual
+publication again. A deliberately seeded older failure must be superseded by
+the fresh read. Native lease counts prove unopened and in-flight-drop objects
+are released. Production recovery must reacquire authority through Files;
+reopening the failed instance is intentionally not supported.
+Writer-admission tests cover save/mutation exclusion and worker lifetimes;
+real OpenSSH integration additionally checks refused downloads/mutations leave
+existing files untouched and the blocking publication worker owns its lease.
+
+Run `python3 scripts/build-ios-spike.py --live-ssh --native-document-smoke --run`
+with the documented iOS toolchain to enable the smoke. Its console must reach
+`festerm-document-smoke: PASS`; a launch or build alone is not a pass.
+The fixture is freshly created under this app's Caches and removed after
+successful native close. The smoke is compiled out of normal and physical-device
+builds; rebuild without the opt-in flag before user testing.
+The iPhone 17 Pro/iOS 26.5 Simulator passed this fixture smoke on 2026-11-04.
+This does not qualify picker grants, iCloud/third-party providers, file
+protection metadata, background operation or UI behavior.
+Native provider and visual evidence remains open:
+
+The opt-in `capture_document_ui` test emits actual-widget phone, landscape
+and tablet images plus hashes/source attribution to a new directory named by
+`FESTERM_DOCUMENT_UI_OUT`. Fixtures use the refusing non-iOS native stub, never
+real Files grants. Keyboard occlusion is simulated and no UIKit keyboard
+pixels are present; do not treat these as native acceptance.
+The existing `scripts/capture-mobile-ui.py` runner (and optional-validation
+entry point) includes this gallery under `documents/`, with its own manifest.
+Failure of either capture remains a failed attempt with evidence retained.
+
+| ID | Environment | Required evidence |
+|---|---|---|
+| MOB-08 | iPhone/iPad Simulator and physical devices; local, iCloud and an available third-party Files provider | Once the native surface is wired, open/reopen authorized files, revoke permission, move/delete/replace a source, edit across two views and undo/redo. Verify stable accessible saved/unsaved/conflict chip markers, local keyboard ownership with no terminal input, actual safe-area/keyboard occlusion at phone portrait/landscape, iPad and narrow Split View, and no Edit/Preview split panes. Exercise generation-checked saves, concurrent outside writes, simultaneous local transfers, storage denial/full-provider failures, Compare/Reload/Keep edits/Save As and final-dirty-view close. Remote SFTP must remain read-only, with an explicit distinct local copy. Compare real captures against numbered owner mockups using a Claude visual review; classify intentional no-Split/font/keyboard differences separately from true mismatches. Verify VoiceOver, Dynamic Type, hardware/floating keyboard, non-English IME and selection/context menus. A document dictation acceptance must be one Undo and must refuse stale targets; speech/model/privacy qualification is separately MOB-07/#564. |
+
+For the dependent Markdown slice, edit a local `.md` file and switch to Preview:
+verify current content, retained source selection and one shared undo history.
+Use Contents on phone, with keyboard reservation, in short landscape and on
+iPad; verify heading navigation and dismissal when switching views or after an
+external clean reload. Check the wide Contents rail and that compact More can
+scroll to Edit/Preview/Contents above actual occlusion. Duplicate views must
+retain independent mode/scroll/navigation. Close while a projection is updating;
+reopen another file and confirm no late content appears. Exercise visible parser
+failure/retry without source mutation. Links/images must not fetch resources and
+embedded HTML must remain literal. These actual-widget flows are implemented;
+native Files, keyboard, VoiceOver and Dynamic Type evidence is still required.
+Source syntax/line numbers, Find/Replace, local copy/Save As and shared document
+dictation are not part of this Markdown projection slice.
+
+### On-device terminal dictation evidence
+
+| ID | Environment | Required evidence |
+|---|---|---|
+| MOB-07 | Physical iPhone/iPad with local speech model; Simulator for UI/unsupported state only | On both custom keyboard layouts, confirm Left/Up/Down/Right followed immediately by a microphone icon, then Extended keys; VoiceOver identifies the icon as Mic, and holding it never repeats. Tap it, test denied/restricted and granted speech/microphone permissions, and recognize with networking disabled. Confirm on-device support for the selected language/model; unsupported cases must never fall back to a server. Verify the recording indicator, latest-only revisions, 4096-byte Unicode cap, native 45-second deadline, Stop → brief Finishing → final punctuated transcript in an editable review, first-use permission alerts that keep a connected plain SSH session alive (and backgrounding during an alert still suspends it), single-use Insert with no Return/modifiers and rejection of pasted CR/LF/ESC/other controls. While recording and reviewing, test interruption, app switch/lock/background, session/tab/workspace replacement and reconnect: capture must stop even without another UI frame, text must not be replayed and stale callbacks must not restore it. Cancel leaves terminal bytes unchanged. Inspect app-owned storage/logs for absence of audio/transcripts using non-sensitive fixtures. Exercise actual shell/TUI insertion and VoiceOver/touch targets; remote programs may react to explicitly inserted text. Simulator launch/manual-preview tests do not establish native speech privacy or recognition quality. Tracked in #564; ADR 0066. |
+
 For MOB-02/MOB-06, verify copy/paste against the real iOS pasteboard, the native
 keyboard's 123 / #+= buttons, modifier highlighting, and full redraw while
 connected and while reading disconnected history. A linked device build and

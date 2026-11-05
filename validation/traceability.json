@@ -69,13 +69,14 @@
       ],
       "requirements": [
         "docs/adr/0053-separate-dev-tunnels-session-bridge.md#decision",
-        "docs/adr/0066-opt-in-managed-daemon-recovery.md#decision"
+        "docs/adr/0066-opt-in-managed-daemon-recovery.md#decision",
+        "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#decision"
       ],
       "decisions": [
         "ADR-0053",
+        "ADR-0066",
         "ADR-0067",
-        "ADR-0068",
-        "ADR-0066"
+        "ADR-0070"
       ],
       "automated_tests": [
         "managed_observation_consent_is_independent_bounded_and_transactional",
@@ -3531,7 +3532,12 @@
     {
       "id": "ios-rendering-spike",
       "edges": [
-        "MOB-*"
+        "MOB-01",
+        "MOB-02",
+        "MOB-03",
+        "MOB-04",
+        "MOB-05",
+        "MOB-06"
       ],
       "requirements": [
         "docs/adr/0042-ios-rendering-spike-host.md",
@@ -3732,6 +3738,96 @@
         "MOB-06 opt-in live-ssh composition received independent architectural approval on 2026-10-30, not native/product acceptance; controlled real SSH/physical-device evidence remains required; fake-session/headless tests cover hidden-workspace output/replies, per-frame budgets and native suspension without a UI frame, including reset binding; compilation/Simulator linking do not establish native usability; credentials and pins remain transient, changed pins reject, suspension requires explicit reconnection; Termius-inspired usability and #425 paste/native handles remain pending",
         "affected PRs retain mobile unit/dependency checks, device compilation and Simulator app builds, including vendor-only epaint edits; isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py runs nightly/manual only under a distinct experimental-simulator-smoke check, not the simulator-build PR context or a desktop merge gate while iOS is experimental; failed runs/receipts remain failed (#303), without retry and with unchanged CoreSimulator application/process deadlines and ownership/capture/pass-fail guards; during the existing three-second startup grace, the harness observes the first-UI marker once per second and records the actual grace plus poll 1, 2 or 3 when first observed, then retains the prior exact-process check, screenshot/PNG validation, second liveness check and final marker evaluation, including acceptance when first UI is observed post-capture; pre-capture liveness failure retains readiness with capture marked not-attempted and blocks the screenshot as before; capture records retain readiness in memory before capture and are persisted when controlled screenshot timeouts and invalid PNGs unwind, while external hard termination can still prevent the final manifest write; first-UI failure or process death remains failed evidence; separate read-only prepared receipts are not app-pass evidence; scripts/tests/test_scheduled_workflows.py and test_ios_simulator_smoke.py cover the ADR-0042 workflow policy, readiness observation and preparation separation; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go and runtime merge-gate review before mobile product support",
         "ADR 0057 Dev Tunnels client backend only (no UI): offline fakes and a real-daemon loopback pass on macOS; shell integration, live Microsoft Dev Tunnels service, Keychain and physical-device validation, file reads over the tunnel and shell handling of RecoverySync remain open under MOB-06"
+      ]
+    },
+    {
+      "id": "ios-shared-documents",
+      "edges": ["MOB-08"],
+      "requirements": ["docs/mobile-layout-design.md#shared-ios-document-editor", "docs/text-editor-design.md"],
+      "decisions": ["ADR-0069", "ADR-0034", "ADR-0058"],
+      "automated_tests": [
+        "mobile_document_identity_and_undo_are_shared_without_shared_selection",
+        "mobile_document_multiline_replacement_is_one_exact_encoded_undo",
+        "mobile_document_rejects_stale_revision_selection_and_replayed_transactions",
+        "mobile_document_rejects_invalid_unicode_ranges_without_clamping",
+        "mobile_document_remote_origin_refuses_every_mutation_beneath_ui",
+        "mobile_document_revocation_and_reauthorization_invalidate_old_targets",
+        "mobile_document_external_change_never_silently_overwrites_dirty_text",
+        "mobile_document_clean_external_change_reloads_shared_identity",
+        "mobile_document_late_reads_cannot_replace_edits_or_newer_conflicts",
+        "mobile_document_reload_requires_conflict_and_discards_history_explicitly",
+        "mobile_document_save_completion_records_written_point_not_newer_edits",
+        "mobile_document_failed_or_busy_save_cannot_claim_clean_or_lose_last_view",
+        "mobile_document_only_last_dirty_view_prompts_and_handles_never_recycle",
+        "mobile_document_untitled_copy_is_unsaved_and_cannot_write_original_source",
+        "mobile_document_source_and_registry_limits_refuse_without_truncation",
+        "mobile_document_normalizes_pasted_newlines_and_refuses_binary_edits",
+        "mobile_document_edit_limits_include_original_encoded_line_endings",
+        "mobile_document_revocation_gates_edits_while_a_save_finishes",
+        "native_save_excludes_mutations_until_completion",
+        "all_detached_transfer_leases_must_finish_before_save",
+        "local_write_admission_refuses_download_and_mutations_without_touching_files",
+        "download_retains_local_admission_in_publication_worker",
+        "multiline_keyboard_uses_visual_rows_and_mirrors_return",
+        "document_surface_native_multiline_edits_never_reach_the_terminal",
+        "document_views_share_history_but_keep_independent_widget_selection",
+        "read_only_document_surface_cannot_type_or_undo",
+        "document_last_dirty_close_prompts_without_background_keyboard_edits",
+        "fresh_file_authority_preserves_dirty_text_and_observes_conflict",
+        "late_open_and_failed_native_save_keep_canonical_content",
+        "document_launcher_keeps_existing_global_navigation",
+        "document_hardware_tab_indents_locally_without_changing_focus",
+        "linear_field_geometry_preserves_wrapped_unicode_and_newline_carets",
+        "maximum_document_field_geometry_is_complete_and_cached_between_frames",
+        "stale_refresh_requeues_without_losing_edits_or_restoring_obsolete_access",
+        "conflict_keep_requires_review_and_leaves_save_explicit_and_version_bound",
+        "conflict_reload_discards_only_after_explicit_review_and_refuses_stale_decisions",
+        "document_chip_close_from_terminal_uses_dirty_guard_and_blocks_background_input",
+        "short_document_view_moves_touch_sized_actions_into_more",
+        "conflict_actions_stay_above_keyboard_occlusion_at_short_and_narrow_sizes",
+        "mobile_preview_keeps_one_worker_and_rejects_cancelled_old_revisions",
+        "mobile_preview_releases_closed_document_cache_without_adopting_late_results",
+        "mobile_preview_failed_projection_retries_without_mutating_source",
+        "shared_markdown_views_reuse_projection_but_keep_navigation_independent",
+        "markdown_edit_preview_keeps_source_selection_and_shared_history",
+        "markdown_contents_is_view_local_and_never_mutates_or_sends_terminal_input",
+        "markdown_contents_navigation_and_view_switch_dismiss_the_captured_sheet",
+        "markdown_contents_scrolls_to_an_offscreen_heading_without_editing",
+        "markdown_wide_preview_uses_contents_rail_and_dismisses_old_sheet"
+      ],
+      "manual_scenarios": ["MOB-08"],
+      "status": "partial",
+      "prerequisites": [
+        "Issue #570: draft #575 provides shared/native I/O foundations; draft #579 wires Documents/Browse in Files, registry-backed source surfaces, shared undo/redo, guarded conflict decisions and dirty-close handling. The dependent Markdown slice adds current-revision Edit/Preview, shared cancellable projections and view/revision-bound Contents with no resource loading. Actual-widget tests/captures do not qualify picker grants or multiline UIKit/IME behavior. Source syntax/line numbers, Find/Replace, local copy/Save As and shared keyboard-region dictation remain subsequent slices.",
+        "Simulator fixture smoke passed actual native publication, 0600 permissions, stale overwrite refusal, refresh, failed-revert closed-instance refusal, fresh-instance recovery/save, superseded pending failures, unopened/in-flight-drop lease release and close/cleanup; production recovery requires fresh Files authority rather than reopening the failed instance. Portable and real OpenSSH tests cover app-owned writer exclusion. Picker grants/reacquisition, iCloud/third-party provider coordination, revocation/move/delete, file-protection metadata, storage failures, actual keyboard/safe-area/IME, physical iPhone/iPad accessibility and Claude-based real-capture visual review remain MOB-08 qualification; no Edit/Preview split panes at any viewport size.",
+        "On-device speech availability and privacy remain the separate MOB-07/#564 gate; online recognition remains deferred in #567."
+      ]
+    },
+    {
+      "id": "ios-on-device-dictation",
+      "edges": ["MOB-07"],
+      "requirements": ["docs/mobile-layout-design.md#on-device-dictation"],
+      "decisions": ["ADR-0068"],
+      "automated_tests": [
+        "dictation_requires_review_and_single_line_bounded_text",
+        "dictation_revisions_replace_and_stale_callbacks_cannot_restore_cancelled_text",
+        "dictation_insert_is_explicit_single_use_and_has_no_return_or_modifiers",
+        "dictation_refuses_unsafe_text_and_changed_target_or_lifecycle",
+        "dictation_navigation_and_suspension_clear_preview_before_any_insert",
+        "dictation_pending_authorization_survives_temporary_permission_resignation",
+        "dictation_permission_alert_then_background_still_suspends_and_cancels",
+        "mobile_live_ssh_dictation_permission_alert_keeps_plain_session_until_background",
+        "dictation_stop_finishes_and_accepts_the_final_transcript",
+        "dictation_finishing_timeout_or_error_reviews_latest_text_but_cancel_wins",
+        "dictation_host_stop_without_native_recognizer_reviews_immediately",
+        "dictation_editor_bounds_unicode_bytes_without_splitting_characters",
+        "dictation_failed_and_manual_review_sheets_render_without_terminal_input",
+        "terminal_keyboards_offer_dictation_as_one_non_repeating_action"
+      ],
+      "manual_scenarios": ["MOB-07"],
+      "status": "partial",
+      "prerequisites": [
+        "Issue #564: physical-device local speech model/language availability, denied/granted permissions, offline recognition, native microphone/deadline/interruption/background/lock cancellation without another UI frame, session replacement and actual terminal/TUI/touch/accessibility qualification remain required, including the microphone icon after Left/Up/Down/Right. Simulator unsupported/manual-preview flow and portable tests are not native speech recognition or privacy acceptance."
       ]
     }
   ]

@@ -1,6 +1,9 @@
 //! iOS feasibility host: offline by default, with opt-in transient live SSH.
 
 mod app_lock;
+mod dictation;
+mod document_preview;
+mod documents;
 #[cfg_attr(not(feature = "live-ssh"), allow(dead_code))] // SFTP needs the SSH transport
 mod files;
 #[cfg(test)]
@@ -173,6 +176,84 @@ impl SuspensionHandle {
     }
 }
 
+/// Applies native lifecycle callbacks to the shared [`Lifecycle`] and live sessions.
+///
+/// winit reports `applicationWillResignActive` as `Suspended`. A dictation
+/// permission alert only resigns active, so that suspension is deferred: live
+/// sessions and dictation survive the alert. If the app then really enters the
+/// background, the deferred suspension is applied as before.
+pub struct NativeLifecycle {
+    lifecycle: Rc<Cell<Lifecycle>>,
+    #[cfg(feature = "live-ssh")]
+    suspension: SuspensionHandle,
+    deferred: bool,
+}
+
+impl NativeLifecycle {
+    pub fn new(
+        lifecycle: Rc<Cell<Lifecycle>>,
+        #[cfg(feature = "live-ssh")] suspension: SuspensionHandle,
+    ) -> Self {
+        Self {
+            lifecycle,
+            #[cfg(feature = "live-ssh")]
+            suspension,
+            deferred: false,
+        }
+    }
+
+    pub fn get(&self) -> Lifecycle {
+        self.lifecycle.get()
+    }
+
+    fn update(&self, update: impl FnOnce(&mut Lifecycle)) {
+        let mut state = self.lifecycle.get();
+        update(&mut state);
+        self.lifecycle.set(state);
+    }
+
+    /// Returns whether the renderer should also be resumed.
+    pub fn resumed(&mut self) -> bool {
+        if std::mem::take(&mut self.deferred) {
+            return false;
+        }
+        self.update(Lifecycle::resume);
+        true
+    }
+
+    /// Returns whether the app was suspended (false when deferred for a
+    /// dictation permission alert).
+    pub fn suspended(&mut self, permission_prompt: bool) -> bool {
+        if permission_prompt {
+            self.deferred = true;
+            return false;
+        }
+        self.deferred = false;
+        self.suspend();
+        true
+    }
+
+    /// The app entered the background. Returns whether a deferred suspension
+    /// was applied now.
+    pub fn entered_background(&mut self) -> bool {
+        if !std::mem::take(&mut self.deferred) {
+            return false;
+        }
+        self.suspend();
+        true
+    }
+
+    pub fn memory_warning(&self) {
+        self.update(Lifecycle::memory_warning);
+    }
+
+    fn suspend(&self) {
+        #[cfg(feature = "live-ssh")]
+        self.suspension.suspend();
+        self.update(Lifecycle::suspend);
+    }
+}
+
 /// Deliberately discards bytes: the spike must not pretend to be a shell or
 /// save what a tester types. Uses the renderer's existing input contract.
 #[derive(Default)]
@@ -239,6 +320,7 @@ enum Surface {
     #[default]
     Tabs,
     Terminal,
+    Documents,
 }
 
 /// Content-free view of the live SSH worker for chrome decisions.
@@ -250,6 +332,12 @@ struct LiveView {
 }
 
 pub struct MobileApp {
+    #[cfg(all(
+        target_os = "ios",
+        target_abi = "sim",
+        feature = "native-document-smoke"
+    ))]
+    document_smoke: festerm_ios_window::DocumentSmoke,
     reported_first_ui: bool,
     terminal: Terminal,
     view: TerminalView,
@@ -274,6 +362,7 @@ pub struct MobileApp {
     files: Option<Box<files::FilesSession>>,
     files_ctx: files_shell::FilesContext,
     markdown: Option<workspaces::MarkdownWorkspace>,
+    documents: documents::DocumentHost,
     surface: Surface,
     shell: shell::ShellState,
     profiles: Option<profiles::Profiles>,
@@ -285,6 +374,8 @@ pub struct MobileApp {
     last_custom_keyboard: terminal_keyboard::KeyboardKind,
     terminal_keyboard: terminal_keyboard::TerminalKeyboard,
     terminal_keyboard_input: bool,
+    dictation: Option<festerm_ios_window::Dictation>,
+    dictation_tab: Option<u64>,
     #[cfg(feature = "live-ssh")]
     tunnel: tunnel_link::TunnelUi,
     caps: model::Capabilities,
@@ -320,6 +411,12 @@ fn mobile_terminal_view() -> TerminalView {
 impl MobileApp {
     pub fn new(lifecycle: Rc<Cell<Lifecycle>>) -> Self {
         Self {
+            #[cfg(all(
+                target_os = "ios",
+                target_abi = "sim",
+                feature = "native-document-smoke"
+            ))]
+            document_smoke: festerm_ios_window::DocumentSmoke::default(),
             reported_first_ui: false,
             terminal: fixture_terminal(),
             view: mobile_terminal_view(),
@@ -343,6 +440,7 @@ impl MobileApp {
             files: None,
             files_ctx: files_shell::FilesContext::default(),
             markdown: None,
+            documents: documents::DocumentHost::default(),
             #[cfg(feature = "live-ssh")]
             tunnel: tunnel_link::TunnelUi::default(),
             surface: Surface::Tabs,
@@ -355,6 +453,8 @@ impl MobileApp {
             last_custom_keyboard: terminal_keyboard::KeyboardKind::HoldSymbols,
             terminal_keyboard: terminal_keyboard::TerminalKeyboard::default(),
             terminal_keyboard_input: false,
+            dictation: None,
+            dictation_tab: None,
             caps: model::Capabilities::production(),
             tabs: Vec::new(),
             active_tab: None,
@@ -443,6 +543,11 @@ impl MobileApp {
     }
 
     pub fn with_keyboard(mut self, keyboard: Option<festerm_ios_window::KeyboardBridge>) -> Self {
+        self.documents.bind_picker(
+            keyboard
+                .as_ref()
+                .and_then(|bridge| bridge.document_picker()),
+        );
         self.keyboard = keyboard;
         self
     }
@@ -460,6 +565,16 @@ impl MobileApp {
     }
 
     fn show_with_occlusion(&mut self, ui: &mut egui::Ui, occlusion: f32) {
+        #[cfg(all(
+            target_os = "ios",
+            target_abi = "sim",
+            feature = "native-document-smoke"
+        ))]
+        {
+            let context = ui.ctx().clone();
+            self.document_smoke
+                .poll(std::sync::Arc::new(move || context.request_repaint()));
+        }
         self.terminal_keyboard_input = false;
         // Accessory taps must not blur the terminal and restart UIKit's keyboard.
         let terminal_surface = self.terminal_surface();
@@ -801,7 +916,9 @@ impl MobileApp {
         if let Some(sessions) = &self.sessions_override {
             return model::SessionSource::surfaces(sessions);
         }
-        self.tab_surfaces()
+        let mut surfaces = self.tab_surfaces();
+        surfaces.extend(self.documents.surfaces(self.surface == Surface::Documents));
+        surfaces
     }
 
     fn reattachable(&self) -> Vec<model::Reattachable> {
@@ -842,10 +959,19 @@ impl MobileApp {
 
     fn show_content(&mut self, ui: &mut egui::Ui) {
         let lifecycle = self.lifecycle.get();
+        // Permission alerts never count as suspensions (see NativeLifecycle).
+        if !self.terminal_surface()
+            || !self.terminal_input_ready(lifecycle)
+            || self.dictation_tab != self.active_tab
+            || lifecycle.suspensions != self.observed_suspensions
+        {
+            self.cancel_dictation();
+        }
         if !self.terminal_surface() || !lifecycle.active || !ui.input(|input| input.focused) {
             self.terminal_keyboard.cancel();
         }
         if lifecycle.suspensions != self.observed_suspensions {
+            self.documents.invalidate_sources();
             #[cfg(feature = "live-ssh")]
             self.suspend_sessions();
             self.gestures.cancel();
@@ -882,6 +1008,7 @@ impl MobileApp {
             let hidden = lock.gate(ui, lifecycle.active);
             lock.frame_presented();
             if hidden {
+                self.cancel_dictation();
                 self.gestures.cancel();
                 self.terminal_keyboard.cancel();
                 self.clear_sticky_modifiers();
@@ -895,13 +1022,21 @@ impl MobileApp {
             self.show_host_setup(ui.ctx(), bounds);
             return;
         }
+        if lifecycle.active && self.documents.poll(&mut self.next_tab) {
+            self.park_active();
+            self.surface = Surface::Documents;
+        }
         match self.surface {
             Surface::Tabs => self.show_tabs(ui),
             Surface::Terminal => self.show_surface(ui, lifecycle),
+            Surface::Documents => self.show_documents(ui),
         }
         self.show_sheets(ui.ctx(), bounds);
         self.show_files_sheets(ui.ctx(), bounds);
         self.show_host_setup(ui.ctx(), bounds);
+        self.show_dictation(ui.ctx(), bounds);
+        self.documents
+            .show_sheets(ui.ctx(), bounds, self.surface == Surface::Documents);
     }
 
     fn show_host_setup(&mut self, ctx: &egui::Context, bounds: egui::Rect) {
@@ -1047,6 +1182,12 @@ impl MobileApp {
                 ShellAction::CloseSurface(id) => self.close_tab(id),
                 ShellAction::OpenSurface(id) => {
                     self.shell.sessions_sheet = false;
+                    if self.documents.contains(id) {
+                        self.park_active();
+                        self.documents.activate(id);
+                        self.surface = Surface::Documents;
+                        continue;
+                    }
                     self.activate_tab(id);
                     if self.active_tab == Some(id) {
                         self.surface = Surface::Terminal;
@@ -1069,6 +1210,11 @@ impl MobileApp {
                     self.shell.sessions_sheet = false;
                     self.shell.tab = shell::Tab::Profiles;
                     self.leave_terminal();
+                }
+                ShellAction::OpenDocuments => {
+                    self.park_active();
+                    self.documents.active = None;
+                    self.surface = Surface::Documents;
                 }
             }
         }
@@ -1514,6 +1660,7 @@ impl MobileApp {
     }
 
     fn switch_workspace(&mut self, workspace: workspaces::Workspace) {
+        self.cancel_dictation();
         if self.workspace == workspace {
             return;
         }
@@ -1528,6 +1675,7 @@ impl MobileApp {
     }
 
     fn reset_fixture(&mut self) {
+        self.cancel_dictation();
         self.switch_workspace(workspaces::Workspace::Terminal);
         self.gestures.cancel();
         if self.active_is_local() {
@@ -1581,6 +1729,12 @@ impl MobileApp {
                 back = header.back;
                 chip_action = header.chip;
                 let menu = egui::Popup::menu(&header.more).show(|ui| {
+                    if ui.button("Documents").clicked() {
+                        self.park_active();
+                        self.documents.active = None;
+                        self.surface = Surface::Documents;
+                        ui.close();
+                    }
                     if in_terminal && self.active_tab.is_some() {
                         ui.weak(&chrome.line.label);
                         ui.separator();
@@ -1644,6 +1798,9 @@ impl MobileApp {
                 });
                 self.menu_open = menu.is_some();
             });
+        if self.surface != Surface::Terminal {
+            return;
+        }
         if let Some(id) = close_tab {
             self.close_tab(id);
             return;
@@ -1677,7 +1834,7 @@ impl MobileApp {
                 self.activate_tab(id);
                 return;
             }
-            terminal_chrome::ChipAction::Close(id) => self.confirm_close = Some(id),
+            terminal_chrome::ChipAction::Close(id) => self.request_surface_close(id),
             terminal_chrome::ChipAction::All => self.shell.sessions_sheet = true,
             terminal_chrome::ChipAction::New => {
                 self.shell.tab = shell::Tab::Profiles;
@@ -1705,7 +1862,10 @@ impl MobileApp {
     }
 
     fn terminal_input_ready(&self, lifecycle: Lifecycle) -> bool {
-        let ready = lifecycle.active && !self.shell.sessions_sheet && !self.editor.open;
+        let ready = lifecycle.active
+            && !self.shell.sessions_sheet
+            && !self.editor.open
+            && !self.documents.modal_open();
         #[cfg(feature = "live-ssh")]
         let ready = ready
             && self
@@ -1719,7 +1879,7 @@ impl MobileApp {
     }
 
     fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
-        let input_ready = self.terminal_input_ready(lifecycle);
+        let input_ready = self.terminal_input_ready(lifecycle) && !self.dictation_open();
         #[cfg(feature = "live-ssh")]
         let read_only = self
             .sink
@@ -1828,7 +1988,11 @@ impl MobileApp {
                 return;
             }
         }
-        let history_ready = lifecycle.active && !self.editor.open && (input_ready || read_only);
+        let input_ready = input_ready && !self.dictation_open();
+        let history_ready = lifecycle.active
+            && !self.editor.open
+            && !self.dictation_open()
+            && (input_ready || read_only);
         if self.menu_open || !ui.input(|input| input.focused) {
             self.terminal_keyboard.cancel();
         }
@@ -1911,6 +2075,9 @@ impl MobileApp {
 
     fn apply_key_row(&mut self, ctx: &egui::Context, action: terminal_chrome::KeyRowAction) {
         use terminal_chrome::KeyRowAction;
+        if self.dictation_open() {
+            return;
+        }
         match action {
             KeyRowAction::None => {}
             KeyRowAction::Key(Key::Character(character)) => {
@@ -1936,6 +2103,7 @@ impl MobileApp {
                     self.input_notice = Some("The clipboard has no text to paste");
                 }
             }
+            KeyRowAction::Dictate => self.begin_dictation(ctx),
             KeyRowAction::Escape => self.send_key(Key::Escape),
             KeyRowAction::Tab => self.send_key(Key::Tab),
             KeyRowAction::ToggleControl => self.control = !self.control,
