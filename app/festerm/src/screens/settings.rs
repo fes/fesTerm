@@ -1571,9 +1571,50 @@ fn automation_settings(
                                     ui.add(egui::Label::new(source).wrap());
                                 }
                             }
-                            ssh_paragraph(ui, "Input publication is not available in this build.");
+                            ssh_paragraph(
+                                ui,
+                                "Approval permits this exact input to enter the terminal queue. \
+                                 Queue admission does not mean a command completed.",
+                            );
+                            ui.push_id(("controller-input-confirm", *token), |ui| {
+                                if ui
+                                    .add_enabled(
+                                        !snapshot.controller_targets_incomplete,
+                                        egui::Button::new("Approve and send this input"),
+                                    )
+                                    .clicked()
+                                {
+                                    record_automation_action(
+                                        &mut command,
+                                        NativeCommand::ConfirmControllerInput {
+                                            channel: row.channel,
+                                            registration: row.registration,
+                                            input: *token,
+                                        },
+                                    );
+                                }
+                            });
                         } else {
                             ssh_paragraph(ui, "This input review is no longer current.");
+                        }
+                        cancel_controller_input_button(
+                            ui, &mut command, row.channel, row.registration, *token,
+                        );
+                    }
+                    ControllerInputView::Submitting {
+                        token,
+                        window: input_window,
+                        may_be_admitted,
+                    } => {
+                        if *input_window == window {
+                            ssh_paragraph(
+                                ui,
+                                if *may_be_admitted {
+                                    "The input may already have been admitted; cancellation cannot undo it."
+                                } else {
+                                    "Submitting the approved input."
+                                },
+                            );
                         }
                         cancel_controller_input_button(
                             ui, &mut command, row.channel, row.registration, *token,
@@ -1582,6 +1623,25 @@ fn automation_settings(
                     ControllerInputView::Cancelling => {
                         ssh_paragraph(ui, "Cancelling requested input.");
                     }
+                }
+                if let Some(control) = row.control.filter(|control| control.window == window) {
+                    ui.label(format!(
+                        "Control handoff armed for session {} (attachment {}).",
+                        control.target.session(),
+                        control.target.generation(),
+                    ));
+                    ui.push_id(("controller-input-disarm", row.channel, control.token), |ui| {
+                        if ui.button("Disarm terminal control").clicked() {
+                            record_automation_action(
+                                &mut command,
+                                NativeCommand::DisarmControllerInput {
+                                    channel: row.channel,
+                                    registration: row.registration,
+                                    input: control.token,
+                                },
+                            );
+                        }
+                    });
                 }
             },
         );
@@ -2543,14 +2603,25 @@ mod tests {
         assert!(harness
             .query_by_label("Enrollment source: exact metadata terminal")
             .is_some());
-        assert!(harness
-            .query_by_label("Input publication is not available in this build.")
-            .is_some());
+        harness.get_by_label("Approve and send this input").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::ConfirmControllerInput {
+                channel: 7,
+                registration: actual,
+                input: 53,
+            }) if *actual == registration
+        ));
+        harness.state_mut().command = None;
         let other_window_snapshot = harness.state().snapshot.clone();
         other_window_snapshot.cancel_controller_input_review(7, registration, 53);
         harness.run();
         assert!(harness
             .query_by_label_contains("Text: \"long escaped")
+            .is_none());
+        assert!(harness
+            .query_by_label("Approve and send this input")
             .is_none());
         harness.get_by_label("Cancel requested input").click();
         harness.step();
@@ -2722,6 +2793,128 @@ mod tests {
                 )
             };
             assert!(correct);
+        }
+    }
+
+    #[test]
+    fn controller_input_confirmation_and_disarm_ignore_stale_actions() {
+        use crate::application::WindowId;
+        use crate::automation::{
+            presentation::DirectActionDisplay, ControllerArmedControl, NativeCommand,
+            SettingsSnapshot,
+        };
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            command: Option<NativeCommand>,
+        }
+        for disarm in [false, true] {
+            for accessibility in [false, true] {
+                let (mut snapshot, registration, _, target, _, _) =
+                    SettingsSnapshot::with_controller_for_test();
+                snapshot.controllers[0].associated_target = Some(target);
+                if disarm {
+                    snapshot.controllers[0].control = Some(ControllerArmedControl {
+                        token: 53,
+                        target,
+                        window: WindowId::PRIMARY,
+                    });
+                } else {
+                    snapshot.controllers[0].set_input_review_for_test(
+                        53,
+                        WindowId::PRIMARY,
+                        target,
+                        DirectActionDisplay::Text {
+                            escaped: "input".into(),
+                            submit: false,
+                        },
+                        vec!["source".into()],
+                    );
+                }
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(900.0, 1800.0))
+                    .build_ui_state(
+                        |ui, state: &mut State| {
+                            if let Some(command) =
+                                automation_settings(ui, &state.snapshot, true, WindowId::PRIMARY)
+                            {
+                                state.command = Some(command);
+                            }
+                        },
+                        State {
+                            snapshot,
+                            command: None,
+                        },
+                    );
+                harness.run();
+                let label = if disarm {
+                    "Disarm terminal control"
+                } else {
+                    "Approve and send this input"
+                };
+                let position = harness.get_by_label(label).rect().center();
+                if accessibility {
+                    harness.get_by_label(label).click_accesskit();
+                } else {
+                    harness.event(egui::Event::PointerMoved(position));
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                    harness.step();
+                }
+                if disarm {
+                    harness.state_mut().snapshot.controllers[0]
+                        .control
+                        .as_mut()
+                        .unwrap()
+                        .token = 54;
+                } else {
+                    harness.state_mut().snapshot.controllers[0].set_input_review_for_test(
+                        54,
+                        WindowId::PRIMARY,
+                        target,
+                        DirectActionDisplay::Text {
+                            escaped: "input".into(),
+                            submit: false,
+                        },
+                        vec!["source".into()],
+                    );
+                }
+                if !accessibility {
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+                harness.step();
+                assert!(harness.state().command.is_none());
+                harness.get_by_label(label).click();
+                harness.step();
+                if disarm {
+                    assert!(matches!(
+                        &harness.state().command,
+                        Some(NativeCommand::DisarmControllerInput {
+                            channel: 7,
+                            registration: actual,
+                            input: 54,
+                        }) if *actual == registration
+                    ));
+                } else {
+                    assert!(matches!(
+                        &harness.state().command,
+                        Some(NativeCommand::ConfirmControllerInput {
+                            channel: 7,
+                            registration: actual,
+                            input: 54,
+                        }) if *actual == registration
+                    ));
+                }
+            }
         }
     }
 

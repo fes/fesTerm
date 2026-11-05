@@ -353,6 +353,8 @@ impl FesTermApp {
             | NativeCommand::ConfirmControllerMetadata { .. }
             | NativeCommand::RevokeControllerMetadata { .. }
             | NativeCommand::ReviewControllerInput { .. }
+            | NativeCommand::ConfirmControllerInput { .. }
+            | NativeCommand::DisarmControllerInput { .. }
             | NativeCommand::CaptureWorkflow(_) => {}
         }
         if self.automation_command_overflow {

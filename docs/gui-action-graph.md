@@ -327,8 +327,11 @@ Do not construct it with personal profiles, output or credentials.
 A synthetic-only `AUT-08` input-review stage displays the complete escaped
 action, exact sink and every current metadata source after an explicit review
 request. Cancellation, stale actions, human/IME input, terminal mode changes
-and source expiry or retirement reject the staged review. It offers no approval
-or input publication; native consent and usability remain deferred.
+and source expiry or retirement reject the staged review. Synthetic confirmation
+can publish one frozen action to the controlled backend and exposes disarm; its
+response is admission, refusal or unknown, not command completion. Subsequent
+wire invocations still require review. Native consent, publication and
+usability remain deferred.
 
 Prospective scoped-creation review has only non-authorizing profile/policy
 snapshot tests. Capture does not retrieve secret-store contents, but full

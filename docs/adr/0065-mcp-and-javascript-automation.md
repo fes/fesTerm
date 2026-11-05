@@ -207,8 +207,13 @@ to bypass another's restrictions.
    Cancellation, expiry, human/IME fences, terminal mode changes and
    association retirement invalidate the review; a cancelled or retired
    associated handoff is revoked without cutting unrelated grants.
-   This stage has no approval or publication action. Production consent and
-   per-slot delivery fencing remain unqualified. A separate current-window
+   Under synthetic qualification only, an explicit confirmation now admits one
+   frozen action to its exact test backend and reports refusal, queue admission
+   or unknown outcome. Queued inbound cancellation is processed before a
+   later publication or settlement, and an exact-token disarm cuts its grant.
+   A successful handoff can remain armed, but later wire invocations still
+   require review. Production consent and per-slot delivery fencing remain
+   unqualified. A separate current-window
    metadata Settings review is exercised with synthetic qualification only:
    cancellation invalidates stale
    snapshots immediately, and proposal cleanup and scoped revocation defer
@@ -438,7 +443,9 @@ in the design must be visible in implementation/release review.
   Synthetic input-review tests cover bounded request staging, complete escaped
   action and metadata-source display, stale pointer/accessibility actions,
   cancellation, source expiry, human/IME and mode changes, association
-  movement and scoped handoff retirement. They do not prove native consent or
+  movement and scoped handoff retirement. Further synthetic dispatch tests
+  exercise one ordered backend admission, queued cancellation, truthful unknown
+  outcomes and scoped disarm. They do not prove native consent or production
   input publication.
   Presentation tests inject
   a continuous event source and freshness barrier, check exact app-command tab

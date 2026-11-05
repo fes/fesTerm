@@ -1,5 +1,14 @@
 # Milestone Progress Narrative
 
+## Dispatching one synthetic direct-input action
+
+The test-qualified MCP route can explicitly confirm a frozen review, reserve
+the exact local test backend queue and settle one input as refused, admitted or
+unknown. Queued cancellation is ordered before publication and settlement;
+disarm targets the original control grant. A successful grant may remain armed,
+but a later wire invocation still needs a fresh review. No production input,
+native presentation or private bootstrap is qualified by these tests.
+
 ## Staging direct-input reviews
 
 The synthetic-only adapter stages one exact-enrollment input request per peer
@@ -7,8 +16,8 @@ and displays the complete escaped action, sink and current metadata-source
 closure after an explicit review request. Cancellation, source expiry,
 human/IME or mode changes, enrollment retirement and stale UI actions
 invalidate the staged decision.
-The Settings view cannot approve or publish input; production qualification
-and end-to-end control remain open.
+At this checkpoint Settings could not approve or publish input; the later
+synthetic-only dispatch above does not qualify production control.
 
 ## Defining bounded direct-input protocol
 

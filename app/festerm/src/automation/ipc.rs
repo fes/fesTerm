@@ -4,7 +4,7 @@ use std::{
     collections::BTreeMap,
     io::{self, Read, Write},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc::{self, Receiver, SyncSender},
         Arc,
     },
@@ -46,6 +46,7 @@ fn next_connection_key(counter: &AtomicU64) -> Option<u64> {
 pub(super) struct Connection {
     pub key: u64,
     closed: Arc<AtomicBool>,
+    pending_input: Arc<AtomicUsize>,
     output: OutboundSender,
 }
 
@@ -64,6 +65,63 @@ impl Connection {
 
     pub fn closed_flag(&self) -> Arc<AtomicBool> {
         self.closed.clone()
+    }
+
+    pub fn has_pending_input(&self, _guard: &festerm_session::AutomationAdmissionGuard) -> bool {
+        self.pending_input.load(Ordering::Acquire) != 0
+    }
+
+    pub(super) fn enqueue_message(
+        &self,
+        events: &SyncSender<Event>,
+        bytes: Vec<u8>,
+    ) -> io::Result<()> {
+        let Some(guard) = festerm_session::automation_admission_lock() else {
+            self.closed.store(true, Ordering::Release);
+            return Err(io::ErrorKind::BrokenPipe.into());
+        };
+        if self.is_closed() {
+            return Err(io::ErrorKind::BrokenPipe.into());
+        }
+        if self
+            .pending_input
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                count.checked_add(1)
+            })
+            .is_err()
+        {
+            self.close_under_admission(&guard);
+            return Err(io::ErrorKind::BrokenPipe.into());
+        }
+        if events
+            .try_send(Event::Message {
+                key: self.key,
+                bytes,
+            })
+            .is_err()
+        {
+            self.close_under_admission(&guard);
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        Ok(())
+    }
+
+    pub fn finish_message(&self) -> io::Result<()> {
+        let updated =
+            self.pending_input
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                    count.checked_sub(1)
+                });
+        #[cfg(test)]
+        if updated == Err(0) {
+            // Some coordinator fixtures inject events without an IPC reader.
+            return Ok(());
+        }
+        if updated.is_err() {
+            self.close();
+            return Err(io::ErrorKind::BrokenPipe.into());
+        }
+        Ok(())
     }
 
     pub fn send(
@@ -196,6 +254,7 @@ impl Server {
                             let connection = Connection {
                                 key,
                                 closed,
+                                pending_input: Arc::new(AtomicUsize::new(0)),
                                 output,
                             };
                             let peer = connection.clone();
@@ -312,13 +371,7 @@ fn serve_peer(
             while !connection.is_closed() && !stop.load(Ordering::Acquire) {
                 match read_frame(&mut stream, &connection.closed, &stop) {
                     Ok(Some(bytes)) => {
-                        if events
-                            .try_send(Event::Message {
-                                key: connection.key,
-                                bytes,
-                            })
-                            .is_err()
-                        {
+                        if connection.enqueue_message(&events, bytes).is_err() {
                             break;
                         }
                         wake();
@@ -935,6 +988,7 @@ pub(super) fn test_connection_with_frames(
         Connection {
             key,
             closed: Arc::new(AtomicBool::new(false)),
+            pending_input: Arc::new(AtomicUsize::new(0)),
             output,
         },
         move || receiver.try_recv().ok(),
@@ -958,6 +1012,7 @@ mod tests {
         let connection = Connection {
             key: 1,
             closed: Arc::new(AtomicBool::new(false)),
+            pending_input: Arc::new(AtomicUsize::new(0)),
             output,
         };
         let expiry = Instant::now() + Duration::from_secs(30);
@@ -985,6 +1040,7 @@ mod tests {
         let connection = Connection {
             key: 2,
             closed: Arc::new(AtomicBool::new(false)),
+            pending_input: Arc::new(AtomicUsize::new(0)),
             output,
         };
         drop(receiver);
@@ -1007,6 +1063,7 @@ mod tests {
         let connection = Connection {
             key: 3,
             closed: Arc::new(AtomicBool::new(false)),
+            pending_input: Arc::new(AtomicUsize::new(0)),
             output,
         };
         let valid = Arc::new(AtomicBool::new(true));
@@ -1786,6 +1843,7 @@ mod tests {
         let connection = Connection {
             key: 8,
             closed: Arc::new(AtomicBool::new(false)),
+            pending_input: Arc::new(AtomicUsize::new(0)),
             output,
         };
         let attachment = Arc::new(festerm_session::AutomationEpoch::new());
@@ -1829,6 +1887,7 @@ mod tests {
         let connection = Connection {
             key: 9,
             closed: Arc::new(AtomicBool::new(false)),
+            pending_input: Arc::new(AtomicUsize::new(0)),
             output,
         };
         let valid = Arc::new(AtomicBool::new(true));
@@ -1879,6 +1938,7 @@ mod tests {
         let connection = Connection {
             key: 7,
             closed: Arc::new(AtomicBool::new(false)),
+            pending_input: Arc::new(AtomicUsize::new(0)),
             output,
         };
         let (events, incoming) = mpsc::sync_channel(4);

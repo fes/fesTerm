@@ -2849,6 +2849,13 @@ grant replacement against guarded queue insertion and checks independent
 opposite slots. Other cut, expiry and recipient-delivery paths still need their
 own fences.
 
+Synthetic AUTO-03/AUTO-04 dispatch tests now drive one reviewed wire action to
+an ordered test-backend queue, race queued cancellation with admission and
+settlement, exercise unknown results and exact-token disarm, and reject changed
+review fences. They are not native UI, operating-system or final-recipient
+evidence. Later wire invocations still require review; qualified grant reuse
+and the external client's uncertain-action interlock remain open.
+
 ## Intake rule for new work
 
 Every implemented GUI or platform slice must state which of these applies:

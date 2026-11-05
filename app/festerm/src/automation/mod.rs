@@ -34,8 +34,8 @@ use festerm_automation::{
     RequestId, RunId, RunSpec, Scope, TargetRef,
 };
 use festerm_automation_mcp::{
-    BackendRequest, BackendResult, ControllerId, Event, Machine, Operation, PairingStatus, Refusal,
-    RequestKey, Response, VerificationCode,
+    BackendRequest, BackendResult, ControllerId, Event, InputDisposition, Machine, Operation,
+    PairingStatus, Refusal, RequestKey, Response, VerificationCode,
 };
 use festerm_core::ScrollbackStats;
 use sha2::{Digest as _, Sha256};
@@ -137,7 +137,17 @@ pub(crate) enum NativeCommand {
         registration: ControllerRegistrationId,
         input: u64,
     },
+    ConfirmControllerInput {
+        channel: u64,
+        registration: ControllerRegistrationId,
+        input: u64,
+    },
     CancelControllerInput {
+        channel: u64,
+        registration: ControllerRegistrationId,
+        input: u64,
+    },
+    DisarmControllerInput {
         channel: u64,
         registration: ControllerRegistrationId,
         input: u64,
@@ -185,6 +195,7 @@ impl NativeCommand {
                 | Self::ReviewControllerMetadata { .. }
                 | Self::ConfirmControllerMetadata { .. }
                 | Self::ReviewControllerInput { .. }
+                | Self::ConfirmControllerInput { .. }
         )
     }
 
@@ -199,6 +210,7 @@ impl NativeCommand {
                 | Self::CancelControllerMetadata { .. }
                 | Self::RevokeControllerMetadata { .. }
                 | Self::CancelControllerInput { .. }
+                | Self::DisarmControllerInput { .. }
                 | Self::ClearWorkflow
         )
     }
@@ -217,7 +229,9 @@ impl NativeCommand {
                 | Self::CancelControllerMetadata { .. }
                 | Self::RevokeControllerMetadata { .. }
                 | Self::ReviewControllerInput { .. }
+                | Self::ConfirmControllerInput { .. }
                 | Self::CancelControllerInput { .. }
+                | Self::DisarmControllerInput { .. }
         )
     }
 }
@@ -287,6 +301,11 @@ pub(crate) enum ControllerInputView {
         action: presentation::DirectActionDisplay,
         metadata_sources: Vec<String>,
     },
+    Submitting {
+        token: u64,
+        window: WindowId,
+        may_be_admitted: bool,
+    },
     Cancelling,
 }
 
@@ -300,10 +319,18 @@ pub(crate) struct ControllerRow {
     pub selection: ControllerSelectionView,
     pub metadata: ControllerMetadataView,
     pub input: ControllerInputView,
+    pub control: Option<ControllerArmedControl>,
     valid: Arc<AtomicBool>,
     // Review presentation and confirmation are confined to the UI thread.
     metadata_review_valid: Option<Rc<Cell<bool>>>,
     input_review_valid: Option<Rc<Cell<bool>>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ControllerArmedControl {
+    pub token: u64,
+    pub window: WindowId,
+    pub target: TargetRef,
 }
 
 impl ControllerRow {
@@ -423,6 +450,7 @@ impl SettingsSnapshot {
                         && left.selection == right.selection
                         && left.metadata == right.metadata
                         && left.input == right.input
+                        && left.control == right.control
                 })
             && self.workflow.same_presentation(&other.workflow)
             && self.channels.len() == other.channels.len()
@@ -608,6 +636,7 @@ impl SettingsSnapshot {
                     selection: ControllerSelectionView::Idle,
                     metadata: ControllerMetadataView::Unavailable,
                     input: ControllerInputView::Unavailable,
+                    control: None,
                     valid: Arc::new(AtomicBool::new(true)),
                     metadata_review_valid: None,
                     input_review_valid: None,
@@ -943,6 +972,8 @@ pub(crate) struct Coordinator {
     synthetic_enrollment_metadata_delivery_qualified: bool,
     #[cfg(test)]
     synthetic_direct_input_qualified: bool,
+    #[cfg(test)]
+    synthetic_direct_input_lost_after_commit: bool,
 }
 
 impl Default for Coordinator {
@@ -995,6 +1026,8 @@ impl Default for Coordinator {
             synthetic_enrollment_metadata_delivery_qualified: false,
             #[cfg(test)]
             synthetic_direct_input_qualified: false,
+            #[cfg(test)]
+            synthetic_direct_input_lost_after_commit: false,
         }
     }
 }
@@ -1807,7 +1840,12 @@ impl Coordinator {
         for peer in self.peers.values_mut() {
             controller::expire_direct_input(peer, now);
             if let Some(input) = &peer.controller.direct_input {
-                context.request_repaint_after(input.next_deadline().saturating_duration_since(now));
+                let until_expiry = input.next_deadline().saturating_duration_since(now);
+                context.request_repaint_after(if until_expiry.is_zero() {
+                    Duration::from_millis(50)
+                } else {
+                    until_expiry
+                });
             }
         }
         let cancellation = self.peers.values_mut().try_for_each(|peer| {
@@ -1948,7 +1986,7 @@ impl Coordinator {
                             && controller_qualified,
                     };
                     let result = if let Some(peer) = self.peers.get_mut(&key) {
-                        process_peer_message(
+                        let result = process_peer_message(
                             &mut broker,
                             &self.targets,
                             metadata,
@@ -1960,7 +1998,20 @@ impl Coordinator {
                             controller_qualified,
                             input_qualified,
                             now,
-                        )
+                        );
+                        if matches!(
+                            &result,
+                            Err(festerm_session::AutomationAdmissionTryError::Busy)
+                        ) && peer.controller.direct_input.is_some()
+                        {
+                            // The frame was consumed before it could be processed.
+                            // It may be a cancellation, so no pending input can proceed.
+                            peer.connection.close();
+                        }
+                        if peer.connection.finish_message().is_err() {
+                            peer.connection.close();
+                        }
+                        result
                     } else {
                         Ok(())
                     };
@@ -2209,7 +2260,7 @@ impl Coordinator {
         .map_err(ReconcileError::Authority)?;
         drop(guard);
         if metadata_retired {
-            self.status = "Metadata cancellation or revocation completed; metadata delivery remains unavailable.";
+            self.status = "Automation cancellation or revocation completed.";
         }
         if retirement_refused {
             tracing::warn!("automation target retirement refused");
@@ -2309,7 +2360,9 @@ impl Coordinator {
             | NativeCommand::CancelControllerMetadata { .. }
             | NativeCommand::RevokeControllerMetadata { .. }
             | NativeCommand::ReviewControllerInput { .. }
-            | NativeCommand::CancelControllerInput { .. } => {
+            | NativeCommand::ConfirmControllerInput { .. }
+            | NativeCommand::CancelControllerInput { .. }
+            | NativeCommand::DisarmControllerInput { .. } => {
                 self.status = "Controller action refused without its originating native window.";
             }
         }
@@ -2512,6 +2565,59 @@ impl Coordinator {
 
     pub(crate) fn direct_input_preparations(&self) -> Vec<DirectInputPreparation> {
         controller::direct_input_preparations(self)
+    }
+
+    pub(crate) fn direct_input_dispatches(&self) -> Vec<DirectInputPreparation> {
+        controller::direct_input_dispatches(self)
+    }
+
+    pub(crate) fn dispatch_direct_input(
+        &mut self,
+        preparation: DirectInputPreparation,
+        tab: &SessionTab,
+        apps: &[&FesTermApp],
+        context: &egui::Context,
+    ) {
+        let guard = CoordinatorUnwind { coordinator: self };
+        match controller::dispatch_direct_input(guard.coordinator, preparation, tab, apps) {
+            Ok(()) => context.request_repaint(),
+            Err(festerm_automation::Error::Busy) => {
+                context.request_repaint_after(Duration::from_millis(50));
+            }
+            Err(error) => {
+                tracing::warn!(?error, "approved direct input could not be dispatched");
+                controller::refuse_direct_input_preparation(
+                    guard.coordinator,
+                    preparation,
+                    refusal(error),
+                );
+                guard.coordinator.status =
+                    "Direct input could not be dispatched; no input was admitted.";
+                context.request_repaint();
+            }
+        }
+    }
+
+    pub(crate) fn settle_direct_inputs(&mut self, apps: &[&FesTermApp], context: &egui::Context) {
+        let guard = CoordinatorUnwind { coordinator: self };
+        for (channel, token) in controller::direct_input_settlements(guard.coordinator) {
+            match controller::settle_direct_input(guard.coordinator, channel, token, apps) {
+                Ok(true) => context.request_repaint(),
+                Ok(false) => {}
+                Err(festerm_automation::Error::Busy) => {
+                    context.request_repaint_after(Duration::from_millis(50));
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "direct input settlement failed; closing the peer");
+                    if let Some(peer) = guard.coordinator.peers.get(&channel) {
+                        peer.connection.close();
+                    }
+                    guard.coordinator.status =
+                        "Input settlement failed; its outcome may be unknown.";
+                    context.request_repaint();
+                }
+            }
+        }
     }
 
     pub(crate) fn prepare_direct_input_review(

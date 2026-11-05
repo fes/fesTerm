@@ -266,8 +266,8 @@ they are never added automatically. The native decision freezes the exact
 cross-flow and grant epochs, and ordinary-grant expiry also cuts presentation.
 The host seam models these checks but does not install a writer epoch or
 qualify native UI or recipients. A synthetic-only adapter stages and cancels
-pending MCP input reviews before publication; it does not dispatch input or
-deliver an admitted response.
+pending MCP input reviews and can dispatch one approved action to a controlled
+test backend; this is not production input qualification.
 
 This direct-input binding is a prerequisite, not a feature. #524's P1
 checkpoint remains observation-only. A separately selected protocol catalog
@@ -284,10 +284,15 @@ approved metadata sources before displaying them. Cancellation, source expiry,
 human/IME fences, terminal mode changes or retirement invalidate the review and
 reclaim its pending proposal. A pending request's approved handoff is cut on
 cancellation; a handoff tied to an enrollment is revoked when that enrollment
-is replaced or removed. This stage has no approval or send action. There is no
-production control approval UI, MCP input publication or feature activation;
-the modeled enrollment and presentation foundations do not qualify those paths
-or a desktop.
+is replaced or removed. Under synthetic qualification, explicit confirmation
+revalidates the full display and admits one frozen action to the exact ordered
+backend queue. Queued inbound messages precede publication and final settlement;
+the result distinguishes refusal, admission and unknown without replay. A
+successful grant may stay armed and can be explicitly disarmed, but the adapter
+does not yet reuse it for later wire invocations without a fresh review. There
+is no production control approval UI, MCP input publication or feature
+activation; the modeled enrollment and presentation foundations do not qualify
+those paths or a desktop.
 
 The kernel also has a separately native-approved, discovery-only metadata slot
 on the same connection. It binds exact target generations and has its own epoch,

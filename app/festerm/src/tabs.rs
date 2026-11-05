@@ -590,7 +590,9 @@ impl Session for ApplicationSession {
         match self {
             Self::Local(session) => session.reserve_automation_input(controller_instance, bytes),
             #[cfg(test)]
-            Self::TestSsh(session) => session.reserve_automation_input(controller_instance, bytes),
+            Self::TestSsh(session) | Self::TestLocal(session) => {
+                session.reserve_automation_input(controller_instance, bytes)
+            }
             _ => Err(ReserveAutomationInputError::Unsupported),
         }
     }

@@ -12,7 +12,7 @@ struct Registration {
     internal: ControllerRegistrationId,
     valid: Arc<AtomicBool>,
     association: Option<Association>,
-    direct_control: Option<(TargetRef, NativeControlGrant)>,
+    direct_control: Option<(TargetRef, NativeControlGrant, u64)>,
 }
 
 #[derive(Clone, Copy)]
@@ -43,6 +43,7 @@ impl FrozenAssociation {
         &self,
         peer: &mut Peer,
         grant: NativeControlGrant,
+        token: u64,
     ) -> festerm_automation::Result<()> {
         let record = peer
             .controller
@@ -62,7 +63,7 @@ impl FrozenAssociation {
         {
             return Err(festerm_automation::Error::Revoked);
         }
-        record.direct_control = Some((self.target, grant));
+        record.direct_control = Some((self.target, grant, token));
         Ok(())
     }
 
@@ -217,9 +218,10 @@ impl PendingDirectInput {
     pub(super) fn next_deadline(&self) -> Instant {
         let capture = match &self.phase {
             DirectInputPhase::Requested => return self.deadline,
-            DirectInputPhase::Preparing(capture) | DirectInputPhase::Reviewing { capture, .. } => {
-                capture
-            }
+            DirectInputPhase::Preparing(capture)
+            | DirectInputPhase::Reviewing { capture, .. }
+            | DirectInputPhase::Approved { capture, .. }
+            | DirectInputPhase::Settling { capture, .. } => capture,
         };
         capture
             .sources
@@ -235,6 +237,7 @@ impl PendingDirectInput {
 struct DirectInputReviewCapture {
     candidate: ControllerTargetRow,
     workspace_revision: u64,
+    modes: festerm_core::TerminalModes,
     sources: presentation::DirectInputSources,
     metadata_descriptions: Vec<String>,
 }
@@ -246,6 +249,36 @@ enum DirectInputPhase {
         capture: DirectInputReviewCapture,
         review: Box<presentation::PendingControlReview>,
     },
+    Approved {
+        capture: DirectInputReviewCapture,
+        binding: InvocationBinding,
+        scope: Scope,
+    },
+    Settling {
+        capture: DirectInputReviewCapture,
+        outcome: DirectInputOutcome,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum DirectInputOutcome {
+    Refused(Refusal),
+    Admitted,
+    Unknown,
+}
+
+impl DirectInputOutcome {
+    fn result(self) -> BackendResult {
+        match self {
+            Self::Refused(reason) => BackendResult::Refused(reason),
+            Self::Admitted => BackendResult::InputDisposition(InputDisposition::Admitted),
+            Self::Unknown => BackendResult::InputDisposition(InputDisposition::OutcomeUnknown),
+        }
+    }
+
+    fn may_be_admitted(self) -> bool {
+        matches!(self, Self::Admitted | Self::Unknown)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -269,6 +302,7 @@ pub(super) struct PeerState {
     selection: Option<Selection>,
     metadata_review: Option<MetadataReview>,
     metadata_revocations: BTreeSet<(ControllerRegistrationId, ControllerEnrollmentId)>,
+    direct_control_revocations: BTreeSet<(ControllerRegistrationId, u64)>,
     pub(super) direct_input: Option<PendingDirectInput>,
     direct_input_revision: u64,
     requests: usize,
@@ -405,7 +439,9 @@ pub(super) fn cancel_direct_input(peer: &mut Peer, key: &RequestKey) -> bool {
 
 pub(super) fn expire_direct_input(peer: &mut Peer, now: Instant) {
     let reason = peer.controller.direct_input.as_ref().and_then(|input| {
-        if !input.valid.get() || !input.association.valid.load(Ordering::Acquire) {
+        if matches!(input.phase, DirectInputPhase::Settling { .. }) {
+            None
+        } else if !input.valid.get() || !input.association.valid.load(Ordering::Acquire) {
             Some(Refusal::NotAuthorized)
         } else if now >= input.deadline {
             Some(Refusal::Unavailable)
@@ -541,7 +577,7 @@ fn revoke_associated_control(
     record: &mut Registration,
     guard: &festerm_session::AutomationAdmissionGuard,
 ) {
-    if let Some((target, grant)) = record.direct_control.take() {
+    if let Some((target, grant, _)) = record.direct_control.take() {
         if broker.native_control_grant(principal, target, Instant::now()) == Ok(grant) {
             broker.revoke_ordinary(principal, guard);
         }
@@ -1085,6 +1121,14 @@ fn capture_direct_input_review(
         .as_ref()
         .and_then(WorkspaceRevision::current)
         .ok_or(festerm_automation::Error::Unavailable)?;
+    let modes = apps
+        .iter()
+        .find(|app| app.automation_window() == window)
+        .and_then(|app| {
+            app.automation_session(TabId::from_chip_id(input.association.target.session()))
+        })
+        .map(|session| session.terminal.modes())
+        .ok_or(festerm_automation::Error::StaleTarget)?;
     let sources = coordinator.direct_input_sources_locked(channel, now, guard)?;
     let mut metadata_descriptions = Vec::new();
     for target in &sources.metadata_targets {
@@ -1123,6 +1167,7 @@ fn capture_direct_input_review(
     Ok(DirectInputReviewCapture {
         candidate,
         workspace_revision,
+        modes,
         sources,
         metadata_descriptions,
     })
@@ -1136,7 +1181,10 @@ pub(super) fn command(
 ) -> Result<(), CommandError> {
     if matches!(
         action,
-        NativeCommand::ReviewControllerInput { .. } | NativeCommand::CancelControllerInput { .. }
+        NativeCommand::ReviewControllerInput { .. }
+            | NativeCommand::ConfirmControllerInput { .. }
+            | NativeCommand::CancelControllerInput { .. }
+            | NativeCommand::DisarmControllerInput { .. }
     ) {
         return direct_input_command(coordinator, window, action, apps);
     }
@@ -1206,8 +1254,16 @@ fn direct_input_command(
                     pending.token == input && pending.association.registration == registration
                 })
                 .ok_or(CommandError::Refused(Refusal::NotAuthorized))?;
+            let may_be_admitted = matches!(
+                &pending.phase,
+                DirectInputPhase::Settling { outcome, .. } if outcome.may_be_admitted()
+            );
             pending.valid.set(false);
-            coordinator.status = "Direct input cancelled; no input was admitted.";
+            coordinator.status = if may_be_admitted {
+                "Input cancellation requested; the input may already have been admitted."
+            } else {
+                "Direct input cancelled; no input was admitted."
+            };
             Ok(())
         }
         NativeCommand::ReviewControllerInput {
@@ -1238,6 +1294,123 @@ fn direct_input_command(
                 .ok_or(CommandError::Refused(Refusal::NotAuthorized))?;
             pending.phase = DirectInputPhase::Preparing(capture);
             coordinator.status = "Preparing the exact input and metadata disclosure for review.";
+            Ok(())
+        }
+        NativeCommand::ConfirmControllerInput {
+            channel,
+            registration,
+            input,
+        } => {
+            let guard = try_metadata_admission()?;
+            if !coordinator.direct_input_qualified() {
+                return Err(CommandError::Refused(Refusal::Unavailable));
+            }
+            let peer = coordinator
+                .peers
+                .get(&channel)
+                .ok_or(CommandError::Refused(Refusal::Closed))?;
+            if peer.connection.has_pending_input(&guard)
+                || !peer.controller.direct_control_revocations.is_empty()
+            {
+                return Err(CommandError::Busy);
+            }
+            let pending = peer
+                .controller
+                .direct_input
+                .as_ref()
+                .filter(|pending| {
+                    pending.token == input
+                        && pending.association.registration == registration
+                        && pending.association.window == window
+                        && pending.valid.get()
+                })
+                .ok_or(CommandError::Refused(Refusal::NotAuthorized))?;
+            let DirectInputPhase::Reviewing { capture, review } = &pending.phase else {
+                return Err(CommandError::Refused(Refusal::NotAuthorized));
+            };
+            if !capture_direct_input_review(coordinator, channel, window, pending, apps, &guard)
+                .is_ok_and(|current| current == *capture)
+                || !coordinator
+                    .staged_direct_review_is_current_locked(channel, review, apps, &guard)
+                || review.request().bindings.len() != 1
+            {
+                pending.valid.set(false);
+                return Err(CommandError::Refused(Refusal::NotAuthorized));
+            }
+            let capture = capture.clone();
+            let review = (**review).clone();
+            let binding = *review
+                .request()
+                .bindings
+                .first()
+                .ok_or(CommandError::Refused(Refusal::InvalidArguments))?;
+            let scope = review.request().scope.clone();
+            let decision = review.accept_from_native();
+            if let Err(error) =
+                coordinator.approve_control_handoff_locked(channel, &review, &decision, &guard)
+            {
+                if let Some(pending) = coordinator
+                    .peers
+                    .get(&channel)
+                    .and_then(|peer| peer.controller.direct_input.as_ref())
+                    .filter(|pending| pending.token == input)
+                {
+                    pending.valid.set(false);
+                }
+                return Err(metadata_command_error(error));
+            }
+            let pending = coordinator
+                .peers
+                .get_mut(&channel)
+                .and_then(|peer| peer.controller.direct_input.as_mut())
+                .filter(|pending| pending.token == input && pending.valid.get())
+                .ok_or(CommandError::Refused(Refusal::NotAuthorized))?;
+            pending.phase = DirectInputPhase::Approved {
+                capture,
+                binding,
+                scope,
+            };
+            coordinator.status = "Submitting the approved input; admission is not execution.";
+            Ok(())
+        }
+        NativeCommand::DisarmControllerInput {
+            channel,
+            registration,
+            input,
+        } => {
+            let peer = coordinator
+                .peers
+                .get_mut(&channel)
+                .ok_or(CommandError::Refused(Refusal::Closed))?;
+            let record = peer
+                .controller
+                .registrations
+                .values()
+                .find(|record| {
+                    record.internal == registration
+                        && record
+                            .association
+                            .is_some_and(|association| association.window == window)
+                        && record
+                            .direct_control
+                            .is_some_and(|(_, _, token)| token == input)
+                })
+                .ok_or(CommandError::Refused(Refusal::NotAuthorized))?;
+            if !record.valid.load(Ordering::Acquire) {
+                return Err(CommandError::Refused(Refusal::NotAuthorized));
+            }
+            if let Some(pending) = peer
+                .controller
+                .direct_input
+                .as_ref()
+                .filter(|pending| pending.association.registration == registration)
+            {
+                pending.valid.set(false);
+            }
+            peer.controller
+                .direct_control_revocations
+                .insert((registration, input));
+            coordinator.status = "Control disarm requested; revocation is pending.";
             Ok(())
         }
         _ => Err(CommandError::Refused(Refusal::InvalidArguments)),
@@ -1273,12 +1446,322 @@ pub(super) fn direct_input_preparations(coordinator: &Coordinator) -> Vec<Direct
         .collect()
 }
 
+pub(super) fn direct_input_dispatches(coordinator: &Coordinator) -> Vec<DirectInputPreparation> {
+    if coordinator.reconciliation_deferred
+        || coordinator.stop.load(Ordering::Acquire)
+        || coordinator.privacy_gate.is_closed()
+    {
+        return Vec::new();
+    }
+    coordinator
+        .peers
+        .iter()
+        .filter_map(|(channel, peer)| {
+            let pending = peer.controller.direct_input.as_ref()?;
+            if peer.connection.is_closed()
+                || !pending.valid.get()
+                || !peer.controller.direct_control_revocations.is_empty()
+                || Instant::now() >= pending.next_deadline()
+                || !matches!(&pending.phase, DirectInputPhase::Approved { .. })
+            {
+                return None;
+            }
+            Some(DirectInputPreparation {
+                channel: *channel,
+                token: pending.token,
+                window: pending.association.window,
+                target: pending.association.target,
+            })
+        })
+        .collect()
+}
+
+fn input_refusal(error: festerm_automation::Error) -> Refusal {
+    match error {
+        festerm_automation::Error::Busy | festerm_automation::Error::Unavailable => {
+            Refusal::Unavailable
+        }
+        error => refusal(error),
+    }
+}
+
+pub(super) fn dispatch_direct_input(
+    coordinator: &mut Coordinator,
+    preparation: DirectInputPreparation,
+    tab: &SessionTab,
+    apps: &[&FesTermApp],
+) -> festerm_automation::Result<()> {
+    use festerm_automation::Error;
+    if !coordinator.direct_input_qualified() {
+        return Err(Error::Unavailable);
+    }
+    use festerm_session::CommitAutomationInputError;
+
+    let guard = festerm_session::try_automation_admission_lock().map_err(|error| match error {
+        festerm_session::AutomationAdmissionTryError::Busy => Error::Busy,
+        festerm_session::AutomationAdmissionTryError::Poisoned => Error::Unavailable,
+    })?;
+    let peer = coordinator
+        .peers
+        .get(&preparation.channel)
+        .ok_or(Error::Closed)?;
+    let pending = peer
+        .controller
+        .direct_input
+        .as_ref()
+        .filter(|pending| pending.token == preparation.token && pending.valid.get())
+        .ok_or(Error::Revoked)?;
+    let DirectInputPhase::Approved {
+        capture,
+        binding,
+        scope,
+    } = &pending.phase
+    else {
+        return Err(Error::Revoked);
+    };
+    if peer.pending_completion.is_some()
+        || peer.connection.has_pending_input(&guard)
+        || !peer.controller.direct_control_revocations.is_empty()
+    {
+        return Err(Error::Busy);
+    }
+    let broker = coordinator.broker.as_ref().ok_or(Error::Unavailable)?;
+    let now = Instant::now();
+    if now >= pending.next_deadline()
+        || !peer_is_open(peer, &coordinator.privacy_gate, &coordinator.stop)
+        || pending.association.window != preparation.window
+        || pending.association.target != preparation.target
+        || !pending
+            .association
+            .is_bound(broker, &coordinator.targets, peer, &guard)
+        || coordinator
+            .presentation_workspace
+            .as_ref()
+            .and_then(WorkspaceRevision::current)
+            != Some(capture.workspace_revision)
+        || !capture_direct_input_review(
+            coordinator,
+            preparation.channel,
+            preparation.window,
+            pending,
+            apps,
+            &guard,
+        )
+        .is_ok_and(|current| current == *capture)
+    {
+        return Err(Error::Revoked);
+    }
+    let Invocation::DirectInput {
+        target,
+        input,
+        bytes,
+    } = binding.invocation
+    else {
+        return Err(Error::BindingMismatch);
+    };
+    if target != preparation.target {
+        return Err(Error::BindingMismatch);
+    }
+    let principal = peer.principal;
+    let capture = capture.clone();
+    let spec = RunSpec {
+        binding: *binding,
+        scope: scope.clone(),
+        budget: Budget::default(),
+        deadline: pending.next_deadline(),
+    };
+    let run = coordinator
+        .broker
+        .as_mut()
+        .ok_or(Error::Unavailable)?
+        .admit_run(principal, None, spec, now)?;
+    let peer = coordinator
+        .peers
+        .get_mut(&preparation.channel)
+        .ok_or(Error::Closed)?;
+    retain_completion(peer, run, None);
+    drop(guard);
+
+    let attempted = (|| {
+        let lease = coordinator.acquire_control_lease(preparation.channel, run, target)?;
+        let guard =
+            festerm_session::try_automation_admission_lock().map_err(|error| match error {
+                festerm_session::AutomationAdmissionTryError::Busy => Error::Busy,
+                festerm_session::AutomationAdmissionTryError::Poisoned => Error::Unavailable,
+            })?;
+        let peer = coordinator
+            .peers
+            .get(&preparation.channel)
+            .ok_or(Error::Closed)?;
+        let pending = peer
+            .controller
+            .direct_input
+            .as_ref()
+            .filter(|pending| pending.token == preparation.token && pending.valid.get())
+            .ok_or(Error::Revoked)?;
+        if peer.connection.has_pending_input(&guard)
+            || !peer_is_open(peer, &coordinator.privacy_gate, &coordinator.stop)
+            || Instant::now() >= pending.next_deadline()
+        {
+            return Err(Error::Busy);
+        }
+        let ticket = coordinator
+            .broker
+            .as_mut()
+            .ok_or(Error::Unavailable)?
+            .prepare_request(
+                principal,
+                run,
+                AuthorityOperation::Control {
+                    lease,
+                    input,
+                    bytes,
+                    presentation: None,
+                },
+                Instant::now(),
+            )?;
+        coordinator
+            .peers
+            .get_mut(&preparation.channel)
+            .and_then(|peer| peer.pending_completion.as_mut())
+            .ok_or(Error::Closed)?
+            .request = Some(ticket);
+        drop(guard);
+        let reservation = coordinator
+            .reserve_direct_input(preparation.channel, ticket, tab)
+            .map_err(|error| match error {
+                presentation::ReserveDirectInputError::Authority(error) => error,
+                presentation::ReserveDirectInputError::Backend(_) => Error::Unavailable,
+            })?;
+        let result = coordinator.commit_unpresented_direct_input(
+            preparation.channel,
+            ticket,
+            reservation,
+            tab,
+        );
+        #[cfg(test)]
+        let result = if result.is_ok() && coordinator.synthetic_direct_input_lost_after_commit {
+            Err(CommitAutomationInputError::LostAfterCommit)
+        } else {
+            result
+        };
+        Ok(match result {
+            Ok(()) => DirectInputOutcome::Admitted,
+            Err(CommitAutomationInputError::LostAfterCommit) => DirectInputOutcome::Unknown,
+            Err(CommitAutomationInputError::ClosedOrExpired) => {
+                DirectInputOutcome::Refused(Refusal::Unavailable)
+            }
+            Err(CommitAutomationInputError::Refused(error)) => {
+                DirectInputOutcome::Refused(input_refusal(error))
+            }
+        })
+    })();
+    let outcome =
+        attempted.unwrap_or_else(|error| DirectInputOutcome::Refused(input_refusal(error)));
+    let pending = coordinator
+        .peers
+        .get_mut(&preparation.channel)
+        .and_then(|peer| peer.controller.direct_input.as_mut())
+        .filter(|pending| pending.token == preparation.token)
+        .ok_or(Error::Closed)?;
+    pending.phase = DirectInputPhase::Settling { capture, outcome };
+    Ok(())
+}
+
+pub(super) fn settle_direct_input(
+    coordinator: &mut Coordinator,
+    channel: u64,
+    token: u64,
+    apps: &[&FesTermApp],
+) -> festerm_automation::Result<bool> {
+    use festerm_automation::Error;
+
+    let guard = festerm_session::try_automation_admission_lock().map_err(|error| match error {
+        festerm_session::AutomationAdmissionTryError::Busy => Error::Busy,
+        festerm_session::AutomationAdmissionTryError::Poisoned => Error::Unavailable,
+    })?;
+    let peer = coordinator.peers.get(&channel).ok_or(Error::Closed)?;
+    let Some(pending) = peer
+        .controller
+        .direct_input
+        .as_ref()
+        .filter(|pending| pending.token == token)
+    else {
+        return Ok(false);
+    };
+    let DirectInputPhase::Settling { capture, outcome } = &pending.phase else {
+        return Ok(false);
+    };
+    if peer.pending_completion.is_some() || peer.connection.has_pending_input(&guard) {
+        return Err(Error::Busy);
+    }
+    let valid = pending.valid.clone();
+    let revision = capture.workspace_revision;
+    let outcome = *outcome;
+    let retain_admitted = matches!(outcome, DirectInputOutcome::Admitted)
+        && peer.controller.direct_control_revocations.is_empty()
+        && capture_direct_input_review(
+            coordinator,
+            channel,
+            pending.association.window,
+            pending,
+            apps,
+            &guard,
+        )
+        .is_ok_and(|current| current == *capture);
+    let retained = coordinator.settle_direct_request_handoff_locked(
+        channel,
+        &valid,
+        revision,
+        retain_admitted,
+        &guard,
+    );
+    let peer = coordinator.peers.get_mut(&channel).ok_or(Error::Closed)?;
+    let pending = peer.controller.direct_input.take().ok_or(Error::Closed)?;
+    let response = peer
+        .machine
+        .complete(&pending.request.key, outcome.result());
+    drop(pending);
+    drop(guard);
+    if let Some(response) = response {
+        send(peer, response, Instant::now(), false);
+    }
+    coordinator.status = match outcome {
+        DirectInputOutcome::Admitted if retained => {
+            "Input admitted to the terminal queue; the control handoff remains armed."
+        }
+        DirectInputOutcome::Admitted => {
+            "Input admitted to the terminal queue; the control handoff is disarmed."
+        }
+        DirectInputOutcome::Unknown => "Input outcome is unknown; the control handoff is disarmed.",
+        DirectInputOutcome::Refused(_) => {
+            "Input was not admitted; the control handoff is disarmed."
+        }
+    };
+    Ok(true)
+}
+
+pub(super) fn direct_input_settlements(coordinator: &Coordinator) -> Vec<(u64, u64)> {
+    coordinator
+        .peers
+        .iter()
+        .filter_map(|(channel, peer)| {
+            let pending = peer.controller.direct_input.as_ref()?;
+            matches!(&pending.phase, DirectInputPhase::Settling { .. })
+                .then_some((*channel, pending.token))
+        })
+        .collect()
+}
+
 pub(super) fn prepare_direct_input_review(
     coordinator: &mut Coordinator,
     preparation: DirectInputPreparation,
     tab: &mut SessionTab,
 ) -> festerm_automation::Result<()> {
     use festerm_automation::Error;
+    if !coordinator.direct_input_qualified() {
+        return Err(Error::Unavailable);
+    }
     let pending = coordinator
         .peers
         .get(&preparation.channel)
@@ -1336,9 +1819,13 @@ pub(super) fn prepare_direct_input_review(
         tab,
         &capture.sources.scope,
     )?;
-    if let Err(error) =
-        coordinator.bind_direct_request_review(&review, association, valid.clone(), deadline)
-    {
+    if let Err(error) = coordinator.bind_direct_request_review(
+        &review,
+        association,
+        valid.clone(),
+        deadline,
+        preparation.token,
+    ) {
         valid.set(false);
         if let Err(cleanup) =
             coordinator.cancel_control_handoff_review(preparation.channel, &review)
@@ -1845,6 +2332,18 @@ pub(super) fn retire_metadata_actions_locked(
 ) -> festerm_automation::Result<bool> {
     let mut retired = false;
     for peer in peers.values_mut() {
+        for (registration, token) in std::mem::take(&mut peer.controller.direct_control_revocations)
+        {
+            if let Some(record) = peer.controller.registrations.values_mut().find(|record| {
+                record.internal == registration
+                    && record
+                        .direct_control
+                        .is_some_and(|(_, _, current)| current == token)
+            }) {
+                revoke_associated_control(broker, peer.principal, record, guard);
+                retired = true;
+            }
+        }
         if peer
             .controller
             .metadata_review
@@ -2116,6 +2615,20 @@ pub(super) fn settings(
                                         window: pending.association.window,
                                         target: pending.association.target,
                                     },
+                                    DirectInputPhase::Approved { .. } => {
+                                        ControllerInputView::Submitting {
+                                            token: pending.token,
+                                            window: pending.association.window,
+                                            may_be_admitted: false,
+                                        }
+                                    }
+                                    DirectInputPhase::Settling { outcome, .. } => {
+                                        ControllerInputView::Submitting {
+                                            token: pending.token,
+                                            window: pending.association.window,
+                                            may_be_admitted: outcome.may_be_admitted(),
+                                        }
+                                    }
                                     DirectInputPhase::Preparing(capture)
                                     | DirectInputPhase::Reviewing { capture, .. }
                                         if capture_direct_input_review(
@@ -2160,7 +2673,9 @@ pub(super) fn settings(
                                                     ControllerInputView::Cancelling
                                                 }
                                             }
-                                            DirectInputPhase::Requested => unreachable!(),
+                                            DirectInputPhase::Requested
+                                            | DirectInputPhase::Approved { .. }
+                                            | DirectInputPhase::Settling { .. } => unreachable!(),
                                         }
                                     }
                                     _ => {
@@ -2175,6 +2690,22 @@ pub(super) fn settings(
                     } else {
                         ControllerInputView::Unavailable
                     };
+                    let control = record.direct_control.and_then(|(target, grant, token)| {
+                        let association = record.association.filter(|association| {
+                            association.target == target && associated_target == Some(target)
+                        })?;
+                        (!peer
+                            .controller
+                            .direct_control_revocations
+                            .contains(&(record.internal, token))
+                            && broker.native_control_grant(peer.principal, target, Instant::now())
+                                == Ok(grant))
+                        .then_some(ControllerArmedControl {
+                            token,
+                            window: association.window,
+                            target,
+                        })
+                    });
                     Some(ControllerRow {
                         channel: *channel,
                         registration: record.internal,
@@ -2184,6 +2715,7 @@ pub(super) fn settings(
                         selection,
                         metadata,
                         input,
+                        control,
                         valid: record.valid.clone(),
                         metadata_review_valid,
                         input_review_valid,
@@ -2780,6 +3312,497 @@ pub(super) mod tests {
             token,
             receive,
         )
+    }
+
+    fn settle_direct_input_for_test(coordinator: &mut Coordinator, token: u64, app: &FesTermApp) {
+        retry_automation_busy(|| {
+            let broker = coordinator.broker.as_mut().unwrap();
+            let peer = coordinator.peers.get_mut(&1).unwrap();
+            retry_completion(broker, peer, Instant::now()).map_err(|error| match error {
+                festerm_session::AutomationAdmissionTryError::Busy => {
+                    festerm_automation::Error::Busy
+                }
+                festerm_session::AutomationAdmissionTryError::Poisoned => {
+                    festerm_automation::Error::Unavailable
+                }
+            })
+        })
+        .unwrap();
+        assert!(
+            retry_automation_busy(|| settle_direct_input(coordinator, 1, token, &[app])).unwrap()
+        );
+    }
+
+    fn finish_direct_input_for_test(
+        coordinator: &mut Coordinator,
+        token: u64,
+        app: &FesTermApp,
+        receive: &impl Fn() -> Option<festerm_automation::OutboundFrame>,
+    ) -> Value {
+        settle_direct_input_for_test(coordinator, token, app);
+        frame_response(&receive().expect("expected input disposition"))
+    }
+
+    #[test]
+    fn direct_input_wire_confirmation_admits_once_and_disarms_unknown_or_user_request() {
+        for scenario in [
+            "admitted",
+            "unknown",
+            "privacy",
+            "qualification",
+            "opt-out",
+            "disarm",
+            "disconnect",
+            "changed-source",
+            "changed-mode",
+        ] {
+            let unknown = scenario == "unknown";
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let (mut coordinator, mut app, tab, registration, enrollment, token, receive) =
+                    reviewing_input_fixture("echo synthetic", Some(Duration::from_secs(60)), None);
+                let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+                    app.automation_session(tab).unwrap().controller.session()
+                else {
+                    panic!("expected synthetic local backend");
+                };
+                let backend = backend.clone();
+                backend.enable_ordered_test_input();
+                coordinator.synthetic_direct_input_lost_after_commit = unknown;
+                native(
+                    &mut coordinator,
+                    &[&app],
+                    WindowId::PRIMARY,
+                    NativeCommand::ConfirmControllerInput {
+                        channel: 1,
+                        registration,
+                        input: token,
+                    },
+                );
+                let dispatches = direct_input_dispatches(&coordinator);
+                assert_eq!(dispatches.len(), 1);
+                retry_automation_busy(|| {
+                    dispatch_direct_input(
+                        &mut coordinator,
+                        dispatches[0],
+                        app.automation_session(tab).unwrap(),
+                        &[&app],
+                    )
+                })
+                .unwrap();
+                if scenario == "disconnect" {
+                    if !matches!(
+                        coordinator.peers[&1]
+                            .controller
+                            .direct_input
+                            .as_ref()
+                            .unwrap()
+                            .phase,
+                        DirectInputPhase::Settling {
+                            outcome: DirectInputOutcome::Admitted,
+                            ..
+                        }
+                    ) {
+                        let response =
+                            finish_direct_input_for_test(&mut coordinator, token, &app, &receive);
+                        assert_eq!(
+                            response["result"]["structuredContent"]["code"],
+                            "UNAVAILABLE"
+                        );
+                        assert!(backend.drain_ordered_test_input().is_empty());
+                        assert!(Instant::now() < deadline, "input dispatch stayed busy");
+                        continue;
+                    }
+                    let principal = coordinator.peers[&1].principal;
+                    let target = coordinator.targets[&tab.chip_id()].reference;
+                    coordinator.peers[&1].connection.close();
+                    settle_direct_input_for_test(&mut coordinator, token, &app);
+                    assert!(receive().is_none());
+                    assert_eq!(
+                        backend.drain_ordered_test_input(),
+                        vec![b"echo synthetic\r".to_vec()]
+                    );
+                    assert!(coordinator
+                        .broker
+                        .as_ref()
+                        .unwrap()
+                        .native_control_grant(principal, target, Instant::now())
+                        .is_err());
+                    assert!(coordinator.control_handoffs.is_empty());
+                    break;
+                }
+                if scenario == "privacy" {
+                    coordinator.privacy_gate.close();
+                } else if scenario == "qualification" {
+                    coordinator.synthetic_direct_input_qualified = false;
+                } else if scenario == "opt-out" {
+                    coordinator.controller_opted_in = false;
+                } else if scenario == "changed-source" {
+                    app.automation_session_mut(tab).label = "changed source".to_owned();
+                } else if scenario == "changed-mode" {
+                    app.automation_session_mut(tab)
+                        .terminal
+                        .ingest(b"\x1b[?2004h");
+                } else if scenario == "disarm" {
+                    native(
+                        &mut coordinator,
+                        &[&app],
+                        WindowId::PRIMARY,
+                        NativeCommand::DisarmControllerInput {
+                            channel: 1,
+                            registration,
+                            input: token,
+                        },
+                    );
+                }
+                let response =
+                    finish_direct_input_for_test(&mut coordinator, token, &app, &receive);
+                let content = &response["result"]["structuredContent"];
+                let delivered = backend.drain_ordered_test_input();
+                if content["status"] == "refused" && content["code"] == "UNAVAILABLE" {
+                    assert!(delivered.is_empty());
+                    assert!(Instant::now() < deadline, "input dispatch stayed busy");
+                    continue;
+                }
+                assert_eq!(delivered, vec![b"echo synthetic\r".to_vec()]);
+                assert!(backend.drain_ordered_test_input().is_empty());
+                assert_eq!(
+                    content["data"]["disposition"],
+                    if unknown {
+                        "outcome_unknown"
+                    } else {
+                        "admitted"
+                    }
+                );
+                assert_eq!(response["result"]["isError"], unknown);
+                assert!(coordinator.peers[&1].controller.direct_input.is_none());
+                let principal = coordinator.peers[&1].principal;
+                let target = coordinator.targets[&tab.chip_id()].reference;
+                let current = coordinator.broker.as_ref().unwrap().native_control_grant(
+                    principal,
+                    target,
+                    Instant::now(),
+                );
+                if scenario != "admitted" {
+                    assert!(current.is_err());
+                    if unknown {
+                        assert!(registration_row(&coordinator, &[&app], 1, registration)
+                            .control
+                            .is_none());
+                    }
+                } else {
+                    let grant = current.unwrap();
+                    assert_eq!(
+                        registration_row(&coordinator, &[&app], 1, registration)
+                            .control
+                            .unwrap()
+                            .token,
+                        token
+                    );
+                    assert_eq!(
+                        command(
+                            &mut coordinator,
+                            WindowId::PRIMARY,
+                            NativeCommand::DisarmControllerInput {
+                                channel: 1,
+                                registration,
+                                input: token + 1,
+                            },
+                            &[&app],
+                        ),
+                        Err(CommandError::Refused(Refusal::NotAuthorized))
+                    );
+                    assert_eq!(
+                        coordinator.broker.as_ref().unwrap().native_control_grant(
+                            principal,
+                            target,
+                            Instant::now(),
+                        ),
+                        Ok(grant)
+                    );
+                    native(
+                        &mut coordinator,
+                        &[&app],
+                        WindowId::PRIMARY,
+                        NativeCommand::DisarmControllerInput {
+                            channel: 1,
+                            registration,
+                            input: token,
+                        },
+                    );
+                    let mut broker = coordinator.broker.take().unwrap();
+                    coordinator.reconcile(&mut broker, &[&app]);
+                    assert!(broker
+                        .native_control_grant(principal, target, Instant::now())
+                        .is_err());
+                    assert!(broker
+                        .native_enrollment_metadata_grant(
+                            principal,
+                            registration,
+                            enrollment,
+                            Instant::now(),
+                        )
+                        .is_ok());
+                    coordinator.broker = Some(broker);
+                }
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn direct_input_queued_cancellation_precedes_confirmation_and_settlement() {
+        for stage in ["review", "approved", "admitted"] {
+            let retry_deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let (mut coordinator, mut app, tab, registration, _, token, receive) =
+                    reviewing_input_fixture("cancelled", None, None);
+                let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+                    app.automation_session(tab).unwrap().controller.session()
+                else {
+                    panic!("expected synthetic local backend");
+                };
+                let backend = backend.clone();
+                backend.enable_ordered_test_input();
+                if stage != "review" {
+                    native(
+                        &mut coordinator,
+                        &[&app],
+                        WindowId::PRIMARY,
+                        NativeCommand::ConfirmControllerInput {
+                            channel: 1,
+                            registration,
+                            input: token,
+                        },
+                    );
+                }
+                if stage == "admitted" {
+                    let dispatch = direct_input_dispatches(&coordinator)[0];
+                    retry_automation_busy(|| {
+                        dispatch_direct_input(
+                            &mut coordinator,
+                            dispatch,
+                            app.automation_session(tab).unwrap(),
+                            &[&app],
+                        )
+                    })
+                    .unwrap();
+                    if !matches!(
+                        coordinator.peers[&1]
+                            .controller
+                            .direct_input
+                            .as_ref()
+                            .unwrap()
+                            .phase,
+                        DirectInputPhase::Settling {
+                            outcome: DirectInputOutcome::Admitted,
+                            ..
+                        }
+                    ) {
+                        let response =
+                            finish_direct_input_for_test(&mut coordinator, token, &app, &receive);
+                        assert_eq!(
+                            response["result"]["structuredContent"]["code"],
+                            "UNAVAILABLE"
+                        );
+                        assert!(backend.drain_ordered_test_input().is_empty());
+                        assert!(
+                            Instant::now() < retry_deadline,
+                            "input dispatch stayed busy"
+                        );
+                        continue;
+                    }
+                }
+                let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+                app.adopt_broadcast_configuration(
+                    festerm_config::Configuration::empty()
+                        .with_interface_settings(settings)
+                        .unwrap(),
+                );
+                let (server, events) = ipc::test_server(coordinator.stop.clone());
+                coordinator.server = Some(server);
+                coordinator.peers[&1]
+                .connection
+                .enqueue_message(
+                    &events,
+                    br#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":9}}"#
+                        .to_vec(),
+                )
+                .unwrap();
+                if stage == "admitted" {
+                    coordinator
+                        .peers
+                        .get_mut(&1)
+                        .unwrap()
+                        .controller
+                        .direct_input
+                        .as_mut()
+                        .unwrap()
+                        .deadline = Instant::now() - Duration::from_secs(1);
+                    expire_direct_input(coordinator.peers.get_mut(&1).unwrap(), Instant::now());
+                    assert!(coordinator.peers[&1].controller.direct_input.is_some());
+                    assert_eq!(
+                        settle_direct_input(&mut coordinator, 1, token, &[&app]),
+                        Err(festerm_automation::Error::Busy)
+                    );
+                } else if stage == "approved" {
+                    let dispatch = direct_input_dispatches(&coordinator)[0];
+                    assert_eq!(
+                        dispatch_direct_input(
+                            &mut coordinator,
+                            dispatch,
+                            app.automation_session(tab).unwrap(),
+                            &[&app],
+                        ),
+                        Err(festerm_automation::Error::Busy)
+                    );
+                } else {
+                    assert_eq!(
+                        command(
+                            &mut coordinator,
+                            WindowId::PRIMARY,
+                            NativeCommand::ConfirmControllerInput {
+                                channel: 1,
+                                registration,
+                                input: token,
+                            },
+                            &[&app],
+                        ),
+                        Err(CommandError::Busy)
+                    );
+                }
+                let context = egui::Context::default();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    coordinator.tick(&context, &[&app]);
+                    if coordinator.peers[&1].controller.direct_input.is_none()
+                        && !coordinator.reconciliation_deferred
+                    {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "cancellation cleanup stayed busy"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                assert_eq!(
+                    backend.drain_ordered_test_input(),
+                    if stage == "admitted" {
+                        vec![b"cancelled\r".to_vec()]
+                    } else {
+                        Vec::new()
+                    }
+                );
+                assert!(receive().is_none());
+                assert!(coordinator.control_handoffs.is_empty());
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn direct_input_approved_dispatch_rejects_changed_fences_and_source_descriptions() {
+        for change in [
+            "human",
+            "ime",
+            "mode",
+            "metadata",
+            "association",
+            "qualification",
+        ] {
+            let (mut coordinator, mut app, tab, registration, _, token, receive) =
+                reviewing_input_fixture("must not send", Some(Duration::from_secs(60)), None);
+            let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+                app.automation_session(tab).unwrap().controller.session()
+            else {
+                panic!("expected synthetic local backend");
+            };
+            let backend = backend.clone();
+            backend.enable_ordered_test_input();
+            native(
+                &mut coordinator,
+                &[&app],
+                WindowId::PRIMARY,
+                NativeCommand::ConfirmControllerInput {
+                    channel: 1,
+                    registration,
+                    input: token,
+                },
+            );
+            let dispatch = direct_input_dispatches(&coordinator)[0];
+            let human = if change == "human" {
+                Some(
+                    app.automation_session_mut(tab)
+                        .controller
+                        .begin_pending_human_input(),
+                )
+            } else {
+                None
+            };
+            let ime = if change == "ime" {
+                let ime = Arc::new(festerm_session::AutomationEpoch::new());
+                ime.transition(true);
+                app.set_automation_ime_epoch(&ime);
+                Some(ime)
+            } else {
+                None
+            };
+            match change {
+                "mode" => app
+                    .automation_session_mut(tab)
+                    .terminal
+                    .ingest(b"\x1b[?2004h"),
+                "metadata" => {
+                    app.automation_session_mut(tab).label = "changed source".to_owned();
+                }
+                "association" => coordinator.controller_target_moving(tab),
+                "qualification" => coordinator.synthetic_direct_input_qualified = false,
+                _ => {}
+            }
+            match retry_automation_busy(|| {
+                dispatch_direct_input(
+                    &mut coordinator,
+                    dispatch,
+                    app.automation_session(tab).unwrap(),
+                    &[&app],
+                )
+            }) {
+                Ok(()) => {
+                    let response =
+                        finish_direct_input_for_test(&mut coordinator, token, &app, &receive);
+                    assert_eq!(
+                        response["result"]["structuredContent"]["status"], "refused",
+                        "{change}"
+                    );
+                }
+                Err(error) => {
+                    assert!(
+                        matches!(
+                            error,
+                            festerm_automation::Error::Revoked
+                                | festerm_automation::Error::StaleTarget
+                                | festerm_automation::Error::Unauthorized
+                                | festerm_automation::Error::Unavailable
+                        ),
+                        "{change}: {error:?}"
+                    );
+                    refuse_direct_input_preparation(&mut coordinator, dispatch, refusal(error));
+                    assert_eq!(
+                        frame_response(&receive().unwrap())["result"]["structuredContent"]
+                            ["status"],
+                        "refused",
+                        "{change}"
+                    );
+                }
+            }
+            assert!(backend.drain_ordered_test_input().is_empty(), "{change}");
+            drop((human, ime));
+            let mut broker = coordinator.broker.take().unwrap();
+            coordinator.reconcile(&mut broker, &[&app]);
+            assert!(coordinator.control_handoffs.is_empty(), "{change}");
+            coordinator.broker = Some(broker);
+        }
     }
 
     #[test]

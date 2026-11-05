@@ -100,6 +100,19 @@ pub(super) trait NativePresentationBarrier {
     ) -> festerm_automation::Result<T>;
 }
 
+struct NoPresentationBarrier;
+
+impl NativePresentationBarrier for NoPresentationBarrier {
+    fn with_observation<T>(
+        &mut self,
+        _broker: &mut Broker,
+        _workspace_revision: u64,
+        _operation: impl FnOnce(&mut Broker, NativePresentationObservation) -> T,
+    ) -> festerm_automation::Result<T> {
+        Err(Error::Unavailable)
+    }
+}
+
 pub(super) struct BoundControlHandoff {
     target: TargetRef,
     grant: NativeControlGrant,
@@ -115,6 +128,7 @@ struct DirectRequestFence {
     association: controller::FrozenAssociation,
     valid: Rc<Cell<bool>>,
     deadline: Instant,
+    token: u64,
 }
 
 pub(super) struct BoundControlReview {
@@ -236,6 +250,7 @@ impl FrozenSource {
 
 /// Host-only proposal to be shown by native UI. It is not a decision or a
 /// serializable authority, and its original fence remains in the coordinator.
+#[derive(Clone)]
 pub(crate) struct PendingControlReview {
     principal: ConnectionId,
     target: TargetRef,
@@ -739,6 +754,7 @@ impl Coordinator {
         association: controller::FrozenAssociation,
         valid: Rc<Cell<bool>>,
         deadline: Instant,
+        token: u64,
     ) -> festerm_automation::Result<()> {
         let bound = self
             .pending_control_reviews
@@ -756,6 +772,7 @@ impl Coordinator {
             association,
             valid,
             deadline,
+            token,
         });
         Ok(())
     }
@@ -1130,7 +1147,17 @@ impl Coordinator {
         decision: &NativeControlDecision,
     ) -> festerm_automation::Result<()> {
         let guard = try_admission()?;
-        let principal = self.admission_principal_locked(channel, &guard)?;
+        self.approve_control_handoff_locked(channel, review, decision, &guard)
+    }
+
+    pub(super) fn approve_control_handoff_locked(
+        &mut self,
+        channel: u64,
+        review: &PendingControlReview,
+        decision: &NativeControlDecision,
+        guard: &AutomationAdmissionGuard,
+    ) -> festerm_automation::Result<()> {
+        let principal = self.admission_principal_locked(channel, guard)?;
         if review.principal != principal
             || decision.principal != principal
             || decision.target != review.target
@@ -1139,7 +1166,7 @@ impl Coordinator {
             return Err(Error::Unauthorized);
         }
         let now = Instant::now();
-        self.synchronize_control_handoffs_locked(now, &guard)?;
+        self.synchronize_control_handoffs_locked(now, guard)?;
         if self.peers[&channel].grant.is_some() {
             return Err(Error::Unavailable);
         }
@@ -1157,12 +1184,12 @@ impl Coordinator {
                 || now >= fence.deadline
                 || !fence
                     .association
-                    .is_bound(broker, &self.targets, peer, &guard)
+                    .is_bound(broker, &self.targets, peer, guard)
             {
                 return Err(Error::Revoked);
             }
         }
-        let metadata = self.metadata_snapshot_locked(principal, now, &guard)?;
+        let metadata = self.metadata_snapshot_locked(principal, now, guard)?;
         let mut metadata_sources = metadata
             .as_ref()
             .map_or_else(BTreeSet::new, |(_, sources)| sources.clone());
@@ -1170,7 +1197,7 @@ impl Coordinator {
             channel,
             &bound.enrollment_metadata,
             now,
-            &guard,
+            guard,
         )?);
         if metadata.as_ref().map(|(grant, _)| *grant) != bound.metadata
             || metadata_sources != review.metadata_sources
@@ -1213,11 +1240,11 @@ impl Coordinator {
         if !approval.is_single_control_handoff(review.target) {
             return Err(Error::Unauthorized);
         }
-        if !self.live_control_fence_locked(review.target, &bound.fence, &guard)
+        if !self.live_control_fence_locked(review.target, &bound.fence, guard)
             || !bound
                 .sources
                 .iter()
-                .all(|source| source.is_current(&self.targets, &guard))
+                .all(|source| source.is_current(&self.targets, guard))
         {
             return Err(Error::Revoked);
         }
@@ -1228,7 +1255,7 @@ impl Coordinator {
         }
         let now = approval_now;
         let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
-        if let Err(error) = broker.approve(principal, review.approval_id, approval, now, &guard) {
+        if let Err(error) = broker.approve(principal, review.approval_id, approval, now, guard) {
             let _ = broker.reject_approval(principal, review.approval_id);
             self.pending_control_reviews.remove(&review.approval_id);
             return Err(error);
@@ -1239,14 +1266,14 @@ impl Coordinator {
         self.pending_metadata_reviews
             .retain(|id, pending| broker.pending_approval_is_active(pending.principal, *id, now));
         let Some(bound) = bound else {
-            broker.revoke_ordinary(principal, &guard);
+            broker.revoke_ordinary(principal, guard);
             self.control_handoffs.remove(&principal);
             return Err(Error::Revoked);
         };
         let grant = match broker.native_control_grant(principal, review.target, Instant::now()) {
             Ok(grant) => grant,
             Err(error) => {
-                broker.revoke_ordinary(principal, &guard);
+                broker.revoke_ordinary(principal, guard);
                 self.control_handoffs.remove(&principal);
                 return Err(error);
             }
@@ -1255,14 +1282,14 @@ impl Coordinator {
         let association = pending_request
             .as_ref()
             .map(|fence| fence.association.clone());
-        if let Some(association) = &association {
+        if let (Some(association), Some(request)) = (&association, &pending_request) {
             let result = self
                 .peers
                 .get_mut(&channel)
                 .ok_or(Error::Closed)
-                .and_then(|peer| association.bind_direct_control_grant(peer, grant));
+                .and_then(|peer| association.bind_direct_control_grant(peer, grant, request.token));
             if let Err(error) = result {
-                broker.revoke_ordinary(principal, &guard);
+                broker.revoke_ordinary(principal, guard);
                 self.control_handoffs.remove(&principal);
                 return Err(error);
             }
@@ -1996,6 +2023,72 @@ impl Coordinator {
         })
     }
 
+    pub(super) fn settle_direct_request_handoff_locked(
+        &mut self,
+        channel: u64,
+        valid: &Rc<Cell<bool>>,
+        workspace_revision: u64,
+        admitted: bool,
+        guard: &AutomationAdmissionGuard,
+    ) -> bool {
+        let Some(peer) = self.peers.get(&channel) else {
+            valid.set(false);
+            return false;
+        };
+        let principal = peer.principal;
+        let Some(handoff) = self.control_handoffs.get(&principal) else {
+            valid.set(false);
+            return false;
+        };
+        let Some(request) = handoff
+            .pending_request
+            .as_ref()
+            .filter(|request| Rc::ptr_eq(&request.valid, valid))
+        else {
+            valid.set(false);
+            return false;
+        };
+        let now = Instant::now();
+        let current = admitted
+            && self.direct_input_qualified()
+            && self.controller_opted_in
+            && peer.grant.is_none()
+            && !peer.connection.is_closed()
+            && !self.privacy_gate.is_closed()
+            && !self.stop.load(Ordering::Acquire)
+            && valid.get()
+            && now < request.deadline
+            && self
+                .presentation_workspace
+                .as_ref()
+                .and_then(WorkspaceRevision::current)
+                == Some(workspace_revision)
+            && self.handoff_association_is_bound(channel, handoff, guard)
+            && self.live_control_fence_locked(handoff.target, &handoff.fence, guard)
+            && handoff
+                .sources
+                .iter()
+                .all(|source| source.is_current(&self.targets, guard))
+            && self.broker.as_ref().is_some_and(|broker| {
+                broker.native_control_grant(principal, handoff.target, now) == Ok(handoff.grant)
+            });
+        if current {
+            let handoff = self.control_handoffs.get_mut(&principal).unwrap();
+            handoff.pending_request = None;
+            handoff.lease = None;
+            return true;
+        }
+        let (target, grant) = (handoff.target, handoff.grant);
+        valid.set(false);
+        if let Some(broker) = self.broker.as_mut() {
+            if broker.native_control_grant(principal, target, now) == Ok(grant) {
+                broker.revoke_ordinary(principal, guard);
+            }
+        }
+        self.control_handoffs.remove(&principal);
+        false
+    }
+
     /// The application binds its one shared UI workspace before use. Rebinding
     /// could make an old revision match a different workspace, so it fails closed.
     pub(crate) fn bind_presentation_workspace(
@@ -2351,6 +2444,16 @@ impl Coordinator {
         )
     }
 
+    pub(super) fn commit_unpresented_direct_input(
+        &mut self,
+        channel: u64,
+        request: RequestId,
+        reservation: DirectInputReservation,
+        tab: &SessionTab,
+    ) -> std::result::Result<(), CommitAutomationInputError<Error>> {
+        self.commit_direct_input::<NoPresentationBarrier>(channel, request, reservation, tab, None)
+    }
+
     fn commit_input<B: NativePresentationBarrier>(
         &mut self,
         channel: u64,
@@ -2364,6 +2467,9 @@ impl Coordinator {
         let principal = self
             .admission_principal_locked(channel, &guard)
             .map_err(refused)?;
+        if tab.is_some() && self.peers[&channel].connection.has_pending_input(&guard) {
+            return Err(refused(Error::Busy));
+        }
         self.synchronize_control_handoffs_locked(Instant::now(), &guard)
             .map_err(refused)?;
         let broker = self
