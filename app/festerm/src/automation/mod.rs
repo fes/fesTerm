@@ -3113,6 +3113,7 @@ fn process_peer_message(
                 stop,
                 controller_qualified,
                 metadata.qualified,
+                input_qualified,
                 now,
             );
         }

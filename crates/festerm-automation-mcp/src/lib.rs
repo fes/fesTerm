@@ -375,6 +375,7 @@ pub enum BackendResult {
     ControllerCapabilities {
         enrollment_available: bool,
         metadata_available: bool,
+        input_available: bool,
     },
     /// Only the submitting connection's non-authorizing correlation identifiers.
     ControllerStatus {
@@ -627,7 +628,7 @@ impl Machine {
                 if !schema::empty_params(params) {
                     return self.error(Some(&id), ProtocolError::InvalidParams);
                 }
-                let mut tools = schema::tools(self.controller_enrollment);
+                let mut tools = schema::tools(self.controller_enrollment, self.direct_input);
                 if self.unavailable_presentation {
                     tools.extend(presentation::tools(self.controller_enrollment));
                 }
@@ -649,7 +650,7 @@ impl Machine {
                     Some(Ok(presentation::Call::Capabilities)) => {
                         return Event::Reply(tool_result(
                             &id,
-                            json!({"status": "ok", "data": presentation::unavailable(false)}),
+                            json!({"status": "ok", "data": presentation::unavailable(false, false)}),
                             false,
                         ));
                     }
@@ -741,21 +742,26 @@ impl Machine {
                 BackendResult::ControllerCapabilities {
                     enrollment_available,
                     metadata_available,
+                    input_available,
                 },
             ) => json!({
                 "enrollment_available": enrollment_available,
                 "metadata_available": enrollment_available && metadata_available,
                 "metadata_requires_separate_grant": true,
                 "presentation_available": false,
-                "input_available": false,
+                "input_available": self.direct_input && enrollment_available && input_available,
             }),
             (
                 Operation::PresentationCapabilities,
                 BackendResult::ControllerCapabilities {
                     enrollment_available,
                     metadata_available: _,
+                    input_available,
                 },
-            ) => presentation::unavailable(enrollment_available),
+            ) => presentation::unavailable(
+                enrollment_available,
+                self.direct_input && enrollment_available && input_available,
+            ),
             (
                 Operation::ControllerRegister { .. },
                 BackendResult::ControllerStatus {

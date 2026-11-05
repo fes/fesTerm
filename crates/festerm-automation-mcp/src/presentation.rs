@@ -10,7 +10,7 @@ pub(crate) enum Call {
     Present,
 }
 
-pub(crate) fn unavailable(enrollment_available: bool) -> Value {
+pub(crate) fn unavailable(enrollment_available: bool, input_available: bool) -> Value {
     json!({
         "presentation": {
             "available": false,
@@ -21,7 +21,7 @@ pub(crate) fn unavailable(enrollment_available: bool) -> Value {
             "other": "UNSUPPORTED_BACKEND"
         },
         "enrollment_available": enrollment_available,
-        "input_available": false
+        "input_available": input_available
     })
 }
 

@@ -1125,11 +1125,15 @@ The later-stage MCP catalog offers the content-free
 `festerm_workspace_present` tools. The former currently returns
 `presentation: {available: false, reason: "NATIVE_EVIDENCE_UNQUALIFIED"}`,
 `backends.local_pty: "NATIVE_EVIDENCE_UNQUALIFIED"`,
-`backends.other: "UNSUPPORTED_BACKEND"` and `input_available: false`.
-The presentation-only catalog reports `enrollment_available: false`. When the
-controller and presentation catalogs are explicitly combined, the same
-qualified backend that answers controller capabilities supplies current
-enrollment availability for each presentation capability request.
+and `backends.other: "UNSUPPORTED_BACKEND"`. The presentation-only catalog
+reports enrollment and input unavailable. When the controller and presentation
+catalogs are explicitly combined, the same backend that answers controller
+capabilities supplies enrollment availability for each presentation capability
+request. Both capabilities report input available only if the connection's
+direct-input catalog was selected and the backend is currently qualified for
+input and enrollment. This is a feature-availability snapshot, not an approval
+or a promise that a later request will be admitted. Existing catalogs and all
+production backends continue to report input unavailable.
 The backend policy describes the slice, not any enrolled session. The latter
 tool strictly validates its opaque `enrollment_ref` and 1–5000 ms `timeout_ms`,
 then returns `UNAVAILABLE` without starting work, changing a tab or prompting. The schema
@@ -1138,8 +1142,9 @@ reserves a supported success containing the exact opaque `target_ref` and a
 `FOREGROUND_REFUSED` result; neither is emitted by this unqualified adapter.
 `available: true` would require the corresponding real tool, native grant and
 qualified backend; it would not itself grant authority. The ordinary P1
-`Machine::new()` catalog stays observation-only. The later-stage opt-in cannot
-mint a native decision and does not enable JavaScript or input.
+`Machine::new()` catalog stays observation-only. Catalog selection cannot mint
+a native decision or enable JavaScript; the direct-input route remains
+synthetic-only.
 
 ### Dormant controller protocol and native adapter
 
@@ -1225,9 +1230,12 @@ An official Rust MCP SDK client also exercises this coordinator through a
 test-only in-memory bridge. It enrolls two identical-label local fixtures,
 observes metadata refusal before each separate synthetic review, and checks
 the exact association's metadata after one label changes. It sees the moved
-target's old handle refused without retargeting the other. This exchange
-bypasses private bootstrap and is not native transport, recipient, privacy or
-presentation qualification.
+target's old handle refused without retargeting the other. The same client
+then sends direct input to the remaining synthetic backend after an explicit
+simulated review, observes refusal, admission and an injected unknown outcome,
+and exercises disarm without replaying the unknown action. This exchange
+bypasses private bootstrap and is not native transport, recipient, privacy,
+presentation or production input qualification.
 
 This is not a qualified delivery fence. Cancellation after completion, all
 expiry/destruction and revocation ordering, authenticated recipients,

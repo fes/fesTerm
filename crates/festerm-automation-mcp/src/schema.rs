@@ -144,9 +144,10 @@ impl Tool {
         }
     }
 
-    fn description(self) -> &'static str {
+    fn description(self, direct_input: bool) -> &'static str {
         match self {
             Self::PairingStatus => "Bootstrap pairing metadata and a public channel verification code for matching in native Settings. Not a credential, principal or grant. Does not trigger approval.",
+            Self::ControllerCapabilities if direct_input => "Report qualified enrollment, metadata and direct-input feature availability, not grant status. Presentation is unavailable.",
             Self::ControllerCapabilities => "Report qualified enrollment and metadata feature availability, not grant status. Presentation and input are unavailable.",
             Self::ControllerRegister => "Request an untrusted connection-local registration after native opt-in and qualification. Does not select a terminal, open a prompt, or grant authority.",
             Self::ControllerStatus => "Inspect only this connection's registration and optional non-authorizing association identifier. Metadata requires separate native authorization.",
@@ -282,7 +283,15 @@ impl Tool {
         })
     }
 
-    fn output_schema(self) -> Value {
+    fn output_schema(self, direct_input: bool) -> Value {
+        let input_available = if direct_input {
+            json!({
+                "type": "boolean",
+                "description": "Qualified availability of direct input, not a control grant."
+            })
+        } else {
+            json!({"type": "boolean", "const": false})
+        };
         let data = match self {
             Self::PairingStatus => json!({
                 "type": "object",
@@ -316,7 +325,7 @@ impl Tool {
                         "description": "Metadata access requires a separate native-authorized discover grant; this does not assert a grant exists."
                     },
                     "presentation_available": {"type": "boolean", "const": false},
-                    "input_available": {"type": "boolean", "const": false}
+                    "input_available": input_available
                 },
                 "required": [
                     "enrollment_available", "metadata_available", "metadata_requires_separate_grant",
@@ -581,16 +590,16 @@ pub(crate) fn call(
     tool.parse(args).ok_or(CallError::Arguments)
 }
 
-pub(crate) fn tools(controller_enrollment: bool) -> Vec<Value> {
+pub(crate) fn tools(controller_enrollment: bool, direct_input: bool) -> Vec<Value> {
     TOOLS
         .iter()
         .chain(CONTROLLER_TOOLS.iter().filter(|_| controller_enrollment))
         .map(|tool| {
             json!({
                 "name": tool.name(),
-                "description": tool.description(),
+                "description": tool.description(direct_input),
                 "inputSchema": tool.schema(),
-                "outputSchema": tool.output_schema(),
+                "outputSchema": tool.output_schema(direct_input),
                 "annotations": {
                     "readOnlyHint": !matches!(tool, Tool::ControllerRegister | Tool::ControllerUnregister),
                     "destructiveHint": matches!(tool, Tool::ControllerUnregister),

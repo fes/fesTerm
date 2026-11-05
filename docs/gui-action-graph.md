@@ -334,6 +334,9 @@ received matching action can reuse its still-live handoff only with the original
 target, sources, modes, fences, expiry and shared budgets. Changed actions need
 review, cancellation/disarm precede reuse, and unknown outcomes disarm without
 replay. Native consent, publication and usability remain deferred.
+The controller and presentation capability reports expose input only to an
+explicitly selected direct-input catalog with current backend and enrollment
+qualification; this is not a grant, and production remains unavailable.
 
 Prospective scoped-creation review has only non-authorizing profile/policy
 snapshot tests. Capture does not retrieve secret-store contents, but full

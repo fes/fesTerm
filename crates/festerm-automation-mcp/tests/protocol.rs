@@ -1648,6 +1648,7 @@ fn direct_input_catalog_is_explicit_and_does_not_claim_qualification() {
                 BackendResult::ControllerCapabilities {
                     enrollment_available: true,
                     metadata_available: true,
+                    input_available: false,
                 },
             )
             .unwrap(),
@@ -1656,6 +1657,76 @@ fn direct_input_catalog_is_explicit_and_does_not_claim_qualification() {
         capability["result"]["structuredContent"]["data"]["input_available"],
         false
     );
+}
+
+#[test]
+fn direct_input_capabilities_require_the_catalog_and_live_backend() {
+    for selected in [false, true] {
+        let mut machine = if selected {
+            ready_direct_input()
+        } else {
+            let mut machine = Machine::with_controller_enrollment_and_unavailable_presentation();
+            initialize(&mut machine, PROTOCOL_VERSION);
+            assert!(matches!(
+                machine
+                    .process_value(json!({"jsonrpc":"2.0","method":"notifications/initialized"})),
+                Event::NoReply
+            ));
+            machine
+        };
+        let catalog = reply(machine.process_value(request(json!(2), "tools/list", json!({}))));
+        let tools = catalog["result"]["tools"].as_array().unwrap();
+        let controller_schema = &tools
+            .iter()
+            .find(|tool| tool["name"] == "festerm_controller_capabilities")
+            .unwrap()["outputSchema"];
+        assert_eq!(
+            schema_matches(
+                controller_schema,
+                &json!({
+                    "status": "ok",
+                    "data": {
+                        "enrollment_available": true,
+                        "metadata_available": false,
+                        "metadata_requires_separate_grant": true,
+                        "presentation_available": false,
+                        "input_available": true
+                    }
+                })
+            ),
+            selected
+        );
+
+        for (enrollment_available, input_available) in [(true, false), (true, true), (false, true)]
+        {
+            for name in [
+                "festerm_controller_capabilities",
+                "festerm_presentation_capabilities",
+            ] {
+                let pending = backend(machine.process_value(call(json!(3), name, json!({}))));
+                let response = decode(
+                    machine
+                        .complete(
+                            &pending.key,
+                            BackendResult::ControllerCapabilities {
+                                enrollment_available,
+                                metadata_available: false,
+                                input_available,
+                            },
+                        )
+                        .unwrap(),
+                );
+                let structured = &response["result"]["structuredContent"];
+                assert_eq!(
+                    structured["data"]["input_available"],
+                    selected && enrollment_available && input_available
+                );
+                let schema =
+                    &tools.iter().find(|tool| tool["name"] == name).unwrap()["outputSchema"];
+                assert!(schema_matches(schema, structured));
+            }
+        }
+    }
 }
 
 #[test]
@@ -1937,6 +2008,7 @@ fn combined_controller_catalog_reflects_live_capabilities_and_refuses_presentati
                     BackendResult::ControllerCapabilities {
                         enrollment_available,
                         metadata_available: false,
+                        input_available: false,
                     },
                 )
                 .unwrap(),
@@ -1983,6 +2055,7 @@ fn combined_controller_catalog_reflects_live_capabilities_and_refuses_presentati
             BackendResult::ControllerCapabilities {
                 enrollment_available: true,
                 metadata_available: false,
+                input_available: false,
             },
         )
         .is_none());
@@ -2264,6 +2337,7 @@ fn controller_results_are_typed_and_expose_only_correlation_ids() {
             BackendResult::ControllerCapabilities {
                 enrollment_available: false,
                 metadata_available: false,
+                input_available: false,
             },
             json!({
                 "enrollment_available":false, "metadata_available":false,
@@ -2402,6 +2476,7 @@ fn controller_metadata_capability_requires_backend_and_enrollment_qualification(
                     BackendResult::ControllerCapabilities {
                         enrollment_available,
                         metadata_available,
+                        input_available: false,
                     },
                 )
                 .unwrap(),

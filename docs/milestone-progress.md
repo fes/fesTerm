@@ -1,12 +1,21 @@
 # Milestone Progress Narrative
 
+## Reporting direct-input capability
+
+The controller and presentation capability tools now agree on direct-input
+availability for a selected catalog and its currently qualified backend. This
+reports a feature, not a grant or admission guarantee. Production input remains
+unqualified and unavailable.
+
 ## Exercising enrollment with an official Rust MCP client
 
 The official Rust SDK negotiates MCP and drives two initially identical-label
 synthetic enrollments through an in-memory coordinator bridge. Separate
 simulated reviews authorize metadata; a later label change and target move
-exercise exact association rather than name-based retargeting. The exchange
-does not qualify native transport, privacy or production controller support.
+exercise exact association rather than name-based retargeting. The same client
+uses simulated review and disarm to send input to the remaining test backend and
+observes refused, admitted and unknown outcomes. The exchange does not qualify
+native transport, privacy, presentation or production controller support.
 
 ## Reusing a synthetic direct-input handoff
 

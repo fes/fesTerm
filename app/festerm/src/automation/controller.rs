@@ -871,6 +871,7 @@ pub(super) fn execute(
     stop: &AtomicBool,
     qualified: bool,
     metadata_qualified: bool,
+    input_qualified: bool,
     now: Instant,
 ) {
     if peer.controller.requests >= MAX_CONTROLLER_REQUESTS {
@@ -895,6 +896,7 @@ pub(super) fn execute(
                 Ok(Reply::plain(BackendResult::ControllerCapabilities {
                     enrollment_available: qualified && open,
                     metadata_available: metadata_qualified && qualified && open,
+                    input_available: input_qualified && qualified && open,
                 }))
             }
             _ if !open || !qualified => Err(Refusal::Unavailable),
@@ -3343,6 +3345,45 @@ pub(super) mod tests {
             .to_wire()
     }
 
+    #[test]
+    fn controller_input_capability_tracks_live_qualification_and_catalog() {
+        let (app, _tab) = FesTermApp::automation_local_fixture();
+        let mut coordinator = fixture(&[&app]);
+        let old_peer = add_peer_with_frames(&mut coordinator, 1);
+        coordinator.synthetic_direct_input_qualified = true;
+        let direct_peer = add_peer_with_frames(&mut coordinator, 2);
+
+        for (channel, qualified, opted_in, expected) in [
+            (1, true, true, false),
+            (2, true, true, true),
+            (2, false, true, false),
+            (2, true, true, true),
+            (2, true, false, false),
+        ] {
+            coordinator.synthetic_direct_input_qualified = qualified;
+            coordinator.controller_opted_in = opted_in;
+            for name in [
+                "festerm_controller_capabilities",
+                "festerm_presentation_capabilities",
+            ] {
+                call(&mut coordinator, channel, &[&app], name, json!({}));
+                let frame = if channel == 1 {
+                    old_peer()
+                } else {
+                    direct_peer()
+                }
+                .expect("capability response");
+                assert_eq!(
+                    frame_response(&frame)["result"]["structuredContent"]["data"]
+                        ["input_available"],
+                    expected
+                );
+            }
+        }
+        assert!(coordinator.peers.values().all(|peer| peer.grant.is_none()));
+        assert!(!coordinator.javascript_enabled);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn official_rust_client_exercises_synthetic_enrollment_metadata() {
         use rmcp::{
@@ -3356,6 +3397,21 @@ pub(super) mod tests {
             Enroll,
             ApproveMetadata,
             MoveFirstTarget,
+            ApproveInput,
+            DisarmInput,
+        }
+
+        async fn write_frame(
+            write: &mut (impl tokio::io::AsyncWrite + Unpin),
+            frame: &festerm_automation::OutboundFrame,
+            tool: Option<&str>,
+        ) {
+            let mut guarded = Vec::new();
+            ipc::write_test_frame(&mut guarded, frame)
+                .unwrap_or_else(|error| panic!("synthetic {tool:?} response: {error}"));
+            let length = u32::from_be_bytes(guarded[..4].try_into().unwrap()) as usize;
+            assert_eq!(length, guarded.len() - 4);
+            write.write_all(&guarded[4..]).await.unwrap();
         }
 
         let (mut app, first_tab) = FesTermApp::automation_local_fixture();
@@ -3363,15 +3419,45 @@ pub(super) mod tests {
         app.adopt_tab(donor.detach_tab(second_tab).unwrap(), None);
         app.automation_session_mut(first_tab).label = "same label".to_owned();
         app.automation_session_mut(second_tab).label = "same label".to_owned();
+        let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+        app.adopt_broadcast_configuration(
+            festerm_config::Configuration::empty()
+                .with_interface_settings(settings)
+                .unwrap(),
+        );
+        let ime = Arc::new(festerm_session::AutomationEpoch::new());
+        ime.transition(true);
+        app.set_automation_ime_epoch(&ime);
+        let Some(crate::tabs::ApplicationSession::TestLocal(first_backend)) = app
+            .automation_session(first_tab)
+            .unwrap()
+            .controller
+            .session()
+        else {
+            panic!("expected first synthetic local backend");
+        };
+        let first_backend = first_backend.clone();
+        let Some(crate::tabs::ApplicationSession::TestLocal(second_backend)) = app
+            .automation_session(second_tab)
+            .unwrap()
+            .controller
+            .session()
+        else {
+            panic!("expected second synthetic local backend");
+        };
+        let second_backend = second_backend.clone();
+        first_backend.enable_ordered_test_input();
+        second_backend.enable_ordered_test_input();
         let mut coordinator = fixture(&[&app]);
         coordinator.synthetic_enrollment_metadata_ui_qualified = true;
         coordinator.synthetic_enrollment_metadata_delivery_qualified = true;
+        coordinator.synthetic_direct_input_qualified = true;
         let receive = add_peer_with_frames(&mut coordinator, 1);
-        coordinator.peers.get_mut(&1).unwrap().machine =
-            Machine::with_controller_enrollment_and_unavailable_presentation();
+        coordinator.peers.get_mut(&1).unwrap().machine = Machine::with_direct_input_catalog();
         let principal = coordinator.peers[&1].principal;
         let (server_stream, client_stream) = tokio::io::duplex(128 * 1024);
         let (actions, mut next_action) = tokio::sync::mpsc::channel(1);
+        let (input_prompts, mut next_input_prompt) = tokio::sync::mpsc::channel(1);
 
         let server = async {
             let (read, mut write) = tokio::io::split(server_stream);
@@ -3391,12 +3477,7 @@ pub(super) mod tests {
                 let tool = request["params"]["name"].as_str();
                 process_test_peer_bytes(&mut coordinator, 1, &[&app], &bytes);
                 while let Some(frame) = receive() {
-                    let mut guarded = Vec::new();
-                    ipc::write_test_frame(&mut guarded, &frame)
-                        .unwrap_or_else(|error| panic!("synthetic {tool:?} response: {error}"));
-                    let length = u32::from_be_bytes(guarded[..4].try_into().unwrap()) as usize;
-                    assert_eq!(length, guarded.len() - 4);
-                    write.write_all(&guarded[4..]).await.unwrap();
+                    write_frame(&mut write, &frame, tool).await;
                 }
                 match tool {
                     Some("festerm_controller_register") => {
@@ -3501,7 +3582,170 @@ pub(super) mod tests {
                             );
                             assert!(first_handle.is_some());
                             coordinator.controller_target_moving(first_tab);
+                            let deadline = Instant::now() + Duration::from_secs(5);
+                            loop {
+                                coordinator.tick(&egui::Context::default(), &[&app]);
+                                if !coordinator.reconciliation_deferred
+                                    && coordinator.enrollment_metadata_grants.len() == 1
+                                {
+                                    break;
+                                }
+                                assert!(Instant::now() < deadline, "target cleanup stayed busy");
+                                std::thread::sleep(Duration::from_millis(1));
+                            }
                             retired_first = true;
+                        }
+                    }
+                    Some("festerm_terminal_send_text")
+                        if coordinator.peers[&1].controller.direct_input.is_some() =>
+                    {
+                        let text = request["params"]["arguments"]["text"].as_str().unwrap();
+                        assert!(matches!(text, "sdk admitted" | "sdk uncertain"));
+                        let pending = coordinator.peers[&1]
+                            .controller
+                            .direct_input
+                            .as_ref()
+                            .unwrap();
+                        let registration = pending.association.registration;
+                        let token = pending.token;
+                        assert_eq!(
+                            pending.association.public.to_wire(),
+                            *second_handle.as_ref().unwrap()
+                        );
+                        assert!(matches!(
+                            registration_row(&coordinator, &[&app], 1, registration).input,
+                            ControllerInputView::Requested { token: current, .. } if current == token
+                        ));
+                        native(
+                            &mut coordinator,
+                            &[&app],
+                            WindowId::PRIMARY,
+                            NativeCommand::ReviewControllerInput {
+                                channel: 1,
+                                registration,
+                                input: token,
+                            },
+                        );
+                        let preparations = direct_input_preparations(&coordinator);
+                        assert_eq!(
+                            preparations.len(),
+                            1,
+                            "input review status: {}",
+                            coordinator.status
+                        );
+                        retry_automation_busy(|| {
+                            prepare_direct_input_review(
+                                &mut coordinator,
+                                preparations[0],
+                                app.automation_session_mut(second_tab),
+                            )
+                        })
+                        .unwrap();
+                        let row = registration_row(&coordinator, &[&app], 1, registration);
+                        let ControllerInputView::Reviewing {
+                            action,
+                            metadata_sources,
+                            ..
+                        } = row.input
+                        else {
+                            panic!("expected input review");
+                        };
+                        assert_eq!(
+                            action,
+                            presentation::DirectActionDisplay::Text {
+                                escaped: text.to_owned(),
+                                submit: true,
+                            }
+                        );
+                        assert_eq!(metadata_sources.len(), 1);
+                        assert!(metadata_sources[0].contains(second_handle.as_ref().unwrap()));
+                        assert!(receive().is_none());
+                        assert!(first_backend.drain_ordered_test_input().is_empty());
+                        assert!(second_backend.drain_ordered_test_input().is_empty());
+                        input_prompts.send(text.to_owned()).await.unwrap();
+                        assert_eq!(
+                            next_action.recv().await,
+                            Some(SyntheticAction::ApproveInput)
+                        );
+                        native(
+                            &mut coordinator,
+                            &[&app],
+                            WindowId::PRIMARY,
+                            NativeCommand::ConfirmControllerInput {
+                                channel: 1,
+                                registration,
+                                input: token,
+                            },
+                        );
+                        coordinator.synthetic_direct_input_lost_after_commit =
+                            text == "sdk uncertain";
+                        let dispatches = direct_input_dispatches(&coordinator);
+                        assert_eq!(dispatches.len(), 1);
+                        retry_automation_busy(|| {
+                            dispatch_direct_input(
+                                &mut coordinator,
+                                dispatches[0],
+                                app.automation_session(second_tab).unwrap(),
+                                &[&app],
+                            )
+                        })
+                        .unwrap();
+                        settle_direct_input_for_test(&mut coordinator, token, &app);
+                        let frame = receive().expect("expected input disposition");
+                        let result = frame_response(&frame);
+                        let content = &result["result"]["structuredContent"];
+                        let delivered = second_backend.drain_ordered_test_input();
+                        if content["status"] == "refused" {
+                            assert_eq!(content["code"], "UNAVAILABLE");
+                            assert!(delivered.is_empty());
+                        } else {
+                            assert_eq!(delivered, vec![format!("{text}\r").into_bytes()]);
+                            assert_eq!(
+                                content["data"]["disposition"],
+                                if text == "sdk uncertain" {
+                                    "outcome_unknown"
+                                } else {
+                                    "admitted"
+                                }
+                            );
+                        }
+                        assert!(first_backend.drain_ordered_test_input().is_empty());
+                        assert!(second_backend.drain_ordered_test_input().is_empty());
+                        write_frame(&mut write, &frame, tool).await;
+                        if content["status"] == "ok" {
+                            assert_eq!(
+                                next_action.recv().await,
+                                Some(SyntheticAction::DisarmInput)
+                            );
+                            native(
+                                &mut coordinator,
+                                &[&app],
+                                WindowId::PRIMARY,
+                                NativeCommand::DisarmControllerInput {
+                                    channel: 1,
+                                    registration,
+                                    input: token,
+                                },
+                            );
+                            let target = coordinator.targets[&second_tab.chip_id()].reference;
+                            let deadline = Instant::now() + Duration::from_secs(5);
+                            loop {
+                                let mut broker = coordinator.broker.take().unwrap();
+                                coordinator.reconcile(&mut broker, &[&app]);
+                                let disarmed = broker
+                                    .native_control_grant(principal, target, Instant::now())
+                                    .is_err();
+                                coordinator.broker = Some(broker);
+                                if disarmed {
+                                    break;
+                                }
+                                assert!(Instant::now() < deadline, "input disarm stayed busy");
+                                std::thread::sleep(Duration::from_millis(1));
+                            }
+                        } else if content["status"] == "unknown" {
+                            assert!(registration_row(&coordinator, &[&app], 1, registration)
+                                .control
+                                .is_none());
                         }
                     }
                     _ => {}
@@ -3512,6 +3756,8 @@ pub(super) mod tests {
             assert!(coordinator.peers[&1].grant.is_none());
             assert!(!coordinator.javascript_enabled);
             assert!(!app.automation_javascript_enabled());
+            assert!(first_backend.drain_ordered_test_input().is_empty());
+            assert!(second_backend.drain_ordered_test_input().is_empty());
         };
 
         let client = async {
@@ -3531,6 +3777,7 @@ pub(super) mod tests {
                 "festerm_controller_register",
                 "festerm_controller_status",
                 "festerm_sessions_get",
+                "festerm_terminal_send_text",
             ] {
                 assert!(tools.iter().any(|tool| tool.name == name), "{name}");
             }
@@ -3546,7 +3793,7 @@ pub(super) mod tests {
             assert_eq!(data["metadata_available"], true);
             assert_eq!(data["metadata_requires_separate_grant"], true);
             assert_eq!(data["presentation_available"], false);
-            assert_eq!(data["input_available"], false);
+            assert_eq!(data["input_available"], true);
 
             let mut handles = Vec::new();
             for local_id in ["device-left", "device-right"] {
@@ -3642,6 +3889,61 @@ pub(super) mod tests {
                 } else {
                     assert_eq!(result.is_error, Some(true));
                     assert_eq!(result.structured_content.unwrap()["code"], "NOT_AUTHORIZED");
+                }
+            }
+            let refused = client
+                .call_tool(
+                    CallToolRequestParams::new("festerm_terminal_send_text").with_arguments(
+                        json!({
+                            "enrollment_ref": &handles[1],
+                            "text": "not sent",
+                            "presentation_revision": "a".repeat(48)
+                        })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    ),
+                )
+                .await
+                .expect("SDK input refusal");
+            assert_eq!(refused.is_error, Some(true));
+            assert_eq!(refused.structured_content.unwrap()["code"], "UNAVAILABLE");
+
+            for (text, expected) in [
+                ("sdk admitted", "admitted"),
+                ("sdk uncertain", "outcome_unknown"),
+            ] {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    let request = client.call_tool(
+                        CallToolRequestParams::new("festerm_terminal_send_text").with_arguments(
+                            json!({"enrollment_ref": &handles[1], "text": text, "submit": true})
+                                .as_object()
+                                .unwrap()
+                                .clone(),
+                        ),
+                    );
+                    tokio::pin!(request);
+                    let result = tokio::select! {
+                        result = &mut request => result.expect("SDK input response"),
+                        prompt = next_input_prompt.recv() => {
+                            assert_eq!(prompt.as_deref(), Some(text));
+                            actions.send(SyntheticAction::ApproveInput).await.unwrap();
+                            request.await.expect("SDK input disposition")
+                        }
+                    };
+                    let content = result.structured_content.unwrap();
+                    if content["status"] == "refused" && content["code"] == "UNAVAILABLE" {
+                        assert!(Instant::now() < deadline, "SDK input stayed unavailable");
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                        continue;
+                    }
+                    assert_eq!(content["data"]["disposition"], expected);
+                    assert_eq!(result.is_error, Some(expected == "outcome_unknown"));
+                    if expected == "admitted" {
+                        actions.send(SyntheticAction::DisarmInput).await.unwrap();
+                    }
+                    break;
                 }
             }
             client.cancel().await.expect("SDK disconnect");
