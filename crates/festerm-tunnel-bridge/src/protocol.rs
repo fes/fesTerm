@@ -211,6 +211,11 @@ pub fn validate_length(kind: u8, length: usize) -> io::Result<()> {
             crate::file_protocol::JSON_LIMIT
         }
         crate::file_protocol::DATA => crate::file_protocol::CHUNK_LIMIT + 4,
+        crate::observation_protocol::OPEN => 4096,
+        crate::observation_protocol::REQUEST
+        | crate::observation_protocol::RESPONSE
+        | crate::observation_protocol::NOTICE => crate::observation_protocol::JSON_LIMIT,
+        crate::observation_protocol::DATA => crate::observation_protocol::CHUNK_LIMIT + 4,
         SNAPSHOT => SNAPSHOT_LIMIT,
         HELLO | DESCRIPTION => 4096,
         DISCOVER => 2,
@@ -303,6 +308,7 @@ mod tests {
         assert!(validate_length(99, 0).is_err());
         assert!(validate_length(INPUT, CHUNK_LIMIT + 1).is_err());
         assert!(validate_length(ADOPTED, 1).is_err());
+        #[cfg(feature = "relay")]
         assert!(RecoverySyncCommand::try_from(Sync::Scrollback(usize::MAX)).is_err());
     }
 }

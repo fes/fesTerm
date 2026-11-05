@@ -8,6 +8,11 @@ pub mod filesystem;
 pub mod host_identity;
 #[cfg(feature = "client")]
 pub mod mobile;
+#[cfg(feature = "relay")]
+pub mod observation;
+#[cfg(feature = "client")]
+pub mod observation_client;
+pub mod observation_protocol;
 pub mod protocol;
 #[cfg(feature = "client")]
 pub mod relay;
