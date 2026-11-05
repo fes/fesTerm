@@ -1,6 +1,7 @@
 use festerm_ios_lock::{
-    AppLock, AuthFailure, Availability, BackgroundGrace, BiometryKind, FakeLocker, LifecycleEvent,
-    LoadStatus, LockPolicy, LockSettings, LockState, ManualClock, SettingsError, SettingsStore,
+    AppLock, AuthFailure, AuthMethod, AuthOutcome, Authentication, Availability, BackgroundGrace,
+    BiometryKind, FakeLocker, LifecycleEvent, LoadStatus, LockPolicy, LockSettings, LockState,
+    Locker, ManualClock, SettingsError, SettingsStore,
 };
 use std::{
     sync::{
@@ -374,4 +375,249 @@ fn system_clock_is_monotonic() {
     // The portable fallback measures from its first call, so it may read zero.
     #[cfg(unix)]
     assert!(a > Duration::ZERO);
+}
+
+#[test]
+fn stale_unlock_success_after_device_lock_cannot_complete_a_new_attempt() {
+    let locker = FakeLocker::new(FACE);
+    let (lock, ..) = app(enabled(BackgroundGrace::Never), &locker);
+    locker.set_deferred(true);
+    lock.begin_unlock();
+    lock.handle_lifecycle(LifecycleEvent::DeviceLocked);
+    lock.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    lock.begin_unlock();
+    assert_eq!(locker.pending_count(), 2);
+    locker.complete_pending(Ok(()));
+    assert!(
+        !lock.should_draw_content(),
+        "the retired request must never authenticate the replacement"
+    );
+    locker.complete_pending(Ok(()));
+    assert!(lock.should_draw_content());
+}
+
+#[test]
+fn automatic_unlock_rearms_after_background_but_not_its_own_cancelled_dialog() {
+    let locker = FakeLocker::new(FACE);
+    let (lock, ..) = app(enabled(BackgroundGrace::Always), &locker);
+    locker.set_deferred(true);
+    lock.begin_automatic_unlock();
+    lock.begin_automatic_unlock();
+    assert_eq!(locker.pending_count(), 1);
+    lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+    locker.complete_pending(Err(AuthFailure::Cancelled));
+    assert!(lock.authentication_prompt_in_flight());
+    lock.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    assert!(!lock.authentication_prompt_in_flight());
+    lock.begin_automatic_unlock();
+    assert_eq!(locker.pending_count(), 0, "no automatic prompt loop");
+    assert_eq!(lock.last_failure(), Some(AuthFailure::Cancelled));
+    lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+    lock.handle_lifecycle(LifecycleEvent::DidEnterBackground);
+    lock.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    lock.begin_automatic_unlock();
+    assert_eq!(locker.pending_count(), 1);
+    locker.complete_pending(Ok(()));
+    assert!(lock.should_draw_content());
+}
+
+#[test]
+fn missing_completion_can_be_retired_by_explicit_passcode_retry() {
+    let locker = FakeLocker::new(FACE);
+    let (lock, ..) = app(enabled(BackgroundGrace::Never), &locker);
+    locker.set_deferred(true);
+    lock.begin_unlock();
+    lock.begin_passcode_unlock();
+    assert_eq!(locker.cancellation_count(), 1);
+    assert_eq!(
+        locker.prompt_methods(),
+        [AuthMethod::OwnerAuthentication, AuthMethod::DevicePasscode]
+    );
+    locker.complete_pending(Ok(()));
+    assert_eq!(lock.state(), LockState::Unlocking, "old success is ignored");
+    locker.complete_pending(Err(AuthFailure::NotRecognized));
+    assert_eq!(lock.state(), LockState::Locked);
+    lock.retry_unlock();
+    locker.complete_pending(Ok(()));
+    assert!(lock.should_draw_content());
+}
+
+#[test]
+fn stale_failure_after_lock_now_cannot_end_a_replacement_attempt() {
+    let locker = FakeLocker::new(FACE);
+    let (lock, ..) = app(enabled(BackgroundGrace::Never), &locker);
+    locker.set_deferred(true);
+    lock.begin_unlock();
+    lock.lock_now();
+    lock.begin_unlock();
+    locker.complete_pending(Err(AuthFailure::Unavailable));
+    assert_eq!(lock.state(), LockState::Unlocking);
+    assert_eq!(lock.last_failure(), None);
+    locker.complete_pending(Ok(()));
+    assert!(lock.should_draw_content());
+}
+
+#[test]
+fn backgrounding_cancels_unlock_without_waiting_for_a_callback() {
+    let locker = FakeLocker::new(FACE);
+    let (lock, ..) = app(enabled(BackgroundGrace::Never), &locker);
+    locker.set_deferred(true);
+    lock.begin_unlock();
+    lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+    lock.handle_lifecycle(LifecycleEvent::DidEnterBackground);
+    assert_eq!(lock.state(), LockState::Locked);
+    assert_eq!(locker.cancellation_count(), 1);
+    assert!(lock.shield_should_cover());
+    lock.retry_unlock();
+    assert_eq!(locker.pending_count(), 1, "no prompt while backgrounded");
+    locker.complete_pending(Ok(()));
+    assert!(
+        !lock.should_draw_content(),
+        "late background success is ignored"
+    );
+    lock.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    lock.begin_automatic_unlock();
+    locker.complete_pending(Ok(()));
+    assert!(lock.should_draw_content());
+}
+
+#[test]
+fn backgrounding_cancels_disable_and_late_success_cannot_turn_protection_off() {
+    let locker = FakeLocker::new(FACE);
+    let (lock, ..) = app(enabled(BackgroundGrace::Always), &locker);
+    locker.push_outcome(Ok(()));
+    lock.begin_unlock();
+    locker.set_deferred(true);
+    assert_eq!(
+        lock.apply_settings(LockSettings::default()),
+        Err(SettingsError::AuthenticationStarted)
+    );
+    lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+    lock.handle_lifecycle(LifecycleEvent::DidEnterBackground);
+    assert_eq!(locker.cancellation_count(), 1);
+    locker.complete_pending(Ok(()));
+    assert!(lock.settings().enabled);
+    lock.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    assert_eq!(lock.state(), LockState::Locked);
+}
+
+#[test]
+fn changed_settings_retire_an_old_disable_request() {
+    let locker = FakeLocker::new(FACE);
+    let (lock, _clock, _repaints, dir) = app(enabled(BackgroundGrace::Never), &locker);
+    locker.push_outcome(Ok(()));
+    lock.begin_unlock();
+    locker.set_deferred(true);
+    assert_eq!(
+        lock.apply_settings(LockSettings::default()),
+        Err(SettingsError::AuthenticationStarted)
+    );
+    let next = enabled(BackgroundGrace::Minutes5);
+    lock.apply_settings(next).unwrap();
+    locker.complete_pending(Ok(()));
+    assert_eq!(lock.settings(), next);
+    assert_eq!(
+        SettingsStore::new(dir.path().join("lock.json")).load().0,
+        next
+    );
+}
+
+#[test]
+fn dropping_the_last_lock_owner_cancels_the_platform_request() {
+    let locker = FakeLocker::new(FACE);
+    let (lock, ..) = app(enabled(BackgroundGrace::Never), &locker);
+    locker.set_deferred(true);
+    lock.begin_unlock();
+    drop(lock);
+    assert_eq!(
+        locker.cancellation_count(),
+        1,
+        "no request/context owner cycle"
+    );
+    locker.complete_pending(Ok(()));
+}
+
+#[test]
+fn synchronous_cancellation_reply_can_reenter_without_deadlocking() {
+    struct CancelReplies(Arc<AtomicUsize>);
+    impl Locker for CancelReplies {
+        fn availability(&self) -> Availability {
+            FACE
+        }
+
+        fn authenticate(
+            &self,
+            _: AuthMethod,
+            _: &str,
+            done: Box<dyn FnOnce(AuthOutcome) + Send>,
+        ) -> Authentication {
+            let cancelled = self.0.clone();
+            Authentication::new(move || {
+                cancelled.fetch_add(1, Ordering::SeqCst);
+                done(Err(AuthFailure::Cancelled));
+            })
+        }
+    }
+    let cancelled = Arc::new(AtomicUsize::new(0));
+    let lock = AppLock::new(
+        None,
+        Arc::new(CancelReplies(cancelled.clone())),
+        Arc::new(ManualClock::new()),
+        || {},
+    );
+    lock.apply_settings(enabled(BackgroundGrace::Never))
+        .unwrap();
+    lock.lock_now();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        lock.begin_unlock();
+        lock.begin_passcode_unlock();
+        lock.lock_now();
+        let state = lock.state();
+        lock.begin_unlock();
+        drop(lock);
+        sender.send(state).unwrap();
+    });
+    assert_eq!(
+        receiver.recv_timeout(Duration::from_secs(2)).unwrap(),
+        LockState::Locked
+    );
+    assert_eq!(cancelled.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn failed_authenticated_settings_write_is_visible_and_keeps_protection() {
+    let locker = FakeLocker::new(FACE);
+    let (lock, _clock, _repaints, dir) = app(enabled(BackgroundGrace::Never), &locker);
+    locker.push_outcome(Ok(()));
+    lock.begin_unlock();
+    locker.set_deferred(true);
+    let path = dir.path().join("lock.json");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert_eq!(
+        lock.apply_settings(LockSettings::default()),
+        Err(SettingsError::AuthenticationStarted)
+    );
+    locker.complete_pending(Ok(()));
+    assert!(lock.settings().enabled);
+    assert_eq!(
+        lock.settings_error(),
+        Some("Could not save the lock settings.")
+    );
+}
+
+#[test]
+fn shield_requests_the_remaining_resume_frame_without_user_input() {
+    let locker = FakeLocker::new(FACE);
+    let (lock, _clock, repaints, _dir) = app(enabled(BackgroundGrace::Never), &locker);
+    lock.note_frame_presented();
+    assert_eq!(repaints.load(Ordering::SeqCst), 1);
+    assert!(lock.shield_should_cover());
+    lock.note_frame_presented();
+    assert!(!lock.shield_should_cover());
+    assert!(
+        !lock.should_draw_content(),
+        "only the opaque native cover retires"
+    );
 }

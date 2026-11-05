@@ -320,6 +320,29 @@ View script, a read-only line-numbered viewer of the exact embedded installer.
 Capture actual-widget phone/tablet comparisons for each implemented slice and
 record native rendering, Dynamic Type, VoiceOver and touch checks separately.
 
+### Recoverable app unlocking
+
+The November 5 iOS UX handoff's Priority 0 is an independent regression fix
+(`MOB-09`, ADRs 0058/0061). An appropriate foreground lock interval requests
+system owner authentication once. Failure/cancellation offers **Try Face ID
+Again** (or the detected equivalent) and **Use device passcode**. Both remain
+responsive while waiting for a lost native completion; explicit action retires
+the previous request instead of queueing another authority-bearing callback.
+Passcode entry is exclusively system-owned. A full-screen input barrier sits
+behind, not on top of, these controls.
+Short-height views use compact spacing; smaller bounds scroll rather than
+overlapping the title/error or shrinking the touch targets.
+Actionable authentication errors wrap instead of ellipsizing the passcode
+recovery instruction at narrow widths.
+
+Authentication-dialog inactivity cannot start a retry loop or consume grace.
+Real background/device lock cancels outstanding requests; old replies cannot
+unlock or turn protection off. Content/input remain gated while healthy
+Dev Tunnel attachments keep their independent lifetime and foreground check.
+Headless pointer tests and captures cover app-owned controls only. Physical
+iPhone authentication, native shielding, accessibility and rapid switching are
+required before acceptance; no deployment is implied by a review build.
+
 ### Shell implementation status
 
 Mock-ups 01-06, 10-12 and 16 are implemented as a bottom-tab shell with a

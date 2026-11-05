@@ -4237,6 +4237,40 @@
       ]
     },
     {
+      "id": "ios-app-lock-recovery",
+      "edges": ["MOB-09"],
+      "requirements": [
+        "docs/mobile-layout-design.md#recoverable-app-unlocking",
+        "docs/adr/0058-ios-app-lock-and-mobile-document-viewer.md#app-lock-festerm-ios-lock",
+        "docs/adr/0061-ios-dev-tunnel-profiles-and-app-lock-wiring.md#amendment-recoverable-foreground-authentication"
+      ],
+      "decisions": ["ADR-0058", "ADR-0061"],
+      "automated_tests": [
+        "stale_unlock_success_after_device_lock_cannot_complete_a_new_attempt",
+        "automatic_unlock_rearms_after_background_but_not_its_own_cancelled_dialog",
+        "missing_completion_can_be_retired_by_explicit_passcode_retry",
+        "stale_failure_after_lock_now_cannot_end_a_replacement_attempt",
+        "backgrounding_cancels_unlock_without_waiting_for_a_callback",
+        "backgrounding_cancels_disable_and_late_success_cannot_turn_protection_off",
+        "changed_settings_retire_an_old_disable_request",
+        "dropping_the_last_lock_owner_cancels_the_platform_request",
+        "synchronous_cancellation_reply_can_reenter_without_deadlocking",
+        "failed_authenticated_settings_write_is_visible_and_keeps_protection",
+        "shield_requests_the_remaining_resume_frame_without_user_input",
+        "unlock_buttons_receive_pointer_input_after_cancelled_automatic_authentication",
+        "unlock_errors_wrap_without_covering_retry_controls",
+        "shield_warmup_counts_frames_not_repeated_egui_passes",
+        "app_lock_dialog_preserves_active_and_parked_ssh_but_real_background_still_stops",
+        "lifecycle_resume_checks_transport_while_lock_keeps_content_hidden"
+      ],
+      "manual_scenarios": ["MOB-09", "MOB-06"],
+      "status": "partial",
+      "prerequisites": [
+        "Provisioned physical iPhone: automatic Face ID success/failure/cancellation, explicit system passcode, unavailable biometrics, repeated rapid app switches, phone lock/unlock and return from system prompts without stuck controls or stale authorization",
+        "Native compositor/opaque-cover removal and app-switcher snapshots, complete narrow-width recovery errors, VoiceOver/touch and healthy active/parked tunnel identity remain manual evidence; portable tests, headless widget captures and Apple-target compilation do not establish device acceptance; no deployment authorized"
+      ]
+    },
+    {
       "id": "ios-rendering-spike",
       "edges": [
         "MOB-01",
@@ -4439,7 +4473,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "ADR-0058 app lock (festerm-ios-lock) and document viewer (festerm-mobile-docs) are unwired platform crates: enrolled Face ID match, resume-after-grace lock, app-switcher snapshot and the UI integration remain unproven on Simulator/device",
+        "ADR-0058 app lock is wired through ADR-0061; portable request/cancellation and pointer recovery are covered under MOB-09, but enrolled Face ID, explicit system passcode, resume-after-grace, compositor/snapshot timing and rapid physical-device switches remain unqualified",
         "Owner-provided iOS mock-ups guide mobile-only navy/blue visuals, actual-host identity, labelled Host/Port fields and Esc/Tab/Ctrl/Alt order; profiles, full tabs, Dev Tunnel identity and app lock are deferred, with deliberate differences in docs/mobile-layout-design.md; native Dynamic Type/VoiceOver and touch comparison remain required. Owned test-only loopback SSH peer proves host-side actual-form trust/auth retry, core input/replies, resize and disconnect without external credentials or OS shell execution; bounded runtime cleanup and socket-free synthetic trust/auth gallery remain distinct from native iOS/OpenSSH/TUI/device acceptance. scripts/capture-mobile-ui.py and ignored capture_mobile_ui_gallery produce actual-widget phone/tablet terminal/connect-form/held-navigation PNGs with source/hash attribution for owner review; CI publishes the non-native headless artifact separately; simulated keyboard reservation has no native keyboard pixels; native rendering/input/live-SSH/device and Termius usability acceptance remain required under MOB-01–06",
         "scripts/tests/test_ios_device_build.py covers explicit --live-ssh preflight/build graph selection, local-network metadata, minimal entitlements and mode-labeled private receipts including signing failures; default packaging remains offline; actual Apple signing, manual installation and MOB-06 controlled-host/physical-device acceptance still require a provisioned Mac and iPhone/iPad",
         "MOB-06 opt-in live-ssh composition received independent architectural approval on 2026-10-30, not native/product acceptance; controlled real SSH/physical-device evidence remains required; fake-session/headless tests cover hidden-workspace output/replies, per-frame budgets and native suspension without a UI frame, including reset binding; compilation/Simulator linking do not establish native usability; credentials and pins remain transient, changed pins reject, suspension requires explicit reconnection; Termius-inspired usability and #425 paste/native handles remain pending",

@@ -1089,6 +1089,87 @@ mod tests {
     }
 
     #[test]
+    fn app_lock_dialog_preserves_active_and_parked_ssh_but_real_background_still_stops() {
+        use crate::{Lifecycle, MobileApp, NativeLifecycle, SuspensionHandle};
+        use festerm_ios_lock::{
+            AppLock, AuthFailure, Availability, BiometryKind, FakeLocker, LifecycleEvent,
+            LockSettings, ManualClock,
+        };
+        use std::{cell::Cell, rc::Rc};
+
+        let lifecycle = Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        }));
+        let suspension = SuspensionHandle::default();
+        let app = MobileApp::new_terminal(lifecycle.clone()).with_suspension(suspension.clone());
+        let locker = FakeLocker::new(Availability::Available(BiometryKind::FaceId));
+        locker.set_deferred(true);
+        let lock = AppLock::new(None, locker.clone(), Arc::new(ManualClock::new()), || {});
+        lock.apply_settings(LockSettings {
+            enabled: true,
+            ..Default::default()
+        })
+        .unwrap();
+        lock.lock_now();
+        let mut native =
+            NativeLifecycle::new(lifecycle.clone(), suspension.clone()).with_app_lock(lock.clone());
+        let active = Arc::new(FakeSession::default());
+        let parked = Arc::new(FakeSession::default());
+        let active_session: Arc<dyn Session> = active.clone();
+        let parked_session: Arc<dyn Session> = parked.clone();
+        *app.sink.live.connection.borrow_mut() = Some(connection(active.clone()));
+        suspension
+            .background
+            .borrow_mut()
+            .push((9, connection(parked.clone())));
+        for passcode in [false, true, false] {
+            if passcode {
+                lock.begin_passcode_unlock();
+            } else {
+                lock.retry_unlock();
+            }
+            lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+            // Exercise the completion-before-winit-suspension ordering too.
+            locker.complete_pending(Err(AuthFailure::Cancelled));
+            assert!(!native.suspended(false));
+            assert!(!native.resumed());
+            lock.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+            assert_eq!(lifecycle.get().suspensions, 0);
+            assert_eq!(*active.shutdowns.lock().unwrap(), 0);
+            assert_eq!(*parked.shutdowns.lock().unwrap(), 0);
+            assert!(Arc::ptr_eq(
+                app.sink
+                    .live
+                    .connection
+                    .borrow()
+                    .as_ref()
+                    .unwrap()
+                    .session
+                    .as_ref()
+                    .unwrap(),
+                &active_session
+            ));
+            assert!(Arc::ptr_eq(
+                suspension.background.borrow()[0]
+                    .1
+                    .session
+                    .as_ref()
+                    .unwrap(),
+                &parked_session
+            ));
+        }
+        lock.retry_unlock();
+        lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+        assert!(!native.suspended(false));
+        lock.handle_lifecycle(LifecycleEvent::DidEnterBackground);
+        assert!(native.entered_background());
+        assert_eq!(*active.shutdowns.lock().unwrap(), 1);
+        assert_eq!(*parked.shutdowns.lock().unwrap(), 1);
+        assert!(!lifecycle.get().active);
+    }
+
+    #[test]
     fn mobile_live_ssh_input_refusal_retires_session_without_replay() {
         let session = Arc::new(FakeSession {
             rejected: true,
