@@ -1,5 +1,21 @@
 # Milestone Progress Narrative
 
+## Hosting an installed persistent profile without a second shell
+
+The standalone Dev Tunnel installer remains useful for headless hosts, but it
+was the wrong owner for publishing an already configured desktop daemon profile.
+Issue #618 adds an explicit Local-profile checkbox whose Save can start that
+exact command without attaching a hidden frontend. A native one-shot launch
+reservation and private host-local consent distinguish saved intent from
+authority; rename keeps ownership, while copies do not inherit it.
+
+Disabling or deleting journals revocation before the config write, stops only
+the exact owned relay and retains the persistent shell. Pending cloud cleanup
+survives profile deletion. Signed desktop helper payloads are staged into
+versioned private copies so package updates need not replace running images;
+old-cache collection remains #619. Deterministic fixtures are not signed
+servicing or physical-client acceptance: those remain DT-08.
+
 ## Opening the desktop MCP beta
 
 The owner accepted a desktop MCP beta. macOS now has a privacy monitor that

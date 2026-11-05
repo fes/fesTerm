@@ -161,11 +161,23 @@ jobs:
             return 1
           }
           cargo build --release -p festerm -p festerm-sessiond
+          cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
           if ! cargo packager --config packaging/macos-release.toml --formats app; then
             echo "::warning::cargo-packager failed; retrying the notarization staple"
             staple target/release/fesTerm.app
           fi
           codesign --verify --deep --strict --verbose=2 target/release/fesTerm.app
+          app_team=$(codesign -dv --verbose=4 target/release/fesTerm.app/Contents/MacOS/festerm 2>&1 | sed -n 's/^TeamIdentifier=//p')
+          test -n "$app_team"
+          test "$app_team" != "not set"
+          for helper in festerm-sessiond festerm-tunnel-setup festerm-tunnel-bridge; do
+            binary="target/release/fesTerm.app/Contents/MacOS/$helper"
+            test -x "$binary"
+            codesign --verify --strict -R='anchor apple generic' --verbose=2 "$binary"
+            helper_signature=$(codesign -dv --verbose=4 "$binary" 2>&1)
+            test "$(printf '%s\n' "$helper_signature" | sed -n 's/^TeamIdentifier=//p')" = "$app_team"
+            printf '%s\n' "$helper_signature" | grep -q 'flags=.*runtime'
+          done
           xcrun stapler validate target/release/fesTerm.app
           spctl --assess --type execute --verbose=2 target/release/fesTerm.app
           mkdir dist
@@ -232,13 +244,19 @@ jobs:
           }
       - name: Build and stage verified ARM64 ConPTY runtime
         shell: pwsh
-        run: ./scripts/stage-conpty.ps1 -Configuration Release
+        run: |
+          ./scripts/stage-conpty.ps1 -Configuration Release
+          cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
+          if ($LASTEXITCODE -ne 0) { throw 'Tunnel helper build failed' }
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: windows-aarch64-package-input
           path: |
             target/release/festerm.exe
             target/release/festerm-sessiond.exe
+            target/release/festerm-tunnel-setup.exe
+            target/release/festerm-tunnel-bridge.exe
+            target/release/festerm-tunnel-worker.exe
             target/release/runtime/conpty
           if-no-files-found: error
           retention-days: 1
@@ -309,7 +327,10 @@ jobs:
       - name: Build and stage verified x86_64 ConPTY runtime
         if: matrix.arch == 'x86_64'
         shell: pwsh
-        run: ./scripts/stage-conpty.ps1 -Configuration Release
+        run: |
+          ./scripts/stage-conpty.ps1 -Configuration Release
+          cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
+          if ($LASTEXITCODE -ne 0) { throw 'Tunnel helper build failed' }
       - name: Download native ARM64 package input
         if: matrix.arch == 'aarch64'
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
@@ -322,7 +343,10 @@ jobs:
           $expectedMachine = [Convert]::ToUInt16('${{ matrix.pe_machine }}'.Substring(2), 16)
           foreach ($binary in @(
             'target/release/festerm.exe',
-            'target/release/festerm-sessiond.exe'
+            'target/release/festerm-sessiond.exe',
+            'target/release/festerm-tunnel-setup.exe',
+            'target/release/festerm-tunnel-bridge.exe',
+            'target/release/festerm-tunnel-worker.exe'
           )) {
             $bytes = [IO.File]::ReadAllBytes((Resolve-Path $binary))
             $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
@@ -353,12 +377,26 @@ jobs:
           files: |
             ${{ github.workspace }}\target\release\festerm.exe
             ${{ github.workspace }}\target\release\festerm-sessiond.exe
+            ${{ github.workspace }}\target\release\festerm-tunnel-setup.exe
+            ${{ github.workspace }}\target\release\festerm-tunnel-bridge.exe
+            ${{ github.workspace }}\target\release\festerm-tunnel-worker.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
       - name: Stage immutable Windows session daemon
         shell: pwsh
         run: |
+          $applicationSignature = Get-AuthenticodeSignature 'target/release/festerm.exe'
+          if ($applicationSignature.Status -ne 'Valid') {
+            throw 'Application is not Authenticode-valid'
+          }
+          foreach ($helper in @('festerm-sessiond', 'festerm-tunnel-setup', 'festerm-tunnel-bridge', 'festerm-tunnel-worker')) {
+            $signature = Get-AuthenticodeSignature "target/release/$helper.exe"
+            if ($signature.Status -ne 'Valid' -or
+                $signature.SignerCertificate.Subject -ne $applicationSignature.SignerCertificate.Subject) {
+              throw "Helper does not have a valid matching publisher: $helper"
+            }
+          }
           $versionedHelper = ./scripts/stage-windows-sessiond.ps1 -Configuration Release
           if ((Get-AuthenticodeSignature $versionedHelper).Status -ne 'Valid') {
             throw "Staged session daemon is not Authenticode-valid: $versionedHelper"
@@ -440,6 +478,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release -p festerm -p festerm-sessiond -p festerm-automation-js
+          cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
           cargo packager --config packaging/linux.toml --formats appimage
           appimage=$(find target/release -maxdepth 1 -name '*.AppImage' -print -quit)
           test -n "$appimage"
@@ -453,6 +492,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release -p festerm -p festerm-sessiond -p festerm-automation-js
+          cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
           cargo packager --config packaging/linux.toml --formats deb
           deb=$(find target/release -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$deb"

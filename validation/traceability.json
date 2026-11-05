@@ -35,6 +35,53 @@
   ],
   "coverage": [
     {
+      "id": "installed-profile-dev-tunnel-hosting",
+      "edges": ["TUNNEL-15", "TUNNEL-16"],
+      "requirements": [
+        "docs/adr/0072-installed-profile-tunnel-hosting.md#decision",
+        "docs/gui-design.md#profile-editing",
+        "docs/application-command-model.md"
+      ],
+      "decisions": ["ADR-0072"],
+      "automated_tests": [
+        "detached_matching_attached_reuse_is_non_admitting_and_request_bound",
+        "detached_absent_start_reserves_before_launch_and_starts_once",
+        "detached_crash_after_reservation_never_relaunches",
+        "detached_uncertain_launch_adopts_only_reserved_generation",
+        "detached_fingerprint_preserves_argv_cwd_and_effective_path",
+        "local_tunnel_hosting_is_explicit_and_requires_native_persistence",
+        "local_tunnel_hosting_rejects_noncanonical_identity_and_shared_installations",
+        "prepared_consent_cannot_host_and_a_different_or_revoked_consent_cannot_resume",
+        "late_cloud_creation_is_retained_for_cleanup_but_never_published_after_revocation",
+        "a_crash_before_submission_can_be_cancelled_but_an_uncertain_create_cannot",
+        "fresh_shell_approval_preserves_cloud_identity_and_pins_the_initial_name",
+        "cancelled_preparation_and_completed_revocation_need_fresh_explicit_consent",
+        "cached_cli_verification_opens_a_mapped_executable_read_only",
+        "pinned_archive_accepts_only_the_expected_flat_executable_and_both_hashes",
+        "packaged_executable_ancestors_accept_the_native_applications_directory",
+        "foreground_consent_read_refuses_a_busy_transaction_without_waiting",
+        "a_status_poll_cannot_swallow_explicit_hosting_work",
+        "queued_removal_cannot_be_replaced_by_ensure_or_login_for_hosting",
+        "unverifiable_consent_blocks_profile_removal_instead_of_skipping_revocation",
+        "an_unreferenced_host_cannot_be_removed_after_its_profile_reappears",
+        "uncertain_creation_remains_visible_without_a_transient_failure_code",
+        "cloud_browser_removal_requires_a_qualified_reserved_candidate",
+        "unknown_inventory_cannot_fall_back_to_unmanaged_cloud_deletion",
+        "local_host_checkbox_requires_explicit_save_and_dispatches_hosting_intent",
+        "failed_local_host_save_retains_the_draft_and_ignores_stale_replies",
+        "local_draft_preserves_ordered_argument_boundaries_when_only_renamed",
+        "edited_profile_rename_updates_all_windows_and_usage_without_overwriting_another_profile",
+        "hosted_profile_rename_updates_live_and_sibling_workspace_metadata_only"
+      ],
+      "manual_scenarios": ["DT-08"],
+      "status": "partial",
+      "prerequisites": [
+        "Signed desktop provisioning, browser sign-in/account binding and native service/helper updates on Windows, macOS and Linux remain DT-08",
+        "Real-service interrupted creation, offline authenticated cleanup and physical-client reconnect remain unqualified",
+        "Reference-aware old helper-cache collection is deferred to #619; retain unknown and referenced versions"
+      ]
+    },
+    {
       "id": "mcp-javascript-automation-proposal",
       "edges": [
         "AUT-03",

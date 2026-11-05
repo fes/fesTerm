@@ -33,7 +33,12 @@ identity/revision-checked offset reads, bounded watch/rescan semantics and
 daemon generation correlation. Separate exact-caller/tab/root MCP consent is
 implemented in a dependent broker slice; native DT/AUTO qualification is still
 open, and unsupported SSH combinations remain unavailable.
-Inventory/create/takeover/terminate remain unavailable. Native GitHub device
+Installed desktop Local profiles can explicitly request native-daemon tunnel
+hosting on Save (ADR 0072), with host-local consent, non-attaching one-shot
+launch, verified helper staging and shell-preserving revocation/cleanup.
+Signed native provisioning, servicing and physical-client acceptance remain
+open under DT-08; no file/observation grant is implied. This is separate from
+remote session inventory/create/terminate, which remain unavailable. Native GitHub device
 authorization, account-bound refresh and tunnel-name discovery have deterministic
 coverage, not live qualification: the project-owned public client is registered
 and included in default builds; actual service acceptance remains pending

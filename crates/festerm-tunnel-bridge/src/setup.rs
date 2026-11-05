@@ -97,30 +97,58 @@ fn split_created_id(value: &str, expected: &str) -> io::Result<(String, String)>
 }
 
 async fn cli(path: &Path, args: &[&str], stage: &'static str) -> io::Result<Zeroizing<Vec<u8>>> {
+    let response = cli_captured(path, args, stage).await?;
+    drop(response.stderr);
+    if response.code != Some(0) {
+        return Err(refused(stage));
+    }
+    Ok(response.stdout)
+}
+
+struct CliCaptured {
+    code: Option<i32>,
+    stdout: Zeroizing<Vec<u8>>,
+    stderr: Zeroizing<Vec<u8>>,
+}
+
+async fn bounded_cli_output(
+    stream: impl tokio::io::AsyncRead + Unpin,
+    stage: &'static str,
+) -> io::Result<Zeroizing<Vec<u8>>> {
+    let mut bytes = Zeroizing::new(Vec::new());
+    stream
+        .take(MAX_RESPONSE + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|_| refused(stage))?;
+    if bytes.len() as u64 > MAX_RESPONSE {
+        return Err(refused(stage));
+    }
+    Ok(bytes)
+}
+
+async fn cli_captured(path: &Path, args: &[&str], stage: &'static str) -> io::Result<CliCaptured> {
     let mut child = background_command(path)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .map_err(|_| refused(stage))?;
-    let mut stdout = child.stdout.take().ok_or_else(|| refused(stage))?;
+    let stdout = child.stdout.take().ok_or_else(|| refused(stage))?;
+    let stderr = child.stderr.take().ok_or_else(|| refused(stage))?;
     let result = timeout(CLI_TIMEOUT, async {
-        let mut bytes = Zeroizing::new(Vec::new());
-        (&mut stdout)
-            .take(MAX_RESPONSE + 1)
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(|_| refused(stage))?;
-        if bytes.len() as u64 > MAX_RESPONSE {
-            return Err(refused(stage));
-        }
-        let status = child.wait().await.map_err(|_| refused(stage))?;
-        if !status.success() {
-            return Err(refused(stage));
-        }
-        Ok(bytes)
+        let (stdout, stderr, status) = tokio::try_join!(
+            bounded_cli_output(stdout, stage),
+            bounded_cli_output(stderr, stage),
+            async { child.wait().await.map_err(|_| refused(stage)) },
+        )?;
+        Ok::<_, io::Error>(CliCaptured {
+            code: status.code(),
+            stdout,
+            stderr,
+        })
     })
     .await
     .map_err(|_| refused(stage))??;
@@ -462,6 +490,7 @@ fn main() {
         .and_then(|runtime| {
             runtime.block_on(async {
                 match args.first().and_then(|arg| arg.to_str()) {
+                    Some("--profile-host") => managed_setup::profile_request_file(&args[1..]).await,
                     Some("--managed") => managed_setup::install(&args[1..]).await,
                     Some("--serve") => managed_setup::serve(&args[1..]).await,
                     _ => run().await,

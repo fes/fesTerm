@@ -1,0 +1,173 @@
+//! Reviewed official CLI bytes, shared by desktop staging and managed workers.
+
+use crate::setup_storage;
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::{
+    fs::File,
+    io::{self, Read},
+    path::{Path, PathBuf},
+};
+
+pub const DOWNLOAD_LIMIT: u64 = 128 * 1024 * 1024;
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CliPin {
+    pub platform: String,
+    pub architecture: String,
+    pub download: String,
+    pub format: String,
+    pub archive_sha256: String,
+    pub executable_sha256: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Manifest {
+    reviewed: String,
+    pins: Vec<CliPin>,
+}
+
+pub fn current() -> io::Result<CliPin> {
+    let manifest: Manifest = serde_json::from_str(include_str!("../devtunnel-cli-pins.json"))
+        .map_err(|_| io::Error::other("profile_host.cli_manifest"))?;
+    if manifest.reviewed.is_empty() {
+        return Err(io::Error::other("profile_host.cli_manifest"));
+    }
+    let architecture = if cfg!(windows) {
+        "x86_64"
+    } else {
+        std::env::consts::ARCH
+    };
+    manifest
+        .pins
+        .into_iter()
+        .find(|pin| pin.platform == std::env::consts::OS && pin.architecture == architecture)
+        .ok_or_else(|| io::Error::other("profile_host.cli_platform"))
+}
+
+/// Keep the trusted directory and no-follow executable handles alive while
+/// spawning/using the cached command; do not service from a downloaded script.
+pub struct VerifiedCli {
+    path: PathBuf,
+    _directory: File,
+    _executable: File,
+}
+
+impl VerifiedCli {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+pub fn verify(path: &Path) -> io::Result<VerifiedCli> {
+    let pin = current()?;
+    let name = format!("devtunnel{}", std::env::consts::EXE_SUFFIX);
+    if !path.is_absolute() || path.file_name() != Some(std::ffi::OsStr::new(&name)) {
+        return Err(io::Error::other("profile_host.cli_path"));
+    }
+    let directory = setup_storage::private_directory(
+        path.parent()
+            .ok_or_else(|| io::Error::other("profile_host.cli_path"))?,
+        false,
+    )?;
+    #[cfg(windows)]
+    let mut executable = {
+        let file = festerm_windows_security::open_file_no_reparse(&directory, Path::new(&name))?;
+        if !file.metadata()?.is_file() || !festerm_windows_security::is_current_user_only(&file)? {
+            return Err(io::Error::other("profile_host.cli_permissions"));
+        }
+        file
+    };
+    #[cfg(unix)]
+    let mut executable = {
+        use std::os::unix::fs::MetadataExt;
+        let file = festerm_unix_security::open_file_nofollow(&directory, Path::new(&name))?;
+        let metadata = file.metadata()?;
+        if metadata.uid() != festerm_unix_security::current_user_id()?
+            || metadata.mode() & 0o077 != 0
+            || metadata.nlink() != 1
+        {
+            return Err(io::Error::other("profile_host.cli_permissions"));
+        }
+        file
+    };
+    if !matches_digest(&mut executable, &pin.executable_sha256)? {
+        return Err(io::Error::other("profile_host.cli_pin_mismatch"));
+    }
+    Ok(VerifiedCli {
+        path: path.to_owned(),
+        _directory: directory,
+        _executable: executable,
+    })
+}
+
+pub fn matches_digest(reader: impl Read, expected: &str) -> io::Result<bool> {
+    let mut reader = reader.take(DOWNLOAD_LIMIT + 1);
+    let mut digest = Sha256::new();
+    let mut total = 0u64;
+    let mut buffer = [0; 8192];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        if total > DOWNLOAD_LIMIT {
+            return Err(io::Error::other("profile_host.cli_size"));
+        }
+        digest.update(&buffer[..count]);
+    }
+    let actual: String = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    Ok(actual == expected)
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::process::{Command, Stdio};
+
+    #[test]
+    #[ignore = "bounded child used by the mapped executable regression"]
+    fn mapped_binary_child() {
+        std::thread::sleep(std::time::Duration::from_secs(10));
+    }
+
+    #[test]
+    fn cached_cli_verification_opens_a_mapped_executable_read_only() {
+        let state = crate::test_support::private_directory("festerm-cli-mapped");
+        let directory = setup_storage::private_directory(&state, false).unwrap();
+        let path = state.join("devtunnel.exe");
+        let mut source = File::open(std::env::current_exe().unwrap()).unwrap();
+        let mut output =
+            setup_storage::open_private_file(&directory, Path::new("devtunnel.exe"), true).unwrap();
+        io::copy(&mut source, &mut output).unwrap();
+        output.sync_all().unwrap();
+        drop(output);
+        let mut child = Command::new(&path)
+            .args([
+                "--ignored",
+                "--exact",
+                "cli_pins::tests::mapped_binary_child",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let result = verify(&path);
+        let _ = child.kill();
+        child.wait().unwrap();
+        let Err(error) = result else {
+            panic!("the fixture must not match the official CLI pin")
+        };
+        assert_eq!(error.to_string(), "profile_host.cli_pin_mismatch");
+        drop(directory);
+        std::fs::remove_dir_all(state).unwrap();
+    }
+}

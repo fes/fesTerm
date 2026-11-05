@@ -51,6 +51,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0072: Installed-Profile Dev Tunnel Hosting](0072-installed-profile-tunnel-hosting.md) - explicit profile Save activation, non-attaching native ensure, protected host consent, staged helper updates and shared revocation/teardown
+
 - [ADR 0070: Read-Only Remote Observation](0070-read-only-remote-observation.md) - independent host roots, revision-checked reads, bounded native watches, daemon generation correlation and separately authorized exact-tab/root MCP exposure
 - [ADR 0066: Opt-in Managed Daemon Recovery](0066-opt-in-managed-daemon-recovery.md) - bounded private lifecycle evidence, explicit unexpected-daemon replacement consent and unchanged client generation pins
 - [ADR 0068: On-device Dictation for iOS Terminal Keyboards](0068-ios-on-device-terminal-dictation.md) - explicit, bounded native speech capture with no cloud fallback, volatile review and source-bound paste insertion; Simulator spike and physical-device qualification remain distinct

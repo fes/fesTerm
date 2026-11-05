@@ -9,7 +9,7 @@ description = "A scratch, multi-platform SSH/terminal client."
 
 [features]
 default = ["experimental-dev-tunnels"]
-experimental-dev-tunnels = ["dep:festerm-tunnel-bridge", "dep:festerm-tunnel-client", "dep:tokio-util"]
+experimental-dev-tunnels = ["dep:festerm-tunnel-bridge", "dep:festerm-tunnel-client", "dep:tokio-util", "dep:zip"]
 
 [dependencies]
 cap-fs-ext = "4.0.3"
@@ -57,6 +57,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 cargo-packager-updater = "0.2.3"
 bytemuck = "1"
 zeroize = "1"
+uuid = { version = "1", features = ["v4"] }
+zip = { version = "4", default-features = false, features = ["deflate"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 raw-window-handle = "0.6"

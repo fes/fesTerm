@@ -215,6 +215,10 @@ impl<S> WindowsAttachmentInbox<S> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct SessionRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    spawn_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    launch_request: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     correlation_id: Option<String>,
     name: String,
     pid: u32,
@@ -713,18 +717,13 @@ fn run_start(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
     let runtime_root = festerm_sessiond::runtime_root()?;
+    if !runtime_root.exists() {
+        festerm_sessiond::prepare_native_runtime(&runtime_root)?;
+    }
     fs::create_dir_all(&runtime_root)?;
     set_dir_mode(&runtime_root, 0o700)?;
 
-    let start_lock_path = runtime_root.join(format!("{name}.start.lock"));
-    let start_lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(&start_lock_path)?;
-    set_file_mode(&start_lock_path, 0o600)?;
-    start_lock.lock_exclusive()?;
+    let start_lock = lock_session_file(&runtime_root, &name, "start")?;
 
     with_registry_lock(|registry| {
         if registry.foreign.contains_key(&name) {
@@ -953,15 +952,75 @@ fn run_daemon(
 
     let name = validate_name(name)?;
     let runtime_root = festerm_sessiond::runtime_root()?;
+    if !runtime_root.exists() {
+        festerm_sessiond::prepare_native_runtime(&runtime_root)?;
+    }
     fs::create_dir_all(&runtime_root)?;
     set_dir_mode(&runtime_root, 0o700)?;
+    // Independent of the start-helper lock: that helper waits for registration.
+    // Also fences direct `daemon` invocation before it can spawn a second shell.
+    let _daemon_lock = lock_session_file(&runtime_root, &name, "daemon")?;
+    let registry = load_registry()?;
+    if registry.foreign.contains_key(&name)
+        || registry
+            .sessions
+            .get(&name)
+            .map(record_is_live)
+            .transpose()?
+            .unwrap_or(false)
+    {
+        return Err("native generation already running or unsupported".into());
+    }
+    let profile = festerm_pty::LocalProfile::new(&shell.executable)
+        .with_arguments(shell.arguments.iter().cloned());
+    let profile = match &shell.working_directory {
+        Some(cwd) => profile.with_working_directory(cwd),
+        None => profile,
+    };
+    let (shell, fingerprint) = match festerm_sessiond::normalize_spawn_profile(&profile) {
+        Ok(profile) => {
+            let fingerprint = festerm_sessiond::spawn_fingerprint(&profile)?;
+            let shell = ShellSpec {
+                executable: profile
+                    .executable()
+                    .to_str()
+                    .ok_or("unverifiable executable")?
+                    .into(),
+                arguments: profile
+                    .arguments()
+                    .iter()
+                    .map(|arg| {
+                        arg.to_str()
+                            .map(str::to_owned)
+                            .ok_or("unverifiable argument")
+                    })
+                    .collect::<Result<_, _>>()?,
+                working_directory: Some(
+                    profile
+                        .working_directory()
+                        .ok_or("unverifiable directory")?
+                        .to_str()
+                        .ok_or("unverifiable directory")?
+                        .into(),
+                ),
+            };
+            (shell, Some(fingerprint))
+        }
+        // Ordinary legacy launches retain their existing resolution behavior.
+        Err(_) => (shell, None),
+    };
+    if let Some(expected) = env::var_os("FESTERM_SESSIOND_EXPECTED_SPAWN") {
+        if expected.to_str() != fingerprint.as_deref() {
+            return Err("native spawn evidence changed before launch".into());
+        }
+    }
     let generation = match env::var("FESTERM_SESSIOND_GENERATION") {
         Ok(generation) => generation.parse::<u128>()?,
         Err(env::VarError::NotPresent) => now_ms(),
         Err(error) => return Err(error.into()),
     };
     let _ = DAEMON_GENERATION.set(generation);
-    let record = generation_record(
+    let mut record = generation_record(
         &runtime_root,
         GenerationRecordSpec {
             name: name.clone(),
@@ -973,6 +1032,21 @@ fn run_daemon(
             scrollback_limit_bytes,
         },
     )?;
+    record.spawn_fingerprint = fingerprint;
+    record.launch_request = match env::var("FESTERM_SESSIOND_LAUNCH_REQUEST") {
+        Ok(value) => {
+            let id = uuid::Uuid::parse_str(&value)?;
+            if id.get_version_num() != 4
+                || id.get_variant() != uuid::Variant::RFC4122
+                || id.hyphenated().to_string() != value
+            {
+                return Err("invalid native hosting launch request".into());
+            }
+            Some(value)
+        }
+        Err(env::VarError::NotPresent) => None,
+        Err(_) => return Err("invalid native hosting launch request".into()),
+    };
     let identity = festerm_sessiond::NativeSessionIdentity {
         name: name.clone(),
         pid: record.pid,
@@ -1089,6 +1163,8 @@ fn generation_record(
         session_pipe_name(&identity)
     };
     Ok(SessionRecord {
+        spawn_fingerprint: None,
+        launch_request: None,
         correlation_id: Some(format!("fesTerm:{pid}:{generation}")),
         name,
         pid,
@@ -1130,11 +1206,18 @@ fn with_daemon_generation(
 ) -> Result<(), Box<dyn std::error::Error>> {
     validate_artifact_root(root)?;
     let lease_path = generation_lease_path(root, record);
-    let lease = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(&lease_path)?;
+    let lease = match private_runtime_directory(root)? {
+        Some(directory) => festerm_sessiond::private_storage::open_private_file(
+            &directory,
+            Path::new(lease_path.file_name().ok_or("invalid lease")?),
+            true,
+        )?,
+        None => OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&lease_path)?,
+    };
     let mut socket_owned = false;
     let result = (|| {
         lease.lock_exclusive()?;
@@ -3124,11 +3207,95 @@ fn registry_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(festerm_sessiond::runtime_root()?.join("registry.json"))
 }
 
+fn private_runtime_directory(root: &Path) -> io::Result<Option<File>> {
+    match festerm_sessiond::private_storage::private_directory(root, false) {
+        Ok(directory) => Ok(Some(directory)),
+        Err(error) if env::var_os("FESTERM_SESSIOND_EXPECTED_SPAWN").is_some() => Err(error),
+        Err(_) => Ok(None),
+    }
+}
+
+fn lock_session_file(
+    root: &Path,
+    name: &str,
+    kind: &str,
+) -> Result<File, Box<dyn std::error::Error>> {
+    let file_name = format!("{name}.{kind}.lock");
+    let lock = match private_runtime_directory(root)? {
+        Some(directory) => match festerm_sessiond::private_storage::open_private_file(
+            &directory,
+            Path::new(&file_name),
+            true,
+        ) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                festerm_sessiond::private_storage::open_private_file(
+                    &directory,
+                    Path::new(&file_name),
+                    false,
+                )?
+            }
+            Err(error) => return Err(error.into()),
+        },
+        // Old ordinary CLI sessions remain usable in their original roots.
+        // Hosting itself never takes this compatibility path.
+        None => {
+            let path = root.join(file_name);
+            let file = OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(&path)?;
+            set_file_mode(&path, 0o600)?;
+            file
+        }
+    };
+    bounded_registry_lock(&lock, true)?;
+    Ok(lock)
+}
+
+fn bounded_registry_lock(file: &File, exclusive: bool) -> io::Result<()> {
+    let deadline = std::time::Instant::now() + Duration::from_millis(500);
+    loop {
+        let result = if exclusive {
+            FileExt::try_lock_exclusive(file)
+        } else {
+            FileExt::try_lock_shared(file)
+        };
+        match result {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if festerm_sessiond::lock_is_contended(&error)
+                    && std::time::Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(20))
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 fn registry_lock_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(festerm_sessiond::runtime_root()?.join("registry.lock"))
 }
 
 fn read_registry_at(path: &Path) -> Result<SessionRegistry, Box<dyn std::error::Error>> {
+    if let Some(parent) = path.parent() {
+        if let Some(directory) = private_runtime_directory(parent)? {
+            return match festerm_sessiond::private_storage::read_private(
+                &directory,
+                Path::new("registry.json"),
+                4 * 1024 * 1024,
+            ) {
+                Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    Ok(SessionRegistry::default())
+                }
+                Err(error) => Err(error.into()),
+            };
+        }
+    }
     if !path.exists() {
         return Ok(SessionRegistry::default());
     }
@@ -3145,6 +3312,24 @@ fn open_registry_lock_file() -> Result<(PathBuf, File), Box<dyn std::error::Erro
     let parent = lock_path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     set_dir_mode(parent, 0o700)?;
+    if let Some(directory) = private_runtime_directory(parent)? {
+        let lock_file = match festerm_sessiond::private_storage::open_private_file(
+            &directory,
+            Path::new("registry.lock"),
+            true,
+        ) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                festerm_sessiond::private_storage::open_private_file(
+                    &directory,
+                    Path::new("registry.lock"),
+                    false,
+                )?
+            }
+            Err(error) => return Err(error.into()),
+        };
+        return Ok((path, lock_file));
+    }
     let lock_file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -3159,7 +3344,7 @@ fn with_registry_lock<T>(
     mut operation: impl FnMut(&mut SessionRegistry) -> Result<T, Box<dyn std::error::Error>>,
 ) -> Result<T, Box<dyn std::error::Error>> {
     let (path, lock_file) = open_registry_lock_file()?;
-    lock_file.lock_exclusive()?;
+    bounded_registry_lock(&lock_file, true)?;
     let mut registry = read_registry_at(&path)?;
     let result = operation(&mut registry);
     if result.is_ok() {
@@ -3174,6 +3359,16 @@ fn write_registry_at(
     registry: &SessionRegistry,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let output = serde_json::to_string_pretty(registry)?;
+    if let Some(parent) = path.parent() {
+        if let Some(directory) = private_runtime_directory(parent)? {
+            festerm_sessiond::private_storage::replace_private(
+                &directory,
+                Path::new("registry.json"),
+                output.as_bytes(),
+            )?;
+            return Ok(());
+        }
+    }
     fs::write(path, output)?;
     set_file_mode(path, 0o600)?;
     Ok(())
@@ -3181,7 +3376,7 @@ fn write_registry_at(
 
 fn load_registry() -> Result<SessionRegistry, Box<dyn std::error::Error>> {
     let (path, lock_file) = open_registry_lock_file()?;
-    FileExt::lock_shared(&lock_file)?;
+    bounded_registry_lock(&lock_file, false)?;
     let result = read_registry_at(&path);
     FileExt::unlock(&lock_file)?;
     result
@@ -3189,8 +3384,15 @@ fn load_registry() -> Result<SessionRegistry, Box<dyn std::error::Error>> {
 
 fn save_registry_record(record: SessionRecord) -> Result<(), Box<dyn std::error::Error>> {
     with_registry_lock(|registry: &mut SessionRegistry| {
+        if registry.foreign.contains_key(&record.name) {
+            return Err("unsupported native generation already registered".into());
+        }
         if let Some(existing) = registry.sessions.get(&record.name) {
-            if existing.pid != record.pid && record_is_live(existing)? {
+            if (existing.pid != record.pid
+                || existing.created_at_unix_ms != record.created_at_unix_ms
+                || existing.socket != record.socket)
+                && record_is_live(existing)?
+            {
                 return Err(format!("session '{}' is already running", record.name).into());
             }
         }
@@ -5287,6 +5489,8 @@ mod tests {
                 "demo".to_owned(),
                 SessionRecord {
                     name: "demo".to_owned(),
+                    spawn_fingerprint: None,
+                    launch_request: None,
                     correlation_id: None,
                     pid: 22,
                     socket: "demo.sock".to_owned(),
@@ -5973,6 +6177,8 @@ mod tests {
     fn registry_round_trip_is_stable() {
         let record = SessionRecord {
             name: "demo".to_owned(),
+            spawn_fingerprint: None,
+            launch_request: None,
             correlation_id: None,
             pid: 1234,
             socket: "/tmp/festerm-sessiond/demo.sock".to_owned(),
@@ -6018,6 +6224,8 @@ mod tests {
             "mine".to_owned(),
             SessionRecord {
                 name: "mine".to_owned(),
+                spawn_fingerprint: None,
+                launch_request: None,
                 correlation_id: None,
                 pid: 7,
                 socket: "mine.sock".to_owned(),

@@ -1704,6 +1704,23 @@ close and report a retryable recovery disconnect without displacing the active
 client. This is not a limit on open terminals; command input/resize
 backpressure remains separate.
 
+Installed desktop builds add a default-off **Expose via Dev Tunnel** checkbox
+only for Local profiles using the native daemon. This explicit opt-in is the
+exception to metadata-only profile Save: saving can start the exact configured
+command and publish it without opening a local tab. The explanation identifies
+remote takeover, independent service lifetime and the absence of file/observation
+grants. Starting, sign-in, readiness and cleanup are distinct states; only
+verified ready hosts offer connection details. Browser sign-in is foreground
+and cancellable, never an invisible startup prompt.
+
+Disable/Save, provider removal and profile deletion revoke exposure before the
+config write, retain the shell and track pending cloud cleanup even when the
+profile no longer exists. Profiles lists that protected local cleanup with
+sign-in/Retry actions. Renaming retains ownership and the durable session name;
+duplication clears the hosting grant. Retry cannot authorize another shell or
+cloud object; separate confirmed actions explain each. See ADR 0072 and
+`TUNNEL-15`/`TUNNEL-16` for the lifecycle and failure contract.
+
 Local executable and initial-directory fields share
 bounded filesystem-backed completion. That completion is asynchronous: it
 caches exact prior queries, performs slow filesystem scans off the UI thread,

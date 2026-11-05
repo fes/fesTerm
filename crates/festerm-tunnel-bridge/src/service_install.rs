@@ -1,7 +1,7 @@
 //! Dedicated, unelevated login services. Definitions are create-only: an
 //! existing entry must match exactly, and no daemon/session is ever stopped.
-//! The one exception is an explicit upgrade ([`stop_and_replace`]), which may
-//! stop and rewrite only this UUID's own worker definition.
+//! Explicit upgrade ([`stop_and_replace`]) and removal ([`uninstall`]) may stop
+//! only this UUID/state's own worker and bridge, including journaled old images.
 use festerm_tunnel_bridge::setup_storage;
 use std::{
     ffi::OsString,
@@ -219,7 +219,9 @@ fn linux_definition(spec: &ServiceSpec) -> io::Result<String> {
     linux_unit(
         spec,
         "StartLimitIntervalSec=0\n",
-        &format!("Restart=on-failure\nRestartSec=15\nRestartPreventExitStatus={PERMANENT_REFUSAL_EXIT}\n"),
+        &format!(
+            "Restart=on-failure\nRestartSec=15\nRestartPreventExitStatus={PERMANENT_REFUSAL_EXIT}\n"
+        ),
     )
 }
 
@@ -402,6 +404,20 @@ fn windows_owned_definitions(spec: &ServiceSpec, sid: &str) -> io::Result<[Vec<u
             .replacen("encoding=\"UTF-16\"", "encoding=\"UTF-8\"", 1)
             .into_bytes(),
     ])
+}
+
+#[cfg(any(windows, test))]
+fn windows_history_definitions(
+    previous: &[ServiceSpec],
+    spec: &ServiceSpec,
+    sid: &str,
+) -> io::Result<Vec<Vec<u8>>> {
+    previous
+        .iter()
+        .chain([spec])
+        .map(|prior| windows_owned_definitions(prior, sid))
+        .collect::<io::Result<Vec<_>>>()
+        .map(|definitions| definitions.into_iter().flatten().collect())
 }
 
 #[cfg(any(windows, test))]
@@ -694,6 +710,11 @@ pub fn start_existing(spec: &ServiceSpec) -> io::Result<()> {
 /// any other content, identity or state directory still refuses. The daemon
 /// session is not part of the service and keeps running.
 pub fn stop_and_replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
+    validate_history(previous, spec)?;
+    replace(previous, spec)
+}
+
+fn validate_history(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
     spec.validate_syntax()?;
     for prior in previous {
         prior.validate_syntax()?;
@@ -701,7 +722,54 @@ pub fn stop_and_replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Res
             return Err(refused("service.foreign_definition"));
         }
     }
-    replace(previous, spec)
+    Ok(())
+}
+
+/// Removes only this installation's service, including journaled definitions
+/// from an interrupted upgrade. Retain private installation receipts for cloud
+/// cleanup and never signal the independent daemon shell.
+pub fn uninstall(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
+    validate_history(previous, spec)?;
+    #[cfg(windows)]
+    windows_teardown(previous, spec, false)?;
+    #[cfg(not(windows))]
+    replace(previous, spec)?;
+    #[cfg(target_os = "linux")]
+    {
+        let directory = trusted_directory(&registration_directory_path()?, false)?;
+        let name = format!("festerm-tunnel-{}.service", spec.id);
+        let accepted = [linux_definition(spec)?, legacy_linux_definition(spec)?];
+        if owned_definition(&directory, Path::new(&name), &accepted)?.is_none() {
+            return Ok(());
+        }
+        run(
+            Path::new("/usr/bin/systemctl"),
+            &args(&["--user", "disable", "--no-reload", &name]),
+            "service.systemd_disable",
+        )?;
+        remove_owned_registration(&directory, Path::new(&name))?;
+        run(
+            Path::new("/usr/bin/systemctl"),
+            &args(&["--user", "daemon-reload"]),
+            "service.systemd_reload",
+        )?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let directory = trusted_directory(&registration_directory_path()?, false)?;
+        let name = format!("dev.fes.festerm.tunnel.{}.plist", spec.id);
+        remove_owned_registration(&directory, Path::new(&name))?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn remove_owned_registration(directory: &File, name: &Path) -> io::Result<()> {
+    match festerm_unix_security::remove_private_staging_file(directory, name) {
+        Ok(()) => directory.sync_all(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 /// Rewrites this UUID's pre-restart Linux definition and reloads systemd when
@@ -937,49 +1005,228 @@ fn powershell_literal(value: &str) -> io::Result<String> {
     Ok(format!("'{}'", value.replace('\'', "''")))
 }
 
-/// Fixed script that terminates only this state directory's `--serve` worker
-/// and its bridge child running one of the owned helper images. Never the
-/// daemon (a different image) and never the calling process.
+// Use the system argv decoder, not a second implementation of Windows quoting.
+// Bridge options are consumed by arity, so a flag-like *value* cannot establish
+// ownership. Unknown options refuse until this bounded matcher is updated.
+#[cfg(any(windows, test))]
+const WINDOWS_PROCESS_MATCHER: &str = r#"
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Runtime.InteropServices;
+public static class FesTermOwnedProcess {
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern IntPtr CommandLineToArgvW(string commandLine, out int argc);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr LocalFree(IntPtr memory);
+    public static string[] Argv(string commandLine) {
+        if (String.IsNullOrEmpty(commandLine) || commandLine.Length > 32767)
+            throw new ArgumentException("service.process_arguments");
+        int count;
+        IntPtr memory = CommandLineToArgvW(commandLine, out count);
+        if (memory == IntPtr.Zero) throw new InvalidOperationException("service.process_arguments");
+        try {
+            var args = new string[count];
+            for (int i = 0; i < count; ++i)
+                args[i] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(memory, i * IntPtr.Size));
+            return args;
+        } finally { LocalFree(memory); }
+    }
+    static bool PathEquals(string a, string b) {
+        return String.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+    }
+    // Normalization is only an ambiguity/refusal check, never kill authority.
+    static string CandidatePath(string value) {
+        if (String.IsNullOrEmpty(value)) return null;
+        if (value.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+            value = @"\\" + value.Substring(8);
+        else if (value.StartsWith(@"\\?\", StringComparison.Ordinal))
+            value = value.Substring(4);
+        try {
+            if (!Path.IsPathRooted(value)) return null;
+            return Path.GetFullPath(value).TrimEnd('\\', '/');
+        }
+        catch (ArgumentException) { return null; }
+        catch (NotSupportedException) { return null; }
+        catch (PathTooLongException) { return null; }
+    }
+    static bool CandidatePathEquals(string a, string b) {
+        string normalized = CandidatePath(a);
+        return normalized != null && PathEquals(normalized, CandidatePath(b));
+    }
+    public static bool KnownImage(string image, string[] setups) {
+        foreach (string setup in setups) {
+            string directory = Path.GetDirectoryName(setup);
+            if (CandidatePathEquals(image, setup) ||
+                CandidatePathEquals(image, Path.Combine(directory, "festerm-tunnel-worker.exe")) ||
+                CandidatePathEquals(image, Path.Combine(directory, "festerm-tunnel-bridge.exe"))) return true;
+        }
+        return false;
+    }
+    public static bool Classify(string image, string commandLine, string[] setups, string state) {
+        if (!KnownImage(image, setups)) return false;
+        if (Owned(image, commandLine, setups, state)) return true;
+        string identity = Path.Combine(state, "host-identity.key");
+        string[] args = Argv(commandLine);
+        for (int i = 1; i < args.Length; ++i) {
+            string value = args[i];
+            int equals = value.IndexOf('=');
+            if (value.StartsWith("--", StringComparison.Ordinal) && equals >= 0)
+                value = value.Substring(equals + 1);
+            if (CandidatePathEquals(value, state) || CandidatePathEquals(value, identity))
+                throw new InvalidOperationException("service.process_unrecognized");
+        }
+        return false;
+    }
+    public static bool SameCreationTime(long actualTicks, long cimTicks) {
+        return actualTicks >= cimTicks && actualTicks - cimTicks < 10;
+    }
+    public static bool Owned(string image, string commandLine, string[] setups, string state) {
+        if (!KnownImage(image, setups)) return false;
+        string[] args = Argv(commandLine);
+        if (args.Length == 0 || !PathEquals(args[0], image)) return false;
+        foreach (string setup in setups) {
+            string directory = Path.GetDirectoryName(setup);
+            if (PathEquals(image, setup))
+                return args.Length == 4 && args[1] == "--serve" &&
+                    args[2] == "--state-dir" && PathEquals(args[3], state);
+            if (PathEquals(image, Path.Combine(directory, "festerm-tunnel-worker.exe")))
+                return args.Length == 3 && args[1] == "--state-dir" && PathEquals(args[2], state);
+            if (!PathEquals(image, Path.Combine(directory, "festerm-tunnel-bridge.exe"))) continue;
+            bool existing = false, identity = false;
+            var single = new HashSet<string>();
+            for (int i = 1; i < args.Length; ++i) {
+                string flag = args[i];
+                switch (flag) {
+                    case "--experimental": case "--token-stdin": case "--takeover":
+                    case "--allow-file-read": case "--allow-file-write":
+                        break;
+                    case "--existing-host-identity":
+                        existing = true;
+                        break;
+                    case "--tunnel-id": case "--cluster": case "--port": case "--session":
+                    case "--destination": case "--session-pid": case "--session-generation":
+                    case "--file-root": case "--observe-root": case "--host-identity":
+                        if (++i == args.Length) return false;
+                        if (flag == "--host-identity") {
+                            if (identity || !PathEquals(args[i], Path.Combine(state, "host-identity.key")))
+                                return false;
+                            identity = true;
+                        }
+                        break;
+                    default: return false;
+                }
+                if (flag != "--observe-root" && !single.Add(flag)) return false;
+            }
+            return existing && identity;
+        }
+        return false;
+    }
+}
+'@
+"#;
+
+/// Stops and verifies only the exact owned worker/launcher/bridge argv and
+/// images, including old helpers and bridges orphaned after worker.lock release.
 #[cfg(any(windows, test))]
 fn windows_stop_script(owned: &[&ServiceSpec], state: &Path, own_pid: u32) -> io::Result<String> {
-    let mut images = Vec::new();
-    for spec in owned {
-        let directory = spec
-            .executable
-            .parent()
-            .ok_or_else(|| refused("service.invalid_path"))?;
-        images.push(powershell_literal(path_text(&spec.executable)?)?);
-        images.push(powershell_literal(path_text(
-            &directory.join("festerm-tunnel-bridge.exe"),
-        )?)?);
-    }
+    let setups = owned
+        .iter()
+        .map(|spec| powershell_literal(path_text(&spec.executable)?))
+        .collect::<io::Result<Vec<_>>>()?;
     Ok(format!(
-        "$ErrorActionPreference='Stop'; $state={}; $images=@({}); \
-         Get-CimInstance Win32_Process | Where-Object {{ $_.ProcessId -ne {own_pid} -and \
-         $_.ExecutablePath -and ($images -contains $_.ExecutablePath) -and $_.CommandLine -and \
-         $_.CommandLine.Contains($state) -and ($_.CommandLine.Contains(' --serve ') -or \
-         $_.CommandLine.Contains('--existing-host-identity')) }} | \
-         ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+        "$ErrorActionPreference='Stop'; {WINDOWS_PROCESS_MATCHER}\n\
+         $state={}; [string[]]$setups=@({}); \
+         function OwnedProcesses {{ \
+           foreach($p in Get-CimInstance Win32_Process) {{ \
+             if($p.ProcessId -eq {own_pid}) {{continue}}; \
+             if(!$p.ExecutablePath) {{ \
+               if($p.Name -in @('festerm-tunnel-setup.exe','festerm-tunnel-worker.exe','festerm-tunnel-bridge.exe')) \
+                 {{throw 'service.process_inspect'}}; \
+               continue \
+             }}; \
+             if([FesTermOwnedProcess]::KnownImage($p.ExecutablePath,$setups)) {{ \
+               if(!$p.CommandLine) {{throw 'service.process_inspect'}}; \
+               if([FesTermOwnedProcess]::Classify($p.ExecutablePath,$p.CommandLine,$setups,$state)) {{$p}} \
+             }} \
+           }} \
+         }}; \
+         $deadline=[DateTime]::UtcNow.AddSeconds(8); \
+         do {{ \
+           $owned=@(OwnedProcesses); if($owned.Count -eq 0) {{exit 0}}; \
+           foreach($p in $owned) {{ \
+             $process=$null; \
+             try {{ \
+               $process=[Diagnostics.Process]::GetProcessById([int]$p.ProcessId); \
+               $handle=$process.Handle; \
+               if(![FesTermOwnedProcess]::SameCreationTime(\
+                 $process.StartTime.ToUniversalTime().Ticks,$p.CreationDate.ToUniversalTime().Ticks)) \
+                 {{throw 'service.process_changed'}}; \
+               $process.Kill(); \
+               if(!$process.WaitForExit(1000)) {{throw 'service.process_stop'}} \
+             }} catch [ArgumentException] {{ \
+               if(Get-CimInstance Win32_Process -Filter ('ProcessId='+$p.ProcessId)) {{throw}} \
+             }} finally {{if($process) {{$process.Dispose()}}}} \
+           }}; \
+           if([DateTime]::UtcNow -gt $deadline) {{throw 'service.process_stop'}} \
+         }} while($true)",
         powershell_literal(path_text(state)?)?,
-        images.join(","),
+        setups.join(","),
     ))
+}
+
+#[cfg(any(windows, test))]
+fn windows_task_probe_script(name: &str) -> io::Result<String> {
+    Ok(format!(
+        "$ErrorActionPreference='Stop'; \
+         $s=[Activator]::CreateInstance([type]::GetTypeFromProgID('Schedule.Service')); \
+         $s.Connect(); $folder=$s.GetFolder('\\'); \
+         try {{$null=$folder.GetTask({}); [Console]::Write('present')}} \
+         catch {{if($_.Exception.GetBaseException().HResult -eq -2147024894) \
+         {{[Console]::Write('missing')}} else {{throw}}}}",
+        powershell_literal(name)?,
+    ))
+}
+
+#[cfg(any(windows, test))]
+fn windows_task_presence(output: NativeOutput) -> io::Result<bool> {
+    match (output.success, output.bytes.as_slice()) {
+        (true, b"present") => Ok(true),
+        (true, b"missing") => Ok(false),
+        _ => Err(refused("service.task_inspect")),
+    }
+}
+
+#[cfg(windows)]
+fn windows_task_exists(system: &Path, name: &str) -> io::Result<bool> {
+    windows_task_presence(native(
+        &system.join("WindowsPowerShell\\v1.0\\powershell.exe"),
+        &args(&[
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &windows_task_probe_script(name)?,
+        ]),
+        "service.task_inspect",
+    )?)
 }
 
 #[cfg(windows)]
 fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
+    windows_teardown(previous, spec, true)
+}
+
+#[cfg(windows)]
+fn windows_teardown(previous: &[ServiceSpec], spec: &ServiceSpec, rewrite: bool) -> io::Result<()> {
     let state = spec.validate()?;
-    check_windows_worker(&spec.executable)?;
+    if rewrite {
+        check_windows_worker(&spec.executable)?;
+    }
     let (sid, system) = festerm_windows_security::current_user_service_context()
         .map_err(|_| refused("service.user_context"))?;
     let expected = windows_task_bytes(&windows_definition(spec, &sid)?);
-    let accepted = previous
-        .iter()
-        .chain([spec])
-        .map(|prior| windows_owned_definitions(prior, &sid))
-        .collect::<io::Result<Vec<_>>>()?
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+    let accepted = windows_history_definitions(previous, spec, &sid)?;
     let definition_name = Path::new("service-task.xml");
     let snapshot_name = Path::new("service-task-owned.xml");
     let tool = system.join("schtasks.exe");
@@ -1003,28 +1250,36 @@ fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
                 .map_err(|_| refused("service.foreign_definition"))?,
             &current.bytes,
         )?;
-        // AllowHardTerminate=false means the Scheduler cannot stop the task,
-        // so terminate exactly this installation's worker and bridge.
-        let owned: Vec<_> = previous.iter().chain([spec]).collect();
-        run(
-            &system.join("WindowsPowerShell/v1.0/powershell.exe"),
-            &[
-                OsString::from("-NoProfile"),
-                OsString::from("-NonInteractive"),
-                OsString::from("-Command"),
-                OsString::from(windows_stop_script(
-                    &owned,
-                    &spec.state,
-                    std::process::id(),
-                )?),
-            ],
-            "service.task_stop",
-        )?;
         run(
             &tool,
             &args(&["/Delete", "/TN", &name, "/F"]),
             "service.task_delete",
         )?;
+    }
+    // A failed /Query is not evidence of absence (permissions, Scheduler
+    // failure, malformed output, etc.). Keep both receipts on any uncertainty.
+    if windows_task_exists(&system, &name)? {
+        return Err(refused("service.task_inspect"));
+    }
+    // Deleting first prevents Scheduler from launching another worker during
+    // cleanup. Always scan, even if the task/worker lock is already absent.
+    let owned: Vec<_> = previous.iter().chain([spec]).collect();
+    run(
+        &system.join("WindowsPowerShell\\v1.0\\powershell.exe"),
+        &[
+            OsString::from("-NoProfile"),
+            OsString::from("-NonInteractive"),
+            OsString::from("-Command"),
+            OsString::from(windows_stop_script(
+                &owned,
+                &spec.state,
+                std::process::id(),
+            )?),
+        ],
+        "service.task_stop",
+    )?;
+    if windows_task_exists(&system, &name)? {
+        return Err(refused("service.task_inspect"));
     }
     match std::fs::remove_file(spec.state.join(snapshot_name)) {
         Ok(()) => {}
@@ -1032,7 +1287,7 @@ fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
         Err(error) => return Err(error),
     }
     match existing {
-        Some(existing) if existing != expected => {
+        Some(existing) if rewrite && existing != expected => {
             setup_storage::replace_private(&state, definition_name, &expected)
         }
         _ => Ok(()),
@@ -1220,6 +1475,9 @@ fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
             &current.bytes,
         )?;
     } else {
+        if windows_task_exists(&system, &name)? {
+            return Err(refused("service.task_inspect"));
+        }
         if !create {
             return Err(refused("service.task_missing"));
         }
@@ -1668,9 +1926,11 @@ mod tests {
         let new = spec();
         let mut foreign = spec();
         foreign.id = "d17273e0-a8a3-4fce-b3cd-49f112d8b15c".into();
+        assert!(uninstall(std::slice::from_ref(&foreign), &new).is_err());
         assert!(stop_and_replace(&[foreign], &new).is_err());
         let mut moved = spec();
         moved.state = moved.state.with_file_name("other state");
+        assert!(uninstall(std::slice::from_ref(&moved), &new).is_err());
         assert!(stop_and_replace(&[moved], &new).is_err());
     }
 
@@ -1682,13 +1942,311 @@ mod tests {
             .with_file_name("o'ld")
             .join("festerm-tunnel-setup.exe");
         let script = windows_stop_script(&[&old], &spec().state, 4242).unwrap();
-        assert!(script.contains("$_.ProcessId -ne 4242"));
+        assert!(script.contains("$p.ProcessId -eq 4242"));
         assert!(script.contains("o''ld"));
         assert!(script.contains("festerm-tunnel-bridge.exe"));
-        assert!(script.contains("' --serve '"));
-        assert!(script.contains("'--existing-host-identity'"));
+        assert!(script.contains("CommandLineToArgvW"));
+        assert!(script.contains("OwnedProcesses"));
+        assert!(script.contains("$process.WaitForExit(1000)"));
+        assert!(!script.contains(".Contains($state)"));
+        assert!(!script.contains("Stop-Process"));
+        assert!(!script.contains("worker.lock"));
         assert!(!script.contains("sessiond"));
         assert!(powershell_literal("C:\\a\u{2019}b").is_err());
+    }
+
+    #[test]
+    fn service_windows_task_probe_never_infers_missing_from_an_error() {
+        for (success, bytes, present) in [
+            (true, b"present".as_slice(), Some(true)),
+            (true, b"missing".as_slice(), Some(false)),
+            (false, b"missing".as_slice(), None),
+            (false, b"Access denied".as_slice(), None),
+            (true, b"".as_slice(), None),
+            (true, b"missing\n".as_slice(), None),
+            (true, b"unexpected".as_slice(), None),
+        ] {
+            assert_eq!(
+                windows_task_presence(NativeOutput {
+                    success,
+                    bytes: bytes.to_vec(),
+                })
+                .ok(),
+                present,
+            );
+        }
+        let script = windows_task_probe_script("fesTerm-DevTunnel-test").unwrap();
+        assert!(script.contains("GetTask('fesTerm-DevTunnel-test')"));
+        assert!(script.contains("HResult -eq -2147024894"));
+        assert!(script.contains("else {throw}"));
+    }
+
+    #[test]
+    fn service_interrupted_upgrade_accepts_journaled_old_definitions_only() {
+        let current = spec();
+        let mut old = spec();
+        old.executable = old
+            .executable
+            .parent()
+            .unwrap()
+            .join("older helpers")
+            .join(current.executable.file_name().unwrap());
+        validate_history(std::slice::from_ref(&old), &current).unwrap();
+        let sid = "S-1-5-21-123-456-789-1001";
+        let accepted =
+            windows_history_definitions(std::slice::from_ref(&old), &current, sid).unwrap();
+        for definition in windows_owned_definitions(&old, sid).unwrap() {
+            assert!(accepted.contains(&definition));
+        }
+        let mut foreign = spec();
+        foreign.state = foreign.state.with_file_name("adjacent state");
+        for definition in windows_owned_definitions(&foreign, sid).unwrap() {
+            assert!(!accepted.contains(&definition));
+        }
+        assert_ne!(
+            linux_definition(&old).unwrap(),
+            linux_definition(&current).unwrap()
+        );
+        assert_ne!(
+            mac_definition(&old).unwrap(),
+            mac_definition(&current).unwrap()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn service_windows_teardown_scripts_parse_without_running() {
+        let spec = spec();
+        let scripts = [
+            windows_stop_script(&[&spec], &spec.state, 4242).unwrap(),
+            windows_task_probe_script(&format!("fesTerm-DevTunnel-{}", spec.id)).unwrap(),
+        ];
+        let mut expression = "$ErrorActionPreference='Stop';".to_owned();
+        for script in scripts {
+            expression.push_str(&format!(
+                "$tokens=$null; $errors=$null; \
+                 $null=[Management.Automation.Language.Parser]::ParseInput('{}',[ref]$tokens,[ref]$errors); \
+                 if($errors.Count -ne 0) {{throw 'service.script_parse'}};",
+                script.replace('\'', "''"),
+            ));
+        }
+        let (_, system) = festerm_windows_security::current_user_service_context().unwrap();
+        run(
+            &system.join("WindowsPowerShell\\v1.0\\powershell.exe"),
+            &args(&["-NoProfile", "-NonInteractive", "-Command", &expression]),
+            "service.script_parse_fixture",
+        )
+        .unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn service_windows_native_argv_ownership_is_exact_and_read_only() {
+        // Only synthetic command lines go through the native decoder; this
+        // test never enumerates, registers, starts, deletes or stops anything.
+        let setup = r"C:\program files\old helpers\festerm-tunnel-setup.exe";
+        let worker = r"C:\program files\old helpers\festerm-tunnel-worker.exe";
+        let bridge = r"C:\program files\old helpers\festerm-tunnel-bridge.exe";
+        let state = r"C:\private state\profile";
+        let identity = format!(r"{state}\host-identity.key");
+        let bridge_args = format!(
+            r#"--experimental --session "name with spaces" --destination "C:\daemon path" --host-identity "{identity}" --existing-host-identity --token-stdin"#
+        );
+        let setup_command = format!(r#""{setup}" --serve --state-dir "{state}""#);
+        let bridge_command = format!(r#""{bridge}" {bridge_args}"#);
+        let cases = [
+            (setup, setup_command.clone(), true),
+            (worker, format!(r#""{worker}" --state-dir "{state}""#), true),
+            (bridge, bridge_command.clone(), true),
+            (
+                setup,
+                setup_command.replace(state, &format!("{state}-other")),
+                false,
+            ),
+            (
+                setup,
+                setup_command.replace(state, &format!(r"{state}\child")),
+                false,
+            ),
+            (setup, setup_command.replace("--serve", "--service"), false),
+            (
+                setup,
+                format!(r#""{setup}" --serve --state-dir "{state}" extra"#),
+                false,
+            ),
+            (
+                setup,
+                format!(r#""{setup}" --label "--serve --state-dir {state}""#),
+                false,
+            ),
+            (
+                bridge,
+                bridge_command.replace(&identity, &format!(r"{state}-other\host-identity.key")),
+                false,
+            ),
+            (
+                bridge,
+                bridge_command.replace(&identity, &format!(r"{state}\host-identity.key.backup")),
+                false,
+            ),
+            (
+                bridge,
+                bridge_command.replace(
+                    "--existing-host-identity",
+                    "--session --existing-host-identity",
+                ),
+                false,
+            ),
+            (
+                bridge,
+                format!(
+                    r#""{bridge}" --session --host-identity "{identity}" --existing-host-identity"#
+                ),
+                false,
+            ),
+            (
+                bridge,
+                format!(r#"{bridge_command} --host-identity "{identity}""#),
+                false,
+            ),
+            (
+                bridge,
+                format!(
+                    r#""{bridge}" --session "--existing-host-identity" --host-identity "{identity}""#
+                ),
+                false,
+            ),
+            (
+                bridge,
+                bridge_command.replace("name with spaces", r#"name \"quoted\" spaces"#),
+                true,
+            ),
+            (
+                bridge,
+                bridge_command.replace(r"C:\daemon path", r"C:\daemon path\\"),
+                true,
+            ),
+            (
+                r"C:\unowned\festerm-tunnel-bridge.exe",
+                bridge_command.clone(),
+                false,
+            ),
+            (
+                r"C:\program files\old helpers\festerm-sessiond.exe",
+                bridge_command,
+                false,
+            ),
+        ];
+        let mut expression = format!(
+            "$ErrorActionPreference='Stop'; {WINDOWS_PROCESS_MATCHER}\n\
+             [string[]]$setups=@({},{}); $state={};",
+            powershell_literal(setup).unwrap(),
+            powershell_literal(r"C:\new helpers\festerm-tunnel-setup.exe").unwrap(),
+            powershell_literal(state).unwrap(),
+        );
+        for (index, (image, command_line, expected)) in cases.into_iter().enumerate() {
+            expression.push_str(&format!(
+                "if([FesTermOwnedProcess]::Owned({},{},$setups,$state) -ne ${expected}) \
+                 {{throw 'fixture-{index}'}};",
+                powershell_literal(image).unwrap(),
+                powershell_literal(&command_line).unwrap(),
+            ));
+        }
+        let ambiguous = [
+            (setup, format!("{setup_command} --future-option")),
+            (
+                bridge,
+                format!(r#""{bridge}" {bridge_args} --future-option"#),
+            ),
+            (
+                setup,
+                setup_command.replace(state, &format!(r"\\?\{state}")),
+            ),
+            (
+                setup,
+                setup_command.replace(state, &format!(r"{state}\..\profile")),
+            ),
+            (setup, format!(r#""{setup}" --future-state="{state}""#)),
+        ];
+        for (index, (image, command_line)) in ambiguous.into_iter().enumerate() {
+            expression.push_str(&format!(
+                "$refused=$false; try {{ \
+                   $null=[FesTermOwnedProcess]::Classify({},{},$setups,$state) \
+                 }} catch {{ \
+                   if($_.Exception.GetBaseException().Message -cne 'service.process_unrecognized') {{throw}}; \
+                   $refused=$true \
+                 }}; if(!$refused) {{throw 'ambiguous-{index}'}};",
+                powershell_literal(image).unwrap(),
+                powershell_literal(&command_line).unwrap(),
+            ));
+        }
+        for command_line in [
+            format!(
+                "{} --future-option",
+                setup_command.replace(state, &format!("{state}-other"))
+            ),
+            setup_command.replace(state, &format!(r"{state}\child")),
+        ] {
+            expression.push_str(&format!(
+                "if([FesTermOwnedProcess]::Classify({},{},$setups,$state)) \
+                 {{throw 'adjacent-state'}};",
+                powershell_literal(setup).unwrap(),
+                powershell_literal(&command_line).unwrap(),
+            ));
+        }
+        let (_, system) = festerm_windows_security::current_user_service_context().unwrap();
+        run(
+            &system.join("WindowsPowerShell\\v1.0\\powershell.exe"),
+            &args(&["-NoProfile", "-NonInteractive", "-Command", &expression]),
+            "service.native_argv_fixture",
+        )
+        .unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn service_windows_creation_identity_matches_only_cim_microsecond_precision() {
+        let (_, system) = festerm_windows_security::current_user_service_context().unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "service_install::tests::service_runner_identity_child",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let expression = format!(
+            "$ErrorActionPreference='Stop'; {WINDOWS_PROCESS_MATCHER}\n\
+             if(![FesTermOwnedProcess]::SameCreationTime(1000,1000) -or \
+                ![FesTermOwnedProcess]::SameCreationTime(1009,1000) -or \
+                [FesTermOwnedProcess]::SameCreationTime(999,1000) -or \
+                [FesTermOwnedProcess]::SameCreationTime(1010,1000)) \
+                {{throw 'service.identity_precision'}}; \
+             $p=Get-CimInstance Win32_Process -Filter 'ProcessId={}'; \
+             if(!$p) {{throw 'service.identity_child_missing'}}; \
+             $process=[Diagnostics.Process]::GetProcessById({}); \
+             try {{ \
+               $handle=$process.Handle; \
+               if(![FesTermOwnedProcess]::SameCreationTime(\
+                 $process.StartTime.ToUniversalTime().Ticks,$p.CreationDate.ToUniversalTime().Ticks)) \
+                 {{throw 'service.identity_child_mismatch'}} \
+             }} finally {{$process.Dispose()}}",
+            child.id(),
+            child.id(),
+        );
+        let result = run(
+            &system.join("WindowsPowerShell\\v1.0\\powershell.exe"),
+            &args(&["-NoProfile", "-NonInteractive", "-Command", &expression]),
+            "service.identity_fixture",
+        );
+        // The probe is read-only. Cleanup is through this newly spawned
+        // child's owned handle, never through an enumerated or preexisting PID.
+        let _ = child.kill();
+        child.wait().unwrap();
+        result.unwrap();
     }
 
     #[test]
@@ -2217,6 +2775,12 @@ mod tests {
             result.is_ok(),
             "native LaunchAgent smoke failed: {result:?}"
         );
+    }
+
+    #[test]
+    #[ignore = "read-only creation-identity fixture child; no service registration"]
+    fn service_runner_identity_child() {
+        std::thread::sleep(Duration::from_secs(30));
     }
 
     #[test]

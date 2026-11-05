@@ -10,6 +10,8 @@ on:
       - 'Cargo.toml'
       - 'app/festerm/**'
       - 'crates/festerm-automation-js/**'
+      - 'crates/festerm-tunnel-bridge/**'
+      - 'crates/festerm-sessiond/**'
       - 'crates/festerm-windows-direct2d/**'
       - 'assets/app-icon/**'
       - 'packaging/**'
@@ -94,15 +96,92 @@ jobs:
       - name: Install pinned cargo-packager
         if: steps.cargo-packager-cache.outputs.cache-hit != 'true'
         run: cargo install cargo-packager --version 0.11.8 --locked --force
+      - name: Smoke reviewed macOS CLI signature prerequisites
+        if: matrix.platform == 'macos'
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import stat
+          import subprocess
+          import tempfile
+          import zipfile
+          from pathlib import Path
+
+          limit = 128 * 1024 * 1024
+          manifest = json.loads(Path("crates/festerm-tunnel-bridge/devtunnel-cli-pins.json").read_text())
+          pins = [pin for pin in manifest["pins"] if pin["platform"] == "macos"]
+          if sorted(pin["architecture"] for pin in pins) != ["aarch64", "x86_64"]:
+              raise SystemExit("Expected both reviewed macOS CLI architectures exactly once")
+          failures = []
+          with tempfile.TemporaryDirectory(prefix=".macos-cli-smoke-", dir=Path.cwd()) as directory:
+              for pin in pins:
+                  architecture = pin["architecture"]
+                  try:
+                      if pin["format"] != "zip" or not pin["download"].startswith("https://"):
+                          raise ValueError("Expected reviewed HTTPS ZIP download")
+                      cache = Path(directory) / architecture
+                      cache.mkdir(mode=0o700)
+                      archive = cache / "devtunnel.zip"
+                      print(f"Checking reviewed macOS CLI: {architecture}", flush=True)
+                      subprocess.run([
+                          "curl", "--fail", "--location", "--silent", "--show-error",
+                          "--proto", "=https", "--proto-redir", "=https",
+                          "--connect-timeout", "15", "--max-time", "90",
+                          "--max-filesize", str(limit), "--output", str(archive), pin["download"],
+                      ], check=True, timeout=100)
+                      if archive.stat().st_size > limit:
+                          raise ValueError("CLI archive exceeds runtime size limit")
+                      if hashlib.sha256(archive.read_bytes()).hexdigest() != pin["archive_sha256"]:
+                          raise ValueError("CLI archive SHA256 mismatch")
+                      with zipfile.ZipFile(archive) as source:
+                          entries = source.infolist()
+                          if len(entries) != 1:
+                              raise ValueError("Expected a single CLI ZIP entry")
+                          entry = entries[0]
+                          if (entry.filename != "devtunnel" or entry.is_dir()
+                                  or stat.S_ISLNK(entry.external_attr >> 16)
+                                  or entry.file_size > limit):
+                              raise ValueError("Unsafe CLI ZIP entry")
+                          with source.open(entry) as stream:
+                              executable_bytes = stream.read(limit + 1)
+                      if len(executable_bytes) > limit:
+                          raise ValueError("CLI executable exceeds runtime size limit")
+                      if hashlib.sha256(executable_bytes).hexdigest() != pin["executable_sha256"]:
+                          raise ValueError("CLI executable SHA256 mismatch")
+                      executable = cache / "devtunnel"
+                      with executable.open("xb") as destination:
+                          destination.write(executable_bytes)
+                      executable.chmod(0o700)
+                      subprocess.run(["/usr/bin/codesign", "-dv", str(executable)],
+                                     check=False, timeout=20)
+                      subprocess.run([
+                          "/usr/bin/codesign", "--verify", "--strict",
+                          "-R=anchor apple generic", str(executable),
+                      ], check=True, timeout=20)
+                  except (OSError, ValueError, RuntimeError, subprocess.SubprocessError,
+                          zipfile.BadZipFile) as error:
+                      failures.append(f"{architecture}: {error}")
+                      print(f"::error::Reviewed macOS CLI signature prerequisite failed: {architecture}: {error}",
+                            flush=True)
+          if failures:
+              raise SystemExit("\n".join(failures))
+          PY
       - name: Build unsigned macOS package
         if: matrix.platform == 'macos'
         env:
           FESTERM_INSTALLATION_KIND: app
         run: |
           cargo build --release -p festerm -p festerm-sessiond
+          cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
           cargo packager --config packaging/macos.toml --formats app
           test -x target/release/fesTerm.app/Contents/MacOS/festerm
           test -x target/release/fesTerm.app/Contents/MacOS/festerm-sessiond
+          test -x target/release/fesTerm.app/Contents/MacOS/festerm-tunnel-setup
+          test -x target/release/fesTerm.app/Contents/MacOS/festerm-tunnel-bridge
+          test ! -e target/release/fesTerm.app/Contents/MacOS/devtunnel
           test -f target/release/fesTerm.app/Contents/Info.plist
           test "$(defaults read "$PWD/target/release/fesTerm.app/Contents/Info" CFBundleIdentifier)" = "dev.fes.festerm"
           test "$(defaults read "$PWD/target/release/fesTerm.app/Contents/Info" CFBundleExecutable)" = "festerm"
@@ -144,6 +223,8 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/stage-conpty.ps1 -Configuration Release
+          cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
+          if ($LASTEXITCODE -ne 0) { throw 'Tunnel helper build failed' }
           ./scripts/stage-windows-sessiond.ps1 -Configuration Release
           cargo packager --config packaging/windows.toml --formats nsis
           $installer = Get-ChildItem target/release -Filter '*-setup.exe' | Select-Object -First 1
@@ -219,6 +300,16 @@ jobs:
           if (-not (Test-Path $installedSessionDaemon -PathType Leaf)) {
             throw 'NSIS install did not place the release-versioned session daemon'
           }
+          $installedTunnelHelpers = @('festerm-tunnel-setup.exe', 'festerm-tunnel-bridge.exe', 'festerm-tunnel-worker.exe') |
+            ForEach-Object { Join-Path $installDirectory $_ }
+          foreach ($helper in $installedTunnelHelpers) {
+            if (-not (Test-Path $helper -PathType Leaf)) {
+              throw "NSIS install did not place tunnel helper: $helper"
+            }
+          }
+          if (Test-Path (Join-Path $installDirectory 'devtunnel.exe')) {
+            throw 'NSIS must not bundle the downloaded Dev Tunnels CLI'
+          }
           if (Test-Path $legacySessionDaemon) {
             throw 'NSIS clean install unexpectedly placed the legacy stable session daemon'
           }
@@ -236,6 +327,11 @@ jobs:
           Assert-MarkdownOpenWith $false
           if (Test-Path $installedBinary) {
             throw 'NSIS uninstall left the application binary installed'
+          }
+          foreach ($helper in $installedTunnelHelpers) {
+            if (Test-Path $helper) {
+              throw "NSIS uninstall left tunnel helper installed: $helper"
+            }
           }
           if (Test-Path $installedSessionDaemon) {
             throw 'NSIS uninstall left the session daemon installed'
@@ -347,6 +443,7 @@ jobs:
           FESTERM_INSTALLATION_KIND: appimage
         run: |
           cargo build --release -p festerm -p festerm-sessiond -p festerm-automation-js
+          cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
           cargo packager --config packaging/linux.toml --formats appimage
           appimage="$(find target/release -maxdepth 1 -name '*.AppImage' -print -quit)"
           test -n "$appimage"
@@ -358,6 +455,9 @@ jobs:
             test -x squashfs-root/AppRun
             test -x squashfs-root/usr/bin/festerm
             test -x squashfs-root/usr/bin/festerm-sessiond
+            test -x squashfs-root/usr/bin/festerm-tunnel-setup
+            test -x squashfs-root/usr/bin/festerm-tunnel-bridge
+            test ! -e squashfs-root/usr/bin/devtunnel
             timeout --kill-after=6s 15s python3 ../../scripts/smoke_linux_automation_worker.py squashfs-root/usr/bin/festerm-automation-js-worker
             desktop="$(find squashfs-root/usr/share/applications -maxdepth 1 -name '*.desktop' -print -quit)"
             test -n "$desktop"
@@ -386,12 +486,19 @@ jobs:
           FESTERM_INSTALLATION_KIND: managed
         run: |
           cargo build --release -p festerm -p festerm-sessiond -p festerm-automation-js
+          cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
           cargo packager --config packaging/linux.toml --formats deb
           deb="$(find target/release -maxdepth 1 -name '*.deb' -print -quit)"
           test -n "$deb"
           dpkg-deb --info "$deb" >/dev/null
           dpkg-deb --contents "$deb" | grep -q 'usr/bin/festerm$'
           dpkg-deb --contents "$deb" | grep -q 'usr/bin/festerm-sessiond$'
+          dpkg-deb --contents "$deb" | grep -q 'usr/bin/festerm-tunnel-setup$'
+          dpkg-deb --contents "$deb" | grep -q 'usr/bin/festerm-tunnel-bridge$'
+          if dpkg-deb --contents "$deb" | grep -q 'usr/bin/devtunnel$'; then
+            echo 'Debian package must not bundle the downloaded Dev Tunnels CLI' >&2
+            exit 1
+          fi
           dpkg-deb --contents "$deb" | grep -q 'usr/bin/festerm-automation-js-worker$'
           deb_desktop="$(dpkg-deb --contents "$deb" | awk '/usr\/share\/applications\/.*\.desktop$/ { print $6; exit }')"
           test -n "$deb_desktop"
@@ -416,8 +523,12 @@ jobs:
           sudo dpkg --install "$deb"
           test -x /usr/bin/festerm
           test -x /usr/bin/festerm-sessiond
+          test -x /usr/bin/festerm-tunnel-setup
+          test -x /usr/bin/festerm-tunnel-bridge
           timeout --kill-after=6s 15s python3 scripts/smoke_linux_automation_worker.py /usr/bin/festerm-automation-js-worker
           sudo dpkg --remove festerm
           test ! -e /usr/bin/festerm
           test ! -e /usr/bin/festerm-sessiond
+          test ! -e /usr/bin/festerm-tunnel-setup
+          test ! -e /usr/bin/festerm-tunnel-bridge
           test ! -e /usr/bin/festerm-automation-js-worker

@@ -25,6 +25,7 @@ enum Event {
     /// A new sign-in finished and its credential is in the store.
     Signed(DevTunnelAccount),
     Listed(Result<(String, Vec<TunnelSummary>), Error>),
+    LocalRemoval(Result<festerm_config::LocalTunnelHosting, &'static str>),
 }
 
 enum Stage {
@@ -99,6 +100,22 @@ impl Browser {
                     context.request_repaint();
                     sent
                 };
+                if let (Some(account), Some(locator)) = (account.as_ref(), delete.as_deref()) {
+                    if cancel.is_cancelled() {
+                        return;
+                    }
+                    match super::profile_hosting::revoke_cloud_browser_host(account.account_id(), locator, &cancel) {
+                        Ok(Some(binding)) => {
+                            notify(Event::LocalRemoval(Ok(binding)));
+                            return;
+                        }
+                        Err(message) => {
+                            notify(Event::LocalRemoval(Err(message)));
+                            return;
+                        }
+                        Ok(None) => {}
+                    }
+                }
                 let outcome = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -252,6 +269,7 @@ impl FesTermApp {
             return;
         };
         let mut signed = None;
+        let mut local_removal = None;
         while let Ok(event) = browser.receiver.try_recv() {
             browser.stage = match event {
                 Event::Device(prompt) => Stage::Device(prompt),
@@ -266,8 +284,21 @@ impl FesTermApp {
                     rename: None,
                 },
                 Event::Listed(Err(error)) => Stage::Error(error),
+                Event::LocalRemoval(result) => {
+                    local_removal = Some(result);
+                    continue;
+                }
             };
             browser.focus_cancel = true;
+        }
+        if let Some(result) = local_removal {
+            self.tunnel_browser = None;
+            self.overlays.native_tunnel = false;
+            match result {
+                Ok(binding) => self.queue_cloud_browser_host_removal(binding),
+                Err(message) => self.secure_storage_feedback = Some(message),
+            }
+            return;
         }
         if let Some(account) = signed {
             let store = self
@@ -428,7 +459,8 @@ impl FesTermApp {
                     ui.label(format!("Delete the Dev Tunnel “{title}” ({locator})?"));
                     ui.label(
                         "Its host becomes unreachable until its bridge is set up again. \
-                         This cannot be undone.",
+                         This cannot be undone. For a locally managed desktop host, \
+                         deletion also revokes local exposure; its persistent shell is kept.",
                     );
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
