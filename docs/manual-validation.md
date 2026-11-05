@@ -2732,8 +2732,15 @@ client is supported. A separate synthetic host review now installs an
 exact-enrollment metadata grant only after revalidating its association,
 attachment and workspace revision. Tests cover two identically labelled
 enrollments, scoped revocation and stale/cross-connection decisions. It refuses
-active control and legacy observation composition. These are not a native
-metadata consent UI or metadata delivery evidence.
+active control and legacy observation composition. A synthetic-qualified
+current-window Settings review separately describes label and lifecycle status,
+requires explicit confirmation and models cancellation and queued scoped
+revocation. Stale snapshot, cross-window and admission-contention cases are
+automated; qualified native usability and metadata delivery remain unverified.
+AUTO-01 must assess whether the exact disclosed fields, client code, target,
+lifetime and exclusions are understandable; a future delivery route must enforce
+that reviewed field scope. AUTO-03 and AUTO-04 must verify physical revocation
+and recipient fencing, not merely the deferred broker cut.
 The separately granted presentation state machine, app-command routing,
 workspace revision and presented-input admission seam have deterministic
 synthetic-source tests, including original-handoff/lease binding, wrong-backend

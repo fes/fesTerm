@@ -317,7 +317,7 @@
         "Control and worker integration require input ownership validation and platform confinement",
         "The extracted shared admission boundary does not bind metadata grants or delivery liveness",
         "Native direct-input approval and actual publication-boundary revalidation remain unavailable",
-        "Metadata-only native review, explicit cross-flow UI and per-write delivery fences remain unavailable",
+        "Production-qualified metadata consent, explicit cross-flow UI and per-write delivery fences remain unavailable",
         "Native lifecycle evidence and workflow result delivery remain open",
         "Profile snapshot is data only: configuration revision ownership, native approval, fresh-target attestation, launch fencing and scoped creation authority remain unavailable"
       ]
@@ -387,6 +387,12 @@
         "enrollment_metadata_stale_reviews_do_not_block_observation",
         "enrollment_metadata_host_refuses_unreviewed_control_composition",
         "enrollment_metadata_host_never_waits_for_admission",
+        "native_enrollment_metadata_review_binds_window_and_explicit_confirmation",
+        "native_enrollment_metadata_review_rejects_changed_display",
+        "native_enrollment_metadata_snapshot_is_disarmed_by_safety_cuts",
+        "native_enrollment_metadata_batch_conflicts_stop_before_confirmation",
+        "native_enrollment_metadata_cancellation_and_revocation_defer_without_blocking",
+        "native_enrollment_metadata_queued_revocation_does_not_follow_rebinding",
         "controller_cancellation_and_queue_limits_never_approve_a_stale_review",
         "controller_rejects_nonlocal_backend_and_closes_on_exhaustion",
         "controller_limit_poison_log_panic_closes_peer_before_reporting",
@@ -394,6 +400,8 @@
         "controller_review_rejects_away_and_back_tab_selection",
         "controller_chooser_tracks_surviving_window_identity_without_hidden_titles",
         "controller_settings_require_explicit_current_window_choice_and_confirmation",
+        "controller_metadata_settings_require_a_separate_same_window_review",
+        "controller_metadata_review_ignores_stale_pointer_and_accessibility_actions",
         "controller_confirmation_ignores_stale_accessibility_and_pointer_actions",
         "queued_controller_reply_closes_when_registration_is_invalidated"
       ],
@@ -401,7 +409,7 @@
       "status": "partial",
       "prerequisites": [
         "The native current-window chooser and opt-in protocol adapter have synthetic tests only; private bootstrap, native authentication, privacy and controller qualification remain closed in production",
-        "The dormant enrollment metadata host review has no native consent UI or MCP delivery route and refuses active control and legacy observation composition pending reviewed cross-consent and delivery fences",
+        "The enrollment metadata Settings review is synthetic-qualified only; native consent, an MCP delivery route and composition with control or legacy observation require separate qualification, reviewed cross-consent and delivery fences",
         "Association-handle resolution by sessions.get is not implemented and requires separately reviewed discovery grants and shared stop/privacy/recipient and liveness fences at actual publication, not just broker liveness",
         "Confirmed presentation, admission-time presentation revalidation, native handoff and explicit disarm require independent implementation and native lifecycle evidence",
         "No-replay uncertainty handling, real JavaScript-independent client operation, native usability and platform/backend capability reporting remain unqualified"

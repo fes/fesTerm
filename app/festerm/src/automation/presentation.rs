@@ -201,6 +201,7 @@ pub(crate) struct NativeMetadataDecision {
 }
 
 /// A host-only review of one exact controller association.
+#[derive(Clone)]
 pub(crate) struct PendingEnrollmentMetadataReview {
     principal: ConnectionId,
     approval_id: ApprovalId,
@@ -277,6 +278,14 @@ impl PendingMetadataReview {
 
 #[allow(dead_code)]
 impl PendingEnrollmentMetadataReview {
+    pub(super) fn principal(&self) -> ConnectionId {
+        self.principal
+    }
+
+    pub(super) fn approval_id(&self) -> ApprovalId {
+        self.approval_id
+    }
+
     pub(crate) fn registration(&self) -> ControllerRegistrationId {
         self.registration
     }
@@ -1180,9 +1189,28 @@ impl Coordinator {
         apps: &[&FesTermApp],
     ) -> festerm_automation::Result<PendingEnrollmentMetadataReview> {
         let guard = try_admission()?;
-        let principal = self.admission_principal_locked(channel, &guard)?;
+        self.prepare_enrollment_metadata_review_locked(
+            channel,
+            registration,
+            enrollment,
+            lifetime,
+            apps,
+            &guard,
+        )
+    }
+
+    pub(super) fn prepare_enrollment_metadata_review_locked(
+        &mut self,
+        channel: u64,
+        registration: ControllerRegistrationId,
+        enrollment: ControllerEnrollmentId,
+        lifetime: Duration,
+        apps: &[&FesTermApp],
+        guard: &AutomationAdmissionGuard,
+    ) -> festerm_automation::Result<PendingEnrollmentMetadataReview> {
+        let principal = self.admission_principal_locked(channel, guard)?;
         let now = Instant::now();
-        self.synchronize_control_handoffs_locked(now, &guard)?;
+        self.synchronize_control_handoffs_locked(now, guard)?;
         if !self.controller_opted_in
             || !self.controller_qualified()
             || self.peers[&channel].grant.is_some()
@@ -1205,11 +1233,11 @@ impl Coordinator {
             registration,
             enrollment,
             apps,
-            &guard,
+            guard,
         )?;
         let target = association.target();
         let source = self
-            .freeze_sources_locked(&BTreeSet::from([target]), &guard)?
+            .freeze_sources_locked(&BTreeSet::from([target]), guard)?
             .pop()
             .ok_or(Error::StaleTarget)?;
         let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
@@ -1218,7 +1246,7 @@ impl Coordinator {
             registration,
             enrollment,
             now,
-            &guard,
+            guard,
         )?;
         if proposal.target() != target
             || proposal.control_grant().is_some()
@@ -1259,7 +1287,18 @@ impl Coordinator {
         apps: &[&FesTermApp],
     ) -> festerm_automation::Result<()> {
         let guard = try_admission()?;
-        let principal = self.admission_principal_locked(channel, &guard)?;
+        self.approve_enrollment_metadata_review_locked(channel, review, decision, apps, &guard)
+    }
+
+    pub(super) fn approve_enrollment_metadata_review_locked(
+        &mut self,
+        channel: u64,
+        review: &PendingEnrollmentMetadataReview,
+        decision: &NativeEnrollmentMetadataDecision,
+        apps: &[&FesTermApp],
+        guard: &AutomationAdmissionGuard,
+    ) -> festerm_automation::Result<()> {
+        let principal = self.admission_principal_locked(channel, guard)?;
         if review.principal != principal
             || decision.principal != principal
             || decision.approval_id != review.approval_id
@@ -1267,7 +1306,7 @@ impl Coordinator {
             return Err(Error::Unauthorized);
         }
         let now = Instant::now();
-        self.synchronize_control_handoffs_locked(now, &guard)?;
+        self.synchronize_control_handoffs_locked(now, guard)?;
         let bound = self
             .pending_enrollment_metadata_reviews
             .get(&review.approval_id)
@@ -1288,13 +1327,13 @@ impl Coordinator {
                 .as_ref()
                 .and_then(WorkspaceRevision::current)
                 == Some(bound.workspace_revision)
-            && bound.source.is_current(&self.targets, &guard)
+            && bound.source.is_current(&self.targets, guard)
             && bound.association.is_current(
                 self.broker.as_ref().ok_or(Error::Unavailable)?,
                 &self.targets,
                 &self.peers[&channel],
                 apps,
-                &guard,
+                guard,
             );
         if !current {
             self.pending_enrollment_metadata_reviews
@@ -1312,7 +1351,7 @@ impl Coordinator {
         let approval = NativeEnrollmentMetadataGrantApproval::new(bound.proposal, bound.lifetime);
         let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
         if let Err(error) =
-            broker.approve_enrollment_metadata_grant(principal, approval, now, &guard)
+            broker.approve_enrollment_metadata_grant(principal, approval, now, guard)
         {
             if broker.pending_approval_is_active(principal, review.approval_id, now) {
                 broker.reject_approval(principal, review.approval_id)?;
@@ -1333,12 +1372,10 @@ impl Coordinator {
                     principal,
                     review.registration,
                     review.enrollment,
-                    &guard,
+                    guard,
                 ) {
-                    self.peers[&channel]
-                        .connection
-                        .close_under_admission(&guard);
-                    broker.disconnect(principal, &guard);
+                    self.peers[&channel].connection.close_under_admission(guard);
+                    broker.disconnect(principal, guard);
                     return Err(revoke_error);
                 }
                 return Err(error);

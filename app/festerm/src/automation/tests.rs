@@ -6406,7 +6406,7 @@ fn automation_cancelled_wait_defers_without_output_and_retries_before_new_events
         .any(|wait| wait.key == key));
 }
 
-fn isolate_admission_contention_test(marker: &str, test: &str) -> bool {
+pub(super) fn isolate_admission_contention_test(marker: &str, test: &str) -> bool {
     use std::io::Read;
     use std::process::Stdio;
 

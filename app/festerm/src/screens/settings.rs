@@ -1091,7 +1091,7 @@ fn automation_settings(
     enabled: bool,
     window: crate::application::WindowId,
 ) -> Option<crate::automation::NativeCommand> {
-    use crate::automation::{ControllerSelectionView, NativeCommand};
+    use crate::automation::{ControllerMetadataView, ControllerSelectionView, NativeCommand};
     use festerm_automation::TargetRef;
     ui.add_space(10.0);
     ssh_paragraph(ui, snapshot.status);
@@ -1327,6 +1327,119 @@ fn automation_settings(
                                 },
                             );
                         }
+                    }
+                }
+                match row.metadata {
+                    ControllerMetadataView::Unavailable => {}
+                    ControllerMetadataView::Idle {
+                        enrollment,
+                        window: association_window,
+                        target,
+                        granted,
+                    } => {
+                        if association_window == window
+                            && snapshot.controller_targets.iter().any(|candidate| {
+                                candidate.reference == target && candidate.window == window
+                            })
+                        {
+                            if granted {
+                                ssh_paragraph(
+                                    ui,
+                                    "Metadata access is approved for this association; delivery remains unavailable.",
+                                );
+                                if ui.button("Revoke this metadata grant").clicked() {
+                                    record_automation_action(
+                                        &mut command,
+                                        NativeCommand::RevokeControllerMetadata {
+                                            channel: row.channel,
+                                            registration: row.registration,
+                                            enrollment,
+                                        },
+                                    );
+                                }
+                            } else if ui
+                                .add_enabled(
+                                    !snapshot.controller_targets_incomplete,
+                                    egui::Button::new("Review metadata access"),
+                                )
+                                .clicked()
+                            {
+                                record_automation_action(
+                                    &mut command,
+                                    NativeCommand::ReviewControllerMetadata {
+                                        channel: row.channel,
+                                        registration: row.registration,
+                                        enrollment,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    ControllerMetadataView::Reviewing {
+                        token,
+                        window: review_window,
+                        target,
+                    } => {
+                        let candidate = snapshot.controller_targets.iter().find(|candidate| {
+                            candidate.reference == target && candidate.window == window
+                        });
+                        if review_window != window {
+                            ssh_paragraph(ui, "Confirm metadata in the originating window, or cancel.");
+                        } else if let Some(candidate) = candidate {
+                            if row.metadata_review_is_current() {
+                                ui.label(format!(
+                                    "Review metadata for client {code}: {}",
+                                    candidate.label
+                                ));
+                                ssh_paragraph(
+                                    ui,
+                                    "Approve only the terminal label and lifecycle status for at most 5 minutes. \
+                                     This grants no screen, history, selection or input access and does not require JavaScript. \
+                                     Metadata delivery remains unavailable.",
+                                );
+                                ui.push_id(
+                                    (token, target.session(), target.generation()),
+                                    |ui| {
+                                        if ui
+                                            .add_enabled(
+                                                !snapshot.controller_targets_incomplete,
+                                                egui::Button::new("Approve this metadata grant"),
+                                            )
+                                            .clicked()
+                                        {
+                                            record_automation_action(
+                                                &mut command,
+                                                NativeCommand::ConfirmControllerMetadata {
+                                                    channel: row.channel,
+                                                    registration: row.registration,
+                                                    review: token,
+                                                },
+                                            );
+                                        }
+                                    },
+                                );
+                            } else {
+                                ssh_paragraph(ui, "Metadata review was cancelled.");
+                            }
+                        } else {
+                            ssh_paragraph(ui, "The selected local terminal is no longer available.");
+                        }
+                        if ui.button("Cancel metadata review").clicked() {
+                            record_automation_action(
+                                &mut command,
+                                NativeCommand::CancelControllerMetadata {
+                                    channel: row.channel,
+                                    registration: row.registration,
+                                    review: token,
+                                },
+                            );
+                        }
+                    }
+                    ControllerMetadataView::Cancelling => {
+                        ssh_paragraph(ui, "Cancelling metadata review.");
+                    }
+                    ControllerMetadataView::Revoking => {
+                        ssh_paragraph(ui, "Revoking metadata access.");
                     }
                 }
             },
@@ -2021,7 +2134,7 @@ mod tests {
             window: WindowId,
             command: Option<NativeCommand>,
         }
-        let (snapshot, registration, first, second, _) =
+        let (snapshot, registration, first, second, _, _) =
             SettingsSnapshot::with_controller_for_test();
         let mut harness = Harness::builder()
             .with_size(egui::vec2(900.0, 1800.0))
@@ -2118,6 +2231,180 @@ mod tests {
     }
 
     #[test]
+    fn controller_metadata_settings_require_a_separate_same_window_review() {
+        use crate::application::WindowId;
+        use crate::automation::{ControllerMetadataView, NativeCommand, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            window: WindowId,
+            command: Option<NativeCommand>,
+        }
+        let (mut snapshot, registration, _, target, _, enrollment) =
+            SettingsSnapshot::with_controller_for_test();
+        snapshot.controllers[0].associated_target = Some(target);
+        snapshot.controllers[0].metadata = ControllerMetadataView::Idle {
+            enrollment,
+            window: WindowId::PRIMARY,
+            target,
+            granted: false,
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 1800.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    if let Some(command) =
+                        automation_settings(ui, &state.snapshot, true, state.window)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                State {
+                    snapshot,
+                    window: WindowId::PRIMARY,
+                    command: None,
+                },
+            );
+        harness.run();
+        assert!(harness
+            .query_by_label("Approve this metadata grant")
+            .is_none());
+        harness.get_by_label("Review metadata access").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::ReviewControllerMetadata {
+                channel: 7,
+                registration: actual,
+                enrollment: actual_enrollment,
+            }) if *actual == registration && *actual_enrollment == enrollment
+        ));
+
+        harness.state_mut().command = None;
+        harness.state_mut().snapshot.controllers[0].set_metadata_review_for_test(
+            42,
+            WindowId::PRIMARY,
+            target,
+        );
+        harness.state_mut().window = WindowId::for_test(2);
+        harness.run();
+        assert!(harness
+            .query_by_label("Approve this metadata grant")
+            .is_none());
+        harness.state_mut().window = WindowId::PRIMARY;
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("Review metadata for client 0123456789abcdef: tab position 2",)
+            .is_some());
+        assert!(harness
+            .query_by_label_contains("Approve only the terminal label and lifecycle status")
+            .is_some());
+        harness.get_by_label("Approve this metadata grant").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::ConfirmControllerMetadata {
+                channel: 7,
+                registration: actual,
+                review: 42,
+            }) if *actual == registration
+        ));
+
+        harness.state_mut().command = None;
+        let other_window_snapshot = harness.state().snapshot.clone();
+        other_window_snapshot.cancel_controller_metadata_review(7, registration, 42);
+        harness.run();
+        assert!(harness
+            .query_by_label("Approve this metadata grant")
+            .is_none());
+        assert!(harness
+            .query_by_label("Metadata review was cancelled.")
+            .is_some());
+        harness.get_by_label("Cancel metadata review").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::CancelControllerMetadata {
+                channel: 7,
+                registration: actual,
+                review: 42,
+            }) if *actual == registration
+        ));
+    }
+
+    #[test]
+    fn controller_metadata_review_ignores_stale_pointer_and_accessibility_actions() {
+        use crate::application::WindowId;
+        use crate::automation::{NativeCommand, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            command: Option<NativeCommand>,
+        }
+        for accessibility in [false, true] {
+            let (mut snapshot, registration, _, target, _, _) =
+                SettingsSnapshot::with_controller_for_test();
+            snapshot.controllers[0].associated_target = Some(target);
+            snapshot.controllers[0].set_metadata_review_for_test(42, WindowId::PRIMARY, target);
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(900.0, 1800.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        if let Some(command) =
+                            automation_settings(ui, &state.snapshot, true, WindowId::PRIMARY)
+                        {
+                            state.command = Some(command);
+                        }
+                    },
+                    State {
+                        snapshot,
+                        command: None,
+                    },
+                );
+            harness.run();
+            let label = "Approve this metadata grant";
+            let position = harness.get_by_label(label).rect().center();
+            if accessibility {
+                harness.get_by_label(label).click_accesskit();
+            } else {
+                harness.event(egui::Event::PointerMoved(position));
+                harness.event(egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.step();
+            }
+            harness.state_mut().snapshot.controllers[0].set_metadata_review_for_test(
+                43,
+                WindowId::PRIMARY,
+                target,
+            );
+            if !accessibility {
+                harness.event(egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            harness.step();
+            assert!(harness.state().command.is_none());
+            harness.get_by_label(label).click();
+            harness.step();
+            assert!(matches!(
+                &harness.state().command,
+                Some(NativeCommand::ConfirmControllerMetadata {
+                    channel: 7,
+                    registration: actual,
+                    review: 43,
+                }) if *actual == registration
+            ));
+        }
+    }
+
+    #[test]
     fn controller_confirmation_ignores_stale_accessibility_and_pointer_actions() {
         use crate::application::WindowId;
         use crate::automation::{ControllerSelectionView, NativeCommand, SettingsSnapshot};
@@ -2129,7 +2416,7 @@ mod tests {
 
         for accessibility in [false, true] {
             for same_target in [false, true] {
-                let (mut snapshot, registration, first, second, _) =
+                let (mut snapshot, registration, first, second, _, _) =
                     SettingsSnapshot::with_controller_for_test();
                 snapshot.controllers[0].selection = ControllerSelectionView::Reviewing {
                     token: 18,
@@ -2324,7 +2611,7 @@ mod tests {
             ConfirmController,
             CancelController,
         }
-        let (_, registration, _, _, _) =
+        let (_, registration, _, _, _, _) =
             crate::automation::SettingsSnapshot::with_controller_for_test();
         let make = |action| match action {
             Action::Javascript => AppCommand::ToggleJavascriptEnabled,

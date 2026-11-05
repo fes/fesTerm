@@ -139,11 +139,20 @@ impl Selection {
     }
 }
 
+struct MetadataReview {
+    token: u64,
+    candidate: ControllerTargetRow,
+    review: presentation::PendingEnrollmentMetadataReview,
+    valid: Rc<Cell<bool>>,
+}
+
 #[derive(Default)]
 pub(super) struct PeerState {
     registrations: BTreeMap<ControllerId, Registration>,
     issued_ids: BTreeSet<ControllerId>,
     selection: Option<Selection>,
+    metadata_review: Option<MetadataReview>,
+    metadata_revocations: BTreeSet<(ControllerRegistrationId, ControllerEnrollmentId)>,
     requests: usize,
     #[cfg(test)]
     next_test_id: Option<u128>,
@@ -276,6 +285,14 @@ fn remove_locked(
         .is_some_and(|selection| selection.registration() == record.internal)
     {
         peer.controller.selection = None;
+    }
+    if let Some(review) = peer
+        .controller
+        .metadata_review
+        .as_ref()
+        .filter(|review| review.review.registration() == record.internal)
+    {
+        review.valid.set(false);
     }
     let _ = broker.unregister_controller_session(peer.principal, record.internal, guard);
     true
@@ -496,6 +513,11 @@ pub(super) fn reconcile(
         }) {
             peer.controller.selection = None;
         }
+        if let Some(review) = peer.controller.metadata_review.as_ref() {
+            if incomplete || !candidates.contains(&review.candidate) {
+                review.valid.set(false);
+            }
+        }
     }
 }
 
@@ -528,6 +550,15 @@ pub(super) fn command(
     action: NativeCommand,
     apps: &[&FesTermApp],
 ) -> Result<(), CommandError> {
+    if matches!(
+        action,
+        NativeCommand::ReviewControllerMetadata { .. }
+            | NativeCommand::ConfirmControllerMetadata { .. }
+            | NativeCommand::CancelControllerMetadata { .. }
+            | NativeCommand::RevokeControllerMetadata { .. }
+    ) {
+        return metadata_command(coordinator, window, action, apps);
+    }
     if let NativeCommand::CancelController {
         channel,
         registration,
@@ -563,6 +594,220 @@ pub(super) fn command(
     };
     command_under_admission(coordinator, window, action, apps, &guard)
         .map_err(CommandError::Refused)
+}
+
+fn metadata_command(
+    coordinator: &mut Coordinator,
+    window: WindowId,
+    action: NativeCommand,
+    apps: &[&FesTermApp],
+) -> Result<(), CommandError> {
+    match action {
+        NativeCommand::CancelControllerMetadata {
+            channel,
+            registration,
+            review,
+        } => {
+            let peer = coordinator
+                .peers
+                .get_mut(&channel)
+                .ok_or(CommandError::Refused(Refusal::Closed))?;
+            let pending = peer
+                .controller
+                .metadata_review
+                .as_ref()
+                .filter(|pending| {
+                    pending.token == review && pending.review.registration() == registration
+                })
+                .ok_or(CommandError::Refused(Refusal::NotAuthorized))?;
+            pending.valid.set(false);
+            coordinator.status = "Metadata review cancelled; cleanup is pending.";
+            Ok(())
+        }
+        NativeCommand::RevokeControllerMetadata {
+            channel,
+            registration,
+            enrollment,
+        } => {
+            let peer = coordinator
+                .peers
+                .get_mut(&channel)
+                .ok_or(CommandError::Refused(Refusal::Closed))?;
+            let current = peer.controller.registrations.values().any(|record| {
+                record.internal == registration
+                    && record
+                        .association
+                        .is_some_and(|association| association.enrollment == enrollment)
+            });
+            if !current {
+                return Err(CommandError::Refused(Refusal::NotAuthorized));
+            }
+            if peer.controller.metadata_revocations.len() >= MAX_ISSUED_IDS {
+                return Err(CommandError::Refused(Refusal::BudgetExceeded));
+            }
+            if let Some(pending) = peer.controller.metadata_review.as_ref().filter(|pending| {
+                pending.review.registration() == registration
+                    && pending.review.enrollment() == enrollment
+            }) {
+                pending.valid.set(false);
+            }
+            peer.controller
+                .metadata_revocations
+                .insert((registration, enrollment));
+            coordinator.status = "Metadata revocation queued; no metadata delivery is available.";
+            Ok(())
+        }
+        NativeCommand::ReviewControllerMetadata {
+            channel,
+            registration,
+            enrollment,
+        } => {
+            if !coordinator.enrollment_metadata_ui_qualified() {
+                return Err(CommandError::Refused(Refusal::Unavailable));
+            }
+            let peer = coordinator
+                .peers
+                .get(&channel)
+                .ok_or(CommandError::Refused(Refusal::Closed))?;
+            let association = peer
+                .controller
+                .registrations
+                .values()
+                .find(|record| record.internal == registration)
+                .and_then(|record| record.association)
+                .filter(|association| {
+                    association.enrollment == enrollment && association.window == window
+                })
+                .ok_or(CommandError::Refused(Refusal::NotAuthorized))?;
+            if peer.controller.metadata_review.is_some()
+                || peer
+                    .controller
+                    .metadata_revocations
+                    .contains(&(registration, enrollment))
+            {
+                return Err(CommandError::Refused(Refusal::Unavailable));
+            }
+            let token = next_selection(&mut coordinator.controller_selection_revision)
+                .map_err(CommandError::Refused)?;
+            let guard = try_metadata_admission()?;
+            let (candidates, incomplete) = local_candidates(&coordinator.targets, apps);
+            let candidate = candidates
+                .into_iter()
+                .find(|candidate| {
+                    candidate.reference == association.target && candidate.window == window
+                })
+                .filter(|_| !incomplete)
+                .ok_or(CommandError::Refused(Refusal::NotAuthorized))?;
+            let review = coordinator
+                .prepare_enrollment_metadata_review_locked(
+                    channel,
+                    registration,
+                    enrollment,
+                    festerm_automation::MAX_GRANT_LIFETIME,
+                    apps,
+                    &guard,
+                )
+                .map_err(metadata_command_error)?;
+            let current = review.target() == association.target;
+            drop(guard);
+            coordinator
+                .peers
+                .get_mut(&channel)
+                .ok_or(CommandError::Refused(Refusal::Closed))?
+                .controller
+                .metadata_review = Some(MetadataReview {
+                token,
+                candidate,
+                review,
+                valid: Rc::new(Cell::new(current)),
+            });
+            if !current {
+                return Err(CommandError::Refused(Refusal::NotAuthorized));
+            }
+            coordinator.status = "Review this exact metadata grant before confirming.";
+            Ok(())
+        }
+        NativeCommand::ConfirmControllerMetadata {
+            channel,
+            registration,
+            review,
+        } => {
+            if !coordinator.enrollment_metadata_ui_qualified() {
+                return Err(CommandError::Refused(Refusal::Unavailable));
+            }
+            let peer = coordinator
+                .peers
+                .get(&channel)
+                .ok_or(CommandError::Refused(Refusal::Closed))?;
+            let pending = peer
+                .controller
+                .metadata_review
+                .as_ref()
+                .filter(|pending| {
+                    pending.token == review
+                        && pending.candidate.window == window
+                        && pending.review.registration() == registration
+                        && pending.valid.get()
+                        && !peer
+                            .controller
+                            .metadata_revocations
+                            .contains(&(registration, pending.review.enrollment()))
+                })
+                .ok_or(CommandError::Refused(Refusal::NotAuthorized))?;
+            let decision = pending.review.accept_from_native();
+            let pending_review = pending.review.clone();
+            let valid = pending.valid.clone();
+            let candidate = pending.candidate.clone();
+            let guard = try_metadata_admission()?;
+            let (candidates, incomplete) = local_candidates(&coordinator.targets, apps);
+            if incomplete || !candidates.contains(&candidate) || !valid.get() {
+                valid.set(false);
+                return Err(CommandError::Refused(Refusal::NotAuthorized));
+            }
+            let result = coordinator.approve_enrollment_metadata_review_locked(
+                channel,
+                &pending_review,
+                &decision,
+                apps,
+                &guard,
+            );
+            drop(guard);
+            match result {
+                Ok(()) => {
+                    valid.set(false);
+                    if let Some(peer) = coordinator.peers.get_mut(&channel) {
+                        peer.controller.metadata_review = None;
+                    }
+                    coordinator.status =
+                        "Metadata grant approved; metadata delivery remains unavailable.";
+                    Ok(())
+                }
+                Err(festerm_automation::Error::Busy) => Err(CommandError::Busy),
+                Err(error) => {
+                    valid.set(false);
+                    Err(metadata_command_error(error))
+                }
+            }
+        }
+        _ => Err(CommandError::Refused(Refusal::InvalidArguments)),
+    }
+}
+
+fn metadata_command_error(error: festerm_automation::Error) -> CommandError {
+    if error == festerm_automation::Error::Busy {
+        CommandError::Busy
+    } else {
+        CommandError::Refused(refusal(error))
+    }
+}
+
+fn try_metadata_admission() -> Result<festerm_session::AutomationAdmissionGuard, CommandError> {
+    festerm_session::try_automation_admission_lock().map_err(|error| match error {
+        festerm_session::AutomationAdmissionTryError::Busy => CommandError::Busy,
+        festerm_session::AutomationAdmissionTryError::Poisoned => {
+            CommandError::Refused(Refusal::Unavailable)
+        }
+    })
 }
 
 fn command_under_admission(
@@ -736,6 +981,14 @@ fn command_under_admission(
                 .registrations
                 .get_mut(&id)
                 .ok_or(Refusal::NotAuthorized)?;
+            if let Some(review) = peer
+                .controller
+                .metadata_review
+                .as_ref()
+                .filter(|review| review.review.registration() == registration)
+            {
+                review.valid.set(false);
+            }
             record.valid.store(false, Ordering::Release);
             record.valid = Arc::new(AtomicBool::new(true));
             record.association = Some(Association {
@@ -763,6 +1016,79 @@ pub(super) fn cancel_selections(peers: &mut BTreeMap<u64, Peer>) {
     for peer in peers.values_mut() {
         peer.controller.selection = None;
     }
+    disarm_metadata_reviews(peers);
+}
+
+pub(super) fn disarm_metadata_reviews(peers: &BTreeMap<u64, Peer>) {
+    for peer in peers.values() {
+        if let Some(review) = &peer.controller.metadata_review {
+            review.valid.set(false);
+        }
+    }
+}
+
+pub(super) fn retire_metadata_actions_locked(
+    peers: &mut BTreeMap<u64, Peer>,
+    pending: &mut BTreeMap<
+        festerm_automation::ApprovalId,
+        presentation::BoundEnrollmentMetadataReview,
+    >,
+    grants: &mut BTreeMap<
+        presentation::EnrollmentMetadataKey,
+        presentation::BoundEnrollmentMetadataGrant,
+    >,
+    broker: &mut Broker,
+    now: Instant,
+    guard: &festerm_session::AutomationAdmissionGuard,
+) -> festerm_automation::Result<bool> {
+    let mut retired = false;
+    for peer in peers.values_mut() {
+        if peer
+            .controller
+            .metadata_review
+            .as_ref()
+            .is_some_and(|review| {
+                !review.valid.get()
+                    || !pending.contains_key(&review.review.approval_id())
+                    || !broker.pending_approval_is_active(
+                        review.review.principal(),
+                        review.review.approval_id(),
+                        now,
+                    )
+            })
+        {
+            let review = peer.controller.metadata_review.take().unwrap();
+            let principal = review.review.principal();
+            let id = review.review.approval_id();
+            if principal != peer.principal {
+                return Err(festerm_automation::Error::Unauthorized);
+            }
+            if broker.pending_approval_is_active(principal, id, now) {
+                broker.reject_approval(principal, id)?;
+            }
+            pending.remove(&id);
+            retired = true;
+        }
+        for (registration, enrollment) in std::mem::take(&mut peer.controller.metadata_revocations)
+        {
+            match broker.resolve_controller_enrollment(peer.principal, registration, enrollment) {
+                Ok(_) => broker.revoke_enrollment_metadata_grant(
+                    peer.principal,
+                    registration,
+                    enrollment,
+                    guard,
+                )?,
+                Err(
+                    festerm_automation::Error::Unauthorized
+                    | festerm_automation::Error::StaleTarget,
+                ) => {}
+                Err(error) => return Err(error),
+            }
+            grants.remove(&(peer.principal, registration, enrollment));
+            retired = true;
+        }
+    }
+    Ok(retired)
 }
 
 pub(super) fn invalidate_location(
@@ -867,7 +1193,7 @@ pub(super) fn settings(
     if !mcp_open {
         return (Vec::new(), Vec::new(), false);
     }
-    let Ok(_guard) = festerm_session::try_automation_admission_lock() else {
+    let Ok(guard) = festerm_session::try_automation_admission_lock() else {
         return (Vec::new(), Vec::new(), true);
     };
     let Some(broker) = coordinator.broker.as_ref() else {
@@ -914,6 +1240,58 @@ pub(super) fn settings(
                         .as_ref()
                         .filter(|selection| selection.registration() == record.internal)
                         .map_or(ControllerSelectionView::Idle, Selection::view);
+                    let mut metadata_review_valid = None;
+                    let metadata = if coordinator.enrollment_metadata_ui_qualified() {
+                        if let Some(association) = record
+                            .association
+                            .filter(|association| associated_target == Some(association.target))
+                        {
+                            if peer
+                                .controller
+                                .metadata_revocations
+                                .contains(&(record.internal, association.enrollment))
+                            {
+                                ControllerMetadataView::Revoking
+                            } else if let Some(review) =
+                                peer.controller.metadata_review.as_ref().filter(|review| {
+                                    review.review.registration() == record.internal
+                                        && review.review.enrollment() == association.enrollment
+                                        && review.review.target() == association.target
+                                        && review.candidate.window == association.window
+                                })
+                            {
+                                if review.valid.get() {
+                                    metadata_review_valid = Some(review.valid.clone());
+                                    ControllerMetadataView::Reviewing {
+                                        token: review.token,
+                                        window: review.candidate.window,
+                                        target: association.target,
+                                    }
+                                } else {
+                                    ControllerMetadataView::Cancelling
+                                }
+                            } else {
+                                ControllerMetadataView::Idle {
+                                    enrollment: association.enrollment,
+                                    window: association.window,
+                                    target: association.target,
+                                    granted: coordinator
+                                        .enrollment_metadata_binding_is_current_locked(
+                                            *channel,
+                                            record.internal,
+                                            association.enrollment,
+                                            apps,
+                                            Instant::now(),
+                                            &guard,
+                                        ),
+                                }
+                            }
+                        } else {
+                            ControllerMetadataView::Unavailable
+                        }
+                    } else {
+                        ControllerMetadataView::Unavailable
+                    };
                     Some(ControllerRow {
                         channel: *channel,
                         registration: record.internal,
@@ -921,7 +1299,9 @@ pub(super) fn settings(
                         label,
                         associated_target,
                         selection,
+                        metadata,
                         valid: record.valid.clone(),
+                        metadata_review_valid,
                     })
                 })
         })
@@ -1257,6 +1637,457 @@ pub(super) mod tests {
             .unwrap()
             .enrollment;
         (coordinator, app, tab, registration, enrollment)
+    }
+
+    fn metadata_command_with_retry(
+        coordinator: &mut Coordinator,
+        app: &FesTermApp,
+        window: WindowId,
+        action: NativeCommand,
+    ) -> Result<(), CommandError> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match command(coordinator, window, action.clone(), &[app]) {
+                Err(CommandError::Busy) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                result => return result,
+            }
+        }
+    }
+
+    fn metadata_review_token(
+        coordinator: &Coordinator,
+        app: &FesTermApp,
+        registration: ControllerRegistrationId,
+    ) -> u64 {
+        match registration_row(coordinator, &[app], 1, registration).metadata {
+            ControllerMetadataView::Reviewing { token, .. } => token,
+            _ => panic!("expected metadata review"),
+        }
+    }
+
+    #[test]
+    fn native_enrollment_metadata_review_binds_window_and_explicit_confirmation() {
+        let (mut coordinator, app, tab, registration, enrollment) = metadata_fixture();
+        let principal = coordinator.peers[&1].principal;
+        let target = coordinator.targets[&tab.chip_id()].reference;
+        let open = NativeCommand::ReviewControllerMetadata {
+            channel: 1,
+            registration,
+            enrollment,
+        };
+        assert_eq!(
+            metadata_command_with_retry(&mut coordinator, &app, WindowId::PRIMARY, open.clone()),
+            Err(CommandError::Refused(Refusal::Unavailable))
+        );
+        assert!(coordinator.pending_enrollment_metadata_reviews.is_empty());
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        assert_eq!(
+            metadata_command_with_retry(
+                &mut coordinator,
+                &app,
+                WindowId::for_test(2),
+                open.clone(),
+            ),
+            Err(CommandError::Refused(Refusal::NotAuthorized))
+        );
+        metadata_command_with_retry(&mut coordinator, &app, WindowId::PRIMARY, open).unwrap();
+        let token = metadata_review_token(&coordinator, &app, registration);
+        let review_snapshot = stable_settings(&coordinator, &[&app]);
+        assert!(coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .native_enrollment_metadata_grant(principal, registration, enrollment, Instant::now())
+            .is_err());
+        let confirm = NativeCommand::ConfirmControllerMetadata {
+            channel: 1,
+            registration,
+            review: token,
+        };
+        assert_eq!(
+            metadata_command_with_retry(
+                &mut coordinator,
+                &app,
+                WindowId::for_test(2),
+                confirm.clone(),
+            ),
+            Err(CommandError::Refused(Refusal::NotAuthorized))
+        );
+        let _other = add_peer(&mut coordinator, 2);
+        assert_eq!(
+            metadata_command_with_retry(
+                &mut coordinator,
+                &app,
+                WindowId::PRIMARY,
+                NativeCommand::ConfirmControllerMetadata {
+                    channel: 2,
+                    registration,
+                    review: token,
+                },
+            ),
+            Err(CommandError::Refused(Refusal::NotAuthorized))
+        );
+        metadata_command_with_retry(&mut coordinator, &app, WindowId::PRIMARY, confirm).unwrap();
+        assert!(!review_snapshot.controllers[0].metadata_review_is_current());
+        assert_eq!(
+            coordinator
+                .broker
+                .as_ref()
+                .unwrap()
+                .native_enrollment_metadata_grant(
+                    principal,
+                    registration,
+                    enrollment,
+                    Instant::now(),
+                )
+                .unwrap()
+                .target(),
+            target
+        );
+        assert!(!app.automation_javascript_enabled());
+        assert!(coordinator.peers[&1].grant.is_none());
+    }
+
+    #[test]
+    fn native_enrollment_metadata_review_rejects_changed_display() {
+        let (mut coordinator, mut app, tab, registration, enrollment) = metadata_fixture();
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        metadata_command_with_retry(
+            &mut coordinator,
+            &app,
+            WindowId::PRIMARY,
+            NativeCommand::ReviewControllerMetadata {
+                channel: 1,
+                registration,
+                enrollment,
+            },
+        )
+        .unwrap();
+        let token = metadata_review_token(&coordinator, &app, registration);
+        app.automation_session_mut(tab).label = "changed after review".into();
+        assert_eq!(
+            metadata_command_with_retry(
+                &mut coordinator,
+                &app,
+                WindowId::PRIMARY,
+                NativeCommand::ConfirmControllerMetadata {
+                    channel: 1,
+                    registration,
+                    review: token,
+                },
+            ),
+            Err(CommandError::Refused(Refusal::NotAuthorized))
+        );
+        let principal = coordinator.peers[&1].principal;
+        assert!(coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .native_enrollment_metadata_grant(principal, registration, enrollment, Instant::now())
+            .is_err());
+        let mut broker = coordinator.broker.take().unwrap();
+        coordinator.reconcile(&mut broker, &[&app]);
+        coordinator.broker = Some(broker);
+        assert!(coordinator.pending_enrollment_metadata_reviews.is_empty());
+        assert!(coordinator.peers[&1].controller.metadata_review.is_none());
+    }
+
+    #[test]
+    fn native_enrollment_metadata_snapshot_is_disarmed_by_safety_cuts() {
+        for cut in 0..5 {
+            let (mut coordinator, app, _tab, registration, enrollment) = metadata_fixture();
+            coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+            metadata_command_with_retry(
+                &mut coordinator,
+                &app,
+                WindowId::PRIMARY,
+                NativeCommand::ReviewControllerMetadata {
+                    channel: 1,
+                    registration,
+                    enrollment,
+                },
+            )
+            .unwrap();
+            let snapshot = stable_settings(&coordinator, &[&app]);
+            assert!(snapshot.controllers[0].metadata_review_is_current());
+            match cut {
+                0 => snapshot.disable(),
+                1 => snapshot.revoke(1),
+                2 => snapshot.unregister_controller(1, registration),
+                3 => coordinator.stop_mcp(),
+                4 => coordinator.fail_closed_on_unwind(),
+                _ => unreachable!(),
+            }
+            assert!(!snapshot.controllers[0].metadata_review_is_current());
+        }
+    }
+
+    #[test]
+    fn native_enrollment_metadata_batch_conflicts_stop_before_confirmation() {
+        for reverse in [false, true] {
+            let (mut coordinator, app, _tab, registration, enrollment) = metadata_fixture();
+            coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+            metadata_command_with_retry(
+                &mut coordinator,
+                &app,
+                WindowId::PRIMARY,
+                NativeCommand::ReviewControllerMetadata {
+                    channel: 1,
+                    registration,
+                    enrollment,
+                },
+            )
+            .unwrap();
+            let token = metadata_review_token(&coordinator, &app, registration);
+            let snapshot = stable_settings(&coordinator, &[&app]);
+            let principal = coordinator.peers[&1].principal;
+            let mut commands = vec![
+                NativeCommand::ConfirmControllerMetadata {
+                    channel: 1,
+                    registration,
+                    review: token,
+                },
+                NativeCommand::CancelControllerMetadata {
+                    channel: 1,
+                    registration,
+                    review: token,
+                },
+            ];
+            if reverse {
+                commands.reverse();
+            }
+            assert!(coordinator.commands_for_test(commands, &egui::Context::default(), &[&app]));
+            assert!(coordinator.stop.load(Ordering::Acquire));
+            assert!(!snapshot.controllers[0].metadata_review_is_current());
+            assert!(coordinator
+                .broker
+                .as_ref()
+                .unwrap()
+                .native_enrollment_metadata_grant(
+                    principal,
+                    registration,
+                    enrollment,
+                    Instant::now(),
+                )
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn native_enrollment_metadata_cancellation_and_revocation_defer_without_blocking() {
+        if super::super::tests::isolate_admission_contention_test(
+            "FESTERM_NATIVE_METADATA_CANCEL_CHILD",
+            "automation::controller::tests::native_enrollment_metadata_cancellation_and_revocation_defer_without_blocking",
+        ) {
+            return;
+        }
+        let (mut coordinator, app, _tab, registration, enrollment) = metadata_fixture();
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        let open = NativeCommand::ReviewControllerMetadata {
+            channel: 1,
+            registration,
+            enrollment,
+        };
+        metadata_command_with_retry(&mut coordinator, &app, WindowId::PRIMARY, open.clone())
+            .unwrap();
+        let token = metadata_review_token(&coordinator, &app, registration);
+        let snapshot = stable_settings(&coordinator, &[&app]);
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        snapshot.cancel_controller_metadata_review(1, registration, token);
+        let cancelled = command(
+            &mut coordinator,
+            WindowId::PRIMARY,
+            NativeCommand::CancelControllerMetadata {
+                channel: 1,
+                registration,
+                review: token,
+            },
+            &[&app],
+        );
+        let stale = command(
+            &mut coordinator,
+            WindowId::PRIMARY,
+            NativeCommand::ConfirmControllerMetadata {
+                channel: 1,
+                registration,
+                review: token,
+            },
+            &[&app],
+        );
+        let mut broker = coordinator.broker.take().unwrap();
+        let deferred = coordinator.try_reconcile(&mut broker, &[&app]);
+        coordinator.broker = Some(broker);
+        drop(guard);
+        assert_eq!(cancelled, Ok(()));
+        assert_eq!(stale, Err(CommandError::Refused(Refusal::NotAuthorized)));
+        assert!(matches!(
+            deferred,
+            Err(ReconcileError::Admission(
+                festerm_session::AutomationAdmissionTryError::Busy
+            ))
+        ));
+        let mut broker = coordinator.broker.take().unwrap();
+        coordinator.reconcile(&mut broker, &[&app]);
+        coordinator.broker = Some(broker);
+        assert!(coordinator.pending_enrollment_metadata_reviews.is_empty());
+
+        metadata_command_with_retry(&mut coordinator, &app, WindowId::PRIMARY, open).unwrap();
+        let token = metadata_review_token(&coordinator, &app, registration);
+        metadata_command_with_retry(
+            &mut coordinator,
+            &app,
+            WindowId::PRIMARY,
+            NativeCommand::ConfirmControllerMetadata {
+                channel: 1,
+                registration,
+                review: token,
+            },
+        )
+        .unwrap();
+        let principal = coordinator.peers[&1].principal;
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        let revoke = command(
+            &mut coordinator,
+            WindowId::PRIMARY,
+            NativeCommand::RevokeControllerMetadata {
+                channel: 1,
+                registration,
+                enrollment,
+            },
+            &[&app],
+        );
+        assert!(coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .native_enrollment_metadata_grant(principal, registration, enrollment, Instant::now())
+            .is_ok());
+        drop(guard);
+        assert_eq!(revoke, Ok(()));
+        let mut broker = coordinator.broker.take().unwrap();
+        coordinator.reconcile(&mut broker, &[&app]);
+        coordinator.broker = Some(broker);
+        assert!(coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .native_enrollment_metadata_grant(principal, registration, enrollment, Instant::now())
+            .is_err());
+    }
+
+    #[test]
+    fn native_enrollment_metadata_queued_revocation_does_not_follow_rebinding() {
+        let (mut coordinator, app, tab, registration, old_enrollment) = metadata_fixture();
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        metadata_command_with_retry(
+            &mut coordinator,
+            &app,
+            WindowId::PRIMARY,
+            NativeCommand::ReviewControllerMetadata {
+                channel: 1,
+                registration,
+                enrollment: old_enrollment,
+            },
+        )
+        .unwrap();
+        let token = metadata_review_token(&coordinator, &app, registration);
+        metadata_command_with_retry(
+            &mut coordinator,
+            &app,
+            WindowId::PRIMARY,
+            NativeCommand::ConfirmControllerMetadata {
+                channel: 1,
+                registration,
+                review: token,
+            },
+        )
+        .unwrap();
+        metadata_command_with_retry(
+            &mut coordinator,
+            &app,
+            WindowId::PRIMARY,
+            NativeCommand::RevokeControllerMetadata {
+                channel: 1,
+                registration,
+                enrollment: old_enrollment,
+            },
+        )
+        .unwrap();
+        let target = coordinator.targets[&tab.chip_id()].reference;
+        let selection = review(
+            &mut coordinator,
+            &[&app],
+            WindowId::PRIMARY,
+            1,
+            registration,
+            target,
+        );
+        confirm(
+            &mut coordinator,
+            &[&app],
+            WindowId::PRIMARY,
+            registration,
+            selection,
+        );
+        let new_enrollment = coordinator.peers[&1]
+            .controller
+            .registrations
+            .values()
+            .find(|record| record.internal == registration)
+            .unwrap()
+            .association
+            .unwrap()
+            .enrollment;
+        assert_ne!(new_enrollment, old_enrollment);
+        metadata_command_with_retry(
+            &mut coordinator,
+            &app,
+            WindowId::PRIMARY,
+            NativeCommand::ReviewControllerMetadata {
+                channel: 1,
+                registration,
+                enrollment: new_enrollment,
+            },
+        )
+        .unwrap();
+        let token = metadata_review_token(&coordinator, &app, registration);
+        metadata_command_with_retry(
+            &mut coordinator,
+            &app,
+            WindowId::PRIMARY,
+            NativeCommand::ConfirmControllerMetadata {
+                channel: 1,
+                registration,
+                review: token,
+            },
+        )
+        .unwrap();
+        let principal = coordinator.peers[&1].principal;
+        let mut broker = coordinator.broker.take().unwrap();
+        coordinator.reconcile(&mut broker, &[&app]);
+        assert!(broker
+            .native_enrollment_metadata_grant(
+                principal,
+                registration,
+                old_enrollment,
+                Instant::now(),
+            )
+            .is_err());
+        assert!(broker
+            .native_enrollment_metadata_grant(
+                principal,
+                registration,
+                new_enrollment,
+                Instant::now(),
+            )
+            .is_ok());
+        assert!(coordinator.peers[&1]
+            .controller
+            .metadata_revocations
+            .is_empty());
+        coordinator.broker = Some(broker);
     }
 
     #[test]

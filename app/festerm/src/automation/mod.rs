@@ -15,7 +15,9 @@ pub(crate) use controller::tests::{
 pub(crate) use tests::{application_disclosure_witness, preference_application_fixture};
 
 use std::{
+    cell::Cell,
     collections::{BTreeMap, BTreeSet},
+    rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Mutex,
@@ -109,6 +111,26 @@ pub(crate) enum NativeCommand {
         channel: u64,
         registration: ControllerRegistrationId,
     },
+    ReviewControllerMetadata {
+        channel: u64,
+        registration: ControllerRegistrationId,
+        enrollment: ControllerEnrollmentId,
+    },
+    ConfirmControllerMetadata {
+        channel: u64,
+        registration: ControllerRegistrationId,
+        review: u64,
+    },
+    CancelControllerMetadata {
+        channel: u64,
+        registration: ControllerRegistrationId,
+        review: u64,
+    },
+    RevokeControllerMetadata {
+        channel: u64,
+        registration: ControllerRegistrationId,
+        enrollment: ControllerEnrollmentId,
+    },
     CaptureWorkflow(SelectedWorkflow),
     ClearWorkflow,
 }
@@ -149,6 +171,8 @@ impl NativeCommand {
                 | Self::ChooseController { .. }
                 | Self::SelectControllerTarget { .. }
                 | Self::ConfirmController { .. }
+                | Self::ReviewControllerMetadata { .. }
+                | Self::ConfirmControllerMetadata { .. }
         )
     }
 
@@ -160,6 +184,8 @@ impl NativeCommand {
                 | Self::Revoke { .. }
                 | Self::CancelController { .. }
                 | Self::UnregisterController { .. }
+                | Self::CancelControllerMetadata { .. }
+                | Self::RevokeControllerMetadata { .. }
                 | Self::ClearWorkflow
         )
     }
@@ -173,6 +199,10 @@ impl NativeCommand {
                 | Self::ConfirmController { .. }
                 | Self::CancelController { .. }
                 | Self::UnregisterController { .. }
+                | Self::ReviewControllerMetadata { .. }
+                | Self::ConfirmControllerMetadata { .. }
+                | Self::CancelControllerMetadata { .. }
+                | Self::RevokeControllerMetadata { .. }
         )
     }
 }
@@ -205,6 +235,24 @@ pub(crate) enum ControllerSelectionView {
     },
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ControllerMetadataView {
+    Unavailable,
+    Idle {
+        enrollment: ControllerEnrollmentId,
+        window: WindowId,
+        target: TargetRef,
+        granted: bool,
+    },
+    Reviewing {
+        token: u64,
+        window: WindowId,
+        target: TargetRef,
+    },
+    Cancelling,
+    Revoking,
+}
+
 #[derive(Clone)]
 pub(crate) struct ControllerRow {
     pub channel: u64,
@@ -213,7 +261,33 @@ pub(crate) struct ControllerRow {
     pub label: String,
     pub associated_target: Option<TargetRef>,
     pub selection: ControllerSelectionView,
+    pub metadata: ControllerMetadataView,
     valid: Arc<AtomicBool>,
+    // Review presentation and confirmation are confined to the UI thread.
+    metadata_review_valid: Option<Rc<Cell<bool>>>,
+}
+
+impl ControllerRow {
+    pub(crate) fn metadata_review_is_current(&self) -> bool {
+        self.metadata_review_valid
+            .as_ref()
+            .is_some_and(|valid| valid.get())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_metadata_review_for_test(
+        &mut self,
+        token: u64,
+        window: WindowId,
+        target: TargetRef,
+    ) {
+        self.metadata = ControllerMetadataView::Reviewing {
+            token,
+            window,
+            target,
+        };
+        self.metadata_review_valid = Some(Rc::new(Cell::new(true)));
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -274,6 +348,7 @@ impl SettingsSnapshot {
                         && left.label == right.label
                         && left.associated_target == right.associated_target
                         && left.selection == right.selection
+                        && left.metadata == right.metadata
                 })
             && self.workflow.same_presentation(&other.workflow)
             && self.channels.len() == other.channels.len()
@@ -290,10 +365,20 @@ impl SettingsSnapshot {
     }
 
     pub(crate) fn disable(&self) {
+        for row in &self.controllers {
+            if let Some(valid) = &row.metadata_review_valid {
+                valid.set(false);
+            }
+        }
         set_admission_flag(&self.stop, true);
     }
 
     pub(crate) fn revoke(&self, channel: u64) {
+        for row in self.controllers.iter().filter(|row| row.channel == channel) {
+            if let Some(valid) = &row.metadata_review_valid {
+                valid.set(false);
+            }
+        }
         if let Some(row) = self.channels.iter().find(|row| row.channel == channel) {
             set_admission_flag(&row.closed, true);
         }
@@ -309,7 +394,30 @@ impl SettingsSnapshot {
             .iter()
             .find(|row| row.channel == channel && row.registration == registration)
         {
+            if let Some(valid) = &row.metadata_review_valid {
+                valid.set(false);
+            }
             set_admission_flag(&row.valid, false);
+        }
+    }
+
+    pub(crate) fn cancel_controller_metadata_review(
+        &self,
+        channel: u64,
+        registration: ControllerRegistrationId,
+        review: u64,
+    ) {
+        if let Some(row) = self.controllers.iter().find(|row| {
+            row.channel == channel
+                && row.registration == registration
+                && matches!(
+                    row.metadata,
+                    ControllerMetadataView::Reviewing { token, .. } if token == review
+                )
+        }) {
+            if let Some(valid) = &row.metadata_review_valid {
+                valid.set(false);
+            }
         }
     }
 
@@ -334,6 +442,7 @@ impl SettingsSnapshot {
         TargetRef,
         TargetRef,
         TargetRef,
+        ControllerEnrollmentId,
     ) {
         let mut broker = Broker::new([7; 16]);
         let principal = broker.accept_connection().unwrap();
@@ -344,6 +453,16 @@ impl SettingsSnapshot {
         let first = broker.attach_target(101, 1, &guard).unwrap();
         let second = broker.attach_target(102, 1, &guard).unwrap();
         let other_window = broker.attach_target(103, 1, &guard).unwrap();
+        let proposal = broker
+            .prepare_controller_enrollment(principal, registration, second, &guard)
+            .unwrap();
+        let enrollment = broker
+            .approve_controller_enrollment(
+                principal,
+                NativeControllerEnrollment::new(proposal),
+                &guard,
+            )
+            .unwrap();
         drop(guard);
         (
             Self {
@@ -361,7 +480,9 @@ impl SettingsSnapshot {
                     label: "untrusted".into(),
                     associated_target: None,
                     selection: ControllerSelectionView::Idle,
+                    metadata: ControllerMetadataView::Unavailable,
                     valid: Arc::new(AtomicBool::new(true)),
+                    metadata_review_valid: None,
                 }],
                 controller_targets: vec![
                     ControllerTargetRow {
@@ -389,6 +510,7 @@ impl SettingsSnapshot {
             first,
             second,
             other_window,
+            enrollment,
         )
     }
 }
@@ -687,6 +809,8 @@ pub(crate) struct Coordinator {
     controller_opted_in: bool,
     #[cfg(test)]
     synthetic_controller_qualified: bool,
+    #[cfg(test)]
+    synthetic_enrollment_metadata_ui_qualified: bool,
 }
 
 impl Default for Coordinator {
@@ -733,6 +857,8 @@ impl Default for Coordinator {
             controller_opted_in: false,
             #[cfg(test)]
             synthetic_controller_qualified: false,
+            #[cfg(test)]
+            synthetic_enrollment_metadata_ui_qualified: false,
         }
     }
 }
@@ -917,6 +1043,7 @@ impl Coordinator {
         self.controller_opted_in = false;
         self.javascript_enabled = false;
         self.workflow.disarm();
+        controller::disarm_metadata_reviews(&self.peers);
         self.workflow_unwind_stopped = true;
         self.workflow_unwind_disabled_seen = false;
         self.privacy_lost_this_tick = true;
@@ -939,6 +1066,14 @@ impl Coordinator {
                 .is_some()
     }
 
+    fn enrollment_metadata_ui_qualified(&self) -> bool {
+        #[cfg(test)]
+        let native_qualified = self.synthetic_enrollment_metadata_ui_qualified;
+        #[cfg(not(test))]
+        let native_qualified = false;
+        native_qualified && self.controller_qualified()
+    }
+
     fn machine_for_new_peer(&self) -> Machine {
         if self.controller_opted_in && self.controller_qualified() {
             Machine::with_controller_enrollment()
@@ -954,6 +1089,7 @@ impl Coordinator {
             .flatten();
         self.want_start = false;
         self.controller_opted_in = false;
+        controller::disarm_metadata_reviews(&self.peers);
         self.stop.store(true, Ordering::Release);
         self.control_handoffs.clear();
         self.pending_control_reviews.clear();
@@ -1831,7 +1967,19 @@ impl Coordinator {
                 .and_then(WorkspaceRevision::current),
             &guard,
         );
+        let metadata_retired = controller::retire_metadata_actions_locked(
+            &mut self.peers,
+            &mut self.pending_enrollment_metadata_reviews,
+            &mut self.enrollment_metadata_grants,
+            broker,
+            Instant::now(),
+            &guard,
+        )
+        .map_err(ReconcileError::Authority)?;
         drop(guard);
+        if metadata_retired {
+            self.status = "Metadata cancellation or revocation completed; metadata delivery remains unavailable.";
+        }
         if retirement_refused {
             tracing::warn!("automation target retirement refused");
         }
@@ -1924,7 +2072,11 @@ impl Coordinator {
             | NativeCommand::SelectControllerTarget { .. }
             | NativeCommand::ConfirmController { .. }
             | NativeCommand::CancelController { .. }
-            | NativeCommand::UnregisterController { .. } => {
+            | NativeCommand::UnregisterController { .. }
+            | NativeCommand::ReviewControllerMetadata { .. }
+            | NativeCommand::ConfirmControllerMetadata { .. }
+            | NativeCommand::CancelControllerMetadata { .. }
+            | NativeCommand::RevokeControllerMetadata { .. } => {
                 self.status = "Controller action refused without its originating native window.";
             }
         }

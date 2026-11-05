@@ -320,6 +320,15 @@ impl FesTermApp {
             } => self
                 .automation_settings
                 .unregister_controller(*channel, *registration),
+            NativeCommand::CancelControllerMetadata {
+                channel,
+                registration,
+                review,
+            } => self.automation_settings.cancel_controller_metadata_review(
+                *channel,
+                *registration,
+                *review,
+            ),
             NativeCommand::ClearWorkflow => self.automation_settings.workflow.disable(),
             NativeCommand::ApproveObservation { .. }
             | NativeCommand::EnableControllerEnrollment
@@ -327,6 +336,9 @@ impl FesTermApp {
             | NativeCommand::SelectControllerTarget { .. }
             | NativeCommand::ConfirmController { .. }
             | NativeCommand::CancelController { .. }
+            | NativeCommand::ReviewControllerMetadata { .. }
+            | NativeCommand::ConfirmControllerMetadata { .. }
+            | NativeCommand::RevokeControllerMetadata { .. }
             | NativeCommand::CaptureWorkflow(_) => {}
         }
         if self.automation_command_overflow {

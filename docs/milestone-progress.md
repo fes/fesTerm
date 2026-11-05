@@ -1,5 +1,14 @@
 # Milestone Progress Narrative
 
+## Modeling native enrollment metadata review
+
+The dormant Settings route now models a separate same-window review for one
+exact enrollment and describes its bounded metadata-only scope. Cancellation
+invalidates stale review snapshots immediately; proposal cleanup and scoped
+revocation are deferred through admission and reported as pending. The route
+is test-qualified only, refuses active control and legacy observation
+composition, and provides no metadata delivery or production capability.
+
 ## Combining enrollment metadata with completion safety
 
 The host enrollment-review seam now composes with retained completion and its

@@ -190,8 +190,12 @@ to bypass another's restrictions.
    peer, enrollment, local attachment and workspace revision before installing
    its broker grant. It refuses to compose with active control or the legacy
    observation adapter; host-side two-sided consent and per-slot delivery
-   fencing are still required. Synthetic decisions do not constitute native UI
-   or enable a metadata consumer.
+   fencing are still required. A separate current-window Settings review is
+   exercised with synthetic qualification only: cancellation invalidates stale
+   snapshots immediately, and proposal cleanup and scoped revocation defer
+   under admission. It describes only label and lifecycle status for at most
+   five minutes; a future route must enforce that scope. This is not qualified
+   native consent and does not enable a metadata consumer.
    The existing capacity-four app outbound channel and its frame and target
    guards now reside in the authority crate and remain connected to the same
    app writer. The app retains the existing admission validation, size and
