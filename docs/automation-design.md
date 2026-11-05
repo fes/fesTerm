@@ -1176,8 +1176,9 @@ deadline. Any previously delivered status is only a snapshot, not authority.
 An association-handle `festerm_sessions_get` consumer is wired behind a
 test-only delivery qualification. It resolves only the requesting connection's
 exact association and separately reviewed grant, admits and charges an exact
-discovery run, and returns bounded label/lifecycle data with the association
-reference rather than the internal target. Its queued frame retains the
+discovery run with a 2 KiB encoded metadata reservation, and returns bounded
+label/lifecycle data with the association reference rather than the internal
+target. Its queued frame retains the
 original grant/run liveness, connection, association and attachment guards;
 the existing writer rechecks those guards on each nonblocking write. A
 synthetic test exercises scoped revocation and expiry of queued replies. No

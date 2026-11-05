@@ -394,6 +394,7 @@
         "enrollment_metadata_host_refuses_unreviewed_control_composition",
         "enrollment_metadata_host_never_waits_for_admission",
         "enrollment_metadata_route_requires_separate_approval_and_original_liveness",
+        "enrollment_metadata_refresh_charges_only_its_bounded_projection",
         "enrollment_metadata_route_keeps_identical_labels_independent",
         "enrollment_metadata_route_scopes_colliding_handles_to_each_connection",
         "enrollment_metadata_queued_reply_is_invalidated_by_expiry_attachment_or_rebind",

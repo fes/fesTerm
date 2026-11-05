@@ -5,6 +5,7 @@ const MAX_ISSUED_IDS: usize = 256;
 const MAX_ID_ATTEMPTS: usize = 8;
 const MAX_LOCAL_TARGETS: usize = 128;
 const MAX_CONTROLLER_REQUESTS: usize = 256;
+const MAX_ENROLLMENT_METADATA_BYTES: u32 = 2_048;
 
 struct Registration {
     internal: ControllerRegistrationId,
@@ -417,7 +418,9 @@ fn prepare_metadata_disclosure(
         .prepare_request(
             peer.principal,
             run,
-            AuthorityOperation::Discover { max_bytes: 32_768 },
+            AuthorityOperation::Discover {
+                max_bytes: MAX_ENROLLMENT_METADATA_BYTES,
+            },
             Instant::now(),
         )
         .map_err(refusal)?;
@@ -442,7 +445,7 @@ fn prepare_metadata_disclosure(
             }],
             "untrusted": true,
         }),
-        32_768,
+        MAX_ENROLLMENT_METADATA_BYTES as usize,
     )?;
     let encoded = serde_json::to_vec(&data).map_err(|_| Refusal::InvalidBackendResult)?;
     let encoded_bytes = u32::try_from(encoded.len()).map_err(|_| Refusal::ResponseTooLarge)?;
@@ -1627,7 +1630,8 @@ pub(super) mod tests {
             grants: &coordinator.enrollment_metadata_grants,
             qualified: coordinator.enrollment_metadata_delivery_qualified() && qualified,
         };
-        process_peer_message(
+        assert!(coordinator.peers[&channel].pending_completion.is_none());
+        let result = process_peer_message(
             coordinator.broker.as_mut().unwrap(),
             &coordinator.targets,
             metadata,
@@ -1638,8 +1642,30 @@ pub(super) mod tests {
             &coordinator.stop,
             qualified,
             Instant::now(),
-        )
-        .unwrap();
+        );
+        match result {
+            Ok(()) => {}
+            Err(festerm_session::AutomationAdmissionTryError::Busy) => {
+                assert!(coordinator.peers[&channel].pending_completion.is_some());
+                retry_automation_busy(|| {
+                    retry_completion(
+                        coordinator.broker.as_mut().unwrap(),
+                        coordinator.peers.get_mut(&channel).unwrap(),
+                        Instant::now(),
+                    )
+                    .map_err(|error| match error {
+                        festerm_session::AutomationAdmissionTryError::Busy => {
+                            festerm_automation::Error::Busy
+                        }
+                        festerm_session::AutomationAdmissionTryError::Poisoned => {
+                            festerm_automation::Error::Unavailable
+                        }
+                    })
+                })
+                .unwrap();
+            }
+            Err(error) => panic!("peer message admission failed: {error:?}"),
+        }
     }
 
     fn response(receive: &impl Fn() -> Option<Vec<u8>>) -> Value {
@@ -2054,6 +2080,41 @@ pub(super) mod tests {
             frame_response(&receive().unwrap())["result"]["structuredContent"]["code"],
             "NOT_AUTHORIZED"
         );
+    }
+
+    #[test]
+    fn enrollment_metadata_refresh_charges_only_its_bounded_projection() {
+        let (mut coordinator, mut app, tab, registration, enrollment, receive) =
+            metadata_fixture_with_frames();
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        coordinator.synthetic_enrollment_metadata_delivery_qualified = true;
+        let label = "\0".repeat(128);
+        app.automation_session_mut(tab).label = label.clone();
+        approve_metadata_for_delivery(
+            &mut coordinator,
+            &app,
+            1,
+            registration,
+            enrollment,
+            Duration::from_secs(60),
+        );
+        let handle = metadata_handle(&coordinator, registration);
+        for _ in 0..33 {
+            call(
+                &mut coordinator,
+                1,
+                &[&app],
+                "festerm_sessions_get",
+                json!({"session_ref": handle}),
+            );
+            let frame = receive().unwrap();
+            assert!(frame.is_valid());
+            assert_eq!(
+                frame_response(&frame)["result"]["structuredContent"]["data"]["sessions"][0]
+                    ["label"],
+                label
+            );
+        }
     }
 
     #[test]
