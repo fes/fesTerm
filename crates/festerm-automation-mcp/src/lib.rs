@@ -8,9 +8,9 @@
 //! by default. [`Machine::new`] is observation-only. An explicitly selected
 //! catalog describes later controller registration, but does not implement it.
 //! The combined controller/presentation catalog asks the backend for current
-//! enrollment availability; presentation and input remain unavailable.
-//! The application currently refuses these operations; association handles have
-//! no metadata consumer. No HTTP, execution, workflows, resources, or prompts
+//! enrollment availability. The application has a test-qualified consumer for
+//! association metadata, but production metadata, presentation, and input
+//! remain unavailable. No HTTP, execution, workflows, resources, or prompts
 //! are exposed.
 //!
 //! Backend observation data is explicitly authorized **untrusted content**, not
