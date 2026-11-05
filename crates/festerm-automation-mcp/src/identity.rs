@@ -60,7 +60,6 @@ impl ClientIdentity {
         Ok(identity)
     }
 
-    #[must_use]
     pub fn proof(&self, challenge: &AuthChallenge) -> Result<ClientIdentityProof, IdentityError> {
         let signature = self.0.sign(&challenge.message()?);
         Ok(ClientIdentityProof {
@@ -159,7 +158,7 @@ fn decode_hex<const N: usize>(encoded: &str) -> Option<[u8; N]> {
         return None;
     }
     let mut decoded = [0; N];
-    for (index, pair) in encoded.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in encoded.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let high = hex_digit(pair[0])?;
         let low = hex_digit(pair[1])?;
         decoded[index] = (high << 4) | low;
