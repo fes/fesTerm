@@ -94,6 +94,7 @@ session contents remain outside this recovery path.
 - **GUI/action edges affected:** `TUNNEL-01`, `TUNNEL-03`, `TUNNEL-05`.
 - **Automated tests required:**
   `lifecycle_journal_is_bounded_generation_scoped_and_preserves_stop_intent`,
+  `lifecycle_lock_waits_out_brief_contention_but_not_a_stuck_holder`,
   `managed_daemon_restart_budget_survives_reload_and_refuses_clock_rollback`,
   `managed_daemon_recovery_replaces_only_the_authorized_generation`,
   `host_refusal_does_not_claim_that_enabled_takeover_is_off`,

@@ -11,6 +11,7 @@ use std::{
 
 const LIMIT: usize = 64;
 const BYTE_LIMIT: usize = 32 * 1024;
+const LOCK_ATTEMPTS: u32 = 20;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -70,8 +71,20 @@ fn storage(root: &Path, name: &str) -> io::Result<(File, PathBuf, File)> {
         }
         Err(error) => return Err(error),
     };
-    // Diagnostics must not stall PTY handling or shutdown behind another process.
-    lock.try_lock_exclusive()?;
+    // Diagnostics must not stall PTY handling or shutdown behind another
+    // process, but a concurrent reader/writer (or a child that briefly
+    // inherited the descriptor before exec) only holds the lock momentarily.
+    let mut attempts = 0;
+    loop {
+        match lock.try_lock_exclusive() {
+            Ok(()) => break,
+            Err(error) if crate::lock_is_contended(&error) && attempts < LOCK_ATTEMPTS => {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(error) => return Err(error),
+        }
+    }
     Ok((directory, PathBuf::from(format!("{name}.json")), lock))
 }
 
@@ -164,6 +177,32 @@ mod tests {
             record(&root, &identity, event).unwrap();
             assert!(!unexpected_exit(&history(&root, &identity).unwrap()));
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn lifecycle_lock_waits_out_brief_contention_but_not_a_stuck_holder() {
+        let root = private_storage::test_directory();
+        let identity = NativeSessionIdentity {
+            name: "test".into(),
+            pid: 7,
+            created_at_unix_ms: 9,
+            endpoint: "unused".into(),
+        };
+        record(&root, &identity, Event::Ready).unwrap();
+        let (_, _, held) = storage(&root, &identity.name).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            drop(held);
+        });
+        record(&root, &identity, Event::Starting).unwrap();
+        release.join().unwrap();
+        assert_eq!(history(&root, &identity).unwrap().len(), 2);
+
+        let (_, _, _stuck) = storage(&root, &identity.name).unwrap();
+        assert!(crate::lock_is_contended(
+            &history(&root, &identity).unwrap_err()
+        ));
         std::fs::remove_dir_all(root).unwrap();
     }
 }
