@@ -193,23 +193,18 @@ to bypass another's restrictions.
    fencing are still required. Synthetic decisions do not constitute native UI
    or enable a metadata consumer.
    The existing capacity-four app outbound channel and its frame and target
-   guards now reside in the authority crate and remain connected to the same
-   app writer. The app retains the existing admission validation, size and
-   expiry checks, connection closure and physical writes. The legacy sender
-   accepts host-constructed frames without enforcing broker authority, and its
-   insertion still occurs after the admission guard is released. This
-   extraction is not a metadata witness or revocable enqueue; any such future
-   path must prevent bypass and account for all liveness and delivery cuts.
-   An alternative is app-owned insertion under the same admission boundary,
-   with its own carefully specified authority and revocation contract. This
-   extraction enables a future authority-owned insertion without crossing the
-   crate boundary through an arbitrary callback; it does not by itself make
-   that path safe. It uses the same standard-library channel and introduces no
-   dependency or platform-specific implementation; the thin endpoint wrappers
-   do not change its capacity or intended runtime behavior. Existing IPC
-   regressions remain applicable, with focused coverage for the relocated queue
-   and connection failure paths. This extends, rather than supersedes, this
-   decision.
+   guards reside in the authority crate and feed the same app writer. The app
+   now retains the shared admission guard from its connection, frame-size,
+   expiry and target/flag checks through the nonblocking queue insertion. Queue
+   insertion requires that opaque guard; on a full or disconnected queue the
+   app closes the connection under the guard, without a callback. The legacy
+   sender still accepts host-constructed frames and does not enforce broker
+   authority or bind an enrollment. Other broker cuts remain unguarded. This is
+   not an enrollment witness, a general revocation guarantee or a
+   final-recipient delivery fence. Future metadata paths must prevent bypass
+   and account for all liveness and physical-delivery cuts. The standard
+   channel retains its capacity and FIFO behavior. This extends, rather than
+   supersedes, this decision.
    At the real input queue publication boundary the future application adapter
    must revalidate privacy, attachment/generation, terminal modes, human
    input/IME fences, any required presentation condition, and the same immutable
@@ -380,8 +375,9 @@ in the design must be visible in implementation/release review.
   across restart. MCP protocol, private framing, bounded
   observation, pairing and stale-target tests cover the P1 path.
   The outbound ownership extraction adds queue capacity/FIFO/disconnect and
-  guard-freshness checks plus app connection full/closed regressions; their
-  execution and native-platform evidence are tracked with the PR.
+  guard-freshness checks plus app connection full/closed regressions. An
+  isolated enqueue race checks that revocation cannot cross the host checks
+  before insertion; it does not establish a final-recipient fence.
   Cancellation regressions exercise post-reconciliation contention, retained
   wait suppression, retry before a reused request ID, missing-run closure,
   defensive cleanup of an injected retained child, and isolated admission

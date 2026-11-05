@@ -395,6 +395,7 @@
         "controller_chooser_tracks_surviving_window_identity_without_hidden_titles",
         "controller_settings_require_explicit_current_window_choice_and_confirmation",
         "controller_confirmation_ignores_stale_accessibility_and_pointer_actions",
+        "connection_enqueue_serializes_validation_with_revocation",
         "queued_controller_reply_closes_when_registration_is_invalidated"
       ],
       "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04", "AUTO-05"],
@@ -594,6 +595,7 @@
         "outbound_queue_retains_capacity_fifo_and_disconnect_semantics",
         "outbound_frame_keeps_live_target_and_registration_checks",
         "connection_closes_on_extracted_queue_full_or_disconnected",
+        "connection_enqueue_serializes_validation_with_revocation",
         "queued_reply_is_dropped_when_target_is_replaced_before_dispatch",
         "backpressured_reply_cannot_write_after_revocation",
         "stdio_eof_closes_the_private_channel_even_when_stdout_is_blocked",

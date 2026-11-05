@@ -2697,6 +2697,9 @@ evidence. JavaScript and terminal control remain unavailable.
 The record-framing tests cover a writer panic after an unknown partial write
 and prevent channel reuse. Disposal of the real stream and per-write privacy
 guards still require the native and interoperability evidence in AUTO-04.
+An isolated synthetic queue race also checks that the app holds admission from
+its host validation through bounded insertion. It is not evidence that broker
+liveness or a physical recipient is fenced.
 
 Terminal-request encoding has deterministic text, key, mode and refusal tests.
 The broker's exact direct-input binding, single-request rule and explicit human

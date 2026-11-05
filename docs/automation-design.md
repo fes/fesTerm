@@ -806,11 +806,14 @@ or physical delivery, and does not qualify or enable any platform or adapter.
 The existing capacity-four outbound queue and its frame/target-guard
 representation live in `festerm-automation`, while the app retains the same
 connection and writer. The frame limit and expiration remain host checks; the
-queue itself does not authorize or bound frame bytes. In particular,
-`Connection::send_guarded` releases its admission guard before queue insertion,
-and the publicly constructible legacy frames and sender are not an enrollment
-witness or revocable metadata publication boundary. A future bound path must
-prevent bypass and establish all relevant lifetime and final-recipient fences.
+queue itself does not authorize or bound frame bytes. `Connection::send_guarded`
+retains the shared guard through its existing connection, expiry, target and
+flag checks and nonblocking queue insertion; the sender requires that guard.
+A full or disconnected queue closes the connection before releasing it.
+Publicly constructible legacy frames are still not an enrollment witness or
+revocable metadata publication boundary, and other broker cuts remain
+unguarded. A future bound path must prevent bypass and establish all relevant
+lifetime and final-recipient fences.
 
 The handwritten adapter implements the MCP `2025-11-25` protocol baseline;
 native client interoperability is not yet qualified. Support only negotiated versions;

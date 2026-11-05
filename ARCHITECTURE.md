@@ -69,8 +69,9 @@ changes dependency ownership, not terminal ownership or lock scope. See
 `festerm-automation` also owns the existing four-frame in-memory outbound
 queue and its inert frame and target-guard representation; the application
 still owns transport, size/deadline and admission checks, and shutdown. Queue
-insertion is not an authorization or revocation fence and does not qualify
-metadata routing or physical delivery.
+insertion requires the shared guard, which the app retains from those checks.
+It is not a broker authorization or complete revocation fence and does not
+qualify metadata routing or physical delivery.
 
 The Windows Direct2D experiment adds an app-owned
 `festerm-windows-direct2d` graphics boundary consuming egui primitives, not
