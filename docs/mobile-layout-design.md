@@ -19,7 +19,10 @@ Return; the user submits separately. It rejects control characters and line
 breaks, clears modifiers and revalidates the original ready session.
 
 Audio stays on-device, capture has a native 45-second maximum, and only the
-latest 4096-byte transcript revision is retained. Background/lock/interruption,
+latest 4096-byte transcript revision is retained. Stop (or the deadline) ends
+audio and briefly shows **Finishing transcription** while the recognizer
+delivers its final punctuated result (at most 1.5 seconds). A first-use
+permission alert does not suspend the app's sessions. Background/lock/interruption,
 navigation and session replacement stop and cancel without replay. No audio
 or transcript is saved or logged. Unsupported recognition fails explicitly,
 without cloud fallback. **Edit text manually** permits preview-flow testing

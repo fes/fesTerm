@@ -3725,6 +3725,11 @@
         "dictation_refuses_unsafe_text_and_changed_target_or_lifecycle",
         "dictation_navigation_and_suspension_clear_preview_before_any_insert",
         "dictation_pending_authorization_survives_temporary_permission_resignation",
+        "dictation_permission_alert_then_background_still_suspends_and_cancels",
+        "mobile_live_ssh_dictation_permission_alert_keeps_plain_session_until_background",
+        "dictation_stop_finishes_and_accepts_the_final_transcript",
+        "dictation_finishing_timeout_or_error_reviews_latest_text_but_cancel_wins",
+        "dictation_host_stop_without_native_recognizer_reviews_immediately",
         "dictation_editor_bounds_unicode_bytes_without_splitting_characters",
         "dictation_failed_and_manual_review_sheets_render_without_terminal_input",
         "terminal_keyboards_offer_dictation_as_one_non_repeating_action"

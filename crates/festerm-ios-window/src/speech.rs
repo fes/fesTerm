@@ -1,5 +1,5 @@
 //! Public Speech/AVFAudio APIs only. No file recording or network fallback.
-use crate::dictation::{DictationPhase, Shared, MAX_DICTATION_BYTES};
+use crate::dictation::{set_permission_prompt, DictationPhase, Shared, MAX_DICTATION_BYTES};
 use block2::RcBlock;
 use objc2::{
     rc::Retained,
@@ -29,6 +29,9 @@ use std::{cell::RefCell, ptr::NonNull, rc::Rc, sync::Arc};
 type Wake = Arc<dyn Fn() + Send + Sync>;
 type Resources = Rc<RefCell<Option<Capture>>>;
 
+/// After Stop/deadline, how long to wait for the recognizer's final result.
+const FINISH_GRACE_SECONDS: f64 = 1.5;
+
 struct Capture {
     generation: u64,
     _recognizer: Retained<SFSpeechRecognizer>,
@@ -37,7 +40,70 @@ struct Capture {
     request: Retained<SFSpeechAudioBufferRecognitionRequest>,
     task: Option<Retained<SFSpeechRecognitionTask>>,
     timer: Option<Retained<NSTimer>>,
+    grace: Option<Retained<NSTimer>>,
     tapped: bool,
+    audio_ended: bool,
+}
+
+/// Ends microphone input but keeps the recognition task alive so it can
+/// deliver its final result; a grace timer moves to Review if it does not.
+fn finish_capture(resources: &Resources, shared: &Shared, wake: &Wake, generation: u64) {
+    let audio = {
+        let mut current = resources.borrow_mut();
+        let Some(capture) = current
+            .as_mut()
+            .filter(|capture| capture.generation == generation && !capture.audio_ended)
+        else {
+            return;
+        };
+        capture.audio_ended = true;
+        let tapped = std::mem::replace(&mut capture.tapped, false);
+        (
+            capture.engine.clone(),
+            capture.input.clone(),
+            capture.request.clone(),
+            tapped,
+            capture.timer.clone(),
+        )
+    };
+    let (engine, input, request, tapped, deadline) = audio;
+    // SAFETY: main-thread owner or main-run-loop timer. The RefCell is released
+    // first because framework calls may re-enter result callbacks.
+    unsafe {
+        engine.stop();
+        if tapped {
+            input.removeTapOnBus(0);
+        }
+        request.endAudio();
+        if let Some(deadline) = deadline {
+            deadline.invalidate();
+        }
+        let (state, weak, wake) = (shared.clone(), Rc::downgrade(resources), wake.clone());
+        let grace = NSTimer::timerWithTimeInterval_repeats_block(
+            FINISH_GRACE_SECONDS,
+            false,
+            &RcBlock::new(move |_: NonNull<NSTimer>| {
+                state
+                    .lock()
+                    .expect("dictation state poisoned")
+                    .finish_timed_out(generation);
+                if let Some(resources) = weak.upgrade() {
+                    stop_capture(&resources, Some(generation));
+                }
+                wake();
+            }),
+        );
+        let mut current = resources.borrow_mut();
+        let Some(capture) = current
+            .as_mut()
+            .filter(|capture| capture.generation == generation)
+        else {
+            // A result or cancellation completed the capture during endAudio.
+            return;
+        };
+        NSRunLoop::mainRunLoop().addTimer_forMode(&grace, NSRunLoopCommonModes);
+        capture.grace = Some(grace);
+    }
 }
 
 fn stop_capture(resources: &Resources, generation: Option<u64>) {
@@ -65,11 +131,13 @@ impl Drop for Capture {
             if self.tapped {
                 self.input.removeTapOnBus(0);
             }
-            self.request.endAudio();
+            if !self.audio_ended {
+                self.request.endAudio();
+            }
             if let Some(task) = &self.task {
                 task.cancel();
             }
-            if let Some(timer) = &self.timer {
+            for timer in [&self.timer, &self.grace].into_iter().flatten() {
                 timer.invalidate();
             }
             // A cleanup error is surfaced without logging native error details.
@@ -118,8 +186,11 @@ impl Speech {
                 let (state, resources, wake) = (shared.clone(), resources.clone(), wake.clone());
                 let block = RcBlock::new(move |_: NonNull<NSNotification>| {
                     let mut draft = state.lock().expect("dictation state poisoned");
-                    // System permission sheets may temporarily resign focus.
-                    if authorizing_allowed && draft.phase == DictationPhase::Authorizing {
+                    // System permission alerts temporarily resign active.
+                    if authorizing_allowed
+                        && draft.phase == DictationPhase::Authorizing
+                        && draft.permission_pending
+                    {
                         return;
                     }
                     draft.cancel();
@@ -158,6 +229,15 @@ impl Speech {
         stop_capture(&self.resources, None);
     }
 
+    pub(crate) fn finish(&self) {
+        let generation = self
+            .shared
+            .lock()
+            .expect("dictation state poisoned")
+            .generation;
+        finish_capture(&self.resources, &self.shared, &self.wake, generation);
+    }
+
     #[allow(deprecated)] // AVAudioSession permission APIs preserve the iOS 15 floor.
     pub(crate) fn poll(&mut self) {
         let (phase, generation, pending) = {
@@ -165,7 +245,7 @@ impl Speech {
             (draft.phase, draft.generation, draft.permission_pending)
         };
         if phase != DictationPhase::Authorizing {
-            if phase != DictationPhase::Listening {
+            if !matches!(phase, DictationPhase::Listening | DictationPhase::Finishing) {
                 self.stop();
             }
             return;
@@ -192,7 +272,9 @@ impl Speech {
                     .expect("dictation state poisoned")
                     .permission_pending = true;
                 let (state, wake) = (self.shared.clone(), self.wake.clone());
+                set_permission_prompt(true);
                 SFSpeechRecognizer::requestAuthorization(&RcBlock::new(move |_| {
+                    set_permission_prompt(false);
                     let mut draft = state.lock().expect("dictation state poisoned");
                     if draft.generation == generation {
                         draft.permission_pending = false;
@@ -214,7 +296,9 @@ impl Speech {
                     .expect("dictation state poisoned")
                     .permission_pending = true;
                 let (state, wake) = (self.shared.clone(), self.wake.clone());
+                set_permission_prompt(true);
                 audio.requestRecordPermission(&RcBlock::new(move |_: Bool| {
+                    set_permission_prompt(false);
                     let mut draft = state.lock().expect("dictation state poisoned");
                     if draft.generation == generation {
                         draft.permission_pending = false;
@@ -261,7 +345,9 @@ impl Speech {
                 request,
                 task: None,
                 timer: None,
+                grace: None,
                 tapped: false,
+                audio_ended: false,
             };
             let format = capture.input.outputFormatForBus(0);
             if format.sampleRate() <= 0.0 || format.channelCount() == 0 {
@@ -296,14 +382,11 @@ impl Speech {
             let result = RcBlock::new(
                 move |result: *mut SFSpeechRecognitionResult, error: *mut NSError| {
                     let mut draft = state.lock().expect("dictation state poisoned");
-                    if draft.generation != generation || draft.phase != DictationPhase::Listening {
+                    if !draft.accepts_results(generation) {
                         return;
                     }
                     if !error.is_null() {
-                        draft.cancel();
-                        draft.phase = DictationPhase::Failed(
-                            "On-device recognition failed. Try again; no cloud fallback was used.",
-                        );
+                        draft.recognition_failed(generation);
                     } else if let Some(result) = result.as_ref() {
                         let text = result.bestTranscription().formattedString();
                         // Bound before allocating a Rust copy; NSString length is UTF-16.
@@ -316,7 +399,7 @@ impl Speech {
                             draft.recognize(generation, &text.to_string(), result.isFinal());
                         }
                     }
-                    let finished = draft.phase != DictationPhase::Listening;
+                    let finished = !draft.accepts_results(generation);
                     drop(draft);
                     if finished {
                         if let Some(resources) = resources.upgrade() {
@@ -345,13 +428,16 @@ impl Speech {
                 45.0,
                 false,
                 &RcBlock::new(move |_: NonNull<NSTimer>| {
-                    let mut draft = state.lock().expect("dictation state poisoned");
-                    if draft.generation == generation && draft.phase == DictationPhase::Listening {
-                        draft.phase = DictationPhase::Review;
-                    }
-                    drop(draft);
+                    let finishing = {
+                        let mut draft = state.lock().expect("dictation state poisoned");
+                        draft.generation == generation && draft.finish()
+                    };
                     if let Some(resources) = resources.upgrade() {
-                        stop_capture(&resources, Some(generation));
+                        if finishing {
+                            finish_capture(&resources, &state, &wake, generation);
+                        } else {
+                            stop_capture(&resources, Some(generation));
+                        }
                     }
                     wake();
                 }),

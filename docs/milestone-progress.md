@@ -36,6 +36,14 @@ is unavailable; it does not fabricate recognition evidence. ADR 0066 and #564
 keep device/language/model, offline audio, permission and privacy qualification
 separate from portable tests and a Simulator build/launch.
 
+Review found two lifecycle defects. winit maps `applicationWillResignActive` to
+`Suspended`, so the first Speech/Microphone permission alert stopped plain SSH
+and cancelled dictation; the host now defers that one suspension while a
+permission request is in flight and applies it only if the app really enters
+the background. Stop also cancelled the recognition task immediately after
+ending audio, so review showed the last lagging partial; a short `Finishing`
+phase now waits for the final result, an error or a 1.5-second grace timer.
+
 ## 0.14.2: iOS field editing and Dev Tunnel resiliency
 
 This patch packages five fixes. iOS profile form fields now support the native

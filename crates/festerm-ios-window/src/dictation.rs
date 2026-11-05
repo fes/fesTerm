@@ -1,7 +1,24 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use zeroize::Zeroize;
 
 pub const MAX_DICTATION_BYTES: usize = 4096;
+
+static PERMISSION_PROMPT: AtomicBool = AtomicBool::new(false);
+
+/// True while a Speech/Microphone permission alert may be on screen. Such an
+/// alert resigns the app active without backgrounding it, so the host can
+/// defer its suspension until the app actually enters the background.
+pub fn dictation_permission_prompt_in_flight() -> bool {
+    PERMISSION_PROMPT.load(Ordering::SeqCst)
+}
+
+#[cfg(target_os = "ios")]
+pub(crate) fn set_permission_prompt(in_flight: bool) {
+    PERMISSION_PROMPT.store(in_flight, Ordering::SeqCst);
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DictationPhase {
@@ -9,6 +26,8 @@ pub enum DictationPhase {
     Idle,
     Authorizing,
     Listening,
+    /// Audio has ended; waiting briefly for the recognizer's final result.
+    Finishing,
     Review,
     Failed(&'static str),
 }
@@ -54,9 +73,54 @@ impl DictationText {
         self.permission_pending = false;
     }
 
+    /// Stop/deadline: Listening -> Finishing. Returns whether audio must end.
+    pub(crate) fn finish(&mut self) -> bool {
+        let finishing = self.phase == DictationPhase::Listening;
+        if finishing {
+            self.phase = DictationPhase::Finishing;
+        }
+        finishing
+    }
+
+    /// The final result did not arrive in time; review the latest text.
+    #[cfg(any(target_os = "ios", test))]
+    pub(crate) fn finish_timed_out(&mut self, generation: u64) {
+        if self.generation == generation && self.phase == DictationPhase::Finishing {
+            self.phase = DictationPhase::Review;
+        }
+    }
+
+    /// After audio ends, a recognizer error (e.g. no speech) completes the
+    /// review with the latest text instead of discarding it.
+    #[cfg(any(target_os = "ios", test))]
+    pub(crate) fn recognition_failed(&mut self, generation: u64) {
+        if self.generation != generation {
+            return;
+        }
+        match self.phase {
+            DictationPhase::Finishing => self.phase = DictationPhase::Review,
+            DictationPhase::Listening => {
+                self.cancel();
+                self.phase = DictationPhase::Failed(
+                    "On-device recognition failed. Try again; no cloud fallback was used.",
+                );
+            }
+            _ => {}
+        }
+    }
+
+    #[cfg(any(target_os = "ios", test))]
+    pub(crate) fn accepts_results(&self, generation: u64) -> bool {
+        self.generation == generation
+            && matches!(
+                self.phase,
+                DictationPhase::Listening | DictationPhase::Finishing
+            )
+    }
+
     #[cfg(any(target_os = "ios", test))]
     pub(crate) fn recognize(&mut self, generation: u64, text: &str, final_result: bool) {
-        if self.generation != generation || self.phase != DictationPhase::Listening {
+        if !self.accepts_results(generation) {
             return;
         }
         self.text.zeroize();
@@ -125,16 +189,27 @@ impl Dictation {
         }
     }
 
+    /// Ends audio capture. Native recognition keeps its task alive in
+    /// `Finishing` until the final result, an error, or a short grace timeout.
     pub fn stop(&mut self) {
+        #[cfg(target_os = "ios")]
+        if let Some(native) = &self.native {
+            let (finishing, phase) = {
+                let mut draft = self.shared.lock().expect("dictation state poisoned");
+                (draft.finish(), draft.phase)
+            };
+            if finishing {
+                native.finish();
+            } else if phase != DictationPhase::Finishing {
+                native.stop();
+            }
+            return;
+        }
         self.with_text(|draft| {
-            if draft.phase == DictationPhase::Listening {
+            if draft.finish() {
                 draft.phase = DictationPhase::Review;
             }
         });
-        #[cfg(target_os = "ios")]
-        if let Some(native) = &mut self.native {
-            native.stop();
-        }
     }
 
     pub fn cancel(&mut self) {
@@ -215,5 +290,77 @@ mod tests {
         );
         assert!(matches!(draft.phase, DictationPhase::Failed(_)));
         assert!(draft.text.is_empty());
+    }
+
+    fn listening(text: &str) -> DictationText {
+        DictationText {
+            phase: DictationPhase::Listening,
+            text: text.to_owned(),
+            generation: 3,
+            permission_pending: false,
+        }
+    }
+
+    #[test]
+    fn dictation_stop_finishes_and_accepts_the_final_transcript() {
+        let mut draft = listening("hello world");
+        assert!(draft.finish());
+        assert!(!draft.finish());
+        assert_eq!(draft.phase, DictationPhase::Finishing);
+        assert!(draft.insertion_error().is_some());
+        draft.recognize(3, "hello world how", false);
+        assert_eq!(draft.phase, DictationPhase::Finishing);
+        draft.recognize(3, "Hello world, how are you?", true);
+        assert_eq!(draft.phase, DictationPhase::Review);
+        assert_eq!(draft.text, "Hello world, how are you?");
+        draft.finish_timed_out(3);
+        draft.recognition_failed(3);
+        draft.recognize(3, "late", true);
+        assert_eq!(draft.phase, DictationPhase::Review);
+        assert_eq!(draft.text, "Hello world, how are you?");
+    }
+
+    #[test]
+    fn dictation_finishing_timeout_or_error_reviews_latest_text_but_cancel_wins() {
+        let mut draft = listening("partial");
+        draft.finish();
+        draft.finish_timed_out(2);
+        assert_eq!(draft.phase, DictationPhase::Finishing);
+        draft.finish_timed_out(3);
+        assert_eq!(draft.phase, DictationPhase::Review);
+        assert_eq!(draft.text, "partial");
+
+        let mut draft = listening("partial");
+        draft.finish();
+        draft.recognition_failed(3);
+        assert_eq!(draft.phase, DictationPhase::Review);
+        assert_eq!(draft.text, "partial");
+
+        let mut draft = listening("partial");
+        draft.recognition_failed(3);
+        assert!(matches!(draft.phase, DictationPhase::Failed(_)));
+        assert!(draft.text.is_empty());
+
+        // Privacy cancellation during Finishing discards text and late results.
+        let mut draft = listening("private");
+        draft.finish();
+        draft.cancel();
+        assert_eq!(draft.phase, DictationPhase::Idle);
+        assert!(draft.text.is_empty());
+        draft.recognize(3, "private final", true);
+        draft.finish_timed_out(3);
+        assert_eq!(draft.phase, DictationPhase::Idle);
+        assert!(draft.text.is_empty());
+    }
+
+    #[test]
+    fn dictation_host_stop_without_native_recognizer_reviews_immediately() {
+        let mut dictation = Dictation::new(|| {});
+        dictation.with_text(|draft| {
+            draft.phase = DictationPhase::Listening;
+            draft.text = "manual".to_owned();
+        });
+        dictation.stop();
+        assert_eq!(dictation.phase(), DictationPhase::Review);
     }
 }

@@ -2,7 +2,7 @@
 
 #[cfg(feature = "live-ssh")]
 use festerm_mobile::SuspensionHandle;
-use festerm_mobile::{HardwareKeys, Lifecycle, MobileApp};
+use festerm_mobile::{HardwareKeys, Lifecycle, MobileApp, NativeLifecycle};
 use raw_window_handle::HasWindowHandle;
 use std::{
     cell::Cell,
@@ -39,41 +39,38 @@ static STARTUP_LOGGER: StartupLogger = StartupLogger;
 
 struct MobileHost<'a> {
     app: eframe::EframeWinitApplication<'a>,
-    lifecycle: Rc<Cell<Lifecycle>>,
+    lifecycle: NativeLifecycle,
     keys: HardwareKeys,
     repaint: Arc<OnceLock<eframe::egui::Context>>,
-    #[cfg(feature = "live-ssh")]
-    suspension: SuspensionHandle,
-}
-
-impl MobileHost<'_> {
-    fn update_lifecycle(&self, update: impl FnOnce(&mut Lifecycle)) {
-        let mut state = self.lifecycle.get();
-        update(&mut state);
-        self.lifecycle.set(state);
-    }
 }
 
 impl ApplicationHandler<eframe::UserEvent> for MobileHost<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.update_lifecycle(Lifecycle::resume);
-        self.app.resumed(event_loop);
+        if self.lifecycle.resumed() {
+            self.app.resumed(event_loop);
+        }
     }
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
-        #[cfg(feature = "live-ssh")]
-        self.suspension.suspend();
-        self.update_lifecycle(Lifecycle::suspend);
-        self.app.suspended(event_loop);
-        event_loop.set_control_flow(ControlFlow::Wait);
+        // A dictation permission alert resigns active without backgrounding.
+        let prompt = festerm_ios_window::dictation_permission_prompt_in_flight();
+        if self.lifecycle.suspended(prompt) {
+            self.app.suspended(event_loop);
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
     }
 
     fn memory_warning(&mut self, event_loop: &ActiveEventLoop) {
-        self.update_lifecycle(Lifecycle::memory_warning);
+        self.lifecycle.memory_warning();
         self.app.memory_warning(event_loop);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // winit reports applicationDidEnterBackground as Occluded(true).
+        if matches!(event, WindowEvent::Occluded(true)) && self.lifecycle.entered_background() {
+            self.app.suspended(event_loop);
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
         // Never submit Metal drawables while UIKit has suspended the app.
         // Forward other events so resize/focus state remains current.
         if !self.lifecycle.get().active && matches!(event, WindowEvent::RedrawRequested) {
@@ -211,11 +208,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     event_loop.run_app(&mut MobileHost {
         app,
-        lifecycle,
+        lifecycle: NativeLifecycle::new(
+            lifecycle,
+            #[cfg(feature = "live-ssh")]
+            suspension,
+        ),
         keys,
         repaint: host_repaint,
-        #[cfg(feature = "live-ssh")]
-        suspension,
     })?;
     Ok(())
 }

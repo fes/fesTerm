@@ -135,6 +135,13 @@ impl MobileApp {
                     });
                     stop = ui.button("Stop and review").clicked();
                 }
+                DictationPhase::Finishing => {
+                    ui.spinner();
+                    ui.label("Finishing transcription...");
+                    speech.with_text(|draft| {
+                        ui.label(&draft.text);
+                    });
+                }
                 DictationPhase::Review => {
                     speech.with_text(|draft| {
                         let mut buffer =
@@ -301,6 +308,22 @@ mod tests {
         assert_eq!(harness.state().sink.diagnostics.byte_count, 0);
     }
 
+    fn native_lifecycle(app: &MobileApp) -> crate::NativeLifecycle {
+        crate::NativeLifecycle::new(
+            app.lifecycle.clone(),
+            #[cfg(feature = "live-ssh")]
+            app.sink.live.clone(),
+        )
+    }
+
+    fn authorizing_frames(app: MobileApp) -> egui_kittest::Harness<'static, MobileApp> {
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+        harness.run_steps(2);
+        harness
+    }
+
     #[test]
     fn dictation_pending_authorization_survives_temporary_permission_resignation() {
         let mut app = app();
@@ -308,19 +331,39 @@ mod tests {
         app.dictation.as_ref().unwrap().with_text(|draft| {
             draft.phase = DictationPhase::Authorizing;
         });
-        let mut lifecycle = app.lifecycle.get();
-        lifecycle.suspend();
-        lifecycle.active = true;
-        app.lifecycle.set(lifecycle);
-        let mut harness = egui_kittest::Harness::builder()
-            .with_size(egui::vec2(390.0, 844.0))
-            .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
-        harness.run_steps(2);
+        let mut native = native_lifecycle(&app);
+        // The permission alert resigns active; winit reports Suspended, then Resumed.
+        assert!(!native.suspended(true));
+        let harness = authorizing_frames(app);
+        assert!(!native.resumed());
         assert_eq!(
             harness.state().dictation.as_ref().unwrap().phase(),
             DictationPhase::Authorizing
         );
+        assert_eq!(native.get().suspensions, 0);
         assert_eq!(harness.state().sink.diagnostics.byte_count, 0);
+    }
+
+    #[test]
+    fn dictation_permission_alert_then_background_still_suspends_and_cancels() {
+        let mut app = app();
+        review(&mut app, "");
+        app.dictation.as_ref().unwrap().with_text(|draft| {
+            draft.phase = DictationPhase::Authorizing;
+        });
+        let mut native = native_lifecycle(&app);
+        assert!(!native.suspended(true));
+        assert!(native.entered_background());
+        assert!(!native.entered_background());
+        assert!(!native.get().active);
+        assert_eq!(native.get().suspensions, 1);
+        assert!(native.resumed());
+        let harness = authorizing_frames(app);
+        assert!(!harness.state().dictation_open());
+        // An ordinary resign (no permission alert) suspends immediately.
+        assert!(native.suspended(false));
+        assert!(!native.entered_background());
+        assert_eq!(native.get().suspensions, 2);
     }
 
     #[test]

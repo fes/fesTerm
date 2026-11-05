@@ -174,6 +174,84 @@ impl SuspensionHandle {
     }
 }
 
+/// Applies native lifecycle callbacks to the shared [`Lifecycle`] and live sessions.
+///
+/// winit reports `applicationWillResignActive` as `Suspended`. A dictation
+/// permission alert only resigns active, so that suspension is deferred: live
+/// sessions and dictation survive the alert. If the app then really enters the
+/// background, the deferred suspension is applied as before.
+pub struct NativeLifecycle {
+    lifecycle: Rc<Cell<Lifecycle>>,
+    #[cfg(feature = "live-ssh")]
+    suspension: SuspensionHandle,
+    deferred: bool,
+}
+
+impl NativeLifecycle {
+    pub fn new(
+        lifecycle: Rc<Cell<Lifecycle>>,
+        #[cfg(feature = "live-ssh")] suspension: SuspensionHandle,
+    ) -> Self {
+        Self {
+            lifecycle,
+            #[cfg(feature = "live-ssh")]
+            suspension,
+            deferred: false,
+        }
+    }
+
+    pub fn get(&self) -> Lifecycle {
+        self.lifecycle.get()
+    }
+
+    fn update(&self, update: impl FnOnce(&mut Lifecycle)) {
+        let mut state = self.lifecycle.get();
+        update(&mut state);
+        self.lifecycle.set(state);
+    }
+
+    /// Returns whether the renderer should also be resumed.
+    pub fn resumed(&mut self) -> bool {
+        if std::mem::take(&mut self.deferred) {
+            return false;
+        }
+        self.update(Lifecycle::resume);
+        true
+    }
+
+    /// Returns whether the app was suspended (false when deferred for a
+    /// dictation permission alert).
+    pub fn suspended(&mut self, permission_prompt: bool) -> bool {
+        if permission_prompt {
+            self.deferred = true;
+            return false;
+        }
+        self.deferred = false;
+        self.suspend();
+        true
+    }
+
+    /// The app entered the background. Returns whether a deferred suspension
+    /// was applied now.
+    pub fn entered_background(&mut self) -> bool {
+        if !std::mem::take(&mut self.deferred) {
+            return false;
+        }
+        self.suspend();
+        true
+    }
+
+    pub fn memory_warning(&self) {
+        self.update(Lifecycle::memory_warning);
+    }
+
+    fn suspend(&self) {
+        #[cfg(feature = "live-ssh")]
+        self.suspension.suspend();
+        self.update(Lifecycle::suspend);
+    }
+}
+
 /// Deliberately discards bytes: the spike must not pretend to be a shell or
 /// save what a tester types. Uses the renderer's existing input contract.
 #[derive(Default)]
@@ -847,13 +925,11 @@ impl MobileApp {
 
     fn show_content(&mut self, ui: &mut egui::Ui) {
         let lifecycle = self.lifecycle.get();
-        let authorizing = self.dictation.as_ref().is_some_and(|speech| {
-            speech.phase() == festerm_ios_window::DictationPhase::Authorizing
-        });
+        // Permission alerts never count as suspensions (see NativeLifecycle).
         if !self.terminal_surface()
             || !self.terminal_input_ready(lifecycle)
             || self.dictation_tab != self.active_tab
-            || (lifecycle.suspensions != self.observed_suspensions && !authorizing)
+            || lifecycle.suspensions != self.observed_suspensions
         {
             self.cancel_dictation();
         }

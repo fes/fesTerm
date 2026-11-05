@@ -26,13 +26,26 @@ explicitly; there is no server fallback or private keyboard-dictation API.
 Packaging declares microphone and speech usage descriptions.
 
 Keep only the latest recognition revision, bounded to 4096 UTF-8 bytes.
-Capture stops after 45 seconds using a native common-mode run-loop timer,
-or immediately on Stop/Cancel, native resignation/background/device lock or
-audio interruption. Permission dialogs may temporarily resign focus while
-authorization is pending, but background/lock invalidates pending requests.
-Native lifecycle cancellation does not require another egui frame.
+Microphone capture ends after 45 seconds using a native common-mode run-loop
+timer or on Stop: the engine stops, the tap is removed and the request's audio
+ends, but the recognition task stays alive in a short `Finishing` phase so its
+final (punctuated) result can replace the lagging partial. The first final
+result, a recognizer error or a 1.5-second grace timer moves to review, then
+the task is cancelled and the audio session deactivated. Cancel, native
+resignation/background/device lock and audio interruption cancel immediately,
+including during `Finishing`. Native lifecycle cancellation does not require
+another egui frame.
 
-Stop freezes a volatile, editable review. The editor uses the existing
+Speech/Microphone permission alerts resign the app active without
+backgrounding it, and winit reports that as `Suspended`. While such a request
+is in flight, the adapter exposes a process-wide prompt flag; the mobile host's
+`NativeLifecycle` then defers that suspension, so the alert neither stops a
+plain SSH shell, gates a tunnel, nor cancels pending dictation. If the app
+actually enters the background (winit `Occluded(true)`), the deferred
+suspension is applied with the ordinary SSH/lock/dictation consequences;
+background/lock also invalidates the pending request natively.
+
+Stop freezes a volatile, editable review once finishing completes. The editor uses the existing
 zeroizing text buffer with an additional byte limit and clears undo snapshots.
 Insert is an explicit, single-use application action, bound to the originating
 tab. Revalidate terminal/transport/lifecycle ownership, reject blank,
@@ -64,9 +77,10 @@ product-support acceptance. No provisioning, Keychain access group or remote
 transport entitlement is added. Real hardware/language/model availability
 remains a native qualification gate under issue #564.
 
-Existing app-lock and plain-SSH suspension policies remain authoritative.
-First-use permission dialogs may require unlocking/reconnecting and pressing
-Mic again; this spike does not keep plain SSH alive across app inactivity.
+Existing app-lock and plain-SSH suspension policies remain authoritative for
+genuine inactivity and background. Only the resign-active caused by an
+in-flight dictation permission alert is deferred; other inactivity (Control
+Center, app switcher) still suspends immediately.
 
 Simulator may reject on-device recognition. Its explicit "Edit text manually"
 action exercises the same review/Insert controls without fabricating a speech
@@ -86,6 +100,11 @@ result; it is not evidence that native speech works.
   `dictation_refuses_unsafe_text_and_changed_target_or_lifecycle`,
   `dictation_navigation_and_suspension_clear_preview_before_any_insert`,
   `dictation_pending_authorization_survives_temporary_permission_resignation`,
+  `dictation_permission_alert_then_background_still_suspends_and_cancels`,
+  `mobile_live_ssh_dictation_permission_alert_keeps_plain_session_until_background`,
+  `dictation_stop_finishes_and_accepts_the_final_transcript`,
+  `dictation_finishing_timeout_or_error_reviews_latest_text_but_cancel_wins`,
+  `dictation_host_stop_without_native_recognizer_reviews_immediately`,
   `dictation_editor_bounds_unicode_bytes_without_splitting_characters`,
   `dictation_failed_and_manual_review_sheets_render_without_terminal_input`,
   `terminal_keyboards_offer_dictation_as_one_non_repeating_action`.
