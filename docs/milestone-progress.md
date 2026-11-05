@@ -1,5 +1,23 @@
 # Milestone Progress Narrative
 
+## Read-only remote evidence for external controllers
+
+An external Copilot-status controller needs to tail large remote logs without
+whole-file copies or terminal scraping. The rooted transfer service alone
+could not authorize disclosure to an MCP caller or guarantee safe saved-offset
+reads after replacement. ADR 0068 separates default-off observation roots from
+browsing/writes, checks native identity and revision before releasing chunks,
+and bounds native watches with explicit rescan/ended results.
+
+New daemon generations inject a non-authorizing correlation marker into the
+actual shell environment instead of exposing machine-wide process arguments.
+Managed root changes preserve the tunnel, host key and shell; old shells do not
+gain a marker through a helper upgrade. A stacked broker slice adds independent
+native per-controller/exact-tab/root approval and completion-time revocation
+fences, with JavaScript disabled. External controllers still own parsing,
+offsets and privacy. Signed-host, native grant/lock, live controller and
+physical-device qualification remain explicit gates, not inferred from fixtures.
+
 ## Rooted Dev Tunnel host filesystem
 
 The bridge's opt-in known-file snapshot reader could not support browsing or

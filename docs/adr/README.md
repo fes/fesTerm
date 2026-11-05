@@ -51,6 +51,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0068: Read-Only Remote Observation](0068-read-only-remote-observation.md) - independent host roots, revision-checked reads, bounded native watches, daemon generation correlation and separately authorized exact-tab/root MCP exposure
+
 - [ADR 0067: Rooted Dev Tunnel Host Filesystem](0067-rooted-dev-tunnel-host-filesystem.md) - explicit rooted listing/streamed transfers, independent file streams, conflict-checked publication and managed grant revocation; clients are separate
 
 - [ADR 0053: Separate Dev Tunnels Bridge for Remote Persistent Sessions](0053-separate-dev-tunnels-session-bridge.md) - direct transport with a separate same-user bridge; scoped-token bootstrap, daemon ownership preserved, implementation and hosted/native qualification pending

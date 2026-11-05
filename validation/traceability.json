@@ -72,9 +72,24 @@
       ],
       "decisions": [
         "ADR-0053",
-        "ADR-0067"
+        "ADR-0067",
+        "ADR-0068"
       ],
       "automated_tests": [
+        "managed_observation_consent_is_independent_bounded_and_transactional",
+        "observation_native_callback_overflow_is_latched_not_silently_dropped",
+        "observation_large_offsets_eof_and_changes_never_return_old_offset_bytes",
+        "observation_consent_bounds_and_same_handle_native_pages",
+        "observation_native_watches_anchor_and_retire_on_coverage_changes",
+        "observation_native_generation_and_stream_contract_refuse_replay_and_expiry",
+        "observation_native_links_do_not_authorize_objects_or_watch_coverage",
+        "observation_portable_wire_empty_eof_and_changed_are_distinct",
+        "observation_token_expiry_is_independent_and_unknown_expiry_refuses",
+        "observation_watch_terminal_status_survives_full_buffer_and_parent_cancellation",
+        "observation_strict_schemas_lengths_and_canonical_offsets_preserve_old_discovery",
+        "session_correlation_checks_exact_lease_and_preserves_registry_without_admission",
+        "spawned_shell_honors_the_configured_working_directory",
+        "native_persistent_children_identify_festerm_and_drop_stale_terminal_session",
         "file_requests_refuse_ambiguous_sizes_unknown_fields_and_oversized_frames",
         "rooted_files_enumerate_stream_and_refuse_escape_and_read_only_writes",
         "rooted_file_handles_bound_admission_and_release_capacity",

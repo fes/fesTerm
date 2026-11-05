@@ -13,6 +13,11 @@ experimental; `DT-01`–`DT-06` real-service/native qualification remains open.
 An explicit default-off rooted host filesystem service adds enumeration,
 metadata, streamed read/write and mkdir under ADR 0067; its desktop/iOS clients
 and native transfer qualification remain separate, not accepted capabilities.
+Independent read-only observation under ADR 0068 adds approved roots,
+identity/revision-checked offset reads, bounded watch/rescan semantics and
+daemon generation correlation. Separate exact-caller/tab/root MCP consent is
+implemented in a dependent broker slice; native DT/AUTO qualification is still
+open, and unsupported SSH combinations remain unavailable.
 Inventory/create/takeover/terminate remain unavailable. Native GitHub device
 authorization, account-bound refresh and tunnel-name discovery have deterministic
 coverage, not live qualification: the project-owned public client is registered

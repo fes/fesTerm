@@ -61,6 +61,29 @@ transfer, cancellation and overwrite-confirmation evidence is deferred behind
 the separate client implementation. No live installation was changed by these
 isolated tests.
 
+Read-only observation (ADR 0068/#584) is independent of the transfer grant.
+Automated coverage targets strict negotiation, bounded root/page/read/watch
+admission, same-handle identity/revision checks and explicit change/rescan/ended
+results, plus managed consent preservation/revocation and daemon generation
+correlation without terminal admission. These are not signed-host or external
+controller acceptance. DT-05 must qualify enabling/replacing/revoking roots on
+an existing signed host while preserving its tunnel/key/shell, real filesystem
+watch coverage/loss and link/reparse refusal on each desktop OS. DT-07 must
+qualify scoped-token expiry while a relay remains connected, disconnect/restart
+retirement and an actual controller tailing a growing/replaced/truncated log.
+The daemon marker requires a newly created shell generation; upgrading a host
+does not inject it into old shells or match existing Copilot folders.
+Desktop exact-caller/tab/root native approval, late-completion fencing, lock,
+revocation and JavaScript-disabled MCP operation belong to the stacked AUTO
+integration gates. Physical-iOS observation UI/usability remains deferred
+behind a separately implemented mobile client; this adds no mobile UI or
+implicit SSH/SFTP fallback. No live host was enabled or restarted by this work.
+Windows isolated native identity/watch tests passed; Linux/macOS remain
+unqualified locally. macOS currently advertises polling-only stat/list/read
+with native watch unavailable, pending a safe retained-directory watch adapter.
+Root IDs are service-incarnation scoped, while provider/grant authority and
+revisions/cursors/subscriptions retire on reconnect even when a root ID repeats.
+
 Windows task-file encoding has a deterministic Unicode regression and an
 opt-in Scheduler validation-only check in the optional Windows runner.
 A controlled native import rejected the old UTF-8 declaration, silently

@@ -9,6 +9,8 @@ param(
     [string]$FileRoot = '',
     [switch]$AllowFileWrite,
     [switch]$DisableFiles,
+    [string[]]$ObserveRoot = @(),
+    [switch]$DisableObservation,
     [string]$FriendlyName = ''
 )
 
@@ -16,6 +18,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if (($DisableFiles -and ($FileRoot -or $AllowFileWrite)) -or ($AllowFileWrite -and -not $FileRoot)) {
     throw 'Use -FileRoot with optional -AllowFileWrite, or -DisableFiles.'
+}
+if ($ObserveRoot.Count -gt 4 -or ($DisableObservation -and $ObserveRoot.Count -gt 0)) {
+    throw 'Use up to four -ObserveRoot directories, or -DisableObservation.'
 }
 if ([Security.Principal.WindowsIdentity]::GetCurrent().IsSystem) {
     throw 'Run setup as your normal user, not SYSTEM.'
@@ -187,6 +192,8 @@ try {
     if ($FileRoot) { $setupArguments += @('--file-root', $FileRoot) }
     if ($AllowFileWrite) { $setupArguments += '--allow-file-write' }
     if ($DisableFiles) { $setupArguments += '--disable-files' }
+    foreach ($rootPath in $ObserveRoot) { $setupArguments += @('--observe-root', $rootPath) }
+    if ($DisableObservation) { $setupArguments += '--disable-observation' }
     if ($FriendlyName) {
         $setupArguments += @('--friendly-name', $FriendlyName.Trim())
     }
@@ -194,6 +201,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Experimental tunnel setup refused/stopped.' }
     $profile = Join-Path $root 'state\festerm-profile.json'
     if (-not (Test-Path -LiteralPath $profile -PathType Leaf)) {
+        if ($DisableFiles -or $DisableObservation) {
+            Write-Host 'Requested grant revocation saved; no connection JSON is available.'
+            return
+        }
         throw 'Setup finished but did not write the connection JSON.'
     }
     $json = [IO.File]::ReadAllText($profile)

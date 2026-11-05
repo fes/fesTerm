@@ -192,6 +192,8 @@ type Reconnector =
 #[derive(Clone, Debug, Deserialize)]
 struct SessionRecord {
     #[serde(default)]
+    correlation_id: Option<String>,
+    #[serde(default)]
     name: String,
     pid: u32,
     socket: String,
@@ -435,6 +437,42 @@ pub fn list_running_sessions_in(
             .then(a.session.endpoint.cmp(&b.session.endpoint))
     });
     Ok(sessions)
+}
+
+pub const SESSION_CORRELATION_ENV: &str = "FESTERM_SESSION_CORRELATION";
+
+/// Read-only evidence for one exact, lease-backed generation; never admission.
+pub fn session_correlation_in(
+    root: &std::path::Path,
+    selected: &NativeSessionIdentity,
+) -> Result<Option<String>, PersistentSessionError> {
+    let registry = load_registry_in(root)?;
+    let record = registry.sessions.get(&selected.name).ok_or_else(|| {
+        PersistentSessionError::new("observation.selected_generation_unavailable")
+    })?;
+    let suffix = format!("{}-{}", selected.pid, selected.created_at_unix_ms);
+    if selected.pid == 0
+        || selected.created_at_unix_ms == 0
+        || record.name != selected.name
+        || record.pid != selected.pid
+        || record.created_at_unix_ms != selected.created_at_unix_ms
+        || record.socket != selected.endpoint
+        || !(selected.endpoint.ends_with(&suffix)
+            || selected.endpoint.ends_with(&format!("{suffix}.sock")))
+        || !record_is_live(root, record)?
+    {
+        return Err(PersistentSessionError::new(
+            "observation.selected_generation_unavailable",
+        ));
+    }
+    let expected = format!("fesTerm:{}:{}", selected.pid, selected.created_at_unix_ms);
+    match &record.correlation_id {
+        Some(marker) if marker == &expected => Ok(Some(marker.clone())),
+        None => Ok(None),
+        Some(_) => Err(PersistentSessionError::new(
+            "observation.invalid_generation_correlation",
+        )),
+    }
 }
 
 fn record_is_live(
@@ -3758,6 +3796,7 @@ mod client_worker_tests {
     fn native_session_identity_copies_existing_registry_facts_without_changing_provider_record() {
         let record = SessionRecord {
             name: "same-name".into(),
+            correlation_id: None,
             pid: 42,
             socket: "owned-native-42-100".into(),
             shell: "owned-shell".into(),
@@ -5043,6 +5082,70 @@ mod registry_filtering_tests {
     }
 
     #[test]
+    fn session_correlation_checks_exact_lease_and_preserves_registry_without_admission() {
+        let fixture = RegistryFixture::new();
+        let pid = std::process::id();
+        let generation = 123456u128;
+        let endpoint = fixture.0.join(format!("{pid}-{generation}.sock"));
+        std::fs::write(&endpoint, b"metadata-fixture-not-an-attachment").unwrap();
+        let lease = OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(fixture.0.join(format!("lease-{pid}-{generation}")))
+            .unwrap();
+        lease.lock_exclusive().unwrap();
+        let expected = format!("fesTerm:{pid}:{generation}");
+        let mut registry = serde_json::json!({"sessions": {"observe-test": {
+            "name": "observe-test", "pid": pid,
+            "socket": endpoint.to_str().unwrap(),
+            "created_at_unix_ms": generation,
+            "attached": true, "attached_by": "remote",
+            "correlation_id": expected
+        }}});
+        let write = |registry: &serde_json::Value| {
+            std::fs::write(
+                fixture.0.join("registry.json"),
+                serde_json::to_vec(registry).unwrap(),
+            )
+            .unwrap();
+        };
+        write(&registry);
+        let selected = NativeSessionIdentity {
+            name: "observe-test".into(),
+            pid,
+            created_at_unix_ms: generation,
+            endpoint: endpoint.to_str().unwrap().into(),
+        };
+        let before = std::fs::read(fixture.0.join("registry.json")).unwrap();
+        assert_eq!(
+            session_correlation_in(&fixture.0, &selected).unwrap(),
+            Some(expected)
+        );
+        assert_eq!(
+            std::fs::read(fixture.0.join("registry.json")).unwrap(),
+            before
+        );
+        let mut stale = selected.clone();
+        stale.created_at_unix_ms += 1;
+        assert!(session_correlation_in(&fixture.0, &stale).is_err());
+        stale = selected.clone();
+        stale.name = "same-label-different-session".into();
+        assert!(session_correlation_in(&fixture.0, &stale).is_err());
+        registry["sessions"]["observe-test"]["correlation_id"] = "wrong-generation".into();
+        write(&registry);
+        assert!(session_correlation_in(&fixture.0, &selected).is_err());
+        registry["sessions"]["observe-test"]
+            .as_object_mut()
+            .unwrap()
+            .remove("correlation_id");
+        write(&registry);
+        assert_eq!(session_correlation_in(&fixture.0, &selected).unwrap(), None);
+        FileExt::unlock(&lease).unwrap();
+        assert!(session_correlation_in(&fixture.0, &selected).is_err());
+    }
+
+    #[test]
     fn registry_absence_corruption_and_lock_contention_have_distinct_bounded_results() {
         let fixture = RegistryFixture::new();
         assert!(list_unattached_sessions_in(&fixture.0).unwrap().is_empty());
@@ -5242,6 +5345,7 @@ mod registry_filtering_tests {
     fn unattached_session_carries_expected_metadata() {
         let record = SessionRecord {
             name: "demo".to_owned(),
+            correlation_id: None,
             pid: 1,
             socket: "demo.sock".to_owned(),
             shell: "/bin/bash".to_owned(),
@@ -5287,6 +5391,7 @@ mod registry_filtering_tests {
             "attached-demo".to_owned(),
             SessionRecord {
                 name: "attached-demo".to_owned(),
+                correlation_id: None,
                 pid: 1,
                 socket: "demo.sock".to_owned(),
                 shell: "/bin/bash".to_owned(),
@@ -5315,6 +5420,7 @@ mod registry_filtering_tests {
     fn incompatible_registry_record_is_rejected_before_connecting() {
         let record = SessionRecord {
             name: "future".to_owned(),
+            correlation_id: None,
             pid: 1,
             socket: "future.sock".to_owned(),
             shell: String::new(),
@@ -5346,6 +5452,7 @@ mod registry_filtering_tests {
     fn unsupported_snapshot_schema_is_rejected_before_connecting() {
         let record = SessionRecord {
             name: "schema-future".to_owned(),
+            correlation_id: None,
             pid: 1,
             socket: "future.sock".to_owned(),
             shell: String::new(),

@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 
 fail() { printf 'fesTerm tunnel setup: %s\n' "$*" >&2; exit 1; }
-usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade] [--friendly-name NAME] [--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files]'
+usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade] [--friendly-name NAME] [--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files] [--observe-root ABSOLUTE_DIRECTORY ... | --disable-observation]'
 version=
 install_dependencies=false
 no_takeover=false
@@ -12,6 +12,8 @@ friendly_name=
 file_root=
 file_write=false
 disable_files=false
+observe_roots=()
+disable_observation=false
 while (($#)); do
     if [[ $1 == --install-dependencies ]]; then
         install_dependencies=true
@@ -27,6 +29,12 @@ while (($#)); do
         shift
     elif [[ $1 == --disable-files ]] && ! "$disable_files"; then
         disable_files=true
+        shift
+    elif [[ $1 == --observe-root && $# -ge 2 && -n $2 && ${#observe_roots[@]} -lt 4 ]]; then
+        observe_roots+=("$2")
+        shift 2
+    elif [[ $1 == --disable-observation ]] && ! "$disable_observation"; then
+        disable_observation=true
         shift
     elif [[ $1 == --upgrade ]]; then
         # Switch an existing host's service to this release's helpers,
@@ -51,6 +59,11 @@ if "$file_write" && [[ -z $file_root ]]; then fail '--allow-file-write requires 
 if [[ -n $file_root ]]; then setup_extra+=(--file-root "$file_root"); fi
 if "$file_write"; then setup_extra+=(--allow-file-write); fi
 if "$disable_files"; then setup_extra+=(--disable-files); fi
+if "$disable_observation" && ((${#observe_roots[@]})); then
+    fail 'Use --observe-root directories, or --disable-observation.'
+fi
+for observe_root in ${observe_roots[@]+"${observe_roots[@]}"}; do setup_extra+=(--observe-root "$observe_root"); done
+if "$disable_observation"; then setup_extra+=(--disable-observation); fi
 if "$no_takeover"; then setup_extra+=(--no-takeover); fi
 if "$upgrade"; then setup_extra+=(--upgrade); fi
 if [[ -n $friendly_name ]]; then
@@ -216,6 +229,10 @@ cleanup
 trap - EXIT
 "$install/festerm-tunnel-setup" --managed --devtunnel "$install/devtunnel" --state-dir "$root/state" ${setup_extra[@]+"${setup_extra[@]}"}
 profile="$root/state/festerm-profile.json"
+if [[ ! -e $profile && ! -L $profile ]] && { "$disable_files" || "$disable_observation"; }; then
+    printf 'Requested grant revocation saved; no connection JSON is available.\n'
+    exit 0
+fi
 [[ -f $profile && ! -L $profile ]] || fail 'Setup finished but did not write the connection JSON.'
 copied=false
 for clip in 'pbcopy' 'wl-copy' 'xclip -selection clipboard' 'xsel --clipboard --input'; do
