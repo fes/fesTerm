@@ -773,17 +773,22 @@
       "requirements": [
         "docs/adr/0053-separate-dev-tunnels-session-bridge.md#decision",
         "docs/adr/0066-opt-in-managed-daemon-recovery.md#decision",
+        "docs/adr/0071-explicit-managed-session-repair.md#decision",
         "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#decision"
       ],
       "decisions": [
         "ADR-0053",
         "ADR-0066",
         "ADR-0067",
-        "ADR-0070"
+        "ADR-0070",
+        "ADR-0071"
       ],
       "automated_tests": [
         "managed_observation_consent_is_independent_bounded_and_transactional",
         "managed_daemon_recovery_cannot_overwrite_concurrent_policy_revocation",
+        "managed_session_repair_is_explicit_and_cannot_change_policy",
+        "managed_session_repair_journals_one_fresh_generation_without_changing_grants",
+        "managed_session_repair_validates_the_selected_helper_bundle",
         "observation_native_callback_overflow_is_latched_not_silently_dropped",
         "observation_large_offsets_eof_and_changes_never_return_old_offset_bytes",
         "observation_consent_bounds_and_same_handle_native_pages",

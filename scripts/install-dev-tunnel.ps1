@@ -6,6 +6,7 @@ param(
     # Switch an existing host's service to this release's helpers, keeping its
     # tunnel, host key and running daemon session.
     [switch]$Upgrade,
+    [switch]$RepairSession,
     [string]$FileRoot = '',
     [switch]$AllowFileWrite,
     [switch]$DisableFiles,
@@ -194,6 +195,7 @@ try {
     $setupArguments = @('--managed', '--devtunnel', $cli, '--state-dir', (Join-Path $root 'state'))
     if ($NoTakeover) { $setupArguments += '--no-takeover' }
     if ($Upgrade) { $setupArguments += '--upgrade' }
+    if ($RepairSession) { $setupArguments += '--repair-session' }
     if ($FileRoot) { $setupArguments += @('--file-root', $FileRoot) }
     if ($AllowFileWrite) { $setupArguments += '--allow-file-write' }
     if ($DisableFiles) { $setupArguments += '--disable-files' }

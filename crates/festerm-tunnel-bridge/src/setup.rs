@@ -419,7 +419,7 @@ fn main() {
     if args == ["--help"] {
         println!(concat!(
             "festerm-tunnel-setup [--managed] --devtunnel ABSOLUTE_CLI_PATH --state-dir ABSOLUTE_PRIVATE_DIRECTORY ",
-            "[--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected] ",
+            "[--no-takeover] [--upgrade] [--repair-session] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected] ",
             "[--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files]\n",
             "Default: new foreground-only setup in a new directory.\n",
             "--managed: explicit per-user service setup; healthy reruns reuse the original private tunnel, ",
@@ -427,6 +427,10 @@ fn main() {
             "By default stale/partial/foreign state refuses, never creates a replacement. ",
             "Add --upgrade to switch an existing installation's service to this release's helpers, ",
             "keeping its tunnel, host key and running daemon session. ",
+            "--repair-session explicitly replaces a DEAD session with a NEW default shell, even without legacy lifecycle evidence. ",
+            "It preserves the tunnel, host key and grants; programs/state are lost. Uses the daemon beside --devtunnel. ",
+            "Combine with --upgrade to switch helpers; interrupted repair adopts only its journaled generation and never blindly creates again. ",
+            "Repair cannot change policy; apply grant/restart options separately.\n",
             "Add --friendly-name NAME on first setup to name the tunnel's user-visible description.\n",
             "--restart-unexpected: explicitly allow a NEW default shell after instrumented unexpected daemon loss, ",
             "at most three starts per ten minutes; never after observed shell exit or operator stop. ",

@@ -61,6 +61,20 @@ transfer, cancellation and overwrite-confirmation evidence is deferred behind
 the separate client implementation. No live installation was changed by these
 isolated tests.
 
+Explicit managed dead-session repair (ADR 0071) has deterministic consent,
+policy-preservation, live-target refusal and journaled single-generation
+reconciliation coverage. DT-05 still requires signed-host Windows/Linux/macOS
+repair of an uninstrumented dead daemon, unchanged tunnel/key/grants, interrupted
+launch refusal, refreshed connection JSON and explicit client reconnection.
+Development-host repair is native operational evidence only, not a promotion
+of signed-release, cross-platform or physical-iOS acceptance.
+The 2026-11-05 Windows development-host exercise restored a fresh daemon with
+the official signed 0.15.0 hosting bundle and preserved the tunnel, account,
+host fingerprint, grants and disabled automatic-restart policy. The repair
+launcher ran through a temporary user task outside the test tool's
+non-breakaway job; daemon and relay liveness were checked after that task
+completed. Refreshed-profile reconnection from a physical client remains open.
+
 Read-only observation (ADR 0070/#584) is independent of the transfer grant.
 Automated coverage targets strict negotiation, bounded root/page/read/watch
 admission, same-handle identity/revision checks and explicit change/rescan/ended
