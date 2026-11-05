@@ -142,7 +142,9 @@ client reconnection still require separate qualification.
   directories still require exact native-service absence; unsafe ancestors
   and unknown/foreign loaded state refuse cleanup. Executable publication
   sets private execution permissions before rename, and cached CLI recovery
-  repairs only an already pin-verified handle.
+  repairs only an already pin-verified handle. The detached native fixture
+  selects a directory accepted by production private-storage policy rather
+  than assuming Windows runner checkout ancestors are trusted.
 - **Native/manual evidence required:** DT-08 signed desktop lifecycle,
   GitHub browser sign-in, live helper updates and physical-client reconnect;
   deterministic tests do not promote acceptance.

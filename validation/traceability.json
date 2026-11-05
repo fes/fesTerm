@@ -48,6 +48,7 @@
         "detached_absent_start_reserves_before_launch_and_starts_once",
         "detached_crash_after_reservation_never_relaunches",
         "detached_uncertain_launch_adopts_only_reserved_generation",
+        "detached_native_start_once_preserves_local_attachment",
         "detached_fingerprint_preserves_argv_cwd_and_effective_path",
         "local_tunnel_hosting_is_explicit_and_requires_native_persistence",
         "local_tunnel_hosting_rejects_noncanonical_identity_and_shared_installations",

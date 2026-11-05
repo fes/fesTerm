@@ -16,6 +16,10 @@ guard. Standalone setup, upgrade and repair now reject desktop records before
 mutation, preserving the profile coordinator's fresh-shell consent. The
 regression failed before the guard and checks unchanged installation bytes and
 absence of a repair journal in both repair modes.
+Windows CI then exposed the detached native fixture's unsafe assumption that
+checkout ancestors satisfy private-storage policy. It now chooses a verified
+private fixture using the existing candidate-parent pattern; production ACL
+and ancestor checks are unchanged.
 
 ## Hosting an installed persistent profile without a second shell
 

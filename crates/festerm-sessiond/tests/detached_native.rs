@@ -25,6 +25,32 @@ fn helper_name() -> &'static str {
     }
 }
 
+fn private_fixture_directory() -> (PathBuf, fs::File) {
+    // Hosted Windows checkouts need not have trusted private-storage ancestors.
+    #[cfg(windows)]
+    let parents = [
+        std::env::temp_dir(),
+        PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("Temp"),
+    ];
+    #[cfg(unix)]
+    let parents = [std::env::current_dir().unwrap()];
+    let mut failures = Vec::new();
+    for parent in parents {
+        let root = parent.join(format!(
+            "dn-{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..8],
+        ));
+        match private_storage::private_directory(&root, true) {
+            Ok(directory) => return (root, directory),
+            Err(error) => failures.push(format!("{}: {error}", root.display())),
+        }
+    }
+    panic!(
+        "no policy-compliant detached fixture directory: {}",
+        failures.join("; ")
+    );
+}
+
 fn bounded(mut command: Command) -> bool {
     let mut child = command.spawn().unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -68,11 +94,7 @@ fn detached_native_start_once_preserves_local_attachment() {
         exercise_native(&PathBuf::from(root));
         return;
     }
-    let root = std::env::current_dir().unwrap().join(format!(
-        "dn-{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..8],
-    ));
-    let directory = private_storage::private_directory(&root, true).unwrap();
+    let (root, directory) = private_fixture_directory();
     let bin = root.join("bin");
     let bin_directory = private_storage::private_directory(&bin, true).unwrap();
     let runner = bin.join(if cfg!(windows) {
