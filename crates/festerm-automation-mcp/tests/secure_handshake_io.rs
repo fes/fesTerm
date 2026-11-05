@@ -167,6 +167,61 @@ fn fragmented_handshakes_interoperate_after_independent_comparison() {
 }
 
 #[test]
+fn direct_and_adapter_handshakes_are_cryptographically_separated() {
+    let mut direct_client = HandshakeIo::direct_initiator().unwrap();
+    let mut direct_app = HandshakeIo::direct_responder();
+    let mut first = VecDeque::new();
+    let mut reply = VecDeque::new();
+    flush(&mut direct_client, &mut first, 3);
+    assert_eq!(
+        read_frame(&mut direct_app, &mut first, 5),
+        ReadProgress::WriteReady
+    );
+    flush(&mut direct_app, &mut reply, 3);
+    assert_eq!(
+        read_frame(&mut direct_client, &mut reply, 5),
+        ReadProgress::Complete
+    );
+    let client = direct_client.take_unverified().unwrap();
+    let app = direct_app.take_unverified().unwrap();
+    let client_fingerprint = client.fingerprint().to_string();
+    let app_fingerprint = app.fingerprint().to_string();
+    let mut client = RecordIo::new(client.confirm(&app_fingerprint).unwrap()).unwrap();
+    let mut app = RecordIo::new(app.confirm(&client_fingerprint).unwrap()).unwrap();
+    transfer(&mut client, &mut app, b"direct request");
+    transfer(&mut app, &mut client, b"direct response");
+
+    for (mut initiator, mut responder) in [
+        (
+            HandshakeIo::direct_initiator().unwrap(),
+            HandshakeIo::responder(),
+        ),
+        (
+            HandshakeIo::initiator().unwrap(),
+            HandshakeIo::direct_responder(),
+        ),
+    ] {
+        let mut first = VecDeque::new();
+        let mut reply = VecDeque::new();
+        flush(&mut initiator, &mut first, usize::MAX);
+        assert_eq!(
+            read_frame(&mut responder, &mut first, usize::MAX),
+            ReadProgress::WriteReady
+        );
+        flush(&mut responder, &mut reply, usize::MAX);
+        assert_eq!(
+            read_step(&mut initiator, &mut reply, usize::MAX).unwrap(),
+            ReadProgress::Partial
+        );
+        assert!(matches!(
+            read_step(&mut initiator, &mut reply, usize::MAX),
+            Err(Error::Channel(ChannelError::InvalidMessage))
+        ));
+        assert_closed(&mut initiator);
+    }
+}
+
+#[test]
 fn responder_handoff_waits_for_every_reply_byte_to_be_written() {
     let mut initiator = HandshakeIo::initiator().unwrap();
     let mut responder = HandshakeIo::responder();

@@ -1,5 +1,15 @@
 # Milestone Progress Narrative
 
+## Exploring a direct authenticated MCP channel
+
+The owner authorized an additional direct local-socket connector so an MCP
+client need not forward replies through an unqualified stdio recipient. The
+experimental channel composes bounded encrypted I/O, independently simulated
+comparisons, role-bound mutual confirmation and a separate handshake domain.
+It exchanges frames over a Unix socket pair but does not start a listener or
+connect the MCP SDK. Caller liveness, native verification and privacy,
+recipient fencing and the production control path remain open gates.
+
 ## Reporting direct-input capability
 
 The controller and presentation capability tools now agree on direct-input

@@ -2695,8 +2695,13 @@ tests are not native pairing, settings usability, containment or input-ordering
 evidence. JavaScript and terminal control remain unavailable.
 
 The record-framing tests cover a writer panic after an unknown partial write
-and prevent channel reuse. Disposal of the real stream and per-write privacy
-guards still require the native and interoperability evidence in AUTO-04.
+and prevent channel reuse. Qualified native stream disposal and per-write
+privacy guards still require the interoperability evidence in AUTO-04.
+The experimental direct channel additionally exchanges encrypted frames over a
+Unix socket pair after simulated comparisons and separates its handshake from
+the stdio adapter. It provides no production endpoint or SDK connector, and
+the actual peer, trusted comparison, relay-resistant caller liveness and
+physical-recipient boundaries remain unqualified.
 An isolated synthetic queue race also checks that the app holds admission from
 its host validation through bounded insertion. It is not evidence that broker
 liveness or a physical recipient is fenced.

@@ -701,11 +701,14 @@ only to the extent demonstrated by the platform sandbox and broker protocol.
 
 ### Local transport first
 
-Initial deployment is a separately launched, install-owned stdio adapter and
-a private application IPC endpoint. Nothing listens on a network interface.
-The adapter never autostarts a missing GUI, opens a profile or executes an
-unreviewed script merely because a client connected. Stdout carries protocol
-messages only; stderr contains bounded content-free diagnostics.
+The local stdio binding uses a separately launched, install-owned adapter and
+a private application IPC endpoint. The owner also authorized an additional
+direct authenticated local-socket binding with a fesTerm-specific client
+connector as a possible first route. It is not HTTP and does not replace or
+qualify stdio. Neither route listens on a network interface, autostarts a
+missing GUI, opens a profile or executes an unreviewed script merely because a
+client connected. Stdio stdout carries protocol messages only; stderr contains
+bounded content-free diagnostics.
 
 Bootstrap must use a user-enabled native pairing/approval flow and a
 per-connection secret or handle exchanged through a private channel. The
@@ -759,6 +762,21 @@ None of these components is wired into the adapter or qualifies bootstrap or
 executable provenance.
 An active relay can delay ciphertext or suppress disconnect; independently
 qualified liveness is required for strict caller-loss guarantees.
+
+An experimental owned direct-channel driver composes the existing primitives
+with a distinct Noise prologue, independently supplied native comparisons and
+encrypted role-bound confirmations and receipts. It owns bounded nonblocking
+I/O, deadlines and one pending frame per direction; every physical write still
+requires a caller-supplied live admission guard. The direct and stdio handshake
+domains cannot authenticate each other's replies. A Unix socket-pair test uses
+simulated comparisons, not a native verifier or a separate client process.
+The driver does not create an endpoint, connect an MCP SDK, identify the
+process holding the other end, qualify lock/privacy monitoring or fence a
+recipient. A relay can forward a valid handshake unchanged and delay previously
+sent ciphertext after the real client exits. Direct delivery removes the extra
+stdio proxy only when a future integration establishes its actual recipient;
+it does not itself solve that relay or caller-liveness problem. Production
+bootstrap, observation and control remain closed.
 
 Once bootstrap is qualified, the application binds a distinct broker principal
 to the accepted handle; neither `clientInfo`, a wire ID nor a copied code owns

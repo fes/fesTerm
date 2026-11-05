@@ -31,8 +31,8 @@
 use std::{fmt, io, mem};
 
 use super::{
-    initiate, respond, ChannelError, Initiator, UnverifiedChannel, FIRST_HANDSHAKE_BYTES,
-    SECOND_HANDSHAKE_BYTES,
+    initiate, respond, ChannelError, ChannelPurpose, Initiator, UnverifiedChannel,
+    FIRST_HANDSHAKE_BYTES, SECOND_HANDSHAKE_BYTES,
 };
 
 pub use crate::secure_record_io::WriteProgress;
@@ -168,6 +168,7 @@ impl Output {
 /// written. Once taken, the channel cannot be taken again.
 pub struct HandshakeIo {
     state: State,
+    purpose: ChannelPurpose,
     input: Input,
     output: Output,
 }
@@ -175,9 +176,19 @@ pub struct HandshakeIo {
 impl HandshakeIo {
     /// Create the adapter side and immediately queue its first handshake frame.
     pub fn initiator() -> Result<Self, Error> {
-        let (initiator, first) = initiate().map_err(Error::Channel)?;
+        Self::initiator_for(ChannelPurpose::Adapter)
+    }
+
+    /// Create a direct client handshake, separated from the stdio adapter.
+    pub fn direct_initiator() -> Result<Self, Error> {
+        Self::initiator_for(ChannelPurpose::Direct)
+    }
+
+    fn initiator_for(purpose: ChannelPurpose) -> Result<Self, Error> {
+        let (initiator, first) = initiate(purpose).map_err(Error::Channel)?;
         Ok(Self {
             state: State::WriteFirst(initiator),
+            purpose,
             input: Input::new(SECOND_HANDSHAKE_BYTES),
             output: Output::frame(&first)?,
         })
@@ -185,8 +196,18 @@ impl HandshakeIo {
 
     /// Create the application side, initially waiting for the first frame.
     pub fn responder() -> Self {
+        Self::responder_for(ChannelPurpose::Adapter)
+    }
+
+    /// Create the application side of a direct client handshake.
+    pub fn direct_responder() -> Self {
+        Self::responder_for(ChannelPurpose::Direct)
+    }
+
+    fn responder_for(purpose: ChannelPurpose) -> Self {
         Self {
             state: State::ReadFirst,
+            purpose,
             input: Input::new(FIRST_HANDSHAKE_BYTES),
             output: Output::empty(),
         }
@@ -270,7 +291,7 @@ impl HandshakeIo {
                 let payload = &self.input.bytes[HEADER_BYTES..HEADER_BYTES + self.input.expected];
                 match state {
                     State::ReadFirst => {
-                        let (channel, reply) = match respond(payload) {
+                        let (channel, reply) = match respond(payload, self.purpose) {
                             Ok(pair) => pair,
                             Err(error) => return self.fail(Error::Channel(error)),
                         };

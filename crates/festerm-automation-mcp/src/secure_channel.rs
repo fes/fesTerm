@@ -42,6 +42,8 @@ pub mod handshake_io;
 
 const PATTERN: &str = "Noise_NN_25519_ChaChaPoly_SHA256";
 const PROLOGUE: &[u8] = b"fesTerm local MCP channel v1; initiator=adapter; responder=application";
+const DIRECT_PROLOGUE: &[u8] =
+    b"fesTerm direct local MCP channel v1; initiator=client; responder=application";
 const FINGERPRINT_DOMAIN: &[u8] = b"fesTerm local MCP channel fingerprint v1\0";
 const FIRST_HANDSHAKE_BYTES: usize = 32;
 const SECOND_HANDSHAKE_BYTES: usize = 48;
@@ -85,6 +87,21 @@ impl fmt::Display for Fingerprint {
 }
 
 struct Initiator(snow::HandshakeState);
+
+#[derive(Clone, Copy)]
+enum ChannelPurpose {
+    Adapter,
+    Direct,
+}
+
+impl ChannelPurpose {
+    fn prologue(self) -> &'static [u8] {
+        match self {
+            Self::Adapter => PROLOGUE,
+            Self::Direct => DIRECT_PROLOGUE,
+        }
+    }
+}
 
 struct CheckedResolver;
 
@@ -156,10 +173,13 @@ impl Dh for CheckedDh {
     }
 }
 
-fn handshake(initiator: bool) -> Result<snow::HandshakeState, ChannelError> {
+fn handshake(
+    initiator: bool,
+    purpose: ChannelPurpose,
+) -> Result<snow::HandshakeState, ChannelError> {
     let parameters = PATTERN.parse().map_err(|_| ChannelError::Unavailable)?;
     let builder = snow::Builder::with_resolver(parameters, Box::new(CheckedResolver))
-        .prologue(PROLOGUE)
+        .prologue(purpose.prologue())
         .map_err(|_| ChannelError::Unavailable)?;
     if initiator {
         builder.build_initiator()
@@ -169,8 +189,8 @@ fn handshake(initiator: bool) -> Result<snow::HandshakeState, ChannelError> {
     .map_err(|_| ChannelError::Unavailable)
 }
 
-fn initiate() -> Result<(Initiator, Vec<u8>), ChannelError> {
-    let mut state = handshake(true)?;
+fn initiate(purpose: ChannelPurpose) -> Result<(Initiator, Vec<u8>), ChannelError> {
+    let mut state = handshake(true, purpose)?;
     let mut first = vec![0; FIRST_HANDSHAKE_BYTES + TAG_BYTES];
     let length = state
         .write_message(&[], &mut first)
@@ -199,11 +219,14 @@ impl Initiator {
     }
 }
 
-fn respond(first: &[u8]) -> Result<(UnverifiedChannel, Vec<u8>), ChannelError> {
+fn respond(
+    first: &[u8],
+    purpose: ChannelPurpose,
+) -> Result<(UnverifiedChannel, Vec<u8>), ChannelError> {
     if first.len() != FIRST_HANDSHAKE_BYTES {
         return Err(ChannelError::InvalidMessage);
     }
-    let mut state = handshake(false)?;
+    let mut state = handshake(false, purpose)?;
     let mut payload = [0; 1];
     let length = state
         .read_message(first, &mut payload)
@@ -395,8 +418,8 @@ mod tests {
     use super::*;
 
     fn unverified_pair() -> (UnverifiedChannel, UnverifiedChannel) {
-        let (initiator, first) = initiate().unwrap();
-        let (responder, reply) = respond(&first).unwrap();
+        let (initiator, first) = initiate(ChannelPurpose::Adapter).unwrap();
+        let (responder, reply) = respond(&first, ChannelPurpose::Adapter).unwrap();
         (initiator.finish(&reply).unwrap(), responder)
     }
 
@@ -498,20 +521,20 @@ mod tests {
     #[test]
     fn invalid_lengths_and_malformed_handshakes_fail_closed() {
         assert!(matches!(
-            respond(&[0; 31]),
+            respond(&[0; 31], ChannelPurpose::Adapter),
             Err(ChannelError::InvalidMessage)
         ));
         assert!(matches!(
-            respond(&[0; 32]),
+            respond(&[0; 32], ChannelPurpose::Adapter),
             Err(ChannelError::InvalidMessage)
         ));
         let mut low_order = [0; 32];
         low_order[0] = 1;
         assert!(matches!(
-            respond(&low_order),
+            respond(&low_order, ChannelPurpose::Adapter),
             Err(ChannelError::InvalidMessage)
         ));
-        let (initiator, _) = initiate().unwrap();
+        let (initiator, _) = initiate(ChannelPurpose::Adapter).unwrap();
         assert!(matches!(
             initiator.finish(&[0; 49]),
             Err(ChannelError::InvalidMessage)
@@ -546,8 +569,8 @@ mod tests {
 
     #[test]
     fn fresh_handshakes_reject_old_responses_and_ciphertexts() {
-        let (initiator, first) = initiate().unwrap();
-        let (old_application, old_reply) = respond(&first).unwrap();
+        let (initiator, first) = initiate(ChannelPurpose::Adapter).unwrap();
+        let (old_application, old_reply) = respond(&first, ChannelPurpose::Adapter).unwrap();
         let old_adapter = initiator.finish(&old_reply).unwrap();
         let old_code = old_adapter.fingerprint().to_string();
         let mut old_adapter = old_adapter
@@ -555,10 +578,10 @@ mod tests {
             .unwrap();
         let old_record = old_adapter.seal_frame(b"old").unwrap().remove(0);
 
-        let (fresh_application, fresh_reply) = respond(&first).unwrap();
+        let (fresh_application, fresh_reply) = respond(&first, ChannelPurpose::Adapter).unwrap();
         assert_ne!(old_code, fresh_application.fingerprint().to_string());
         assert_ne!(old_reply, fresh_reply);
-        let (fresh_initiator, _) = initiate().unwrap();
+        let (fresh_initiator, _) = initiate(ChannelPurpose::Adapter).unwrap();
         assert!(matches!(
             fresh_initiator.finish(&old_reply),
             Err(ChannelError::InvalidMessage)

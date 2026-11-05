@@ -96,15 +96,17 @@ to bypass another's restrictions.
    cannot prove confinement, script execution stays disabled there. Engine
    interruption and allocation limits supplement this boundary. A worker has no
    ambient credentials, file handles, shell/network APIs or application state.
-6. **Start locally and deliberately.** The first MCP binding is an opt-in local
-   stdio adapter connected to the application through authenticated private IPC.
-   Connection alone grants no session access. The P1 checkpoint exposes bounded
-   observation only. Named, reviewed workflow invocation follows P2 runtime
-   qualification and the P3 control/authorization gates; no tool evaluates
-   caller-supplied JavaScript. HTTP/network service, MCP client behavior,
-   unattended schedules/output triggers and automatic repository script loading
-   are deferred behind separate gates. HTTP would require a new transport threat
-   model, not merely changing the listener address.
+6. **Start locally and deliberately.** The opt-in local stdio adapter uses
+   authenticated private IPC. The owner also authorized an additional direct
+   authenticated local-socket binding for clients using a fesTerm-specific
+   connector; it can be pursued first but does not replace stdio or relax its
+   gates. Neither binding grants session access on connection. The P1 checkpoint
+   exposes bounded observation only. Named, reviewed workflow invocation follows
+   P2 runtime qualification and the P3 control/authorization gates; no tool
+   evaluates caller-supplied JavaScript. HTTP/network service, fesTerm acting as
+   an MCP client, unattended schedules/output triggers and automatic repository
+   script loading are deferred behind separate gates. HTTP would require a new
+   transport threat model, not merely changing the listener address.
 7. **Preserve ownership and lifecycle invariants.** Automation writes hold an
    explicit input lease. Controller-serialized acquisition invalidates pending
    human input reservations before admitting automation. Empty local queues
@@ -419,8 +421,11 @@ in the design must be visible in implementation/release review.
   establish final delivery fencing.
   Incremental Noise handshake tests cover bounded framing, readiness and withholding the
   unverified channel until outbound handshake bytes are physically written.
-  These do not prove trusted human comparison, native lock behavior, client
-  interoperability, a confined engine or native input ordering. Coordinator
+  The experimental direct channel adds a separate handshake domain, mutual
+  confirmation and bounded physical I/O, including a Unix socket-pair test
+  with simulated decisions. These do not prove trusted human comparison, caller
+  liveness, native lock behavior, production client interoperability, a
+  confined engine or native input ordering. Coordinator
   lifecycle tests additionally distinguish
   MCP-only cleanup from global privacy revocation; they do not prove an
   integrated JavaScript adapter. Local PTY reservation tests exercise ordered
