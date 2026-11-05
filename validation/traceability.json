@@ -60,6 +60,7 @@
         "pinned_archive_accepts_only_the_expected_flat_executable_and_both_hashes",
         "staged_helpers_publish_executable_bytes_and_recover_interrupted_mode",
         "verified_cli_repairs_interrupted_mode_only_after_pin_verification",
+        "standalone_repair_refuses_desktop_records_before_any_mutation",
         "service_missing_registration_directory_preserves_unknown_and_unsafe_refusals",
         "packaged_executable_ancestors_accept_the_native_applications_directory",
         "foreground_consent_read_refuses_a_busy_transaction_without_waiting",

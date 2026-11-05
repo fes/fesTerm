@@ -484,6 +484,13 @@ fn exact_target_alive(root: &Path, target: &Target) -> io::Result<()> {
     Ok(())
 }
 
+fn require_script_origin(record: &Installation) -> io::Result<()> {
+    if record.origin.is_some() {
+        return Err(refused("setup.desktop_host_requires_profile_management"));
+    }
+    Ok(())
+}
+
 pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     let ManagedArguments {
         cli: cli_path,
@@ -587,9 +594,6 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                 upgrading_from: Vec::new(),
             };
             validate_record(&record)?;
-            if record.origin.is_some() {
-                return Err(refused("setup.desktop_host_requires_profile_management"));
-            }
             setup_storage::write_new_private(
                 &directory,
                 Path::new(CONFIG),
@@ -698,6 +702,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         Err(error) => return Err(error),
     };
     validate_record(&record)?;
+    require_script_origin(&record)?;
     if let Some(error) = management_guidance(&record) {
         return Err(error);
     }
@@ -1211,6 +1216,7 @@ async fn repair_installation(
     cli: &Path,
     upgrade: bool,
 ) -> io::Result<Installation> {
+    require_script_origin(&record)?;
     if record.phase != "configured" && record.phase != UPGRADING {
         return Err(refused("setup.incomplete_installation"));
     }
@@ -2431,6 +2437,53 @@ mod tests {
         record.version = 2;
         record.recovery = Some(DaemonRecovery::default());
         assert!(validate_record(&record).is_err());
+    }
+
+    #[tokio::test]
+    async fn standalone_repair_refuses_desktop_records_before_any_mutation() {
+        let state = crate::test_support::private_directory("festerm-desktop-repair-refused");
+        let directory = setup_storage::private_directory(&state, false).unwrap();
+        let mut record = configured_fixture(std::env::current_exe().unwrap());
+        require_script_origin(&record).unwrap();
+        record.version = 2;
+        record.origin = Some(DesktopOrigin {
+            kind: "desktop-profile".into(),
+            consent: uuid::Uuid::new_v4().to_string(),
+            spawn_fingerprint: "spawn-v1:fixture".into(),
+            ownership_label: format!("festerm-owned-{}", uuid::Uuid::new_v4()),
+            incarnation: None,
+        });
+        record.target.as_mut().unwrap().name = "configured.profile-shell".into();
+        checkpoint(&directory, &record).unwrap();
+        let before = fs::read(state.join(CONFIG)).unwrap();
+        let mut stages = Vec::new();
+        for upgrade in [false, true] {
+            let result = repair_installation(
+                &directory,
+                &state,
+                record.clone(),
+                &state.join("missing-cli"),
+                upgrade,
+            )
+            .await;
+            stages.push(match result {
+                Err(error) => error.to_string(),
+                Ok(_) => "unexpected repair success".to_owned(),
+            });
+        }
+        let after = fs::read(state.join(CONFIG)).unwrap();
+        let no_repair_journal = !state.join(SESSION_REPAIR).exists();
+        drop(directory);
+        fs::remove_dir_all(state).unwrap();
+        assert_eq!(before, after);
+        assert!(no_repair_journal);
+        assert_eq!(
+            stages,
+            [
+                "setup.desktop_host_requires_profile_management",
+                "setup.desktop_host_requires_profile_management"
+            ]
+        );
     }
 
     #[test]

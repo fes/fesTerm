@@ -11,6 +11,11 @@ refuse. Helpers receive executable permissions before atomic publication;
 retry repairs an old private CLI's mode only after verifying its pinned bytes.
 Real permission/handle regressions cover these paths without operating a live
 service. This does not promote DT-08 native qualification.
+The repair/hosting integration review also caught a misplaced desktop-origin
+guard. Standalone setup, upgrade and repair now reject desktop records before
+mutation, preserving the profile coordinator's fresh-shell consent. The
+regression failed before the guard and checks unchanged installation bytes and
+absence of a repair journal in both repair modes.
 
 ## Hosting an installed persistent profile without a second shell
 

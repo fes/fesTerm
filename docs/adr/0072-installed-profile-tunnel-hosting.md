@@ -54,6 +54,11 @@ Standalone setup and its explicit upgrade path remain independent. Old helper
 copies are conservatively retained; reference-aware cleanup is deferred to
 [#619](https://github.com/fes/fesTerm/issues/619).
 
+Standalone setup, upgrade and explicit legacy repair refuse desktop-origin
+records before repair or update mutation. A desktop fresh-shell replacement
+must pass its protected profile-consent coordinator; a script command cannot
+replace a desktop target or bypass revoked consent.
+
 Only the foreground app starts the pinned official CLI's browser sign-in;
 workers and startup reconciliation return SignInRequired. CLI credentials stay
 with their existing owner, not configuration, command arguments or logs.

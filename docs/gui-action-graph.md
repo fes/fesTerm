@@ -674,6 +674,10 @@ cleanup when the exact native service is also absent; unsafe paths and unknown
 or foreign loaded state still refuse. Deterministic regressions cover missing
 directories, unsafe/symlink ancestors, executable-mode recovery and tampered
 CLI refusal; native DT-08 acceptance remains separate.
+Standalone setup/upgrade/repair rejects desktop-origin installations before
+mutation; desktop fresh-shell consent remains with the profile coordinator.
+`standalone_repair_refuses_desktop_records_before_any_mutation` checks both
+repair modes without changing the saved installation or creating a repair journal.
 
 The host-only filesystem extension for `TUNNEL-01`, `TUNNEL-03` and `TUNNEL-05`
 is defined by ADR 0067 and `docs/dev-tunnel-files-protocol.md`: explicit rooted
