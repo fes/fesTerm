@@ -12,7 +12,7 @@ pub(crate) use controller::tests::{
     reviewed_controller_for_application, stable_settings as stable_controller_settings_for_test,
 };
 #[cfg(test)]
-pub(crate) use tests::preference_application_fixture;
+pub(crate) use tests::{application_disclosure_witness, preference_application_fixture};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -56,6 +56,10 @@ pub(crate) use presentation::WorkspaceRevision;
 pub(crate) use workflow_selection::{Status as WorkflowStatus, View as WorkflowView};
 
 pub(crate) const MAX_NATIVE_COMMANDS: usize = 32;
+const WORKFLOW_UNWIND_STOPPED: &str =
+    "Workflow selection stopped after an internal error. Turn JavaScript workflows off and on to resume.";
+const MCP_UNWIND_STOPPED: &str =
+    "MCP stopped after an internal error. Restart MCP explicitly; no previous grants were restored.";
 
 #[derive(Clone)]
 pub(crate) struct SelectedWorkflow(pub(crate) std::path::PathBuf);
@@ -72,6 +76,7 @@ pub(crate) enum NativeCommand {
     SafetyStop,
     PreferenceChanged {
         clear_workflow: bool,
+        reenable_workflow: bool,
     },
     ApproveObservation {
         channel: u64,
@@ -415,6 +420,12 @@ struct Wait {
     cancel_pending: bool,
 }
 
+#[derive(Clone, Copy)]
+struct PendingCompletion {
+    run: RunId,
+    request: Option<RequestId>,
+}
+
 struct Peer {
     connection: ipc::Connection,
     principal: ConnectionId,
@@ -422,6 +433,9 @@ struct Peer {
     code: VerificationCode,
     grant: Option<Grant>,
     waits: Vec<Wait>,
+    pending_completion: Option<PendingCompletion>,
+    #[cfg(test)]
+    after_finish: Option<(mpsc::SyncSender<()>, mpsc::Receiver<()>)>,
     controller: controller::PeerState,
 }
 
@@ -500,6 +514,34 @@ impl Drop for Retirement {
 struct PrivacyGate {
     closed: AtomicBool,
     mcp_stop: Mutex<Option<Arc<AtomicBool>>>,
+}
+
+// A tick temporarily owns the broker outside the coordinator. Never acquire
+// admission while unwinding: the panic may have occurred while holding it.
+struct TakenBrokerUnwind {
+    privacy: Arc<PrivacyGate>,
+    stop: Arc<AtomicBool>,
+}
+
+struct CoordinatorUnwind<'a> {
+    coordinator: &'a mut Coordinator,
+}
+
+impl Drop for CoordinatorUnwind<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.coordinator.fail_closed_on_unwind();
+        }
+    }
+}
+
+impl Drop for TakenBrokerUnwind {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.privacy.closed.store(true, Ordering::Release);
+            self.stop.store(true, Ordering::Release);
+        }
+    }
 }
 
 impl PrivacyGate {
@@ -627,8 +669,16 @@ pub(crate) struct Coordinator {
     enabled: bool,
     privacy_lost_this_tick: bool,
     reconciliation_deferred: bool,
+    unwind_stopped: bool,
+    unwind_cleanup_pending: bool,
+    workflow_unwind_stopped: bool,
+    workflow_unwind_disabled_seen: bool,
     #[cfg(test)]
     after_reconcile: Option<(mpsc::SyncSender<()>, mpsc::Receiver<()>)>,
+    #[cfg(test)]
+    peer_message_busy_repaint: Option<Arc<AtomicBool>>,
+    #[cfg(test)]
+    pending_cleanup_busy_repaint: Option<Arc<AtomicBool>>,
     status: &'static str,
     peers: BTreeMap<u64, Peer>,
     targets: BTreeMap<u64, Target>,
@@ -665,8 +715,16 @@ impl Default for Coordinator {
             enabled: false,
             privacy_lost_this_tick: false,
             reconciliation_deferred: false,
+            unwind_stopped: false,
+            unwind_cleanup_pending: false,
+            workflow_unwind_stopped: false,
+            workflow_unwind_disabled_seen: false,
             #[cfg(test)]
             after_reconcile: None,
+            #[cfg(test)]
+            peer_message_busy_repaint: None,
+            #[cfg(test)]
+            pending_cleanup_busy_repaint: None,
             status: SettingsSnapshot::default().status,
             peers: BTreeMap::new(),
             targets: BTreeMap::new(),
@@ -849,6 +907,25 @@ fn start_failure_status(failure: StartFailure) -> &'static str {
 }
 
 impl Coordinator {
+    // Application and coordinator guards may unwind together; these cuts are
+    // idempotent and do not acquire admission or invoke callbacks.
+    pub(crate) fn fail_closed_on_unwind(&mut self) {
+        self.privacy_gate.closed.store(true, Ordering::Release);
+        self.stop.store(true, Ordering::Release);
+        self.want_shared_start = false;
+        self.want_start = false;
+        self.controller_opted_in = false;
+        self.javascript_enabled = false;
+        self.workflow.disarm();
+        self.workflow_unwind_stopped = true;
+        self.workflow_unwind_disabled_seen = false;
+        self.privacy_lost_this_tick = true;
+        self.unwind_stopped = true;
+        self.unwind_cleanup_pending = true;
+        self.status = "Automation stopped after privacy loss or an internal safety limit. Restart explicitly; all automation grants were revoked.";
+        self.broker = None;
+    }
+
     fn controller_qualified(&self) -> bool {
         #[cfg(test)]
         let native_qualified = self.synthetic_controller_qualified;
@@ -993,6 +1070,9 @@ impl Coordinator {
     }
 
     fn restart_with_bootstrap(&mut self, context: &egui::Context, bootstrap: std::io::Result<()>) {
+        if self.unwind_stopped {
+            return;
+        }
         if self.privacy_gate.is_closed() && (self.broker.is_some() || self.starting.is_some()) {
             self.privacy_lost();
             return;
@@ -1032,6 +1112,21 @@ impl Coordinator {
         }
     }
 
+    fn privacy_lost_with_taken_broker(&mut self, broker: &mut Broker) {
+        // Keep ownership in tick until shutdown returns: logging or cleanup may
+        // unwind, in which case the sentinel must run before broker drop.
+        if let Some(guard) = festerm_session::automation_admission_lock() {
+            broker.revoke_all(&guard);
+        }
+        self.privacy_lost();
+    }
+
+    fn finish_unwind_cleanup(&mut self) {
+        self.privacy_lost();
+        self.workflow.cancel();
+        self.unwind_cleanup_pending = false;
+    }
+
     fn mcp_failed(&mut self) {
         self.stop_mcp();
         self.status =
@@ -1049,6 +1144,9 @@ impl Coordinator {
     }
 
     fn advance_shared(&mut self, context: &egui::Context) {
+        if self.unwind_stopped {
+            return;
+        }
         let result = self
             .starting
             .as_ref()
@@ -1165,6 +1263,9 @@ impl Coordinator {
     }
 
     fn advance_mcp(&mut self, context: &egui::Context) {
+        if self.unwind_stopped {
+            return;
+        }
         let result = self
             .mcp_starting
             .as_ref()
@@ -1293,7 +1394,7 @@ impl Coordinator {
     }
 
     fn advance_start(&mut self, context: &egui::Context) {
-        if self.reconciliation_deferred {
+        if self.unwind_stopped || self.reconciliation_deferred {
             return;
         }
         self.advance_shared(context);
@@ -1308,8 +1409,20 @@ impl Coordinator {
     }
 
     pub(crate) fn tick(&mut self, context: &egui::Context, apps: &[&FesTermApp]) {
-        self.privacy_lost_this_tick = false;
-        self.reconciliation_deferred = false;
+        let tick = CoordinatorUnwind { coordinator: self };
+        tick.coordinator.tick_inner(context, apps);
+    }
+
+    fn advance_workflow(&mut self, context: &egui::Context, apps: &[&FesTermApp]) {
+        if self.workflow_unwind_stopped {
+            if !self.unwind_cleanup_pending
+                && !apps.is_empty()
+                && apps.iter().any(|app| !app.automation_javascript_enabled())
+            {
+                self.workflow_unwind_disabled_seen = true;
+            }
+            return;
+        }
         let javascript_enabled =
             !apps.is_empty() && apps.iter().all(|app| app.automation_javascript_enabled());
         if self.javascript_enabled && !javascript_enabled {
@@ -1317,6 +1430,20 @@ impl Coordinator {
         }
         self.javascript_enabled = javascript_enabled;
         self.workflow.poll(context);
+    }
+
+    fn tick_inner(&mut self, context: &egui::Context, apps: &[&FesTermApp]) {
+        self.privacy_lost_this_tick = false;
+        self.reconciliation_deferred = false;
+        if self.unwind_stopped {
+            self.enabled = apps.first().is_some_and(|app| app.automation_mcp_enabled());
+            if self.unwind_cleanup_pending {
+                self.finish_unwind_cleanup();
+            }
+            self.advance_workflow(context, apps);
+            return;
+        }
+        self.advance_workflow(context, apps);
         let enabled = apps.first().is_some_and(|app| app.automation_mcp_enabled());
         if enabled != self.enabled {
             self.enabled = enabled;
@@ -1337,24 +1464,26 @@ impl Coordinator {
         let Some(mut broker) = self.broker.take() else {
             return;
         };
+        let _unwind = TakenBrokerUnwind {
+            privacy: self.privacy_gate.clone(),
+            stop: self.stop.clone(),
+        };
         match self.try_reconcile(&mut broker, apps) {
             Ok(()) => {}
             Err(ReconcileError::Admission(festerm_session::AutomationAdmissionTryError::Busy)) => {
-                self.broker = Some(broker);
                 self.reconciliation_deferred = true;
                 context.request_repaint_after(Duration::from_millis(50));
+                self.broker = Some(broker);
                 return;
             }
             Err(ReconcileError::Admission(
                 festerm_session::AutomationAdmissionTryError::Poisoned,
             )) => {
-                self.broker = Some(broker);
-                self.privacy_lost();
+                self.privacy_lost_with_taken_broker(&mut broker);
                 return;
             }
             Err(ReconcileError::Authority(error)) => {
-                self.broker = Some(broker);
-                self.privacy_lost();
+                self.privacy_lost_with_taken_broker(&mut broker);
                 tracing::error!(?error, "stale enrollment metadata review cleanup failed");
                 return;
             }
@@ -1367,26 +1496,28 @@ impl Coordinator {
                 .expect("reconciliation test release");
         }
         if self.privacy_gate.is_closed() {
-            self.broker = Some(broker);
-            self.privacy_lost();
+            self.privacy_lost_with_taken_broker(&mut broker);
             return;
         }
         let now = Instant::now();
-        let cancellation = self
-            .peers
-            .values_mut()
-            .try_for_each(|peer| retry_cancelled_waits(&mut broker, peer, now));
+        let cancellation = self.peers.values_mut().try_for_each(|peer| {
+            retry_completion(&mut broker, peer, now)?;
+            retry_cancelled_waits(&mut broker, peer, now)
+        });
         match cancellation {
             Ok(()) => {}
             Err(festerm_session::AutomationAdmissionTryError::Busy) => {
-                self.broker = Some(broker);
                 self.reconciliation_deferred = true;
+                #[cfg(test)]
+                if let Some(marker) = &self.pending_cleanup_busy_repaint {
+                    marker.store(true, Ordering::Release);
+                }
                 context.request_repaint_after(Duration::from_millis(50));
+                self.broker = Some(broker);
                 return;
             }
             Err(festerm_session::AutomationAdmissionTryError::Poisoned) => {
-                self.broker = Some(broker);
-                self.privacy_lost();
+                self.privacy_lost_with_taken_broker(&mut broker);
                 return;
             }
         }
@@ -1404,8 +1535,7 @@ impl Coordinator {
         self.pending_enrollment_metadata_reviews
             .retain(|id, review| broker.pending_approval_is_active(review.principal, *id, now));
         if self.privacy_gate.is_closed() {
-            self.broker = Some(broker);
-            self.privacy_lost();
+            self.privacy_lost_with_taken_broker(&mut broker);
             return;
         }
         let closed: Vec<_> = self
@@ -1426,8 +1556,7 @@ impl Coordinator {
             .collect();
         for key in closed {
             let Some(guard) = festerm_session::automation_admission_lock() else {
-                self.broker = Some(broker);
-                self.privacy_lost();
+                self.privacy_lost_with_taken_broker(&mut broker);
                 return;
             };
             if let Some(mut peer) = self.peers.remove(&key) {
@@ -1478,6 +1607,9 @@ impl Coordinator {
                                     code,
                                     grant: None,
                                     waits: Vec::new(),
+                                    pending_completion: None,
+                                    #[cfg(test)]
+                                    after_finish: None,
                                     controller: controller::PeerState::default(),
                                 },
                             );
@@ -1485,8 +1617,7 @@ impl Coordinator {
                         (Ok(principal), _) => {
                             let Some(guard) = festerm_session::automation_admission_lock() else {
                                 connection.close();
-                                self.broker = Some(broker);
-                                self.privacy_lost();
+                                self.privacy_lost_with_taken_broker(&mut broker);
                                 return;
                             };
                             broker.disconnect(principal, &guard);
@@ -1518,33 +1649,51 @@ impl Coordinator {
                     match result {
                         Ok(()) => {}
                         Err(festerm_session::AutomationAdmissionTryError::Busy) => {
-                            self.broker = Some(broker);
                             self.reconciliation_deferred = true;
+                            #[cfg(test)]
+                            if let Some(marker) = &self.peer_message_busy_repaint {
+                                marker.store(true, Ordering::Release);
+                            }
                             context.request_repaint_after(Duration::from_millis(50));
+                            self.broker = Some(broker);
                             return;
                         }
                         Err(festerm_session::AutomationAdmissionTryError::Poisoned) => {
-                            self.broker = Some(broker);
-                            self.privacy_lost();
+                            self.privacy_lost_with_taken_broker(&mut broker);
                             return;
                         }
                     }
                 }
             }
         }
-        for peer in self.peers.values_mut() {
-            settle_waits(&mut broker, &self.targets, peer, now);
+        let waits = self.peers.values_mut().try_for_each(|peer| {
+            settle_waits(&mut broker, &self.targets, peer, now)?;
             for wait in &peer.waits {
                 context.request_repaint_after(wait.deadline.saturating_duration_since(now));
             }
             if let Some(grant) = &peer.grant {
                 context.request_repaint_after(grant.expires.saturating_duration_since(now));
             }
+            Ok(())
+        });
+        if let Err(error) = waits {
+            match error {
+                festerm_session::AutomationAdmissionTryError::Busy => {
+                    self.reconciliation_deferred = true;
+                    context.request_repaint_after(Duration::from_millis(50));
+                    self.broker = Some(broker);
+                }
+                festerm_session::AutomationAdmissionTryError::Poisoned => {
+                    self.privacy_lost_with_taken_broker(&mut broker);
+                }
+            }
+            return;
+        }
+        if self.privacy_gate.is_closed() {
+            self.privacy_lost_with_taken_broker(&mut broker);
+            return;
         }
         self.broker = Some(broker);
-        if self.privacy_gate.is_closed() {
-            self.privacy_lost();
-        }
     }
 
     fn try_reconcile(
@@ -1718,17 +1867,26 @@ impl Coordinator {
     }
 
     pub(crate) fn command(&mut self, command: NativeCommand, context: &egui::Context) {
+        let guard = CoordinatorUnwind { coordinator: self };
+        guard.coordinator.command_inner(command, context);
+    }
+
+    fn command_inner(&mut self, command: NativeCommand, context: &egui::Context) {
+        if self.unwind_cleanup_pending {
+            self.finish_unwind_cleanup();
+        }
         if self.privacy_gate.is_closed() && (self.broker.is_some() || self.starting.is_some()) {
             self.privacy_lost();
         }
         match command {
             NativeCommand::SafetyStop => self.command_overflow(),
-            NativeCommand::PreferenceChanged { clear_workflow } => {
+            NativeCommand::PreferenceChanged { clear_workflow, .. } => {
                 if clear_workflow {
                     self.workflow.cancel();
                 }
             }
             NativeCommand::RestartMcp if self.enabled && !self.privacy_lost_this_tick => {
+                self.unwind_stopped = false;
                 self.start(context);
             }
             NativeCommand::RestartMcp => {}
@@ -1752,6 +1910,8 @@ impl Coordinator {
             NativeCommand::CaptureWorkflow(SelectedWorkflow(path)) => {
                 if self.javascript_enabled {
                     self.workflow.capture(path, context);
+                } else if self.workflow_unwind_stopped {
+                    self.workflow.refuse(WORKFLOW_UNWIND_STOPPED);
                 } else {
                     tracing::warn!("workflow selection refused while JavaScript is disabled");
                     self.workflow
@@ -1772,22 +1932,44 @@ impl Coordinator {
     }
 
     pub(crate) fn command_overflow(&mut self) {
+        let guard = CoordinatorUnwind { coordinator: self };
+        guard.coordinator.command_overflow_inner();
+    }
+
+    fn command_overflow_inner(&mut self) {
+        self.workflow_unwind_disabled_seen = false;
         self.stop_mcp();
         self.workflow.cancel();
         self.status = "Automation actions overflowed or conflicted; channels and pending selections were closed and workflow previews cancelled. Settings changes may not have been applied; check toggles or reset and restart MCP explicitly.";
     }
 
     pub(crate) fn command_overflow_for_apps(&mut self, apps: &[&FesTermApp]) {
+        let guard = CoordinatorUnwind { coordinator: self };
+        guard.coordinator.command_overflow_for_apps_inner(apps);
+    }
+
+    fn command_overflow_for_apps_inner(&mut self, apps: &[&FesTermApp]) {
         self.enabled = apps.first().is_some_and(|app| app.automation_mcp_enabled());
         self.command_overflow();
     }
 
-    pub(crate) fn close_overflow_admission(&self) {
+    pub(crate) fn close_overflow_admission(&mut self) {
+        let guard = CoordinatorUnwind { coordinator: self };
+        guard.coordinator.close_overflow_admission_inner();
+    }
+
+    fn close_overflow_admission_inner(&self) {
         set_admission_flag(&self.stop, true);
     }
 
     pub(crate) fn close_conflicting_admission(&mut self) {
-        self.close_overflow_admission();
+        let guard = CoordinatorUnwind { coordinator: self };
+        guard.coordinator.close_conflicting_admission_inner();
+    }
+
+    fn close_conflicting_admission_inner(&mut self) {
+        self.workflow_unwind_disabled_seen = false;
+        self.close_overflow_admission_inner();
         self.workflow.cancel();
     }
 
@@ -1800,12 +1982,22 @@ impl Coordinator {
 
     pub(crate) fn commands(
         &mut self,
+        commands: Vec<NativeWindowCommand>,
+        context: &egui::Context,
+        apps: &[&FesTermApp],
+    ) -> bool {
+        let guard = CoordinatorUnwind { coordinator: self };
+        guard.coordinator.commands_inner(commands, context, apps)
+    }
+
+    fn commands_inner(
+        &mut self,
         mut commands: Vec<NativeWindowCommand>,
         context: &egui::Context,
         apps: &[&FesTermApp],
     ) -> bool {
         if NativeCommand::batch_requires_safety_stop(commands.iter().map(|item| &item.command)) {
-            self.command_overflow_for_apps(apps);
+            self.command_overflow_for_apps_inner(apps);
             return true;
         }
         let cancellation = commands.iter().any(|item| item.command.is_cancellation());
@@ -1835,6 +2027,28 @@ impl Coordinator {
                 || (workflow_clear && matches!(&command, NativeCommand::CaptureWorkflow(_)))
             {
                 continue;
+            }
+            if self.workflow_unwind_stopped
+                && matches!(
+                    &command,
+                    NativeCommand::PreferenceChanged {
+                        reenable_workflow: true,
+                        ..
+                    }
+                )
+            {
+                if self.unwind_cleanup_pending {
+                    self.finish_unwind_cleanup();
+                }
+                if self.workflow_unwind_disabled_seen
+                    && !apps.is_empty()
+                    && apps.iter().all(|app| app.automation_javascript_enabled())
+                {
+                    self.workflow.cancel();
+                    self.workflow_unwind_stopped = false;
+                    self.workflow_unwind_disabled_seen = false;
+                    self.javascript_enabled = true;
+                }
             }
             if command.is_controller() {
                 if self.privacy_lost_this_tick {
@@ -1907,20 +2121,30 @@ impl Coordinator {
     }
 
     pub(crate) fn controller_target_moving(&mut self, tab: TabId) {
+        let guard = CoordinatorUnwind { coordinator: self };
+        guard.coordinator.controller_target_moving_inner(tab);
+    }
+
+    fn controller_target_moving_inner(&mut self, tab: TabId) {
         if !controller::invalidate_location(self.broker.as_mut(), &mut self.peers, Some(tab), None)
         {
-            self.close_overflow_admission();
+            self.close_overflow_admission_inner();
         }
     }
 
     pub(crate) fn controller_window_closing(&mut self, window: WindowId) {
+        let guard = CoordinatorUnwind { coordinator: self };
+        guard.coordinator.controller_window_closing_inner(window);
+    }
+
+    fn controller_window_closing_inner(&mut self, window: WindowId) {
         if !controller::invalidate_location(
             self.broker.as_mut(),
             &mut self.peers,
             None,
             Some(window),
         ) {
-            self.close_overflow_admission();
+            self.close_overflow_admission_inner();
         }
     }
 
@@ -2006,7 +2230,11 @@ impl Coordinator {
         let privacy_closed = self.privacy_gate.is_closed();
         let mcp_stopped = self.stop.load(Ordering::Acquire);
         let mcp_open = !mcp_stopped && !privacy_closed;
-        let status = if privacy_closed && self.broker.is_some() && self.enabled {
+        let status = if self.unwind_stopped && self.enabled {
+            MCP_UNWIND_STOPPED
+        } else if self.workflow_unwind_stopped && !self.enabled {
+            "MCP is disabled. Workflow selection stopped after an internal error; turn JavaScript workflows off and on to resume."
+        } else if privacy_closed && self.broker.is_some() && self.enabled {
             "Automation is stopping after privacy loss or an internal safety limit; admission is closed."
         } else if mcp_stopped && self.server.is_some() {
             "MCP is stopping; no further access is available."
@@ -2079,6 +2307,10 @@ impl Coordinator {
             .collect();
         let (controllers, controller_targets, controller_targets_incomplete) =
             controller::settings(self, apps, mcp_open);
+        let mut workflow = self.workflow.view();
+        if self.workflow_unwind_stopped {
+            workflow.status = WorkflowStatus::Failed(WORKFLOW_UNWIND_STOPPED.into());
+        }
         SettingsSnapshot {
             status,
             channels,
@@ -2090,7 +2322,7 @@ impl Coordinator {
                 && self.broker.is_some()
                 && self.controller_qualified(),
             controller_opted_in: mcp_open && self.controller_opted_in,
-            workflow: self.workflow.view(),
+            workflow,
             stop: self.stop.clone(),
         }
     }
@@ -2141,14 +2373,76 @@ fn finish(peer: &mut Peer, key: &RequestKey, result: BackendResult, now: Instant
     let protect_targets = matches!(&result, BackendResult::AuthorizedObservation(_));
     if let Some(response) = peer.machine.complete(key, result) {
         send(peer, response, now, protect_targets);
+        #[cfg(test)]
+        if let Some((entered, release)) = peer.after_finish.take() {
+            entered.send(()).expect("finish test observer");
+            release
+                .recv_timeout(Duration::from_secs(10))
+                .expect("finish test release");
+        }
     }
 }
 
-fn finish_run(broker: &mut Broker, peer: &Peer, run: RunId, now: Instant) {
-    let _ = broker.complete(peer.principal, run, Completion::Returned, now);
-    if broker.forget_run(peer.principal, run).is_err() {
-        tracing::debug!("automation closed context could not be forgotten");
+fn retain_completion(peer: &mut Peer, run: RunId, request: Option<RequestId>) {
+    assert!(
+        peer.pending_completion.is_none(),
+        "completion already pending"
+    );
+    peer.pending_completion = Some(PendingCompletion { run, request });
+}
+
+fn retry_completion(
+    broker: &mut Broker,
+    peer: &mut Peer,
+    now: Instant,
+) -> Result<(), festerm_session::AutomationAdmissionTryError> {
+    let Some(pending) = peer.pending_completion else {
+        return Ok(());
+    };
+    let guard = festerm_session::try_automation_admission_lock()?;
+    let settlement = match pending.request {
+        None => Ok(()),
+        Some(request) => match broker.settle_request(peer.principal, request) {
+            Ok(()) | Err(festerm_automation::Error::Closed) => Ok(()),
+            Err(error) => Err(error),
+        },
+    };
+    let completion = settlement
+        .is_ok()
+        .then(|| broker.complete(peer.principal, pending.run, Completion::Returned, now));
+    let forget = settlement.and_then(|()| broker.forget_run(peer.principal, pending.run));
+    if forget.is_err() {
+        peer.connection.close_under_admission(&guard);
+        broker.disconnect(peer.principal, &guard);
     }
+    drop(guard);
+    if let Some(result) = completion {
+        match result {
+            Ok(status) if status.state != festerm_automation::RunState::Completed => {
+                tracing::warn!(?status, "automation completion did not succeed");
+            }
+            Ok(_) => {}
+            Err(error) => match error {
+                festerm_automation::Error::Expired
+                | festerm_automation::Error::Revoked
+                | festerm_automation::Error::Closed
+                | festerm_automation::Error::StaleTarget => {
+                    tracing::debug!(
+                        ?error,
+                        "automation completion run already closed or invalid"
+                    );
+                }
+                _ => tracing::warn!(?error, "automation completion failed"),
+            },
+        }
+    }
+    if let Err(error) = forget {
+        tracing::warn!(?error, "automation completion cleanup failed; closing peer");
+        peer.machine.close();
+        peer.waits.clear();
+    }
+    peer.pending_completion = None;
+    Ok(())
 }
 
 fn retry_cancelled_waits(
@@ -2222,6 +2516,7 @@ fn process_peer_message(
     controller_qualified: bool,
     now: Instant,
 ) -> Result<(), festerm_session::AutomationAdmissionTryError> {
+    retry_completion(broker, peer, now)?;
     if peer.connection.is_closed() || stop.load(Ordering::Acquire) || privacy.is_closed() {
         return Ok(());
     }
@@ -2244,7 +2539,7 @@ fn process_peer_message(
         Event::Cancelled(key) => return cancel_wait(broker, peer, &key, now),
         Event::NoReply => {}
     }
-    Ok(())
+    retry_completion(broker, peer, Instant::now())
 }
 
 fn execute(
@@ -2294,6 +2589,7 @@ fn execute(
         });
         return;
     }
+    retain_completion(peer, run, Some(ticket));
     let data = snapshot(
         broker,
         targets,
@@ -2315,8 +2611,6 @@ fn execute(
         Err(error) => BackendResult::Refused(error),
     };
     finish(peer, &request.key, result, Instant::now());
-    let _ = broker.settle_request(peer.principal, ticket);
-    finish_run(broker, peer, run, Instant::now());
 }
 
 fn direct_binding(
@@ -2382,7 +2676,7 @@ fn direct_binding(
 fn admit_request(
     broker: &mut Broker,
     targets: &BTreeMap<u64, Target>,
-    peer: &Peer,
+    peer: &mut Peer,
     operation: &Operation,
     now: Instant,
 ) -> Result<(RunId, RequestId, Option<TargetRef>), Refusal> {
@@ -2465,7 +2759,7 @@ fn admit_request(
     match broker.prepare_request(peer.principal, run, operation, now) {
         Ok(ticket) => Ok((run, ticket, reference)),
         Err(error) => {
-            finish_run(broker, peer, run, now);
+            retain_completion(peer, run, None);
             Err(refusal(error))
         }
     }
@@ -2546,7 +2840,11 @@ fn settle_waits(
     targets: &BTreeMap<u64, Target>,
     peer: &mut Peer,
     now: Instant,
-) {
+) -> Result<(), festerm_session::AutomationAdmissionTryError> {
+    retry_completion(broker, peer, now)?;
+    if peer.connection.is_closed() {
+        return Ok(());
+    }
     let mut index = 0;
     while index < peer.waits.len() {
         let wait = &peer.waits[index];
@@ -2563,6 +2861,8 @@ fn settle_waits(
             index += 1;
             continue;
         }
+        let (run, request) = (wait.run, wait.request);
+        retain_completion(peer, run, Some(request));
         let wait = peer.waits.remove(index);
         let result = target.ok_or(Refusal::StaleTarget).and_then(|target| {
             if wait.after_revision > target.revision {
@@ -2594,7 +2894,10 @@ fn settle_waits(
             },
             Instant::now(),
         );
-        let _ = broker.settle_request(peer.principal, wait.request);
-        finish_run(broker, peer, wait.run, Instant::now());
+        retry_completion(broker, peer, Instant::now())?;
+        if peer.connection.is_closed() {
+            break;
+        }
     }
+    Ok(())
 }

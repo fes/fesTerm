@@ -1037,6 +1037,8 @@ pub(super) mod tests {
                 code: VerificationCode::new(&format!("{channel:016x}")).unwrap(),
                 grant: None,
                 waits: Vec::new(),
+                pending_completion: None,
+                after_finish: None,
                 controller,
             },
         );
@@ -1255,6 +1257,110 @@ pub(super) mod tests {
             .unwrap()
             .enrollment;
         (coordinator, app, tab, registration, enrollment)
+    }
+
+    #[test]
+    fn enrollment_metadata_unwind_revokes_grant_and_clears_review() {
+        let (mut coordinator, app, tab, registration, enrollment) = metadata_fixture();
+        let principal = coordinator.peers[&1].principal;
+        let target = coordinator.targets[&tab.chip_id()].reference;
+        let review = retry_automation_busy(|| {
+            coordinator.prepare_enrollment_metadata_review(
+                1,
+                registration,
+                enrollment,
+                Duration::from_secs(60),
+                &[&app],
+            )
+        })
+        .unwrap();
+        retry_automation_busy(|| {
+            coordinator.approve_enrollment_metadata_review(
+                1,
+                &review,
+                &review.accept_from_native(),
+                &[&app],
+            )
+        })
+        .unwrap();
+        let pending = retry_automation_busy(|| {
+            coordinator.prepare_enrollment_metadata_review(
+                1,
+                registration,
+                enrollment,
+                Duration::from_secs(60),
+                &[&app],
+            )
+        })
+        .unwrap();
+
+        let now = Instant::now();
+        let broker = coordinator.broker.as_mut().unwrap();
+        let run = broker
+            .admit_enrollment_metadata_run(
+                principal,
+                registration,
+                enrollment,
+                festerm_automation::MetadataRunSpec {
+                    parameters: Digest([19; 32]),
+                    targets: BTreeSet::from([target]),
+                    budget: Budget::default(),
+                    deadline: now + Duration::from_secs(30),
+                },
+                now,
+            )
+            .unwrap();
+        let request = broker
+            .prepare_request(
+                principal,
+                run,
+                AuthorityOperation::Discover { max_bytes: 64 },
+                now,
+            )
+            .unwrap();
+        assert_eq!(
+            broker.discovery_targets(principal, request, now).unwrap(),
+            vec![target]
+        );
+        broker
+            .commit_disclosure(principal, request, 8, now)
+            .unwrap();
+        let liveness = broker.disclosure_liveness(principal, request, now).unwrap();
+        assert!(liveness.is_live(principal, Instant::now()));
+
+        let context = egui::Context::default();
+        for _ in 0..4 {
+            let mut output = context.run_ui(Default::default(), |_| {});
+            output.textures_delta.clear();
+        }
+        context.set_request_repaint_callback(|_| panic!("metadata command repaint"));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            coordinator.command(NativeCommand::ClearWorkflow, &context);
+        }));
+        assert_eq!(
+            result
+                .expect_err("metadata command repaint did not panic")
+                .downcast_ref::<&str>(),
+            Some(&"metadata command repaint")
+        );
+        assert!(coordinator.privacy_gate.is_closed());
+        assert!(coordinator.stop.load(Ordering::Acquire));
+        assert!(coordinator.broker.is_none());
+        assert!(!liveness.is_live(principal, Instant::now()));
+
+        coordinator.command(NativeCommand::ClearWorkflow, &egui::Context::default());
+        assert!(coordinator.enrollment_metadata_grants.is_empty());
+        assert!(coordinator.pending_enrollment_metadata_reviews.is_empty());
+        assert!(coordinator.broker.is_none());
+        assert!(retry_automation_busy(|| {
+            coordinator.approve_enrollment_metadata_review(
+                1,
+                &pending,
+                &pending.accept_from_native(),
+                &[&app],
+            )
+        })
+        .is_err());
     }
 
     #[test]

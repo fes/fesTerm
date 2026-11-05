@@ -176,6 +176,9 @@ impl FesTermApp {
         self.sync_automation_preferences();
         self.queue_automation_command(NativeCommand::PreferenceChanged {
             clear_workflow: before.javascript && !effective.javascript,
+            reenable_workflow: feature == Feature::Javascript
+                && !before.javascript
+                && effective.javascript,
         });
         let saved = self.persist_interface_settings();
         self.finish_automation_preference_save(before, saved);
@@ -192,6 +195,7 @@ impl FesTermApp {
         self.sync_automation_preferences();
         self.queue_automation_command(NativeCommand::PreferenceChanged {
             clear_workflow: true,
+            reenable_workflow: false,
         });
         before
     }
@@ -213,6 +217,7 @@ impl FesTermApp {
         self.cancel_automation_workflow_picker(context);
         self.queue_automation_command(NativeCommand::PreferenceChanged {
             clear_workflow: true,
+            reenable_workflow: false,
         });
         let saved = self.persist_interface_settings();
         self.finish_automation_preference_save(before, saved);
@@ -303,7 +308,7 @@ impl FesTermApp {
                     preferences.clear_action_conflict();
                 }
             }
-            NativeCommand::PreferenceChanged { clear_workflow } => {
+            NativeCommand::PreferenceChanged { clear_workflow, .. } => {
                 if *clear_workflow {
                     self.automation_settings.workflow.disable();
                 }

@@ -52,6 +52,8 @@ fn fixture() -> (Coordinator, FesTermApp, TabId, impl Fn() -> Option<Vec<u8>>) {
             code: VerificationCode::new("0123456789abcdef").unwrap(),
             grant: None,
             waits: Vec::new(),
+            pending_completion: None,
+            after_finish: None,
             controller: controller::PeerState::default(),
         },
     );
@@ -359,6 +361,8 @@ fn add_metadata_peer(coordinator: &mut Coordinator, channel: u64) -> ConnectionI
             code: VerificationCode::new("0123456789abcdef").unwrap(),
             grant: None,
             waits: Vec::new(),
+            pending_completion: None,
+            after_finish: None,
             controller: controller::PeerState::default(),
         },
     );
@@ -2530,6 +2534,8 @@ fn presentation_source_loss_preserves_other_controller_without_that_source() {
             code: VerificationCode::new("0123456789abcdef").unwrap(),
             grant: None,
             waits: Vec::new(),
+            pending_completion: None,
+            after_finish: None,
             controller: controller::PeerState::default(),
         },
     );
@@ -3127,6 +3133,8 @@ fn presentation_control_review_is_channel_bound_and_disconnect_is_isolated() {
             code: VerificationCode::new("0123456789abcdef").unwrap(),
             grant: None,
             waits: Vec::new(),
+            pending_completion: None,
+            after_finish: None,
             controller: controller::PeerState::default(),
         },
     );
@@ -4261,6 +4269,8 @@ fn presentation_input_admission_is_principal_bound_and_takeover_cuts_all_control
             code: VerificationCode::new("0123456789abcdef").unwrap(),
             grant: None,
             waits: Vec::new(),
+            pending_completion: None,
+            after_finish: None,
             controller: controller::PeerState::default(),
         },
     );
@@ -4559,6 +4569,39 @@ pub(crate) fn preference_application_fixture(
     (coordinator, app, target, stop, receive)
 }
 
+pub(crate) fn application_disclosure_witness(
+    coordinator: &mut Coordinator,
+    target: TargetRef,
+) -> (ConnectionId, festerm_automation::DisclosureLiveness) {
+    let principal = coordinator.peers[&1].principal;
+    let now = Instant::now();
+    let operation = Operation::TerminalReadScreen {
+        session_ref: serde_json::to_string(&target).unwrap(),
+        max_bytes: 4096,
+    };
+    let (_, request, _) = admit_request(
+        coordinator.broker.as_mut().unwrap(),
+        &coordinator.targets,
+        coordinator.peers.get_mut(&1).unwrap(),
+        &operation,
+        now,
+    )
+    .unwrap();
+    coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .commit_disclosure(principal, request, 0, now)
+        .unwrap();
+    let liveness = coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .disclosure_liveness(principal, request, now)
+        .unwrap();
+    (principal, liveness)
+}
+
 fn independent_run(
     coordinator: &mut Coordinator,
     target: TargetRef,
@@ -4634,7 +4677,20 @@ fn call(
         apps,
         Instant::now(),
     );
+    retry_completion_for_test(coordinator.broker.as_mut().unwrap(), peer);
     key
+}
+
+fn retry_completion_for_test(broker: &mut Broker, peer: &mut Peer) {
+    retry_automation_busy(|| {
+        retry_completion(broker, peer, Instant::now()).map_err(|error| match error {
+            festerm_session::AutomationAdmissionTryError::Busy => festerm_automation::Error::Busy,
+            festerm_session::AutomationAdmissionTryError::Poisoned => {
+                festerm_automation::Error::Unavailable
+            }
+        })
+    })
+    .unwrap();
 }
 
 fn response(receive: &impl Fn() -> Option<Vec<u8>>) -> Value {
@@ -5061,12 +5117,11 @@ fn automation_privacy_loss_revokes_every_principal_and_invalidates_targets() {
     let (_, pending, _) = admit_request(
         coordinator.broker.as_mut().unwrap(),
         &coordinator.targets,
-        &coordinator.peers[&1],
+        coordinator.peers.get_mut(&1).unwrap(),
         &operation,
         now,
     )
     .unwrap();
-
     coordinator.privacy_gate.close();
     assert!(coordinator.stop.load(Ordering::Acquire));
     let snapshot = coordinator.settings(&[&app]);
@@ -5752,6 +5807,8 @@ fn automation_busy_reconciliation_defers_stale_waits_and_retries() {
             code: VerificationCode::new("fedcba9876543210").unwrap(),
             grant: None,
             waits: Vec::new(),
+            pending_completion: None,
+            after_finish: None,
             controller: controller::PeerState::default(),
         },
     );
@@ -6150,12 +6207,17 @@ fn automation_waits_are_notified_cancelled_and_cannot_cross_replacement() {
     session.controller.record_local_observation_change();
     let mut broker = coordinator.broker.take().unwrap();
     coordinator.reconcile(&mut broker, &[&app]);
-    settle_waits(
+    let result = settle_waits(
         &mut broker,
         &coordinator.targets,
         coordinator.peers.get_mut(&1).unwrap(),
         Instant::now(),
     );
+    if result == Err(festerm_session::AutomationAdmissionTryError::Busy) {
+        retry_completion_for_test(&mut broker, coordinator.peers.get_mut(&1).unwrap());
+    } else {
+        result.unwrap();
+    }
     assert_eq!(
         response(&receive)["result"]["structuredContent"]["data"]["changed"],
         true
@@ -6205,6 +6267,8 @@ fn automation_cancelled_wait_defers_without_output_and_retries_before_new_events
             code: VerificationCode::new("fedcba9876543210").unwrap(),
             grant: None,
             waits: Vec::new(),
+            pending_completion: None,
+            after_finish: None,
             controller: controller::PeerState::default(),
         },
     );
@@ -6269,7 +6333,8 @@ fn automation_cancelled_wait_defers_without_output_and_retries_before_new_events
         &coordinator.targets,
         coordinator.peers.get_mut(&1).unwrap(),
         Instant::now(),
-    );
+    )
+    .unwrap();
     coordinator.tick(&context, &[&app]);
     let elapsed = before.elapsed();
     let pending = coordinator.peers[&1].waits[0].cancel_pending;
@@ -6339,6 +6404,1582 @@ fn automation_cancelled_wait_defers_without_output_and_retries_before_new_events
         .waits
         .iter()
         .any(|wait| wait.key == key));
+}
+
+fn isolate_admission_contention_test(marker: &str, test: &str) -> bool {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    if std::env::var_os(marker).is_some() {
+        return false;
+    }
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture"])
+        .env(marker, "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn isolated admission test");
+    let read_output = |mut stream: Box<dyn Read + Send>| {
+        std::thread::spawn(move || {
+            let mut output = Vec::new();
+            stream
+                .by_ref()
+                .take(64 * 1024)
+                .read_to_end(&mut output)
+                .expect("read isolated test output");
+            std::io::copy(&mut stream, &mut std::io::sink()).expect("drain isolated test output");
+            output
+        })
+    };
+    let stdout = read_output(Box::new(child.stdout.take().unwrap()));
+    let stderr = read_output(Box::new(child.stderr.take().unwrap()));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => break Err("isolated admission test timed out".to_owned()),
+            Err(error) => break Err(format!("isolated admission test wait failed: {error}")),
+        }
+    };
+    if status.is_err() {
+        if let Err(error) = child.kill() {
+            assert!(
+                matches!(child.try_wait(), Ok(Some(_))),
+                "could not terminate isolated admission test: {error}"
+            );
+        }
+        child.wait().expect("reap isolated admission test");
+    }
+    let stdout = stdout.join().expect("isolated stdout reader panicked");
+    let stderr = stderr.join().expect("isolated stderr reader panicked");
+    let output = || {
+        format!(
+            "\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        )
+    };
+    let status = status.unwrap_or_else(|error| panic!("{error}{}", output()));
+    assert!(
+        status.success(),
+        "isolated admission test failed{}",
+        output()
+    );
+    assert!(
+        String::from_utf8_lossy(&stdout).contains("running 1 test"),
+        "isolated admission test did not run{}",
+        output()
+    );
+    true
+}
+
+fn hold_admission_after_test_hook(
+    entered: mpsc::Receiver<()>,
+    resume: mpsc::SyncSender<()>,
+    release: mpsc::Receiver<()>,
+    armed: Option<Arc<AtomicBool>>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        entered
+            .recv_timeout(Duration::from_secs(10))
+            .expect("admission test hook was not reached");
+        let guard = festerm_session::automation_admission_lock().expect("admission poisoned");
+        if let Some(armed) = armed {
+            armed.store(true, Ordering::Release);
+        }
+        let resumed = resume.send(());
+        if resumed.is_ok() {
+            let _ = release.recv();
+        }
+        drop(guard);
+        assert!(resumed.is_ok(), "admission test hook was abandoned");
+    })
+}
+
+#[test]
+fn automation_completion_busy_after_send_retains_exact_cleanup_before_peer_events() {
+    if isolate_admission_contention_test(
+        "FESTERM_COMPLETION_BUSY_SEND_CHILD",
+        "automation::tests::automation_completion_busy_after_send_retains_exact_cleanup_before_peer_events",
+    ) {
+        return;
+    }
+    let (mut coordinator, mut app, id, receive) = fixture();
+    let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+    app.adopt_broadcast_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap(),
+    );
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    let other_principal = coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .accept_connection()
+        .unwrap();
+    let (other_connection, other_receive) = ipc::test_connection(2);
+    coordinator.peers.insert(
+        2,
+        Peer {
+            connection: other_connection,
+            principal: other_principal,
+            machine: ready(),
+            code: VerificationCode::new("fedcba9876543210").unwrap(),
+            grant: None,
+            waits: Vec::new(),
+            pending_completion: None,
+            after_finish: None,
+            controller: controller::PeerState::default(),
+        },
+    );
+    let (server, events) = ipc::test_server(coordinator.stop.clone());
+    coordinator.server = Some(server);
+    let request = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "festerm_terminal_read_screen", "arguments": {
+            "session_ref": serde_json::to_string(&target).unwrap(), "max_bytes": 4096
+        }}
+    }))
+    .unwrap();
+    let pairing = |id| {
+        serde_json::to_vec(&json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": {"name": "festerm_pairing_status", "arguments": {}}
+        }))
+        .unwrap()
+    };
+    assert!(events
+        .try_send(ipc::Event::Message {
+            key: 1,
+            bytes: request
+        })
+        .is_ok());
+    assert!(events
+        .try_send(ipc::Event::Message {
+            key: 1,
+            bytes: pairing(1)
+        })
+        .is_ok());
+    assert!(events
+        .try_send(ipc::Event::Message {
+            key: 2,
+            bytes: pairing(2)
+        })
+        .is_ok());
+
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+    coordinator.peers.get_mut(&1).unwrap().after_finish = Some((entered_tx, resume_rx));
+    let worker = hold_admission_after_test_hook(entered_rx, resume_tx, release_rx, None);
+    let context = egui::Context::default();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while coordinator.peers[&1].after_finish.is_some() {
+        coordinator.tick(&context, &[&app]);
+        assert!(Instant::now() < deadline, "request was not dispatched");
+        if coordinator.peers[&1].after_finish.is_some() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    release_tx.send(()).unwrap();
+    worker.join().unwrap();
+    let pending = coordinator.peers[&1].pending_completion.unwrap();
+    let principal = coordinator.peers[&1].principal;
+    assert!(coordinator.reconciliation_deferred);
+    let first = response(&receive);
+    assert_eq!(first["id"], 1);
+    assert!(first["result"]["structuredContent"]["data"]["text"].is_string());
+    assert!(receive().is_none());
+    assert!(other_receive().is_none());
+    assert_eq!(coordinator.peers[&1].machine.in_flight(), 0);
+    assert_eq!(
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .forget_run(principal, pending.run),
+        Err(festerm_automation::Error::Busy)
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while coordinator.peers[&1].pending_completion.is_some() {
+        coordinator.tick(&context, &[&app]);
+        assert!(Instant::now() < deadline, "completion was not retired");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .forget_run(principal, pending.run),
+        Err(festerm_automation::Error::Unauthorized)
+    );
+    assert_eq!(
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .settle_request(principal, pending.request.unwrap()),
+        Err(festerm_automation::Error::Closed)
+    );
+    let next = response(&receive);
+    assert_eq!(next["id"], 1);
+    assert_eq!(
+        next["result"]["structuredContent"]["data"]["observation_enabled"],
+        true
+    );
+    let other = response(&other_receive);
+    assert_eq!(other["id"], 2);
+    assert_eq!(
+        other["result"]["structuredContent"]["data"]["observation_enabled"],
+        true
+    );
+    assert!(receive().is_none());
+    assert!(other_receive().is_none());
+}
+
+fn complete_screen_without_cleanup(
+    coordinator: &mut Coordinator,
+    app: &FesTermApp,
+    target: TargetRef,
+) {
+    let peer = coordinator.peers.get_mut(&1).unwrap();
+    let Event::Backend(request) = peer.machine.process_value(json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "festerm_terminal_read_screen", "arguments": {
+            "session_ref": serde_json::to_string(&target).unwrap(), "max_bytes": 4096
+        }}
+    })) else {
+        panic!("expected observation request");
+    };
+    execute(
+        coordinator.broker.as_mut().unwrap(),
+        &coordinator.targets,
+        peer,
+        request,
+        &[app],
+        Instant::now(),
+    );
+}
+
+#[test]
+fn automation_wait_completion_busy_after_send_does_not_repeat_wait() {
+    if isolate_admission_contention_test(
+        "FESTERM_WAIT_COMPLETION_BUSY_CHILD",
+        "automation::tests::automation_wait_completion_busy_after_send_does_not_repeat_wait",
+    ) {
+        return;
+    }
+    let (mut coordinator, app, id, receive) = fixture();
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    call(
+        &mut coordinator,
+        &[&app],
+        "festerm_terminal_wait_for_change",
+        json!({
+            "session_ref": serde_json::to_string(&target).unwrap(),
+            "after_revision": 1, "timeout_ms": 30_000
+        }),
+    );
+    coordinator.peers.get_mut(&1).unwrap().waits[0].deadline =
+        Instant::now() - Duration::from_secs(1);
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+    coordinator.peers.get_mut(&1).unwrap().after_finish = Some((entered_tx, resume_rx));
+    let worker = hold_admission_after_test_hook(entered_rx, resume_tx, release_rx, None);
+    let result = settle_waits(
+        coordinator.broker.as_mut().unwrap(),
+        &coordinator.targets,
+        coordinator.peers.get_mut(&1).unwrap(),
+        Instant::now(),
+    );
+    release_tx.send(()).unwrap();
+    worker.join().unwrap();
+    let pending = coordinator.peers[&1].pending_completion;
+    let wait_count = coordinator.peers[&1].waits.len();
+    let first = receive();
+    let extra = receive();
+    assert_eq!(
+        result,
+        Err(festerm_session::AutomationAdmissionTryError::Busy)
+    );
+    assert!(pending.is_some());
+    assert_eq!(wait_count, 0);
+    let reply: Value = serde_json::from_slice(&first.unwrap()).unwrap();
+    assert_eq!(
+        reply["result"]["structuredContent"]["data"]["timed_out"],
+        true
+    );
+    assert!(extra.is_none());
+    retry_completion_for_test(
+        coordinator.broker.as_mut().unwrap(),
+        coordinator.peers.get_mut(&1).unwrap(),
+    );
+    assert!(coordinator.peers[&1].pending_completion.is_none());
+    assert!(receive().is_none());
+}
+
+#[test]
+fn automation_pending_completion_retires_revoked_run_and_closes_for_missing_run() {
+    let (mut coordinator, app, id, receive) = fixture();
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    complete_screen_without_cleanup(&mut coordinator, &app, target);
+    let principal = coordinator.peers[&1].principal;
+    let pending = coordinator.peers[&1].pending_completion.unwrap();
+    coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .revoke_ordinary(principal);
+    retry_completion_for_test(
+        coordinator.broker.as_mut().unwrap(),
+        coordinator.peers.get_mut(&1).unwrap(),
+    );
+    assert!(!coordinator.peers[&1].connection.is_closed());
+    assert_eq!(
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .forget_run(principal, pending.run),
+        Err(festerm_automation::Error::Unauthorized)
+    );
+    assert_eq!(response(&receive)["id"], 1);
+    assert!(receive().is_none());
+
+    coordinator.peers.get_mut(&1).unwrap().grant = None;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    complete_screen_without_cleanup(&mut coordinator, &app, target);
+    let pending = coordinator.peers[&1].pending_completion.unwrap();
+    {
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        let broker = coordinator.broker.as_mut().unwrap();
+        broker
+            .cancel_run(principal, pending.run, Instant::now(), &guard)
+            .unwrap();
+        broker.forget_run(principal, pending.run).unwrap();
+    }
+    retry_completion_for_test(
+        coordinator.broker.as_mut().unwrap(),
+        coordinator.peers.get_mut(&1).unwrap(),
+    );
+    assert!(coordinator.peers[&1].connection.is_closed());
+    assert!(coordinator.peers[&1].pending_completion.is_none());
+    assert_eq!(response(&receive)["id"], 1);
+    assert!(receive().is_none());
+}
+
+#[test]
+fn automation_pending_completion_expiry_and_teardown_fail_closed() {
+    let (mut coordinator, app, id, receive) = fixture();
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    complete_screen_without_cleanup(&mut coordinator, &app, target);
+    let principal = coordinator.peers[&1].principal;
+    let pending = coordinator.peers[&1].pending_completion.unwrap();
+    coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .poll_expiry(Instant::now() + Duration::from_secs(301));
+    retry_completion_for_test(
+        coordinator.broker.as_mut().unwrap(),
+        coordinator.peers.get_mut(&1).unwrap(),
+    );
+    assert_eq!(
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .forget_run(principal, pending.run),
+        Err(festerm_automation::Error::Unauthorized)
+    );
+    assert_eq!(response(&receive)["id"], 1);
+    assert!(receive().is_none());
+
+    let (mut coordinator, app, id, receive) = fixture();
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    complete_screen_without_cleanup(&mut coordinator, &app, target);
+    let principal = coordinator.peers[&1].principal;
+    let pending = coordinator.peers[&1].pending_completion.unwrap();
+    {
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .close_target(target, &guard)
+            .unwrap();
+    }
+    retry_completion_for_test(
+        coordinator.broker.as_mut().unwrap(),
+        coordinator.peers.get_mut(&1).unwrap(),
+    );
+    assert_eq!(
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .forget_run(principal, pending.run),
+        Err(festerm_automation::Error::Unauthorized)
+    );
+    assert_eq!(response(&receive)["id"], 1);
+    assert!(receive().is_none());
+
+    let (mut coordinator, app, id, receive) = fixture();
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    complete_screen_without_cleanup(&mut coordinator, &app, target);
+    let peer = &coordinator.peers[&1];
+    let closed = peer.connection.closed_flag();
+    let principal = peer.principal;
+    let pending = peer.pending_completion.unwrap();
+    let liveness = coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .disclosure_liveness(principal, pending.request.unwrap(), Instant::now())
+        .unwrap();
+    coordinator.stop_mcp();
+    assert!(closed.load(Ordering::Acquire));
+    assert!(!liveness.is_live(principal, Instant::now()));
+    assert!(coordinator.peers.is_empty());
+    assert_eq!(
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .forget_run(principal, pending.run),
+        Err(festerm_automation::Error::Unauthorized)
+    );
+    assert_eq!(response(&receive)["id"], 1);
+    assert!(receive().is_none());
+}
+
+#[test]
+fn automation_direct_command_repaint_unwind_fails_closed() {
+    let (mut coordinator, _app, id, receive) = fixture();
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    let (principal, liveness) = application_disclosure_witness(&mut coordinator, target);
+    let context = egui::Context::default();
+    for _ in 0..4 {
+        let mut output = context.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+    }
+    context.set_request_repaint_callback(|_| panic!("direct command repaint"));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        coordinator.command(NativeCommand::ClearWorkflow, &context);
+    }));
+    assert_eq!(
+        result
+            .expect_err("direct command repaint did not panic")
+            .downcast_ref::<&str>(),
+        Some(&"direct command repaint")
+    );
+    assert!(coordinator.privacy_gate.is_closed());
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    assert!(coordinator.broker.is_none());
+    assert!(!liveness.is_live(principal, Instant::now()));
+    assert!(receive().is_none());
+}
+
+#[test]
+fn automation_sent_response_busy_controller_command_repaint_unwind_fails_closed() {
+    if isolate_admission_contention_test(
+        "FESTERM_COMPLETION_BUSY_COMMAND_CHILD",
+        "automation::tests::automation_sent_response_busy_controller_command_repaint_unwind_fails_closed",
+    ) {
+        return;
+    }
+    let (mut coordinator, mut app, id, receive) = fixture();
+    app.adopt_broadcast_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(
+                festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true),
+            )
+            .unwrap(),
+    );
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    let (server, events) = ipc::test_server(coordinator.stop.clone());
+    coordinator.server = Some(server);
+    let request = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "festerm_terminal_read_screen", "arguments": {
+            "session_ref": serde_json::to_string(&target).unwrap(), "max_bytes": 4096
+        }}
+    }))
+    .unwrap();
+    let next = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "festerm_pairing_status", "arguments": {}}
+    }))
+    .unwrap();
+    assert!(events
+        .try_send(ipc::Event::Message {
+            key: 1,
+            bytes: request
+        })
+        .is_ok());
+    assert!(events
+        .try_send(ipc::Event::Message {
+            key: 1,
+            bytes: next.clone()
+        })
+        .is_ok());
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+    coordinator.peers.get_mut(&1).unwrap().after_finish = Some((entered_tx, resume_rx));
+    let worker = hold_admission_after_test_hook(entered_rx, resume_tx, release_rx, None);
+    let context = egui::Context::default();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while coordinator.peers[&1].after_finish.is_some() {
+        coordinator.tick(&context, &[&app]);
+        assert!(Instant::now() < deadline, "request was not dispatched");
+        if coordinator.peers[&1].after_finish.is_some() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    release_tx.send(()).unwrap();
+    worker.join().unwrap();
+    assert!(coordinator.reconciliation_deferred);
+    assert_eq!(response(&receive)["id"], 1);
+    assert!(receive().is_none());
+    let peer = &coordinator.peers[&1];
+    let principal = peer.principal;
+    let pending = peer.pending_completion.unwrap();
+    let liveness = coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .disclosure_liveness(principal, pending.request.unwrap(), Instant::now())
+        .unwrap();
+    assert!(liveness.is_live(principal, Instant::now()));
+    assert_eq!(peer.machine.in_flight(), 0);
+
+    let command_context = egui::Context::default();
+    for _ in 0..4 {
+        let mut output = command_context.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+    }
+    command_context.set_request_repaint_callback(|_| panic!("deferred controller repaint"));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        coordinator.commands(
+            vec![NativeWindowCommand {
+                window: WindowId::PRIMARY,
+                command: NativeCommand::EnableControllerEnrollment,
+            }],
+            &command_context,
+            &[&app],
+        );
+    }));
+    assert_eq!(
+        result
+            .expect_err("deferred command repaint did not panic")
+            .downcast_ref::<&str>(),
+        Some(&"deferred controller repaint")
+    );
+    assert!(coordinator.broker.is_none());
+    assert!(coordinator.privacy_gate.is_closed());
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    assert!(coordinator.unwind_stopped);
+    assert!(!liveness.is_live(principal, Instant::now()));
+    assert!(receive().is_none());
+    match coordinator.server.as_ref().unwrap().try_recv() {
+        Some(ipc::Event::Message { key, bytes }) => {
+            assert_eq!(key, 1);
+            assert_eq!(bytes, next);
+        }
+        _ => panic!("subsequent event was consumed"),
+    }
+}
+
+#[test]
+fn automation_sent_response_busy_repaint_panic_drops_broker_without_replay() {
+    if isolate_admission_contention_test(
+        "FESTERM_COMPLETION_BUSY_REPAINT_CHILD",
+        "automation::tests::automation_sent_response_busy_repaint_panic_drops_broker_without_replay",
+    ) {
+        return;
+    }
+    let (mut coordinator, mut app, id, receive) = fixture();
+    let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+    app.adopt_broadcast_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap(),
+    );
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    let principal = coordinator.peers[&1].principal;
+    let now = Instant::now();
+    let operation = Operation::TerminalReadScreen {
+        session_ref: serde_json::to_string(&target).unwrap(),
+        max_bytes: 4096,
+    };
+    let (_, witness_request, _) = admit_request(
+        coordinator.broker.as_mut().unwrap(),
+        &coordinator.targets,
+        coordinator.peers.get_mut(&1).unwrap(),
+        &operation,
+        now,
+    )
+    .unwrap();
+    coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .commit_disclosure(principal, witness_request, 0, now)
+        .unwrap();
+    let liveness = coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .disclosure_liveness(principal, witness_request, now)
+        .unwrap();
+    assert!(liveness.is_live(principal, Instant::now()));
+    let (server, events) = ipc::test_server(coordinator.stop.clone());
+    coordinator.server = Some(server);
+    let request = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "festerm_terminal_read_screen", "arguments": {
+            "session_ref": serde_json::to_string(&target).unwrap(), "max_bytes": 4096
+        }}
+    }))
+    .unwrap();
+    let next = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "festerm_pairing_status", "arguments": {}}
+    }))
+    .unwrap();
+    assert!(events
+        .try_send(ipc::Event::Message {
+            key: 1,
+            bytes: request
+        })
+        .is_ok());
+    assert!(events
+        .try_send(ipc::Event::Message {
+            key: 1,
+            bytes: next.clone()
+        })
+        .is_ok());
+
+    let armed = Arc::new(AtomicBool::new(false));
+    let invoked = Arc::new(AtomicBool::new(false));
+    let busy_repaint = Arc::new(AtomicBool::new(false));
+    let witnessed = Arc::new(AtomicBool::new(false));
+    coordinator.peer_message_busy_repaint = Some(busy_repaint.clone());
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+    coordinator.peers.get_mut(&1).unwrap().after_finish = Some((entered_tx, resume_rx));
+    let worker =
+        hold_admission_after_test_hook(entered_rx, resume_tx, release_rx, Some(armed.clone()));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let result = loop {
+        // A previous Busy tick may have already scheduled the same repaint.
+        // Prime a fresh context before installing the callback for this tick.
+        let context = egui::Context::default();
+        for _ in 0..4 {
+            let mut output = context.run_ui(Default::default(), |_| {});
+            output.textures_delta.clear();
+        }
+        busy_repaint.store(false, Ordering::Release);
+        let callback_armed = armed.clone();
+        let callback_invoked = invoked.clone();
+        let callback_busy_repaint = busy_repaint.clone();
+        let callback_witnessed = witnessed.clone();
+        let expected_delay = Duration::from_millis(50).saturating_sub(
+            Duration::try_from_secs_f32(context.input(|input| input.predicted_dt))
+                .unwrap_or_default(),
+        );
+        context.set_request_repaint_callback(move |info| {
+            if callback_armed.load(Ordering::Acquire) {
+                callback_invoked.store(true, Ordering::Release);
+                callback_witnessed.store(
+                    callback_busy_repaint.load(Ordering::Acquire)
+                        && info.delay == expected_delay
+                        && matches!(
+                            festerm_session::try_automation_admission_lock(),
+                            Err(festerm_session::AutomationAdmissionTryError::Busy)
+                        ),
+                    Ordering::Release,
+                );
+                panic!("post-send busy repaint");
+            }
+        });
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            coordinator.tick(&context, &[&app]);
+        }));
+        if result.is_err()
+            || coordinator.peers[&1].after_finish.is_none()
+            || Instant::now() >= deadline
+        {
+            break result;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    // Dropping the sender also releases the worker on an unexpected unwind.
+    drop(release_tx);
+    coordinator.peers.get_mut(&1).unwrap().after_finish.take();
+    worker.join().unwrap();
+    let panic = result.expect_err("post-send busy repaint did not panic");
+    assert_eq!(
+        panic.downcast_ref::<&str>(),
+        Some(&"post-send busy repaint")
+    );
+    assert!(invoked.load(Ordering::Acquire));
+    assert!(witnessed.load(Ordering::Acquire));
+    assert!(coordinator.reconciliation_deferred);
+    assert!(coordinator.peers[&1].pending_completion.is_some());
+    assert_eq!(coordinator.peers[&1].machine.in_flight(), 0);
+    assert!(coordinator.broker.is_none());
+    assert!(coordinator.privacy_gate.is_closed());
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    assert!(!liveness.is_live(principal, Instant::now()));
+    let reply = response(&receive);
+    assert_eq!(reply["id"], 1);
+    assert!(reply["result"]["structuredContent"]["data"]["text"].is_string());
+    assert!(receive().is_none());
+    match coordinator.server.as_ref().unwrap().try_recv() {
+        Some(ipc::Event::Message { key, bytes }) => {
+            assert_eq!(key, 1);
+            assert_eq!(bytes, next);
+        }
+        _ => panic!("subsequent event was consumed"),
+    }
+}
+
+#[test]
+fn automation_pending_completion_next_tick_pre_take_panic_drops_broker() {
+    if isolate_admission_contention_test(
+        "FESTERM_COMPLETION_PRE_TAKE_PANIC_CHILD",
+        "automation::tests::automation_pending_completion_next_tick_pre_take_panic_drops_broker",
+    ) {
+        return;
+    }
+    let (mut coordinator, mut app, id, receive) = fixture();
+    let settings = festerm_config::InterfaceSettings::DEFAULT
+        .with_mcp_enabled(true)
+        .with_javascript_enabled(true);
+    app.adopt_broadcast_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap(),
+    );
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    let (server, events) = ipc::test_server(coordinator.stop.clone());
+    coordinator.server = Some(server);
+    let request = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "festerm_terminal_read_screen", "arguments": {
+            "session_ref": serde_json::to_string(&target).unwrap(), "max_bytes": 4096
+        }}
+    }))
+    .unwrap();
+    assert!(events
+        .try_send(ipc::Event::Message {
+            key: 1,
+            bytes: request
+        })
+        .is_ok());
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+    coordinator.peers.get_mut(&1).unwrap().after_finish = Some((entered_tx, resume_rx));
+    let worker = hold_admission_after_test_hook(entered_rx, resume_tx, release_rx, None);
+    let context = egui::Context::default();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while coordinator.peers[&1].after_finish.is_some() {
+        coordinator.tick(&context, &[&app]);
+        assert!(Instant::now() < deadline, "request was not dispatched");
+        if coordinator.peers[&1].after_finish.is_some() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    release_tx.send(()).unwrap();
+    worker.join().unwrap();
+    assert!(coordinator.reconciliation_deferred);
+    assert_eq!(response(&receive)["id"], 1);
+    assert!(receive().is_none());
+    let peer = &coordinator.peers[&1];
+    let principal = peer.principal;
+    let pending = peer.pending_completion.unwrap();
+    let liveness = coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .disclosure_liveness(principal, pending.request.unwrap(), Instant::now())
+        .unwrap();
+    assert!(liveness.is_live(principal, Instant::now()));
+
+    struct DropProbe(Arc<AtomicBool>);
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    let capture_sender = coordinator.workflow.pending_capture_for_test();
+    let capture_started = Arc::new(AtomicBool::new(false));
+    let capture_dropped = Arc::new(AtomicBool::new(false));
+    let started = capture_started.clone();
+    let probe = DropProbe(capture_dropped.clone());
+    coordinator
+        .workflow
+        .queue_capture_for_test(&egui::Context::default(), move || {
+            let _ = &probe;
+            started.store(true, Ordering::Release);
+            Err("queued capture unexpectedly ran".into())
+        });
+    assert_eq!(
+        coordinator.workflow.view().status,
+        workflow_selection::Status::Waiting
+    );
+    coordinator.want_shared_start = true;
+    coordinator.want_start = true;
+    coordinator.controller_opted_in = true;
+    coordinator.javascript_enabled = true;
+    let (shared_tx, shared_rx) = mpsc::sync_channel(1);
+    assert!(shared_tx.send(Err(StartFailure::Cancelled)).is_ok());
+    coordinator.starting = Some(Starting {
+        result: shared_rx,
+        thread: std::thread::spawn(|| {}),
+    });
+    let (startup_server, _startup_events) = ipc::test_server(coordinator.stop.clone());
+    let (mcp_tx, mcp_rx) = mpsc::sync_channel(1);
+    assert!(mcp_tx.send(Ok(startup_server)).is_ok());
+    coordinator.mcp_starting = Some(Starting {
+        result: mcp_rx,
+        thread: std::thread::spawn(|| {}),
+    });
+    let next_context = egui::Context::default();
+    for _ in 0..4 {
+        let mut output = next_context.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+    }
+    let invoked = Arc::new(AtomicBool::new(false));
+    let callback_invoked = invoked.clone();
+    next_context.set_request_repaint_callback(move |_| {
+        callback_invoked.store(true, Ordering::Release);
+        panic!("pre-take workflow repaint");
+    });
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        coordinator.tick(&next_context, &[&app]);
+    }));
+    let panic = result.expect_err("workflow repaint did not panic");
+    assert_eq!(
+        panic.downcast_ref::<&str>(),
+        Some(&"pre-take workflow repaint")
+    );
+    assert!(invoked.load(Ordering::Acquire));
+    assert!(coordinator.broker.is_none());
+    assert!(coordinator.privacy_gate.is_closed());
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    assert!(!liveness.is_live(principal, Instant::now()));
+    assert_eq!(coordinator.peers[&1].machine.in_flight(), 0);
+    assert!(receive().is_none());
+    assert!(!coordinator.want_shared_start);
+    assert!(!coordinator.want_start);
+    assert!(!coordinator.controller_opted_in);
+    assert!(!coordinator.javascript_enabled);
+    assert_eq!(
+        coordinator.workflow.view().status,
+        workflow_selection::Status::Cancelling
+    );
+    assert!(!capture_started.load(Ordering::Acquire));
+    assert!(!capture_dropped.load(Ordering::Acquire));
+    assert!(coordinator.unwind_stopped);
+    assert!(coordinator.unwind_cleanup_pending);
+    assert!(coordinator.starting.is_some());
+    assert!(coordinator.mcp_starting.is_some());
+
+    let gate = coordinator.privacy_gate.clone();
+    let later_context = egui::Context::default();
+    assert!(capture_sender.send(Err("late capture".into())).is_ok());
+    coordinator.advance_shared(&later_context);
+    coordinator.advance_mcp(&later_context);
+    coordinator.advance_start(&later_context);
+    assert!(coordinator.starting.is_some());
+    assert!(coordinator.mcp_starting.is_some());
+    assert!(Arc::ptr_eq(&gate, &coordinator.privacy_gate));
+    coordinator.enabled = false;
+    coordinator.tick(&later_context, &[&app]);
+    assert!(coordinator.enabled);
+    assert!(coordinator.unwind_stopped);
+    assert!(!coordinator.unwind_cleanup_pending);
+    assert!(coordinator.starting.is_none());
+    assert!(coordinator.mcp_starting.is_none());
+    assert!(capture_dropped.load(Ordering::Acquire));
+    assert!(!capture_started.load(Ordering::Acquire));
+    assert!(coordinator.server.is_none());
+    assert!(coordinator.broker.is_none());
+    assert!(Arc::ptr_eq(&gate, &coordinator.privacy_gate));
+    assert!(gate.is_closed());
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    coordinator.tick(&later_context, &[&app]);
+    assert!(coordinator.unwind_stopped);
+    assert!(Arc::ptr_eq(&gate, &coordinator.privacy_gate));
+    assert!(gate.is_closed());
+    assert!(coordinator.broker.is_none());
+    coordinator.command(NativeCommand::RestartMcp, &later_context);
+    assert!(!coordinator.unwind_stopped);
+    assert!(coordinator.broker.is_none());
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    coordinator.tick(&later_context, &[&app]);
+    assert!(coordinator.workflow_unwind_stopped);
+    assert_eq!(
+        coordinator.workflow.view().status,
+        workflow_selection::Status::Cancelling
+    );
+    assert!(!capture_started.load(Ordering::Acquire));
+}
+
+#[test]
+fn automation_js_only_unwind_requires_explicit_reenable_after_cleanup() {
+    let enabled = FesTermApp::for_test_with_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(
+                festerm_config::InterfaceSettings::DEFAULT.with_javascript_enabled(true),
+            )
+            .unwrap(),
+    );
+    let disabled = FesTermApp::for_test_with_configuration(festerm_config::Configuration::empty());
+    let context = egui::Context::default();
+    let mut coordinator = Coordinator::default();
+    coordinator.tick(&context, &[&enabled]);
+    assert!(coordinator.javascript_enabled);
+    assert!(!coordinator.enabled);
+
+    let capture_sender = coordinator.workflow.pending_capture_for_test();
+    let queued_started = Arc::new(AtomicBool::new(false));
+    let queued = queued_started.clone();
+    coordinator
+        .workflow
+        .queue_capture_for_test(&context, move || {
+            queued.store(true, Ordering::Release);
+            Err("stale capture ran".into())
+        });
+    let panic_context = egui::Context::default();
+    for _ in 0..4 {
+        let mut output = panic_context.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+    }
+    panic_context.set_request_repaint_callback(|_| panic!("JS-only workflow repaint"));
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        coordinator.tick(&panic_context, &[&enabled]);
+    }))
+    .expect_err("workflow repaint did not panic");
+    assert_eq!(
+        panic.downcast_ref::<&str>(),
+        Some(&"JS-only workflow repaint")
+    );
+    assert!(coordinator.workflow_unwind_stopped);
+    assert!(coordinator.unwind_cleanup_pending);
+    assert!(!coordinator.javascript_enabled);
+    assert!(!queued_started.load(Ordering::Acquire));
+    assert!(capture_sender.send(Err("late capture".into())).is_ok());
+
+    let gate = coordinator.privacy_gate.clone();
+    coordinator.tick(&context, &[&enabled]);
+    coordinator.tick(&context, &[&enabled]);
+    assert!(!coordinator.unwind_cleanup_pending);
+    assert!(coordinator.unwind_stopped);
+    assert!(coordinator.workflow_unwind_stopped);
+    assert!(!coordinator.javascript_enabled);
+    assert_eq!(coordinator.status, SettingsSnapshot::default().status);
+    assert!(coordinator
+        .settings(&[&enabled])
+        .status
+        .contains("Workflow selection stopped"));
+    assert_eq!(
+        coordinator.settings(&[&enabled]).workflow.status,
+        WorkflowStatus::Failed(WORKFLOW_UNWIND_STOPPED.into())
+    );
+    assert!(!queued_started.load(Ordering::Acquire));
+    let mcp_enabled = FesTermApp::for_test_with_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(
+                festerm_config::InterfaceSettings::DEFAULT
+                    .with_javascript_enabled(true)
+                    .with_mcp_enabled(true),
+            )
+            .unwrap(),
+    );
+    coordinator.tick(&context, &[&mcp_enabled]);
+    assert!(coordinator.enabled);
+    assert_eq!(
+        coordinator.settings(&[&mcp_enabled]).status,
+        MCP_UNWIND_STOPPED
+    );
+    assert!(coordinator.broker.is_none());
+    assert!(coordinator.privacy_gate.is_closed());
+    coordinator.tick(&context, &[&enabled]);
+    assert!(!coordinator.enabled);
+    assert!(!coordinator.commands_for_test(
+        vec![NativeCommand::PreferenceChanged {
+            clear_workflow: false,
+            reenable_workflow: true,
+        }],
+        &context,
+        &[&enabled],
+    ));
+    assert!(coordinator.workflow_unwind_stopped);
+    assert!(!coordinator.commands_for_test(
+        vec![NativeCommand::CaptureWorkflow(SelectedWorkflow(
+            std::path::PathBuf::new(),
+        ))],
+        &context,
+        &[&enabled],
+    ));
+    assert!(coordinator.workflow_unwind_stopped);
+    assert!(!queued_started.load(Ordering::Acquire));
+
+    coordinator.tick(&context, &[&disabled]);
+    assert!(coordinator.workflow_unwind_disabled_seen);
+    assert!(!coordinator.commands_for_test(
+        vec![NativeCommand::PreferenceChanged {
+            clear_workflow: false,
+            reenable_workflow: true,
+        }],
+        &context,
+        &[&enabled, &disabled],
+    ));
+    assert!(coordinator.workflow_unwind_stopped);
+    coordinator.tick(&context, &[&enabled]);
+    assert!(coordinator.workflow_unwind_stopped);
+    assert!(!coordinator.javascript_enabled);
+    assert!(!coordinator.commands_for_test(
+        vec![NativeCommand::PreferenceChanged {
+            clear_workflow: false,
+            reenable_workflow: false,
+        }],
+        &context,
+        &[&enabled],
+    ));
+    assert!(coordinator.workflow_unwind_stopped);
+    assert!(!coordinator.commands_for_test(
+        vec![NativeCommand::PreferenceChanged {
+            clear_workflow: false,
+            reenable_workflow: true,
+        }],
+        &context,
+        &[&enabled],
+    ));
+    assert!(!coordinator.workflow_unwind_stopped);
+    assert!(coordinator.javascript_enabled);
+    assert!(coordinator.unwind_stopped);
+    coordinator.tick(&context, &[&enabled]);
+    assert_eq!(coordinator.workflow.view().status, WorkflowStatus::Empty);
+    assert!(!queued_started.load(Ordering::Acquire));
+    assert!(coordinator.broker.is_none());
+    assert!(coordinator.server.is_none());
+    assert!(!coordinator.want_shared_start);
+    assert!(!coordinator.want_start);
+    assert!(Arc::ptr_eq(&gate, &coordinator.privacy_gate));
+    assert!(gate.is_closed());
+    assert!(coordinator.stop.load(Ordering::Acquire));
+
+    assert!(!coordinator.commands_for_test(
+        vec![NativeCommand::CaptureWorkflow(SelectedWorkflow(
+            std::path::PathBuf::new(),
+        ))],
+        &context,
+        &[&enabled],
+    ));
+    assert_eq!(
+        coordinator.workflow.view().status,
+        WorkflowStatus::Capturing
+    );
+}
+
+#[test]
+fn automation_js_disabled_at_unwind_can_be_explicitly_enabled_after_cleanup() {
+    let disabled = FesTermApp::for_test_with_configuration(festerm_config::Configuration::empty());
+    let enabled = FesTermApp::for_test_with_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(
+                festerm_config::InterfaceSettings::DEFAULT.with_javascript_enabled(true),
+            )
+            .unwrap(),
+    );
+    let context = egui::Context::default();
+    let mut coordinator = Coordinator::default();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _tick = CoordinatorUnwind {
+            coordinator: &mut coordinator,
+        };
+        panic!("injected tick unwind");
+    }));
+    assert!(result.is_err());
+    coordinator.tick(&context, &[&disabled]);
+    assert!(coordinator.workflow_unwind_disabled_seen);
+    coordinator.tick(&context, &[&enabled]);
+    assert!(!coordinator.javascript_enabled);
+    assert!(!coordinator.commands_for_test(
+        vec![NativeCommand::PreferenceChanged {
+            clear_workflow: false,
+            reenable_workflow: true,
+        }],
+        &context,
+        &[&enabled],
+    ));
+    assert!(coordinator.javascript_enabled);
+    assert!(!coordinator.workflow_unwind_stopped);
+    assert!(coordinator.unwind_stopped);
+    assert!(coordinator.privacy_gate.is_closed());
+    assert!(coordinator.broker.is_none());
+}
+
+#[test]
+fn automation_pending_completion_busy_repaint_unwind_drops_taken_broker() {
+    if isolate_admission_contention_test(
+        "FESTERM_COMPLETION_PENDING_REPAINT_CHILD",
+        "automation::tests::automation_pending_completion_busy_repaint_unwind_drops_taken_broker",
+    ) {
+        return;
+    }
+    let (mut coordinator, mut app, id, receive) = fixture();
+    let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+    app.adopt_broadcast_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap(),
+    );
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    complete_screen_without_cleanup(&mut coordinator, &app, target);
+    let peer = &coordinator.peers[&1];
+    let principal = peer.principal;
+    let pending = peer.pending_completion.unwrap();
+    let liveness = coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .disclosure_liveness(principal, pending.request.unwrap(), Instant::now())
+        .unwrap();
+    assert!(liveness.is_live(principal, Instant::now()));
+    assert_eq!(response(&receive)["id"], 1);
+    assert!(receive().is_none());
+
+    let armed = Arc::new(AtomicBool::new(false));
+    let invoked = Arc::new(AtomicBool::new(false));
+    let busy_repaint = Arc::new(AtomicBool::new(false));
+    let witnessed = Arc::new(AtomicBool::new(false));
+    coordinator.pending_cleanup_busy_repaint = Some(busy_repaint.clone());
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+    coordinator.after_reconcile = Some((entered_tx, resume_rx));
+    let worker =
+        hold_admission_after_test_hook(entered_rx, resume_tx, release_rx, Some(armed.clone()));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let result = loop {
+        // Earlier reconciliation contention must not coalesce this repaint.
+        // The callback is installed only after the new context is primed.
+        let context = egui::Context::default();
+        for _ in 0..4 {
+            let mut output = context.run_ui(Default::default(), |_| {});
+            output.textures_delta.clear();
+        }
+        busy_repaint.store(false, Ordering::Release);
+        let callback_armed = armed.clone();
+        let callback_invoked = invoked.clone();
+        let callback_busy_repaint = busy_repaint.clone();
+        let callback_witnessed = witnessed.clone();
+        let expected_delay = Duration::from_millis(50).saturating_sub(
+            Duration::try_from_secs_f32(context.input(|input| input.predicted_dt))
+                .unwrap_or_default(),
+        );
+        context.set_request_repaint_callback(move |info| {
+            if callback_armed.load(Ordering::Acquire) {
+                callback_invoked.store(true, Ordering::Release);
+                callback_witnessed.store(
+                    callback_busy_repaint.load(Ordering::Acquire)
+                        && info.delay == expected_delay
+                        && matches!(
+                            festerm_session::try_automation_admission_lock(),
+                            Err(festerm_session::AutomationAdmissionTryError::Busy)
+                        ),
+                    Ordering::Release,
+                );
+                panic!("injected busy repaint panic");
+            }
+        });
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            coordinator.tick(&context, &[&app]);
+        }));
+        if result.is_err() || coordinator.after_reconcile.is_none() || Instant::now() >= deadline {
+            break result;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    drop(release_tx);
+    coordinator.after_reconcile.take();
+    worker.join().unwrap();
+    let panic = result.expect_err("busy repaint callback did not panic");
+    assert_eq!(
+        panic.downcast_ref::<&str>(),
+        Some(&"injected busy repaint panic")
+    );
+    assert!(invoked.load(Ordering::Acquire));
+    assert!(witnessed.load(Ordering::Acquire));
+    assert!(coordinator.reconciliation_deferred);
+    assert!(coordinator.peers[&1].pending_completion.is_some());
+    assert!(coordinator.broker.is_none());
+    assert!(coordinator.privacy_gate.is_closed());
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    assert!(!liveness.is_live(principal, Instant::now()));
+    assert!(receive().is_none());
+}
+
+#[test]
+fn automation_taken_broker_privacy_loss_revokes_and_disconnects() {
+    let (mut coordinator, mut app, id, receive) = fixture();
+    let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+    app.adopt_broadcast_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap(),
+    );
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    complete_screen_without_cleanup(&mut coordinator, &app, target);
+    let peer = &coordinator.peers[&1];
+    let principal = peer.principal;
+    let closed = peer.connection.closed_flag();
+    let pending = peer.pending_completion.unwrap();
+    let liveness = coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .disclosure_liveness(principal, pending.request.unwrap(), Instant::now())
+        .unwrap();
+    assert_eq!(response(&receive)["id"], 1);
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+    coordinator.after_reconcile = Some((entered_tx, resume_rx));
+    let gate = coordinator.privacy_gate.clone();
+    let worker = std::thread::spawn(move || {
+        entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        gate.close();
+        resume_tx.send(()).unwrap();
+    });
+    let context = egui::Context::default();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while coordinator.after_reconcile.is_some() {
+        coordinator.tick(&context, &[&app]);
+        assert!(
+            Instant::now() < deadline,
+            "privacy test did not reach reconciliation"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    worker.join().unwrap();
+    assert!(coordinator.broker.is_none());
+    assert!(coordinator.privacy_gate.is_closed());
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    assert!(closed.load(Ordering::Acquire));
+    assert!(!liveness.is_live(principal, Instant::now()));
+    assert!(coordinator.peers.is_empty());
+    assert!(receive().is_none());
+}
+
+#[test]
+fn automation_poison_log_panic_closes_peers_and_drops_broker() {
+    if isolate_poison_panic_test(
+        "FESTERM_STOP_MCP_POISON_LOG_PANIC_CHILD",
+        "automation::tests::automation_poison_log_panic_closes_peers_and_drops_broker",
+    ) {
+        return;
+    }
+    let (mut coordinator, app, id, receive) = fixture();
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    complete_screen_without_cleanup(&mut coordinator, &app, target);
+    let second_principal = coordinator
+        .broker
+        .as_mut()
+        .unwrap()
+        .accept_connection()
+        .unwrap();
+    let (second_connection, _second_receive) = ipc::test_connection(2);
+    let second_closed = second_connection.closed_flag();
+    coordinator.peers.insert(
+        2,
+        Peer {
+            connection: second_connection,
+            principal: second_principal,
+            machine: ready(),
+            code: VerificationCode::new("0123456789abcdef").unwrap(),
+            grant: None,
+            waits: Vec::new(),
+            pending_completion: None,
+            after_finish: None,
+            controller: controller::PeerState::default(),
+        },
+    );
+    let peer = &coordinator.peers[&1];
+    let principal = peer.principal;
+    let closed = peer.connection.closed_flag();
+    let liveness = coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .disclosure_liveness(
+            principal,
+            peer.pending_completion.unwrap().request.unwrap(),
+            Instant::now(),
+        )
+        .unwrap();
+    assert!(liveness.is_live(principal, Instant::now()));
+    assert!(!closed.load(Ordering::Acquire));
+    assert!(!second_closed.load(Ordering::Acquire));
+    assert!(!coordinator.stop.load(Ordering::Acquire));
+    assert_eq!(response(&receive)["id"], 1);
+    poison_admission_for_panic_test();
+
+    assert_poison_log_panics(|| coordinator.stop_mcp());
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    assert!(closed.load(Ordering::Acquire));
+    assert!(second_closed.load(Ordering::Acquire));
+    assert!(coordinator.broker.is_none());
+    assert!(!liveness.is_live(principal, Instant::now()));
+    assert!(coordinator.peers.is_empty());
+    assert!(receive().is_none());
+}
+
+#[test]
+fn automation_overflow_entrypoints_poison_panic_close_shared_authority() {
+    if isolate_poison_panic_test(
+        "FESTERM_OVERFLOW_POISON_LOG_PANIC_CHILD",
+        "automation::tests::automation_overflow_entrypoints_poison_panic_close_shared_authority",
+    ) {
+        return;
+    }
+    let (mut first, app, first_id, _) = fixture();
+    let target = first.targets[&first_id.chip_id()].reference;
+    approve_for_test(&mut first, 1, vec![target]).unwrap();
+    let (first_principal, first_live) = application_disclosure_witness(&mut first, target);
+    let (mut second, _app, second_id, _) = fixture();
+    let target = second.targets[&second_id.chip_id()].reference;
+    approve_for_test(&mut second, 1, vec![target]).unwrap();
+    let (second_principal, second_live) = application_disclosure_witness(&mut second, target);
+    let (mut third, _app, third_id, _) = fixture();
+    let target = third.targets[&third_id.chip_id()].reference;
+    approve_for_test(&mut third, 1, vec![target]).unwrap();
+    let (third_principal, third_live) = application_disclosure_witness(&mut third, target);
+    poison_admission_for_panic_test();
+
+    assert_poison_log_panics(|| first.command_overflow_for_apps(&[&app]));
+    assert_poison_log_panics(|| second.close_conflicting_admission());
+    assert_poison_log_panics(|| third.close_overflow_admission());
+    for (coordinator, principal, liveness) in [
+        (&first, first_principal, first_live),
+        (&second, second_principal, second_live),
+        (&third, third_principal, third_live),
+    ] {
+        assert!(coordinator.privacy_gate.is_closed());
+        assert!(coordinator.stop.load(Ordering::Acquire));
+        assert!(coordinator.broker.is_none());
+        assert!(!liveness.is_live(principal, Instant::now()));
+    }
+}
+
+#[test]
+fn automation_taken_broker_poison_shutdown_panic_closes_and_drops_grant() {
+    const CHILD: &str = "FESTERM_TAKEN_BROKER_SHUTDOWN_PANIC_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "automation::tests::automation_taken_broker_poison_shutdown_panic_closes_and_drops_grant",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated poison test failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("running 1 test"));
+        return;
+    }
+    use tracing_subscriber::prelude::*;
+
+    struct PanicOnError;
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for PanicOnError {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            if *event.metadata().level() == tracing::Level::ERROR {
+                panic!("injected privacy shutdown logging panic");
+            }
+        }
+    }
+
+    let (mut coordinator, mut app, id, receive) = fixture();
+    let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+    app.adopt_broadcast_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap(),
+    );
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    complete_screen_without_cleanup(&mut coordinator, &app, target);
+    let peer = &coordinator.peers[&1];
+    let principal = peer.principal;
+    let pending = peer.pending_completion.unwrap();
+    let liveness = coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .disclosure_liveness(principal, pending.request.unwrap(), Instant::now())
+        .unwrap();
+    assert_eq!(response(&receive)["id"], 1);
+    assert!(std::thread::spawn(|| {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        panic!("poison admission in isolated test process");
+    })
+    .join()
+    .is_err());
+    let subscriber = tracing_subscriber::registry().with(PanicOnError);
+    let result = tracing::subscriber::with_default(subscriber, || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            coordinator.tick(&egui::Context::default(), &[&app]);
+        }))
+    });
+    assert_eq!(
+        result
+            .expect_err("poison shutdown logging did not panic")
+            .downcast_ref::<&str>(),
+        Some(&"injected privacy shutdown logging panic")
+    );
+    assert!(coordinator.broker.is_none());
+    assert!(coordinator.privacy_gate.is_closed());
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    assert!(!liveness.is_live(principal, Instant::now()));
+    assert!(receive().is_none());
+}
+
+#[test]
+fn automation_pending_completion_unwind_closes_stop_and_drops_grant() {
+    let (mut coordinator, mut app, id, receive) = fixture();
+    let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+    app.adopt_broadcast_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap(),
+    );
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    complete_screen_without_cleanup(&mut coordinator, &app, target);
+    let peer = &coordinator.peers[&1];
+    let principal = peer.principal;
+    let pending = peer.pending_completion.unwrap();
+    let liveness = coordinator
+        .broker
+        .as_ref()
+        .unwrap()
+        .disclosure_liveness(principal, pending.request.unwrap(), Instant::now())
+        .unwrap();
+    assert!(liveness.is_live(principal, Instant::now()));
+    assert_eq!(response(&receive)["id"], 1);
+    let (entered, receiver) = mpsc::sync_channel(1);
+    drop(receiver);
+    let (_release, wait) = mpsc::sync_channel(1);
+    coordinator.after_reconcile = Some((entered, wait));
+    let context = egui::Context::default();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let result = loop {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            coordinator.tick(&context, &[&app]);
+        }));
+        if result.is_err() {
+            break result;
+        }
+        assert!(Instant::now() < deadline, "test unwind was not reached");
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    assert!(result.is_err());
+    assert!(coordinator.broker.is_none());
+    assert!(coordinator.stop.load(Ordering::Acquire));
+    assert!(coordinator.privacy_gate.is_closed());
+    assert!(!liveness.is_live(principal, Instant::now()));
+    assert!(receive().is_none());
+}
+
+#[test]
+fn automation_pending_completion_poison_closes_after_sent_response() {
+    const CHILD: &str = "FESTERM_COMPLETION_POISON_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "automation::tests::automation_pending_completion_poison_closes_after_sent_response",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated poison test failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("running 1 test"));
+        return;
+    }
+    let (mut coordinator, mut app, id, receive) = fixture();
+    let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+    app.adopt_broadcast_configuration(
+        festerm_config::Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap(),
+    );
+    let target = coordinator.targets[&id.chip_id()].reference;
+    approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+    complete_screen_without_cleanup(&mut coordinator, &app, target);
+    let closed = coordinator.peers[&1].connection.closed_flag();
+    assert_eq!(response(&receive)["id"], 1);
+    assert!(std::thread::spawn(|| {
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        panic!("poison admission in isolated test process");
+    })
+    .join()
+    .is_err());
+    assert_eq!(
+        retry_completion(
+            coordinator.broker.as_mut().unwrap(),
+            coordinator.peers.get_mut(&1).unwrap(),
+            Instant::now()
+        ),
+        Err(festerm_session::AutomationAdmissionTryError::Poisoned)
+    );
+    coordinator.tick(&egui::Context::default(), &[&app]);
+    assert!(coordinator.privacy_gate.is_closed());
+    assert!(closed.load(Ordering::Acquire));
+    assert!(receive().is_none());
 }
 
 #[test]
@@ -6691,12 +8332,17 @@ fn automation_wait_observes_applied_persistent_recovery_sync() {
 
     let mut broker = coordinator.broker.take().unwrap();
     coordinator.reconcile(&mut broker, &[&app]);
-    settle_waits(
+    let result = settle_waits(
         &mut broker,
         &coordinator.targets,
         coordinator.peers.get_mut(&1).unwrap(),
         Instant::now(),
     );
+    if result == Err(festerm_session::AutomationAdmissionTryError::Busy) {
+        retry_completion_for_test(&mut broker, coordinator.peers.get_mut(&1).unwrap());
+    } else {
+        result.unwrap();
+    }
     assert_eq!(
         response(&receive)["result"]["structuredContent"]["data"]["changed"],
         true

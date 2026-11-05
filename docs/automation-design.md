@@ -763,6 +763,46 @@ any response send. This does not migrate other broker cut or expiry APIs,
 serialize broker destruction, or fence enqueue and physical delivery. Queued
 or written bytes cannot be recalled.
 
+For the live observation peer paths, one fixed-size record per peer retains the
+exact run and optional request before a response is finished or sent. After
+the send, cleanup tries admission without holding it across the send; busy
+retains the record and defers later peer events and waits, without replaying
+the response. Cleanup settles the request, completes and forgets the run;
+an inconsistent or missing run closes and disconnects the peer. Expiration
+and revocation can cut the run first. Poison closes privacy. If a tick unwinds
+with its broker temporarily taken, a non-reentrant sentinel closes privacy and
+the adapter stop flag before broker destruction; grant liveness is invalidated
+by broker drop. Busy repaint callbacks and privacy-loss shutdown run while the
+broker is still locally owned, including when those callbacks unwind. An outer
+tick unwind guard borrows the coordinator and closes privacy and stop and
+drops any broker still in the coordinator, including on a pre-take callback
+panic. Equivalent guards cover coordinator command and overflow entry points;
+an application guard covers input, logic and UI dispatch, including command
+collection, window settlement and post-dispatch repaint. Their unwind cuts are
+idempotent and do not acquire admission or invoke callbacks. They also clear
+start intents and opt-ins and latch startup closed;
+atomic cancellation flags immediately disarm current, pending and queued
+workflow selections without dropping their closures during unwind. A later
+normal cleanup retires outstanding startup results and drops queued selection
+work. MCP remains latched until explicit restart. Independently, workflow
+selection remains stopped until a disabled JavaScript setting is observed
+after cleanup and the user explicitly enables it while all windows permit it;
+with JavaScript already enabled, turn it off and on. Unchanged settings and
+selecting a file alone cannot rearm it, and the settings view explains the
+recovery. This rearm does not restart MCP or restore grants. While MCP is
+enabled but still unwind-latched, settings explicitly require MCP restart.
+These guards do not recall a queued or already-written response, stop an
+already-running capture, or recall an already-extracted workflow bundle.
+
+A panic at privacy-close logging can precede peer-flag closure, although the
+tick unwind guards close privacy and stop and drop the broker. This does not
+add a final-recipient or physical-delivery fence.
+
+This is a live cleanup prerequisite, not a guarded broker completion API:
+`Broker::complete`, `complete_with_result`, other cuts, expiry and broker drop
+remain unguarded. It does not fence metadata, queue insertion or final-recipient
+or physical delivery, and does not qualify or enable any platform or adapter.
+
 The existing capacity-four outbound queue and its frame/target-guard
 representation live in `festerm-automation`, while the app retains the same
 connection and writer. The frame limit and expiration remain host checks; the

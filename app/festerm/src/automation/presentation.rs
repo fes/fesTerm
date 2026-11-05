@@ -1592,6 +1592,8 @@ impl Coordinator {
                 code: VerificationCode::new("0123456789abcdef").unwrap(),
                 grant: None,
                 waits: Vec::new(),
+                pending_completion: None,
+                after_finish: None,
                 controller: controller::PeerState::default(),
             },
         );

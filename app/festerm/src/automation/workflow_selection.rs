@@ -114,6 +114,15 @@ impl Selection {
         send
     }
 
+    #[cfg(test)]
+    pub(super) fn queue_capture_for_test(
+        &mut self,
+        context: &egui::Context,
+        capture: impl FnOnce() -> Result<ApprovedBundle, String> + Send + 'static,
+    ) {
+        self.begin(context, capture);
+    }
+
     fn begin(
         &mut self,
         context: &egui::Context,
@@ -158,16 +167,23 @@ impl Selection {
         }
     }
 
-    pub(super) fn cancel(&mut self) {
-        self.bundle = None;
-        self.error = None;
-        self.queued = None;
+    pub(super) fn disarm(&self) {
         if let Some(pending) = &self.pending {
             pending.cancelled.store(true, Ordering::Release);
+        }
+        if let Some(queued) = &self.queued {
+            queued.cancelled.store(true, Ordering::Release);
         }
         if let Some(cancelled) = &self.cancelled {
             cancelled.store(true, Ordering::Release);
         }
+    }
+
+    pub(super) fn cancel(&mut self) {
+        self.disarm();
+        self.bundle = None;
+        self.error = None;
+        self.queued = None;
     }
 
     pub(super) fn refuse(&mut self, message: &'static str) {
@@ -268,6 +284,21 @@ mod tests {
             modules: BTreeMap::from([("main.js".into(), "export default 1;".into())]),
         })
         .unwrap()
+    }
+
+    #[test]
+    fn workflow_disarm_invalidates_existing_capture_view() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let selection = Selection {
+            bundle: Some(Arc::new(bundle())),
+            cancelled: Some(cancelled),
+            ..Selection::default()
+        };
+        let view = selection.view();
+        assert!(view.current_bundle().is_some());
+        selection.disarm();
+        assert!(view.current_bundle().is_none());
+        assert!(selection.view().current_bundle().is_none());
     }
 
     fn wait_for_capture(selection: &mut Selection, context: &egui::Context) {
