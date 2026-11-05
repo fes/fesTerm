@@ -7591,3 +7591,12 @@ output. A single-process Rust SDK test reaches the real coordinator and a
 controlled session with simulated comparison and approval; revocation tests
 cover contention and partially written replies. There is still no production
 listener or qualified native caller, privacy, recipient or lifecycle boundary.
+
+## Readiness-driven direct host ownership
+
+The dormant direct peer now has an owner that waits on socket readiness,
+explicit native/lifecycle notifications and transport deadlines instead of
+polling. It yields after bounded work and reports cleanup completion even when
+its task is cancelled; unobserved or failed cleanup requires quarantine. The
+SDK/coordinator fixture exercises this loop with simulated decisions. No
+listener, native identity, screen-lock monitor or effect boundary is qualified.

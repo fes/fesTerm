@@ -109,7 +109,9 @@ to bypass another's restrictions.
    admission; it does not authenticate the peer, qualify privacy or provide a
    production endpoint. A dormant host bridge retains the original guarded
    frame through each encrypted write and passes inbound frames to the existing
-   coordinator queue. A single-process SDK/coordinator test uses simulated
+   coordinator queue. A dormant readiness-driven owner waits for socket events,
+   deadlines and explicit lifecycle wakeups, and reports cleanup on
+   cancellation. A single-process SDK/coordinator test uses simulated
    comparisons and approval; no production listener or native boundary is
    qualified. Windows and iOS feasibility remain unqualified.
    Neither binding grants session access on connection. The P1 checkpoint

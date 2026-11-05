@@ -1,6 +1,8 @@
 //! Dormant direct-channel bridge. This does not open a listener or qualify a
 //! native caller, privacy monitor, recipient, or effect boundary.
 
+mod owner;
+
 use super::{Connection, Event, Waker};
 use festerm_automation::{outbound_channel, OutboundFrame, OutboundReceiver};
 use festerm_automation_mcp::secure_transport::{
@@ -64,6 +66,8 @@ pub(super) enum Error {
     Events,
     Cleanup,
     Closed,
+    OwnerInterrupted,
+    OwnerLost,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -742,6 +746,299 @@ mod tests {
         assert!(fixture.host_native.cancelled.load(Ordering::Acquire));
     }
 
+    fn new_owner(
+        socket: tokio::net::UnixStream,
+        stop: Arc<AtomicBool>,
+        wake: Wake,
+        native: Arc<NativeState>,
+        cancelled: Arc<AtomicBool>,
+        fail_cleanup: bool,
+        bootstrap_duration: Duration,
+    ) -> Result<(owner::Owner<Native, Admission>, owner::Status), Error> {
+        let (events, _) = mpsc::sync_channel(1);
+        owner::Owner::new(
+            socket,
+            Native(native),
+            Admission {
+                open: Arc::new(AtomicBool::new(true)),
+                cancelled,
+                fail_cleanup,
+            },
+            PeerContext {
+                bootstrap: QualifiedBootstrap::synthetic(),
+                key: 17,
+                events,
+                wake_ui: Arc::new(|| {}),
+                stop,
+                wake,
+            },
+            bootstrap_duration,
+            MAX_FRAME_DURATION,
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn direct_owner_wakes_on_stop_and_reports_cleanup() {
+        let (socket, client) = tokio::net::UnixStream::pair().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let wake = Wake::default();
+        let native = Arc::new(NativeState::default());
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (owner, mut status) = new_owner(
+            socket,
+            stop.clone(),
+            wake.clone(),
+            native.clone(),
+            cancelled.clone(),
+            false,
+            Duration::from_secs(8),
+        )
+        .unwrap();
+        let worker = tokio::spawn(owner.run());
+        tokio::task::yield_now().await;
+        super::super::super::set_admission_flag(&stop, true);
+        wake.notify();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), worker)
+                .await
+                .unwrap()
+                .unwrap(),
+            Ok(())
+        );
+        assert_eq!(status.wait().await, Ok(()));
+        assert!(native.cancelled.load(Ordering::Acquire));
+        assert!(cancelled.load(Ordering::Acquire));
+        tokio::time::timeout(Duration::from_secs(5), client.readable())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(client.try_read(&mut [0]).unwrap(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn direct_owner_expires_without_socket_activity() {
+        let (socket, _client) = tokio::net::UnixStream::pair().unwrap();
+        let native = Arc::new(NativeState::default());
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (owner, mut status) = new_owner(
+            socket,
+            Arc::new(AtomicBool::new(false)),
+            Wake::default(),
+            native.clone(),
+            cancelled.clone(),
+            false,
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(5), owner.run())
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            Err(Error::Channel(secure_transport::Error::Deadline))
+        );
+        assert_eq!(status.wait().await, result);
+        assert!(native.cancelled.load(Ordering::Acquire));
+        assert!(cancelled.load(Ordering::Acquire));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn direct_owner_reports_cleanup_after_task_cancellation() {
+        for fail_cleanup in [false, true] {
+            let (socket, _client) = tokio::net::UnixStream::pair().unwrap();
+            let native = Arc::new(NativeState::default());
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let (owner, mut status) = new_owner(
+                socket,
+                Arc::new(AtomicBool::new(false)),
+                Wake::default(),
+                native.clone(),
+                cancelled.clone(),
+                fail_cleanup,
+                Duration::from_secs(8),
+            )
+            .unwrap();
+            let worker = tokio::spawn(owner.run());
+            tokio::task::yield_now().await;
+            worker.abort();
+            assert!(tokio::time::timeout(Duration::from_secs(5), worker)
+                .await
+                .unwrap()
+                .unwrap_err()
+                .is_cancelled());
+            assert_eq!(
+                status.wait().await,
+                Err(if fail_cleanup {
+                    Error::Cleanup
+                } else {
+                    Error::OwnerInterrupted
+                })
+            );
+            assert!(native.cancelled.load(Ordering::Acquire));
+            assert!(cancelled.load(Ordering::Acquire));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn direct_owner_retires_both_boundaries_if_construction_fails() {
+        let (socket, _client) = tokio::net::UnixStream::pair().unwrap();
+        let native = Arc::new(NativeState::default());
+        let cancelled = Arc::new(AtomicBool::new(false));
+        assert!(matches!(
+            new_owner(
+                socket,
+                Arc::new(AtomicBool::new(false)),
+                Wake::default(),
+                native.clone(),
+                cancelled.clone(),
+                false,
+                Duration::ZERO,
+            ),
+            Err(Error::Channel(secure_transport::Error::Protocol))
+        ));
+        assert!(native.cancelled.load(Ordering::Acquire));
+        assert!(cancelled.load(Ordering::Acquire));
+    }
+
+    struct ContendedAdmission {
+        open: Arc<AtomicBool>,
+        blocked: Arc<Notify>,
+    }
+
+    impl NativeAdmission for ContendedAdmission {
+        type Guard<'a> = ();
+
+        fn try_admit(&self) -> io::Result<Self::Guard<'_>> {
+            if self.open.load(Ordering::Acquire) {
+                Ok(())
+            } else {
+                self.blocked.notify_one();
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+        }
+
+        fn cancel(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn direct_owner_waits_for_admission_wake_before_writing() {
+        use festerm_automation_mcp_client::DirectClientTransport;
+        use rmcp::transport::Transport;
+
+        let (host_socket, client_socket) = tokio::net::UnixStream::pair().unwrap();
+        let host_native = Arc::new(NativeState::default());
+        let client_native = Arc::new(NativeState::default());
+        let open = Arc::new(AtomicBool::new(true));
+        let blocked = Arc::new(Notify::new());
+        let host_wake = Wake::default();
+        let (events_tx, events_rx) = mpsc::sync_channel(8);
+        let (host, mut host_status) = owner::Owner::new(
+            host_socket,
+            Native(host_native.clone()),
+            ContendedAdmission {
+                open: open.clone(),
+                blocked: blocked.clone(),
+            },
+            PeerContext {
+                bootstrap: QualifiedBootstrap::synthetic(),
+                key: 17,
+                events: events_tx,
+                wake_ui: Arc::new(|| {}),
+                stop: Arc::new(AtomicBool::new(false)),
+                wake: host_wake.clone(),
+            },
+            Duration::from_secs(8),
+            MAX_FRAME_DURATION,
+        )
+        .unwrap();
+        let worker = tokio::spawn(host.run());
+        let (wake_tx, wake_rx) = mpsc::sync_channel(1);
+        let decision = client_native.clone();
+        let (mut client, mut client_status) = DirectClientTransport::new(
+            client_socket,
+            Duration::from_secs(8),
+            MAX_FRAME_DURATION,
+            move |wake| {
+                wake_tx.send(wake).unwrap();
+                (Native(decision), ClientAdmission)
+            },
+        )
+        .unwrap();
+        let client_wake = wake_rx.recv().unwrap();
+        let connection = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let host_code = host_native.displayed.lock().unwrap().clone();
+                let client_code = client_native.displayed.lock().unwrap().clone();
+                if let (Some(host_code), Some(client_code)) = (host_code, client_code) {
+                    assert_eq!(host_code, client_code);
+                    *client_native.decision.lock().unwrap() =
+                        Some(host_code.as_bytes().try_into().unwrap());
+                    *host_native.decision.lock().unwrap() =
+                        Some(client_code.as_bytes().try_into().unwrap());
+                    host_wake.notify();
+                    client_wake.wake();
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            loop {
+                if let Ok(Event::Connected(connection)) = events_rx.try_recv() {
+                    break connection;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("direct host did not establish");
+
+        open.store(false, Ordering::Release);
+        connection
+            .send(
+                br#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#.to_vec(),
+                Instant::now() + MAX_FRAME_DURATION,
+                &[],
+            )
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), blocked.notified())
+            .await
+            .expect("write did not encounter admission contention");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), client.receive())
+                .await
+                .is_err()
+        );
+        open.store(true, Ordering::Release);
+        host_wake.notify();
+        let message = tokio::time::timeout(Duration::from_secs(5), client.receive())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(message).unwrap()["method"],
+            "notifications/tools/list_changed"
+        );
+        connection.close();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), worker)
+                .await
+                .unwrap()
+                .unwrap(),
+            Ok(())
+        );
+        assert_eq!(host_status.wait().await, Ok(()));
+        let client_result = client.close().await;
+        assert!(matches!(
+            client_result,
+            Ok(())
+                | Err(festerm_automation_mcp_client::Error::Channel(
+                    secure_transport::Error::PeerClosed
+                ))
+        ));
+        assert_eq!(client_status.wait().await, client_result);
+    }
+
     struct ClientAdmission;
 
     impl festerm_automation_mcp_client::ClientWriteAdmission for ClientAdmission {
@@ -786,18 +1083,11 @@ mod tests {
         let (client_socket, host_socket) = tokio::net::UnixStream::pair().unwrap();
         let host_native = Arc::new(NativeState::default());
         let client_native = Arc::new(NativeState::default());
-        let host_channel = SecureTransport::new(
-            host_socket.into_std().unwrap(),
-            Role::Application,
-            Native(host_native.clone()),
-            Duration::from_secs(8),
-            MAX_FRAME_DURATION,
-        )
-        .unwrap();
         let host_wake = Wake::default();
         let stop = coordinator.stop.clone();
-        let mut host = Peer::new(
-            host_channel,
+        let (host, mut host_status) = owner::Owner::new(
+            host_socket,
+            Native(host_native.clone()),
             Admission {
                 open: Arc::new(AtomicBool::new(true)),
                 cancelled: Arc::new(AtomicBool::new(false)),
@@ -811,22 +1101,11 @@ mod tests {
                 stop: stop.clone(),
                 wake: host_wake.clone(),
             },
-        );
-        let worker = thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(20);
-            loop {
-                match host.step() {
-                    Ok(Step::Closed) | Err(Error::Channel(secure_transport::Error::PeerClosed)) => {
-                        break;
-                    }
-                    Ok(Step::Advanced | Step::Blocked) => {}
-                    Err(error) => panic!("direct host failed: {error:?}"),
-                }
-                assert!(Instant::now() < deadline, "direct host timed out");
-                thread::sleep(Duration::from_millis(1));
-            }
-            host.finish().unwrap();
-        });
+            Duration::from_secs(8),
+            MAX_FRAME_DURATION,
+        )
+        .unwrap();
+        let worker = tokio::spawn(host.run());
 
         let (wake_tx, wake_rx) = mpsc::sync_channel(1);
         let client_decision = client_native.clone();
@@ -927,7 +1206,16 @@ mod tests {
         })
         .await;
         super::super::super::set_admission_flag(&stop, true);
-        worker.join().unwrap();
+        host_wake.notify();
+        let host_result = tokio::time::timeout(Duration::from_secs(5), worker)
+            .await
+            .expect("direct host did not stop")
+            .unwrap();
+        assert!(matches!(
+            host_result,
+            Ok(()) | Err(Error::Channel(secure_transport::Error::PeerClosed))
+        ));
+        assert_eq!(host_status.wait().await, host_result);
         completed.expect("direct SDK coordinator exchange timed out");
         assert_eq!(status.wait().await, Ok(()));
     }
