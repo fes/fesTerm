@@ -136,8 +136,9 @@ impl TerminalKeyboard {
             ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
             ui.spacing_mut().interact_size.y = height;
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let width = (ui.available_width() - 4.0 * 10.0) / 11.0;
+                let gap = ((ui.available_width() - 24.0 * 12.0) / 11.0).clamp(0.0, 4.0);
+                ui.spacing_mut().item_spacing.x = gap;
+                let width = (ui.available_width() - gap * 11.0) / 12.0;
                 for (label, key) in [("Esc", Key::Escape), ("Tab", Key::Tab)] {
                     let response = draw_key(ui, width, utility_height, label, None, false, true);
                     if let Some(key) =
@@ -161,8 +162,8 @@ impl TerminalKeyboard {
                 }
                 for (label, key) in [
                     ("Left", Key::ArrowLeft),
-                    ("Down", Key::ArrowDown),
                     ("Up", Key::ArrowUp),
+                    ("Down", Key::ArrowDown),
                     ("Right", Key::ArrowRight),
                 ] {
                     let response = arrow_key(ui, width, utility_height, label, key);
@@ -170,6 +171,17 @@ impl TerminalKeyboard {
                     {
                         output.action = KeyRowAction::Key(key);
                     }
+                }
+                let mic = glyph_key(
+                    ui,
+                    width,
+                    utility_height,
+                    "Mic",
+                    Glyph::Icon(Icon::Microphone),
+                )
+                .on_hover_text("On-device dictation");
+                if self.keys.toggle(ui, &mic, Glyph::Icon(Icon::Microphone)) {
+                    output.action = KeyRowAction::Dictate;
                 }
                 let extended = glyph_key(ui, width, utility_height, "Extended keys", Glyph::Grid);
                 if self.keys.toggle(ui, &extended, Glyph::Grid) {

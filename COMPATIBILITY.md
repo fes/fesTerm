@@ -6,6 +6,12 @@ fesTerm measures compatibility in terms of observable application behavior. Reco
 
 ## Compatibility Baseline
 
+The experimental iOS terminal keyboards include an on-device-only dictation
+spike with explicit bounded review/Insert (no implicit Return or cloud fallback).
+Portable tests and Simulator launch are not physical-device speech/privacy
+qualification; that remains `MOB-07` under
+[#564](https://github.com/fes/fesTerm/issues/564).
+
 The [Dev Tunnels subset](docs/dev-tunnels-experiment.md), included in default desktop builds, implements
 peer profiles, independently bound scoped credentials, exact-generation
 daemon attach/detach and optional bounded remote file snapshots. It is

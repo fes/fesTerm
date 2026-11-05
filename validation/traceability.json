@@ -3505,7 +3505,12 @@
     {
       "id": "ios-rendering-spike",
       "edges": [
-        "MOB-*"
+        "MOB-01",
+        "MOB-02",
+        "MOB-03",
+        "MOB-04",
+        "MOB-05",
+        "MOB-06"
       ],
       "requirements": [
         "docs/adr/0042-ios-rendering-spike-host.md",
@@ -3706,6 +3711,33 @@
         "MOB-06 opt-in live-ssh composition received independent architectural approval on 2026-10-30, not native/product acceptance; controlled real SSH/physical-device evidence remains required; fake-session/headless tests cover hidden-workspace output/replies, per-frame budgets and native suspension without a UI frame, including reset binding; compilation/Simulator linking do not establish native usability; credentials and pins remain transient, changed pins reject, suspension requires explicit reconnection; Termius-inspired usability and #425 paste/native handles remain pending",
         "affected PRs retain mobile unit/dependency checks, device compilation and Simulator app builds, including vendor-only epaint edits; isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py runs nightly/manual only under a distinct experimental-simulator-smoke check, not the simulator-build PR context or a desktop merge gate while iOS is experimental; failed runs/receipts remain failed (#303), without retry and with unchanged CoreSimulator application/process deadlines and ownership/capture/pass-fail guards; during the existing three-second startup grace, the harness observes the first-UI marker once per second and records the actual grace plus poll 1, 2 or 3 when first observed, then retains the prior exact-process check, screenshot/PNG validation, second liveness check and final marker evaluation, including acceptance when first UI is observed post-capture; pre-capture liveness failure retains readiness with capture marked not-attempted and blocks the screenshot as before; capture records retain readiness in memory before capture and are persisted when controlled screenshot timeouts and invalid PNGs unwind, while external hard termination can still prevent the final manifest write; first-UI failure or process death remains failed evidence; separate read-only prepared receipts are not app-pass evidence; scripts/tests/test_scheduled_workflows.py and test_ios_simulator_smoke.py cover the ADR-0042 workflow policy, readiness observation and preparation separation; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go and runtime merge-gate review before mobile product support",
         "ADR 0057 Dev Tunnels client backend only (no UI): offline fakes and a real-daemon loopback pass on macOS; shell integration, live Microsoft Dev Tunnels service, Keychain and physical-device validation, file reads over the tunnel and shell handling of RecoverySync remain open under MOB-06"
+      ]
+    },
+    {
+      "id": "ios-on-device-dictation",
+      "edges": ["MOB-07"],
+      "requirements": ["docs/mobile-layout-design.md#on-device-dictation"],
+      "decisions": ["ADR-0068"],
+      "automated_tests": [
+        "dictation_requires_review_and_single_line_bounded_text",
+        "dictation_revisions_replace_and_stale_callbacks_cannot_restore_cancelled_text",
+        "dictation_insert_is_explicit_single_use_and_has_no_return_or_modifiers",
+        "dictation_refuses_unsafe_text_and_changed_target_or_lifecycle",
+        "dictation_navigation_and_suspension_clear_preview_before_any_insert",
+        "dictation_pending_authorization_survives_temporary_permission_resignation",
+        "dictation_permission_alert_then_background_still_suspends_and_cancels",
+        "mobile_live_ssh_dictation_permission_alert_keeps_plain_session_until_background",
+        "dictation_stop_finishes_and_accepts_the_final_transcript",
+        "dictation_finishing_timeout_or_error_reviews_latest_text_but_cancel_wins",
+        "dictation_host_stop_without_native_recognizer_reviews_immediately",
+        "dictation_editor_bounds_unicode_bytes_without_splitting_characters",
+        "dictation_failed_and_manual_review_sheets_render_without_terminal_input",
+        "terminal_keyboards_offer_dictation_as_one_non_repeating_action"
+      ],
+      "manual_scenarios": ["MOB-07"],
+      "status": "partial",
+      "prerequisites": [
+        "Issue #564: physical-device local speech model/language availability, denied/granted permissions, offline recognition, native microphone/deadline/interruption/background/lock cancellation without another UI frame, session replacement and actual terminal/TUI/touch/accessibility qualification remain required, including the microphone icon after Left/Up/Down/Right. Simulator unsupported/manual-preview flow and portable tests are not native speech recognition or privacy acceptance."
       ]
     }
   ]

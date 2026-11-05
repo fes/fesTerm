@@ -21,6 +21,13 @@ class IosSshDependencyTests(unittest.TestCase):
         self.assertIn("Face ID", build.bundle_info()["NSFaceIDUsageDescription"])
         self.assertIn("NSFaceIDUsageDescription", build.bundle_info(True))
 
+    def test_bundle_declares_explicit_on_device_dictation_permissions(self):
+        for live in (False, True):
+            info = build.bundle_info(live)
+            self.assertIn("on-device dictation", info["NSMicrophoneUsageDescription"])
+            self.assertIn("not saved or sent", info["NSMicrophoneUsageDescription"])
+            self.assertIn("review", info["NSSpeechRecognitionUsageDescription"])
+
     def test_live_feature_graph_is_checked_for_both_mobile_targets(self):
         with patch.object(build.sys, "argv", ["build", "--check-dependencies", "--live-ssh"]), \
                 patch.object(build, "check_dependencies") as check:

@@ -70,6 +70,7 @@ The intended first enum surface is:
 | `Copy`, `Paste`, `Clear` | matching filename | Terminal content operation |
 | `Diagnostics` | `diagnostics.svg` | Diagnostic detail or health trace |
 | `KeyboardShortcuts` | `keyboard-shortcuts.svg` | Shortcut settings/reference |
+| `Microphone` | `microphone.svg` | Explicit on-device terminal dictation |
 | `ThemeAppearance` | `theme-appearance.svg` | Theme and appearance settings |
 | `TypographyFont` | `typography-font.svg` | Terminal font settings |
 | `Account` | `account.svg` | A signed-in person or service account (for example GitHub) |

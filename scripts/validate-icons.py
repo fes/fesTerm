@@ -25,7 +25,7 @@ EXPECTED = {
     "copy", "dev-tunnel", "diagnostics", "disclosure", "disconnect", "error", "file-transfer",
     "home-directory",
     "host-key-verification",
-    "edit", "keyboard-shortcuts", "local-terminal", "maximize", "minimize",
+    "edit", "keyboard-shortcuts", "local-terminal", "maximize", "microphone", "minimize",
     "external-link", "markdown-document", "new-profile", "new-session", "next-match", "outline",
     "overflow", "overflow-vertical", "parent-directory", "paste", "previous-match", "proceed",
     "profile", "reattach", "reconnect", "refresh", "remote-globe", "remote-tunnel", "rendered-view", "restore",

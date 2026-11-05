@@ -1,6 +1,7 @@
 //! iOS feasibility host: offline by default, with opt-in transient live SSH.
 
 mod app_lock;
+mod dictation;
 #[cfg_attr(not(feature = "live-ssh"), allow(dead_code))] // SFTP needs the SSH transport
 mod files;
 #[cfg(test)]
@@ -173,6 +174,84 @@ impl SuspensionHandle {
     }
 }
 
+/// Applies native lifecycle callbacks to the shared [`Lifecycle`] and live sessions.
+///
+/// winit reports `applicationWillResignActive` as `Suspended`. A dictation
+/// permission alert only resigns active, so that suspension is deferred: live
+/// sessions and dictation survive the alert. If the app then really enters the
+/// background, the deferred suspension is applied as before.
+pub struct NativeLifecycle {
+    lifecycle: Rc<Cell<Lifecycle>>,
+    #[cfg(feature = "live-ssh")]
+    suspension: SuspensionHandle,
+    deferred: bool,
+}
+
+impl NativeLifecycle {
+    pub fn new(
+        lifecycle: Rc<Cell<Lifecycle>>,
+        #[cfg(feature = "live-ssh")] suspension: SuspensionHandle,
+    ) -> Self {
+        Self {
+            lifecycle,
+            #[cfg(feature = "live-ssh")]
+            suspension,
+            deferred: false,
+        }
+    }
+
+    pub fn get(&self) -> Lifecycle {
+        self.lifecycle.get()
+    }
+
+    fn update(&self, update: impl FnOnce(&mut Lifecycle)) {
+        let mut state = self.lifecycle.get();
+        update(&mut state);
+        self.lifecycle.set(state);
+    }
+
+    /// Returns whether the renderer should also be resumed.
+    pub fn resumed(&mut self) -> bool {
+        if std::mem::take(&mut self.deferred) {
+            return false;
+        }
+        self.update(Lifecycle::resume);
+        true
+    }
+
+    /// Returns whether the app was suspended (false when deferred for a
+    /// dictation permission alert).
+    pub fn suspended(&mut self, permission_prompt: bool) -> bool {
+        if permission_prompt {
+            self.deferred = true;
+            return false;
+        }
+        self.deferred = false;
+        self.suspend();
+        true
+    }
+
+    /// The app entered the background. Returns whether a deferred suspension
+    /// was applied now.
+    pub fn entered_background(&mut self) -> bool {
+        if !std::mem::take(&mut self.deferred) {
+            return false;
+        }
+        self.suspend();
+        true
+    }
+
+    pub fn memory_warning(&self) {
+        self.update(Lifecycle::memory_warning);
+    }
+
+    fn suspend(&self) {
+        #[cfg(feature = "live-ssh")]
+        self.suspension.suspend();
+        self.update(Lifecycle::suspend);
+    }
+}
+
 /// Deliberately discards bytes: the spike must not pretend to be a shell or
 /// save what a tester types. Uses the renderer's existing input contract.
 #[derive(Default)]
@@ -285,6 +364,8 @@ pub struct MobileApp {
     last_custom_keyboard: terminal_keyboard::KeyboardKind,
     terminal_keyboard: terminal_keyboard::TerminalKeyboard,
     terminal_keyboard_input: bool,
+    dictation: Option<festerm_ios_window::Dictation>,
+    dictation_tab: Option<u64>,
     #[cfg(feature = "live-ssh")]
     tunnel: tunnel_link::TunnelUi,
     caps: model::Capabilities,
@@ -355,6 +436,8 @@ impl MobileApp {
             last_custom_keyboard: terminal_keyboard::KeyboardKind::HoldSymbols,
             terminal_keyboard: terminal_keyboard::TerminalKeyboard::default(),
             terminal_keyboard_input: false,
+            dictation: None,
+            dictation_tab: None,
             caps: model::Capabilities::production(),
             tabs: Vec::new(),
             active_tab: None,
@@ -842,6 +925,14 @@ impl MobileApp {
 
     fn show_content(&mut self, ui: &mut egui::Ui) {
         let lifecycle = self.lifecycle.get();
+        // Permission alerts never count as suspensions (see NativeLifecycle).
+        if !self.terminal_surface()
+            || !self.terminal_input_ready(lifecycle)
+            || self.dictation_tab != self.active_tab
+            || lifecycle.suspensions != self.observed_suspensions
+        {
+            self.cancel_dictation();
+        }
         if !self.terminal_surface() || !lifecycle.active || !ui.input(|input| input.focused) {
             self.terminal_keyboard.cancel();
         }
@@ -882,6 +973,7 @@ impl MobileApp {
             let hidden = lock.gate(ui, lifecycle.active);
             lock.frame_presented();
             if hidden {
+                self.cancel_dictation();
                 self.gestures.cancel();
                 self.terminal_keyboard.cancel();
                 self.clear_sticky_modifiers();
@@ -902,6 +994,7 @@ impl MobileApp {
         self.show_sheets(ui.ctx(), bounds);
         self.show_files_sheets(ui.ctx(), bounds);
         self.show_host_setup(ui.ctx(), bounds);
+        self.show_dictation(ui.ctx(), bounds);
     }
 
     fn show_host_setup(&mut self, ctx: &egui::Context, bounds: egui::Rect) {
@@ -1514,6 +1607,7 @@ impl MobileApp {
     }
 
     fn switch_workspace(&mut self, workspace: workspaces::Workspace) {
+        self.cancel_dictation();
         if self.workspace == workspace {
             return;
         }
@@ -1528,6 +1622,7 @@ impl MobileApp {
     }
 
     fn reset_fixture(&mut self) {
+        self.cancel_dictation();
         self.switch_workspace(workspaces::Workspace::Terminal);
         self.gestures.cancel();
         if self.active_is_local() {
@@ -1719,7 +1814,7 @@ impl MobileApp {
     }
 
     fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
-        let input_ready = self.terminal_input_ready(lifecycle);
+        let input_ready = self.terminal_input_ready(lifecycle) && !self.dictation_open();
         #[cfg(feature = "live-ssh")]
         let read_only = self
             .sink
@@ -1828,7 +1923,11 @@ impl MobileApp {
                 return;
             }
         }
-        let history_ready = lifecycle.active && !self.editor.open && (input_ready || read_only);
+        let input_ready = input_ready && !self.dictation_open();
+        let history_ready = lifecycle.active
+            && !self.editor.open
+            && !self.dictation_open()
+            && (input_ready || read_only);
         if self.menu_open || !ui.input(|input| input.focused) {
             self.terminal_keyboard.cancel();
         }
@@ -1911,6 +2010,9 @@ impl MobileApp {
 
     fn apply_key_row(&mut self, ctx: &egui::Context, action: terminal_chrome::KeyRowAction) {
         use terminal_chrome::KeyRowAction;
+        if self.dictation_open() {
+            return;
+        }
         match action {
             KeyRowAction::None => {}
             KeyRowAction::Key(Key::Character(character)) => {
@@ -1936,6 +2038,7 @@ impl MobileApp {
                     self.input_notice = Some("The clipboard has no text to paste");
                 }
             }
+            KeyRowAction::Dictate => self.begin_dictation(ctx),
             KeyRowAction::Escape => self.send_key(Key::Escape),
             KeyRowAction::Tab => self.send_key(Key::Tab),
             KeyRowAction::ToggleControl => self.control = !self.control,

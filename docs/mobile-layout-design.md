@@ -7,6 +7,29 @@ Companion to ADR 0031 and
 narrow-width precedent to phone/tablet form factors rather than introducing
 a separate device-specific layout system.
 
+## On-device dictation
+
+The experimental Hold symbols and Shell row keyboards add a microphone icon
+(accessible name **Mic**) immediately after the Left/Up/Down/Right arrows in the
+pinned utility row, before Extended keys. Dictation replaces terminal input
+with a bounded review sheet:
+explicit permission/capability checks, visible Listening, **Stop and review**,
+editable single-line text, **Insert**, and **Cancel**. Insert never presses
+Return; the user submits separately. It rejects control characters and line
+breaks, clears modifiers and revalidates the original ready session.
+
+Audio stays on-device, capture has a native 45-second maximum, and only the
+latest 4096-byte transcript revision is retained. Stop (or the deadline) ends
+audio and briefly shows **Finishing transcription** while the recognizer
+delivers its final punctuated result (at most 1.5 seconds). A first-use
+permission alert does not suspend the app's sessions. Background/lock/interruption,
+navigation and session replacement stop and cancel without replay. No audio
+or transcript is saved or logged. Unsupported recognition fails explicitly,
+without cloud fallback. **Edit text manually** permits preview-flow testing
+on Simulator but does not simulate or qualify speech recognition.
+See [ADR 0068](adr/0068-ios-on-device-terminal-dictation.md), `MOB-07` and
+[#564](https://github.com/fes/fesTerm/issues/564) for the remaining native gates.
+
 ## Principle: key layout off measured breakpoints, not device type
 
 `docs/sftp-ui-design.md` already documents a narrow-width fallback for the
@@ -94,7 +117,7 @@ Forms and authentication
 continue to use the native keyboard regardless of the terminal preference.
 
 Both terminal layouts follow the owner's 2026-11-02 keyboard bundle: a grouped
-Esc/Tab/Ctrl/Alt/Shift utility strip with Left/Down/Up/Right arrows, permanent
+Esc/Tab/Ctrl/Alt/Shift utility strip with Left/Up/Down/Right arrows, permanent
 number row, QWERTY with an inset middle row, synchronized lower Shift and
 Backspace, and a symbols/ABC layer, comma, Space, period and Return. Shell row
 adds directly tappable `/ \ - _ ' " | & $ ~`. Hold symbols instead shows those

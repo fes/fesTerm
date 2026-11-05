@@ -82,6 +82,8 @@ def bundle_info(live_ssh: bool = False) -> dict:
         "LSRequiresIPhoneOS": True,
         # Required by LocalAuthentication (festerm-ios-lock); without it Face ID is denied.
         "NSFaceIDUsageDescription": "fesTerm uses Face ID to unlock the app when app lock is on.",
+        "NSMicrophoneUsageDescription": "Record speech only when you choose on-device dictation. Audio is not saved or sent to a server.",
+        "NSSpeechRecognitionUsageDescription": "Transcribe speech on this device for review before you insert text into the terminal.",
         # Make Documents/ (the This iPhone pane's root) visible in the Files app.
         "UIFileSharingEnabled": True,
         "LSSupportsOpeningDocumentsInPlace": True,

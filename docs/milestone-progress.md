@@ -19,6 +19,31 @@ reconnect remains pinned to the original session. Isolated regressions cover the
 policy and publication boundaries; signed service and physical-iOS qualification
 remain in DT-05/07. The existing live installation was not changed.
 
+## iOS on-device terminal dictation spike
+
+The owner asked to dictate without leaving either terminal-user keyboard.
+The existing native input boundary now adds public Speech/AVFAudio capture,
+while the mobile composition root owns a volatile review/Insert sheet. Local
+capability checks and per-request on-device enforcement exclude cloud fallback.
+Revisions replace rather than append, native recording has a 45-second limit,
+and explicit Insert rejects line breaks/controls and reuses core paste encoding
+without modifiers or an implicit Return. Generation and source-tab checks,
+native lifecycle cancellation and navigation cleanup prevent late replay.
+
+The owner changed delivery from a physical iPhone to Simulator. An explicitly
+labelled manual editor can exercise review there if Apple's local recognizer
+is unavailable; it does not fabricate recognition evidence. ADR 0068 and #564
+keep device/language/model, offline audio, permission and privacy qualification
+separate from portable tests and a Simulator build/launch.
+
+Review found two lifecycle defects. winit maps `applicationWillResignActive` to
+`Suspended`, so the first Speech/Microphone permission alert stopped plain SSH
+and cancelled dictation; the host now defers that one suspension while a
+permission request is in flight and applies it only if the app really enters
+the background. Stop also cancelled the recognition task immediately after
+ending audio, so review showed the last lagging partial; a short `Finishing`
+phase now waits for the final result, an error or a 1.5-second grace timer.
+
 ## 0.14.2: iOS field editing and Dev Tunnel resiliency
 
 This patch packages five fixes. iOS profile form fields now support the native

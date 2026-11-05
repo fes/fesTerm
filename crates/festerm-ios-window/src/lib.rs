@@ -11,6 +11,14 @@ pub enum KeyboardMode {
 
 mod field;
 pub use field::{FieldDocument, FieldInput, FieldModel, FieldSync};
+mod dictation;
+pub use dictation::{
+    dictation_permission_prompt_in_flight, Dictation, DictationPhase, DictationText,
+    MAX_DICTATION_BYTES,
+};
+
+#[cfg(target_os = "ios")]
+mod speech;
 
 #[cfg(target_os = "ios")]
 mod ios;
