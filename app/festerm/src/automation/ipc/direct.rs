@@ -638,6 +638,75 @@ mod tests {
         assert!(fixture.cancelled.load(Ordering::Acquire));
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn coordinator_stop_wakes_a_direct_peer_before_fingerprint_display() {
+        let (mut coordinator, _app, _, _) = super::super::super::tests::fixture();
+        coordinator.peers.clear();
+        let wake = Wake::default();
+        let wake_owner = {
+            let wake = wake.clone();
+            Arc::new(move || wake.notify())
+        };
+        let surface = coordinator.direct_verification_surface();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let verifier = loop {
+            match surface.reserve(
+                17,
+                crate::application::WindowId::PRIMARY,
+                coordinator.stop.clone(),
+                coordinator.privacy_gate.clone(),
+                Arc::new(|| {}),
+                wake_owner.clone(),
+            ) {
+                Ok(verifier) => break verifier,
+                Err(super::super::super::verification::Error::Busy)
+                    if Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => panic!("could not reserve comparison: {error:?}"),
+            }
+        };
+        let (host_socket, _client) = UnixStream::pair().unwrap();
+        host_socket.set_nonblocking(true).unwrap();
+        let channel = SecureTransport::new(
+            host_socket,
+            Role::Application,
+            verifier,
+            Duration::from_secs(8),
+            MAX_FRAME_DURATION,
+        )
+        .unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (events, _receiver) = mpsc::sync_channel(1);
+        let mut host = Peer::new(
+            channel,
+            Admission {
+                open: Arc::new(AtomicBool::new(true)),
+                cancelled: cancelled.clone(),
+                fail_cleanup: false,
+            },
+            PeerContext {
+                bootstrap: QualifiedBootstrap::synthetic(),
+                key: 17,
+                events,
+                wake_ui: Arc::new(|| {}),
+                stop: coordinator.stop.clone(),
+                wake: wake.clone(),
+            },
+        );
+        assert_eq!(host.step(), Ok(Step::Blocked));
+        assert!(coordinator.verification.view().is_none());
+        assert!(coordinator.peers.is_empty());
+
+        coordinator.stop_mcp();
+        tokio::time::timeout(Duration::from_secs(1), wake.notified())
+            .await
+            .expect("pre-fingerprint direct peer did not wake on stop");
+        assert_eq!(host.step(), Ok(Step::Closed));
+        assert!(cancelled.load(Ordering::Acquire));
+    }
+
     #[test]
     fn direct_peer_rechecks_original_frame_after_admission_contention() {
         let mut fixture = Fixture::new(|socket| socket);

@@ -44,9 +44,10 @@ impl Liveness {
         self.alive() && self.pending.load(Ordering::Acquire)
     }
 
-    fn invalidate(&self) {
-        self.alive.store(false, Ordering::Release);
+    fn invalidate(&self) -> bool {
+        let was_alive = self.alive.swap(false, Ordering::AcqRel);
         self.pending.store(false, Ordering::Release);
+        was_alive
     }
 }
 
@@ -106,9 +107,18 @@ struct Prompt {
     wake_owner: Wake,
 }
 
+struct Reservation {
+    live: Arc<Liveness>,
+    wake_owner: Wake,
+}
+
 struct Shared {
     pending: SyncSender<Prompt>,
+    // A cancelled verifier may leave its prompt queued after releasing the reservation.
+    pending_occupied: AtomicBool,
+    reservations: SyncSender<Reservation>,
     reserved: AtomicBool,
+    owner_alive: AtomicBool,
     generation: AtomicU64,
     quarantined: Arc<AtomicBool>,
 }
@@ -119,20 +129,28 @@ pub(super) struct Surface(Arc<Shared>);
 pub(super) struct Owner {
     surface: Surface,
     pending: Receiver<Prompt>,
+    reservations: Receiver<Reservation>,
+    active: Option<Reservation>,
     current: Option<Prompt>,
 }
 
 impl Default for Owner {
     fn default() -> Self {
         let (sender, pending) = mpsc::sync_channel(1);
+        let (reservation_sender, reservations) = mpsc::sync_channel(1);
         Self {
             surface: Surface(Arc::new(Shared {
                 pending: sender,
+                pending_occupied: AtomicBool::new(false),
+                reservations: reservation_sender,
                 reserved: AtomicBool::new(false),
+                owner_alive: AtomicBool::new(true),
                 generation: AtomicU64::new(0),
                 quarantined: Arc::new(AtomicBool::new(false)),
             })),
             pending,
+            reservations,
+            active: None,
             current: None,
         }
     }
@@ -156,7 +174,25 @@ impl Owner {
             let prompt = self.current.take().expect("current prompt was checked");
             self.dismiss(prompt);
         }
-        match self.pending.try_recv() {
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|reservation| !reservation.live.alive())
+        {
+            let reservation = self.active.take().expect("active reservation was checked");
+            self.retire(reservation);
+        }
+        match self.reservations.try_recv() {
+            Ok(reservation) if !reservation.live.alive() => self.retire(reservation),
+            Ok(reservation) if self.active.is_none() => self.active = Some(reservation),
+            Ok(reservation) => {
+                self.retire(reservation);
+                self.quarantine();
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => self.quarantine(),
+        }
+        match self.take_prompt() {
             Ok(prompt) if prompt.view.is_current() => {
                 if self.current.is_some() {
                     self.dismiss(prompt);
@@ -226,14 +262,36 @@ impl Owner {
         if let Some(prompt) = self.current.take() {
             self.dismiss(prompt);
         }
-        if let Ok(prompt) = self.pending.try_recv() {
+        if let Ok(prompt) = self.take_prompt() {
             self.dismiss(prompt);
+        }
+        if let Some(reservation) = self.active.take() {
+            self.retire(reservation);
+        }
+        if let Ok(reservation) = self.reservations.try_recv() {
+            self.retire(reservation);
         }
     }
 
     fn dismiss(&self, prompt: Prompt) {
-        prompt.view.live.invalidate();
-        self.surface.wake(&prompt.wake_owner);
+        if prompt.view.live.invalidate() {
+            self.surface.wake(&prompt.wake_owner);
+        }
+    }
+
+    fn take_prompt(&self) -> Result<Prompt, TryRecvError> {
+        let prompt = self.pending.try_recv()?;
+        self.surface
+            .0
+            .pending_occupied
+            .store(false, Ordering::Release);
+        Ok(prompt)
+    }
+
+    fn retire(&self, reservation: Reservation) {
+        if reservation.live.invalidate() {
+            self.surface.wake(&reservation.wake_owner);
+        }
     }
 
     fn quarantine(&self) {
@@ -243,6 +301,7 @@ impl Owner {
 
 impl Drop for Owner {
     fn drop(&mut self) {
+        self.surface.0.owner_alive.store(false, Ordering::Release);
         self.revoke();
     }
 }
@@ -257,12 +316,16 @@ impl Surface {
         wake_ui: Wake,
         wake_owner: Wake,
     ) -> Result<Verifier, Error> {
-        if window != WindowId::PRIMARY || self.0.quarantined.load(Ordering::Acquire) {
+        if window != WindowId::PRIMARY
+            || !self.0.owner_alive.load(Ordering::Acquire)
+            || self.0.quarantined.load(Ordering::Acquire)
+        {
             return Err(Error::Unavailable);
         }
         let _admission = admission()?;
         if stop.load(Ordering::Acquire)
             || privacy.is_closed()
+            || !self.0.owner_alive.load(Ordering::Acquire)
             || self.0.quarantined.load(Ordering::Acquire)
         {
             return Err(Error::Unavailable);
@@ -271,6 +334,10 @@ impl Surface {
             .reserved
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| Error::Busy)?;
+        if self.0.pending_occupied.load(Ordering::Acquire) {
+            self.0.reserved.store(false, Ordering::Release);
+            return Err(Error::Busy);
+        }
         let generation =
             match self
                 .0
@@ -291,6 +358,32 @@ impl Surface {
             privacy,
             quarantined: self.0.quarantined.clone(),
         });
+        let reservation = Reservation {
+            live: live.clone(),
+            wake_owner: wake_owner.clone(),
+        };
+        match self.0.reservations.try_send(reservation) {
+            Ok(()) => {}
+            Err(TrySendError::Full(reservation)) => {
+                self.0.reserved.store(false, Ordering::Release);
+                drop(_admission);
+                drop(reservation);
+                return Err(Error::Busy);
+            }
+            Err(TrySendError::Disconnected(reservation)) => {
+                self.0.quarantined.store(true, Ordering::Release);
+                self.0.reserved.store(false, Ordering::Release);
+                drop(_admission);
+                drop(reservation);
+                return Err(Error::Unavailable);
+            }
+        }
+        drop(_admission);
+        if !self.0.owner_alive.load(Ordering::Acquire) {
+            live.invalidate();
+            self.0.reserved.store(false, Ordering::Release);
+            return Err(Error::Unavailable);
+        }
         let (decision, decisions) = mpsc::sync_channel(1);
         Ok(Verifier {
             surface: self.clone(),
@@ -353,13 +446,32 @@ impl TrustedNativeVerification for Verifier {
             decision: self.decision.take().ok_or(NativeUnavailable)?,
             wake_owner: self.wake_owner.clone(),
         };
+        if self
+            .surface
+            .0
+            .pending_occupied
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            self.live.invalidate();
+            return Err(NativeUnavailable);
+        }
         match self.surface.0.pending.try_send(prompt) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
+                self.surface
+                    .0
+                    .pending_occupied
+                    .store(false, Ordering::Release);
                 self.live.invalidate();
+                self.surface.0.quarantined.store(true, Ordering::Release);
                 return Err(NativeUnavailable);
             }
             Err(TrySendError::Disconnected(_)) => {
+                self.surface
+                    .0
+                    .pending_occupied
+                    .store(false, Ordering::Release);
                 self.live.invalidate();
                 self.surface.0.quarantined.store(true, Ordering::Release);
                 return Err(NativeUnavailable);
@@ -663,7 +775,7 @@ mod tests {
             Err(Error::Unavailable)
         );
         owner.revoke();
-        assert!(wakes.load(Ordering::Relaxed) > 0);
+        assert_eq!(wakes.load(Ordering::Relaxed), 1);
         assert!(matches!(decision(&mut verifier), NativeDecision::Denied));
     }
 
@@ -717,6 +829,113 @@ mod tests {
         assert!(!view.is_current());
         assert!(wakes.load(Ordering::Relaxed) > 0);
         assert!(matches!(decision(&mut verifier), NativeDecision::Denied));
+    }
+
+    #[test]
+    fn dropping_the_ui_owner_before_display_retires_the_reservation() {
+        let (owner, mut verifier, wakes, stop) = fixture();
+        let surface = owner.surface();
+        let privacy = verifier.live.privacy.clone();
+        drop(owner);
+
+        assert!(wakes.load(Ordering::Relaxed) > 0);
+        assert!(matches!(verifier.poll_decision(), NativeDecision::Denied));
+        assert!(verifier.show_local_fingerprint(&"5".repeat(64)).is_err());
+        assert!(matches!(
+            surface.reserve(
+                8,
+                WindowId::PRIMARY,
+                stop,
+                privacy,
+                Arc::new(|| {}),
+                Arc::new(|| {})
+            ),
+            Err(Error::Unavailable)
+        ));
+    }
+
+    #[test]
+    fn stale_reservation_is_bounded_and_reclaimed_before_reuse() {
+        let (mut owner, mut verifier, _, stop) = fixture();
+        let privacy = verifier.live.privacy.clone();
+        let surface = owner.surface();
+        verifier.cancel().unwrap();
+        assert!(matches!(
+            surface.reserve(
+                8,
+                WindowId::PRIMARY,
+                stop.clone(),
+                privacy.clone(),
+                Arc::new(|| {}),
+                Arc::new(|| {})
+            ),
+            Err(Error::Busy)
+        ));
+        owner.advance();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut next = loop {
+            match surface.reserve(
+                8,
+                WindowId::PRIMARY,
+                stop.clone(),
+                privacy.clone(),
+                Arc::new(|| {}),
+                Arc::new(|| {}),
+            ) {
+                Ok(verifier) => break verifier,
+                Err(Error::Busy) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => panic!("could not reuse comparison surface: {error:?}"),
+            }
+        };
+        display(&mut next, &"9".repeat(64));
+        owner.advance();
+        let view = owner.view().unwrap();
+        assert_eq!(view.channel, 8);
+        assert_ne!(view.generation, verifier.generation);
+    }
+
+    #[test]
+    fn queued_stale_prompt_is_reclaimed_before_surface_reuse() {
+        let (mut owner, mut verifier, _, stop) = fixture();
+        let privacy = verifier.live.privacy.clone();
+        let surface = owner.surface();
+        owner.advance();
+        display(&mut verifier, &"a".repeat(64));
+        verifier.cancel().unwrap();
+        assert!(matches!(
+            surface.reserve(
+                8,
+                WindowId::PRIMARY,
+                stop.clone(),
+                privacy.clone(),
+                Arc::new(|| {}),
+                Arc::new(|| {})
+            ),
+            Err(Error::Busy)
+        ));
+        owner.advance();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut next = loop {
+            match surface.reserve(
+                8,
+                WindowId::PRIMARY,
+                stop.clone(),
+                privacy.clone(),
+                Arc::new(|| {}),
+                Arc::new(|| {}),
+            ) {
+                Ok(verifier) => break verifier,
+                Err(Error::Busy) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => panic!("could not reuse comparison surface: {error:?}"),
+            }
+        };
+        display(&mut next, &"b".repeat(64));
+        owner.advance();
+        assert_eq!(owner.view().unwrap().fingerprint, "b".repeat(64));
     }
 
     #[test]

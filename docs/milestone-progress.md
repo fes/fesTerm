@@ -7638,4 +7638,6 @@ retains a deferred owner wake until the lock is released. Coordinator stop,
 expiry and exceptional closure paths use the same release rule, avoiding both
 an idle owner and executor callbacks under admission. Tests cover guarded
 closure and coordinator stop. Waking an owner before connection announcement
-and qualifying the production listener and native boundaries remain open.
+is also covered for a reserved verifier on normal coordinator stop or UI-owner
+destruction before fingerprint display. Other lifecycle wakeups and
+qualification of the production listener and native boundaries remain open.
