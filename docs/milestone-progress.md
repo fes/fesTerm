@@ -32,7 +32,7 @@ native lifecycle cancellation and navigation cleanup prevent late replay.
 
 The owner changed delivery from a physical iPhone to Simulator. An explicitly
 labelled manual editor can exercise review there if Apple's local recognizer
-is unavailable; it does not fabricate recognition evidence. ADR 0066 and #564
+is unavailable; it does not fabricate recognition evidence. ADR 0068 and #564
 keep device/language/model, offline audio, permission and privacy qualification
 separate from portable tests and a Simulator build/launch.
 

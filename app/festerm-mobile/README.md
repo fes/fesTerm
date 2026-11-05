@@ -164,7 +164,7 @@ startup choice in **Settings → Default keyboard**; **More → Keyboard** switc
 without changing it. The plain keyboard icon hides input; the centered Space
 bar is unobstructed by switching controls. More also offers Paste and Extended
 keys. Character presses show enlarged key previews. Both terminal keyboards
-offer **Mic** for the [on-device dictation spike](../../docs/adr/0066-ios-on-device-terminal-dictation.md):
+offer **Mic** for the [on-device dictation spike](../../docs/adr/0068-ios-on-device-terminal-dictation.md):
 Stop and review (a brief Finishing step collects the final punctuated text), edit, then Insert; no Return is generated. Capability/permission
 failure is explicit, never a cloud fallback. Capture stops after 45 seconds
 and on native background/lock/interruption or navigation. Audio/transcripts

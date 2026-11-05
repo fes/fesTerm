@@ -1,4 +1,4 @@
-# ADR 0066: On-device dictation for iOS terminal keyboards
+# ADR 0068: On-device dictation for iOS terminal keyboards
 
 - **Status:** Proposed
 - **Date:** 2026-11-04

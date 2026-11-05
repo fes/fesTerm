@@ -3717,7 +3717,7 @@
       "id": "ios-on-device-dictation",
       "edges": ["MOB-07"],
       "requirements": ["docs/mobile-layout-design.md#on-device-dictation"],
-      "decisions": ["ADR-0066"],
+      "decisions": ["ADR-0068"],
       "automated_tests": [
         "dictation_requires_review_and_single_line_bounded_text",
         "dictation_revisions_replace_and_stale_callbacks_cannot_restore_cancelled_text",

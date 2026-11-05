@@ -27,7 +27,7 @@ navigation and session replacement stop and cancel without replay. No audio
 or transcript is saved or logged. Unsupported recognition fails explicitly,
 without cloud fallback. **Edit text manually** permits preview-flow testing
 on Simulator but does not simulate or qualify speech recognition.
-See [ADR 0066](adr/0066-ios-on-device-terminal-dictation.md), `MOB-07` and
+See [ADR 0068](adr/0068-ios-on-device-terminal-dictation.md), `MOB-07` and
 [#564](https://github.com/fes/fesTerm/issues/564) for the remaining native gates.
 
 ## Principle: key layout off measured breakpoints, not device type
