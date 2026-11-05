@@ -121,6 +121,24 @@ disappears while the tunnel, host fingerprint and exact daemon generation stay
 unchanged; no existing live installation was upgraded by these local tests.
 This does not qualify daemon survival after the originating job closes.
 
+Opt-in daemon replacement (ADR 0066) adds deterministic journal, persistent
+crash-budget, exact-generation reconciliation, watchdog-lease and honest iOS
+refusal coverage. DT-05 still requires signed-host tests for abrupt daemon
+termination with a healthy relay, initial Windows job containment, intentional
+shell exit (including nonzero), operator kill, supervisor interruption,
+crash-loop refusal and policy revocation on Windows/Linux/macOS. DT-07 retains
+physical iOS confirmation that automatic recovery refuses a replacement
+generation and explicit reconnect opens a fresh shell without replay. Legacy
+uninstrumented generations must refuse automatic replacement. These are native
+qualification checks, not evidence that the disappeared shell was recovered.
+
+Isolated Windows native probes also passed for PowerShell 7 startup with the
+requested generation and a retained readiness journal, and for ordinary shell
+exit with a retained exit-code marker that refuses replacement. Windows native
+fixtures use user temporary storage so journal validation retains the same
+trusted-parent policy as production, rather than weakening it for a workspace
+drive. These task-free probes do not qualify signed service supervision.
+
 Publication and broader qualification remain gated on clarification of
 standalone fesTerm usage rights, as recorded in ADR 0053. The owner subsequently
 authorized the bounded service-application tests and integration below; the current service terms

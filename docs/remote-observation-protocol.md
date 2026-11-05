@@ -14,6 +14,9 @@ An omitted option preserves consent. Ordinary `--file-root` / writes never
 imply observation consent, and observation never implies those grants.
 Owned workers stop before policy changes become runnable; tunnel/key/shell
 identity stays unchanged. A different helper release requires explicit upgrade.
+Daemon recovery uses the same installer lock, reloads current policy before
+mutation and holds it through launch/publication, preventing a stale worker
+snapshot from restoring a journaled revocation.
 
 Each service incarnation assigns an opaque root ID to a retained, trusted,
 no-follow directory capability. Root IDs survive reconnect to that same service

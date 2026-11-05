@@ -323,12 +323,37 @@ enable Linux lingering or modify the original web-forwarding service. Setup
 returns after verified worker readiness; the terminal need not remain open.
 Auto-start is at sign-in (Linux can start at boot when lingering was already
 enabled). Neither daemon-shell reboot survival nor automatic replacement of a
-dead/stale generation is promised.
+dead/stale generation is promised by default.
+
+For an updated managed host, `--restart-unexpected` (`-RestartUnexpected` on
+Windows) explicitly opts into [bounded daemon replacement](adr/0066-opt-in-managed-daemon-recovery.md).
+Use `--no-restart-unexpected` / `-NoRestartUnexpected` to disable it; combine
+with the existing upgrade flag when switching helper releases. Changing this
+policy stops/restarts only the owned worker. It preserves tunnel, account and
+host key, but a replacement is a **new default shell**, not recovery of running
+programs or terminal state. Automatic client reconnect never switches to that
+new generation: attach explicitly. Three starts within ten minutes stop further
+replacement; interrupted creation, clock rollback and uncertain identity refuse.
+Named profiles discover the new target; generation-pinned connection JSON must
+be refreshed through a setup rerun before a new explicit attach.
+Observed shell exit (even nonzero), operator termination and normal shutdown
+stay stopped. Legacy/missing/corrupt lifecycle evidence also refuses; a bridge
+upgrade cannot retrofit diagnostics into an already-running old daemon.
+
+The worker checks daemon liveness every second independently of relay health,
+stops advertising a dead target and, when opted in, retries after 15 seconds.
+New daemons retain a private `lifecycle/<session-name>.json` under their original
+runtime directory: at most 64 typed entries / 32 KiB per name, including UTC
+epoch-millisecond timestamps, PID/generation, startup/readiness, Windows
+breakaway outcome, shell exit status, stop intent, panic, sanitized failure
+stage/native error code and shutdown result. The host worker log records loss
+and replacement generations. Neither contains terminal output, credentials or
+raw error strings. An abrupt disappearance still does not identify its killer.
 
 Linux services and Windows workers retry 15 seconds after a transient failure
 (relay drop, bridge exit/crash, token or network error), indefinitely, keeping
 the same tunnel, host key and daemon session. Refusals a restart cannot fix
-(the recorded daemon generation is gone, or the account, host identity or
+(the recorded daemon generation is gone without authorized recovery, or the account, host identity or
 tunnel changed) exit with status 78 and stay stopped until setup is rerun.
 Windows retries within the existing worker process, without changing its
 owned task or restarting the windowless launcher. Every attempt rechecks the
@@ -337,7 +362,8 @@ scoped token. Clean bridge shutdown stops the worker. Failed attempts terminate
 their bridge and remove temporary readiness data before retrying; failure to
 clean up refuses rather than accumulating children or files. Existing Windows
 installations gain this behavior only after an explicit helper upgrade.
-macOS services still start only at sign-in and do not retry. On every platform the
+Without daemon-recovery opt-in, macOS services still start only at sign-in and
+do not retry. On every platform the
 worker appends start, ready, retry, bridge-exit, worker-exit and client open/close
 events to `worker.log` in its private state directory (one 256 KiB file plus
 one rotated `worker.log.1`). Lines hold timestamps, PIDs and stage codes only:

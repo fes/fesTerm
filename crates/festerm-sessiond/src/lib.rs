@@ -1,5 +1,8 @@
 //! Client backend for fesTerm's native local session persistence daemon.
 
+pub mod lifecycle;
+pub mod private_storage;
+
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt,

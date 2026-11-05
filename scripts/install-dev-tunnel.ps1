@@ -11,6 +11,8 @@ param(
     [switch]$DisableFiles,
     [string[]]$ObserveRoot = @(),
     [switch]$DisableObservation,
+    [switch]$RestartUnexpected,
+    [switch]$NoRestartUnexpected,
     [string]$FriendlyName = ''
 )
 
@@ -21,6 +23,9 @@ if (($DisableFiles -and ($FileRoot -or $AllowFileWrite)) -or ($AllowFileWrite -a
 }
 if ($ObserveRoot.Count -gt 4 -or ($DisableObservation -and $ObserveRoot.Count -gt 0)) {
     throw 'Use up to four -ObserveRoot directories, or -DisableObservation.'
+}
+if ($RestartUnexpected -and $NoRestartUnexpected) {
+    throw 'Choose only one unexpected-failure restart policy.'
 }
 if ([Security.Principal.WindowsIdentity]::GetCurrent().IsSystem) {
     throw 'Run setup as your normal user, not SYSTEM.'
@@ -194,6 +199,8 @@ try {
     if ($DisableFiles) { $setupArguments += '--disable-files' }
     foreach ($rootPath in $ObserveRoot) { $setupArguments += @('--observe-root', $rootPath) }
     if ($DisableObservation) { $setupArguments += '--disable-observation' }
+    if ($RestartUnexpected) { $setupArguments += '--restart-unexpected' }
+    if ($NoRestartUnexpected) { $setupArguments += '--no-restart-unexpected' }
     if ($FriendlyName) {
         $setupArguments += @('--friendly-name', $FriendlyName.Trim())
     }

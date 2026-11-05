@@ -40,6 +40,7 @@ struct Script {
     detached: AtomicBool,
     displace: tokio::sync::Notify,
     received_input: Mutex<Vec<u8>>,
+    refuse_attach: AtomicBool,
 }
 
 fn script(attached_by: Option<Displacer>, takeover_allowed: bool) -> Arc<Script> {
@@ -51,6 +52,7 @@ fn script(attached_by: Option<Displacer>, takeover_allowed: bool) -> Arc<Script>
         detached: AtomicBool::new(false),
         displace: tokio::sync::Notify::new(),
         received_input: Mutex::new(Vec::new()),
+        refuse_attach: AtomicBool::new(false),
     })
 }
 
@@ -86,6 +88,12 @@ async fn host(mut stream: tokio::io::DuplexStream, script: Arc<Script>) {
     assert_eq!(kind, HELLO);
     let hello: Hello = serde_json::from_slice(&bytes).unwrap();
     script.hellos.lock().unwrap().push(hello.takeover);
+    if script.refuse_attach.load(Ordering::SeqCst) {
+        write_frame(&mut stream, festerm_tunnel_bridge::protocol::REFUSED, &[])
+            .await
+            .unwrap();
+        return;
+    }
     write_frame(&mut stream, CAPABILITIES, &[0, 0])
         .await
         .unwrap();
@@ -352,6 +360,21 @@ fn attach_requires_an_approved_unchanged_host() {
         f.client.attach(&id, notifier, &cancel),
         Err(TunnelError::HostChanged { .. })
     ));
+}
+
+#[test]
+fn host_refusal_does_not_claim_that_enabled_takeover_is_off() {
+    let f = fixture(script(Some(Displacer::Remote), true), false);
+    let id = profile(&f, true, true);
+    f.script.refuse_attach.store(true, Ordering::SeqCst);
+    let error = f
+        .client
+        .attach(&id, noop_session_event_notifier(), &CancelToken::new())
+        .err()
+        .unwrap();
+    assert_eq!(error, TunnelError::AttachRefused);
+    assert!(!error.to_string().contains("takeover is off"));
+    assert_eq!(*f.script.hellos.lock().unwrap(), [true]);
 }
 
 #[test]

@@ -418,13 +418,32 @@ fn main() {
     }
     if args == ["--help"] {
         println!(concat!(
-            "festerm-tunnel-setup [--managed] --devtunnel ABSOLUTE_CLI_PATH --state-dir ABSOLUTE_PRIVATE_DIRECTORY [--no-takeover] [--upgrade] [--friendly-name NAME]\n",
+            "festerm-tunnel-setup [--managed] --devtunnel ABSOLUTE_CLI_PATH --state-dir ABSOLUTE_PRIVATE_DIRECTORY ",
+            "[--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected]\n",
             "Default: new foreground-only setup in a new directory.\n",
-            "--managed: explicit per-user service setup; healthy reruns reuse the original private tunnel, host identity and exact shell generation, printing public profile JSON without credentials. Stale/partial/foreign state refuses, never creates a replacement. Add --upgrade to switch an existing installation's service to this release's helpers, keeping its tunnel, host key and running daemon session. Add --friendly-name NAME on first setup to name the tunnel's user-visible description.\n",
+            "--managed: explicit per-user service setup; healthy reruns reuse the original private tunnel, ",
+            "host identity and exact shell generation, printing public profile JSON without credentials. ",
+            "By default stale/partial/foreign state refuses, never creates a replacement. ",
+            "Add --upgrade to switch an existing installation's service to this release's helpers, ",
+            "keeping its tunnel, host key and running daemon session. ",
+            "Add --friendly-name NAME on first setup to name the tunnel's user-visible description.\n",
+            "--restart-unexpected: explicitly allow a NEW default shell after instrumented unexpected daemon loss, ",
+            "at most three starts per ten minutes; never after observed shell exit or operator stop. ",
+            "Missing evidence and uncertain creation refuse. --no-restart-unexpected disables this policy. ",
+            "Policy changes restart the owned worker; older helpers require --upgrade. ",
+            "Automatic client recovery never switches generations; reconnect explicitly. Programs/state are not restored.\n",
             "Managed filesystem policy: --file-root ABSOLUTE_DIRECTORY enables rooted enumeration/downloads; add --allow-file-write for uploads/mkdir. Rerun --file-root without writes to make it read-only, or --disable-files to revoke. Omitted policy preserves existing consent. Changes restart only owned hosting workers, never the shell or cloud tunnel. Different helper releases require --upgrade.\n",
             "Independent read-only observation: repeat --observe-root ABSOLUTE_DIRECTORY for at most four approved roots; --disable-observation revokes only observation. Omission preserves consent. Observation never grants filesystem writes, MCP enrollment or JavaScript. Revocation leaves hosting stopped if account/target verification is unavailable.\n",
-            "--serve --state-dir ABSOLUTE_PRIVATE_DIRECTORY: existing installation worker, no provisioning or key regeneration.\n",
-            "First setup uses interactive official GitHub login and creates one private 30-day tunnel, marked virtual port and retained default-shell session. Managed startup requires an unelevated user; sign-in auto-start does not preserve a shell through reboot. Linux services and Windows workers retry 15s after a transient bridge/relay failure (never after a stale-daemon/account/identity or unsafe-cleanup refusal, exit 78). Windows retries in-process and stops after clean bridge shutdown; existing hosts need an explicit helper upgrade. The worker always records start/ready/retry/exit and client open/close events, without credentials or terminal data, in the state directory's bounded worker.log. No remote file access by default; no ACL widening or automatic client reconnect."
+            "--serve --state-dir ABSOLUTE_PRIVATE_DIRECTORY: existing installation worker, no cloud provisioning or key regeneration.\n",
+            "First setup uses interactive official GitHub login and creates one private 30-day tunnel, ",
+            "marked virtual port and retained platform-default shell session. Managed startup requires an unelevated user; ",
+            "sign-in auto-start does not preserve a shell through reboot. Linux services and Windows workers retry 15s ",
+            "after transient bridge/relay failure; opted-in daemon supervision also retries on macOS. ",
+            "Identity, unauthorized stale-generation and unsafe-cleanup refusals exit 78. ",
+            "Existing hosts need an explicit helper upgrade. The worker records start/ready/retry/exit, ",
+            "daemon loss/replacement and client open/close events in bounded worker.log. ",
+            "Daemons retain bounded private lifecycle journals under the runtime root. ",
+            "No credentials or terminal data are logged. No remote file access, ACL widening or automatic client takeover/reconnect."
         ));
         return;
     }

@@ -42,6 +42,11 @@ listing/download/upload/mkdir grants without moving filesystem or network
 ownership into sessiond, changing legacy terminal frames or implementing client
 file-manager policy.
 
+The no-shell-replacement statements below remain the default. Owner-requested
+[ADR 0066](0066-opt-in-managed-daemon-recovery.md) adds explicit host opt-in to
+bounded fresh-shell replacement after instrumented unexpected daemon loss;
+it does not relax client generation pins or revive the old shell.
+
 Introduce an optional **separate executable/process**, provisionally
 `festerm-tunnel-bridge`, on the remote host. It terminates the Dev Tunnels
 connection and mediates access to that host user's existing daemon APIs.

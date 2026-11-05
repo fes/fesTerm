@@ -55,6 +55,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 - [ADR 0067: Rooted Dev Tunnel Host Filesystem](0067-rooted-dev-tunnel-host-filesystem.md) - explicit rooted listing/streamed transfers, independent file streams, conflict-checked publication and managed grant revocation; clients are separate
 
+- [ADR 0066: Opt-in Managed Daemon Recovery](0066-opt-in-managed-daemon-recovery.md) - bounded private lifecycle evidence, explicit unexpected-daemon replacement consent and unchanged client generation pins
+
 - [ADR 0053: Separate Dev Tunnels Bridge for Remote Persistent Sessions](0053-separate-dev-tunnels-session-bridge.md) - direct transport with a separate same-user bridge; scoped-token bootstrap, daemon ownership preserved, implementation and hosted/native qualification pending
 - [ADR 0054: iOS Keychain Secret Backend and Mobile Profile Store](0054-ios-keychain-and-mobile-profile-store.md) - Keychain-backed secret store for iOS and a UI-agnostic secret-free profile, host-trust and SSH-key crate
 - [ADR 0055: Platform-Neutral SFTP Core Crate for Mobile](0055-platform-neutral-sftp-core-crate.md) - UI-free bounded SFTP/sandbox crate over russh-sftp; atomic temp-rename transfers, conflict policies, real-sshd harness
