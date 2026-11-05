@@ -85,6 +85,7 @@ use std::io::{self, BufRead, Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod direct_input;
+pub mod identity;
 mod presentation;
 mod schema;
 pub mod secure_channel;

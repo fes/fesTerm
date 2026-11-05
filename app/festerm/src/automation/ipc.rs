@@ -258,7 +258,10 @@ impl Connection {
 }
 
 pub(super) enum Event {
-    Connected(Connection),
+    Connected {
+        connection: Connection,
+        identity: Option<festerm_automation_mcp::identity::VerifiedClientIdentity>,
+    },
     Message { key: u64, bytes: Vec<u8> },
 }
 
@@ -410,6 +413,7 @@ fn serve_peer(
     privacy_closed: Arc<AtomicBool>,
 ) {
     let result = (|| -> io::Result<()> {
+        let identity = authenticate_server_peer(&mut stream, &connection, &stop, &privacy_closed)?;
         let mut writer = stream.try_clone()?;
         prepare_writer(&mut writer)?;
         let writer_connection = connection.clone();
@@ -449,7 +453,10 @@ fn serve_peer(
         if stop.load(Ordering::Acquire)
             || privacy_closed.load(Ordering::Acquire)
             || events
-                .try_send(Event::Connected(connection.clone()))
+                .try_send(Event::Connected {
+                    connection: connection.clone(),
+                    identity,
+                })
                 .is_err()
         {
             connection.close();
@@ -484,6 +491,45 @@ fn serve_peer(
     }
     connection.close();
     wake();
+}
+
+fn authenticate_server_peer(
+    stream: &mut Stream,
+    connection: &Connection,
+    stop: &AtomicBool,
+    privacy_closed: &AtomicBool,
+) -> io::Result<Option<festerm_automation_mcp::identity::VerifiedClientIdentity>> {
+    use festerm_automation_mcp::identity::{AuthChallenge, ClientIdentityProof};
+
+    let nonce = super::random::<32>()
+        .map_err(|_| io::Error::other("MCP authentication challenge unavailable"))?;
+    let challenge = AuthChallenge::new(nonce);
+    let challenge_bytes = serde_json::to_vec(&challenge)?;
+    write_frame_until(
+        stream,
+        &challenge_bytes,
+        Instant::now() + FRAME_DEADLINE,
+        || !connection.is_closed() && !stop.load(Ordering::Acquire),
+    )?;
+
+    let response = read_frame(stream, &connection.closed, stop)?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "MCP identity proof missing"))?;
+    if response.len() > 1024
+        || connection.is_closed()
+        || stop.load(Ordering::Acquire)
+        || privacy_closed.load(Ordering::Acquire)
+    {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    let proof: Option<ClientIdentityProof> =
+        serde_json::from_slice(&response).map_err(|_| io::ErrorKind::InvalidData)?;
+    proof
+        .map(|proof| {
+            proof
+                .verify(&challenge)
+                .map_err(|_| io::ErrorKind::InvalidData.into())
+        })
+        .transpose()
 }
 
 fn peer_frame_is_live(
@@ -904,7 +950,7 @@ impl Listener {
 pub(crate) fn run_stdio() -> io::Result<()> {
     require_qualified_bootstrap()?;
     #[cfg(unix)]
-    let stream = {
+    let mut stream = {
         use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
         let (root, _directory) = endpoint_directory(false)?;
         let path = root.join("broker.sock");
@@ -921,7 +967,7 @@ pub(crate) fn run_stdio() -> io::Result<()> {
         stream
     };
     #[cfg(windows)]
-    let stream = {
+    let mut stream = {
         let cancelled = AtomicBool::new(false);
         let mut stream = Stream::connect(&pipe_name()?, FRAME_DEADLINE, &cancelled)?;
         stream.verify_server_user()?;
@@ -929,7 +975,41 @@ pub(crate) fn run_stdio() -> io::Result<()> {
         stream.set_write_timeout(FRAME_DEADLINE);
         stream
     };
+    authenticate_stdio_peer(&mut stream)?;
     proxy_stdio(stream, io::BufReader::new(io::stdin()), io::stdout())
+}
+
+fn authenticate_stdio_peer(stream: &mut Stream) -> io::Result<()> {
+    use festerm_automation_mcp::identity::{AuthChallenge, ClientIdentity, ClientIdentityProof};
+
+    let closed = AtomicBool::new(false);
+    let stop = AtomicBool::new(false);
+    let challenge = read_frame(stream, &closed, &stop)?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "MCP challenge missing"))?;
+    if challenge.len() > 1024 {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    let challenge: AuthChallenge =
+        serde_json::from_slice(&challenge).map_err(|_| io::ErrorKind::InvalidData)?;
+    let identity = match std::env::var("FESTERM_MCP_CLIENT_KEY") {
+        Ok(mut seed) => {
+            std::env::remove_var("FESTERM_MCP_CLIENT_KEY");
+            let identity = ClientIdentity::from_hex_seed(&seed);
+            zeroize::Zeroize::zeroize(&mut seed);
+            Some(identity.map_err(|_| io::ErrorKind::InvalidInput)?)
+        }
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+    };
+    let proof: Option<ClientIdentityProof> = identity
+        .as_ref()
+        .map(|identity| identity.proof(&challenge))
+        .transpose()
+        .map_err(|_| io::ErrorKind::InvalidData)?;
+    let response = serde_json::to_vec(&proof)?;
+    write_frame_until(stream, &response, Instant::now() + FRAME_DEADLINE, || true)
 }
 
 fn proxy_stdio(
@@ -2191,9 +2271,23 @@ mod tests {
             )
         });
 
+        let closed = AtomicBool::new(false);
+        let challenge_bytes = read_frame(&mut client, &closed, &stop)
+            .unwrap()
+            .unwrap();
+        let challenge: festerm_automation_mcp::identity::AuthChallenge =
+            serde_json::from_slice(&challenge_bytes).unwrap();
+        let identity =
+            festerm_automation_mcp::identity::ClientIdentity::from_hex_seed(&"07".repeat(32))
+                .unwrap();
+        let proof = Some(identity.proof(&challenge).unwrap());
+        write_frame(&mut client, &serde_json::to_vec(&proof).unwrap()).unwrap();
         assert!(matches!(
             incoming.recv_timeout(FRAME_DEADLINE).unwrap(),
-            Event::Connected(_)
+            Event::Connected {
+                identity: Some(_),
+                ..
+            }
         ));
         write_frame(&mut client, b"{\"request\":1}").unwrap();
         assert!(matches!(
@@ -2207,7 +2301,6 @@ mod tests {
                 &[],
             )
             .unwrap();
-        let closed = AtomicBool::new(false);
         assert_eq!(
             read_frame(&mut client, &closed, &stop).unwrap(),
             Some(b"{\"response\":1}\n".to_vec())

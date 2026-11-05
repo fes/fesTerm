@@ -55,6 +55,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0071: Explicit Managed Session Repair](0071-explicit-managed-session-repair.md) - explicit fresh-shell repair of a dead legacy host, preserved tunnel/key/grants and generation-journaled interruption safety
 
 - [ADR 0070: Read-Only Remote Observation](0070-read-only-remote-observation.md) - independent host roots, revision-checked reads, bounded native watches, daemon generation correlation and separately authorized exact-tab/root MCP exposure
+- [ADR 0071: Persistent MCP Client Identity and Capability Grants](0071-persistent-mcp-client-permissions.md) - host-defined permission groups, authenticated reconnect, durable read-only status and separately scoped controller input policy
 - [ADR 0066: Opt-in Managed Daemon Recovery](0066-opt-in-managed-daemon-recovery.md) - bounded private lifecycle evidence, explicit unexpected-daemon replacement consent and unchanged client generation pins
 - [ADR 0068: On-device Dictation for iOS Terminal Keyboards](0068-ios-on-device-terminal-dictation.md) - explicit, bounded native speech capture with no cloud fallback, volatile review and source-bound paste insertion; Simulator spike and physical-device qualification remain distinct
 - [ADR 0069: Authorized Shared Documents in the iOS Host](0069-ios-authorized-shared-documents.md) - shared engine and bounded mobile registry; phased authorized Files/editor, Markdown and shared dictation integration; no iOS Edit/Preview split panes

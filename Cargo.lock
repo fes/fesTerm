@@ -2373,11 +2373,14 @@ dependencies = [
 name = "festerm-automation-mcp"
 version = "0.15.0"
 dependencies = [
+ "ed25519-dalek",
+ "getrandom 0.3.4",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "snow",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
