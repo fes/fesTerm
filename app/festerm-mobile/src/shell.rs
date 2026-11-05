@@ -123,6 +123,7 @@ pub enum ShellAction {
     ShowSessions,
     HideSessions,
     OpenProfilesTab,
+    OpenDocuments,
     Lock(super::app_lock::LockAction),
     SetTextSize(TextSize),
     SetDefaultKeyboard(KeyboardKind),
@@ -137,7 +138,7 @@ pub enum ShellAction {
 fn state_dot(state: SurfaceState) -> Dot {
     match state {
         SurfaceState::Connected => Dot::Connected,
-        SurfaceState::Connecting => Dot::Warning,
+        SurfaceState::Connecting | SurfaceState::Modified => Dot::Warning,
         SurfaceState::Disconnected => Dot::Idle,
     }
 }
@@ -298,6 +299,15 @@ fn profiles_screen(
         });
     });
     search_field(ui, &mut state.search, "Find a profile");
+    if state.search.trim().is_empty() {
+        let mut row = RowSpec::new("Documents");
+        row.icon = Some(Icon::SourceView);
+        row.subtitle = Some("Open local text or Markdown in Files");
+        row.trailing = Trailing::Chevron;
+        if list_row(ui, &row).clicked() {
+            actions.push(ShellAction::OpenDocuments);
+        }
+    }
     if let Some(notice) = data.notice {
         ui.add(
             egui::Label::new(

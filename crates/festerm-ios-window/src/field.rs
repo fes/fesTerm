@@ -21,6 +21,9 @@ pub struct FieldDocument {
     pub carets: Vec<f32>,
     pub top: f32,
     pub bottom: f32,
+    /// Per-offset visual row bounds; empty for the legacy single-row fields.
+    pub rows: Vec<(f32, f32)>,
+    pub multiline: bool,
     pub secure: bool,
 }
 
@@ -57,6 +60,8 @@ pub struct FieldModel {
     carets: Vec<f32>,
     top: f32,
     bottom: f32,
+    rows: Vec<(f32, f32)>,
+    multiline: bool,
     secure: bool,
     queue: VecDeque<FieldInput>,
 }
@@ -107,6 +112,8 @@ impl FieldModel {
         self.carets = document.carets;
         self.top = document.top;
         self.bottom = document.bottom;
+        self.rows = document.rows;
+        self.multiline = document.multiline;
         self.secure = document.secure;
         if self.field != Some(document.field) {
             self.field = Some(document.field);
@@ -158,7 +165,7 @@ impl FieldModel {
             self.push(FieldInput::Commit(text.to_owned()));
             return;
         }
-        if text == "\n" || text == "\r" {
+        if !self.multiline && (text == "\n" || text == "\r") {
             self.push(FieldInput::Insert("\n".to_owned()));
             return;
         }
@@ -254,19 +261,68 @@ impl FieldModel {
     }
 
     pub fn row(&self) -> (f32, f32) {
-        (self.top, self.bottom.max(self.top + 1.0))
+        self.row_at(self.selection.start)
+    }
+
+    pub fn row_at(&self, offset: usize) -> (f32, f32) {
+        let (top, bottom) = self
+            .rows
+            .get(offset.min(self.chars.len()))
+            .copied()
+            .unwrap_or((self.top, self.bottom));
+        (top, bottom.max(top + 1.0))
     }
 
     /// Offset whose caret is nearest `x`; the field is a single row.
     pub fn closest(&self, x: f32) -> usize {
+        let (top, bottom) = self.row();
+        self.closest_at(x, (top + bottom) / 2.0)
+    }
+
+    /// Prefer the nearest visual row before comparing horizontal carets.
+    pub fn closest_at(&self, x: f32, y: f32) -> usize {
         let last = self.chars.len().min(self.carets.len().saturating_sub(1));
         (0..=last)
             .min_by(|a, b| {
-                (self.caret_x(*a) - x)
+                let center = |offset| {
+                    let (top, bottom) = self.row_at(offset);
+                    (top + bottom) / 2.0
+                };
+                (center(*a) - y)
                     .abs()
-                    .total_cmp(&(self.caret_x(*b) - x).abs())
+                    .total_cmp(&(center(*b) - y).abs())
+                    .then_with(|| {
+                        (self.caret_x(*a) - x)
+                            .abs()
+                            .total_cmp(&(self.caret_x(*b) - x).abs())
+                    })
             })
             .unwrap_or(0)
+    }
+
+    pub fn vertical(&self, offset: usize, delta: isize) -> usize {
+        let offset = offset.min(self.chars.len());
+        if delta == 0 {
+            return offset;
+        }
+        if !self.multiline {
+            return if delta < 0 { 0 } else { self.chars.len() };
+        }
+        let mut rows = self.rows.clone();
+        rows.dedup();
+        let current = self.row_at(offset);
+        let Some(index) = rows.iter().position(|row| *row == current) else {
+            return offset;
+        };
+        let target = index.saturating_add_signed(delta);
+        if target >= rows.len() {
+            return self.chars.len();
+        }
+        if delta < 0 && delta.unsigned_abs() > index {
+            return 0;
+        }
+        let (top, bottom) = rows[target];
+        self.closest_at(self.caret_x(offset), (top + bottom) / 2.0)
     }
 
     pub fn clamp(&self, range: Range<usize>) -> Range<usize> {
@@ -286,6 +342,11 @@ impl FieldModel {
         let x = self.carets.get(start).copied().unwrap_or_default();
         self.carets.truncate(start + 1);
         self.carets.resize(self.chars.len() + 1, x);
+        if !self.rows.is_empty() {
+            let row = self.row_at(start);
+            self.rows.truncate(start + 1);
+            self.rows.resize(self.chars.len() + 1, row);
+        }
     }
 
     fn push(&mut self, input: FieldInput) {
@@ -308,6 +369,8 @@ mod tests {
             carets: (0..=chars).map(|i| 10.0 + 8.0 * i as f32).collect(),
             top: 100.0,
             bottom: 120.0,
+            rows: Vec::new(),
+            multiline: false,
             secure: false,
         }
     }
@@ -342,6 +405,34 @@ mod tests {
         assert_eq!(model.closest(500.0), 3);
         assert_eq!(model.caret_x(99), 34.0);
         assert_eq!(model.row(), (100.0, 120.0));
+    }
+
+    #[test]
+    fn multiline_keyboard_uses_visual_rows_and_mirrors_return() {
+        let mut field = document(1, "ab\ncd", 1);
+        field.multiline = true;
+        field.carets = vec![10.0, 18.0, 26.0, 10.0, 18.0, 26.0];
+        field.rows = vec![(100.0, 120.0); 3];
+        field.rows.extend([(120.0, 140.0); 3]);
+        let mut model = FieldModel::default();
+        model.sync(Some(field));
+        assert_eq!(model.closest_at(18.0, 130.0), 4);
+        assert_eq!(model.vertical(1, 1), 4);
+        assert_eq!(model.vertical(4, -1), 1);
+        assert_eq!(model.vertical(4, isize::MIN), 0);
+        assert_eq!(model.vertical(1, isize::MAX), 5);
+        assert_eq!(model.row_at(4), (120.0, 140.0));
+        model.insert("\n");
+        model.insert("X");
+        assert_eq!(model.text(0..model.len()), "a\nXb\ncd");
+        assert_eq!(model.selection(), 3..3);
+        assert_eq!(
+            model.take_batch(),
+            [
+                FieldInput::Insert("\n".into()),
+                FieldInput::Insert("X".into())
+            ]
+        );
     }
 
     #[test]

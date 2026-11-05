@@ -19,6 +19,30 @@ reconnect remains pinned to the original session. Isolated regressions cover the
 policy and publication boundaries; signed service and physical-iOS qualification
 remain in DT-05/07. The existing live installation was not changed.
 
+## Shared iOS documents: local surfaces without terminal ownership
+
+The dependent local-editor slice connects the authorized Files picker and
+document registry to a Documents launcher inside the existing shell. Source
+views join session chips and the Sessions inventory without becoming terminal
+tabs or acquiring workers. Native input, shared undo/redo, dirty markers and
+last-view close use the same canonical engine across views. Fresh Files
+authority preserves dirty bytes and observes conflicts rather than replacing
+content. Failed saves remain dirty; closed native instances are discarded,
+not reopened.
+Explicit conflict review now offers Keep edits followed by a separate Save or
+Reload and discard. Decisions refuse if their captured revision/source/access
+changes. Stale refreshes requeue and cannot restore obsolete authority;
+terminal-side document-chip closes use the same dirty guard and input gating.
+
+Multiline editing extends the existing form-field responder's caret geometry
+and Return mirroring instead of adding another UIKit text stack. Tests replay
+local native edits, guard read-only views and modal input, and keep widget
+selection independent of shared history. Actual-widget capture is available
+at phone/tablet/short-landscape sizes, including conflict review. A bounded
+million-character regression checks complete linear geometry and unchanged
+cache reuse; short-height actions move into More. This is not provider, physical IME or
+accessibility acceptance; Markdown tools and shared dictation follow.
+
 ## Shared iOS documents: shared ownership and native I/O first
 
 The approved editor handoff asks for an editor, Markdown projection and

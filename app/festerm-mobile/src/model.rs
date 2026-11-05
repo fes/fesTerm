@@ -57,6 +57,7 @@ pub enum SurfaceKind {
     Ssh,
     DevTunnel,
     Files,
+    Document,
 }
 
 impl SurfaceKind {
@@ -66,6 +67,7 @@ impl SurfaceKind {
             Self::Ssh => Icon::SshRemote,
             Self::DevTunnel => Icon::DevTunnel,
             Self::Files => Icon::FileTransfer,
+            Self::Document => Icon::SourceView,
         }
     }
 }
@@ -75,6 +77,7 @@ pub enum SurfaceState {
     Connected,
     Connecting,
     Disconnected,
+    Modified,
 }
 
 /// One open surface (terminal or files) for chips, sheet and Sessions tab.
