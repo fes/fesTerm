@@ -7641,3 +7641,12 @@ closure and coordinator stop. Waking an owner before connection announcement
 is also covered for a reserved verifier on normal coordinator stop or UI-owner
 destruction before fingerprint display. Other lifecycle wakeups and
 qualification of the production listener and native boundaries remain open.
+
+## Retiring a peer after comparison-owner loss
+
+The direct owner now retains the UI-owner liveness associated with its
+verifier. Destroying that owner wakes and retires a stalled handshake or an
+established peer instead of waiting for socket activity or the bootstrap
+deadline. Synthetic tests cover both states. This does not serialize owner
+destruction with effects already in flight, qualify other lifecycle cuts or
+open a production endpoint.

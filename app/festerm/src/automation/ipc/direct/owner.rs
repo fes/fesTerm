@@ -1,9 +1,9 @@
 //! Readiness-driven ownership for one dormant direct host peer.
 
-use super::{retire_admission, Error, NativeAdmission, Peer, PeerContext, Step, Wake};
-use festerm_automation_mcp::secure_transport::{
-    self, Role, SecureTransport, TrustedNativeVerification,
+use super::{
+    retire_admission, Error, HostVerification, NativeAdmission, Peer, PeerContext, Step, Wake,
 };
+use festerm_automation_mcp::secure_transport::{self, Role, SecureTransport};
 use std::{
     io::{self, Read, Write},
     sync::Arc,
@@ -53,13 +53,14 @@ impl Status {
 /// Run off the UI thread on a Tokio runtime with I/O and time enabled. Callers
 /// must wake it for native decisions and lifecycle/admission cuts that do not
 /// close an announced connection, including stop before announcement. Guarded
-/// connection closes wake it after releasing admission. This loop does not
+/// connection closes wake it after releasing admission. The verifier's
+/// UI-owner wake must use this same owner wake. This loop does not
 /// qualify those boundaries or attach a listener. Keep `Status` until cleanup
 /// finishes before reusing a native surface; failed or unobserved cleanup
 /// requires quarantine.
 /// An interrupted owner may have been cancelled or panicked; its task result
 /// must also be observed.
-pub(super) struct Owner<N: TrustedNativeVerification, A: NativeAdmission> {
+pub(super) struct Owner<N: HostVerification, A: NativeAdmission> {
     peer: Peer<RegisteredStream, N, A>,
     socket: Option<Arc<UnixStream>>,
     wake: Wake,
@@ -67,7 +68,7 @@ pub(super) struct Owner<N: TrustedNativeVerification, A: NativeAdmission> {
     finished: bool,
 }
 
-impl<N: TrustedNativeVerification, A: NativeAdmission> Owner<N, A> {
+impl<N: HostVerification, A: NativeAdmission> Owner<N, A> {
     pub(super) fn new(
         socket: UnixStream,
         native: N,
@@ -77,6 +78,7 @@ impl<N: TrustedNativeVerification, A: NativeAdmission> Owner<N, A> {
         frame_duration: Duration,
     ) -> Result<(Self, Status), Error> {
         let socket = Arc::new(socket);
+        let owner_liveness = native.owner_liveness();
         let channel = match SecureTransport::new(
             RegisteredStream(socket.clone()),
             Role::Application,
@@ -94,7 +96,7 @@ impl<N: TrustedNativeVerification, A: NativeAdmission> Owner<N, A> {
             }
         };
         let wake = context.wake.clone();
-        let peer = Peer::new(channel, admission, context);
+        let peer = Peer::new(channel, admission, context, owner_liveness);
         let (completion, status) = watch::channel(None);
         Ok((
             Self {
@@ -165,7 +167,7 @@ impl<N: TrustedNativeVerification, A: NativeAdmission> Owner<N, A> {
     }
 }
 
-impl<N: TrustedNativeVerification, A: NativeAdmission> Drop for Owner<N, A> {
+impl<N: HostVerification, A: NativeAdmission> Drop for Owner<N, A> {
     fn drop(&mut self) {
         if !self.finished {
             let _ = self.finish(Err(Error::OwnerInterrupted));

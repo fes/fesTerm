@@ -5,6 +5,7 @@ mod owner;
 #[cfg(test)]
 mod process_tests;
 
+use super::super::verification::{OwnerLiveness, Verifier};
 use super::{Connection, Event, Waker};
 use festerm_automation::{outbound_channel, OutboundFrame, OutboundReceiver};
 use festerm_automation_mcp::secure_transport::{
@@ -58,6 +59,17 @@ pub(super) trait NativeAdmission {
 
     fn try_admit(&self) -> io::Result<Self::Guard<'_>>;
     fn cancel(&mut self) -> io::Result<()>;
+}
+
+/// The verifier's wake must notify the same owner when its UI owner is lost.
+pub(super) trait HostVerification: TrustedNativeVerification {
+    fn owner_liveness(&self) -> OwnerLiveness;
+}
+
+impl HostVerification for Verifier {
+    fn owner_liveness(&self) -> OwnerLiveness {
+        Verifier::owner_liveness(self)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -127,6 +139,7 @@ pub(super) struct Peer<S: Read + Write, N: TrustedNativeVerification, A: NativeA
     events: SyncSender<Event>,
     wake_ui: Waker,
     stop: Arc<AtomicBool>,
+    owner_liveness: OwnerLiveness,
     pending: Option<HeldFrame>,
     announced: bool,
     admission_blocked: bool,
@@ -135,7 +148,12 @@ pub(super) struct Peer<S: Read + Write, N: TrustedNativeVerification, A: NativeA
 }
 
 impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, N, A> {
-    pub(super) fn new(channel: SecureTransport<S, N>, admission: A, context: PeerContext) -> Self {
+    fn new(
+        channel: SecureTransport<S, N>,
+        admission: A,
+        context: PeerContext,
+        owner_liveness: OwnerLiveness,
+    ) -> Self {
         let (output, receiver) = outbound_channel();
         let PeerContext {
             bootstrap: _,
@@ -159,6 +177,7 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
             events,
             wake_ui,
             stop,
+            owner_liveness,
             pending: None,
             announced: false,
             admission_blocked: false,
@@ -198,7 +217,11 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
     }
 
     fn step_inner(&mut self) -> Result<Step, Error> {
-        if self.connection.is_closed() || self.stop.load(Ordering::Acquire) {
+        // This wake-driven cut does not fence an effect already in flight.
+        if self.connection.is_closed()
+            || self.stop.load(Ordering::Acquire)
+            || !self.owner_liveness.is_alive()
+        {
             return Ok(Step::Closed);
         }
 
@@ -206,7 +229,10 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
             let admission = self.admission.as_ref().ok_or(Error::Closed)?;
             let native = admission.try_admit().map_err(|_| Error::Admission)?;
             let guard = festerm_session::automation_admission_lock().ok_or(Error::Admission)?;
-            if self.connection.is_closed() || self.stop.load(Ordering::Acquire) {
+            if self.connection.is_closed()
+                || self.stop.load(Ordering::Acquire)
+                || !self.owner_liveness.is_alive()
+            {
                 return Ok(Step::Closed);
             }
             self.events
@@ -237,6 +263,7 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
         let pending = self.pending.as_ref();
         let connection = &self.connection;
         let stop = &self.stop;
+        let owner_liveness = &self.owner_liveness;
         let mut admission_blocked = false;
         let progress = self.channel.poll(|| {
             let native = match admission.try_admit() {
@@ -250,6 +277,7 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
                 .ok_or_else(|| io::Error::other("automation admission unavailable"))?;
             if connection.is_closed()
                 || stop.load(Ordering::Acquire)
+                || !owner_liveness.is_alive()
                 || pending
                     .is_some_and(|frame| Instant::now() >= frame.0.expires || !frame.0.is_valid())
             {
@@ -265,7 +293,11 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
                 self.pending.take().ok_or(Error::Closed)?;
                 Ok(Step::Advanced)
             }
-            Progress::Frame(bytes) => {
+            Progress::Frame(mut bytes) => {
+                if !self.owner_liveness.is_alive() {
+                    bytes.fill(0);
+                    return Ok(Step::Closed);
+                }
                 let native = admission.try_admit().map_err(|_| Error::Admission)?;
                 self.connection
                     .enqueue_message(&self.events, bytes, &self.stop)
@@ -335,6 +367,7 @@ fn retire_admission<A: NativeAdmission>(mut admission: A) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::{verification, PrivacyGate};
     use super::*;
     use festerm_automation_mcp::secure_transport::{
         NativeCleanupFailed, NativeDecision, NativeUnavailable, Role, MAX_FRAME_DURATION,
@@ -351,6 +384,7 @@ mod tests {
         pub(super) displayed: Mutex<Option<String>>,
         pub(super) decision: Mutex<Option<[u8; 64]>>,
         pub(super) cancelled: AtomicBool,
+        owner_liveness: OwnerLiveness,
     }
 
     pub(super) struct Native(pub(super) Arc<NativeState>);
@@ -371,6 +405,40 @@ mod tests {
         fn cancel(&mut self) -> Result<(), NativeCleanupFailed> {
             self.0.cancelled.store(true, Ordering::Release);
             Ok(())
+        }
+    }
+
+    impl HostVerification for Native {
+        fn owner_liveness(&self) -> OwnerLiveness {
+            self.0.owner_liveness.clone()
+        }
+    }
+
+    fn reserve_verifier(
+        owner: &verification::Owner,
+        stop: Arc<AtomicBool>,
+        privacy: Arc<PrivacyGate>,
+        wake: &Wake,
+    ) -> Verifier {
+        let surface = owner.surface();
+        let wake = wake.clone();
+        let wake_owner = Arc::new(move || wake.notify());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match surface.reserve(
+                17,
+                crate::application::WindowId::PRIMARY,
+                stop.clone(),
+                privacy.clone(),
+                Arc::new(|| {}),
+                wake_owner.clone(),
+            ) {
+                Ok(verifier) => return verifier,
+                Err(verification::Error::Busy) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => panic!("could not reserve comparison: {error:?}"),
+            }
         }
     }
 
@@ -463,6 +531,7 @@ mod tests {
                         stop: Arc::new(AtomicBool::new(false)),
                         wake: wake.clone(),
                     },
+                    host_native.owner_liveness.clone(),
                 ),
                 client,
                 events,
@@ -669,6 +738,7 @@ mod tests {
         };
         let (host_socket, _client) = UnixStream::pair().unwrap();
         host_socket.set_nonblocking(true).unwrap();
+        let owner_liveness = verifier.owner_liveness();
         let channel = SecureTransport::new(
             host_socket,
             Role::Application,
@@ -694,6 +764,7 @@ mod tests {
                 stop: coordinator.stop.clone(),
                 wake: wake.clone(),
             },
+            owner_liveness,
         );
         assert_eq!(host.step(), Ok(Step::Blocked));
         assert!(coordinator.verification.view().is_none());
@@ -705,6 +776,198 @@ mod tests {
             .expect("pre-fingerprint direct peer did not wake on stop");
         assert_eq!(host.step(), Ok(Step::Closed));
         assert!(cancelled.load(Ordering::Acquire));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn direct_owner_closes_when_ui_owner_drops_before_fingerprint() {
+        let ui_owner = verification::Owner::default();
+        let stop = Arc::new(AtomicBool::new(false));
+        let wake = Wake::default();
+        let verifier = reserve_verifier(
+            &ui_owner,
+            stop.clone(),
+            Arc::new(PrivacyGate::new(false)),
+            &wake,
+        );
+        let (socket, client) = tokio::net::UnixStream::pair().unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (events, event_receiver) = mpsc::sync_channel(1);
+        let (owner, mut status) = owner::Owner::new(
+            socket,
+            verifier,
+            Admission {
+                open: Arc::new(AtomicBool::new(true)),
+                cancelled: cancelled.clone(),
+                fail_cleanup: false,
+            },
+            PeerContext {
+                bootstrap: QualifiedBootstrap::synthetic(),
+                key: 17,
+                events,
+                wake_ui: Arc::new(|| {}),
+                stop,
+                wake,
+            },
+            Duration::from_secs(8),
+            MAX_FRAME_DURATION,
+        )
+        .unwrap();
+        let mut worker = tokio::spawn(owner.run());
+        tokio::task::yield_now().await;
+        assert!(ui_owner.view().is_none());
+        assert!(event_receiver.try_recv().is_err());
+        drop(ui_owner);
+
+        let result = match tokio::time::timeout(Duration::from_secs(2), &mut worker).await {
+            Ok(result) => result.unwrap(),
+            Err(_) => {
+                worker.abort();
+                assert!(worker.await.unwrap_err().is_cancelled());
+                panic!("direct owner did not retire after UI-owner loss");
+            }
+        };
+        assert_eq!(result, Ok(()));
+        assert_eq!(status.wait().await, Ok(()));
+        assert!(cancelled.load(Ordering::Acquire));
+        tokio::time::timeout(Duration::from_secs(2), client.readable())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(client.try_read(&mut [0]).unwrap(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn direct_peer_closes_after_established_ui_owner_loss() {
+        let mut ui_owner = verification::Owner::default();
+        let stop = Arc::new(AtomicBool::new(false));
+        let wake = Wake::default();
+        let verifier = reserve_verifier(
+            &ui_owner,
+            stop.clone(),
+            Arc::new(PrivacyGate::new(false)),
+            &wake,
+        );
+        let owner_liveness = verifier.owner_liveness();
+        let (host_socket, client_socket) = UnixStream::pair().unwrap();
+        host_socket.set_nonblocking(true).unwrap();
+        client_socket.set_nonblocking(true).unwrap();
+        let host_channel = SecureTransport::new(
+            host_socket,
+            Role::Application,
+            verifier,
+            Duration::from_secs(8),
+            MAX_FRAME_DURATION,
+        )
+        .unwrap();
+        let client_native = Arc::new(NativeState::default());
+        let mut client = SecureTransport::new(
+            client_socket,
+            Role::Client,
+            Native(client_native.clone()),
+            Duration::from_secs(8),
+            MAX_FRAME_DURATION,
+        )
+        .unwrap();
+        let (events, event_receiver) = mpsc::sync_channel(8);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let mut host = Peer::new(
+            host_channel,
+            Admission {
+                open: Arc::new(AtomicBool::new(true)),
+                cancelled: cancelled.clone(),
+                fail_cleanup: false,
+            },
+            PeerContext {
+                bootstrap: QualifiedBootstrap::synthetic(),
+                key: 17,
+                events,
+                wake_ui: Arc::new(|| {}),
+                stop,
+                wake: wake.clone(),
+            },
+            owner_liveness,
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert_ne!(host.step().unwrap(), Step::Closed);
+            client.poll(|| Ok(())).unwrap();
+            ui_owner.advance();
+            if let (Some(view), Some(client_code)) = (
+                ui_owner.view(),
+                client_native.displayed.lock().unwrap().clone(),
+            ) {
+                assert_eq!(view.fingerprint, client_code);
+                match ui_owner.decide(view.window, view.generation, Some(&client_code)) {
+                    Ok(()) => {
+                        *client_native.decision.lock().unwrap() =
+                            Some(view.fingerprint.as_bytes().try_into().unwrap());
+                        break;
+                    }
+                    Err(verification::Error::Busy) => {}
+                    Err(error) => panic!("comparison decision failed: {error:?}"),
+                }
+            }
+            assert!(Instant::now() < deadline, "fingerprint exchange timed out");
+            thread::sleep(Duration::from_millis(1));
+        }
+        let connection = loop {
+            assert_ne!(host.step().unwrap(), Step::Closed);
+            client.poll(|| Ok(())).unwrap();
+            if let Ok(Event::Connected(connection)) = event_receiver.try_recv() {
+                break connection;
+            }
+            assert!(Instant::now() < deadline, "connection was not announced");
+            thread::sleep(Duration::from_millis(1));
+        };
+        while !client.is_established() {
+            assert_ne!(host.step().unwrap(), Step::Closed);
+            client.poll(|| Ok(())).unwrap();
+            assert!(Instant::now() < deadline, "client did not establish");
+            thread::sleep(Duration::from_millis(1));
+        }
+        client
+            .prepare_send(b"unadmitted", Instant::now() + MAX_FRAME_DURATION)
+            .unwrap();
+        loop {
+            if matches!(client.poll(|| Ok(())).unwrap(), Progress::Sent) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "request was not written");
+            thread::sleep(Duration::from_millis(1));
+        }
+        connection
+            .send(
+                b"undelivered".to_vec(),
+                Instant::now() + MAX_FRAME_DURATION,
+                &[],
+            )
+            .unwrap();
+        tokio::select! {
+            biased;
+            _ = wake.notified() => {}
+            _ = async {} => {}
+        }
+        drop(ui_owner);
+        tokio::time::timeout(Duration::from_secs(2), wake.notified())
+            .await
+            .expect("UI-owner loss did not wake the established peer");
+        assert_eq!(host.step(), Ok(Step::Closed));
+        assert!(connection.is_closed());
+        assert!(cancelled.load(Ordering::Acquire));
+        assert!(matches!(
+            event_receiver.try_recv(),
+            Err(TryRecvError::Empty)
+        ));
+        loop {
+            match client.poll(|| Ok(())) {
+                Ok(Progress::Frame(_)) => panic!("queued frame was delivered after UI-owner loss"),
+                Ok(_) => {}
+                Err(secure_transport::Error::PeerClosed) => break,
+                Err(error) => panic!("unexpected client error: {error}"),
+            }
+            assert!(Instant::now() < deadline, "client did not observe closure");
+            thread::sleep(Duration::from_millis(1));
+        }
     }
 
     #[test]

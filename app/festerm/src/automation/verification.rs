@@ -112,6 +112,30 @@ struct Reservation {
     wake_owner: Wake,
 }
 
+#[derive(Clone)]
+pub(super) struct OwnerLiveness(Arc<AtomicBool>);
+
+impl OwnerLiveness {
+    fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(true)))
+    }
+
+    pub(super) fn is_alive(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
+    fn retire(&self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+impl Default for OwnerLiveness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 struct AdvanceTestGate {
     entered: SyncSender<()>,
@@ -131,7 +155,7 @@ struct Shared {
     pending_occupied: AtomicBool,
     reservations: SyncSender<Reservation>,
     reserved: AtomicBool,
-    owner_alive: AtomicBool,
+    owner_alive: OwnerLiveness,
     generation: AtomicU64,
     quarantined: Arc<AtomicBool>,
 }
@@ -157,7 +181,7 @@ impl Default for Owner {
                 pending_occupied: AtomicBool::new(false),
                 reservations: reservation_sender,
                 reserved: AtomicBool::new(false),
-                owner_alive: AtomicBool::new(true),
+                owner_alive: OwnerLiveness::new(),
                 generation: AtomicU64::new(0),
                 quarantined: Arc::new(AtomicBool::new(false)),
             })),
@@ -339,7 +363,7 @@ impl Owner {
 
 impl Drop for Owner {
     fn drop(&mut self) {
-        self.surface.0.owner_alive.store(false, Ordering::Release);
+        self.surface.0.owner_alive.retire();
         self.revoke();
     }
 }
@@ -355,7 +379,7 @@ impl Surface {
         wake_owner: Wake,
     ) -> Result<Verifier, Error> {
         if window != WindowId::PRIMARY
-            || !self.0.owner_alive.load(Ordering::Acquire)
+            || !self.0.owner_alive.is_alive()
             || self.0.quarantined.load(Ordering::Acquire)
         {
             return Err(Error::Unavailable);
@@ -363,7 +387,7 @@ impl Surface {
         let _admission = admission()?;
         if stop.load(Ordering::Acquire)
             || privacy.is_closed()
-            || !self.0.owner_alive.load(Ordering::Acquire)
+            || !self.0.owner_alive.is_alive()
             || self.0.quarantined.load(Ordering::Acquire)
         {
             return Err(Error::Unavailable);
@@ -417,7 +441,7 @@ impl Surface {
             }
         }
         drop(_admission);
-        if !self.0.owner_alive.load(Ordering::Acquire) {
+        if !self.0.owner_alive.is_alive() {
             live.invalidate();
             self.0.reserved.store(false, Ordering::Release);
             return Err(Error::Unavailable);
@@ -464,6 +488,13 @@ pub(super) struct Verifier {
     wake_owner: Wake,
     displayed: bool,
     cancelled: bool,
+}
+
+#[cfg(unix)]
+impl Verifier {
+    pub(super) fn owner_liveness(&self) -> OwnerLiveness {
+        self.surface.0.owner_alive.clone()
+    }
 }
 
 impl TrustedNativeVerification for Verifier {

@@ -113,9 +113,11 @@ to bypass another's restrictions.
    deadlines and explicit lifecycle wakeups, and reports cleanup on
    cancellation. Guarded closure of an announced connection wakes that owner
    only after admission is released. A reserved verifier also wakes on
-   normal coordinator stop or UI-owner destruction before fingerprint display;
-   other unannounced-owner lifecycle integration remains open. SDK/coordinator tests
-   include a separate process and a
+   normal coordinator stop or UI-owner destruction before fingerprint display.
+   The direct owner observes the verifier's UI-owner liveness and retires a
+   stalled or established peer after that owner is destroyed; this does not
+   fence already in-flight effects. Other lifecycle integration remains open.
+   SDK/coordinator tests include a separate process and a
    test-only Unix listener, with simulated comparisons and approval, including
    controller enrollment, metadata and input to a test backend. Presentation
    remains unavailable; no production listener or native boundary is

@@ -610,6 +610,8 @@
         "direct_peer_close_defers_wake_until_admission_release",
         "coordinator_stop_wakes_a_closed_direct_peer",
         "coordinator_stop_wakes_a_direct_peer_before_fingerprint_display",
+        "direct_owner_closes_when_ui_owner_drops_before_fingerprint",
+        "direct_peer_closes_after_established_ui_owner_loss",
         "direct_peer_rechecks_original_frame_after_admission_contention",
         "direct_peer_closes_if_incoming_admission_is_temporarily_unavailable",
         "direct_peer_never_finishes_a_partially_written_revoked_frame",

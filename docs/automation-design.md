@@ -813,10 +813,12 @@ lifecycle cuts and fence the actual effects. A capacity-one verifier
 reservation wakes its owner on normal coordinator stop or UI-owner destruction
 even before the fingerprint is displayed. A queued stale reservation or
 comparison prompt must be reclaimed before its surface can be reserved again.
-UI-owner destruction alone does not close a peer still waiting for handshake
-I/O; its bootstrap deadline bounds that wait. Other lifecycle wakeups remain
-unqualified. An opaque bootstrap
-gate cannot be obtained in production
+The direct owner also retains the verifier's UI-owner liveness and retires a
+stalled handshake or established peer when that owner is destroyed. It
+rechecks liveness before advancing, announcing, writing and queuing a completed
+frame. These checks do not fence an effect already in flight or qualify native
+privacy and recipient delivery. Other lifecycle wakeups remain unqualified. An
+opaque bootstrap gate cannot be obtained in production
 until qualification. The owner is not attached to a listener.
 Official SDK tests reach the actual coordinator and a controlled session both
 within one process and from a separate process using a test-only Unix listener.
