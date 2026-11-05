@@ -775,6 +775,24 @@ fn upgrade_record(
     Ok(next)
 }
 
+/// Journals the requested file policy with the upgrade marker, so a resumed
+/// `--upgrade` without file flags cannot restore a revoked or narrowed grant.
+/// Workers refuse to run while the record is upgrading.
+fn pending_upgrade(
+    record: &Installation,
+    executable: PathBuf,
+    cli: PathBuf,
+    no_takeover: bool,
+    filesystem: Option<&Option<festerm_tunnel_bridge::file_protocol::Policy>>,
+) -> io::Result<Installation> {
+    let mut next = upgrade_record(record, executable, cli, no_takeover)?;
+    if let Some(policy) = filesystem {
+        next.filesystem = policy.clone();
+        validate_record(&next)?;
+    }
+    Ok(next)
+}
+
 fn upgrade_completed(
     record: &Installation,
     filesystem: Option<&Option<festerm_tunnel_bridge::file_protocol::Policy>>,
@@ -823,7 +841,7 @@ async fn upgrade_installation(
             return Err(refused("setup.changed_cli_account"));
         }
     }
-    let next = upgrade_record(record, executable, cli, no_takeover)?;
+    let next = pending_upgrade(record, executable, cli, no_takeover, filesystem)?;
     checkpoint(directory, &next)?;
     println!(
         "Upgrading host helpers from {} to {}; keeping tunnel {}, host key {} and daemon session {} (pid {}). Only the bridge restarts.",
@@ -1614,6 +1632,18 @@ mod tests {
         assert!(revoked.filesystem.is_none());
         assert_eq!(revoked.tunnel, record.tunnel);
         assert_eq!(revoked.fingerprint, record.fingerprint);
+        // An interrupted revocation resumed by a bare `--upgrade` stays revoked.
+        let interrupted = pending_upgrade(
+            &record,
+            std::env::current_exe().unwrap(),
+            record.cli.clone(),
+            false,
+            Some(&None),
+        )
+        .unwrap();
+        assert_eq!(interrupted.phase, UPGRADING);
+        assert!(interrupted.filesystem.is_none());
+        assert!(upgrade_completed(&interrupted, None).filesystem.is_none());
         assert_eq!(
             upgraded.target.unwrap().generation,
             record.target.unwrap().generation
