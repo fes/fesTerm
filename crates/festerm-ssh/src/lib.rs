@@ -9046,10 +9046,19 @@ mod tests {
             }
         };
         assert_eq!(error.kind(), SessionErrorKind::Spawn);
-        assert!(matches!(
-            session.lifecycle(),
-            SessionLifecycle::Failed(SessionError { .. })
-        ));
+        let lifecycle_deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let lifecycle = session.lifecycle();
+            if let SessionLifecycle::Failed(failure) = &lifecycle {
+                assert_eq!(failure.kind(), error.kind());
+                break;
+            }
+            assert!(
+                Instant::now() < lifecycle_deadline,
+                "SSH lifecycle did not reach Failed after its error: {lifecycle:?}"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
         match session.shutdown(Duration::from_secs(1)) {
             Err(ShutdownError::Failed(error)) => {
                 assert_eq!(error.kind(), SessionErrorKind::Spawn);
