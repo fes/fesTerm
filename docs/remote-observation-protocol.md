@@ -45,6 +45,8 @@ to unrestricted reads, local files, shell commands or another connection.
 
 Observation uses separate forwarded streams on the already verified,
 authenticated host transport. No new network endpoint or credential is exposed.
+The relay host accepts at most four forwarded channels per authenticated client
+(terminal, observation control and two watches) to the one configured port.
 Frame kinds are 40 OPEN, 41 REQUEST, 42 RESPONSE, 43 DATA and 44 NOTICE.
 Headers remain kind u8 plus big-endian payload length u32. OPEN is at most
 4096 bytes; JSON frames at most 65536; DATA is request ID u32 big-endian followed

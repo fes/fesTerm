@@ -21,6 +21,9 @@ use crate::{
 /// Concurrent relay clients: enough for one attached device, one taking it over
 /// and a read-only discovery, without letting a peer queue unbounded work.
 const RELAY_CLIENTS: usize = 4;
+/// Forwarded channels per authenticated client: the terminal stream, the
+/// observation control stream and at most two observation watches.
+const CHANNELS_PER_CLIENT: u8 = 4;
 
 pub struct HostConnection {
     pub endpoint: TunnelEndpoint,
@@ -139,7 +142,7 @@ pub async fn host_with_identity(
     .map_err(|_| stage_error("host.outer_ssh"))?;
     let cancel = CancellationToken::new();
     let stopped = cancel.clone();
-    let (tx, connections) = mpsc::channel(RELAY_CLIENTS);
+    let (tx, connections) = mpsc::channel(RELAY_CLIENTS * usize::from(CHANNELS_PER_CLIENT));
     let (exit_sender, exit) = tokio::sync::watch::channel(None);
     tokio::spawn(async move {
         let server_config = Arc::new(server::Config {
@@ -164,7 +167,7 @@ pub async fn host_with_identity(
                 let handler = Port {
                     port,
                     tx: tx.clone(),
-                    opened: false,
+                    opened: 0,
                     authed: Some(authed),
                 };
                 let server_config = server_config.clone();
@@ -326,7 +329,7 @@ impl client::Handler for Outer {
 struct Port {
     port: u16,
     tx: mpsc::Sender<ChannelStream<server::Msg>>,
-    opened: bool,
+    opened: u8,
     authed: Option<oneshot::Sender<()>>,
 }
 impl server::Handler for Port {
@@ -351,12 +354,16 @@ impl server::Handler for Port {
         reply: server::ChannelOpenHandle,
         _: &mut server::Session,
     ) -> Result<(), Self::Error> {
-        if self.opened || port != self.port as u32 || host != "127.0.0.1" {
+        if self.opened >= CHANNELS_PER_CLIENT || port != self.port as u32 || host != "127.0.0.1" {
             return Ok(());
         }
-        self.opened = true;
+        // Reserve before accepting so an accepted channel is never silently dropped.
+        let Ok(slot) = self.tx.try_reserve() else {
+            return Ok(());
+        };
+        self.opened += 1;
         reply.accept().await;
-        let _ = self.tx.try_send(channel.into_stream());
+        slot.send(channel.into_stream());
         Ok(())
     }
 }
@@ -646,7 +653,7 @@ mod tests {
             ..Default::default()
         });
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let (tx, mut rx) = mpsc::channel(1);
+        let (tx, mut rx) = mpsc::channel(usize::from(CHANNELS_PER_CLIENT));
         let server = tokio::spawn(async move {
             server::run_stream(
                 config,
@@ -654,7 +661,7 @@ mod tests {
                 Port {
                     port: 47461,
                     tx,
-                    opened: false,
+                    opened: 0,
                     authed: None,
                 },
             )
@@ -681,20 +688,28 @@ mod tests {
         let mut bytes = [0; 10];
         accepted.read_exact(&mut bytes).await.unwrap();
         assert_eq!(&bytes, b"controlled");
-        assert!(client
-            .channel_open_direct_tcpip("127.0.0.1", 47461, "127.0.0.1", 0)
-            .await
-            .is_err());
-        drop(accepted);
-        ClientConnection {
+        // Observation control and watch streams open on the same authenticated
+        // client through the observation binding, bounded per client.
+        let connection = ClientConnection {
             stream: channel,
             _session: Arc::new(client),
             port: 47461,
             observation_expiry: None,
+        };
+        let binding = connection.observation_binding();
+        let mut extra = Vec::new();
+        for _ in 1..CHANNELS_PER_CLIENT {
+            let mut stream = binding.open().await.unwrap();
+            let mut accepted = rx.recv().await.unwrap();
+            stream.write_all(b"o").await.unwrap();
+            let mut byte = [0; 1];
+            accepted.read_exact(&mut byte).await.unwrap();
+            extra.push((stream, accepted));
         }
-        .close()
-        .await
-        .unwrap();
+        assert!(binding.open().await.is_err());
+        drop(extra);
+        drop(accepted);
+        connection.close().await.unwrap();
         assert!(tokio::time::timeout(Duration::from_secs(3), server)
             .await
             .is_ok());
@@ -715,7 +730,7 @@ mod tests {
                 Port {
                     port: 47461,
                     tx,
-                    opened: false,
+                    opened: 0,
                     authed: None,
                 },
             )
