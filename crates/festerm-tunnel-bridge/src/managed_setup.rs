@@ -624,8 +624,9 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
             .await?
         }
     };
-    if revoking_grants {
+    if stops_hosting_after_revocation(&updates, &record) {
         // Revocation succeeds even when the daemon/account is unavailable.
+        // With recovery still enabled the worker is restarted below instead.
         // The owned worker is stopped above; no cloud mutation is required.
         if exact_target_alive(
             &record.runtime_root,
@@ -670,6 +671,9 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     // Keep an existing installation's executable/CLI paths: only an explicit
     // --upgrade switches helpers, and never replaces the daemon generation.
     let specification = service(&record, &state);
+    // The record is final. Release the installer lock so the started worker's
+    // recovery fence can replace an exited daemon during the readiness wait.
+    drop(installer);
     super::service_install::install_and_start(&specification)?;
     timeout(Duration::from_secs(50), async {
         loop {
@@ -701,6 +705,12 @@ struct GrantUpdates {
     filesystem: Option<Option<festerm_tunnel_bridge::file_protocol::Policy>>,
     observation: Option<Option<festerm_tunnel_bridge::observation_protocol::Policy>>,
     restart_unexpected: Option<bool>,
+}
+
+/// A revocation-only rerun leaves hosting stopped when the exact daemon is gone,
+/// unless recovery remains enabled to replace it.
+fn stops_hosting_after_revocation(updates: &GrantUpdates, record: &Installation) -> bool {
+    updates.revoking_only() && record.recovery.is_none()
 }
 
 impl GrantUpdates {
@@ -2194,6 +2204,17 @@ mod tests {
         assert!(upgrade_completed(&pending, &GrantUpdates::default())
             .recovery
             .is_none());
+        // Revoking a grant while recovery stays enabled must not strand hosting.
+        let revoke_observation = GrantUpdates {
+            observation: Some(None),
+            ..Default::default()
+        };
+        assert!(!stops_hosting_after_revocation(
+            &revoke_observation,
+            &upgrade_completed(&recovering, &revoke_observation)
+        ));
+        assert!(stops_hosting_after_revocation(&revoke_both, &pending));
+        assert!(stops_hosting_after_revocation(&updates, &revoked));
         assert!(!GrantUpdates {
             observation: Some(None),
             restart_unexpected: Some(true),
