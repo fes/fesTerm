@@ -7600,3 +7600,12 @@ polling. It yields after bounded work and reports cleanup completion even when
 its task is cancelled; unobserved or failed cleanup requires quarantine. The
 SDK/coordinator fixture exercises this loop with simulated decisions. No
 listener, native identity, screen-lock monitor or effect boundary is qualified.
+
+## Separate-process SDK observation fixture
+
+The official Rust SDK now reaches the actual coordinator and a controlled
+session from another test process via a temporary Unix listener. The test
+verifies refusal before simulated approval, then approved observation, while
+keeping input out of the observation-only catalog. Its comparison and approval
+channel is test-only; this is not native identity, privacy or production
+endpoint qualification.

@@ -617,6 +617,8 @@
         "direct_owner_waits_for_admission_wake_before_writing",
         "lost_completion_is_distinct_from_completed_cleanup",
         "direct_sdk_observation_reaches_the_real_coordinator",
+        "sdk_observation_crosses_process_boundary",
+        "stalled_client_is_terminated_and_reaped",
         "responder_handoff_waits_for_every_reply_byte_to_be_written",
         "initiator_does_not_read_or_handoff_before_its_first_write_completes",
         "read_readiness_distinguishes_interruption_progress_and_backpressure",

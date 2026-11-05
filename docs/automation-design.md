@@ -788,8 +788,8 @@ admission receipt.
 The client retains a separate completion/cleanup handle and can disconnect on
 a local lifecycle cut. Its native verifier and per-write privacy fence are
 caller-supplied and unqualified. Socket-pair tests use simulated comparisons and
-a synthetic protocol host, not a production listener, separate process or native
-authority. The connector cross-compiles for iOS device and Simulator targets
+a synthetic protocol host, not a production listener or native authority. The
+connector cross-compiles for iOS device and Simulator targets
 with an iOS 15 deployment floor, but that is not runtime or distribution
 evidence. Apple documents [App Group IPC](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.application-groups)
 between apps from one development team, with Unix sockets inside the shared
@@ -811,10 +811,11 @@ independently provide native caller/recipient admission, wake it after every
 lifecycle cut and fence the actual effects. An opaque bootstrap gate cannot be
 obtained in production until qualification. The owner is not attached to a
 listener.
-A single-process official SDK test reaches the actual coordinator and a
-controlled session using simulated comparison and native approval. It is not
-evidence of an authenticated separate process, screen-lock behavior or
-production end-to-end availability.
+Official SDK tests reach the actual coordinator and a controlled session both
+within one process and from a separate process using a test-only Unix listener.
+The separate process runs the test binary, and a test control channel supplies
+the comparisons and approval. Neither test qualifies process identity,
+screen-lock behavior, native UI or production end-to-end availability.
 
 Once bootstrap is qualified, the application binds a distinct broker principal
 to the accepted handle; neither `clientInfo`, a wire ID nor a copied code owns

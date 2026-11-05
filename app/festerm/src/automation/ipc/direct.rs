@@ -2,6 +2,8 @@
 //! native caller, privacy monitor, recipient, or effect boundary.
 
 mod owner;
+#[cfg(test)]
+mod process_tests;
 
 use super::{Connection, Event, Waker};
 use festerm_automation::{outbound_channel, OutboundFrame, OutboundReceiver};
@@ -344,13 +346,13 @@ mod tests {
     };
 
     #[derive(Default)]
-    struct NativeState {
-        displayed: Mutex<Option<String>>,
-        decision: Mutex<Option<[u8; 64]>>,
-        cancelled: AtomicBool,
+    pub(super) struct NativeState {
+        pub(super) displayed: Mutex<Option<String>>,
+        pub(super) decision: Mutex<Option<[u8; 64]>>,
+        pub(super) cancelled: AtomicBool,
     }
 
-    struct Native(Arc<NativeState>);
+    pub(super) struct Native(pub(super) Arc<NativeState>);
 
     impl TrustedNativeVerification for Native {
         fn show_local_fingerprint(&mut self, fingerprint: &str) -> Result<(), NativeUnavailable> {
@@ -371,10 +373,10 @@ mod tests {
         }
     }
 
-    struct Admission {
-        open: Arc<AtomicBool>,
-        cancelled: Arc<AtomicBool>,
-        fail_cleanup: bool,
+    pub(super) struct Admission {
+        pub(super) open: Arc<AtomicBool>,
+        pub(super) cancelled: Arc<AtomicBool>,
+        pub(super) fail_cleanup: bool,
     }
 
     impl NativeAdmission for Admission {
@@ -1039,7 +1041,7 @@ mod tests {
         assert_eq!(client_status.wait().await, client_result);
     }
 
-    struct ClientAdmission;
+    pub(super) struct ClientAdmission;
 
     impl festerm_automation_mcp_client::ClientWriteAdmission for ClientAdmission {
         type Guard<'a> = ();
@@ -1055,7 +1057,6 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn direct_sdk_observation_reaches_the_real_coordinator() {
-        use super::super::super::{Broker, Coordinator, FesTermApp, PrivacyGate};
         use eframe::egui;
         use festerm_automation_mcp_client::DirectClientTransport;
         use rmcp::{
@@ -1064,22 +1065,7 @@ mod tests {
         };
         use serde_json::json;
 
-        let (mut app, tab) = FesTermApp::automation_fixture();
-        let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
-        app.adopt_broadcast_configuration(
-            festerm_config::Configuration::empty()
-                .with_interface_settings(settings)
-                .unwrap(),
-        );
-        let mut coordinator = Coordinator::default();
-        coordinator.broker = Some(Broker::new([3; 16]));
-        coordinator.stop = Arc::new(AtomicBool::new(false));
-        coordinator.privacy_gate = Arc::new(PrivacyGate::new(false));
-        assert!(coordinator.privacy_gate.bind_mcp(&coordinator.stop));
-        coordinator.enabled = true;
-        let (server, events) = super::super::test_server(coordinator.stop.clone());
-        coordinator.server = Some(server);
-
+        let (app, tab, mut coordinator, events) = observation_fixture();
         let (client_socket, host_socket) = tokio::net::UnixStream::pair().unwrap();
         let host_native = Arc::new(NativeState::default());
         let client_native = Arc::new(NativeState::default());
@@ -1218,5 +1204,31 @@ mod tests {
         assert_eq!(host_status.wait().await, host_result);
         completed.expect("direct SDK coordinator exchange timed out");
         assert_eq!(status.wait().await, Ok(()));
+    }
+
+    pub(super) fn observation_fixture() -> (
+        super::super::super::FesTermApp,
+        crate::tabs::TabId,
+        super::super::super::Coordinator,
+        mpsc::SyncSender<Event>,
+    ) {
+        use super::super::super::{Broker, Coordinator, FesTermApp, PrivacyGate};
+
+        let (mut app, tab) = FesTermApp::automation_fixture();
+        let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+        app.adopt_broadcast_configuration(
+            festerm_config::Configuration::empty()
+                .with_interface_settings(settings)
+                .unwrap(),
+        );
+        let mut coordinator = Coordinator::default();
+        coordinator.broker = Some(Broker::new([3; 16]));
+        coordinator.stop = Arc::new(AtomicBool::new(false));
+        coordinator.privacy_gate = Arc::new(PrivacyGate::new(false));
+        assert!(coordinator.privacy_gate.bind_mcp(&coordinator.stop));
+        coordinator.enabled = true;
+        let (server, events) = super::super::test_server(coordinator.stop.clone());
+        coordinator.server = Some(server);
+        (app, tab, coordinator, events)
     }
 }
