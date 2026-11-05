@@ -23,13 +23,50 @@ use crate::{
 const RELAY_CLIENTS: usize = 4;
 /// Forwarded channels per authenticated client: the terminal stream, the
 /// observation control stream and at most two observation watches.
-const CHANNELS_PER_CLIENT: u8 = 4;
+const CHANNELS_PER_CLIENT: usize = 4;
 
 pub struct HostConnection {
     pub endpoint: TunnelEndpoint,
-    pub connections: mpsc::Receiver<ChannelStream<server::Msg>>,
+    pub connections: mpsc::Receiver<HostStream>,
     cancel: CancellationToken,
     exit: tokio::sync::watch::Receiver<Option<&'static str>>,
+}
+
+/// Retain channel and client admission through serving, even after SSH disconnects.
+pub struct HostStream {
+    stream: ChannelStream<server::Msg>,
+    _slot: OwnedSemaphorePermit,
+    _client: Arc<OwnedSemaphorePermit>,
+}
+impl tokio::io::AsyncRead for HostStream {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.stream).poll_read(cx, buf)
+    }
+}
+impl tokio::io::AsyncWrite for HostStream {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        std::pin::Pin::new(&mut self.stream).poll_write(cx, buf)
+    }
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.stream).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
 }
 impl HostConnection {
     pub fn failure_category(&self) -> Option<&'static str> {
@@ -142,7 +179,7 @@ pub async fn host_with_identity(
     .map_err(|_| stage_error("host.outer_ssh"))?;
     let cancel = CancellationToken::new();
     let stopped = cancel.clone();
-    let (tx, connections) = mpsc::channel(RELAY_CLIENTS * usize::from(CHANNELS_PER_CLIENT));
+    let (tx, connections) = mpsc::channel(RELAY_CLIENTS * CHANNELS_PER_CLIENT);
     let (exit_sender, exit) = tokio::sync::watch::channel(None);
     tokio::spawn(async move {
         let server_config = Arc::new(server::Config {
@@ -162,12 +199,14 @@ pub async fn host_with_identity(
                     value = outer_rx.recv() => match value { Some(value) => value, None => break },
                 };
                 let (channel, permit) = incoming;
+                let permit = Arc::new(permit);
                 while clients.try_join_next().is_some() {}
                 let (authed, adopted) = oneshot::channel();
                 let handler = Port {
                     port,
                     tx: tx.clone(),
-                    opened: 0,
+                    slots: Arc::new(Semaphore::new(CHANNELS_PER_CLIENT)),
+                    client: permit.clone(),
                     authed: Some(authed),
                 };
                 let server_config = server_config.clone();
@@ -328,8 +367,9 @@ impl client::Handler for Outer {
 
 struct Port {
     port: u16,
-    tx: mpsc::Sender<ChannelStream<server::Msg>>,
-    opened: u8,
+    tx: mpsc::Sender<HostStream>,
+    slots: Arc<Semaphore>,
+    client: Arc<OwnedSemaphorePermit>,
     authed: Option<oneshot::Sender<()>>,
 }
 impl server::Handler for Port {
@@ -354,16 +394,22 @@ impl server::Handler for Port {
         reply: server::ChannelOpenHandle,
         _: &mut server::Session,
     ) -> Result<(), Self::Error> {
-        if self.opened >= CHANNELS_PER_CLIENT || port != self.port as u32 || host != "127.0.0.1" {
+        if port != self.port as u32 || host != "127.0.0.1" {
             return Ok(());
         }
-        // Reserve before accepting so an accepted channel is never silently dropped.
-        let Ok(slot) = self.tx.try_reserve() else {
+        let Ok(slot) = self.slots.clone().try_acquire_owned() else {
             return Ok(());
         };
-        self.opened += 1;
+        // Reserve before accepting so an accepted channel is never silently dropped.
+        let Ok(queued) = self.tx.try_reserve() else {
+            return Ok(());
+        };
         reply.accept().await;
-        slot.send(channel.into_stream());
+        queued.send(HostStream {
+            stream: channel.into_stream(),
+            _slot: slot,
+            _client: self.client.clone(),
+        });
         Ok(())
     }
 }
@@ -653,7 +699,9 @@ mod tests {
             ..Default::default()
         });
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let (tx, mut rx) = mpsc::channel(usize::from(CHANNELS_PER_CLIENT));
+        let (tx, mut rx) = mpsc::channel(CHANNELS_PER_CLIENT);
+        let clients = Arc::new(Semaphore::new(1));
+        let client_lease = Arc::new(clients.clone().try_acquire_owned().unwrap());
         let server = tokio::spawn(async move {
             server::run_stream(
                 config,
@@ -661,7 +709,8 @@ mod tests {
                 Port {
                     port: 47461,
                     tx,
-                    opened: 0,
+                    slots: Arc::new(Semaphore::new(CHANNELS_PER_CLIENT)),
+                    client: client_lease,
                     authed: None,
                 },
             )
@@ -707,12 +756,25 @@ mod tests {
             extra.push((stream, accepted));
         }
         assert!(binding.open().await.is_err());
+        for _ in 0..=CHANNELS_PER_CLIENT {
+            drop(extra.pop().unwrap());
+            let mut stream = binding.open().await.unwrap();
+            let mut accepted = rx.recv().await.unwrap();
+            stream.write_all(b"r").await.unwrap();
+            let mut byte = [0; 1];
+            accepted.read_exact(&mut byte).await.unwrap();
+            assert_eq!(byte, *b"r");
+            extra.push((stream, accepted));
+            assert!(binding.open().await.is_err());
+        }
         drop(extra);
-        drop(accepted);
         connection.close().await.unwrap();
         assert!(tokio::time::timeout(Duration::from_secs(3), server)
             .await
             .is_ok());
+        assert_eq!(clients.available_permits(), 0);
+        drop(accepted);
+        assert_eq!(clients.available_permits(), 1);
     }
 
     #[tokio::test]
@@ -730,7 +792,8 @@ mod tests {
                 Port {
                     port: 47461,
                     tx,
-                    opened: 0,
+                    slots: Arc::new(Semaphore::new(CHANNELS_PER_CLIENT)),
+                    client: Arc::new(Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap()),
                     authed: None,
                 },
             )
