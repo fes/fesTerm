@@ -125,8 +125,8 @@ fn capped_margin(available: f32, max: f32, horizontal: i8, vertical: i8) -> Marg
 pub enum ChipAction {
     None,
     Select(u64),
-    /// Long-pressed: ask before closing this session.
-    Close(u64),
+    /// Long press only opens a menu; closing is a separate explicit action.
+    Menu(u64),
     All,
     New,
 }
@@ -180,7 +180,7 @@ fn chip_strip(ui: &mut Ui, surfaces: &[SurfaceSummary]) -> ChipAction {
                             response.scroll_to_me(Some(egui::Align::Center));
                         }
                         match long_press_or_click(ui, &response) {
-                            (true, _) => action = ChipAction::Close(surface.id),
+                            (true, _) => action = ChipAction::Menu(surface.id),
                             (_, true) => action = ChipAction::Select(surface.id),
                             _ => {}
                         }
@@ -207,6 +207,11 @@ pub enum KeyRowAction {
     SwitchKeyboard,
     Key(Key),
     SelectKeyboard(KeyboardKind),
+    Undo,
+    Redo,
+    Outdent,
+    SelectAll,
+    Copy,
 }
 
 pub struct KeyRowState {
@@ -234,7 +239,7 @@ impl Default for KeyRowOutput {
     }
 }
 
-fn key_button(
+pub(super) fn key_button(
     ui: &mut Ui,
     width: f32,
     height: f32,
@@ -739,14 +744,19 @@ pub fn reconnect_banner(ui: &mut Ui, banner: &ReconnectBanner, compact: bool) ->
 
 /// Confirmation raised by long-pressing a session chip. Returns `Some(true)`
 /// to close, `Some(false)` when cancelled or dismissed.
-pub fn close_session_sheet(ctx: &egui::Context, bounds: Rect, title: &str) -> Option<bool> {
+pub fn close_session_sheet(
+    ctx: &egui::Context,
+    bounds: Rect,
+    title: &str,
+    detail: &str,
+) -> Option<bool> {
     let mut choice = None;
     let outcome = bottom_sheet(ctx, "close-session", bounds, |ui| {
         if sheet_title(ui, &format!("Close {title}?"), None) {
             choice = Some(false);
         }
         ui.label(
-            egui::RichText::new("This closes the tab and ends its connection.")
+            egui::RichText::new(detail)
                 .size(type_scale::BODY)
                 .color(color::TEXT_MUTED),
         );

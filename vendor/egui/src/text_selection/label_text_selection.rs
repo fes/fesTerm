@@ -113,6 +113,7 @@ struct ViewportLabelSelectionState {
     capture_text_without_copy: bool,
     publish_text_to_copy: bool,
     preserve_secondary_for_labels: bool,
+    preserve_touch_for_labels: bool,
     preserved_secondary_this_pass: bool,
     selected_labels: Vec<(Id, std::ops::Range<usize>)>,
     selected_label_lookup: HashMap<Id, std::ops::Range<usize>>,
@@ -138,6 +139,7 @@ impl Default for ViewportLabelSelectionState {
             capture_text_without_copy: Default::default(),
             publish_text_to_copy: Default::default(),
             preserve_secondary_for_labels: Default::default(),
+            preserve_touch_for_labels: Default::default(),
             preserved_secondary_this_pass: Default::default(),
             selected_labels: Default::default(),
             selected_label_lookup: Default::default(),
@@ -169,6 +171,15 @@ impl Plugin for LabelSelectionState {
 }
 
 impl LabelSelectionState {
+    /// Keep a selected label range intact while a touch context-menu gesture
+    /// is pending. Call before rendering the owning labels on each pass.
+    pub fn preserve_selection_on_touch(&mut self, viewport: crate::ViewportId) {
+        self.states
+            .entry(viewport)
+            .or_default()
+            .preserve_touch_for_labels = true;
+    }
+
     /// Preserve the existing selection when a secondary press reaches labels
     /// rendered before the matching [`Self::end_preserve_selection_on_secondary_press`].
     pub fn begin_preserve_selection_on_secondary_press(&mut self, viewport: crate::ViewportId) {
@@ -186,6 +197,7 @@ impl LabelSelectionState {
     ) {
         if let Some(state) = self.states.get_mut(&viewport) {
             state.preserve_secondary_for_labels = false;
+            state.preserve_touch_for_labels = false;
             state.preserved_secondary_this_pass |= preserve_background_press;
         }
     }
@@ -291,6 +303,7 @@ impl ViewportLabelSelectionState {
         self.capture_text_without_copy = false;
         self.publish_text_to_copy = false;
         self.preserve_secondary_for_labels = false;
+        self.preserve_touch_for_labels = false;
         self.preserved_secondary_this_pass = false;
         self.selected_labels.clear();
         self.selected_label_lookup.clear();
@@ -636,6 +649,9 @@ impl ViewportLabelSelectionState {
         }
 
         let preserve_secondary = self.preserve_secondary_for_labels;
+        let preserve_touch = self.preserve_touch_for_labels
+            && self.selection.is_some()
+            && ui.input(|input| input.any_touches());
         self.preserved_secondary_this_pass |= preserve_secondary
             && response.hovered()
             && ui.input(|input| {
@@ -644,7 +660,7 @@ impl ViewportLabelSelectionState {
                     .button_pressed(crate::PointerButton::Secondary)
             });
         let cursor_at_press = super::text_cursor_state::pressed_pointer_pos(ui)
-            .filter(|_| pointer_pressed_for_selection(ui, preserve_secondary))
+            .filter(|_| !preserve_touch && pointer_pressed_for_selection(ui, preserve_secondary))
             .filter(|_| {
                 response.enabled()
                     && (response.hovered()
@@ -657,9 +673,15 @@ impl ViewportLabelSelectionState {
                 response.rect.contains(pos) && ui.clip_rect().contains(pos)
             })
             .map(|pos| galley.cursor_from_pos((galley_from_global * pos).to_vec2()));
-        self.any_hovered |= response.hovered() || cursor_at_press.is_some();
-        self.is_dragging |= response.is_pointer_button_down_on()
-            && pointer_down_for_selection(ui, preserve_secondary);
+        self.any_hovered |= response.hovered()
+            || cursor_at_press.is_some()
+            || (preserve_touch && response.contains_pointer());
+        if preserve_touch {
+            self.is_dragging = false;
+        } else {
+            self.is_dragging |= response.is_pointer_button_down_on()
+                && pointer_down_for_selection(ui, preserve_secondary);
+        }
 
         let old_selection = self.selection;
 

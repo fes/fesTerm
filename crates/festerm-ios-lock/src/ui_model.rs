@@ -30,7 +30,11 @@ impl UnlockScreen {
     pub fn new(biometry: BiometryKind, failure: Option<AuthFailure>) -> Self {
         Self {
             title: UNLOCK_TITLE,
-            primary_button: biometry.button_label(),
+            primary_button: if failure.is_some() {
+                biometry.retry_button_label()
+            } else {
+                biometry.button_label()
+            },
             passcode_button: USE_PASSCODE_LABEL,
             error: failure.and_then(failure_message),
         }

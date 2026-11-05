@@ -31,7 +31,11 @@ Preserve tunnel, account, key, grants, recovery policy and helper binding.
 repair; that combination selects the setup/worker bundle beside the chosen
 Dev Tunnel CLI, allowing a repair utility to use intact signed release helpers
 instead of installing itself. Legacy Windows hosts without the windowless
-worker require this upgrade. Grant/restart-policy changes must be applied separately. The client
+worker require this upgrade. A standalone Windows repair utility need not
+have its own adjacent worker: validate the selected stored/release worker
+before checkpointing or stopping owned workers. Ordinary setup/upgrade keeps
+its current-executable bundle preflight.
+Grant/restart-policy changes must be applied separately. The client
 must explicitly attach the new generation; no old input or terminal state is
 replayed.
 
@@ -60,6 +64,7 @@ older workers. Automatic recovery behavior and its budget remain unchanged.
 - **Automated tests required:**
   `managed_session_repair_is_explicit_and_cannot_change_policy`,
   `managed_session_repair_journals_one_fresh_generation_without_changing_grants`,
+  `managed_session_repair_validates_the_selected_helper_bundle`,
   and existing managed upgrade/recovery serialization tests.
 - **Native/manual evidence required:** DT-05 signed Windows/Linux/macOS
   dead-legacy-host repair, unchanged tunnel/key/grants, interrupted launch,

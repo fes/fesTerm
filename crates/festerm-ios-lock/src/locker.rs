@@ -1,6 +1,9 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,6 +22,15 @@ impl BiometryKind {
             Self::TouchId => "Use Touch ID",
             Self::OpticId => "Use Optic ID",
             Self::None => "Unlock",
+        }
+    }
+
+    pub const fn retry_button_label(self) -> &'static str {
+        match self {
+            Self::FaceId => "Try Face ID Again",
+            Self::TouchId => "Try Touch ID Again",
+            Self::OpticId => "Try Optic ID Again",
+            Self::None => "Try Unlock Again",
         }
     }
 }
@@ -43,18 +55,51 @@ pub enum AuthFailure {
 
 pub type AuthOutcome = Result<(), AuthFailure>;
 
-/// Owner authentication, with passcode fallback.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuthMethod {
+    OwnerAuthentication,
+    DevicePasscode,
+}
+
+/// Retains the platform request and cancels it when its owner retires it.
+pub struct Authentication {
+    cancel: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl Authentication {
+    pub fn new(cancel: impl FnOnce() + Send + 'static) -> Self {
+        Self {
+            cancel: Some(Box::new(cancel)),
+        }
+    }
+}
+
+impl Drop for Authentication {
+    fn drop(&mut self) {
+        if let Some(cancel) = self.cancel.take() {
+            cancel();
+        }
+    }
+}
+
+/// System owner authentication; the application never handles a passcode.
 pub trait Locker: Send + Sync {
     fn availability(&self) -> Availability;
 
-    /// Presents the system dialog. `done` is invoked exactly once, on any thread.
-    fn authenticate(&self, reason: &str, done: Box<dyn FnOnce(AuthOutcome) + Send>);
+    /// Presents the system dialog. A reply can arrive after cancellation.
+    fn authenticate(
+        &self,
+        method: AuthMethod,
+        reason: &str,
+        done: Box<dyn FnOnce(AuthOutcome) + Send>,
+    ) -> Authentication;
 }
 
 /// Scriptable locker for tests. Outcomes complete synchronously unless
 /// `defer` is set, in which case `complete_pending` finishes them.
 pub struct FakeLocker {
     state: Mutex<FakeState>,
+    cancellations: Arc<AtomicUsize>,
 }
 
 struct FakeState {
@@ -63,6 +108,7 @@ struct FakeState {
     defer: bool,
     pending: VecDeque<Box<dyn FnOnce(AuthOutcome) + Send>>,
     reasons: Vec<String>,
+    methods: Vec<AuthMethod>,
 }
 
 impl FakeLocker {
@@ -74,7 +120,9 @@ impl FakeLocker {
                 defer: false,
                 pending: VecDeque::new(),
                 reasons: Vec::new(),
+                methods: Vec::new(),
             }),
+            cancellations: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -108,6 +156,14 @@ impl FakeLocker {
     pub fn prompt_reasons(&self) -> Vec<String> {
         self.state().reasons.clone()
     }
+
+    pub fn prompt_methods(&self) -> Vec<AuthMethod> {
+        self.state().methods.clone()
+    }
+
+    pub fn cancellation_count(&self) -> usize {
+        self.cancellations.load(Ordering::SeqCst)
+    }
 }
 
 impl Locker for FakeLocker {
@@ -115,13 +171,31 @@ impl Locker for FakeLocker {
         self.state().availability
     }
 
-    fn authenticate(&self, reason: &str, done: Box<dyn FnOnce(AuthOutcome) + Send>) {
+    fn authenticate(
+        &self,
+        method: AuthMethod,
+        reason: &str,
+        done: Box<dyn FnOnce(AuthOutcome) + Send>,
+    ) -> Authentication {
+        let completed = Arc::new(AtomicBool::new(false));
+        let completion = completed.clone();
+        let done: Box<dyn FnOnce(AuthOutcome) + Send> = Box::new(move |outcome| {
+            completion.store(true, Ordering::SeqCst);
+            done(outcome);
+        });
+        let cancellations = self.cancellations.clone();
+        let authentication = Authentication::new(move || {
+            if !completed.load(Ordering::SeqCst) {
+                cancellations.fetch_add(1, Ordering::SeqCst);
+            }
+        });
         let outcome = {
             let mut state = self.state();
             state.reasons.push(reason.to_owned());
+            state.methods.push(method);
             if state.defer {
                 state.pending.push_back(done);
-                return;
+                return authentication;
             }
             state
                 .script
@@ -129,5 +203,6 @@ impl Locker for FakeLocker {
                 .unwrap_or(Err(AuthFailure::Cancelled))
         };
         done(outcome);
+        authentication
     }
 }

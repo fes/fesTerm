@@ -439,7 +439,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     }
     super::service_install::ensure_unprivileged_user()?;
     #[cfg(windows)]
-    super::service_install::check_windows_worker(&std::env::current_exe()?)?;
+    preflight_install_worker(repair_session, &std::env::current_exe()?)?;
     let directory = setup_storage::private_directory(&state, create)?;
     let installer = lock(&directory, "installer.lock")?;
     installer
@@ -1098,27 +1098,7 @@ async fn repair_installation(
         }
         Err(error) => return Err(error),
     }
-    let executable = if upgrade {
-        cli.with_file_name(format!(
-            "festerm-tunnel-setup{}",
-            std::env::consts::EXE_SUFFIX
-        ))
-    } else {
-        record.executable.clone()
-    };
-    let mut next = pending_upgrade(
-        &record,
-        executable,
-        if upgrade {
-            cli.into()
-        } else {
-            record.cli.clone()
-        },
-        record.no_takeover,
-        &GrantUpdates::default(),
-    )?;
-    #[cfg(windows)]
-    super::service_install::check_windows_worker(&next.executable)?;
+    let mut next = repair_record(&record, cli, upgrade)?;
     checkpoint(directory, &next)?;
     stop_owned_workers(directory, state, &next).await?;
     let health = lock(directory, "health.lock")?;
@@ -1131,6 +1111,39 @@ async fn repair_installation(
         launch_replacement(start, &log)
     })
     .await?;
+    Ok(next)
+}
+
+#[cfg(windows)]
+fn preflight_install_worker(repair_session: bool, executable: &Path) -> io::Result<()> {
+    if !repair_session {
+        super::service_install::check_windows_worker(executable)?;
+    }
+    Ok(())
+}
+
+fn repair_record(record: &Installation, cli: &Path, upgrade: bool) -> io::Result<Installation> {
+    let executable = if upgrade {
+        cli.with_file_name(format!(
+            "festerm-tunnel-setup{}",
+            std::env::consts::EXE_SUFFIX
+        ))
+    } else {
+        record.executable.clone()
+    };
+    let next = pending_upgrade(
+        record,
+        executable,
+        if upgrade {
+            cli.into()
+        } else {
+            record.cli.clone()
+        },
+        record.no_takeover,
+        &GrantUpdates::default(),
+    )?;
+    #[cfg(windows)]
+    super::service_install::check_windows_worker(&next.executable)?;
     Ok(next)
 }
 
@@ -2914,6 +2927,55 @@ mod tests {
         std::env::current_dir()
             .unwrap()
             .join("releases/0.0.1-fixture/festerm-tunnel-setup")
+    }
+
+    #[test]
+    fn managed_session_repair_validates_the_selected_helper_bundle() {
+        let root = crate::test_support::private_directory("festerm-repair-bundles");
+        let stored = root.join("stored");
+        let release = root.join("release");
+        fs::create_dir(&stored).unwrap();
+        fs::create_dir(&release).unwrap();
+        let setup_name = format!("festerm-tunnel-setup{}", std::env::consts::EXE_SUFFIX);
+        let record = configured_fixture(stored.join(&setup_name));
+        let cli = release.join(format!("devtunnel{}", std::env::consts::EXE_SUFFIX));
+        #[cfg(windows)]
+        {
+            let utility = root.join(&setup_name);
+            assert_eq!(
+                preflight_install_worker(false, &utility)
+                    .unwrap_err()
+                    .to_string(),
+                "service.worker_executable"
+            );
+            preflight_install_worker(true, &utility).unwrap();
+            for upgrade in [false, true] {
+                assert_eq!(
+                    repair_record(&record, &cli, upgrade)
+                        .err()
+                        .unwrap()
+                        .to_string(),
+                    "service.worker_executable"
+                );
+            }
+            fs::write(release.join("festerm-tunnel-worker.exe"), b"fixture").unwrap();
+            assert!(repair_record(&record, &cli, false).is_err());
+        }
+        let upgraded = repair_record(&record, &cli, true).unwrap();
+        assert_eq!(upgraded.executable, release.join(&setup_name));
+        assert_eq!(upgraded.cli, cli);
+        #[cfg(windows)]
+        {
+            fs::remove_file(release.join("festerm-tunnel-worker.exe")).unwrap();
+            fs::write(stored.join("festerm-tunnel-worker.exe"), b"fixture").unwrap();
+            assert!(repair_record(&record, &cli, true).is_err());
+        }
+        let retained = repair_record(&record, &cli, false).unwrap();
+        assert_eq!(retained.executable, record.executable);
+        assert_eq!(retained.cli, record.cli);
+        assert_eq!(record.phase, "configured");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
