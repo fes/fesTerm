@@ -493,28 +493,32 @@ pub(super) fn has_cancelled_direct_handoffs(
     })
 }
 
-pub(super) fn revoke_cancelled_direct_handoffs_locked(
+pub(super) fn revoke_invalid_direct_handoffs_locked(
     handoffs: &mut BTreeMap<ConnectionId, BoundControlHandoff>,
     broker: &mut Broker,
+    direct_qualified: bool,
     now: Instant,
     guard: &AutomationAdmissionGuard,
-) {
-    let cancelled: Vec<_> = handoffs
+) -> bool {
+    let invalid: Vec<_> = handoffs
         .iter()
         .filter_map(|(principal, handoff)| {
-            handoff
+            let cancelled = handoff
                 .pending_request
                 .as_ref()
-                .filter(|fence| !fence.valid.get() || now >= fence.deadline)
-                .map(|_| (*principal, handoff.target, handoff.grant))
+                .is_some_and(|fence| !fence.valid.get() || now >= fence.deadline);
+            let interrupted = handoff.direct_reuse.is_some()
+                && (!direct_qualified || !handoff.fence.is_current());
+            (cancelled || interrupted).then_some((*principal, handoff.target, handoff.grant))
         })
         .collect();
-    for (principal, target, grant) in cancelled {
-        if broker.native_control_grant(principal, target, now) == Ok(grant) {
-            broker.revoke_ordinary(principal, guard);
+    for (principal, target, grant) in &invalid {
+        if broker.native_control_grant(*principal, *target, now) == Ok(*grant) {
+            broker.revoke_ordinary(*principal, guard);
         }
-        handoffs.remove(&principal);
+        handoffs.remove(principal);
     }
+    !invalid.is_empty()
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -919,13 +923,20 @@ impl Coordinator {
         now: Instant,
         guard: &AutomationAdmissionGuard,
     ) -> festerm_automation::Result<()> {
+        let direct_qualified = self.direct_input_qualified() && self.controller_opted_in;
         let workspace_revision = self
             .presentation_workspace
             .as_ref()
             .and_then(WorkspaceRevision::current);
         let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
         broker.poll_expiry(now);
-        revoke_cancelled_direct_handoffs_locked(&mut self.control_handoffs, broker, now, guard);
+        revoke_invalid_direct_handoffs_locked(
+            &mut self.control_handoffs,
+            broker,
+            direct_qualified,
+            now,
+            guard,
+        );
         prune_stale_enrollment_metadata_reviews_locked(
             &mut self.pending_enrollment_metadata_reviews,
             broker,

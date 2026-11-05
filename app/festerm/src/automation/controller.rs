@@ -3923,6 +3923,164 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn direct_input_reuse_disarms_without_a_new_request_after_authority_loss() {
+        for change in ["qualification", "opt-in", "human"] {
+            let (mut coordinator, mut app, tab, registration, _, _, receive) =
+                armed_direct_input_fixture(None);
+            let principal = coordinator.peers[&1].principal;
+            let target = coordinator.targets[&tab.chip_id()].reference;
+            let human = if change == "human" {
+                Some(
+                    app.automation_session_mut(tab)
+                        .controller
+                        .begin_pending_human_input(),
+                )
+            } else {
+                None
+            };
+            match change {
+                "qualification" => coordinator.synthetic_direct_input_qualified = false,
+                "opt-in" => coordinator.controller_opted_in = false,
+                _ => {}
+            }
+            let mut broker = coordinator.broker.take().unwrap();
+            coordinator.reconcile(&mut broker, &[&app]);
+            assert!(
+                broker
+                    .native_control_grant(principal, target, Instant::now())
+                    .is_err(),
+                "{change}"
+            );
+            coordinator.broker = Some(broker);
+            drop(human);
+            coordinator.synthetic_direct_input_qualified = true;
+            coordinator.controller_opted_in = true;
+            queue_later_input(
+                &mut coordinator,
+                &app,
+                registration,
+                10,
+                "armed input",
+                &receive,
+            );
+            assert!(!retry_automation_busy(|| {
+                stage_reusable_direct_inputs(&mut coordinator, &[&app])
+            })
+            .unwrap());
+            assert!(matches!(
+                coordinator.peers[&1]
+                    .controller
+                    .direct_input
+                    .as_ref()
+                    .unwrap()
+                    .phase,
+                DirectInputPhase::Requested
+            ));
+            assert!(direct_input_dispatches(&coordinator).is_empty());
+        }
+    }
+
+    #[test]
+    fn direct_input_reuse_preserves_admission_after_authority_loss() {
+        for change in ["qualification", "human"] {
+            let retry_deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let (mut coordinator, mut app, tab, registration, _, _, receive) =
+                    armed_direct_input_fixture(None);
+                let principal = coordinator.peers[&1].principal;
+                let target = coordinator.targets[&tab.chip_id()].reference;
+                let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+                    app.automation_session(tab).unwrap().controller.session()
+                else {
+                    panic!("expected synthetic local backend");
+                };
+                let backend = backend.clone();
+                let token = queue_later_input(
+                    &mut coordinator,
+                    &app,
+                    registration,
+                    10,
+                    "armed input",
+                    &receive,
+                );
+                assert!(retry_automation_busy(|| {
+                    stage_reusable_direct_inputs(&mut coordinator, &[&app])
+                })
+                .unwrap());
+                let dispatch = direct_input_dispatches(&coordinator)[0];
+                retry_automation_busy(|| {
+                    dispatch_direct_input(
+                        &mut coordinator,
+                        dispatch,
+                        app.automation_session(tab).unwrap(),
+                        &[&app],
+                    )
+                })
+                .unwrap();
+                if !matches!(
+                    coordinator.peers[&1]
+                        .controller
+                        .direct_input
+                        .as_ref()
+                        .unwrap()
+                        .phase,
+                    DirectInputPhase::Settling {
+                        outcome: DirectInputOutcome::Admitted,
+                        ..
+                    }
+                ) {
+                    let response =
+                        finish_direct_input_for_test(&mut coordinator, token, &app, &receive);
+                    assert_eq!(
+                        response["result"]["structuredContent"]["code"],
+                        "UNAVAILABLE"
+                    );
+                    assert!(backend.drain_ordered_test_input().is_empty());
+                    assert!(
+                        Instant::now() < retry_deadline,
+                        "input dispatch stayed busy"
+                    );
+                    continue;
+                }
+                let human = if change == "human" {
+                    Some(
+                        app.automation_session_mut(tab)
+                            .controller
+                            .begin_pending_human_input(),
+                    )
+                } else {
+                    coordinator.synthetic_direct_input_qualified = false;
+                    None
+                };
+                let mut broker = coordinator.broker.take().unwrap();
+                coordinator.reconcile(&mut broker, &[&app]);
+                assert!(
+                    broker
+                        .native_control_grant(principal, target, Instant::now())
+                        .is_err(),
+                    "{change}"
+                );
+                coordinator.broker = Some(broker);
+                let response =
+                    finish_direct_input_for_test(&mut coordinator, token, &app, &receive);
+                assert_eq!(
+                    response["result"]["structuredContent"]["data"]["disposition"], "admitted",
+                    "{change}"
+                );
+                assert_eq!(
+                    backend.drain_ordered_test_input(),
+                    vec![b"armed input\r".to_vec()]
+                );
+                assert!(registration_row(&coordinator, &[&app], 1, registration)
+                    .control
+                    .is_none());
+                drop(human);
+                break;
+            }
+        }
+    }
+
+    #[test]
     fn direct_input_reuse_disarms_changed_fences_and_source_descriptions() {
         for change in ["human", "ime", "mode", "source", "workspace", "association"] {
             let (mut coordinator, mut app, tab, registration, _, _, receive) =

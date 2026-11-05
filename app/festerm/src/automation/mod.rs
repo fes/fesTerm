@@ -2058,9 +2058,11 @@ impl Coordinator {
                 cleanup_now,
                 &guard,
             );
-            presentation::revoke_cancelled_direct_handoffs_locked(
+            let direct_qualified = self.direct_input_qualified() && self.controller_opted_in;
+            let handoff_retired = presentation::revoke_invalid_direct_handoffs_locked(
                 &mut self.control_handoffs,
                 &mut broker,
+                direct_qualified,
                 cleanup_now,
                 &guard,
             );
@@ -2069,6 +2071,9 @@ impl Coordinator {
                 self.privacy_lost_with_taken_broker(&mut broker);
                 tracing::error!(?error, "cancelled direct input review cleanup failed");
                 return;
+            }
+            if handoff_retired {
+                self.status = "Control handoff ended; a new review is required.";
             }
         }
         let waits = self.peers.values_mut().try_for_each(|peer| {
@@ -2106,6 +2111,7 @@ impl Coordinator {
         broker: &mut Broker,
         apps: &[&FesTermApp],
     ) -> Result<(), ReconcileError> {
+        let direct_qualified = self.direct_input_qualified() && self.controller_opted_in;
         let mut candidates = Vec::new();
         for (id, session) in apps.iter().flat_map(|app| app.automation_sessions()) {
             let Some(controller_instance) = session.controller.automation_instance() else {
@@ -2243,9 +2249,10 @@ impl Coordinator {
             &guard,
         )
         .map_err(ReconcileError::Authority)?;
-        presentation::revoke_cancelled_direct_handoffs_locked(
+        let handoff_retired = presentation::revoke_invalid_direct_handoffs_locked(
             &mut self.control_handoffs,
             broker,
+            direct_qualified,
             Instant::now(),
             &guard,
         );
@@ -2261,6 +2268,8 @@ impl Coordinator {
         drop(guard);
         if metadata_retired {
             self.status = "Automation cancellation or revocation completed.";
+        } else if handoff_retired {
+            self.status = "Control handoff ended; a new review is required.";
         }
         if retirement_refused {
             tracing::warn!("automation target retirement refused");

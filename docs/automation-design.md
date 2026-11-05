@@ -293,11 +293,13 @@ successful grant may stay armed and can be explicitly disarmed. A later wire
 invocation may reuse it only for the same action and association, after checking
 the original source descriptions, modes, human/IME and workspace fences,
 qualification and queued cancellation. The original expiry and shared budgets
-are not renewed. A different action needs a fresh review; an unknown outcome
-disarms and is never automatically replayed. There is no production control
-approval UI, MCP input publication or feature activation; the modeled
-enrollment and presentation foundations do not qualify those paths or a
-desktop.
+are not renewed. Reconciliation disarms the matching handoff after an observed
+qualification or opt-in loss, or an invalid human/IME/attachment fence, even
+without another request; restoring qualification does not restore that grant.
+A different action needs a fresh review; an unknown outcome disarms and is
+never automatically replayed. There is no production control approval UI, MCP
+input publication or feature activation; the modeled enrollment and
+presentation foundations do not qualify those paths or a desktop.
 
 The kernel also has a separately native-approved, discovery-only metadata slot
 on the same connection. It binds exact target generations and has its own epoch,
