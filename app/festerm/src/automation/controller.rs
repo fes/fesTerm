@@ -1728,7 +1728,7 @@ pub(super) fn dispatch_direct_input(
     drop(guard);
 
     let attempted = (|| {
-        #[cfg(test)]
+        #[cfg(all(test, unix))]
         if std::mem::take(&mut coordinator.synthetic_direct_input_busy_after_admit_once) {
             return Err(Error::Busy);
         }
@@ -4096,6 +4096,7 @@ pub(super) mod tests {
         )
     }
 
+    #[cfg(unix)]
     pub(in crate::automation) fn direct_input_outcome_for_test(
         coordinator: &Coordinator,
         token: u64,
