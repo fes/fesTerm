@@ -1221,6 +1221,14 @@ synthetic test exercises scoped revocation and expiry of queued replies. No
 name, position or current-association fallback is permitted. Registration and
 status never return terminal metadata or other clients' records.
 
+An official Rust MCP SDK client also exercises this coordinator through a
+test-only in-memory bridge. It enrolls two identical-label local fixtures,
+observes metadata refusal before each separate synthetic review, and checks
+the exact association's metadata after one label changes. It sees the moved
+target's old handle refused without retargeting the other. This exchange
+bypasses private bootstrap and is not native transport, recipient, privacy or
+presentation qualification.
+
 This is not a qualified delivery fence. Cancellation after completion, all
 expiry/destruction and revocation ordering, authenticated recipients,
 privacy monitoring and the final physical recipient still require proof.

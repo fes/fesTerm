@@ -3020,6 +3020,15 @@ pub(super) mod tests {
             "params": {"name": name, "arguments": arguments}
         }))
         .unwrap();
+        process_test_peer_bytes(coordinator, channel, apps, &bytes);
+    }
+
+    fn process_test_peer_bytes(
+        coordinator: &mut Coordinator,
+        channel: u64,
+        apps: &[&FesTermApp],
+        bytes: &[u8],
+    ) {
         let qualified = coordinator.controller_qualified() && coordinator.controller_opted_in;
         let input_qualified = coordinator.direct_input_qualified() && qualified;
         let metadata = EnrollmentMetadataContext {
@@ -3032,7 +3041,7 @@ pub(super) mod tests {
             &coordinator.targets,
             metadata,
             coordinator.peers.get_mut(&channel).unwrap(),
-            &bytes,
+            bytes,
             apps,
             &coordinator.privacy_gate,
             &coordinator.stop,
@@ -3332,6 +3341,316 @@ pub(super) mod tests {
             .unwrap()
             .public
             .to_wire()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn official_rust_client_exercises_synthetic_enrollment_metadata() {
+        use rmcp::{
+            model::{CallToolRequestParams, ClientConfig, ProtocolVersion},
+            ServiceExt,
+        };
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        #[derive(Debug, PartialEq, Eq)]
+        enum SyntheticAction {
+            Enroll,
+            ApproveMetadata,
+            MoveFirstTarget,
+        }
+
+        let (mut app, first_tab) = FesTermApp::automation_local_fixture();
+        let (mut donor, second_tab) = FesTermApp::automation_local_fixture();
+        app.adopt_tab(donor.detach_tab(second_tab).unwrap(), None);
+        app.automation_session_mut(first_tab).label = "same label".to_owned();
+        app.automation_session_mut(second_tab).label = "same label".to_owned();
+        let mut coordinator = fixture(&[&app]);
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        coordinator.synthetic_enrollment_metadata_delivery_qualified = true;
+        let receive = add_peer_with_frames(&mut coordinator, 1);
+        coordinator.peers.get_mut(&1).unwrap().machine =
+            Machine::with_controller_enrollment_and_unavailable_presentation();
+        let principal = coordinator.peers[&1].principal;
+        let (server_stream, client_stream) = tokio::io::duplex(128 * 1024);
+        let (actions, mut next_action) = tokio::sync::mpsc::channel(1);
+
+        let server = async {
+            let (read, mut write) = tokio::io::split(server_stream);
+            let mut reader = BufReader::new(read);
+            let mut bytes = Vec::new();
+            let mut approved = BTreeSet::new();
+            let mut first_handle = None;
+            let mut second_handle = None;
+            let mut retired_first = false;
+            loop {
+                bytes.clear();
+                if reader.read_until(b'\n', &mut bytes).await.unwrap() == 0 {
+                    break;
+                }
+                assert!(bytes.len() <= festerm_automation_mcp::MAX_MESSAGE_BYTES);
+                let request: Value = serde_json::from_slice(&bytes).unwrap();
+                let tool = request["params"]["name"].as_str();
+                process_test_peer_bytes(&mut coordinator, 1, &[&app], &bytes);
+                while let Some(frame) = receive() {
+                    let mut guarded = Vec::new();
+                    ipc::write_test_frame(&mut guarded, &frame)
+                        .unwrap_or_else(|error| panic!("synthetic {tool:?} response: {error}"));
+                    let length = u32::from_be_bytes(guarded[..4].try_into().unwrap()) as usize;
+                    assert_eq!(length, guarded.len() - 4);
+                    write.write_all(&guarded[4..]).await.unwrap();
+                }
+                match tool {
+                    Some("festerm_controller_register") => {
+                        assert_eq!(next_action.recv().await, Some(SyntheticAction::Enroll));
+                        let local_id = request["params"]["arguments"]["local_id"].as_str().unwrap();
+                        let registration = coordinator.peers[&1]
+                            .controller
+                            .registrations
+                            .values()
+                            .find(|record| {
+                                coordinator
+                                    .broker
+                                    .as_ref()
+                                    .unwrap()
+                                    .controller_registration(principal, record.internal)
+                                    .is_ok_and(|identifier| identifier == local_id.as_bytes())
+                            })
+                            .map(|record| record.internal)
+                            .expect("client registration exists");
+                        let tab = match local_id {
+                            "device-left" => first_tab,
+                            "device-right" => second_tab,
+                            _ => panic!("unexpected registration"),
+                        };
+                        let target = coordinator.targets[&tab.chip_id()].reference;
+                        let token = review(
+                            &mut coordinator,
+                            &[&app],
+                            WindowId::PRIMARY,
+                            1,
+                            registration,
+                            target,
+                        );
+                        confirm(
+                            &mut coordinator,
+                            &[&app],
+                            WindowId::PRIMARY,
+                            registration,
+                            token,
+                        );
+                        let handle = metadata_handle(&coordinator, registration);
+                        if tab == first_tab {
+                            first_handle = Some(handle);
+                        } else {
+                            second_handle = Some(handle);
+                            assert_eq!(
+                                app.automation_session(first_tab).unwrap().label,
+                                app.automation_session(second_tab).unwrap().label
+                            );
+                            app.automation_session_mut(first_tab).label =
+                                "renamed first".to_owned();
+                        }
+                    }
+                    Some("festerm_sessions_get") => {
+                        let handle = request["params"]["arguments"]["session_ref"]
+                            .as_str()
+                            .unwrap();
+                        if !approved.contains(handle) {
+                            assert_eq!(
+                                next_action.recv().await,
+                                Some(SyntheticAction::ApproveMetadata)
+                            );
+                            let (registration, enrollment) = coordinator.peers[&1]
+                                .controller
+                                .registrations
+                                .values()
+                                .find_map(|record| {
+                                    record.association.and_then(|association| {
+                                        (association.public.to_wire() == handle)
+                                            .then_some((record.internal, association.enrollment))
+                                    })
+                                })
+                                .expect("metadata request refers to an enrollment");
+                            metadata_command_with_retry(
+                                &mut coordinator,
+                                &app,
+                                WindowId::PRIMARY,
+                                NativeCommand::ReviewControllerMetadata {
+                                    channel: 1,
+                                    registration,
+                                    enrollment,
+                                },
+                            )
+                            .unwrap();
+                            let token = metadata_review_token(&coordinator, &app, registration);
+                            metadata_command_with_retry(
+                                &mut coordinator,
+                                &app,
+                                WindowId::PRIMARY,
+                                NativeCommand::ConfirmControllerMetadata {
+                                    channel: 1,
+                                    registration,
+                                    review: token,
+                                },
+                            )
+                            .unwrap();
+                            approved.insert(handle.to_owned());
+                        } else if second_handle.as_deref() == Some(handle) && !retired_first {
+                            assert_eq!(
+                                next_action.recv().await,
+                                Some(SyntheticAction::MoveFirstTarget)
+                            );
+                            assert!(first_handle.is_some());
+                            coordinator.controller_target_moving(first_tab);
+                            retired_first = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            assert!(retired_first);
+            assert_eq!(approved.len(), 2);
+            assert!(coordinator.peers[&1].grant.is_none());
+            assert!(!coordinator.javascript_enabled);
+            assert!(!app.automation_javascript_enabled());
+        };
+
+        let client = async {
+            let mut config = ClientConfig::default();
+            config.protocol_version = ProtocolVersion::V_2025_11_25;
+            let client = config
+                .serve(client_stream)
+                .await
+                .expect("SDK initialization");
+            assert_eq!(
+                client.peer_info().unwrap().protocol_version,
+                ProtocolVersion::V_2025_11_25
+            );
+            let tools = client.list_all_tools().await.expect("SDK tool listing");
+            for name in [
+                "festerm_controller_capabilities",
+                "festerm_controller_register",
+                "festerm_controller_status",
+                "festerm_sessions_get",
+            ] {
+                assert!(tools.iter().any(|tool| tool.name == name), "{name}");
+            }
+            let capabilities = client
+                .call_tool(
+                    CallToolRequestParams::new("festerm_controller_capabilities")
+                        .with_arguments(serde_json::Map::new()),
+                )
+                .await
+                .expect("SDK capability request");
+            let data = &capabilities.structured_content.unwrap()["data"];
+            assert_eq!(data["enrollment_available"], true);
+            assert_eq!(data["metadata_available"], true);
+            assert_eq!(data["metadata_requires_separate_grant"], true);
+            assert_eq!(data["presentation_available"], false);
+            assert_eq!(data["input_available"], false);
+
+            let mut handles = Vec::new();
+            for local_id in ["device-left", "device-right"] {
+                let registered = client
+                    .call_tool(
+                        CallToolRequestParams::new("festerm_controller_register").with_arguments(
+                            json!({"local_id": local_id}).as_object().unwrap().clone(),
+                        ),
+                    )
+                    .await
+                    .expect("SDK registration");
+                let registered = registered.structured_content.unwrap();
+                assert!(registered["data"]["association_id"].is_null());
+                let registration = registered["data"]["registration_id"].as_str().unwrap();
+                actions.send(SyntheticAction::Enroll).await.unwrap();
+                let status = client
+                    .call_tool(
+                        CallToolRequestParams::new("festerm_controller_status").with_arguments(
+                            json!({"registration_id": registration})
+                                .as_object()
+                                .unwrap()
+                                .clone(),
+                        ),
+                    )
+                    .await
+                    .expect("SDK registration status");
+                let status = status.structured_content.unwrap();
+                let handle = status["data"]["association_id"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+                handles.push(handle);
+            }
+            assert_ne!(handles[0], handles[1]);
+            for (handle, label) in handles.iter().zip(["renamed first", "same label"]) {
+                let arguments = json!({"session_ref": handle}).as_object().unwrap().clone();
+                let denied = client
+                    .call_tool(
+                        CallToolRequestParams::new("festerm_sessions_get")
+                            .with_arguments(arguments.clone()),
+                    )
+                    .await
+                    .expect("SDK metadata refusal");
+                assert_eq!(denied.is_error, Some(true));
+                assert_eq!(denied.structured_content.unwrap()["code"], "NOT_AUTHORIZED");
+                actions
+                    .send(SyntheticAction::ApproveMetadata)
+                    .await
+                    .unwrap();
+                let allowed = client
+                    .call_tool(
+                        CallToolRequestParams::new("festerm_sessions_get")
+                            .with_arguments(arguments),
+                    )
+                    .await
+                    .expect("SDK approved metadata");
+                let metadata = allowed.structured_content.unwrap();
+                assert_eq!(metadata["status"], "ok");
+                assert_eq!(
+                    metadata["data"],
+                    json!({
+                        "sessions": [{
+                            "session_ref": handle,
+                            "label": label,
+                            "lifecycle": "running",
+                            "untrusted": true,
+                        }],
+                        "untrusted": true,
+                    })
+                );
+            }
+            actions
+                .send(SyntheticAction::MoveFirstTarget)
+                .await
+                .unwrap();
+            for (handle, expected) in [(&handles[0], false), (&handles[1], true)] {
+                let result = client
+                    .call_tool(
+                        CallToolRequestParams::new("festerm_sessions_get").with_arguments(
+                            json!({"session_ref": handle}).as_object().unwrap().clone(),
+                        ),
+                    )
+                    .await
+                    .expect("SDK metadata after target movement");
+                if expected {
+                    let metadata = result.structured_content.unwrap();
+                    assert_eq!(metadata["status"], "ok");
+                    assert_eq!(
+                        metadata["data"]["sessions"][0]["session_ref"],
+                        handle.as_str()
+                    );
+                    assert_eq!(metadata["data"]["sessions"][0]["label"], "same label");
+                } else {
+                    assert_eq!(result.is_error, Some(true));
+                    assert_eq!(result.structured_content.unwrap()["code"], "NOT_AUTHORIZED");
+                }
+            }
+            client.cancel().await.expect("SDK disconnect");
+        };
+        tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(server, client);
+        })
+        .await
+        .expect("SDK interoperability exchange timed out");
     }
 
     fn frame_response(frame: &festerm_automation::OutboundFrame) -> Value {

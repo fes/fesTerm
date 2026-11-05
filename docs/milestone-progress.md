@@ -1,5 +1,13 @@
 # Milestone Progress Narrative
 
+## Exercising enrollment with an official Rust MCP client
+
+The official Rust SDK negotiates MCP and drives two initially identical-label
+synthetic enrollments through an in-memory coordinator bridge. Separate
+simulated reviews authorize metadata; a later label change and target move
+exercise exact association rather than name-based retargeting. The exchange
+does not qualify native transport, privacy or production controller support.
+
 ## Reusing a synthetic direct-input handoff
 
 A new matching wire invocation can reuse the same still-live synthetic handoff
