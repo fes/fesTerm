@@ -2820,8 +2820,10 @@ separate discovery-grant fences at actual publication.
 
 For AUTO-03, a broker regression orders explicit ordinary-slot, legacy
 metadata-slot and whole-principal revocation against admission and checks
-independent enrollment metadata. Other cut, expiry and recipient-delivery paths
-still need their own fences.
+independent enrollment metadata. Another orders ordinary and legacy metadata
+grant replacement against guarded queue insertion and checks independent
+opposite slots. Other cut, expiry and recipient-delivery paths still need their
+own fences.
 
 ## Intake rule for new work
 

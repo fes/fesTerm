@@ -940,12 +940,28 @@ impl Broker {
     /// Native-only decision, bound to the exact pending channel/proposal.
     /// Reapproval cuts ordinary runs, but does not replace a metadata grant.
     /// Approval does not transfer another principal's writer lease.
+    /// The caller retains the shared admission guard through replacement.
+    ///
+    /// ```compile_fail
+    /// use festerm_automation::{ApprovalId, Broker, ConnectionId, NativeApproval};
+    /// use std::time::Instant;
+    /// fn approve_without_admission(
+    ///     broker: &mut Broker,
+    ///     connection: ConnectionId,
+    ///     id: ApprovalId,
+    ///     approval: NativeApproval,
+    ///     now: Instant,
+    /// ) {
+    ///     let _ = broker.approve(connection, id, approval, now);
+    /// }
+    /// ```
     pub fn approve(
         &mut self,
         connection: ConnectionId,
         id: ApprovalId,
         approval: NativeApproval,
         now: Instant,
+        _guard: &AutomationAdmissionGuard,
     ) -> Result<()> {
         self.poll_expiry(now);
         let pending = self.pending.get(&id).ok_or(Error::Unauthorized)?;
@@ -1071,12 +1087,28 @@ impl Broker {
     }
 
     /// Native-only decision for the separate discovery-only slot.
+    /// The caller retains the shared admission guard through replacement.
+    ///
+    /// ```compile_fail
+    /// use festerm_automation::{ApprovalId, Broker, ConnectionId, NativeMetadataApproval};
+    /// use std::time::Instant;
+    /// fn approve_without_admission(
+    ///     broker: &mut Broker,
+    ///     connection: ConnectionId,
+    ///     id: ApprovalId,
+    ///     approval: NativeMetadataApproval,
+    ///     now: Instant,
+    /// ) {
+    ///     let _ = broker.approve_metadata(connection, id, approval, now);
+    /// }
+    /// ```
     pub fn approve_metadata(
         &mut self,
         connection: ConnectionId,
         id: ApprovalId,
         approval: NativeMetadataApproval,
         now: Instant,
+        _guard: &AutomationAdmissionGuard,
     ) -> Result<()> {
         self.poll_expiry(now);
         let pending = self.pending.get(&id).ok_or(Error::Unauthorized)?;

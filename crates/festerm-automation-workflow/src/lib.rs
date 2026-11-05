@@ -539,6 +539,7 @@ mod tests {
                 approval,
                 NativeApproval::new(proposal, Duration::from_secs(60)),
                 now,
+                &festerm_automation::automation_admission_lock().unwrap(),
             )
             .unwrap();
         assert_eq!(

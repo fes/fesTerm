@@ -2216,6 +2216,7 @@ impl Coordinator {
                 id,
                 NativeApproval::new(request, Duration::from_secs(300)),
                 now,
+                &guard,
             )
             .map_err(refusal)?;
         peer.grant = Some(Grant {

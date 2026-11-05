@@ -2260,15 +2260,19 @@ fn presentation_unbound_metadata_replacement_cuts_control_without_revoking_metad
     let id = broker
         .request_metadata_approval(principal, request.clone(), now)
         .unwrap();
-    broker
-        .approve_metadata(
-            principal,
-            id,
-            NativeMetadataApproval::new(request.clone(), Duration::from_secs(60))
-                .accept_control_disclosure(fixture.barrier.target, request.targets),
-            now,
-        )
-        .unwrap();
+    {
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        broker
+            .approve_metadata(
+                principal,
+                id,
+                NativeMetadataApproval::new(request.clone(), Duration::from_secs(60))
+                    .accept_control_disclosure(fixture.barrier.target, request.targets),
+                now,
+                &guard,
+            )
+            .unwrap();
+    }
     let unbound = broker.native_metadata_grant(principal, now).unwrap();
     assert!(!old_delivery.is_live(principal, now));
     let (result, mut pending) = commit_direct_input_retry(
@@ -4640,14 +4644,18 @@ fn independent_run(
     let approval = broker
         .request_approval(connection, request.clone(), now)
         .unwrap();
-    broker
-        .approve(
-            connection,
-            approval,
-            NativeApproval::new(request, Duration::from_secs(300)),
-            now,
-        )
-        .unwrap();
+    {
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        broker
+            .approve(
+                connection,
+                approval,
+                NativeApproval::new(request, Duration::from_secs(300)),
+                now,
+                &guard,
+            )
+            .unwrap();
+    }
     let run = broker
         .admit_run(
             connection,

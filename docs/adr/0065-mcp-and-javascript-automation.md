@@ -174,9 +174,11 @@ to bypass another's restrictions.
    privacy boundary. The guard is released before any connection send.
    Explicit ordinary-slot, legacy metadata-slot and whole-principal broker
    revocations also require the shared guard, preserving independent enrollment
-   metadata unless the whole principal is revoked. Other run cuts, grant
-   replacement and expiry APIs remain unguarded; broker destruction still
-   drops delivery epochs without the guard.
+   metadata unless the whole principal is revoked. Ordinary and legacy metadata
+   approval also require that guard while replacing their own slot and cutting
+   its old delivery epoch; each preserves the independently approved opposite
+   slot. Other run cuts and expiry APIs remain unguarded; broker destruction
+   still drops delivery epochs without the guard.
    This is not a general cut invariant or a revocable enqueue, physical-output
    or metadata-delivery fence.
    The inert per-enrollment metadata-review model remains non-authorizing.

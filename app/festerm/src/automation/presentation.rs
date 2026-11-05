@@ -820,7 +820,7 @@ impl Coordinator {
         }
         let now = Instant::now();
         let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
-        if let Err(error) = broker.approve(principal, review.approval_id, approval, now) {
+        if let Err(error) = broker.approve(principal, review.approval_id, approval, now, &guard) {
             let _ = broker.reject_approval(principal, review.approval_id);
             self.pending_control_reviews.remove(&review.approval_id);
             return Err(error);
@@ -1118,7 +1118,9 @@ impl Coordinator {
         }
         let now = Instant::now();
         let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
-        if let Err(error) = broker.approve_metadata(principal, review.approval_id, approval, now) {
+        if let Err(error) =
+            broker.approve_metadata(principal, review.approval_id, approval, now, &guard)
+        {
             let _ = broker.reject_approval(principal, review.approval_id);
             self.pending_metadata_reviews.remove(&review.approval_id);
             return Err(error);

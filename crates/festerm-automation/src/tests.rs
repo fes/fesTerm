@@ -103,6 +103,29 @@ impl Broker {
         self.0.revoke_all(&guard);
     }
 
+    fn approve(
+        &mut self,
+        connection: ConnectionId,
+        id: ApprovalId,
+        approval: NativeApproval,
+        now: Instant,
+    ) -> Result<()> {
+        let guard = automation_admission_lock().unwrap();
+        self.0.approve(connection, id, approval, now, &guard)
+    }
+
+    fn approve_metadata(
+        &mut self,
+        connection: ConnectionId,
+        id: ApprovalId,
+        approval: NativeMetadataApproval,
+        now: Instant,
+    ) -> Result<()> {
+        let guard = automation_admission_lock().unwrap();
+        self.0
+            .approve_metadata(connection, id, approval, now, &guard)
+    }
+
     fn cancel_run(&mut self, connection: ConnectionId, id: RunId, now: Instant) -> Result<()> {
         let guard = automation_admission_lock().unwrap();
         self.0.cancel_run(connection, id, now, &guard)
@@ -177,6 +200,7 @@ fn enrollment_registry_mutations_share_the_admission_boundary() {
                 approval,
                 NativeApproval::new(ordinary_request, Duration::from_secs(60)),
                 now,
+                &guard,
             )
             .unwrap();
         let registration = broker
@@ -4474,6 +4498,113 @@ fn ordinary_legacy_metadata_and_principal_revocations_share_admission() {
                 1 => (true, false, true),
                 _ => (false, false, false),
             }
+        );
+        drop(broker);
+    }
+}
+
+#[test]
+fn ordinary_and_metadata_replacement_wait_for_guarded_enqueue() {
+    enum Replacement {
+        Ordinary(ApprovalId, NativeApproval),
+        Metadata(ApprovalId, NativeMetadataApproval),
+    }
+
+    for metadata_slot in [false, true] {
+        let mut f = Fixture::new();
+        let target = f.a;
+        let scope = Scope {
+            discover: BTreeSet::from([target]),
+            ..Scope::default()
+        };
+        let binding = direct(DirectKind::Discovery);
+        f.approve(scope.clone(), &[binding]);
+        approve_metadata(&mut f, &[target], &[], MAX_GRANT_LIFETIME);
+        let ordinary_run = f.run(scope.clone(), binding);
+        let ordinary = committed_discovery(&mut f, ordinary_run);
+        let deadline = f.now + Duration::from_secs(30);
+        let metadata_run = metadata_run(&mut f, &[target], deadline);
+        let metadata = committed_discovery(&mut f, metadata_run);
+        let replacement = if metadata_slot {
+            let request = MetadataGrantRequest {
+                targets: BTreeSet::from([target]),
+            };
+            let id = f
+                .broker
+                .request_metadata_approval(f.connection, request.clone(), f.now)
+                .unwrap();
+            Replacement::Metadata(id, NativeMetadataApproval::new(request, MAX_GRANT_LIFETIME))
+        } else {
+            let request = GrantRequest {
+                scope,
+                bindings: BTreeSet::from([binding]),
+                direct_read_calls: BTreeSet::new(),
+            };
+            let id = f
+                .broker
+                .request_approval(f.connection, request.clone(), f.now)
+                .unwrap();
+            Replacement::Ordinary(id, NativeApproval::new(request, MAX_GRANT_LIFETIME))
+        };
+        let connection = f.connection;
+        let now = f.now;
+        let mut broker = f.broker.0;
+        let (sender, receiver) = outbound_channel();
+        let guard = automation_admission_lock().unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let busy = matches!(
+                try_automation_admission_lock(),
+                Err(AutomationAdmissionTryError::Busy)
+            );
+            ready_tx.send(busy).unwrap();
+            let guard = automation_admission_lock().unwrap();
+            let result = match replacement {
+                Replacement::Ordinary(id, approval) => {
+                    broker.approve(connection, id, approval, now, &guard)
+                }
+                Replacement::Metadata(id, approval) => {
+                    broker.approve_metadata(connection, id, approval, now, &guard)
+                }
+            };
+            drop(guard);
+            (broker, result)
+        });
+        let busy = ready_rx.recv_timeout(Duration::from_secs(2));
+        let before = (
+            ordinary.is_live(connection, now),
+            metadata.is_live(connection, now),
+        );
+        let queued = sender.try_send(
+            OutboundFrame {
+                bytes: b"non-authorizing frame".to_vec(),
+                expires: now + Duration::from_secs(30),
+                targets: Vec::new(),
+                flags: Vec::new(),
+            },
+            &guard,
+        );
+        drop(guard);
+        let (broker, result) = worker.join().unwrap();
+
+        assert_eq!(busy, Ok(true));
+        assert_eq!(before, (true, true));
+        assert!(queued.is_ok());
+        assert_eq!(result, Ok(()));
+        assert_eq!(
+            (
+                ordinary.is_live(connection, now),
+                metadata.is_live(connection, now)
+            ),
+            if metadata_slot {
+                (true, false)
+            } else {
+                (false, true)
+            }
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap().bytes.as_slice(),
+            b"non-authorizing frame"
         );
         drop(broker);
     }

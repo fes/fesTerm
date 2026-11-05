@@ -761,10 +761,12 @@ the peer under it. Bounded error details are logged only after its release,
 because tracing subscribers can reenter admission. It is also released before
 any response send. Explicit ordinary-slot, legacy metadata-slot and
 whole-principal broker revocations also require that guard; the first two
-preserve independently approved enrollment metadata. Other broker cuts,
-grant replacement and expiry are not uniformly guarded, and broker destruction
-remains unguarded. This does not fence enqueue or physical delivery. Queued or
-written bytes cannot be recalled.
+preserve independently approved enrollment metadata. Ordinary and legacy
+metadata reapproval also requires the guard through its own slot replacement,
+preserving the opposite slot. Other broker cuts and expiry are not uniformly
+guarded, and broker destruction remains unguarded. Guarded queue insertion
+does not bind the legacy frame to a grant or fence physical delivery. Queued
+or written bytes cannot be recalled.
 
 For the live observation peer paths, one fixed-size record per peer retains the
 exact run and optional request before a response is finished or sent. After

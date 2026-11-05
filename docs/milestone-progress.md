@@ -1,5 +1,14 @@
 # Milestone Progress Narrative
 
+## Guarding ordinary and metadata grant replacement
+
+Ordinary and legacy metadata approval now retain the shared admission guard
+while replacing their own grant slots. A contention regression orders each
+replacement after guarded queue insertion, cuts the old slot's liveness and
+preserves the independent opposite slot. Other broker cuts, expiry and
+destruction are not uniformly guarded; the queued legacy frame is not bound to
+that liveness and no final-recipient delivery fence is established.
+
 ## Combining enrollment metadata with completion safety
 
 The host enrollment-review seam now composes with retained completion and its
@@ -24,9 +33,9 @@ MCP metadata route, recipient fence or production qualification.
 Ordinary-slot, legacy metadata-slot and whole-principal revocation now require
 the shared admission guard. A contention regression checks the cut and preserves
 independently approved enrollment metadata for the two slot-specific operations.
-Grant replacement, other cuts and expiry are not uniformly guarded, and
-broker destruction remains outside the boundary; these cuts alone do not
-provide a recipient-delivery fence.
+Other cuts and expiry are not uniformly guarded, and broker destruction
+remains outside the boundary; these cuts alone do not provide a
+recipient-delivery fence.
 
 ## Adding exact-enrollment metadata authority in the broker
 
