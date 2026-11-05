@@ -3,6 +3,17 @@
 //! A session backend owns process or connection I/O. It emits bytes and
 //! lifecycle events only; the application owns terminal-core mutation.
 
+mod automation_input;
+
+pub use automation_input::{
+    automation_input_slot, AutomationInputStatus, CommitAutomationInputError,
+    PendingAutomationInput, ReserveAutomationInputError, ReservedAutomationInput,
+};
+pub use festerm_admission::{
+    automation_admission_lock, try_automation_admission_lock, AutomationAdmissionGuard,
+    AutomationAdmissionTryError, AutomationEpoch,
+};
+
 use std::{
     fmt,
     sync::{
@@ -590,16 +601,36 @@ impl std::error::Error for ShutdownError {}
 
 /// Runtime-independent session boundary used by local and future remote backends.
 ///
-/// All calls are nonblocking except [`Self::shutdown`], whose caller chooses a
-/// finite timeout. Events never mutate a terminal directly.
+/// Calls do not wait for transport I/O except [`Self::shutdown`], whose caller
+/// chooses a finite timeout. Lifecycle changes may wait for automation
+/// admission serialization. Events never mutate a terminal directly.
 pub trait Session: Send + Sync {
     fn id(&self) -> SessionId;
     fn lifecycle(&self) -> SessionLifecycle;
     fn metrics(&self) -> SessionMetrics;
     fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError>;
+    /// Reserves a position in the ordinary ordered transport queue without
+    /// admitting automation input. `controller_instance` is the host-owned
+    /// identity of the controller making the reservation, never a client
+    /// claim. The backend binds its own attachment identity and generation.
+    /// Unsupported backends must refuse.
+    fn reserve_automation_input(
+        &self,
+        _controller_instance: u64,
+        _bytes: &[u8],
+    ) -> Result<ReservedAutomationInput, ReserveAutomationInputError> {
+        Err(ReserveAutomationInputError::Unsupported)
+    }
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError>;
     fn try_shutdown(&self) -> Result<(), SessionSendError>;
     fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError>;
+
+    /// Returns the backend's live attachment identity, if it supports safe
+    /// automation observation. Implementations return the same shared epoch
+    /// for the backend's lifetime. `None` must not be treated as a grant.
+    fn automation_epoch(&self) -> Option<Arc<AutomationEpoch>> {
+        None
+    }
 
     /// Whether this backend, rather than the frontend terminal instance,
     /// answers terminal protocol replies generated while parsing output.
@@ -612,6 +643,130 @@ pub trait Session: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automation_epoch_invalidates_on_every_transition() {
+        let epoch = AutomationEpoch::default();
+        assert_eq!(epoch.capture(), None);
+        {
+            let _guard = automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(0));
+        }
+
+        epoch.transition(true);
+        let first = epoch.capture().unwrap();
+        {
+            let _guard = automation_admission_lock().unwrap();
+            assert!(epoch.is_current(first));
+        }
+
+        epoch.transition(false);
+        assert_eq!(epoch.capture(), None);
+        {
+            let _guard = automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(first));
+        }
+
+        epoch.transition(true);
+        let replacement = epoch.capture().unwrap();
+        assert!(replacement > first);
+        {
+            let _guard = automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(first));
+            assert!(epoch.is_current(replacement));
+        }
+
+        epoch.transition(true);
+        let next = epoch.capture().unwrap();
+        assert!(next > replacement);
+        let _guard = automation_admission_lock().unwrap();
+        assert!(!epoch.is_current(replacement));
+        assert!(epoch.is_current(next));
+    }
+
+    #[test]
+    fn automation_epoch_transitions_serialize_with_admission() {
+        let epoch = Arc::new(AutomationEpoch::new());
+        epoch.transition(true);
+        let generation = epoch.capture().unwrap();
+        let guard = automation_admission_lock().unwrap();
+        let (started, start_receiver) = std::sync::mpsc::sync_channel(0);
+        let (finished, finish_receiver) = std::sync::mpsc::sync_channel(1);
+        let worker_epoch = Arc::clone(&epoch);
+        let worker = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            worker_epoch.transition(false);
+            finished.send(()).unwrap();
+        });
+        start_receiver.recv().unwrap();
+        assert!(finish_receiver.try_recv().is_err());
+        assert!(epoch.is_current(generation));
+        drop(guard);
+        finish_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        worker.join().unwrap();
+        assert_eq!(epoch.capture(), None);
+        let _guard = automation_admission_lock().unwrap();
+        assert!(!epoch.is_current(generation));
+    }
+
+    #[test]
+    fn automation_try_admission_reports_contention_without_waiting() {
+        let held = automation_admission_lock().unwrap();
+        let worker = std::thread::spawn(|| {
+            matches!(
+                try_automation_admission_lock(),
+                Err(AutomationAdmissionTryError::Busy)
+            )
+        });
+        assert!(worker.join().unwrap());
+        drop(held);
+    }
+
+    #[test]
+    fn automation_admission_poison_permanently_fails_closed() {
+        const CHILD: &str = "FESTERM_AUTOMATION_ADMISSION_POISON_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::automation_admission_poison_permanently_fails_closed",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated poison test failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let epoch = AutomationEpoch::new();
+        epoch.transition(true);
+        assert!(epoch.capture().is_some());
+        assert!(std::thread::spawn(|| {
+            let _guard = automation_admission_lock().unwrap();
+            panic!("poison the admission lock in this isolated test process");
+        })
+        .join()
+        .is_err());
+        assert!(automation_admission_lock().is_none());
+        assert!(matches!(
+            try_automation_admission_lock(),
+            Err(AutomationAdmissionTryError::Poisoned)
+        ));
+        assert_eq!(epoch.capture(), None);
+        epoch.transition(true);
+        assert_eq!(epoch.capture(), None);
+        let fresh = AutomationEpoch::new();
+        fresh.transition(true);
+        assert_eq!(fresh.capture(), None);
+    }
 
     #[test]
     fn terminal_size_requires_a_real_grid() {

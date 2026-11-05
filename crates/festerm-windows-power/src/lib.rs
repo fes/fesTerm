@@ -5,6 +5,10 @@
 //! "resume from system sleep" wake trigger for an on-demand SSH liveness
 //! probe. Network-interface/route-change detection is deliberately out of
 //! scope here; see issue #48 for that follow-up.
+//!
+//! The separate [`PrivacyMonitor`] requires native session/suspend
+//! subscriptions and reports unavailable platforms/services as errors rather
+//! than adopting [`WakeMonitor`]'s best-effort behavior.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
@@ -36,6 +40,61 @@ const fn classify_windows_power_event(
     } else {
         WakeEvent::Ignore
     }
+}
+
+#[cfg(any(windows, test))]
+struct PrivacyRevocation {
+    callback: std::sync::Arc<dyn Fn() + Send + Sync>,
+    revoked: std::sync::atomic::AtomicBool,
+    loss: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[cfg(any(windows, test))]
+impl PrivacyRevocation {
+    fn new(callback: std::sync::Arc<dyn Fn() + Send + Sync>) -> Self {
+        Self::with_loss_flag(
+            callback,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+    }
+
+    fn with_loss_flag(
+        callback: std::sync::Arc<dyn Fn() + Send + Sync>,
+        loss: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        Self {
+            callback,
+            revoked: std::sync::atomic::AtomicBool::new(false),
+            loss,
+        }
+    }
+
+    fn revoke(&self) {
+        self.loss.store(true, std::sync::atomic::Ordering::Release);
+        if !self.revoked.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            (self.callback)();
+        }
+    }
+}
+
+#[cfg(any(windows, test))]
+mod privacy_lifecycle;
+
+#[cfg(windows)]
+pub use privacy_lifecycle::{
+    privacy_monitor_ownership, PrivacyCleanupState, PrivacyCleanupStatus, PrivacyInstallFailure,
+    PrivacyOwnershipState, RejectedPrivacyInstall,
+};
+
+#[cfg(any(windows, test))]
+const fn session_is_available(
+    expected_id: u32,
+    reported_id: u32,
+    active: bool,
+    flags: i32,
+    unlocked_flag: i32,
+) -> bool {
+    expected_id == reported_id && active && flags == unlocked_flag
 }
 
 #[cfg(windows)]
@@ -242,9 +301,779 @@ impl WakeMonitor {
     }
 }
 
+/// Windows privacy-loss notification monitor; native qualification is pending.
+///
+/// Requires an active, unlocked WTS session, working WTS service, and native
+/// suspend registration (Windows 8+). A dedicated message-only window receives
+/// session lock/logoff, console/remote disconnection (including user switch),
+/// and `PBT_APMSUSPEND`. Suspend is explicitly registered: message-only windows
+/// do not receive ordinary broadcast messages. Service stop and message-loop
+/// failure also request shutdown and attempt a loss callback. With
+/// `install_with_loss_flag`, native dispatch also marks the caller's one-way
+/// flag; the caller must use it at admission. Resume and unlock never grant
+/// authority.
+///
+/// The callback runs outside native dispatch, on the listener or, on a
+/// supervisor failure, the reaper. It and its captured destructors must not
+/// block or panic, but a callback can block on the application's admission
+/// lock. A caught panic can still reach the process-wide panic hook. Native
+/// message payloads are never logged or dereferenced. Synthetic loss messages
+/// cannot grant authority. A loss can precede `install` returning; neither
+/// callback entry nor completion proves admission closed.
+///
+/// Installation can block and must run off the UI thread. Dropping or closing
+/// the monitor only requests shutdown; it never waits for the listener. The
+/// owner must independently close admission before requesting shutdown and
+/// retain a [`PrivacyCleanupStatus`] until cleanup completes. An installation
+/// error can contain [`PrivacyInstallFailure`] with the same status. Pending
+/// or unknown cleanup prevents another monitor from being installed. A single
+/// process-lifetime reaper owns the listener through actual thread join,
+/// including TLS destruction; uncertain native cancellation is quarantined.
+/// Inputs rejected before acquiring that slot are returned in the installation
+/// error; dropping those inputs may block or panic and remains the caller's
+/// responsibility.
+/// At its own deadline the owner can permanently quarantine a still-pending
+/// cleanup using [`PrivacyCleanupStatus::quarantine_if_unresolved`].
+/// Any non-active state is unavailable. Neither cleanup status nor callback
+/// delivery qualifies admission, privacy, or a physical final-recipient fence.
+/// No monitor state authorizes disclosure; MCP bootstrap remains closed.
+#[cfg(windows)]
+pub use privacy::PrivacyMonitor;
+
+#[cfg(not(windows))]
+pub struct PrivacyMonitor;
+
+#[cfg(not(windows))]
+impl PrivacyMonitor {
+    pub fn install(_callback: std::sync::Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "WTS privacy monitoring requires Windows",
+        ))
+    }
+}
+
+#[cfg(windows)]
+mod privacy {
+    use std::cell::{Cell, OnceCell, RefCell, UnsafeCell};
+    use std::io;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{mpsc, Arc, OnceLock};
+    use std::thread;
+    use std::time::Duration;
+
+    use windows_sys::Win32::Foundation::{
+        HANDLE, HWND, LPARAM, LRESULT, WAIT_IO_COMPLETION, WAIT_OBJECT_0, WAIT_TIMEOUT, WPARAM,
+    };
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::System::Power::{
+        RegisterSuspendResumeNotification, UnregisterSuspendResumeNotification, HPOWERNOTIFY,
+    };
+    use windows_sys::Win32::System::RemoteDesktop::{
+        ProcessIdToSessionId, WTSActive, WTSFreeMemory, WTSQuerySessionInformationW,
+        WTSRegisterSessionNotification, WTSSessionInfoEx, WTSUnRegisterSessionNotification,
+        NOTIFY_FOR_THIS_SESSION, WTSINFOEXW, WTS_CURRENT_SERVER_HANDLE, WTS_SESSIONSTATE_UNLOCK,
+    };
+    use windows_sys::Win32::System::Services::{
+        CloseServiceHandle, NotifyServiceStatusChangeW, OpenSCManagerW, OpenServiceW,
+        QueryServiceStatusEx, SC_HANDLE, SC_MANAGER_CONNECT, SC_STATUS_PROCESS_INFO,
+        SERVICE_NOTIFY_2W, SERVICE_NOTIFY_DELETE_PENDING, SERVICE_NOTIFY_PAUSED,
+        SERVICE_NOTIFY_PAUSE_PENDING, SERVICE_NOTIFY_STOPPED, SERVICE_NOTIFY_STOP_PENDING,
+        SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_STATUS_PROCESS,
+    };
+    use windows_sys::Win32::System::Threading::SleepEx;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+        MsgWaitForMultipleObjectsEx, PeekMessageW, RegisterClassExW, TranslateMessage,
+        UnregisterClassW, DEVICE_NOTIFY_WINDOW_HANDLE, HWND_MESSAGE, MSG, MWMO_ALERTABLE,
+        MWMO_INPUTAVAILABLE, PBT_APMSUSPEND, PM_REMOVE, QS_ALLINPUT, WM_CLOSE, WM_DESTROY,
+        WM_ENDSESSION, WM_POWERBROADCAST, WM_QUERYENDSESSION, WM_QUIT, WM_WTSSESSION_CHANGE,
+        WNDCLASSEXW, WTS_CONSOLE_DISCONNECT, WTS_REMOTE_DISCONNECT, WTS_SESSION_LOCK,
+        WTS_SESSION_LOGOFF,
+    };
+
+    use super::privacy_lifecycle::{self, invoke_revocation, Lifecycle, PrivacyCleanupStatus};
+    use super::{session_is_available, PrivacyRevocation};
+
+    const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
+    const STARTUP_MESSAGE_LIMIT: usize = 64;
+    const SHUTDOWN_POLL_MILLIS: u32 = 50;
+
+    static NEXT_CLASS: AtomicU64 = AtomicU64::new(0);
+
+    struct Callback {
+        lifecycle: Arc<Lifecycle>,
+    }
+
+    thread_local! {
+        static CALLBACK: RefCell<Option<Callback>> = const { RefCell::new(None) };
+        static LOSS: OnceCell<Arc<AtomicBool>> = const { OnceCell::new() };
+        static FAILED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    fn note_loss() {
+        let _ = LOSS.try_with(|loss| {
+            if let Some(loss) = loss.get() {
+                loss.store(true, Ordering::Release);
+            }
+        });
+        let _ = FAILED.try_with(|failed| failed.set(true));
+        let _ = CALLBACK.try_with(|slot| {
+            let Ok(callback) = slot.try_borrow() else {
+                return;
+            };
+            if let Some(callback) = callback.as_ref() {
+                let _ = callback.lifecycle.stop();
+            }
+        });
+    }
+
+    unsafe extern "system" fn service_failed(_notification: *const core::ffi::c_void) {
+        note_loss();
+    }
+
+    fn loss(message: u32, wparam: usize) -> bool {
+        (message == WM_POWERBROADCAST && wparam == PBT_APMSUSPEND as usize)
+            || (message == WM_WTSSESSION_CHANGE
+                && matches!(
+                    wparam as u32,
+                    WTS_SESSION_LOCK
+                        | WTS_SESSION_LOGOFF
+                        | WTS_CONSOLE_DISCONNECT
+                        | WTS_REMOTE_DISCONNECT
+                ))
+            || message == WM_QUERYENDSESSION
+            || (message == WM_ENDSESSION && wparam != 0)
+    }
+
+    unsafe extern "system" fn window_procedure(
+        window: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if loss(message, wparam) {
+            note_loss();
+            return 1;
+        }
+        if message == WM_CLOSE || message == WM_DESTROY {
+            note_loss();
+            // Only our orderly teardown destroys the window. An unsolicited
+            // WM_CLOSE must not silently disable the listener.
+            return 0;
+        }
+        // SAFETY: the OS supplied these unchanged window-procedure arguments.
+        unsafe { DefWindowProcW(window, message, wparam, lparam) }
+    }
+
+    struct NotificationBuffer(UnsafeCell<SERVICE_NOTIFY_2W>);
+
+    // The single process slot permits access only on its listener. Reuse
+    // requires successful service cancellation and the listener's actual
+    // join; APCs already queued to that thread are lost when it terminates.
+    // The storage itself persists even if cancellation cannot be established.
+    unsafe impl Send for NotificationBuffer {}
+    unsafe impl Sync for NotificationBuffer {}
+
+    static SERVICE_NOTIFICATION: OnceLock<NotificationBuffer> = OnceLock::new();
+
+    fn service_notification() -> *const SERVICE_NOTIFY_2W {
+        let buffer = SERVICE_NOTIFICATION
+            .get_or_init(|| NotificationBuffer(UnsafeCell::new(SERVICE_NOTIFY_2W::default())));
+        // SAFETY: this listener exclusively holds the process slot. A previous
+        // listener cannot release that slot before its join and cancellation.
+        unsafe {
+            buffer.0.get().write(SERVICE_NOTIFY_2W {
+                dwVersion: 2,
+                pfnNotifyCallback: Some(service_failed),
+                ..Default::default()
+            });
+        }
+        buffer.0.get()
+    }
+
+    struct Registration {
+        lifecycle: Arc<Lifecycle>,
+        revocation: Arc<PrivacyRevocation>,
+        class: Vec<u16>,
+        class_registered: bool,
+        instance: HANDLE,
+        window: HWND,
+        power: HPOWERNOTIFY,
+        wts: bool,
+        manager: SC_HANDLE,
+        service: SC_HANDLE,
+    }
+
+    impl Registration {
+        fn quarantine(&self) -> ! {
+            self.lifecycle.unknown();
+            invoke_revocation(&self.revocation, &self.lifecycle);
+            loop {
+                std::hint::black_box(self);
+                thread::park();
+            }
+        }
+    }
+
+    impl Drop for Registration {
+        fn drop(&mut self) {
+            if self.lifecycle.stop() || FAILED.get() {
+                invoke_revocation(&self.revocation, &self.lifecycle);
+            }
+            // SAFETY: the handles and window belong to this listener thread.
+            // Any uncertain cancellation retains this entire registration;
+            // the service notification buffer is process-lifetime storage.
+            unsafe {
+                if !self.service.is_null() && CloseServiceHandle(self.service) == 0 {
+                    self.quarantine();
+                }
+                self.service = std::ptr::null_mut();
+                if !self.manager.is_null() && CloseServiceHandle(self.manager) == 0 {
+                    self.quarantine();
+                }
+                self.manager = std::ptr::null_mut();
+                if self.power != 0 && UnregisterSuspendResumeNotification(self.power) == 0 {
+                    self.quarantine();
+                }
+                self.power = 0;
+                if self.wts && WTSUnRegisterSessionNotification(self.window) == 0 {
+                    self.quarantine();
+                }
+                self.wts = false;
+                if !self.window.is_null() && DestroyWindow(self.window) == 0 {
+                    self.quarantine();
+                }
+                self.window = std::ptr::null_mut();
+                if self.class_registered
+                    && UnregisterClassW(self.class.as_ptr(), self.instance) == 0
+                {
+                    self.quarantine();
+                }
+                self.class_registered = false;
+            }
+        }
+    }
+
+    fn unavailable() -> io::Error {
+        io::Error::new(io::ErrorKind::NotConnected, "native Windows privacy monitoring unavailable (WTS session/service or suspend registration)")
+    }
+
+    fn active_session() -> io::Result<()> {
+        let mut session_id = 0;
+        let mut buffer = std::ptr::null_mut();
+        let mut bytes = 0;
+        // SAFETY: output pointers are writable and the WTS result is released
+        // using the matching WTS allocator after checking its size and level.
+        unsafe {
+            if ProcessIdToSessionId(std::process::id(), &mut session_id) == 0
+                || WTSQuerySessionInformationW(
+                    WTS_CURRENT_SERVER_HANDLE,
+                    session_id,
+                    WTSSessionInfoEx,
+                    &mut buffer,
+                    &mut bytes,
+                ) == 0
+            {
+                if !buffer.is_null() {
+                    WTSFreeMemory(buffer.cast());
+                }
+                return Err(unavailable());
+            }
+            let active = if !buffer.is_null() && bytes as usize >= std::mem::size_of::<WTSINFOEXW>()
+            {
+                let info = &*buffer.cast::<WTSINFOEXW>();
+                if info.Level == 1 {
+                    let session = &info.Data.WTSInfoExLevel1;
+                    session_is_available(
+                        session_id,
+                        session.SessionId,
+                        session.SessionState == WTSActive,
+                        session.SessionFlags,
+                        WTS_SESSIONSTATE_UNLOCK as i32,
+                    )
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if !buffer.is_null() {
+                WTSFreeMemory(buffer.cast());
+            }
+            if active {
+                Ok(())
+            } else {
+                Err(unavailable())
+            }
+        }
+    }
+
+    impl Registration {
+        fn install(
+            lifecycle: Arc<Lifecycle>,
+            revocation: Arc<PrivacyRevocation>,
+        ) -> io::Result<Self> {
+            let class_id = NEXT_CLASS
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    current.checked_add(1)
+                })
+                .map_err(|_| unavailable())?;
+            let class: Vec<u16> = format!(
+                "fesTermPrivacyMonitor-{}-{}\0",
+                std::process::id(),
+                class_id
+            )
+            .encode_utf16()
+            .collect();
+            // SAFETY: null requests the current executable's module handle.
+            let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
+            if instance.is_null() {
+                return Err(unavailable());
+            }
+            let mut registration = Self {
+                lifecycle,
+                revocation,
+                class,
+                class_registered: false,
+                instance,
+                window: std::ptr::null_mut(),
+                power: 0,
+                wts: false,
+                manager: std::ptr::null_mut(),
+                service: std::ptr::null_mut(),
+            };
+            let descriptor = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                lpfnWndProc: Some(window_procedure),
+                hInstance: instance,
+                lpszClassName: registration.class.as_ptr(),
+                ..Default::default()
+            };
+            // SAFETY: the class has a valid procedure and NUL-terminated name.
+            if unsafe { RegisterClassExW(&descriptor) } == 0 {
+                registration.quarantine();
+            }
+            registration.class_registered = true;
+            // SAFETY: class/instance remain alive through window destruction.
+            registration.window = unsafe {
+                CreateWindowExW(
+                    0,
+                    registration.class.as_ptr(),
+                    std::ptr::null(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    HWND_MESSAGE,
+                    std::ptr::null_mut(),
+                    instance,
+                    std::ptr::null(),
+                )
+            };
+            if registration.window.is_null() {
+                return Err(unavailable());
+            }
+            // SAFETY: a valid message-only window is the native notification
+            // recipient. Explicit registration covers non-broadcast windows.
+            unsafe {
+                if WTSRegisterSessionNotification(registration.window, NOTIFY_FOR_THIS_SESSION) == 0
+                {
+                    registration.quarantine();
+                }
+                registration.wts = true;
+                registration.power = RegisterSuspendResumeNotification(
+                    registration.window,
+                    DEVICE_NOTIFY_WINDOW_HANDLE,
+                );
+                if registration.power == 0 {
+                    registration.quarantine();
+                }
+                registration.manager =
+                    OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT);
+                if registration.manager.is_null() {
+                    return Err(unavailable());
+                }
+                let service_name: Vec<u16> = "TermService\0".encode_utf16().collect();
+                registration.service = OpenServiceW(
+                    registration.manager,
+                    service_name.as_ptr(),
+                    SERVICE_QUERY_STATUS,
+                );
+                if CloseServiceHandle(registration.manager) == 0 {
+                    registration.quarantine();
+                }
+                registration.manager = std::ptr::null_mut();
+                if registration.service.is_null() {
+                    return Err(unavailable());
+                }
+                // This service-only mask excludes CREATED/DELETED, whose
+                // notification would allocate a service-name list.
+                if NotifyServiceStatusChangeW(
+                    registration.service,
+                    SERVICE_NOTIFY_STOPPED
+                        | SERVICE_NOTIFY_STOP_PENDING
+                        | SERVICE_NOTIFY_DELETE_PENDING
+                        | SERVICE_NOTIFY_PAUSED
+                        | SERVICE_NOTIFY_PAUSE_PENDING,
+                    service_notification(),
+                ) != 0
+                {
+                    return Err(unavailable());
+                }
+                let mut status = SERVICE_STATUS_PROCESS::default();
+                let mut needed = 0;
+                if QueryServiceStatusEx(
+                    registration.service,
+                    SC_STATUS_PROCESS_INFO,
+                    (&mut status as *mut SERVICE_STATUS_PROCESS).cast(),
+                    std::mem::size_of::<SERVICE_STATUS_PROCESS>() as u32,
+                    &mut needed,
+                ) == 0
+                    || status.dwCurrentState != SERVICE_RUNNING
+                {
+                    return Err(unavailable());
+                }
+            }
+            active_session()?;
+            Ok(registration)
+        }
+    }
+
+    fn drain_startup_messages(lifecycle: &Lifecycle) -> bool {
+        for _ in 0..STARTUP_MESSAGE_LIMIT {
+            if lifecycle.cancelled() {
+                return false;
+            }
+            // SAFETY: an alertable zero-duration wait dispatches any already
+            // queued service notification APC on this listener thread.
+            let result = unsafe { SleepEx(0, 1) };
+            if FAILED.get() {
+                return false;
+            }
+            if result == WAIT_IO_COMPLETION {
+                continue;
+            }
+            if result != 0 {
+                return false;
+            }
+            let mut message = MSG::default();
+            // SAFETY: the message is writable, thread-local storage.
+            if unsafe { PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) } == 0 {
+                return !FAILED.get();
+            }
+            if message.message == WM_QUIT {
+                return false;
+            }
+            // SAFETY: PeekMessageW initialized this message.
+            unsafe {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+        false
+    }
+
+    pub struct PrivacyMonitor {
+        cleanup: PrivacyCleanupStatus,
+    }
+
+    struct FailureGuard {
+        revocation: Arc<PrivacyRevocation>,
+        lifecycle: Arc<Lifecycle>,
+        armed: bool,
+    }
+
+    impl FailureGuard {
+        fn should_stop(&mut self, failed: bool) -> bool {
+            if failed {
+                return true;
+            }
+            if self.lifecycle.cancelled() {
+                self.armed = false;
+                return true;
+            }
+            false
+        }
+    }
+
+    impl Drop for FailureGuard {
+        fn drop(&mut self) {
+            let _ = self.lifecycle.stop();
+            if self.armed {
+                invoke_revocation(&self.revocation, &self.lifecycle);
+            }
+        }
+    }
+
+    fn listen(
+        lifecycle: Arc<Lifecycle>,
+        revocation: Arc<PrivacyRevocation>,
+        ready: mpsc::SyncSender<bool>,
+    ) -> bool {
+        if !matches!(
+            LOSS.try_with(|slot| slot.set(revocation.loss.clone())),
+            Ok(Ok(()))
+        ) {
+            let _ = ready.try_send(false);
+            return false;
+        }
+        CALLBACK.with(|slot| {
+            *slot.borrow_mut() = Some(Callback {
+                lifecycle: lifecycle.clone(),
+            });
+        });
+        let mut failure = FailureGuard {
+            revocation: revocation.clone(),
+            lifecycle: lifecycle.clone(),
+            armed: true,
+        };
+        if lifecycle.cancelled() {
+            failure.armed = false;
+            return true;
+        }
+        let registration = match Registration::install(lifecycle.clone(), revocation) {
+            Ok(registration) => registration,
+            Err(_) => {
+                let _ = ready.try_send(false);
+                return true;
+            }
+        };
+        // On every later return, report loss before native teardown can stall.
+        let mut failure = failure;
+        if !drain_startup_messages(&lifecycle) || !lifecycle.activate() {
+            return true;
+        }
+        if ready.try_send(true).is_err() {
+            return true;
+        }
+        'listen: loop {
+            if failure.should_stop(FAILED.get()) {
+                break;
+            }
+            // SAFETY: the alertable wait dispatches this thread's service
+            // APCs. The finite timeout observes shutdown without a UI-side
+            // native handle operation.
+            let result = unsafe {
+                MsgWaitForMultipleObjectsEx(
+                    0,
+                    std::ptr::null(),
+                    SHUTDOWN_POLL_MILLIS,
+                    QS_ALLINPUT,
+                    MWMO_ALERTABLE | MWMO_INPUTAVAILABLE,
+                )
+            };
+            if failure.should_stop(FAILED.get()) {
+                break;
+            }
+            if result == WAIT_IO_COMPLETION || result == WAIT_TIMEOUT {
+                continue;
+            }
+            if result != WAIT_OBJECT_0 {
+                break;
+            }
+            let mut message = MSG::default();
+            // Process one message per wait so shutdown and service failure
+            // cannot be starved by a message flood.
+            // SAFETY: message is valid writable local storage.
+            if unsafe { PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) } != 0 {
+                if message.message == WM_QUIT {
+                    break 'listen;
+                }
+                // SAFETY: PeekMessageW initialized the message.
+                unsafe {
+                    TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+        }
+        drop(failure);
+        CALLBACK.with(|slot| *slot.borrow_mut() = None);
+        drop(registration);
+        true
+    }
+
+    impl PrivacyMonitor {
+        /// Starts monitor ownership off the UI thread. Neither its status nor
+        /// callback delivery qualifies admission, privacy, or recipient
+        /// fencing; MCP bootstrap remains closed.
+        pub fn install(callback: Arc<dyn Fn() + Send + Sync>) -> io::Result<Self> {
+            let revocation = Arc::new(PrivacyRevocation::new(callback));
+            Self::start(revocation)
+        }
+
+        /// Atomically marks `loss` when native loss is observed, before the
+        /// callback runs outside native dispatch. The caller must never clear
+        /// the flag or treat it as native or recipient qualification.
+        pub fn install_with_loss_flag(
+            callback: Arc<dyn Fn() + Send + Sync>,
+            loss: Arc<AtomicBool>,
+        ) -> io::Result<Self> {
+            let revocation = Arc::new(PrivacyRevocation::with_loss_flag(callback, loss));
+            Self::start(revocation)
+        }
+
+        fn start(revocation: Arc<PrivacyRevocation>) -> io::Result<Self> {
+            let (ready, started) = mpsc::sync_channel(1);
+            let cleanup = privacy_lifecycle::launch(revocation, move |lifecycle, revocation| {
+                listen(lifecycle, revocation, ready)
+            })?;
+            match started.recv_timeout(STARTUP_TIMEOUT) {
+                Ok(true) if cleanup.is_active() => Ok(Self { cleanup }),
+                _ => {
+                    cleanup.stop();
+                    Err(privacy_lifecycle::unavailable(Some(cleanup)))
+                }
+            }
+        }
+
+        /// Observes monitor cleanup only. Neither this status nor callback
+        /// delivery qualifies admission, privacy, or recipient fencing; MCP
+        /// bootstrap remains closed.
+        pub fn cleanup_status(&self) -> PrivacyCleanupStatus {
+            self.cleanup.clone()
+        }
+
+        /// Requests shutdown without waiting; retain the returned status until
+        /// cleanup is complete or treated as unknown. Neither that status nor
+        /// callback delivery qualifies admission, privacy, or physical
+        /// recipient fencing; MCP bootstrap remains closed.
+        pub fn close(self) -> PrivacyCleanupStatus {
+            let cleanup = self.cleanup_status();
+            drop(self);
+            cleanup
+        }
+    }
+
+    impl Drop for PrivacyMonitor {
+        fn drop(&mut self) {
+            self.cleanup.stop();
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        // These simulated notifications do not qualify admission, privacy, or
+        // final-recipient fencing. Callback delivery is not a fence; bootstrap
+        // remains closed.
+        use super::*;
+
+        #[test]
+        fn native_loss_dispatch_attempts_callback_once_after_dispatch() {
+            use std::sync::atomic::AtomicUsize;
+
+            FAILED.set(false);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = calls.clone();
+            let lifecycle = privacy_lifecycle::test_lifecycle();
+            let revocation = Arc::new(PrivacyRevocation::new(Arc::new(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+            })));
+            LOSS.with(|slot| assert!(slot.set(revocation.loss.clone()).is_ok()));
+            CALLBACK.with(|slot| {
+                *slot.borrow_mut() = Some(Callback {
+                    lifecycle: lifecycle.clone(),
+                });
+            });
+            CALLBACK.with(|slot| {
+                let _borrow = slot.borrow_mut();
+                // SAFETY: the service callback ignores its native argument.
+                unsafe { service_failed(std::ptr::null()) };
+            });
+            assert!(FAILED.get());
+            assert!(revocation.loss.load(Ordering::Acquire));
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            assert!(!lifecycle.cancelled());
+            FAILED.set(false);
+            // SAFETY: these callbacks do not dereference their native
+            // arguments and use the listener thread's test-local state.
+            unsafe {
+                service_failed(std::ptr::null());
+                window_procedure(
+                    std::ptr::null_mut(),
+                    WM_WTSSESSION_CHANGE,
+                    WTS_SESSION_LOCK as usize,
+                    0,
+                );
+                window_procedure(
+                    std::ptr::null_mut(),
+                    WM_POWERBROADCAST,
+                    PBT_APMSUSPEND as usize,
+                    0,
+                );
+            }
+            assert!(FAILED.get());
+            assert!(lifecycle.cancelled());
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            let mut failure = FailureGuard {
+                revocation: revocation.clone(),
+                lifecycle: lifecycle.clone(),
+                armed: true,
+            };
+            assert!(failure.should_stop(FAILED.get()));
+            drop(failure);
+            invoke_revocation(&revocation, &lifecycle);
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            CALLBACK.with(|slot| *slot.borrow_mut() = None);
+            FAILED.set(false);
+        }
+
+        #[test]
+        fn ordinary_active_shutdown_disarms_the_failure_guard() {
+            use std::sync::atomic::AtomicUsize;
+
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = calls.clone();
+            let lifecycle = privacy_lifecycle::test_lifecycle();
+            assert!(lifecycle.activate());
+            let mut failure = FailureGuard {
+                revocation: Arc::new(PrivacyRevocation::new(Arc::new(move || {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                }))),
+                lifecycle: lifecycle.clone(),
+                armed: true,
+            };
+            assert!(!failure.should_stop(false));
+            assert!(lifecycle.stop());
+            assert!(failure.should_stop(false));
+            drop(failure);
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+        }
+
+        #[test]
+        fn loss_event_classification_excludes_resume_and_unlock() {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                PBT_APMRESUMEAUTOMATIC, WTS_SESSION_UNLOCK,
+            };
+            assert!(loss(WM_POWERBROADCAST, PBT_APMSUSPEND as usize));
+            for event in [
+                WTS_SESSION_LOCK,
+                WTS_SESSION_LOGOFF,
+                WTS_CONSOLE_DISCONNECT,
+                WTS_REMOTE_DISCONNECT,
+            ] {
+                assert!(loss(WM_WTSSESSION_CHANGE, event as usize));
+            }
+            assert!(!loss(WM_POWERBROADCAST, PBT_APMRESUMEAUTOMATIC as usize));
+            assert!(!loss(WM_WTSSESSION_CHANGE, WTS_SESSION_UNLOCK as usize));
+            assert!(!loss(0, WTS_SESSION_LOCK as usize));
+            assert!(!loss(WM_ENDSESSION, 0));
+            assert!(loss(WM_ENDSESSION, 1));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{classify_windows_power_event, WakeEvent, WindowsPowerEventCodes};
+    // Test callbacks and their completion do not qualify admission, privacy,
+    // or final-recipient fencing; MCP bootstrap remains closed.
+    use super::{
+        classify_windows_power_event, session_is_available, PrivacyRevocation, WakeEvent,
+        WindowsPowerEventCodes,
+    };
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier};
 
     const CODES: WindowsPowerEventCodes = WindowsPowerEventCodes {
         power_broadcast: 10,
@@ -268,5 +1097,85 @@ mod tests {
             classify_windows_power_event(10, 40, CODES),
             WakeEvent::Ignore
         );
+    }
+
+    #[test]
+    fn initial_session_must_match_and_be_known_active_and_unlocked() {
+        assert!(session_is_available(7, 7, true, 1, 1));
+        assert!(!session_is_available(7, 8, true, 1, 1));
+        assert!(!session_is_available(7, 7, false, 1, 1));
+        assert!(!session_is_available(7, 7, true, 0, 1));
+        assert!(!session_is_available(7, 7, true, -1, 1));
+        assert!(!session_is_available(7, 7, true, 3, 1));
+    }
+
+    #[test]
+    fn privacy_loss_invokes_test_callback_once() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let revocation = PrivacyRevocation::new(Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
+        revocation.revoke();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        revocation.revoke();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn privacy_loss_flag_closes_before_a_stalled_callback() {
+        let loss = Arc::new(AtomicBool::new(false));
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel::<()>(1);
+        let blocked = std::sync::Mutex::new(blocked);
+        let revocation = PrivacyRevocation::with_loss_flag(
+            Arc::new(move || {
+                entered.send(()).unwrap();
+                blocked
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+            }),
+            loss.clone(),
+        );
+        let worker = std::thread::spawn(move || revocation.revoke());
+        waiting
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(loss.load(Ordering::Acquire));
+        release.send(()).unwrap();
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn concurrent_privacy_losses_invoke_callback_once() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let revocation = Arc::new(PrivacyRevocation::new(Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        })));
+        let start = Arc::new(Barrier::new(5));
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let revocation = revocation.clone();
+                let start = start.clone();
+                scope.spawn(move || {
+                    start.wait();
+                    revocation.revoke();
+                });
+            }
+            start.wait();
+        });
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn privacy_monitor_refuses_other_operating_systems() {
+        let error = super::PrivacyMonitor::install(std::sync::Arc::new(|| {}))
+            .err()
+            .unwrap();
+        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
     }
 }

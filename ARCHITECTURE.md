@@ -52,15 +52,32 @@ festerm-app
 
 festerm-ui-egui ------> festerm-core
 festerm-pty ----------> festerm-session
+festerm-session ------> festerm-admission
+festerm-automation ---> festerm-admission
 festerm-sessiond -----> festerm-core and festerm-session
 festerm-ssh ----------> festerm-session
 festerm-test-support -> festerm-core and session implementations
 festerm-document -----> (no workspace dependencies)
 festerm-unix-security -> (platform APIs only)
 festerm-windows-security -> (platform APIs only)
+festerm-admission ----> (standard library only)
 ```
 
 `festerm-core` must not depend on GUI, PTY, SSH, operating-system keychain, cloud identity, or persistence implementations.
+
+`festerm-admission` owns the existing process-wide automation admission lock
+and attachment epoch without depending on policy, session, GUI or backends.
+Session re-exports its existing opaque guard and APIs, and the authority kernel
+can name the same guard without depending on session implementations. This
+changes dependency ownership, not terminal ownership or lock scope. See
+[ADR 0065](docs/adr/0065-mcp-and-javascript-automation.md).
+
+`festerm-automation` also owns the existing four-frame in-memory outbound
+queue and its inert frame and target-guard representation; the application
+still owns transport, size/deadline and admission checks, and shutdown. Queue
+insertion requires the shared guard, which the app retains from those checks.
+It is not a broker authorization or complete revocation fence and does not
+qualify metadata routing or physical delivery.
 
 The Windows Direct2D experiment adds an app-owned
 `festerm-windows-direct2d` graphics boundary consuming egui primitives, not

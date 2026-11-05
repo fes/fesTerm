@@ -20,6 +20,10 @@ getrandom = "0.3"
 eframe = "0"
 egui-winit = "=0.36.1"
 festerm-config = { path = "../../crates/festerm-config" }
+festerm-automation = { path = "../../crates/festerm-automation" }
+festerm-automation-js = { path = "../../crates/festerm-automation-js" }
+festerm-automation-mcp = { path = "../../crates/festerm-automation-mcp" }
+festerm-automation-workflow = { path = "../../crates/festerm-automation-workflow" }
 festerm-core = { path = "../../crates/festerm-core" }
 festerm-document = { path = "../../crates/festerm-document" }
 festerm-markdown = { path = "../../crates/festerm-markdown" }
@@ -47,7 +51,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.11"
 tempfile = "3"
-tokio = { version = "1.17.0", default-features = false, features = ["rt", "sync", "time", "process", "io-util", "macros"] }
+tokio = { version = "1.17.0", default-features = false, features = ["rt", "sync", "time", "process", "io-util", "macros", "net"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 cargo-packager-updater = "0.2.3"
@@ -72,10 +76,12 @@ festerm-windows-direct2d = { path = "../../crates/festerm-windows-direct2d" }
 winresource = "0.1"
 
 [dev-dependencies]
+festerm-automation-mcp-client = { path = "../../crates/festerm-automation-mcp-client" }
 festerm-test-support = { path = "../../crates/festerm-test-support" }
 festerm-syntax = { path = "../../crates/festerm-syntax", features = ["test-support"] }
 accesskit = "0.24"
 egui_kittest = { version = "0.36", features = ["snapshot", "wgpu"] }
+rmcp = { version = "3.8", default-features = false, features = ["client", "transport-async-rw"] }
 russh = { version = "0.62.5", default-features = false, features = ["ring"] }
 
 [lints]

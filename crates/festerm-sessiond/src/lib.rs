@@ -32,8 +32,8 @@ use std::os::unix::net::UnixStream;
 use festerm_core::{ColorScheme, Terminal};
 use festerm_pty::{EnvironmentPolicy, LocalProfile};
 use festerm_session::{
-    noop_session_event_notifier, Session, SessionError, SessionErrorKind, SessionEvent,
-    SessionEventNotifier, SessionExit, SessionId, SessionLifecycle, SessionMetrics,
+    noop_session_event_notifier, AutomationEpoch, Session, SessionError, SessionErrorKind,
+    SessionEvent, SessionEventNotifier, SessionExit, SessionId, SessionLifecycle, SessionMetrics,
     SessionOperation, SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult,
     TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
@@ -582,6 +582,8 @@ pub enum RecoverySyncCommand {
 
 struct Shared {
     id: SessionId,
+    automation_epoch: Arc<AutomationEpoch>,
+    lifecycle_transition: Mutex<()>,
     lifecycle: Mutex<SessionLifecycle>,
     metrics: Mutex<SessionMetrics>,
     protocol_version: Mutex<u16>,
@@ -606,11 +608,40 @@ impl Shared {
     }
 
     fn set_lifecycle(&self, lifecycle: SessionLifecycle) {
+        self.update_lifecycle(lifecycle.clone());
+        self.send_event(SessionEvent::Lifecycle(lifecycle));
+    }
+
+    fn update_lifecycle(&self, lifecycle: SessionLifecycle) {
+        let transition = self.lifecycle_transition.lock();
+        let healthy = transition.is_ok();
+        let _transition = transition.unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.automation_epoch.transition(
+            healthy
+                && matches!(&lifecycle, SessionLifecycle::Running)
+                && !self.cancelled.load(Ordering::Acquire),
+        );
         *self
             .lifecycle
             .lock()
-            .expect("persistent session lifecycle lock is not poisoned") = lifecycle.clone();
-        self.send_event(SessionEvent::Lifecycle(lifecycle));
+            .expect("persistent session lifecycle lock is not poisoned") = lifecycle;
+    }
+
+    fn invalidate_automation_epoch(&self) {
+        let _transition = self
+            .lifecycle_transition
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.automation_epoch.transition(false);
+    }
+
+    fn request_stop(&self) {
+        let _transition = self
+            .lifecycle_transition
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.cancelled.store(true, Ordering::Release);
+        self.automation_epoch.transition(false);
     }
 
     fn send_event(&self, event: SessionEvent) {
@@ -681,7 +712,7 @@ struct ClientWorker {
 
 impl Drop for PersistentSession {
     fn drop(&mut self) {
-        self.shared.cancelled.store(true, Ordering::Release);
+        self.shared.request_stop();
     }
 }
 
@@ -955,6 +986,8 @@ impl PersistentSession {
         let (completion_tx, completion_rx) = mpsc::sync_channel(1);
         let shared = Arc::new(Shared {
             id: SessionId::next(),
+            automation_epoch: Arc::new(AutomationEpoch::new()),
+            lifecycle_transition: Mutex::new(()),
             lifecycle: Mutex::new(SessionLifecycle::Starting),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: DEFAULT_EVENT_QUEUE_CAPACITY,
@@ -1093,11 +1126,7 @@ impl PersistentSession {
             .expect("persistent protocol-version lock is healthy")
             >= 2;
         self.shared.reconnecting.store(true, Ordering::Release);
-        *self
-            .shared
-            .lifecycle
-            .lock()
-            .expect("healthy lifecycle lock") = SessionLifecycle::Starting;
+        self.shared.update_lifecycle(SessionLifecycle::Starting);
         self.shared
             .recovered_terminal
             .lock()
@@ -1208,13 +1237,11 @@ impl PersistentSession {
                 let error = PersistentSessionError::new(format!(
                     "could not start persistent-session reconnect worker: {error}"
                 ));
-                *self
-                    .shared
-                    .lifecycle
-                    .lock()
-                    .expect("healthy lifecycle lock") = SessionLifecycle::Failed(
-                    SessionError::new(SessionErrorKind::Output, error.to_string()),
-                );
+                self.shared
+                    .update_lifecycle(SessionLifecycle::Failed(SessionError::new(
+                        SessionErrorKind::Output,
+                        error.to_string(),
+                    )));
                 let _ = failure_completion.try_send(ShutdownResult::AlreadyStopped);
                 self.shared.notifier.notify();
                 Err(error)
@@ -1405,6 +1432,10 @@ impl Session for PersistentSession {
         self.shared.lifecycle()
     }
 
+    fn automation_epoch(&self) -> Option<Arc<AutomationEpoch>> {
+        Some(Arc::clone(&self.shared.automation_epoch))
+    }
+
     fn metrics(&self) -> SessionMetrics {
         *self
             .shared
@@ -1438,7 +1469,7 @@ impl Session for PersistentSession {
     }
 
     fn try_shutdown(&self) -> Result<(), SessionSendError> {
-        self.shared.cancelled.store(true, Ordering::Release);
+        self.shared.request_stop();
         match self.send(SessionCommand::Shutdown, SessionOperation::Shutdown) {
             // Cancellation is out of band, so a saturated command queue
             // cannot prevent the worker from observing shutdown.
@@ -1955,6 +1986,7 @@ fn client_worker(
 
         match stream.read(&mut buffer) {
             Ok(0) => {
+                shared.invalidate_automation_epoch();
                 if protocol_version < 2 {
                     if let Some(output) = legacy_scanner.close() {
                         send_output(&shared, output);
@@ -1994,6 +2026,7 @@ fn client_worker(
                                 pending_events.push_back(SessionEvent::ResizeApplied(size));
                             }
                             Ok(Some(ServerFrameEvent::Stolen)) => {
+                                shared.invalidate_automation_epoch();
                                 while let Some(event) = pending_events.pop_front() {
                                     shared.send_event(event);
                                 }
@@ -2004,6 +2037,7 @@ fn client_worker(
                                 return;
                             }
                             Ok(Some(ServerFrameEvent::Exited)) => {
+                                shared.invalidate_automation_epoch();
                                 while let Some(event) = pending_events.pop_front() {
                                     shared.send_event(event);
                                 }
@@ -2028,6 +2062,7 @@ fn client_worker(
                         }
                         ScanResult::Pending => {}
                         ScanResult::Stolen(output) => {
+                            shared.invalidate_automation_epoch();
                             if !output.is_empty() {
                                 send_output(&shared, output);
                             }
@@ -2038,6 +2073,7 @@ fn client_worker(
                             return;
                         }
                         ScanResult::Exited(output) => {
+                            shared.invalidate_automation_epoch();
                             if !output.is_empty() {
                                 send_output(&shared, output);
                             }
@@ -2081,6 +2117,7 @@ fn client_worker(
 }
 
 fn fail_transport(shared: &Shared, kind: SessionErrorKind, error: io::Error) {
+    shared.invalidate_automation_epoch();
     let error = SessionError::new(
         kind,
         format!("persistent-session transport failed: {error}"),
@@ -3931,6 +3968,149 @@ mod client_worker_tests {
         assert_eq!(
             session.shutdown(Duration::from_secs(2)).unwrap(),
             ShutdownResult::Stopped
+        );
+    }
+
+    #[test]
+    fn automation_epoch_invalidates_across_persistent_reconnect_and_shutdown() {
+        let old = ScriptedStream::default();
+        let replacement = ScriptedStream::default();
+        let (entered, connecting) = mpsc::sync_channel(1);
+        let (release, released) = mpsc::sync_channel(1);
+        let released = Mutex::new(released);
+        let session = from_stream_with_reconnector_test(
+            Box::new(old.clone()),
+            noop_session_event_notifier(),
+            Some(Arc::new(move |_| {
+                entered.send(()).unwrap();
+                released
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(2))
+                    .unwrap();
+                Ok(connected_test(Box::new(replacement.clone())))
+            })),
+        )
+        .unwrap();
+        assert!(wait_for(|| session.lifecycle() == SessionLifecycle::Running));
+        let epoch = session.automation_epoch().unwrap();
+        let original = epoch.capture().unwrap();
+
+        old.lock().eof = true;
+        assert!(wait_for(|| session.reconnect_available()));
+        assert_eq!(epoch.capture(), None);
+        session.try_reconnect().unwrap();
+        connecting.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(session.lifecycle(), SessionLifecycle::Starting);
+        assert_eq!(epoch.capture(), None);
+
+        release.send(()).unwrap();
+        assert!(wait_for(|| {
+            session.lifecycle() == SessionLifecycle::Running && epoch.capture().is_some()
+        }));
+        let current = epoch.capture().unwrap();
+        assert!(current > original);
+        {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(original));
+            assert!(epoch.is_current(current));
+        }
+
+        // The worker may observe the out-of-band stop before the command is sent.
+        assert!(matches!(
+            session.try_shutdown(),
+            Ok(())
+                | Err(SessionSendError::Closed {
+                    operation: SessionOperation::Shutdown
+                })
+        ));
+        assert_eq!(epoch.capture(), None);
+        {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(current));
+        }
+        assert_eq!(
+            session.shutdown(Duration::from_secs(2)).unwrap(),
+            ShutdownResult::Stopped
+        );
+    }
+
+    #[test]
+    fn validated_tunnel_transport_automation_epoch_closes_on_shutdown() {
+        let stream = ScriptedStream::default();
+        let terminal = Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap();
+        stream.queue_readable(encode_recovery_snapshot(&terminal).unwrap());
+        let session =
+            PersistentSession::from_validated_transport(stream, noop_session_event_notifier())
+                .unwrap();
+        assert!(wait_for(|| session.lifecycle() == SessionLifecycle::Running));
+        let epoch = session.automation_epoch().unwrap();
+        let generation = epoch.capture().unwrap();
+
+        assert!(matches!(
+            session.try_shutdown(),
+            Ok(())
+                | Err(SessionSendError::Closed {
+                    operation: SessionOperation::Shutdown
+                })
+        ));
+        assert_eq!(epoch.capture(), None);
+        {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(generation));
+        }
+        assert_eq!(
+            session.shutdown(Duration::from_secs(2)).unwrap(),
+            ShutdownResult::Stopped
+        );
+    }
+
+    #[test]
+    fn displaced_tunnel_invalidates_epoch_before_a_full_queue_can_delay_lifecycle() {
+        let stream = ScriptedStream::default();
+        let terminal = Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap();
+        stream.queue_readable(encode_recovery_snapshot(&terminal).unwrap());
+        let session = PersistentSession::from_validated_transport(
+            stream.clone(),
+            noop_session_event_notifier(),
+        )
+        .unwrap();
+        assert!(wait_for(|| {
+            while let Ok(event) = session.try_recv_event() {
+                if matches!(event, SessionEvent::Lifecycle(SessionLifecycle::Running)) {
+                    return true;
+                }
+            }
+            false
+        }));
+        assert!(session.take_recovered_terminal().is_some());
+        let epoch = session.automation_epoch().unwrap();
+        let generation = epoch.capture().unwrap();
+
+        for _ in 0..DEFAULT_EVENT_QUEUE_CAPACITY {
+            assert!(session
+                .shared
+                .try_send_event(SessionEvent::Output(vec![b'x']))
+                .is_ok());
+        }
+        let mut frames = encode_server_output_frame(b"pending");
+        frames.extend(encode_server_stolen_frame());
+        stream.queue_readable(frames);
+        assert!(wait_for(|| epoch.capture().is_none()));
+        assert_eq!(session.lifecycle(), SessionLifecycle::Running);
+        {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(generation));
+        }
+
+        while session.try_recv_event().is_ok() {}
+        assert!(wait_for(|| matches!(
+            session.lifecycle(),
+            SessionLifecycle::Disconnected(_)
+        )));
+        assert_eq!(
+            session.shutdown(Duration::from_secs(2)).unwrap(),
+            ShutdownResult::AlreadyStopped
         );
     }
 

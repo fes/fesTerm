@@ -138,9 +138,50 @@ impl WakeMonitor {
     }
 }
 
+#[cfg(target_os = "linux")]
+mod privacy;
+
+#[cfg(target_os = "linux")]
+pub use privacy::PrivacyMonitor;
+
+/// Privacy monitoring is unavailable off Linux. Installation synchronously
+/// revokes and returns an error.
+#[cfg(not(target_os = "linux"))]
+pub struct PrivacyMonitor {
+    _private: (),
+}
+
+#[cfg(not(target_os = "linux"))]
+impl PrivacyMonitor {
+    pub fn install(callback: std::sync::Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
+        callback();
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Linux lock and suspend privacy monitoring is unavailable",
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{classify_prepare_for_sleep, WakeEvent};
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn unavailable_privacy_monitor_revokes_synchronously() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let caller = std::thread::current().id();
+        let result = super::PrivacyMonitor::install(Arc::new(move || {
+            assert_eq!(std::thread::current().id(), caller);
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(result, Err(error) if error.kind() == std::io::ErrorKind::Unsupported));
+    }
 
     #[test]
     fn only_resume_prepare_for_sleep_events_wake() {

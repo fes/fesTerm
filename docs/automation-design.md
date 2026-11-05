@@ -1,10 +1,19 @@
 # MCP and JavaScript Automation Design
 
-**Status: Proposed; no implementation or enablement.** The owner selected
+**Status: Staged implementation; desktop MCP beta.** The owner selected
 JavaScript as the internal scripting language. [ADR 0065](adr/0065-mcp-and-javascript-automation.md)
 records the proposed authority and isolation decisions. This document defines
-their contracts and qualification gates. API names, manifests and limits below
-are a proposed version-one contract, not existing fesTerm functions.
+their contracts and qualification gates. The owner authorized P1-P3 delivery in
+[#501](https://github.com/fes/fesTerm/issues/501). The memory-only
+`festerm-automation` authority kernel, independent default-off settings and a
+local MCP adapter are implemented. The owner accepted a desktop **beta** on
+macOS, Linux and Windows (see [Desktop MCP beta](#desktop-mcp-beta)): the
+user-enabled stdio broker plus native verification-code matching admits
+observation and per-input-reviewed control of exact local terminals, guarded by
+native lock/sleep monitors that fail closed. No JavaScript interpreter is
+enabled. Full native platform/client qualification remains open; later APIs,
+manifests and sandbox policies below are contracts, not claims of shipping
+functionality.
 
 ## Product intent and scope
 
@@ -14,11 +23,54 @@ build tab, collecting selected diagnostics, creating a development workspace
 from approved profiles, and running an explicitly authorized task in a dedicated
 session. An assistant can help author a workflow; importing it never runs it.
 
-This is the deferred scripting/automation track under REQ-EXT-002 and
-REQ-EXT-004, outside the current milestone acceptance path. This document does
+This is the separately authorized scripting/automation track under REQ-EXT-002
+and REQ-EXT-004, outside the current milestone acceptance path. This document does
 not introduce plugins, an in-app AI model, an MCP client, cloud synchronization,
 a package marketplace, persistent terminal transcripts or a general shell daemon.
-It does not authorize implementation by itself.
+Its merge alone does not authorize implementation or bypass stage acceptance.
+
+MCP and JavaScript have independent settings, both disabled by default.
+Configuration opt-in never grants terminal visibility or control. Delivery has a
+distinct observation-only MCP PR checkpoint before JavaScript/control, then
+continues through P3. PRs remain incomplete until tests, independent limited-context
+security/reliability/scope reviews and required CI pass. P4 remains deferred.
+
+### Desktop preference ownership and failure
+
+The application shares the current MCP/JavaScript preference pair across
+windows. Its synchronous configuration writes and committed broadcasts
+overlay that pair, so stale sibling documents, including unrelated saves,
+cannot restore a successfully saved disable. Individual toggles remain
+independent and are saved normally. In-memory overlays reflect the requested
+pair, not proof of persistence after a failed or uncertain write. Same-pass
+conflicting automation actions or queue overflow close admission, cancel
+pending workflow previews, suppress approval, and visibly report that settings
+changes may not have been applied;
+the user must review and retry. Two workflow capture selections in the same
+batch conflict even when their paths are identical: path equality cannot prove
+the same intent or snapshot. Neither selection wins, and an existing preview is
+cancelled. A single nonconflicting selection still works normally. Each toggle
+has a process-local UI interaction
+revision, not a configuration snapshot revision: a stale release cannot undo
+a sibling change even when its displayed boolean changed and changed back.
+Revision exhaustion stops automation and requires restart. Native actions are
+bounded and held through discarded layout passes, so an approval cannot be
+committed before a cancellation in a later pass of the same frame.
+
+After a failed or indeterminate preference save, both live features are stopped
+for the rest of the process. Settings warns that an enabled value may remain
+or have reached disk and offers an explicit retry. Unrelated later saves cannot
+copy a failed enable, and do not clear that warning. A successful explicit
+preference save or retry confirms the current pair but does not resume
+automation in this process. There is no durable failure latch: on restart a
+value still enabled on disk can be read again; existing connection grants are
+never restored.
+
+The guarantee covers in-process writes through the shared reloader and is
+subject to the existing storage contract. It does not reconcile unknown
+outcomes for unrelated fields, protect against other processes or filesystem
+namespace races, or qualify either adapter. A separate configuration-outcome
+owner/latch remains necessary for broader transaction guarantees.
 
 Initial qualification targets desktop local stdio MCP and manually started,
 reviewed JavaScript workflows. Network MCP, unattended runs, timer/output/login
@@ -39,13 +91,39 @@ flowchart LR
   B --> R[Immutable bounded terminal snapshots]
 ```
 
-Proposed modules/crates are `festerm-automation` (data types, authorization,
-quotas and run state), `festerm-automation-js` (engine integration),
-`festerm-automation-mcp` (protocol adapter), and an install-owned automation
-worker executable. Names are provisional; no Cargo changes accompany this PR.
-The application composition root owns the broker and native approvals. Its
-coordinator remains the one owner of product actions and presented terminals.
+Modules/crates include `festerm-automation` (data types, authorization, quotas
+and run state) and `festerm-automation-mcp` (observation protocol adapter).
+`festerm-automation-js` supplies a confined worker component and the desktop
+executable has an early private worker entry, but no application launcher or
+qualified install provenance. The application composition root owns the broker
+and native approvals. Its coordinator remains the one owner of product actions
+and presented terminals.
 The terminal core remains UI/runtime/protocol-adapter independent.
+
+The coordinator's broker and privacy monitor have a shared lifetime separate
+from the MCP listener and its peers. Stopping, restarting or losing MCP closes
+only MCP admission and disconnects its principals; it does not discard other
+broker state. Privacy loss, an internal shared safety failure or application
+shutdown closes shared admission and revokes all principals. A successfully
+started shared lifetime can remain dormant until a global stop; it does not
+itself authorize an adapter or retain terminal contents. A restart queued
+before a global loss is discarded; a later explicit restart is required.
+Cleanup runs outside the UI thread; if cleanup cannot be started or fails,
+the affected service remains closed until the application is restarted.
+
+When admission is poisoned, privacy closure stores both its closed flag and
+the bound MCP stop before logging. MCP stop closes each peer and drops the
+broker before logging; the shared flag helper also applies its requested cut
+first. These diagnostics run without admission held. A panicking subscriber
+can still interrupt later cleanup; this ordering does not establish a
+final-recipient or physical-delivery fence.
+
+Only an actual adapter may request shared startup. The JavaScript preference
+alone starts neither the broker nor an MCP listener, and there is no integrated
+JavaScript adapter in this slice. Future worker integration must serialize its
+own admission and delivery against the shared privacy gate and arrange
+cancellation/reaping on global loss; this prerequisite does not provide those
+worker guarantees.
 
 An adapter cannot call a session backend or GUI object directly. The broker
 copies bounded immutable observations and sends typed application/input
@@ -57,12 +135,20 @@ Approval dialogs are native application-owned surfaces, never script HTML.
 
 Snapshotting runs at the app-owned terminal boundary. A logical observation
 revision changes when relevant rendered state changes; it is not a promise of
-raw transport history. No second terminal parser or terminal mutation owner is
-introduced. Waiters use notifications and bounded deadlines, not frame polling.
+raw transport history. The P1 revision does not track selection-only or viewport
+changes, so `wait_for_change` is not a selection notification. No second
+terminal parser or terminal mutation owner is introduced. Waiters use
+notifications and bounded deadlines, not frame polling.
 
 ## Authority model
 
 ### Principals and grants
+
+The kernel's [integration contract](../crates/festerm-automation/README.md)
+defines the actual prepare/commit boundaries. Its IDs are references, never
+grants. Native application code alone approves scopes and remote-state handoff;
+wire requests cannot deserialize an approval. Kernel unit tests prove state
+transitions, not transport authentication, native input ordering or confinement.
 
 The broker tracks an application instance nonce, adapter connection identity,
 run identity, immutable workflow digest and parent run (if any). MCP `clientInfo`,
@@ -89,6 +175,36 @@ mismatches fail before actions or disclosure. No wildcard target or active-tab
 alias is accepted in a write grant. New session creation yields one exact
 target under the approved creation scope, not authority over future sessions.
 
+The configuration crate provides a **non-authorizing** host-side effective
+profile snapshot for prospective native review. It copies the complete plain
+local, plain SSH-shell or serial profile and separately captures the known-host
+fingerprint selected by the saved profile's actual SSH connection identity.
+Capture and revalidation both use the same connection-profile conversion as
+launch, including its host normalization, and fail closed if it fails. Trust
+records are matched exactly, so a conflicting raw-host record is not substituted.
+The SSH value includes account, authentication kind, opaque credential
+reference and port forwards. Capture never retrieves secret-store contents,
+but full profile data, including freeform command arguments, may itself be
+sensitive; the configuration heuristic is not sanitization. Handle snapshots
+and accessor results only in trusted native code, never blindly log them or
+disclose them to a worker. Snapshot `Debug` is redacted, not its contents.
+Persistent local/SSH profiles, SFTP and Dev Tunnels are refused.
+The current SSH policy accepts a matching stored key and prompts for unknown or
+changed keys; a captured fingerprint is not a stricter trust policy.
+
+Exact revalidation compares both the captured values and an opaque in-process
+configuration revision. The host has not integrated revision ownership: a
+future owner must rotate it on every configuration adoption or mutation, never
+restore an old revision, and synchronize review and launch with that same
+owner. Reusing the revision permits identical remove/recreate (ABA). No content
+digest is produced here; even a future digest would identify content, not
+prove freshness. Neither snapshot nor revision pins executable/path contents,
+device identity or secret-store contents. Current profile launch resolves
+configuration again, SSH looks up trust separately and consumes stored-secret
+references asynchronously, and tab replacement does not attest a fresh session.
+Native approval, launch/privacy/attachment fences, fresh-target attestation,
+broker authority and workflow `open` therefore remain unavailable.
+
 Grants are memory-only in the initial phase. A native caller grant is owned
 by its approved connection/user invocation; derived request/run records cannot
 outlive it. Ending a short RPC request closes its request record, while the
@@ -111,6 +227,149 @@ fields are explicitly inapplicable, never invented or replaced by a privileged
 default workflow. The operation schema bounds its requested scopes. Native
 manual invocations use the same accounting/approval record, with their native
 user-invocation principal.
+
+The pure broker kernel also represents one direct terminal-input invocation as
+an exact `TargetRef`, SHA-256 digest and byte length of immutable encoded input,
+plus the existing canonical parameter digest. The trusted application computes
+both digests; the canonical digest binds the operation/schema identity and
+validated parameters. A client-supplied digest is not authority. A native grant
+must explicitly approve this whole binding and the target's control scope, including
+`accept_control_handoff`; an invocation needs neither JavaScript/workflow nor
+screen, scrollback or selection observation. The kernel checks the approved
+target at lease preparation/commit and checks the target, input digest and
+length at control preparation and exact commit. That invocation cannot be used
+for discovery, observation, workflow start or result-content disclosure.
+
+One successfully prepared direct-input request consumes the invocation's sole
+action even if the request is aborted or settled; an already committed request
+cannot be committed again. A live native grant can authorize later **new
+intentional** invocations of the same approved action, subject to its original
+lifetime and shared budgets. The synthetic review explains this repetition;
+qualified native UI must do so and obtain explicit handoff. A client assertion
+about a hardware gesture is not proof of consent. The kernel has no persistent
+input receipt and cannot tell a
+new intent from a replay. No adapter may automatically replay a lost response;
+the #524 client owns the durable uncertain-action interlock and disarm/reapproval
+flow. Admitted input remains outcome-unknown, not command completion.
+
+The host-only direct-action seam prepares bounded text or keys with the exact
+tab's core encoder before review, freezing the encoded bytes, terminal modes
+and host-computed binding with that review. It can reserve those bytes on the
+same tab's backend without exposing them to a caller. The reservation takes
+the admission lock itself, so the host validates both before and after the
+backend call, and independently checks the binding, exact bytes, modes, target,
+attachment and existing human/IME, privacy and optional presentation fences
+at publication. The opaque reservation is bound to the channel and request.
+Backend failures remain distinct from authority refusals; loss after admission
+is unknown, not evidence of command completion.
+
+The host may explicitly propose readable sources as part of the ordinary
+handoff review. Existing metadata sources must fit that reviewed closure;
+they are never added automatically. The native decision freezes the exact
+cross-flow and grant epochs, and ordinary-grant expiry also cuts presentation.
+The host seam models these checks but does not install a writer epoch or
+qualify native UI or recipients. A synthetic-only adapter stages and cancels
+pending MCP input reviews and can dispatch one approved action to a controlled
+test backend; this is not production input qualification.
+
+This direct-input binding is a prerequisite, not a feature. #524's P1
+checkpoint remains observation-only. A separately selected protocol catalog
+defines bounded `festerm_terminal_send_text` and `festerm_terminal_send_keys`
+calls against exact enrollment handles, with an optional host-owned
+presentation revision. Refusal means definitely not admitted, admission means
+queue admission only, and a mismatched or uncertain backend result is unknown.
+Cancellation or response loss does not prove non-admission or authorize replay.
+The production application does not select this catalog and explicitly refuses
+these operations in its observation path. Synthetic tests alone select it to
+stage one bounded request per peer. After a current-window review is requested,
+the host freezes the exact association, full escaped action and all separately
+approved metadata sources before displaying them. Cancellation, source expiry,
+human/IME fences, terminal mode changes or retirement invalidate the review and
+reclaim its pending proposal. A pending request's approved handoff is cut on
+cancellation; a handoff tied to an enrollment is revoked when that enrollment
+is replaced or removed. Under synthetic qualification, explicit confirmation
+revalidates the full display and admits one frozen action to the exact ordered
+backend queue. Queued inbound messages precede publication and final settlement;
+the result distinguishes refusal, admission and unknown without replay. A
+successful grant may stay armed and can be explicitly disarmed. A later wire
+invocation may reuse it only for the same action and association, after checking
+the original source descriptions, modes, human/IME and workspace fences,
+qualification and queued cancellation. The original expiry and shared budgets
+are not renewed. Reconciliation disarms the matching handoff after an observed
+qualification or opt-in loss, or an invalid human/IME/attachment fence, even
+without another request; restoring qualification does not restore that grant.
+A different action needs a fresh review; an unknown outcome disarms and is
+never automatically replayed. There is no production control approval UI, MCP
+input publication or feature activation; the modeled enrollment and
+presentation foundations do not qualify those paths or a desktop.
+
+The kernel also has a separately native-approved, discovery-only metadata slot
+on the same connection. It binds exact target generations and has its own epoch,
+expiry and revocation. A typed metadata root uses only that slot; the ordinary
+root API uses only the ordinary grant. Metadata grants do not authorize
+observation, control, workflow execution or result content. Each request still
+binds application-computed canonical parameters and projects only its approved
+target subset. Neither slot is an implicit fallback for the other.
+
+The slots do not independently compose into unreviewed authority. If control
+is live, its already reviewed scope must contain every metadata target as a
+source and its handoffs must approve each source at every control sink. Native
+metadata approval must also explicitly acknowledge the exact metadata sources
+for every current control sink. If metadata is approved first, a subsequent
+native control approval must include those sources and explicitly accept their
+handoff to each sink. A handoff's extra source not present in the ordinary
+scope is insufficient; incompatible combinations refuse rather than expanding
+an active grant. Changing the closure requires a fresh reviewed ordinary grant.
+Both slot revisions and relevant target ownership are frozen in pending
+decisions, so even an add/remove ABA transition makes an old decision stale.
+A revision change immediately discards that connection's stale pending
+decisions and releases their principal/global pending capacity; it does not
+refund lifetime proposal charges or invalidate other principals' decisions.
+Revoking an already empty slot still discards that slot's proposals, but does
+not invalidate a still-current opposite-slot proposal.
+The ordinary source scope does not itself permit discovery without an approved
+discovery or workflow invocation. Separate discovery authority deliberately
+approved in the ordinary grant survives metadata-slot revocation; no route
+silently falls back. Native code must retain and display both current scopes and
+the exact cross-flows under its controller fence, and reject stale decisions.
+
+Both slots share the existing principal/global budgets, pending-approval
+limits and direct-context ceiling. Reapproval of one cannot refill the other:
+the shared principal allowance resets only when the other slot is absent.
+Human takeover and an explicit ordinary-slot cut close affected ordinary runs,
+leases and delivery liveness while preserving an otherwise live metadata grant.
+A metadata-only cut preserves ordinary authority; a principal-wide `revoke`,
+lock/privacy loss and disconnect cut both. Pending decisions depending on a
+changed slot are discarded even when the other grant survives. Expiry and
+exact-generation replacement cut affected slots. A
+non-serializable disclosure-liveness handle binds a committed response to its
+original connection, grant/run/ancestor liveness and deadline, including after
+the run's normal completion. It is not a disclosure permit or a substitute for the
+application's serialized privacy, request-cancellation and actual attachment
+checks. A future adapter must bind the original response and per-grant handle
+to the existing bounded queue and recheck under the same nonblocking fence as
+revocation at every write; contention must defer without blocking the controller
+or watchdog. A partial frame interrupted by revocation, expiry or cancellation
+requires connection closure, not unauthorized continuation or replay.
+
+An inactive host seam freezes exact metadata source guards and the current
+control sink before a native metadata decision. A control review separately
+exposes currently authorized metadata sources and freezes the whole ordinary
+readable-source closure. Reapproval cannot widen that closure, and metadata
+installed outside the host seam cuts affected control rather than being
+silently trusted. Independent slot cuts preserve the other slot unless an
+exact source itself becomes stale.
+
+The observation-only adapter's queued responses lack independent per-grant
+delivery fencing, so the seam refuses to compose with its live observation
+grant in either direction. A future adapter must bind the original per-slot
+liveness and reviewed source, connection and privacy guards to every
+nonblocking frame write. There is no metadata-only native UI, metadata MCP
+routing, input tool or real terminal write here. Future metadata projection
+must use a reviewed bounded schema, never relabel observation or workflow
+content as metadata. Native UI must explain recipients, lifetime,
+repeatability, cross-flow consent and control handoff. Native lifecycle and
+client evidence remain open; no OS platform is qualified by this seam.
 
 A direct `workflows.start` request is an admission transaction, not the lifetime
 parent of the workflow it creates. At the serialized start boundary the broker
@@ -149,8 +408,10 @@ allowance by issuing many short calls: per connection, at most 1 MiB disclosed,
 5-minute maximum grant lifetime. The global worker/approval/result limits also
 apply. Exhaustion or expiry requires a new explicit native grant; reconnecting
 does not silently renew it. Every wait/subscription consumes that context and
-closes on disconnect/revocation. A direct tool's response is finalized under
-the same broker completion/admission rule as a workflow result.
+closes on disconnect/revocation. A direct read tool's response is finalized under
+the same broker completion/admission rule as a workflow result. An eventual
+input adapter must securely report admission/refusal on the original channel;
+an input disposition is not permission to disclose workflow result content.
 
 ### Capability matrix
 
@@ -274,22 +535,22 @@ terminal output as JavaScript is never a host API or workflow trigger.
 An illustrative read-only workflow, after native approval, could be:
 
 ```js
-export async function main({ fesTerm, params, signal }) {
-  const session = await fesTerm.sessions.get(params.target);
-  const first = await session.readScreen({ maxBytes: 16_384 });
-  const change = await session.waitForChange({
-    afterRevision: first.revision, timeoutMs: 30_000, signal
+export async function main({ fesTerm, params }) {
+  const first = await fesTerm.readScreen({ target: params.target, maxBytes: 16_384 });
+  const change = await fesTerm.waitForChange({
+    target: params.target, afterRevision: first.revision, timeoutMs: 30_000
   });
-  return change.kind === "changed"
-    ? await session.readScreen({ maxBytes: 16_384 })
-    : { status: change.kind };
+  return change.changed
+    ? await fesTerm.readScreen({ target: params.target, maxBytes: 16_384 })
+    : { status: "unchanged" };
 }
 ```
 
-`params.target` is an opaque reference validated against the run's target
-binding, not a script-selected current tab. The returned observation is itself
-subject to recipient/budget checks. `signal` is broker-owned cancellation state;
-ignoring it cannot keep an expired run authorized.
+`params.target` is an opaque, generation-bound handle derived from the run's
+frozen target mapping, not a script-selected current tab. It does not imply
+permission to discover other sessions. The returned observation is itself
+subject to recipient/budget checks; worker cancellation and the broker deadline
+apply even when JavaScript does not cooperate.
 
 ### Immutable workflow bundles
 
@@ -305,6 +566,97 @@ user-modifiable global library directory. Never accept foreign bytecode or
 serialized engine snapshots; QuickJS itself warns its bytecode is not a safe
 untrusted interchange format. Recompile approved source in the worker.
 
+#### User-selected single-file intake
+
+The `festerm_automation_workflow::intake::load_user_selected_bundle` API
+accepts one absolute, locally user-selected JSON file containing a
+`SourceSnapshot`. For example:
+
+```json
+{
+  "manifest": {
+    "version": 1,
+    "apiVersion": 1,
+    "name": "example",
+    "entry": "main.js",
+    "modules": ["main.js"],
+    "parameters": {},
+    "capabilities": []
+  },
+  "modules": {
+    "main.js": "export function main() { return 1; }"
+  }
+}
+```
+
+All shown fields are required. The manifest's sorted `modules` list must be
+the exact reachable static module graph; its names are canonical ASCII
+root-relative `.js` paths, and its parameter schema and capability names use
+the worker's [snapshot contract](../crates/festerm-automation-js/README.md#snapshot-and-language-profile).
+Duplicate fields, module-map or parameter-map keys, duplicate/case-colliding
+module names, unknown fields, missing/extra/unreachable modules, aliases,
+traversal and unsupported syntax are rejected. The input file itself is at
+most 2 MiB of UTF-8 JSON, including whitespace and escapes; the existing
+snapshot validator also limits decoded source to 1 MiB, the manifest to 64 KiB,
+the canonical snapshot to 2 MiB, and module and parameter counts to 64 each.
+
+On Linux, macOS and iOS, intake anchors at `/` and opens each component
+relative to the retained directory with no-follow flags. On Windows it accepts
+only Unicode absolute local drive paths whose opened root resolves to that
+drive's volume root, and uses retained no-reparse handles on the same volume.
+Windows UNC, mapped network, device and verbatim roots, alternate streams,
+reserved names, and ambiguous trailing dots/spaces are refused. On all these
+platforms, empty, `.` and `..` path components, symlinks/reparse points and
+nonregular final files are refused; path encoding is limited to 4096 bytes
+(UTF-8 on Windows, native bytes on Unix). Other platforms fail closed. These
+are component implementations, not native-platform qualification; iOS
+security-scoped document access must be held by the caller, and provider URLs
+that are not file URLs cannot be passed as paths. Snapshot intake can compile
+for iOS without the unqualified JavaScript engine; worker startup remains
+unavailable. The Unix security crate's
+unqualified iOS private-storage checks remain unavailable. Filesystems, mounts
+and hard links are not provenance or publisher verification; Unix mounts may
+be crossed. Opening a special file may itself have filesystem-specific effects
+before its type is rejected.
+
+The read consumes at most the JSON limit plus one byte, even if the file grows.
+Concurrent modification can produce different or mixed captured bytes; only a
+successfully validated captured snapshot is hashed and returned. The digest is
+over the existing canonical snapshot encoding, not the raw JSON whitespace or
+escape spelling, and includes the exact decoded source strings. The returned
+`ApprovedBundle` name does **not** mean the user has granted authority. A
+future native UI must show and approve that frozen snapshot and must satisfy the
+pending-approval invalidation policy for edits; execution must use the frozen
+snapshot without reopening its pathname. The API does not establish that a path
+came from a person: its caller must enforce trusted native selection, keep I/O
+off the UI thread, and never expose it as an MCP-supplied source/eval path.
+Filesystem/provider I/O can stall even for a regular file. The application must
+bound concurrent intake tasks, retain each slot until the underlying I/O exits
+even after cancellation, and discard results from cancelled or superseded
+selections. Desktop Settings now offers an opt-in, local-file picker and a
+non-authorizing preview of the captured snapshot. It retains one
+background intake slot until the read exits, discards cancelled results, and
+holds at most the latest superseding selection until that slot is free. It
+displays the canonical digest and requested capabilities and allows browsing
+the captured source, not a reopened file. The source view pages at bounded
+UTF-8 boundaries and makes backslashes, controls, newlines and non-ASCII
+characters explicit; this representation is not executable source. It does
+not provide approval, execution, or publisher verification; those remain
+separate requirements. There is no iOS picker integration, file watcher,
+worker launch or execution here.
+
+The standalone workflow binding component freezes the snapshot, validated
+parameters, requested scopes and the complete one-to-one mapping from opaque
+target names to application-instance/session/generation references. Its
+parameter digest includes that mapping, so swapping two approved targets cannot
+silently retarget an unchanged parameter. It rejects host calls outside the
+manifest and frozen scopes; profile opening and child workflow calls remain
+unavailable there. Target parameters reach the worker only as handles derived
+from this mapping and bound to the exact bundle; the application must still use
+the matching frozen invocation when launching and projecting requests. This is
+only an intake projection, not a native grant, worker launch or substitute for
+live broker and controller checks.
+
 Code, parameter schema, permissions, dependency or API version changes produce
 a new digest and require a new grant. Filename, display version, publisher
 signature and an assistant's description are provenance/context only. In the
@@ -318,6 +670,10 @@ QuickJS documents memory/stack limits and interrupt callbacks; Rust bindings
 document Promise integration. Boa offers an embedded Rust implementation.
 These are selection inputs, not evidence that either engine is a security
 sandbox or ready on every fesTerm target. No engine is selected by this ADR.
+The isolated worker component currently pins `rquickjs` 0.14.0 with QuickJS-NG;
+its [language profile and native probes](../crates/festerm-automation-js/README.md)
+are component evidence, not application integration or platform acceptance.
+The JavaScript preference still grants no execution.
 
 Desktop execution uses an install-owned worker process with no inherited
 secrets/environment, GUI/SSH/file descriptors or filesystem/network access
@@ -347,28 +703,333 @@ only to the extent demonstrated by the platform sandbox and broker protocol.
 
 ### Local transport first
 
-Initial deployment is a separately launched, install-owned stdio adapter and
-a private application IPC endpoint. Nothing listens on a network interface.
-The adapter never autostarts a missing GUI, opens a profile or executes an
-unreviewed script merely because a client connected. Stdout carries protocol
-messages only; stderr contains bounded content-free diagnostics.
+The local stdio binding uses a separately launched, install-owned adapter and
+a private application IPC endpoint. The owner also authorized an additional
+direct authenticated local-socket binding with a fesTerm-specific client
+connector as a possible first route. It is not HTTP and does not replace or
+qualify stdio. Neither route listens on a network interface, autostarts a
+missing GUI, opens a profile or executes an unreviewed script merely because a
+client connected. Stdio stdout carries protocol messages only; stderr contains
+bounded content-free diagnostics.
 
-Bootstrap through a user-enabled native pairing/approval flow. The broker
-verifies the private endpoint's OS ownership/permissions and the launched
-adapter instance with a per-connection secret/handle exchanged through a
-private channel, never argv, a copied terminal command, a public socket name
-or script-visible data. The implementation must document how an externally
-launched adapter proves its paired identity without trusting `clientInfo` or
-leaving a reusable bearer credential in configuration. Failure to qualify this
-bootstrap blocks MCP enablement. An enabled process name or same OS UID alone
-does not grant terminal visibility. The native UI lists paired connections
-and supports disconnect/revoke independently.
+Bootstrap must use a user-enabled native pairing/approval flow and a
+per-connection secret or handle exchanged through a private channel. The
+Windows transport prototype uses a current-user-only local pipe and rejects
+remote clients, but this alone does not authenticate another process belonging
+to the same user. Resolving and reopening an OS-reported executable path also
+does not prove the identity of the image a process actually loaded if the path
+was replaced. The bootstrap is therefore not process-authenticated. For the
+desktop beta the owner accepted the same-user private endpoint plus the human
+matching the stream's public verification code in native Settings as the
+bootstrap on macOS, Linux and Windows; other platforms still refuse. MCP checks
+this gate before requesting shared startup, and the listener checks it again
+before binding. This does not replace the independently required privacy
+monitor, which must install successfully before admission opens.
 
-Pin a reviewed MCP SDK/protocol version and test the supported client matrix
-before implementation release. Support only explicitly negotiated versions;
+An unused channel primitive explores `Noise_NN_25519_ChaChaPoly_SHA256` with
+fresh ephemeral keys and the complete SHA-256 handshake fingerprint. Noise NN
+alone authenticates neither endpoint. Each endpoint must independently display
+its own complete fingerprint, and both must receive a trusted human comparison
+before forwarding sensitive client data or granting terminal access. A
+model-controlled MCP tool call that copies the adapter's own public fingerprint
+is not evidence of human verification. The existing public pairing code is not
+this fingerprint. The primitive refuses low-order X25519 contributions and
+rejects tampering, replay and malformed bounded records. Raw handshake entry
+points are private; a transport-independent incremental driver frames the
+initiator's 32-byte message and responder's 48-byte reply with two-byte
+big-endian lengths, rejects every other length before buffering a payload, and
+never reads past the expected frame. It exposes only an unverified channel,
+after every required outbound byte has been written, and performs no fingerprint
+confirmation or peer authentication. EOF, cancellation, malformed input,
+terminal I/O errors or an unknown callback outcome discard pending state. A
+partial or interrupted operation is immediately retryable; only `WouldBlock`
+calls for waiting on readiness. A direction change must also be attempted
+without assuming a fresh readiness edge. The caller must enforce deadlines,
+live privacy/admission checks and cancellation, and close the owned stream.
+Every write callback must report the actual bytes accepted by a physical
+nonblocking stream write, not a local buffered queue; the driver cannot verify
+a dishonest callback. OS acceptance does not prove peer receipt.
+
+An independent incremental framing component supports fragmented, full-duplex
+record I/O, prefixing each encrypted record with a big-endian 16-bit length.
+It closes on truncated input or failed partial output and bounds one pending
+frame per direction. A panicking physical writer also closes the channel
+during unwinding because it may already have accepted an unknown prefix; the
+caller must discard the underlying stream and must not replay that frame. It
+takes a freshly verified channel before any records have been sent or
+received, and distinguishes interrupted writes from backpressure so
+edge-triggered callers can retry. It does not own I/O deadlines, authorization
+or privacy: the caller must hold the live disclosure boundary for each
+physical write.
+On cancellation or a denied boundary, the caller must close the channel and
+discard pending output rather than retrying under a later grant.
+None of these components is wired into the adapter or qualifies bootstrap or
+executable provenance.
+An active relay can delay ciphertext or suppress disconnect; independently
+qualified liveness is required for strict caller-loss guarantees.
+
+An experimental owned direct-channel driver composes the existing primitives
+with a distinct Noise prologue, independently supplied native comparisons and
+encrypted role-bound confirmations and receipts. It owns bounded nonblocking
+I/O, deadlines and one pending frame per direction; every physical write still
+requires a caller-supplied live admission guard. The direct and stdio handshake
+domains cannot authenticate each other's replies. A Unix socket-pair test uses
+simulated comparisons, not a native verifier or a separate client process.
+The driver does not create an endpoint, identify the process holding the other
+end, qualify lock/privacy monitoring or fence a recipient. A relay can forward
+a valid handshake unchanged and delay previously
+sent ciphertext after the real client exits. Direct delivery removes the extra
+stdio proxy only when a future integration establishes its actual recipient;
+it does not itself solve that relay or caller-liveness problem. Production
+bootstrap, observation and control remain closed.
+
+The separate experimental `festerm-automation-mcp-client` crate adapts an
+already-connected Unix socket or Windows named pipe to the official Rust SDK
+without adding that SDK as a production application dependency. Unix waits on
+socket readiness. The Windows path uses synchronous `PIPE_NOWAIT` operations,
+not buffered overlapped writes, and retries blocked I/O every 20 ms alongside
+explicit native or admission wakeups and deadlines. This polling also occurs
+while an established peer is idle; its power and scaling costs are not
+qualified. Both paths bound each direction to four queued messages and close on
+backpressure, invalid frames or cancellation. A send completes only after the
+encrypted frame's physical stream write; it is not an admission receipt.
+The client retains a separate completion/cleanup handle and can disconnect on
+a local lifecycle cut. Its native verifier and per-write privacy fence are
+caller-supplied and unqualified. Socket-pair tests use simulated comparisons and
+a synthetic protocol host, not a production listener or native authority. A
+Windows-only fixture exercises the SDK and dormant host over a local named
+pipe with simulated comparison and admission; native execution is required to
+establish its result. The
+connector cross-compiles for iOS device and Simulator targets
+with an iOS 15 deployment floor, but that is not runtime or distribution
+evidence. Apple documents [App Group IPC](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.application-groups)
+between apps from one development team, with Unix sockets inside the shared
+container; that is not a general endpoint for arbitrary third-party clients.
+Windows endpoint and iOS cross-application feasibility remain unqualified.
+Unknown actions are not replayed; #524's durable uncertainty interlock remains
+the external client's responsibility.
+
+A dormant direct host bridge connects that channel to the existing connection
+and coordinator event queues. It announces a peer only after both comparisons
+and receipts, refuses incoming frames after stop, and retains the original
+outbound frame while rechecking its target, flags, disclosure and expiry under
+admission through each physical write. Queue insertion and guarded closure of
+an announced connection wake the owner after the admission guard is released.
+A dormant Tokio owner drives the peer from
+socket readiness or Windows pipe retries, explicit wakeups and deadlines, yielding after bounded
+progress. It publishes cleanup completion even when its task is cancelled;
+failed or unobserved cleanup quarantines the native surface. Its caller must
+independently provide native caller/recipient admission, wake it after other
+lifecycle cuts and fence the actual effects. A capacity-one verifier
+reservation wakes its owner on normal coordinator stop or UI-owner destruction
+even before the fingerprint is displayed. A queued stale reservation or
+comparison prompt must be reclaimed before its surface can be reserved again.
+The direct owner also retains the verifier's UI-owner liveness and retires a
+stalled handshake or established peer when that owner is destroyed. It
+rechecks liveness before advancing, announcing, writing and queuing a completed
+frame. These checks do not fence an effect already in flight or qualify native
+privacy and recipient delivery. Other lifecycle wakeups remain unqualified. An
+opaque bootstrap gate cannot be obtained in production
+until qualification. The owner is not attached to a listener.
+Official SDK tests reach the actual coordinator and a controlled session both
+within one process and from a separate process using a test-only Unix listener.
+The separate process runs the test binary, and a test control channel simulates
+human comparison and approval. The host now uses a bounded Settings comparison
+model: it displays the complete local fingerprint, requires the independently
+read peer value and an explicit attestation, and routes the decision through
+the originating window and prompt generation. Editing the value clears the
+attestation. The next Settings render discards entry and widget state for a
+retired or replaced prompt. Cancellation and privacy/stop cuts immediately
+invalidate retained views; cleanup failure
+quarantines the surface. The actual coordinator and verifier
+are exercised by the separate-process fixture, while an egui harness exercises
+the Settings controls. The test-supplied values do not prove a human obtained
+them independently. Neither test qualifies process identity, screen-lock
+behavior, native usability or production end-to-end availability.
+The separate-process controller fixture also enrolls two identically labelled
+test sessions, separately approves metadata, retires one association, and
+reviews input to the other test backend with JavaScript and observation
+disabled. It distinguishes admitted from simulated unknown outcomes, never
+replays the latter and observes explicit refusal of unqualified presentation.
+Its native decisions and backend are synthetic, not platform qualification.
+
+Once bootstrap is qualified, the application binds a distinct broker principal
+to the accepted handle; neither `clientInfo`, a wire ID nor a copied code owns
+the grant. The public random verification code shown by
+`festerm_pairing_status` lets the user match that exact stream in native
+Settings. It is not a secret or bearer credential. Connection, executable or
+OS user identity alone grants no visibility. A process that can control or
+relay the approved client remains outside the pairing's containment claim.
+The native UI lists channels and supports independent disconnect, including
+before approval. macOS and Linux also require qualified privacy monitoring.
+The design requires startup and teardown off the UI thread, with admission
+closed until monitoring and the private endpoint are ready; the current
+coordinator still has the blocking paths described below.
+The Windows monitor's separate ownership prerequisite reserves one
+process-wide listener slot before registration. One process-lifetime reaper
+owns that listener through its actual join, including thread-local
+destructors. The reaper first waits on the listener's owned Windows thread
+handle; a failed native wait quarantines that still-owned handle instead of
+consuming it. Once running, the reaper also attempts the once-latched
+revocation callback outside native dispatch on listener spawn, wait or join
+failure, including a wait failure after activation. Ordinary successful
+owner-requested shutdown does not itself invoke that callback. A signaled
+handle is followed by the actual Rust join, not a pre-TLS completion signal.
+Monitor close only requests cancellation; its cleanup status is pending until
+native cleanup and join complete. A failed
+native cancellation, listener failure or other uncertain cleanup permanently
+quarantines the slot and retains the uncertain resources. Class, WTS and
+suspend-registration failure paths also quarantine when no
+safe cancellation of a possibly partial registration can be established; a
+retry then requires a new process. The service-notification buffer has process
+lifetime; successful cancellation stops
+new APCs, and joining the listener disposes of APCs already queued to it
+before the buffer can be reused.
+This relies on the documented
+[`NotifyServiceStatusChangeW`](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-notifyservicestatuschangew)
+cancellation and
+[`QueueUserAPC`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-queueuserapc)
+thread-exit behavior; native validation and review are still required.
+Installation errors can expose the cleanup status, and a process-wide
+ownership status remains queryable. If a reserved job cannot be submitted or
+its supervisor started, the slot becomes unknown and permanently retains that
+entire job in one tracked process-wide quarantine. A listener spawn failure
+likewise retains its unstarted task and callback on the reaper. Inputs rejected
+before reservation instead remain in the returned installation error for the
+caller to retain or dispose of; dropping that error or those inputs can run
+arbitrary destructors and is not guaranteed nonblocking. This distinction
+prevents arbitrarily many rejected inputs from becoming unbounded global
+quarantine. If submission or reaper startup fails before a listener is
+started, no callback runs on the submitting thread; the caller must keep
+admission closed and handle the returned unknown status. At its own deadline
+an owner can turn pending cleanup into sticky unknown quarantine without
+waiting. The application coordinator waits off the UI thread for cleanup and
+slot release for at most five seconds after it obtains a status, then
+quarantines cleanup still pending and blocks restart if the slot remains
+occupied or unknown. An installation or startup worker that has not returned
+can still delay retirement.
+The listener uses a 50 ms alertable wait to observe cancellation without a
+UI-side native-handle operation; its power/wakeup cost also needs native validation. Native
+APC/window callbacks only atomically mark the listener's loss and the shared
+application privacy flag; the application callback runs outside native
+dispatch, so it cannot make SCM/RPC calls from inside an APC. The once latch
+prevents duplicate callback entry, not proof that a
+blocked or panicking callback completed.
+
+Native loss dispatch marks the privacy gate closed without acquiring the
+admission lock; supervisor failure marks it before invoking the callback.
+Reserved input and each private peer message or direct or
+legacy transport write make their final privacy admission with an atomic
+read-modify-write ordered against that cut. A request that wins admission before
+the cut can finish afterward; one that loses is refused. The coordinator retires successful, failed
+and cancelled monitor startups off the UI thread and blocks restart if cleanup
+is unknown. It shows a cleanup-failure message when a restart is attempted;
+the detailed pending state is not separately presented. Other coordinator
+admission-lock and worker-join paths can still block.
+
+This is not an end-to-end privacy or UI-responsiveness qualification. An
+`Unknown` or `Complete` cleanup status, callback entry, or callback
+completion does **not** qualify admission, privacy, or a physical final-recipient
+fence. Atomic monitor cancellation cannot fence a physical write already
+admitted, and the bounded local model tests are not evidence of such a fence.
+The desktop beta accepts this as residual risk. The process panic hook runs before
+`catch_unwind` and may record a callback's panic payload, so catching a panic
+does not establish content-free hook handling. Native callback behavior,
+notification cancellation and the complete admission/recipient boundary
+remain unqualified; no monitor state opens the bootstrap gate.
+
+An active relay can keep IPC open and forward previously valid ciphertext
+after the genuine caller exits. EOF, timeout, or encrypted heartbeats do not
+prove caller liveness against it; any future OS-pinned direct-process channel
+must be independently bound to the authenticated handshake and cannot be
+nominated or kept alive by the relay. Socket acceptance also does not prove a
+guarded physical write to the final stdout recipient. Both boundaries remain
+separate prerequisites, not properties of the monitor.
+
+Backend-owned attachment generations advance before transport loss, even if a
+bounded lifecycle-event queue drops notifications. Text-mode SFTP has no
+qualified transport/subsystem-loss signal and is excluded from automation
+observation even while its terminal remains usable. Revocation and each
+nonblocking private-channel reply write share a prototype admission lock, not
+yet a qualified bounded physical-recipient fence; bytes already written to the
+private channel cannot be recalled. The stdio input reader buffers at most
+64 bounded frames independently of private-channel backpressure, so it can
+observe EOF and revoke while forwarding is stalled; overflow closes the channel.
+
+An accepted peer cancellation marks its existing bounded wait before attempting
+the shared admission guard. Busy leaves that wait pending without servicing it,
+defers peer events and schedules a retry; native observation approval and
+controller confirmation are visibly refused, not replayed, while this or other
+admission/safety work defers the tick. Poison closes shared privacy. The
+exact run is cancelled under the guard; cleanup failures close and disconnect
+the peer under it. Bounded error details are logged only after its release,
+because tracing subscribers can reenter admission. It is also released before
+any response send. Explicit ordinary-slot, legacy metadata-slot and
+whole-principal broker revocations also require that guard; the first two
+preserve independently approved enrollment metadata. Ordinary and legacy
+metadata reapproval also requires the guard through its own slot replacement,
+preserving the opposite slot. Other broker cuts and expiry are not uniformly
+guarded, and broker destruction remains unguarded. Guarded queue insertion
+does not bind the legacy frame to a grant or fence physical delivery. Queued
+or written bytes cannot be recalled.
+
+For the live observation peer paths, one fixed-size record per peer retains the
+exact run and optional request before a response is finished or sent. After
+the send, cleanup tries admission without holding it across the send; busy
+retains the record and defers later peer events and waits, without replaying
+the response. Cleanup settles the request, completes and forgets the run;
+an inconsistent or missing run closes and disconnects the peer. Expiration
+and revocation can cut the run first. Poison closes privacy. If a tick unwinds
+with its broker temporarily taken, a non-reentrant sentinel closes privacy and
+the adapter stop flag before broker destruction; grant liveness is invalidated
+by broker drop. Busy repaint callbacks and privacy-loss shutdown run while the
+broker is still locally owned, including when those callbacks unwind. An outer
+tick unwind guard borrows the coordinator and closes privacy and stop and
+drops any broker still in the coordinator, including on a pre-take callback
+panic. Equivalent guards cover coordinator command and overflow entry points;
+an application guard covers input, logic and UI dispatch, including command
+collection, window settlement and post-dispatch repaint. Their unwind cuts are
+idempotent and do not acquire admission or invoke callbacks. They also clear
+start intents and opt-ins and latch startup closed;
+atomic cancellation flags immediately disarm current, pending and queued
+workflow selections without dropping their closures during unwind. A later
+normal cleanup retires outstanding startup results and drops queued selection
+work. MCP remains latched until explicit restart. Independently, workflow
+selection remains stopped until a disabled JavaScript setting is observed
+after cleanup and the user explicitly enables it while all windows permit it;
+with JavaScript already enabled, turn it off and on. Unchanged settings and
+selecting a file alone cannot rearm it, and the settings view explains the
+recovery. This rearm does not restart MCP or restore grants. While MCP is
+enabled but still unwind-latched, settings explicitly require MCP restart.
+These guards do not recall a queued or already-written response, stop an
+already-running capture, or recall an already-extracted workflow bundle.
+
+A panic at privacy-close logging can precede peer-flag closure, although the
+tick unwind guards close privacy and stop and drop the broker. This does not
+add a final-recipient or physical-delivery fence.
+
+This is a live cleanup prerequisite, not a guarded broker completion API:
+`Broker::complete`, `complete_with_result`, other cuts, expiry and broker drop
+remain unguarded. It does not fence metadata, queue insertion or final-recipient
+or physical delivery, and does not qualify or enable any platform or adapter.
+
+The existing capacity-four outbound queue and its frame/target-guard
+representation live in `festerm-automation`, while the app retains the same
+connection and writer. The frame limit and expiration remain host checks; the
+queue itself does not authorize or bound frame bytes. `Connection::send_guarded`
+retains the shared guard through its existing connection, expiry, target and
+flag checks and nonblocking queue insertion; the sender requires that guard.
+A full or disconnected queue closes the connection before releasing it.
+Publicly constructible legacy frames are still not an enrollment witness or
+revocable metadata publication boundary, and other broker cuts remain
+unguarded. A future bound path must prevent bypass and establish all relevant
+lifetime and final-recipient fences.
+
+The handwritten adapter implements the MCP `2025-11-25` protocol baseline;
+native client interoperability is not yet qualified. Support only negotiated versions;
 do not combine lifecycle/metadata rules from different spec generations.
 The cited transport documentation describes both current bindings and older
-compatibility, so implementation needs version-specific conformance tests.
+compatibility, so release needs version-specific conformance tests.
 Protocol cancellation maps to broker cancellation and bounded request state;
 MCP annotations and client approval UX are hints, never server authorization.
 
@@ -376,6 +1037,425 @@ Network/Streamable HTTP exposure is deferred. It would need its own threat
 model for authorization, token audience separation, origin/Host validation,
 DNS rebinding, TLS, request limits and reconnect/replay. Existing GitHub/Dev
 Tunnel/SSH credentials are not MCP credentials and must never be passed through.
+
+### Controller enrollment prerequisite
+
+The authority kernel also models a bounded, per-registration metadata review
+and decision, independent of the legacy metadata slot. Each candidate freezes
+the exact connection, enrollment, target, ordinary-grant revision and control
+ownership. A native-only model input must acknowledge every current control
+sink, and the ordinary grant must already contain the metadata source and
+handoff closure. Rebinding, cancellation, per-registration revocation,
+principal revocation, target loss and expiry fail closed; an ordinary grant
+revision invalidates the model decision rather than silently composing it with
+a new grant. Decisions have no metadata-run, request, charging or disclosure
+route, and are not consent or publication permits. The model stores no labels;
+two differently registered terminals can have identical visible labels.
+
+A separate broker-only authority path now supports independently approved
+discovery grants for each exact connection, registration, enrollment and
+target generation. It does not convert the inert decisions above into grants.
+The host-only grant proposal freezes the ordinary and metadata revisions and
+current control ownership and existing control-grant identity, and consumes
+the existing pending and lifetime approval budgets. If control is active,
+trusted review must separately acknowledge each sink from the new metadata
+side and from the exact existing control-grant side; the ordinary grant's
+reviewed source and handoff closure must already contain the target. An
+ordinary control review conversely exposes each exact active enrollment-grant
+identity and requires separate control-side and metadata-side acknowledgement
+of each source/sink combination. That native decision must carry a
+broker-frozen, non-serializable review bound to the exact pending approval,
+connection, revisions, current ordinary epoch, enrollment-grant epochs and
+approved sink set. It cannot be reused for a different pending approval.
+Unbound legacy ordinary decisions remain available only when no enrollment
+metadata is being composed with control. The resulting consent binds both grant
+epochs and the entire sink set. Either grant's replacement requires a fresh
+two-sided review, including when two enrollments name the same target.
+Adding, removing or replacing an enrollment grant invalidates earlier pending
+grant reviews, including ABA transitions.
+
+An enrollment metadata root accepts exactly the associated target and uses
+only that enrollment's grant. Existing run, request, reserved-byte, principal
+and global budgets apply; another slot's reapproval cannot replenish shared
+usage while any grant remains. Per-enrollment revocation, rebind, unregistration,
+target loss and expiry cut its runs and grant liveness without cutting unrelated
+enrollments. Removing, expiring or disarming ordinary control, or changing an
+observation-only ordinary grant, preserves live enrollment metadata; a later
+ordinary control decision must explicitly review the then-current exact
+enrollments and their complete source/sink closure.
+Cancellation, principal revocation, disconnect and privacy loss
+use the existing broker lifecycle. Legacy unbound metadata is never a fallback
+for this path.
+
+A dormant application seam separately prepares and approves one exact
+enrollment metadata grant. It freezes the connection, registration,
+association, local target and attachment, plus the workspace revision at
+review, and revalidates them before installing the grant under admission.
+The host retains that binding with the exact broker grant epoch. Cancellation,
+stale decisions and cross-connection decisions do not authorize a replacement.
+An enrollment metadata review still refuses active control and legacy
+observation composition. A later dormant direct-input review can compose the
+already approved enrollment grants only when the explicit readable-source
+scope includes every active enrollment target. It freezes and revalidates
+each exact grant and association, and the modeled native decision acknowledges
+both sides of every source-to-control flow. Metadata replacement or association
+retirement invalidates an earlier review. This metadata-first path does not
+provide a handoff UI or qualify delivery; other control and legacy observation
+composition remain unavailable. A dormant
+Settings review models a separate confirmation in the association's window.
+It shows the connection code, untrusted client identifier and exact local
+terminal, and describes only label and lifecycle-status access for at most five
+minutes, without terminal contents, input or a JavaScript dependency. It
+explicitly says delivery is unavailable. Cancellation immediately invalidates
+cloned review snapshots; proposal cleanup and scoped revocation wait for the
+admission boundary and report their pending state. This UI is exercised only
+with synthetic qualification, not qualified native consent. The test-qualified
+metadata consumer enforces the displayed field scope, but a binding check is
+not disclosure authority. Qualified privacy, application revalidation at
+publication and enrollment-bound per-write recipient fencing remain
+unimplemented; no production gate or metadata capability is enabled.
+
+The hardware-controller use case in [#524](https://github.com/fes/fesTerm/issues/524)
+begins with an ordinary untrusted MCP connection, not a privileged device.
+Claimed gestures, labels, PIDs, working directories, tab positions and
+correlation IDs establish neither user intent nor target ownership. The
+application-owned kernel can record a connection's opaque 1–128-byte local
+registration, bounded to 16 per connection and 128 globally. The same bytes on
+another connection are independent; repeating them on the same connection does
+not select or change a target. Registration does not trigger a native prompt.
+
+For native selection, trusted application code freezes the
+registration, the real `ConnectionId`, the user's explicitly selected live
+`TargetRef` and the registration revision. A non-serializable
+`NativeControllerEnrollment` represents that native decision; trusted code must
+never construct it from an IPC claim. Committing it associates precisely that
+target generation and mints a fresh broker-owned enrollment ID. A later binding
+requires another native decision, invalidates the old ID and rejects older
+in-flight review decisions. Attempting a newer native selection supersedes an
+earlier pending decision even if the new target is stale, without changing an
+existing association. The kernel does not queue proposals; the application
+serializes native selection changes and cancellation before decisions, bounds
+its pending reviews and sanitizes displayed registration bytes. Identical
+labels and changes in display ordering never retarget an association. Unregister,
+disconnect and global privacy revocation remove registrations; close or
+attachment replacement removes registrations bound to that target and invalidates
+review candidates naming its old generation. A fresh broker instance with a
+fresh unpredictable instance nonce invalidates all records. A new registration
+or decision is required; matching bytes do not restore an association.
+Per-connection grant revocation alone leaves these non-authorizing registrations
+intact; unpairing must unregister them or disconnect.
+
+This is not yet a supported controller workflow. A dormant application
+adapter and native Settings chooser now connect this kernel to controlled
+synthetic protocol peers, but private bootstrap and native qualification remain
+unconditionally closed in production. The returned reference identifies an
+association; it does not authorize disclosure of even
+target metadata, or screen, scrollback, selection, input, presentation or
+workflow invocation. It starts no listener or worker and enables neither MCP
+nor JavaScript. The application must deliver target/connection lifecycle
+transitions to the broker and, before any future use or disclosure, revalidate
+real attachment liveness under its admission boundary; the kernel cannot
+observe backend transitions on its own. Queued work must capture its original
+enrollment ID and resolve that
+same ID again at admission, never resolve the then-current association in its
+place. The kernel is backend-neutral; the adapter separately enforces #524's
+local-PTY eligibility policy.
+
+The local adapter's synthetic regressions explicitly cover two live identically
+labelled terminals and the user's exact selected generation, as well as close
+and recreation or a simulated backend disconnect/reconnect under the same tab.
+Reusing a label or local registration string never restores or retargets the
+old association; a replacement needs a new registration and native decision.
+The synthetic reconnect models lifecycle/attachment ABA and does not claim that
+the production local PTY supports reconnect.
+
+### Bounded confirmed-presentation seam
+
+The kernel has a **separate native presentation decision** for one exact
+connection, registration, enrollment and live target generation. Enrollment,
+an observation grant, a label, a client token or a claimed gesture cannot
+create this decision. The decision grants neither discovery/observation nor
+input, and expires within five minutes. A newer native review supersedes older
+reviews and withdraws the previous presentation grant. Rebinding, unpairing,
+revocation, disconnect, privacy loss, target close or replacement invalidates
+the affected grant/evidence.
+
+An application-owned monitor identity represents one *qualified and continuous*
+native event source. Presentation attempts are limited to one application-wide,
+five seconds, 16 per native grant and 4096 per broker lifetime. A prepared
+attempt selects the exact session through `AppCommand::ActivateTab` and queues
+the existing window focus command only after resolving the enrollment and
+checking the local-PTY target, connection, attachment and privacy gates. It is
+still pending after those commands. A later fresh native barrier must establish
+the actual foreground/key window and selected target before the kernel can
+mint a unique opaque revision. A different window/target stays pending or
+refuses; an explicitly refused foreground request is `FOREGROUND_REFUSED`.
+Cancellation and absolute expiry discard the attempt; the application schedules
+the deadline in both UI and logic-only passes. Nothing polls or blocks the UI.
+The host must also revalidate the evidence, recipient and all live guards at
+actual response admission; a confirmation prepared earlier is not permission
+to release a later response.
+
+At input preparation, a requested presentation condition is frozen with the
+exact lease, enrollment and revision. Ordinary control commit refuses that
+condition rather than dropping it. The modeled application handoff captures
+the exact controller, human-input, IME and backend-attachment generations
+**before presenting a pending native control review** for one target. Under
+the admission boundary it first cuts stale handoffs/reviews, then captures the
+fence, freezes guards for **every** discovered or observed source in the
+requested grant, and creates the broker's ownership snapshot. These guards
+bind each exact target and controller instance/lifecycle generation to the
+original liveness and registration identities and backend attachment
+identity/generation. The exact request and bounded grant lifetime are frozen
+for display. The host-only decision is bound to that specific review and its
+entire displayed readable-source closure; it cannot be paired with a newer
+proposal. Human input invalidates the captured epoch before delivery, even if
+no grant, lease or previous handoff exists. IME loss/regain, pending
+clipboard/IME input, source disconnect or attachment replacement also
+invalidate the review. The old broker proposal is rejected rather than
+repaired by a fresh capture. Only a genuine new native review can authorize a
+new handoff, and its first proposal snapshots ownership after the cut.
+
+The original review fence and all source guards stay bound to the principal's
+opaque grant and acquired lease/run; a caller cannot substitute newly captured
+guards for an old grant. Every approved source is revalidated at decision,
+lease acquisition and input admission, including sources omitted from a narrower
+run. The admission lock remains held through publication, so a backend
+transition is ordered either before the checks or after the publication. A
+stale source retires its exact old target and cuts only grants and proposals
+whose scopes contain it. Already-retired targets have already been cut by
+broker close/replacement and must not globally revoke unrelated principals.
+At most 16 pending reviews globally, two per principal, and one handoff per
+principal are retained. Cancellation, expiry, revocation, disconnect and
+privacy loss reject pending decisions; inactive host records are pruned on
+the next boundary, and any future UI must independently dismiss expired or
+cancelled prompts. Before proposal creation, handoff, lease acquisition or
+presented-input admission, a stale human/IME control fence synchronously cuts
+every control grant for that target, including old requests and pending
+approvals. Worker disclosure and other future input paths must implement the
+same ordering; this modeled seam is not an exposed direct-input adapter.
+
+The presented-input seam resolves the request's exact lease, grant and target
+again and, under the shared admission lock, checks the connection/stop and
+privacy flags, concrete local PTY, registration and original attachment
+generations. Each backend reservation is created with the host controller ID
+and the backend's own attachment identity and running generation; the seam
+compares all three to the prepared target under the same lock. Equal bytes or
+equal generation numbers on a different PTY are insufficient. The seam then
+requires a **new** native barrier, rehashes the immutable reserved bytes and
+retains both boundaries through publication. If the reservation or barrier
+fails after broker admission has succeeded, the outcome is unknown, never a
+not-admitted refusal or permission to replay. UI admission, handoff and
+activation use a nonblocking try-lock; contention refuses before effects.
+Any future native barrier must itself be nonblocking and bounded, with pending
+activation resumed by events/deadline instead of waiting on the UI thread.
+The existing controller's human-input invalidation acquires the same mutex
+blocking; before enabling native review in production, its UI responsiveness
+must be qualified or human delivery deferred without weakening ordering.
+These fences order human/IME transitions already recorded by the application;
+they do not prove that the OS has no undelivered human input. A real input
+adapter must also establish that ordering or conservatively refuse.
+
+**Loss and regain between observations:** two identical current window/tab
+samples do not prove uninterrupted presentation. The native source must record
+every intervening activation transition, including loss and regain before the
+next sample, with a non-reused monotonically advancing event generation, detect
+any gap/overflow, and establish an ordering/freshness barrier at confirmation,
+response release and every input admission. The application separately advances
+a shared non-wrapping workspace revision on tab selection and window topology
+changes, including away-and-back changes. The shared revision is bound to the
+UI thread and once to its coordinator, so admission cannot substitute a
+different workspace. The synchronous input callback rechecks it after the native
+barrier and before publication; that callback must not re-enter UI mutation.
+A future response adapter needs the same ordering. An old revision never becomes
+valid again: a transition, mismatch, unknown state, source restart or gap
+closes the evidence; a new explicit request is necessary.
+
+The OS can change foreground independently of the application's admission
+mutex. Merely draining delayed events, comparing `NSWindow.isKeyWindow`,
+`window.has_focus()`, egui's cached `viewport().focused`, or seeing a queued
+`ViewportCommand::Focus` does **not** prove that no transition was missed or
+serialize an OS change against admission. eframe exposes a root frame/raw
+handle but not a frame for every immediate secondary viewport, and its normal
+UI/event delivery is not a proven native admission barrier. A platform source
+must prove the complete event history and the ordering through publication, or
+invalidate/refuse. Synthetic event/barrier tests prove only the state machine,
+not AppKit, Win32, compositor or human-attention behavior. No production native
+source is installed; **all platforms and viewports remain unavailable**,
+including Windows foreground refusal and macOS root/secondary windows. Local
+PTY eligibility does not qualify a platform, and SSH, persistent, tunnel and
+serial sessions are not enabled for this slice.
+
+There are concrete obstacles beyond an absent adapter. On macOS, the vendored
+`egui-winit` focus handler substitutes `window.has_focus()` for the delivered
+event value, so a delayed loss after regain can be collapsed into a current
+snapshot; AppKit/run-loop notifications are not a proven publication barrier.
+On Windows, the pinned winit 0.30.13 `Window::focus_window` can call
+`force_window_active`, which synthesizes Alt with `SendInput` and ignores the
+`SetForegroundWindow` result. That path cannot report OS refusal and must not
+be used as the qualified presentation request. The refusal-only client tool
+does not reach this queue. Existing ordinary window focus behavior is unchanged.
+
+The later-stage MCP catalog offers the content-free
+`festerm_presentation_capabilities` and refusal-only
+`festerm_workspace_present` tools. The former currently returns
+`presentation: {available: false, reason: "NATIVE_EVIDENCE_UNQUALIFIED"}`,
+`backends.local_pty: "NATIVE_EVIDENCE_UNQUALIFIED"`,
+and `backends.other: "UNSUPPORTED_BACKEND"`. The presentation-only catalog
+reports enrollment and input unavailable. When the controller and presentation
+catalogs are explicitly combined, the same backend that answers controller
+capabilities supplies enrollment availability for each presentation capability
+request. Both capabilities report input available only if the connection's
+direct-input catalog was selected and the backend is currently qualified for
+input and enrollment. This is a feature-availability snapshot, not an approval
+or a promise that a later request will be admitted. Existing catalogs and all
+production backends continue to report input unavailable.
+The backend policy describes the slice, not any enrolled session. The latter
+tool strictly validates its opaque `enrollment_ref` and 1–5000 ms `timeout_ms`,
+then returns `UNAVAILABLE` without starting work, changing a tab or prompting. The schema
+reserves a supported success containing the exact opaque `target_ref` and a
+48-character host-owned `presentation_revision`, and a distinct
+`FOREGROUND_REFUSED` result; neither is emitted by this unqualified adapter.
+`available: true` would require the corresponding real tool, native grant and
+qualified backend; it would not itself grant authority. The ordinary P1
+`Machine::new()` catalog stays observation-only. Catalog selection cannot mint
+a native decision or enable JavaScript; the direct-input route remains
+synthetic-only.
+
+### Dormant controller protocol and native adapter
+
+The protocol crate separately offers `Machine::with_controller_enrollment()`
+for an **explicitly selected controller catalog**. `Machine::new()` retains the
+observation-only catalog. The desktop host normally selects the separate
+refusal-only presentation catalog. A native Settings action can select the
+controller catalog for *new* connections only when a separately qualified
+native controller path is available; the desktop beta enables it on macOS,
+Linux and Windows as an owner-accepted risk, without process authentication.
+The disabled control cannot start a listener. Restart or disabling MCP clears
+the ephemeral opt-in and all connection-owned records. Those new controller
+connections use the combined controller and refusal-only presentation catalog.
+The standalone controller and presentation catalog constructors remain
+independently selectable, and `Machine::new()` is unchanged. Controlled tests
+inject qualification and deterministic IDs for synthetic peers to exercise
+the real protocol dispatch and application broker; they do not establish
+native qualification.
+
+| Later-stage tool | Bounded, non-authorizing contract |
+| --- | --- |
+| `festerm_controller_capabilities` | No arguments; reports backend-qualified enrollment feature availability, not grant status. Association-handle metadata, presentation and input are unavailable. |
+| `festerm_controller_register` | Untrusted `local_id`, 1–128 encoded UTF-8 bytes; returns an opaque registration ID and optional association ID, without selecting a target or triggering a prompt. |
+| `festerm_controller_status` | A connection-local registration ID; returns only that registration and its optional association ID. |
+| `festerm_controller_unregister` | A connection-local registration ID; the adapter removes only that registration and association. |
+
+Unknown fields, including claimed gestures, PIDs, targets or approvals, are
+rejected. IDs are 128-bit values encoded as 32 lowercase hexadecimal characters.
+The type checks their encoding; the adapter generates unpredictable IDs
+unique over each connection's lifetime and resolves them only within that
+connection. It never logs or persists client registration bytes. Broker limits
+bound registrations to 16 per connection and 128 globally; per-connection
+issued-ID and controller-request limits are 256, and ID collisions and
+exhaustion fail closed. Neither ID is a credential, target reference or grant.
+Protocol-supplied backend results are not proof that any platform, privacy gate
+or native flow is qualified.
+
+Registration itself only creates an inline row; it neither opens a chooser nor
+selects a target. The human explicitly chooses a registration, then one
+currently live local PTY in the Settings view's own window, then confirms the
+frozen choice. `This window` is based on the Settings view's owning `WindowId`,
+not inferred focus or an OS title that may be hidden. A tab position and escaped
+untrusted label help distinguish identical names, but are never target
+authority. Another window cannot select or confirm the first window's target;
+it can cancel, unregister, or initiate a new choice in its own view. The
+decision rechecks the exact connection, registration, target generation,
+backend type, controller instance/lifecycle, attachment epoch and privacy
+under admission. Changes to the displayed candidate context invalidate a
+review. A review also captures the app-owned workspace revision: tracked tab
+activation and window-topology changes, including away-and-back changes before
+settlement, invalidate it. A missing or exhausted revision source makes
+enrollment unavailable. This is application UI-state evidence, not proof of
+native foreground or presentation. An interwindow tab move cancels pending
+choosers/reviews, even if a tab moves away and back before settlement;
+associations to the moved tab are retired. Closing its window, unregistering,
+disconnecting or losing privacy also invalidates the affected decision/record.
+Same-frame competing controller actions and queue overflow stop rather than
+choosing a winner; a concurrent cancellation or preference change cannot be
+followed by approval. Client identifiers and terminal labels preserve readable
+Unicode while escaping controls, bidirectional formatting, quotes and
+backslashes for native display. Display covers at most 128 input Unicode
+scalars plus a truncation marker; registration remains limited to 128 UTF-8
+bytes. The adapter never logs or persists these values.
+
+The reply worker retains registration and target guards through every
+nonblocking write. A queued status invalidated before or during a frame closes
+the connection rather than substituting a reply or extending the frame
+deadline. Any previously delivered status is only a snapshot, not authority.
+
+An association-handle `festerm_sessions_get` consumer is wired behind a
+test-only delivery qualification. It resolves only the requesting connection's
+exact association and separately reviewed grant, admits and charges an exact
+discovery run with a 2 KiB encoded metadata reservation, and returns bounded
+label/lifecycle data with the association reference rather than the internal
+target. Its queued frame retains the
+original grant/run liveness, connection, association and attachment guards;
+the existing writer rechecks those guards on each nonblocking write. A
+synthetic test exercises scoped revocation and expiry of queued replies. No
+name, position or current-association fallback is permitted. Registration and
+status never return terminal metadata or other clients' records.
+
+An official Rust MCP SDK client also exercises this coordinator through a
+test-only in-memory bridge. It enrolls two identical-label local fixtures,
+observes metadata refusal before each separate synthetic review, and checks
+the exact association's metadata after one label changes. It sees the moved
+target's old handle refused without retargeting the other. The same client
+then sends direct input to the remaining synthetic backend after an explicit
+simulated review, observes refusal, admission and an injected unknown outcome,
+and exercises disarm without replaying the unknown action. This exchange
+bypasses private bootstrap and is not native transport, recipient, privacy,
+presentation or production input qualification.
+
+This is not a qualified delivery fence. Cancellation after completion, all
+expiry/destruction and revocation ordering, authenticated recipients,
+privacy monitoring and the final physical recipient still require proof.
+The existing stdio boundary is not qualified. Production delivery remains
+unconditionally unavailable, and a separate grant alone does not enable it.
+`metadata_available` reports feature availability, not grant status.
+
+The combined catalog reports enrollment availability through the same bounded
+backend path as controller capability requests. A changed opt-in, qualification,
+workspace revision source or privacy/connection state therefore cannot be
+inferred from the catalog selected at connection creation. Capability results
+are snapshots, not grants; every registration still checks live authority.
+Presentation stays unavailable. Production metadata availability remains
+false even after a modeled native metadata review or grant; controlled tests
+can separately enable the synthetic consumer. Presentation continues to
+refuse during review, after approval and after revocation. These modeled grants
+and synthetic writes do not qualify a transport or native platform.
+
+The remaining #524 contract is deliberately open:
+
+- Authenticated native pairing, platform-qualified selection and **separately
+  authorized metadata-only** disclosure and bounded lifecycle refresh, without
+  granting terminal contents.
+- A qualified native event source and response-admission barrier, native
+  enrollment/presentation-grant UI, and end-to-end presentation/input adapter.
+  Windows foreground refusal and away-and-back races require real native
+  evidence; no physical visibility or human-attention claim is implied.
+- Integration of the presented-input seam with direct MCP input, writer lease
+  and explicit handoff/disarm UI. Human input, pending IME/paste, lock,
+  revocation, expiry and disconnect require fresh native handoff/reapproval,
+  never silent lease reacquisition.
+- Honest not-admitted, admitted and unknown outcomes; queue admission is not
+  command completion, and lost responses do not authorize replay. The external
+  client owns its durable uncertain-action interlock.
+- Native/client proof of operation with JavaScript disabled, real
+  capability/unavailability reporting for each backend/platform, and native
+  Windows qualification before
+  claiming Windows controller support. Authenticated private bootstrap and
+  qualified privacy monitoring remain prerequisites; unsupported combinations
+  must remain unavailable.
+
+The P1 #506 checkpoint remains observation-only; none of these controller or
+input requirements is backported into its MCP surface.
 
 ### Proposed operations and results
 
@@ -393,9 +1473,11 @@ Tunnel/SSH credentials are not MCP credentials and must never be passed through.
 | `workflows.start` / `runs.get` / `runs.cancel` | Named digest/parameter validation, owned run ID, bounded status/result access and cancellation. No source-code eval parameter. | `workflows.invoke` plus child scopes; workflow phase |
 
 MCP names use protocol-valid identifiers; the dotted names here express domain
-operations. The adapter must publish an exact schema/name mapping before
-interoperability qualification, rather than assume every SDK accepts these
-illustrative names. All result schemas distinguish absent data, truncation,
+operations. The observation adapter publishes `festerm_pairing_status`,
+`festerm_sessions_list`, `festerm_sessions_get`, `festerm_terminal_read_screen`,
+`festerm_terminal_read_scrollback`, `festerm_terminal_get_selection` and
+`festerm_terminal_wait_for_change` with schemas through `tools/list`. All result
+schemas distinguish absent data, truncation,
 gaps, completion, refusal and unknown execution outcomes. Errors are stable
 codes with bounded safe text, never raw exceptions, tokens or shell output.
 
@@ -456,6 +1538,36 @@ result delivery. Runtime destruction follows the broker's transition, never
 drives it; late callbacks/results are epoch-rejected. This rule applies to
 direct invocations and nested runs as well as JavaScript.
 
+The standalone worker protocol pauses further JavaScript jobs while a forwarded
+host call has not crossed broker admission or been refused. The parent
+acknowledges only after the exact effect/operation is admitted; an immediate
+result also closes that admission phase. Admitted asynchronous calls can still
+await their results while JavaScript proceeds. The future application must
+prepare the exact broker request, cap its run deadline at the supervisor's,
+and consume a one-shot admission permit at the nonblocking broker/controller
+commit. The permit atomically orders the claim against watchdog closure; an
+already claimed effect may physically execute later. Explicit cancellation
+serializes the broker cut before signalling the worker, while the watchdog can
+still reap at deadline without waiting for a stalled admission gate. App
+integration must also serialize target, privacy and cross-run revocation; this
+component alone does not provide those lifecycle hooks.
+
+Each worker host-result frame additionally requires an application-provided
+disclosure guard. The watchdog attempts that guard for every nonblocking
+pipe write, retaining its permit through the write; contention defers output
+without stalling the watchdog. The application must bind it to the exact run,
+recipient, privacy state, deadline and all source attachment generations, using
+the same serialization boundary as revocation. A guard is not itself a broker
+grant, and bytes already written to the worker cannot be recalled.
+
+Worker events can signal a shared one-slot wake channel without calling GUI
+code from the watchdog. A separate application bridge must request a frame and
+drain every active run, rescheduling when a frame budget leaves queued work.
+The startup thread must publish its success or failure and signal the
+application, which must signal again after registering a successful supervisor:
+the bridge may have consumed an earlier wake before the run was installed.
+A full wake channel coalesces signals; a disconnected receiver closes the worker.
+
 A `SessionRef` binds app-instance identity, logical tab/session identity and
 transport attachment generation; durable sessions also bind provider/host/
 generation. Control additionally requires a broker-issued `InputLeaseRef`
@@ -505,6 +1617,14 @@ silently interleave human keys
 with an automated command. Existing core replies and required transport
 control retain their independent ordering; the automation lease is not a
 second owner for terminal parsing, host query replies or screen mutation.
+Native approval checks the proposal's ownership snapshot, but consent and
+approval alone do not transfer another principal's writer, revoke its grant or
+advance the target's ownership epoch. Before a transfer, the native adapter
+must explicitly cut the old grant/run/lease and serialize the handoff with the
+controller, worker and input fences. `human_takeover` is an explicit target-wide
+cut that invalidates existing control grants and pending ownership snapshots;
+the application must obtain a fresh proposal and native approval when needed.
+A kernel cut alone does not perform controller or worker cleanup.
 
 Broker admission and revocation are serialized at the controller boundary.
 Pending requests carry epoch checks; revoked items that have not crossed
@@ -513,10 +1633,86 @@ Already transport-admitted bytes may have executed and are not recalled.
 No unbounded input buffering, “wait for reconnect then send” behavior or
 partially replayed command is allowed. Backpressure is an explicit refusal.
 
+The core can prepare a bounded batch of typed keyboard or paste events without
+changing its input queue. It captures the terminal modes used by the existing
+encoder and retains the exact immutable bytes. Preparation is not a target
+binding, writer lease, authorization or transport reservation. The future
+adapter must enforce the automation write limit, bind the exact target and
+attachment, and recheck privacy, attachment/generation, captured terminal
+modes, human input/IME, any required presentation condition and the same
+immutable bytes while holding the relevant terminal and admission fences through
+real queue publication. A mismatch refuses the entire batch; it must not
+silently re-encode or retry an approved write.
+
+The worker's `sendText` and `sendKeys` requests have a bounded, inert encoding
+adapter. `sendText` uses the ordinary paste encoder, including bracketed-paste
+mode and newline normalization, and adds no submit key. Supplied newlines or
+control characters can still execute commands. Empty or oversized text is
+refused.
+
+Each `sendKeys` token consists of zero or more distinct lowercase `ctrl:`,
+`alt:`, or `shift:` modifiers followed by an exact key name. A single ASCII
+letter, digit, `.`, `_`, or `-` denotes that character. Named characters are
+`Space`, `Plus`, `Equals`, `Slash`, `Backslash`, `BracketLeft`, `BracketRight`,
+`Comma`, `Semicolon`, `Quote`, and `Backtick`. Non-character names are `Enter`,
+`Tab`, `Backspace`, `Escape`, `ArrowUp`, `ArrowDown`, `ArrowRight`, `ArrowLeft`,
+`PageUp`, `PageDown`, `Home`, `End`, `Insert`, `Delete`, `F1` through `F12`,
+and `Keypad` followed by `0` through `9`, `Decimal`, `Enter`, `Add`,
+`Subtract`, `Multiply`, `Divide`, `Equal`, or `Separator`. For example,
+`ctrl:c`, `shift:Tab`, and `alt:ArrowLeft` are distinct typed events.
+Character values are already Shift-translated: `shift:A` supplies `A`, not a
+layout-dependent transformation. Unknown names, duplicate modifiers and
+unsupported chords refuse the entire batch. The core applies terminal modes;
+the adapter cannot turn a refused chord into a different key. An unrecognized
+token is `InvalidKey`; a syntactically valid chord that the core cannot encode
+(such as `ctrl:Plus`), or a locked key, is `Input(Rejected)`.
+
+The local PTY component can reserve an inert position in its existing bounded
+command queue before an exact broker commit. Its immutable bytes become
+sendable only after the application completes the broker callback while
+retaining worker, privacy and attachment admission fences through publication.
+An unresolved slot expires after 250 ms, without allowing later commands to
+overtake it. The bounded admission claim must be confirmed by a monotonic clock
+read after the claim; a timely published reservation remains admitted even if
+the transport consumes it later. If the callback succeeds but publication loses
+the slot, the caller must report an unknown outcome and must not retry
+automatically.
+The controller can capture a composite human-input, application-wide IME and
+authoritative backend-attachment fence only with no buffered input, clipboard
+reservation or pending paste/file-drop confirmation. Human keyboard, paste,
+mouse input while terminal mouse reporting is enabled, and clipboard initiation
+invalidate an armed fence before delivery. IME events are observed before
+input filtering or tab switching, and composition remains blocked across
+windows until every observed composition receives a commit or native disabled
+event, processed through the UI pass. Empty preedit, ordinary text and focus
+loss do not prove cancellation.
+When the platform omits a cancellation event, including for a closed window,
+the gate can remain blocked until application restart. Duplicate empty
+preedits after a commit can also block it: without a qualified native signal,
+they cannot safely be distinguished from an empty preedit preceding another
+commit. Any future adapter must surface that refusal and must not bypass it.
+A native-qualified reset must establish that all relevant IME contexts have
+resolved pending callbacks through the UI pass and must prevent new unobserved
+input from racing rearm or admission; issuing a reset request alone is not
+proof. If quiescence cannot be established, the gate stays closed. This
+metadata fence is not a lease or native handoff. The future adapter must check
+it under the shared admission lock through every effect and disclosure, and
+synchronously cut the controlling
+invocation and descendants through the broker on takeover. An empty local
+queue is not evidence that the remote editing state is safe. Other session
+backends currently refuse reservations, and no application control adapter
+uses either primitive yet.
+
 Lock, native suspension, explicit disconnect, tab close, attachment replacement,
 caller disconnect, expiry and worker crash close new-effect/data admission,
 cancel outstanding work and wake waiters. Invalidate grants/leases and discard
-pending disclosure. App privacy applies to automation, not just screen drawing.
+pending disclosure. OS lock, suspension and client-exit cuts are event-driven:
+until the host observes the loss, input or data may still be admitted, and the
+notification delay has no documented upper bound. Once detected, new admission
+closes; effects admitted before the cut can complete and their outcomes may be
+unknown. Detected monitoring failures fail closed. This timing decision
+does not qualify an unreliable or missing monitor, caller identity or physical
+final-recipient fencing. App privacy applies to automation, not just screen drawing.
 Previously released output cannot be erased from a client. Re-unlocking or
 transport recovery does not restart a script or restore a grant; the person
 must start a new run. The underlying session may recover under its existing
@@ -599,6 +1795,73 @@ residual risks. This proposal does not label MCP or JavaScript inherently safe.
 
 ## Platform and staged delivery gates
 
+The configuration schema can be stored on every platform, but runtime
+availability is independent. iOS has neither a qualified separate worker nor the
+desktop stdio/private-IPC hosting model. JavaScript and MCP server exposure stay
+unavailable there; a simulator build or enabled preference cannot change that.
+
+### Desktop MCP beta
+
+The owner accepted these beta gates (macOS, Linux and Windows only):
+
+- **Bootstrap:** any same-user process can reach the private broker endpoint
+  (`broker.sock`, mode 0600, or a current-user Windows pipe). The only caller
+  check is the human matching the public verification code; there is no OS
+  process-identity check. A same-user process that can control or relay the
+  approved client is outside the containment claim.
+- **Privacy:** macOS polls `CGSessionCopyCurrentDictionary` (screen locked or
+  session off console) every 100 ms, accelerated by the
+  `com.apple.screenIsLocked` distributed notification and NSWorkspace
+  will-sleep/session-resign notifications. Linux resolves its logind session
+  and treats `Lock`, `PrepareForSleep(true)`, `LockedHint`, an inactive
+  session, any D-Bus error or a closed stream as loss, polling every 250 ms.
+  Desktops that never set `LockedHint` are unsupported unless they emit
+  `Lock`. Remote (SSH), seatless/headless and text-console sessions are refused
+  because they have no lock screen, and each logind call is bounded to 2 s.
+  Windows uses its existing session/power monitor. Monitor install
+  failure closes MCP. The polling wake-up/power cost is unmeasured. Loss ends access; requests admitted before the cut may
+  still complete.
+- **Label:** Settings shows **Enable local MCP (Beta)**, off by default.
+
+Presentation/focus changes and metadata delivery remain unavailable; control is
+limited to non-persistent local PTY terminals. The adapter negotiates only MCP
+`2025-11-25`; clients that cannot accept it disconnect. The official TypeScript
+SDK client 1.32 was verified against a real macOS broker for initialize,
+`tools/list`, `festerm_pairing_status` and an unpaired refusal.
+
+Enable **local MCP (Beta)** in Settings, configure the
+client to launch the installed `festerm` executable with `--mcp`, call
+`festerm_pairing_status`, and compare its public verification code with the
+matching Settings row. Explicitly select the exact terminal attachments to
+share and approve observation. Grants last at most five minutes and disclose
+the selected terminals' output, history, selection and labels, which may contain
+secrets. Disconnect, revoke, replacement, expiry or privacy loss ends access;
+no automatic regrant occurs. JavaScript's separate preference does not enable
+execution at this checkpoint.
+
+A typical agent MCP configuration is:
+
+```json
+{
+  "mcpServers": {
+    "festerm": {
+      "command": "/Applications/fesTerm.app/Contents/MacOS/festerm",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+On Linux and Windows use the installed `festerm` / `festerm.exe` path. fesTerm
+must already be running with the beta enabled; `--mcp` only relays stdio to the
+running instance. For control, select **Enable controller registration for new
+connections** before the client connects, let the client call
+`festerm_controller_register`, choose and confirm the exact local terminal in
+Settings, then review and approve each requested input. Text can execute even
+without Enter.
+
+### Delivery stages
+
 1. **P0 — design acceptance:** resolve the ADR, protocol/SDK scope, adversarial
    reviews and authority UX. No implementation enabled by merging documents.
 2. **P1 — observation broker:** strict schemas, snapshots, exact identity,
@@ -628,11 +1891,10 @@ semantics remain unchanged. No mobile feature is promised by this ADR.
 
 ## Validation plan
 
-All cases below are **planned**, with no passing feature evidence in this PR.
-Implementation must turn these into deterministic tests at the broker/worker/
-adapter boundary and map real test function names into traceability. Native
-evidence remains under `AUTO-01` through `AUTO-04`. Do not register placeholders
-as existing automated tests.
+The kernel and observation adapter have deterministic tests mapped in the
+traceability registry. The broader cases below remain acceptance requirements,
+not claims of complete coverage. Native evidence remains open under `AUTO-01`
+through `AUTO-04`; do not register placeholders as existing automated tests.
 
 | Case family | Required adversarial oracles |
 | --- | --- |

@@ -5,6 +5,80 @@ use crate::{
     TerminalSnapshot,
 };
 
+/// A selected-text request exceeded its byte or fixed traversal limit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SelectedTextError {
+    MaxBytesExceeded,
+    WorkLimitExceeded,
+}
+
+impl std::fmt::Display for SelectedTextError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::MaxBytesExceeded => "Selected text exceeds the requested UTF-8 byte limit.",
+            Self::WorkLimitExceeded => "Selected text exceeds the fixed traversal limit.",
+        })
+    }
+}
+
+impl std::error::Error for SelectedTextError {}
+
+pub(crate) type TextSink<'a> = dyn FnMut(&str) -> Result<(), SelectedTextError> + 'a;
+
+// Two passes together visit at most 65,536 cells/rows or scanned text bytes.
+pub(crate) const SELECTED_TEXT_WORK_PER_PASS: usize = 32_768;
+
+#[derive(Clone, Copy)]
+pub(crate) struct TextWork(Option<usize>);
+
+impl TextWork {
+    pub(crate) fn new(limited: bool) -> Self {
+        Self(limited.then_some(SELECTED_TEXT_WORK_PER_PASS))
+    }
+
+    pub(crate) fn charge(&mut self, amount: usize) -> Result<(), SelectedTextError> {
+        if let Some(remaining) = &mut self.0 {
+            *remaining = remaining
+                .checked_sub(amount)
+                .ok_or(SelectedTextError::WorkLimitExceeded)?;
+        }
+        Ok(())
+    }
+}
+
+/// Preflight borrowed fragments before allocating the exact output size.
+pub(crate) fn collect_bounded_text(
+    max_bytes: usize,
+    work: TextWork,
+    visit: impl Fn(&mut TextSink<'_>, &mut TextWork) -> Result<Option<()>, SelectedTextError>,
+) -> Result<Option<String>, SelectedTextError> {
+    let mut bytes = 0usize;
+    let mut preflight_work = work;
+    let present = visit(
+        &mut |fragment| {
+            bytes = bytes
+                .checked_add(fragment.len())
+                .filter(|bytes| *bytes <= max_bytes)
+                .ok_or(SelectedTextError::MaxBytesExceeded)?;
+            Ok(())
+        },
+        &mut preflight_work,
+    )?;
+    if present.is_none() {
+        return Ok(None);
+    }
+    let mut text = String::with_capacity(bytes);
+    let mut output_work = work;
+    visit(
+        &mut |fragment| {
+            text.push_str(fragment);
+            Ok(())
+        },
+        &mut output_work,
+    )?;
+    Ok(Some(text))
+}
+
 /// Local UI selection state. It is deliberately separate from terminal modes.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Selection {
@@ -261,23 +335,58 @@ pub fn selection_text(snapshot: TerminalSnapshot<'_>, selection: &Selection) -> 
     if let Some(smart) = &selection.smart {
         return smart.text(snapshot);
     }
-    let (start, end) = content_range(selection)?;
+    collect_bounded_text(usize::MAX, TextWork::new(false), |append, work| {
+        visit_selection_text(snapshot, selection, append, work)
+    })
+    .expect("selected text fits in a String")
+}
+
+/// Returns complete selected text, `Ok(None)` for an absent or invalid selection,
+/// or an error if its UTF-8 bytes exceed `max_bytes`. No partial text is returned.
+///
+/// Reads borrowed cells and checks the output size before allocating text;
+/// neither whole rows nor logical lines are materialized.
+/// A fixed 65,536-unit work ceiling counts cells, rows, and scanned text bytes
+/// across both passes; exceeding it returns `WorkLimitExceeded`, even when the
+/// output fits. Ordinary [`selection_text`] has no traversal ceiling.
+pub fn selection_text_with_limit(
+    snapshot: TerminalSnapshot<'_>,
+    selection: &Selection,
+    max_bytes: usize,
+) -> Result<Option<String>, SelectedTextError> {
+    if let Some(smart) = &selection.smart {
+        return smart.text_with_limit(snapshot, max_bytes);
+    }
+    collect_bounded_text(max_bytes, TextWork::new(true), |append, work| {
+        visit_selection_text(snapshot, selection, append, work)
+    })
+}
+
+fn visit_selection_text(
+    snapshot: TerminalSnapshot<'_>,
+    selection: &Selection,
+    append: &mut TextSink<'_>,
+    work: &mut TextWork,
+) -> Result<Option<()>, SelectedTextError> {
+    let Some((start, end)) = content_range(selection) else {
+        return Ok(None);
+    };
     if !snapshot.contains_content_row(start.absolute_row)
         || !snapshot.contains_content_row(end.absolute_row)
     {
-        return None;
+        return Ok(None);
     }
-    let mut copied = String::new();
     let mut row = start.absolute_row;
     let mut previous_row = None;
     loop {
+        work.charge(1)?;
         if let Some(previous) = previous_row {
             if row != previous + 1
                 || !snapshot
                     .absolute_row_soft_wrapped(previous)
                     .unwrap_or(false)
             {
-                copied.push('\n');
+                append("\n")?;
             }
         }
         let first = if row == start.absolute_row {
@@ -291,22 +400,26 @@ pub fn selection_text(snapshot: TerminalSnapshot<'_>, selection: &Selection) -> 
             snapshot.dimensions().columns() - 1
         };
         for column in first..=last {
+            work.charge(1)?;
             match snapshot.absolute_cell(column, row) {
-                Some(cell) if !cell.is_continuation() => copied.push_str(cell.text()),
+                Some(cell) if !cell.is_continuation() => append(cell.text())?,
                 Some(_) => {}
-                None => copied.push(' '),
+                None => append(" ")?,
             }
         }
         if row == end.absolute_row {
             break;
         }
         previous_row = Some(row);
-        row = snapshot.next_content_row(row)?;
+        let Some(next) = snapshot.next_content_row(row) else {
+            return Ok(None);
+        };
+        row = next;
         if row > end.absolute_row {
-            return None;
+            return Ok(None);
         }
     }
-    Some(copied)
+    Ok(Some(()))
 }
 
 #[cfg(test)]
@@ -334,6 +447,69 @@ mod tests {
     fn terminal(columns: usize, rows: usize) -> Terminal {
         Terminal::new(Dimensions::new(columns, rows).expect("valid test size"))
             .expect("test terminal allocation")
+    }
+
+    #[test]
+    fn bounded_selection_counts_utf8_bytes_and_distinguishes_empty_from_absent() {
+        let mut terminal = terminal(4, 1);
+        terminal.ingest("界e\u{301}".as_bytes());
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        let mut selection = Selection::default();
+        assert_eq!(selection_text_with_limit(snapshot, &selection, 0), Ok(None));
+        selection.begin(CellPosition { column: 0, row: 0 });
+        selection.extend(CellPosition { column: 2, row: 0 });
+        selection.finish();
+        let expected = "界e\u{301}";
+        for limit in 0..=expected.len() + 1 {
+            let result = selection_text_with_limit(snapshot, &selection, limit);
+            if limit < expected.len() {
+                assert_eq!(result, Err(SelectedTextError::MaxBytesExceeded));
+            } else {
+                assert_eq!(result.as_ref().unwrap().as_deref(), Some(expected));
+            }
+        }
+        assert_eq!(
+            selection_text(snapshot, &selection).as_deref(),
+            Some(expected)
+        );
+
+        selection.begin(CellPosition { column: 1, row: 0 });
+        assert_eq!(
+            selection_text_with_limit(snapshot, &selection, 0),
+            Ok(Some(String::new()))
+        );
+    }
+
+    #[test]
+    fn bounded_selection_rejects_large_cell_text_without_copying_it() {
+        let mut terminal = terminal(2, 1);
+        terminal.ingest(format!("e{}", "\u{301}".repeat(120)).as_bytes());
+        let mut selection = Selection::default();
+        selection.begin(CellPosition { column: 0, row: 0 });
+        selection.extend(CellPosition { column: 1, row: 0 });
+        selection.finish();
+        assert_eq!(
+            selection_text_with_limit(TerminalSnapshot::from_terminal(&terminal), &selection, 16),
+            Err(SelectedTextError::MaxBytesExceeded)
+        );
+    }
+
+    #[test]
+    fn bounded_selection_limits_traversal_without_limiting_ordinary_copy() {
+        let terminal = terminal(1024, 40);
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        let mut selection = Selection::default();
+        selection.begin(CellPosition { column: 0, row: 0 });
+        selection.extend(CellPosition {
+            column: 1023,
+            row: 39,
+        });
+        selection.finish();
+        assert_eq!(
+            selection_text_with_limit(snapshot, &selection, usize::MAX),
+            Err(SelectedTextError::WorkLimitExceeded)
+        );
+        assert_eq!(selection_text(snapshot, &selection).unwrap().len(), 40999);
     }
 
     #[test]
@@ -395,6 +571,10 @@ mod tests {
             selection_text(TerminalSnapshot::from_terminal(&terminal), &selection),
             Some("abcdefgh".to_owned())
         );
+        assert_eq!(
+            selection_text_with_limit(TerminalSnapshot::from_terminal(&terminal), &selection, 8),
+            Ok(Some("abcdefgh".to_owned()))
+        );
     }
 
     #[test]
@@ -422,6 +602,17 @@ mod tests {
             selection_text(TerminalSnapshot::from_terminal(&terminal), &selection),
             Some("abc     \ndef".to_owned())
         );
+        for offset in [0, terminal.scrollback_stats().physical_rows()] {
+            let snapshot = TerminalSnapshot::from_terminal_viewport(&terminal, offset);
+            assert_eq!(
+                selection_text_with_limit(snapshot, &selection, 12),
+                Ok(Some("abc     \ndef".to_owned()))
+            );
+            assert_eq!(
+                selection_text_with_limit(snapshot, &selection, 11),
+                Err(SelectedTextError::MaxBytesExceeded)
+            );
+        }
     }
 
     #[test]
@@ -459,6 +650,7 @@ mod tests {
 
         assert!(terminal.scrollback_stats().content_row_origin() > selected_row);
         assert_eq!(selection_text(snapshot, &selection), None);
+        assert_eq!(selection_text_with_limit(snapshot, &selection, 0), Ok(None));
         assert_eq!(selection.range_in_snapshot(snapshot), None);
     }
 

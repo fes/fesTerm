@@ -1,5 +1,9 @@
 //! Bounded presentation-only inference; the grid remains the source of truth.
-use crate::{normalize_selection_position, CellPosition, TerminalSnapshot};
+use crate::{
+    normalize_selection_position,
+    selection::{collect_bounded_text, TextWork},
+    CellPosition, SelectedTextError, TerminalSnapshot,
+};
 
 const MAX_CELLS: usize = 32_768;
 const MAX_BYTES: usize = 128 * 1024;
@@ -35,38 +39,72 @@ pub(crate) struct SmartSelection {
 
 impl SmartSelection {
     pub fn text(&self, snapshot: TerminalSnapshot<'_>) -> Option<String> {
+        self.text_impl(snapshot, usize::MAX, false)
+            .expect("smart selected text fits in a String")
+    }
+
+    pub fn text_with_limit(
+        &self,
+        snapshot: TerminalSnapshot<'_>,
+        max_bytes: usize,
+    ) -> Result<Option<String>, SelectedTextError> {
+        self.text_impl(snapshot, max_bytes, true)
+    }
+
+    fn text_impl(
+        &self,
+        snapshot: TerminalSnapshot<'_>,
+        max_bytes: usize,
+        limited_work: bool,
+    ) -> Result<Option<String>, SelectedTextError> {
         if snapshot.dimensions() != self.dimensions
             || snapshot.screen_generation() != self.screen_generation
         {
-            return None;
+            return Ok(None);
         }
-        let mut text = String::new();
-        for (index, row) in self.rows.iter().enumerate() {
+        let mut work = TextWork::new(limited_work);
+        for row in &self.rows {
+            work.charge(1)?;
             if snapshot.absolute_row_soft_wrapped(row.row) != Some(row.soft_wrapped) {
-                return None;
+                return Ok(None);
             }
-            let mut current = String::new();
+            let mut matched = 0;
             for column in row.first..=row.last {
-                match snapshot.absolute_cell(column, row.row) {
-                    Some(cell) if !cell.is_continuation() => current.push_str(cell.text()),
-                    Some(_) => {}
-                    None => current.push(' '),
+                work.charge(1)?;
+                let fragment = match snapshot.absolute_cell(column, row.row) {
+                    Some(cell) if !cell.is_continuation() => cell.text(),
+                    Some(_) => continue,
+                    None => " ",
+                };
+                // Compare borrowed fragments before any allocation, even if a repaint
+                // replaced one cell with a much larger combining grapheme.
+                if fragment.len() > row.text.len() - matched {
+                    return Ok(None);
                 }
-            }
-            // Repaint/eviction must never silently change the text about to be copied.
-            if current != row.text {
-                return None;
-            }
-            if index > 0 {
-                if row.space_join {
-                    text.push(' ');
-                } else if !row.joined {
-                    text.push('\n');
+                work.charge(fragment.len())?;
+                if !row.text[matched..].starts_with(fragment) {
+                    return Ok(None);
                 }
+                matched += fragment.len();
             }
-            text.push_str(&current);
+            if matched != row.text.len() {
+                return Ok(None);
+            }
         }
-        Some(text)
+        collect_bounded_text(max_bytes, work, |append, work| {
+            for (index, row) in self.rows.iter().enumerate() {
+                work.charge(1)?;
+                if index > 0 {
+                    if row.space_join {
+                        append(" ")?;
+                    } else if !row.joined {
+                        append("\n")?;
+                    }
+                }
+                append(&row.text)?;
+            }
+            Ok(Some(()))
+        })
     }
 }
 
@@ -451,7 +489,7 @@ fn mapped_in_row(mapped: &[(usize, usize, usize, usize)], y: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{selection_text, Selection};
+    use crate::{selection_text, selection_text_with_limit, Selection};
     use festerm_core::{Dimensions, Terminal};
 
     fn make_terminal(columns: usize, rows: usize, text: &str) -> Terminal {
@@ -468,6 +506,52 @@ mod tests {
             scope
         ));
         selection
+    }
+
+    #[test]
+    fn bounded_smart_selection_counts_utf8_joins_and_rejects_repainted_large_cells() {
+        for (columns, text, expected) in [
+            (12, "界e\u{301}. Next.", "界e\u{301}. Next."),
+            (
+                12,
+                "First line wraps. Next one.",
+                "First line wraps. Next one.",
+            ),
+            (
+                30,
+                "Explicit line.\r\nSecond line.",
+                "Explicit line.\nSecond line.",
+            ),
+            (
+                30,
+                "• First part\r\n  second part",
+                "• First part second part",
+            ),
+        ] {
+            let terminal = make_terminal(columns, 5, text);
+            let selection = select(&terminal, 2, 0, SmartSelectionScope::Paragraph);
+            let snapshot = TerminalSnapshot::from_terminal(&terminal);
+            assert_eq!(
+                selection_text(snapshot, &selection).as_deref(),
+                Some(expected)
+            );
+            for limit in 0..=expected.len() + 1 {
+                let result = selection_text_with_limit(snapshot, &selection, limit);
+                if limit < expected.len() {
+                    assert_eq!(result, Err(SelectedTextError::MaxBytesExceeded));
+                } else {
+                    assert_eq!(result.as_ref().unwrap().as_deref(), Some(expected));
+                }
+            }
+        }
+
+        let mut terminal = make_terminal(20, 2, "Original text.");
+        let selection = select(&terminal, 2, 0, SmartSelectionScope::Sentence);
+        terminal.ingest(format!("\x1b[HO{}", "\u{301}".repeat(120)).as_bytes());
+        assert_eq!(
+            selection_text_with_limit(TerminalSnapshot::from_terminal(&terminal), &selection, 1),
+            Ok(None)
+        );
     }
 
     #[test]

@@ -2832,20 +2832,259 @@ installed/upgrade/uninstall registration while preserving a sentinel default.
 This is not a claim about Finder menu presentation or Windows/Linux foreground
 behavior, and does not close CP-19.
 
-## Proposed MCP and JavaScript automation (AUTO-01 through AUTO-04)
+## Staged MCP and JavaScript automation (AUTO-01 through AUTO-05)
 
-All evidence below is **deferred and unperformed**. The planning contract is
+Native acceptance remains **deferred**, except for the partial probes explicitly
+recorded below. The planning contract is
 [ADR 0065](adr/0065-mcp-and-javascript-automation.md) and the
 [automation design](automation-design.md). A documentation PR does not prove
 confinement, protocol interoperability or native usability. Use only owned
 fixtures once the named prerequisite implementation exists.
 
+The P1 implementation adds native settings/pairing, private local transport
+and bounded observation (`AUT-05`–`AUT-07`). The owner-accepted desktop beta
+activates it on macOS, Linux and Windows behind **Enable local MCP (Beta)**,
+with native lock/sleep monitors that fail closed. Deterministic tests are not
+native pairing, settings usability, containment or input-ordering evidence.
+JavaScript remains unavailable.
+
+### Desktop MCP beta checks
+
+Use a disposable configuration (`FESTERM_CONFIG_PATH`, plus `XDG_STATE_HOME`
+on Unix to isolate the broker endpoint) containing `schema_version = 1` and
+`[settings] mcp_enabled = true`, and a disposable local shell.
+
+1. Launch fesTerm, then connect an MCP client to `festerm --mcp` with the same
+   environment. Expect `initialize`, `tools/list` and `festerm_pairing_status`
+   to succeed and `festerm_sessions_list` to return `NOT_AUTHORIZED`.
+   *Partial probe (macOS, 2026-11-05):* passed with a custom JSON-RPC driver
+   and the official TypeScript SDK client 1.32.2. Native approval was not
+   exercised.
+2. Match the verification code in Settings, share one terminal and approve.
+   Expect reads of only that terminal; revoke and expect refusal.
+3. With controller registration enabled, register, associate one local
+   terminal, request input, verify the escaped review text and approve. Expect
+   exactly one write; cancel a second request and expect no write.
+4. While a grant is live, lock the screen (macOS `Ctrl-Cmd-Q`; Linux
+   `loginctl lock-session`; Windows `Win-L`) and separately sleep the machine.
+   Expect Settings to show privacy loss, the channel to close and no access
+   after unlock until a new pairing and approval. On Linux also try a desktop
+   that does not set `LockedHint` and record the result.
+
+Not yet run: steps 2–4 on every platform.
+
+The Windows monitor's ownership model has local fault-injection fixtures for
+stalled TLS destruction, a held model admission lock, repeated monitor-slot
+reservation, supervisor callback attempts and retained failed-submission
+storage. The portable fixtures passed on macOS, and the Windows code was
+cross-checked but not run natively. These fixtures are not native cancellation
+or UI evidence.
+Before qualification, `AUTO-03` must additionally verify real Windows listener
+registration/cancellation and pending/unknown cleanup reporting, including
+shutdown/restart with a stalled listener. The coordinator now retains cleanup
+through join and slot release off the UI thread, blocks restart on unresolved
+cleanup, and marks native privacy loss before acquiring admission. It
+retains independent blocking paths, so UI responsiveness and a physical
+recipient fence remain unqualified. OS lock and client-exit notifications can
+arrive without a documented upper delay; verify the event-driven cut after
+detection without claiming a cutoff at the actual OS event. Effects admitted
+before the cut can complete. The fixtures cannot qualify admission, privacy,
+or final-recipient fencing, and
+callback delivery is not proof of those fences. Panic hooks may observe caught
+callback payloads. The desktop beta accepts these gaps as residual risk;
+native privacy remains unqualified.
+
+The record-framing tests cover a writer panic after an unknown partial write
+and prevent channel reuse. Qualified native stream disposal and per-write
+privacy guards still require the interoperability evidence in AUTO-04.
+The experimental direct channel additionally exchanges encrypted frames over a
+Unix socket pair after simulated comparisons and separates its handshake from
+the stdio adapter. An experimental Unix Rust SDK connector now exchanges MCP
+frames with a synthetic protocol host over that socket and exercises cancellation
+and bounded queues. It provides no production endpoint; the actual peer, trusted
+comparison, relay-resistant caller liveness and physical-recipient boundaries
+remain unqualified.
+A Windows-only fixture now drives the same experimental SDK and dormant host
+through a local synchronous named pipe, including a queued response cut after
+simulated privacy loss. It requires execution on Windows and does not qualify a
+production endpoint or native authority. Before production use, measure the
+20 ms retry loop's idle wakeups, energy and scaling, and qualify actual
+client-exit, privacy and recipient fencing; the retry timer is not an
+event-driven native lifecycle monitor.
+A dormant host bridge now connects the SDK socket to the real coordinator in a
+single-process test with simulated comparisons and observation approval. It
+retains the original outbound frame and rechecks it through each physical
+write, but has no qualified native admission, lifecycle wakeup or listener.
+An isolated synthetic queue race also checks that the app holds admission from
+its host validation through bounded insertion. It is not evidence that broker
+liveness or a physical recipient is fenced.
+
+Terminal-request encoding has deterministic text, key, mode and refusal tests.
+The broker's exact direct-input binding, single-request rule and explicit human
+takeover cuts have deterministic state tests, with no JS or observation scope.
+Approval alone does not transfer another writer. An opt-in protocol catalog
+models bounded input arguments and admission/unknown/refusal outcomes, but
+the app does not select it and explicitly refuses input in the observation
+path. These tests add no native consent UI or input dispatch. Actual queue
+publication, takeover and platform behavior still require AUTO-03; P1 remains
+observation-only.
+
+The broker now has a separately approved discovery-only metadata slot with
+independent delivery liveness, shared quotas and explicit cross-slot closure.
+An inactive host seam freezes metadata source and control-sink guards before
+synthetic consent and revalidates the combined closure through modeled input
+publication. It refuses to compose with the legacy observation adapter until
+that adapter has per-slot frame-delivery fences. These tests do not qualify
+production metadata UI or implement an MCP route. AUTO-01 must
+verify that users separately understand metadata disclosure, every approved
+metadata-to-control flow, grant lifetimes and repeatable intentional control.
+AUTO-03 must race each slot's expiry, takeover, target replacement and global
+privacy/disconnect cuts against real publication, including ordinary-only and
+metadata-only revocation while the other slot remains live. AUTO-01 must dismiss
+revision-stale approval prompts without replenishing lifetime approval limits.
+AUTO-04 must verify original
+grant/connection fences at every nonblocking frame write, closure after an
+interrupted partial frame and no automatic retry of uncertain input. Native
+evidence for these integrations remains uncollected.
+
+Controller enrollment now has a dormant application/native route as well as
+non-authorizing kernel and protocol tests. The native Settings opt-in, chooser
+and confirmation can be exercised with controlled synthetic peers; production
+qualification and private bootstrap are still closed, so no real controller
+client is supported. A separate synthetic host review now installs an
+exact-enrollment metadata grant only after revalidating its association,
+attachment and workspace revision. Tests cover two identically labelled
+enrollments, scoped revocation and stale/cross-connection decisions. A new
+metadata review still refuses active control and legacy observation. The
+dormant metadata-first direct-action review requires the entire active
+enrollment-source closure and tests rejection after grant replacement or a
+source-window move. Its simulated decision is not a native handoff UI.
+A synthetic-only input-review stage shows the complete escaped action and all
+metadata sources, bounds each peer to one pending request, and exercises
+cancellation, expiry, human/IME and terminal-mode changes, source retirement
+and stale pointer/accessibility actions. Synthetic confirmation can admit one
+action and retain its original bounded handoff for a later new matching wire
+invocation. Tests cover changed actions and fences, original expiry and shared
+budgets, queued cancellation, disarm and unknown outcomes without automatic
+replay. Native usability must verify that long actions and every source can
+actually be read and that repetition, budgets and uncertainty are understood.
+A synthetic-qualified
+current-window Settings review separately describes label and lifecycle status,
+requires explicit confirmation and models cancellation and queued scoped
+revocation. Stale snapshot, cross-window and admission-contention cases are
+automated; qualified native usability and production metadata delivery remain
+unverified. A test-qualified consumer enforces the reviewed label/lifecycle
+scope and retains original grant, run, association and attachment liveness.
+AUTO-01 must assess whether the exact disclosed fields, client code, target,
+lifetime, exclusions and every metadata-to-control flow are understandable.
+AUTO-03 and AUTO-04 must verify physical revocation
+and recipient fencing, not merely the deferred broker cut.
+The separately granted presentation state machine, app-command routing,
+workspace revision and presented-input admission seam have deterministic
+synthetic-source tests, including original-handoff/lease binding, wrong-backend
+reservations and post-publication unknown outcomes. Pending native control
+reviews are bound before simulated consent, including first-grant human input,
+IME/preedit/paste, replacement and the first fresh proposal after takeover.
+Tests also freeze all approved readable-source guards before consent and
+exercise unreconciled source disconnect, attachment/lifecycle/registration
+changes, publication ordering and unrelated-principal survival after retirement.
+The combined opt-in MCP catalog has synthetic tests for current enrollment
+capability and refuses production metadata delivery and presentation before
+and after a modeled metadata grant. Separately enabled synthetic tests exercise
+metadata reads and guarded queued writes. Native selection of identically labelled local
+sessions, actual metadata delivery, real attachment/disconnect races,
+actual activation confirmation (including Windows refusal), response/input
+ordering and explicit human handoff/disarm remain deferred under AUTO-01,
+AUTO-03, AUTO-04 and AUTO-05. No supported controller UI, real presentation
+operation, direct-input adapter, production metadata consumer or native-platform
+evidence is claimed.
+
+Once an authenticated private bootstrap and privacy monitor are qualified, use
+two disposable windows with identically named local PTYs and a controlled MCP
+peer. With JavaScript off, explicitly opt in for new controller connections,
+register bounded malicious labels, and verify registration opens no prompt.
+Choose only a candidate marked `This window` in that Settings view, inspect
+readable ordinary Unicode, escaped quotes/backslashes and spoofing controls,
+bounded labels, and the frozen position, then explicitly confirm. Repeat from
+the other window for the same registration and verify its association reference
+changes while neither reference enables target metadata, observation,
+presentation or input. Cancel from a sibling, unregister, move or close the
+target, disconnect and lose privacy while choices/status frames are pending;
+verify no stale decision or queued response survives and previously received
+status never acts as authority. Test
+preference disable and simultaneous actions, including a failed/uncertain save,
+against confirmation. Switch away and back between selection and confirmation
+and verify the tracked tab change cancels the old review even when the displayed
+candidate returns to the same state. Do not infer success from a hidden window
+title, physical focus or a device's claimed gesture. The app workspace revision
+is not native foreground evidence. These are future native scenarios, not
+evidence that the current gate is open.
+
+Scoped creation has deterministic configuration snapshot tests only. Native
+review and usability evidence, a shared configuration epoch, privacy and
+attachment fences, exact fresh-session attestation, SSH trust/auth fencing,
+broker/worker authorization and launch validation are deferred and unperformed.
+These tests do not establish executable, device or secret-store pinning.
+Capture does not retrieve secret-store contents, but copied profile fields may
+themselves be sensitive. Trusted handling, no blind logging and no worker
+disclosure remain required; redacted snapshot Debug does not sanitize accessors.
+
+For the `AUT-05` preference owner, use a disposable configuration and two
+Settings windows. Disable either enabled feature while the sibling toggles the
+other feature or saves an unrelated setting; inspect both windows, restart and
+verify that the successfully saved disable remains off. Test the reverse
+directions and a sibling close. With a controlled denied/indeterminate write,
+verify both live features stop, the warning says disk may remain enabled, and
+retry saves the pair without resuming during that process. If the disk still
+contains an enabled value, restart may read it; old grants must not reappear.
+Verify same-pass action conflicts/overflow visibly stop rather than approve;
+competing workflow selections, including two for the same path, must cancel
+the preview and report a conflict instead of choosing a winner. Use the
+deterministic multi-window fixture when native timing cannot reproduce this.
+Indeterminate outcomes require the deterministic fault fixture if they cannot
+be produced safely in native testing. This is not evidence for arbitrary
+storage failures, external writers or the broader configuration-save latch.
+The local assembly also adds a synthetic preference/reservation regression:
+verify a qualified future implementation independently races MCP disable and
+indeterminate preference saves against presentation, metadata delivery and
+backend input publication; a successful JavaScript-only disable must not revoke
+an independent MCP control grant. The existing synthetic test observes metadata
+liveness only after direct-input commit triggers coordinator revocation; it is
+not independent evidence for a metadata response immediately after preference
+change. A future metadata consumer must check shared stop/privacy/recipient and
+separate discovery-grant fences at actual publication.
+
+For AUTO-01/AUTO-04, once a qualified direct endpoint exists, compare the
+complete fingerprints on the actual independent client and application
+surfaces. Verify that Settings requires a complete peer value and a fresh
+attestation after every edit, rejects mismatches, and makes a rejected, retired,
+stopped or privacy-cut prompt non-actionable across windows. Exercise keyboard,
+screen-reader, display scaling and disconnect timing on each supported desktop.
+The egui harness and separate-process fixture use simulated human input; they
+do not establish independent provenance or native usability.
+
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
-| AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts. | Deferred native + usability | Prerequisites: accepted authority model, broker and native grant UI. Confirm observation disclosure, all-source/all-sink combinations and shell control authority are understandable; pairing/import alone has no effects. No evidence collected. |
-| AUTO-02 | Run a malicious-worker fixture under the real installed sandbox on Windows x64/ARM64, macOS Apple Silicon and supported Linux distributions; attempt forbidden file/network/process/handle/debugger/IPC access and exceed CPU/memory budgets. | Deferred native security + packaging | Prerequisites: selected engine, reviewed OS containment policy and installed signed/owned helper. Demonstrate denial, setup failure before execution, responsive app and bounded teardown; unsupported platforms stay disabled. No evidence collected. |
-| AUTO-03 | Against controlled local/SSH/tunnel targets, race human input, lock/suspend, disconnect, close, reattach/replacement, caller loss and expiry with each broker admission/delivery boundary. | Deferred native lifecycle + usability | Prerequisites: broker epochs, input leases and worker cancellation. Validate acquisition against local pending input, explicit unknown remote-state handoff, no old-run reacquisition and parent completion with pending work/children. No stale writes/data, replay, takeover or exited-shell recreation; already admitted effects remain explicit. Re-unlock/recovery requires a new run/grant. No evidence collected. |
-| AUTO-04 | Exercise qualified local MCP clients with multiple principals, restricted workflow invocation, resource/status/result access, malformed requests, response loss, cancellation and result/backpressure quotas. | Deferred interoperability + native | Prerequisites: pinned SDK/protocol matrix, authenticated adapter IPC and attenuation tests. Distinguish the start RPC lifetime from its connection-owned asynchronous run, parent-owned script children, and their shared budgets/cancellation. No cross-client disclosure, scope amplification or duplicate run. HTTP, unattended triggers, command-job guarantees and iOS remain separately gated. No evidence collected. |
+| AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts; exercise the multi-window preference and failure scenarios above. | Deferred native + usability | Partial implementation: observation pairing/native grant UI, desktop file selection and non-authorizing captured-source review, frozen-workflow binding components, and shared preference/failure handling. Deterministic preference regressions do not replace native warning, retry or multi-window usability evidence. Desktop source-view usability, iOS security-scoped access, pending-approval invalidation and platform path behavior still need qualification. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. A future direct-input approval must explicitly explain the target, remote-state uncertainty, expiry/budgets and that the approved action may be intentionally repeated throughout the live grant; obtain native handoff rather than accepting a device's claimed gesture, and distinguish approval from an explicit ownership cut. No native evidence collected for intake or workflow approval. |
+| AUTO-02 | Run a malicious-worker fixture under the real installed sandbox on Windows x64/ARM64, macOS Apple Silicon and supported Linux distributions; attempt forbidden file/network/process/handle/debugger/IPC access and exceed CPU/memory budgets. | Partial native security + packaging | A Linux ARM64 VM exercised the worker's own seccomp denial probes and resource ceilings, including without Docker's seccomp profile. Automated subprocess tests cover the desktop application's early worker branch and qualification refusal; Linux package smoke requires the AppImage and installed Debian helper to report native qualification before receiving source. Installed executable provenance, the desktop executable's memory baseline, native x86-64 and broader Linux qualification, application integration and responsiveness remain open. macOS, Windows and iOS execution remain unavailable pending qualified confinement. |
+| AUTO-03 | Against controlled local/SSH/tunnel targets, race human input, lock/suspend, disconnect, close, reattach/replacement, caller loss and expiry with each broker admission/delivery boundary. Include a grant that reads B and controls A, disconnect B without reconciliation, and preserve an unrelated principal's live grant through retirement. Once an independent adapter exists, also race MCP disable/restart/failure against its activity and global privacy loss against both. | Deferred native lifecycle + usability | Observation has deterministic epoch/revocation coverage; actual lock/suspend behavior needs platform qualification. Synthetic coordinator tests bind the human/IME/attachment fence and every approved source guard before a pending native review and through its grant and lease, cut stale source scopes, preserve unrelated grants, and reject pending input or another PTY's reservation. Production control/worker takeover and native handoff UI remain unavailable; other backends cannot reserve automation input. At real publication revalidate privacy, attachment, terminal modes, input/IME, any required presentation condition and immutable bytes. No stale writes/data, replay, takeover or exited-shell recreation; already admitted effects remain explicit. Re-unlock/recovery requires a new run/grant. No native evidence collected. |
+| AUTO-04 | Exercise qualified local MCP clients with multiple principals, restricted workflow invocation, resource/status/result access, malformed requests, response loss, cancellation and result/backpressure quotas. | Deferred interoperability + native | The observation adapter implements MCP 2025-11-25 and has deterministic channel/attenuation tests. An official Rust SDK client exercises synthetic enrollment, separately approved metadata and reviewed input to a test backend, including disarm and refused, admitted and unknown outcomes. The experimental Unix connector reaches the actual coordinator from a separate test process through a test-only listener for observation and controller scenarios, with simulated comparisons and approval; this does not qualify native clients or delivery. A dormant host owner is exercised for readiness, guarded-close wake ordering, coordinator stop, deadlines and cleanup after cancellation. A reserved verifier wakes on normal coordinator stop or UI-owner destruction before fingerprint display; synthetic tests also retire a stalled or established direct peer after UI-owner loss. Other lifecycle wakeups and fencing of effects concurrent with UI-owner destruction remain open. The Noise, handshake and record components are not integrated into a production endpoint: independently trusted human verification at both endpoints, peer identity, per-write disclosure guards, relay/disconnect liveness and native UI evidence remain open. Future workflow tests must distinguish the start RPC lifetime from its connection-owned asynchronous run and parent-owned script children. For #524, verify no adapter replays lost input responses, and the client retains its durable uncertain-action interlock; a new intentional invocation is distinct and the kernel has no persistent write receipt. No cross-client disclosure, scope amplification or duplicate workflow run. HTTP, unattended triggers, command-job guarantees and iOS remain separately gated. No native evidence collected. |
+| AUTO-05 | With a qualified native monitor and controlled local PTYs in multiple windows, enroll identically labelled targets, separately grant presentation, and race queued activation, actual key/foreground changes, away-and-back tab/window/focus changes between samples, native event gaps, lock, disconnect and human input against response and input admission. On Windows include an OS-refused foreground request. | Deferred native ordering + interoperability + usability | The dormant enrollment adapter restricts selection to the Settings window, but no production controller path or native presentation source is qualified. Synthetic host tests cover frozen core-encoded direct actions, ordered backend reservation and mode/target/review checks; they do not prove writer-epoch installation, native ordering or recipient fencing. A future source must prove complete transition delivery and a nonblocking freshness barrier serialized through publication; two identical AppKit/egui/current-focus samples are not proof. Confirm exact-target revisions are never restored after a missed transition, refusal never becomes success, wrong/replaced reservations cannot publish, no input escapes a stale handoff, and an error after publication is unknown without replay. Reapproval must be explicit. Synthetic tests are not OS evidence. No macOS, Windows, Linux or secondary-viewport qualification has been performed. |
+
+For AUTO-03, a broker regression orders explicit ordinary-slot, legacy
+metadata-slot and whole-principal revocation against admission and checks
+independent enrollment metadata. Another orders ordinary and legacy metadata
+grant replacement against guarded queue insertion and checks independent
+opposite slots. Other cut, expiry and recipient-delivery paths still need their
+own fences.
+
+Synthetic AUTO-03/AUTO-04 dispatch tests now drive one reviewed wire action to
+an ordered test-backend queue, race queued cancellation with admission and
+settlement, exercise unknown results and exact-token disarm, and reject changed
+review fences. They are not native UI, operating-system or final-recipient
+evidence. A new matching wire invocation may reuse a still-live synthetic
+handoff after revalidation. Production-qualified grant reuse and the external
+client's uncertain-action interlock remain open.
 
 ## Intake rule for new work
 

@@ -156,8 +156,8 @@ impl Cursor {
 pub use cell::{Attributes, Cell, CellWidth, Color};
 pub use colors::{ColorScheme, Rgb};
 pub use input::{
-    FocusEvent, InputEvent, InputEventOutcome, Key, KeypadKey, Modifiers, MouseButton, MouseEvent,
-    MouseEventKind, MouseWheel,
+    FocusEvent, InputEvent, InputEventOutcome, InputPreparationError, Key, KeypadKey, Modifiers,
+    MouseButton, MouseEvent, MouseEventKind, MouseWheel, PreparedInput, MAX_PREPARED_INPUT_EVENTS,
 };
 pub use modes::{CursorStyle, MouseTrackingMode, TerminalModes};
 pub use parser::{CsiParameters, ParameterSeparator, Parser, TerminalOp};

@@ -9,8 +9,9 @@ description = "Small AppKit integration for fesTerm window chrome and native men
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSButton", "NSControl", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder", "NSView", "NSWindow", "NSWorkspace"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAppleEventDescriptor", "NSAppleEventManager", "NSEnumerator", "NSGeometry", "NSNotification", "NSObject", "NSString", "NSURL"] }
+block2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSButton", "NSControl", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder", "NSView", "NSWindow", "NSWorkspace", "block2"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAppleEventDescriptor", "NSAppleEventManager", "NSEnumerator", "NSGeometry", "NSNotification", "NSOperation", "NSObject", "block2", "NSString", "NSURL"] }
 
 [[test]]
 name = "open_document_appleevent"

@@ -3,8 +3,9 @@ use std::{fmt, mem::size_of};
 use festerm_core::{CellWidth, ContentPosition, Dimensions};
 
 use crate::{
-    CellPosition, RenderedCell, TerminalContextText, TerminalRenderCache, TerminalSnapshot,
-    TERMINAL_CONTEXT_MAX_BYTES, TERMINAL_CONTEXT_MAX_ROWS,
+    selection::{collect_bounded_text, TextWork},
+    CellPosition, RenderedCell, SelectedTextError, TerminalContextText, TerminalRenderCache,
+    TerminalSnapshot, TERMINAL_CONTEXT_MAX_BYTES, TERMINAL_CONTEXT_MAX_ROWS,
 };
 
 pub(crate) const RECTANGLE_COPY_MAX_BYTES: usize = 16 * 1024 * 1024;
@@ -186,9 +187,31 @@ impl RectangleCopy {
     }
 
     pub(crate) fn selected_text(&self, cache: &TerminalRenderCache) -> Option<String> {
-        self.corners[1]?;
-        let (first, last) = self.bounds()?;
-        Some(self.text_in_bounds(cache, first, last))
+        self.selected_text_impl(cache, usize::MAX, false)
+            .expect("rectangle selected text fits in a String")
+    }
+
+    pub(crate) fn selected_text_with_limit(
+        &self,
+        cache: &TerminalRenderCache,
+        max_bytes: usize,
+    ) -> Result<Option<String>, SelectedTextError> {
+        self.selected_text_impl(cache, max_bytes, true)
+    }
+
+    fn selected_text_impl(
+        &self,
+        cache: &TerminalRenderCache,
+        max_bytes: usize,
+        limited_work: bool,
+    ) -> Result<Option<String>, SelectedTextError> {
+        if self.corners[1].is_none() {
+            return Ok(None);
+        }
+        let Some((first, last)) = self.bounds() else {
+            return Ok(None);
+        };
+        self.text_in_bounds_bounded(cache, first, last, max_bytes, limited_work)
     }
 
     pub(crate) fn context_copy_text(&self, cache: &TerminalRenderCache) -> String {
@@ -291,32 +314,67 @@ impl RectangleCopy {
         first: CellPosition,
         last: CellPosition,
     ) -> String {
-        let mut copied = String::new();
-        for row in first.row..=last.row {
-            if row != first.row {
-                copied.push('\n');
-            }
-            let cells = cache
-                .row(row)
-                .expect("frozen copy retains every admitted visible row");
-            let start =
-                if first.column > 0 && cells[first.column].width() == CellWidth::Continuation {
-                    first.column - 1
+        self.text_in_bounds_bounded(cache, first, last, usize::MAX, false)
+            .expect("rectangle text fits in a String")
+            .expect("rectangle bounds contain text")
+    }
+
+    fn text_in_bounds_bounded(
+        &self,
+        cache: &TerminalRenderCache,
+        first: CellPosition,
+        last: CellPosition,
+        max_bytes: usize,
+        limited_work: bool,
+    ) -> Result<Option<String>, SelectedTextError> {
+        collect_bounded_text(max_bytes, TextWork::new(limited_work), |append, work| {
+            for row in first.row..=last.row {
+                work.charge(1)?;
+                if row != first.row {
+                    append("\n")?;
+                }
+                let cells = cache
+                    .row(row)
+                    .expect("frozen copy retains every admitted visible row");
+                let start =
+                    if first.column > 0 && cells[first.column].width() == CellWidth::Continuation {
+                        first.column - 1
+                    } else {
+                        first.column
+                    };
+                let cells = &cells[start..=last.column];
+                // Determine trimmed bounds without first copying all padding.
+                let end = if self.trim_trailing_spaces {
+                    let mut end = 0;
+                    for (index, cell) in cells.iter().enumerate().rev() {
+                        work.charge(1)?;
+                        if cell.width() != CellWidth::Continuation {
+                            work.charge(cell.text().len())?;
+                            if !cell.text().trim_end_matches(' ').is_empty() {
+                                end = index + 1;
+                                break;
+                            }
+                        }
+                    }
+                    end
                 } else {
-                    first.column
+                    cells.len()
                 };
-            for cell in &cells[start..=last.column] {
-                if cell.width() != CellWidth::Continuation {
-                    copied.push_str(cell.text());
+                for (index, cell) in cells[..end].iter().enumerate() {
+                    work.charge(1)?;
+                    if cell.width() != CellWidth::Continuation {
+                        let text = if self.trim_trailing_spaces && index + 1 == end {
+                            work.charge(cell.text().len())?;
+                            cell.text().trim_end_matches(' ')
+                        } else {
+                            cell.text()
+                        };
+                        append(text)?;
+                    }
                 }
             }
-            if self.trim_trailing_spaces {
-                while copied.ends_with(' ') {
-                    copied.pop();
-                }
-            }
-        }
-        copied
+            Ok(Some(()))
+        })
     }
 }
 
@@ -438,6 +496,85 @@ mod tests {
         let mut cache = TerminalRenderCache::default();
         cache.update(snapshot, &[]);
         (terminal, cache, copy)
+    }
+
+    #[test]
+    fn bounded_rectangle_copy_counts_utf8_newlines_and_uses_frozen_text() {
+        let (mut terminal, cache, mut copy) = fixture(8, 2, "A界e\u{301}\r\nB🙂Z".as_bytes(), true);
+        assert_eq!(copy.selected_text_with_limit(&cache, 0), Ok(None));
+        copy.click(CellPosition { column: 2, row: 0 });
+        assert_eq!(copy.selected_text_with_limit(&cache, 0), Ok(None));
+        copy.click(CellPosition { column: 3, row: 1 });
+        terminal.ingest(b"\x1b[2J\x1b[Hchanged");
+        terminal.resize(Dimensions::new(4, 4).unwrap()).unwrap();
+        let expected = "界e\u{301}\n🙂Z";
+        for limit in 0..=expected.len() + 1 {
+            let result = copy.selected_text_with_limit(&cache, limit);
+            if limit < expected.len() {
+                assert_eq!(result, Err(SelectedTextError::MaxBytesExceeded));
+            } else {
+                assert_eq!(result.as_ref().unwrap().as_deref(), Some(expected));
+            }
+        }
+        assert_eq!(copy.selected_text(&cache).as_deref(), Some(expected));
+    }
+
+    #[test]
+    fn bounded_rectangle_copy_excludes_trimmed_padding_before_applying_limit() {
+        for trim in [false, true] {
+            let (_, cache, mut copy) = fixture(4096, 3, b"a\r\n\r\nb", trim);
+            copy.click(CellPosition { column: 0, row: 0 });
+            copy.click(CellPosition {
+                column: 4095,
+                row: 2,
+            });
+            let expected = if trim {
+                "a\n\nb".to_owned()
+            } else {
+                format!(
+                    "a{}\n{}\nb{}",
+                    " ".repeat(4095),
+                    " ".repeat(4096),
+                    " ".repeat(4095)
+                )
+            };
+            assert_eq!(
+                copy.selected_text_with_limit(&cache, expected.len()),
+                Ok(Some(expected.clone()))
+            );
+            assert_eq!(
+                copy.selected_text_with_limit(&cache, expected.len() - 1),
+                Err(SelectedTextError::MaxBytesExceeded)
+            );
+            assert_eq!(copy.selected_text(&cache), Some(expected));
+        }
+        let (_, cache, mut copy) = fixture(8, 1, b"", true);
+        copy.click(CellPosition { column: 0, row: 0 });
+        copy.click(CellPosition { column: 7, row: 0 });
+        assert_eq!(
+            copy.selected_text_with_limit(&cache, 0),
+            Ok(Some(String::new()))
+        );
+    }
+
+    #[test]
+    fn bounded_rectangle_copy_refuses_oversized_trimmed_whitespace_traversal() {
+        let (_, cache, mut copy) = fixture(1024, 40, b"", true);
+        copy.click(CellPosition { column: 0, row: 0 });
+        copy.click(CellPosition {
+            column: 1023,
+            row: 39,
+        });
+        let expected = "\n".repeat(39);
+        assert_eq!(
+            copy.selected_text_with_limit(&cache, expected.len()),
+            Err(SelectedTextError::WorkLimitExceeded)
+        );
+        assert_eq!(
+            copy.selected_text_with_limit(&cache, usize::MAX),
+            Err(SelectedTextError::WorkLimitExceeded)
+        );
+        assert_eq!(copy.selected_text(&cache), Some(expected));
     }
 
     #[test]

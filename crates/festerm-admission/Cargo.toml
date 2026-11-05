@@ -1,0 +1,11 @@
+[package]
+name = "festerm-admission"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Process-wide automation admission and attachment epochs."
+
+[lints]
+workspace = true

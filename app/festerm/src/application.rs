@@ -8,7 +8,7 @@
 //! each committed write to its siblings.
 
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -26,7 +26,12 @@ use crate::tabs::{Tab, TabMoveRequest};
 pub(crate) struct WindowId(u64);
 
 impl WindowId {
-    const PRIMARY: Self = Self(0);
+    pub(crate) const PRIMARY: Self = Self(0);
+
+    #[cfg(test)]
+    pub(crate) const fn for_test(value: u64) -> Self {
+        Self(value)
+    }
 
     fn viewport_id(self) -> egui::ViewportId {
         // The first window *is* eframe's root viewport; anything else here
@@ -62,6 +67,60 @@ struct Window {
     placement: Option<WindowPlacement>,
 }
 
+struct ImeAdmission {
+    epoch: Arc<festerm_session::AutomationEpoch>,
+    composing: HashSet<WindowId>,
+    observed_this_pass: bool,
+}
+
+impl ImeAdmission {
+    fn new() -> Self {
+        let epoch = Arc::new(festerm_session::AutomationEpoch::new());
+        epoch.transition(true);
+        Self {
+            epoch,
+            composing: HashSet::new(),
+            observed_this_pass: false,
+        }
+    }
+
+    #[allow(deprecated)]
+    fn observe(&mut self, window: WindowId, events: &[egui::Event]) {
+        for event in events {
+            let active = match event {
+                egui::Event::Ime(egui::ImeEvent::Preedit { .. }) => true,
+                egui::Event::Ime(egui::ImeEvent::Commit(_)) => false,
+                egui::Event::Ime(egui::ImeEvent::Disabled) if self.composing.contains(&window) => {
+                    false
+                }
+                _ => continue,
+            };
+            if !self.observed_this_pass {
+                self.epoch.transition(false);
+                self.observed_this_pass = true;
+            }
+            if active {
+                self.composing.insert(window);
+            } else {
+                self.composing.remove(&window);
+            }
+        }
+    }
+
+    fn finish_pass(&mut self) -> bool {
+        if !self.observed_this_pass {
+            return false;
+        }
+        self.observed_this_pass = false;
+        if self.composing.is_empty() {
+            self.epoch.transition(true);
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// A window's requested screen position and size, in logical points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct WindowPlacement {
@@ -80,10 +139,42 @@ pub(crate) struct FesTermApplication {
     document_activation: ActivationQueue,
     native_documents: Option<festerm_macos_window::OpenDocumentBridge>,
     activation_errors: Arc<Mutex<VecDeque<String>>>,
+    automation: crate::automation::Coordinator,
+    presentation_workspace: crate::automation::WorkspaceRevision,
+    deferred_automation_commands: Vec<crate::automation::NativeWindowCommand>,
+    deferred_automation_overflow: bool,
+    ime_admission: ImeAdmission,
+    #[cfg(test)]
+    after_automation_dispatch: Option<Arc<std::sync::atomic::AtomicBool>>,
+}
+
+struct AutomationDispatchUnwind<'a> {
+    application: &'a mut FesTermApplication,
+}
+
+impl Drop for AutomationDispatchUnwind<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.application.automation.fail_closed_on_unwind();
+        }
+    }
 }
 
 impl FesTermApplication {
-    pub(crate) fn new(primary: FesTermApp) -> Self {
+    fn guarded_ui_dispatch(&mut self, dispatch: impl FnOnce(&mut Self)) {
+        let guard = AutomationDispatchUnwind { application: self };
+        dispatch(guard.application);
+    }
+
+    pub(crate) fn new(mut primary: FesTermApp) -> Self {
+        primary.set_automation_window(WindowId::PRIMARY);
+        primary.initialize_automation_preferences();
+        let presentation_workspace = crate::automation::WorkspaceRevision::default();
+        primary.set_presentation_workspace(&presentation_workspace);
+        let mut automation = crate::automation::Coordinator::default();
+        automation
+            .bind_presentation_workspace(&presentation_workspace)
+            .expect("a new coordinator has no presentation workspace");
         Self {
             windows: vec![Window {
                 id: WindowId::PRIMARY,
@@ -95,6 +186,13 @@ impl FesTermApplication {
             document_activation: ActivationQueue::default(),
             native_documents: None,
             activation_errors: Default::default(),
+            automation,
+            presentation_workspace,
+            deferred_automation_commands: Vec::new(),
+            deferred_automation_overflow: false,
+            ime_admission: ImeAdmission::new(),
+            #[cfg(test)]
+            after_automation_dispatch: None,
         }
     }
 
@@ -118,6 +216,9 @@ impl FesTermApplication {
             self.windows[index]
                 .app
                 .restore_window_tabs(context, &restored);
+            self.windows[index]
+                .app
+                .set_presentation_workspace(&self.presentation_workspace);
         }
     }
 
@@ -237,6 +338,114 @@ impl FesTermApplication {
         context.request_repaint();
     }
 
+    /// Inert on every production backend until a qualified native monitor and
+    /// the enrollment/grant adapters exist. This only queues presentation; the
+    /// caller must still await a fresh native barrier and revalidate delivery.
+    #[allow(dead_code)]
+    fn queue_controller_presentation(
+        &mut self,
+        channel: u64,
+        registration: festerm_automation::ControllerRegistrationId,
+        enrollment: festerm_automation::ControllerEnrollmentId,
+        timeout: std::time::Duration,
+        context: &egui::Context,
+    ) -> festerm_automation::Result<festerm_automation::PresentationAttempt> {
+        self.queue_controller_presentation_if(
+            channel,
+            registration,
+            enrollment,
+            timeout,
+            context,
+            |session| {
+                matches!(
+                    session.controller.session(),
+                    Some(crate::tabs::ApplicationSession::Local(_))
+                )
+            },
+        )
+    }
+
+    fn queue_controller_presentation_if(
+        &mut self,
+        channel: u64,
+        registration: festerm_automation::ControllerRegistrationId,
+        enrollment: festerm_automation::ControllerEnrollmentId,
+        timeout: std::time::Duration,
+        context: &egui::Context,
+        eligible: impl FnOnce(&crate::tabs::SessionTab) -> bool,
+    ) -> festerm_automation::Result<festerm_automation::PresentationAttempt> {
+        use festerm_automation::{Error, PresentationWindowId};
+
+        let target =
+            self.automation
+                .controller_presentation_target(channel, registration, enrollment)?;
+        let tab = crate::tabs::TabId::from_chip_id(target.session());
+        let mut matches = self
+            .windows
+            .iter()
+            .enumerate()
+            .filter(|(_, window)| window.app.automation_session(tab).is_some());
+        let (index, window) = matches.next().ok_or(Error::StaleTarget)?;
+        if !eligible(
+            window
+                .app
+                .automation_session(tab)
+                .ok_or(Error::StaleTarget)?,
+        ) || matches.next().is_some()
+        {
+            return Err(Error::Unavailable);
+        }
+        let window = PresentationWindowId::from_host(window.id.0);
+        let guard =
+            festerm_session::try_automation_admission_lock().map_err(|error| match error {
+                festerm_session::AutomationAdmissionTryError::Busy => Error::Busy,
+                festerm_session::AutomationAdmissionTryError::Poisoned => Error::Unavailable,
+            })?;
+        if self.presentation_workspace.current().is_none() {
+            self.automation.invalidate_presentation_locked();
+            return Err(Error::Unavailable);
+        }
+        let attempt = self.automation.prepare_presentation_locked(
+            channel,
+            registration,
+            enrollment,
+            (target, window),
+            timeout,
+            &guard,
+        )?;
+        if !self.windows[index]
+            .app
+            .activate_presentation_target(tab, context)
+        {
+            self.automation
+                .cancel_presentation_locked(channel, attempt, &guard);
+            return Err(Error::StaleTarget);
+        }
+        if self.presentation_workspace.current().is_none() {
+            self.automation
+                .cancel_presentation_locked(channel, attempt, &guard);
+            self.automation.invalidate_presentation_locked();
+            return Err(Error::Unavailable);
+        }
+        self.focus_window(index, context);
+        if let Err(error) = self.automation.presentation_requested_locked(
+            channel,
+            attempt,
+            std::time::Instant::now(),
+            &guard,
+        ) {
+            self.automation
+                .cancel_presentation_locked(channel, attempt, &guard);
+            return Err(error);
+        }
+        context.request_repaint_after(
+            attempt
+                .deadline()
+                .saturating_duration_since(std::time::Instant::now()),
+        );
+        Ok(attempt)
+    }
+
     #[cfg(test)]
     pub(crate) fn window_count(&self) -> usize {
         self.windows.len()
@@ -256,11 +465,14 @@ impl FesTermApplication {
         for window in self.windows.iter_mut().skip(1) {
             let builder = Self::viewport_builder(window);
             let app = &mut window.app;
+            let ime_admission = &mut self.ime_admission;
             // The `Ui` egui hands back is the child viewport's root, already
             // free of margin and background - the same contract
             // `eframe::App::ui` gives the primary window - so the window's
             // content goes straight into it.
             context.show_viewport_immediate(window.id.viewport_id(), builder, |ui, _class| {
+                ui.ctx()
+                    .input(|input| ime_admission.observe(window.id, &input.events));
                 if ui.ctx().input(|input| input.viewport().focused) == Some(true) {
                     self.last_active_window = window.id;
                 }
@@ -389,6 +601,8 @@ impl FesTermApplication {
                 if target == source {
                     return;
                 }
+                self.automation.controller_target_moving(request.moved);
+                self.presentation_workspace.changed();
                 let Some(tab) = self.windows[source_index].app.detach_tab(request.moved) else {
                     return;
                 };
@@ -422,6 +636,8 @@ impl FesTermApplication {
         if source != WindowId::PRIMARY && self.windows[source_index].app.tab_count() <= 1 {
             return;
         }
+        self.automation.controller_target_moving(request.moved);
+        self.presentation_workspace.changed();
         let Some(tab) = self.windows[source_index].app.detach_tab(request.moved) else {
             return;
         };
@@ -453,6 +669,8 @@ impl FesTermApplication {
         if id == WindowId::PRIMARY {
             self.windows[index].app.open_launcher_if_empty(context);
         } else {
+            self.automation.controller_window_closing(id);
+            self.presentation_workspace.changed();
             self.windows.remove(index);
             context.request_repaint();
         }
@@ -573,6 +791,7 @@ impl FesTermApplication {
         // Without this, opening a window from an otherwise idle application
         // leaves egui with no reason to repaint and the window never appears.
         context.request_repaint();
+        self.presentation_workspace.changed();
         let (configuration, status, reloader, secret_store, documents) =
             self.windows[0].app.shared_application_services();
         let id = WindowId(self.next_window_id);
@@ -586,6 +805,8 @@ impl FesTermApplication {
             secret_store,
             documents,
         );
+        app.set_automation_window(id);
+        app.set_presentation_workspace(&self.presentation_workspace);
         if let Some(tab) = detached {
             app.adopt_detached_tab(tab);
         }
@@ -604,6 +825,22 @@ impl FesTermApplication {
     /// viewport with nothing to render.
     fn close_finished_windows(&mut self, context: &egui::Context) {
         let before = self.windows.len();
+        let closing: Vec<_> = self
+            .windows
+            .iter()
+            .filter(|window| window.id != WindowId::PRIMARY && window.app.window_close_accepted())
+            .map(|window| window.id)
+            .collect();
+        for id in closing {
+            self.automation.controller_window_closing(id);
+        }
+        if self
+            .windows
+            .iter()
+            .any(|window| window.id != WindowId::PRIMARY && window.app.window_close_accepted())
+        {
+            self.presentation_workspace.changed();
+        }
         self.windows
             .retain(|window| window.id == WindowId::PRIMARY || !window.app.window_close_accepted());
         if self.windows.len() != before {
@@ -626,6 +863,218 @@ impl FesTermApplication {
             .app
             .set_application_live_session_counts(counts);
     }
+
+    fn collect_automation_commands(
+        &mut self,
+        commands: &mut Vec<crate::automation::NativeWindowCommand>,
+        overflow: &mut bool,
+    ) {
+        for window in &mut self.windows {
+            let (pending, window_overflow) = window.app.take_automation_commands();
+            if window_overflow
+                || commands.len().saturating_add(pending.len())
+                    > crate::automation::MAX_NATIVE_COMMANDS
+            {
+                if !*overflow {
+                    self.automation.close_conflicting_admission();
+                }
+                *overflow = true;
+                commands.clear();
+            } else if !*overflow {
+                commands.extend(pending.into_iter().map(|command| {
+                    crate::automation::NativeWindowCommand {
+                        window: window.id,
+                        command,
+                    }
+                }));
+            }
+        }
+        if !*overflow
+            && crate::automation::NativeCommand::batch_requires_safety_stop(
+                commands.iter().map(|item| &item.command),
+            )
+        {
+            self.automation.close_conflicting_admission();
+            *overflow = true;
+            commands.clear();
+        } else if !*overflow
+            && commands.iter().any(|item| {
+                matches!(
+                    &item.command,
+                    crate::automation::NativeCommand::PreferenceChanged { .. }
+                )
+            })
+            && self
+                .windows
+                .first()
+                .is_some_and(|window| !window.app.automation_mcp_enabled())
+        {
+            self.automation.close_overflow_admission();
+        }
+        if let Some(window) = self.windows.first().filter(|_| *overflow) {
+            window.app.report_automation_action_conflict();
+        }
+    }
+
+    #[cfg(test)]
+    fn settle_windows_and_drive_automation(&mut self, context: &egui::Context) {
+        self.guarded_ui_dispatch(|application| {
+            application.settle_windows_and_drive_automation_inner(context);
+        });
+    }
+
+    fn settle_windows_and_drive_automation_inner(&mut self, context: &egui::Context) {
+        let mut commands = std::mem::take(&mut self.deferred_automation_commands);
+        let mut overflow = std::mem::take(&mut self.deferred_automation_overflow);
+        // A window can close during settlement; collect its stop actions first.
+        self.collect_automation_commands(&mut commands, &mut overflow);
+        self.settle_windows(context);
+        if context.will_discard() {
+            // A later layout pass can contain a cancellation from another
+            // window. Do not commit approvals before the frame settles.
+            self.collect_automation_commands(&mut commands, &mut overflow);
+            self.deferred_automation_commands = commands;
+            self.deferred_automation_overflow = overflow;
+            return;
+        }
+        self.drive_automation(context, commands, overflow);
+        self.windows[0].app.finish_automation_preference_pass();
+    }
+
+    fn drive_automation(
+        &mut self,
+        context: &egui::Context,
+        mut commands: Vec<crate::automation::NativeWindowCommand>,
+        mut overflow: bool,
+    ) {
+        self.collect_automation_commands(&mut commands, &mut overflow);
+        if overflow
+            || commands.iter().any(|item| {
+                matches!(
+                    &item.command,
+                    crate::automation::NativeCommand::ClearWorkflow
+                        | crate::automation::NativeCommand::SafetyStop
+                        | crate::automation::NativeCommand::PreferenceChanged {
+                            clear_workflow: true,
+                            ..
+                        }
+                )
+            })
+        {
+            for window in &mut self.windows {
+                window.app.cancel_automation_workflow_picker(context);
+            }
+        }
+        for window in &mut self.windows {
+            window.app.sync_automation_preferences();
+            window
+                .app
+                .set_automation_ime_epoch(&self.ime_admission.epoch);
+        }
+        let apps: Vec<_> = self.windows.iter().map(|window| &window.app).collect();
+        let conflicted = if overflow {
+            self.automation.command_overflow_for_apps(&apps);
+            true
+        } else {
+            self.automation.tick(context, &apps);
+            self.automation.commands(commands, context, &apps)
+        };
+        #[cfg(test)]
+        if let Some(after_dispatch) = &self.after_automation_dispatch {
+            after_dispatch.store(true, std::sync::atomic::Ordering::Release);
+        }
+        if let Some(app) = apps.first().filter(|_| conflicted) {
+            app.report_automation_action_conflict();
+            context.request_repaint();
+        }
+        if !conflicted {
+            self.automation.stage_reusable_direct_inputs(&apps, context);
+        }
+        let preparations = if conflicted {
+            Vec::new()
+        } else {
+            self.automation.direct_input_preparations()
+        };
+        let dispatches = if conflicted {
+            Vec::new()
+        } else {
+            self.automation.direct_input_dispatches()
+        };
+        drop(apps);
+        for preparation in preparations {
+            let tab = self
+                .windows
+                .iter_mut()
+                .find(|window| window.id == preparation.window)
+                .and_then(|window| {
+                    window
+                        .app
+                        .automation_control_session_mut(crate::tabs::TabId::from_chip_id(
+                            preparation.target.session(),
+                        ))
+                });
+            if let Some(tab) = tab {
+                self.automation
+                    .prepare_direct_input_review(preparation, tab, context);
+            } else {
+                self.automation
+                    .missing_direct_input_target(preparation, context);
+            }
+        }
+        let apps: Vec<_> = self.windows.iter().map(|window| &window.app).collect();
+        for dispatch in dispatches {
+            let tab = self
+                .windows
+                .iter()
+                .find(|window| window.id == dispatch.window)
+                .and_then(|window| {
+                    window
+                        .app
+                        .automation_session(crate::tabs::TabId::from_chip_id(
+                            dispatch.target.session(),
+                        ))
+                });
+            if let Some(tab) = tab {
+                self.automation
+                    .dispatch_direct_input(dispatch, tab, &apps, context);
+            } else {
+                self.automation
+                    .missing_direct_input_target(dispatch, context);
+            }
+        }
+        self.automation.settle_direct_inputs(&apps, context);
+        let snapshot = self.automation.settings(&apps);
+        drop(apps);
+        let mut changed = false;
+        for window in &mut self.windows {
+            changed |= window.app.set_automation_settings(snapshot.clone());
+        }
+        if changed {
+            context.request_repaint();
+        }
+    }
+
+    fn ui_inner(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        ui.ctx()
+            .input(|input| self.ime_admission.observe(WindowId::PRIMARY, &input.events));
+        if ui.ctx().input(|input| input.viewport().focused) == Some(true) {
+            self.last_active_window = WindowId::PRIMARY;
+        }
+        eframe::App::ui(self.primary_mut(), ui, frame);
+        let context = ui.ctx().clone();
+        self.show_secondary_windows(&context);
+        festerm_ui_egui::chrome::tab_drag::show_requested_drag_ghost(&context);
+        self.settle_windows_and_drive_automation_inner(&context);
+        self.process_document_activation(&context);
+        if !context.will_discard() && self.ime_admission.finish_pass() {
+            context.request_repaint();
+        }
+        tracing::debug!(
+            target: "festerm::rendering",
+            gui_frame_number = context.cumulative_frame_nr(),
+            "built GUI frame"
+        );
+    }
 }
 
 /// How far left of the pointer a detached window's origin is placed, so the
@@ -635,43 +1084,1813 @@ const DETACH_POINTER_INSET: f32 = 60.0;
 
 impl eframe::App for FesTermApplication {
     fn raw_input_hook(&mut self, context: &egui::Context, input: &mut egui::RawInput) {
-        eframe::App::raw_input_hook(self.primary_mut(), context, input);
+        let guard = AutomationDispatchUnwind { application: self };
+        guard
+            .application
+            .ime_admission
+            .observe(WindowId::PRIMARY, &input.events);
+        eframe::App::raw_input_hook(guard.application.primary_mut(), context, input);
     }
 
     fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
-        self.refresh_application_close_context();
-        eframe::App::logic(self.primary_mut(), context, frame);
+        let guard = AutomationDispatchUnwind { application: self };
+        guard
+            .application
+            .automation
+            .advance_presentation_deadline(context);
+        guard.application.refresh_application_close_context();
+        eframe::App::logic(guard.application.primary_mut(), context, frame);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        if ui.ctx().input(|input| input.viewport().focused) == Some(true) {
-            self.last_active_window = WindowId::PRIMARY;
-        }
-        eframe::App::ui(self.primary_mut(), ui, frame);
-        let context = ui.ctx().clone();
-        self.show_secondary_windows(&context);
-        festerm_ui_egui::chrome::tab_drag::show_requested_drag_ghost(&context);
-        self.settle_windows(&context);
-        self.process_document_activation(&context);
-        tracing::debug!(
-            target: "festerm::rendering",
-            gui_frame_number = context.cumulative_frame_nr(),
-            "built GUI frame"
-        );
+        self.guarded_ui_dispatch(|application| application.ui_inner(ui, frame));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tabs::AppCommand;
+    use crate::automation::preferences::{Feature, Values};
+    use crate::configuration_startup::{
+        ConfigurationReloader, SessionNameConfigurationFixture, TestSaveFailure,
+    };
+    use crate::tabs::{AppCommand, TabId};
     use festerm_config::{Configuration, InterfaceSettings, Profile, TerminalFontPreference};
     use festerm_ui_egui::TerminalFontFamily;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
 
     fn application() -> (FesTermApplication, egui::Context) {
         let context = egui::Context::default();
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         (FesTermApplication::new(app), context)
+    }
+
+    fn with_feature(mut values: Values, feature: Feature, enabled: bool) -> Values {
+        match feature {
+            Feature::Mcp => values.mcp = enabled,
+            Feature::Javascript => values.javascript = enabled,
+        }
+        values
+    }
+
+    fn other_feature(feature: Feature) -> Feature {
+        match feature {
+            Feature::Mcp => Feature::Javascript,
+            Feature::Javascript => Feature::Mcp,
+        }
+    }
+
+    fn automation_configuration(values: Values) -> Configuration {
+        Configuration::empty()
+            .with_interface_settings(
+                InterfaceSettings::DEFAULT
+                    .with_mcp_enabled(values.mcp)
+                    .with_javascript_enabled(values.javascript),
+            )
+            .unwrap()
+    }
+
+    fn application_with_saved_automation_preferences(
+        values: Values,
+    ) -> (
+        FesTermApplication,
+        egui::Context,
+        SessionNameConfigurationFixture,
+    ) {
+        let fixture = SessionNameConfigurationFixture::new();
+        let configuration = automation_configuration(values);
+        configuration.save_to_path(&fixture.path).unwrap();
+        let mut primary = FesTermApp::for_test_with_configuration(configuration);
+        primary.set_reloader_for_test(ConfigurationReloader::from_path_for_test(
+            fixture.path.clone(),
+        ));
+        let context = egui::Context::default();
+        let mut application = FesTermApplication::new(primary);
+        application.open_window(&context, None);
+        (application, context, fixture)
+    }
+
+    fn assert_saved_automation_preferences(path: &std::path::Path, expected: Values) {
+        let configuration = Configuration::load_from_path(path).unwrap();
+        let settings = configuration.interface_settings();
+        assert_eq!(settings.mcp_enabled(), expected.mcp);
+        assert_eq!(settings.javascript_enabled(), expected.javascript);
+    }
+
+    struct LivePreferenceFixture {
+        application: FesTermApplication,
+        context: egui::Context,
+        file: SessionNameConfigurationFixture,
+        target: festerm_automation::TargetRef,
+        stop: Arc<AtomicBool>,
+        _receive: Box<dyn Fn() -> Option<Vec<u8>>>,
+    }
+
+    fn live_preference_fixture(approved: bool) -> LivePreferenceFixture {
+        let (coordinator, mut primary, target, stop, receive) =
+            crate::automation::preference_application_fixture(approved);
+        let file = SessionNameConfigurationFixture::new();
+        let configuration = automation_configuration(Values {
+            mcp: true,
+            javascript: true,
+        });
+        configuration.save_to_path(&file.path).unwrap();
+        primary.adopt_broadcast_configuration(configuration);
+        primary.set_reloader_for_test(ConfigurationReloader::from_path_for_test(file.path.clone()));
+        let context = egui::Context::default();
+        let mut application = FesTermApplication::new(primary);
+        application.automation = coordinator;
+        application.open_window(&context, None);
+        let apps: Vec<_> = application
+            .windows
+            .iter()
+            .map(|window| &window.app)
+            .collect();
+        let snapshot = application.automation.settings(&apps);
+        assert_eq!(snapshot.channels.len(), 1);
+        for window in &mut application.windows {
+            window.app.set_automation_settings(snapshot.clone());
+        }
+        LivePreferenceFixture {
+            application,
+            context,
+            file,
+            target,
+            stop,
+            _receive: Box::new(receive),
+        }
+    }
+
+    fn controller_snapshot(
+        application: &FesTermApplication,
+    ) -> crate::automation::SettingsSnapshot {
+        let apps: Vec<_> = application
+            .windows
+            .iter()
+            .map(|window| &window.app)
+            .collect();
+        crate::automation::stable_controller_settings_for_test(&application.automation, &apps)
+    }
+
+    fn settle_controller_reconciliation(
+        application: &mut FesTermApplication,
+        context: &egui::Context,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            application.settle_windows_and_drive_automation(context);
+            if !application
+                .automation
+                .controller_reconciliation_deferred_for_test()
+            {
+                return;
+            }
+            assert!(Instant::now() < deadline, "reconciliation did not retry");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn submit_controller_command(
+        application: &mut FesTermApplication,
+        context: &egui::Context,
+        window: usize,
+        command: crate::automation::NativeCommand,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            application
+                .window_mut(window)
+                .queue_automation_command(command.clone());
+            application.settle_windows_and_drive_automation(context);
+            assert!(
+                application.deferred_automation_commands.is_empty(),
+                "controller action was not dispatched"
+            );
+            if !application
+                .automation
+                .controller_action_retryable_for_test()
+            {
+                return;
+            }
+            assert!(Instant::now() < deadline, "controller action stayed busy");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn reviewed_controller_application() -> (
+        FesTermApplication,
+        egui::Context,
+        SessionNameConfigurationFixture,
+        festerm_automation::ControllerRegistrationId,
+        u64,
+        impl Fn() -> Option<Vec<u8>>,
+    ) {
+        let (mut primary, tab) = FesTermApp::automation_local_fixture();
+        let file = SessionNameConfigurationFixture::new();
+        let configuration = automation_configuration(Values {
+            mcp: true,
+            javascript: false,
+        });
+        configuration.save_to_path(&file.path).unwrap();
+        primary.adopt_broadcast_configuration(configuration);
+        primary.set_reloader_for_test(ConfigurationReloader::from_path_for_test(file.path.clone()));
+        let context = egui::Context::default();
+        let mut application = FesTermApplication::new(primary);
+        application.open_window(&context, None);
+        let (coordinator, registration, token, receive) =
+            crate::automation::reviewed_controller_for_application(
+                &application.windows[0].app,
+                tab,
+                &application.presentation_workspace,
+            );
+        application.automation = coordinator;
+        let snapshot = controller_snapshot(&application);
+        for window in &mut application.windows {
+            window.app.set_automation_settings(snapshot.clone());
+        }
+        (application, context, file, registration, token, receive)
+    }
+
+    #[test]
+    fn cross_window_disable_or_cancel_precedes_controller_confirmation() {
+        use crate::automation::NativeCommand;
+
+        for disable in [false, true] {
+            for reverse in [false, true] {
+                let (mut application, context, file, registration, token, _receive) =
+                    reviewed_controller_application();
+                let queue_confirmation = |application: &mut FesTermApplication| {
+                    application.window_mut(0).queue_automation_command(
+                        NativeCommand::ConfirmController {
+                            channel: 1,
+                            registration,
+                            selection: token,
+                        },
+                    );
+                };
+                let cancel_or_disable = |application: &mut FesTermApplication| {
+                    if disable {
+                        application
+                            .window_mut(1)
+                            .toggle_automation_preference_for_test(Feature::Mcp, &context);
+                    } else {
+                        application.window_mut(1).queue_automation_command(
+                            NativeCommand::CancelController {
+                                channel: 1,
+                                registration,
+                            },
+                        );
+                        application.window_mut(1).accept_window_close_for_test();
+                    }
+                };
+                if reverse {
+                    cancel_or_disable(&mut application);
+                    queue_confirmation(&mut application);
+                } else {
+                    queue_confirmation(&mut application);
+                    cancel_or_disable(&mut application);
+                }
+                application.settle_windows_and_drive_automation(&context);
+                let apps: Vec<_> = application
+                    .windows
+                    .iter()
+                    .map(|window| &window.app)
+                    .collect();
+                let snapshot = application.automation.settings(&apps);
+                assert!(snapshot.controllers.is_empty());
+                assert!(snapshot.status.contains("conflicted"));
+                assert!(application.windows[0]
+                    .app
+                    .automation_preference_feedback_for_test()
+                    .unwrap()
+                    .contains("may not have been applied"));
+                if disable {
+                    assert_saved_automation_preferences(
+                        &file.path,
+                        Values {
+                            mcp: false,
+                            javascript: false,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn controller_review_rejects_away_and_back_tab_selection() {
+        use crate::automation::{ControllerSelectionView, NativeCommand};
+
+        let (mut application, context, _file, registration, token, _receive) =
+            reviewed_controller_application();
+        let candidate = controller_snapshot(&application).controller_targets[0].clone();
+        let active = application.window_mut(0).active_tab_id_for_test();
+        let revision = application.presentation_workspace.current().unwrap();
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenSettings, &context);
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::ActivateTab(active), &context);
+        assert!(application.presentation_workspace.current().unwrap() >= revision + 2);
+        let current_candidate = controller_snapshot(&application).controller_targets[0].clone();
+        assert!(candidate == current_candidate);
+
+        submit_controller_command(
+            &mut application,
+            &context,
+            0,
+            NativeCommand::ConfirmController {
+                channel: 1,
+                registration,
+                selection: token,
+            },
+        );
+        let snapshot = controller_snapshot(&application);
+        assert!(snapshot.controllers[0].associated_target.is_none());
+        assert!(matches!(
+            snapshot.controllers[0].selection,
+            ControllerSelectionView::Idle
+        ));
+        assert!(snapshot.status.contains("refused"));
+    }
+
+    #[test]
+    fn controller_chooser_tracks_surviving_window_identity_without_hidden_titles() {
+        use crate::automation::{ControllerSelectionView, NativeCommand};
+
+        let (mut application, context, _file, registration, _review, _receive) =
+            reviewed_controller_application();
+        let third_index = application.open_window(&context, None);
+        let (mut donor, third_tab) = FesTermApp::automation_local_fixture();
+        application.windows[third_index]
+            .app
+            .adopt_detached_tab(donor.detach_tab(third_tab).unwrap());
+        application.window_mut(1).accept_window_close_for_test();
+        settle_controller_reconciliation(&mut application, &context);
+        assert_eq!(application.windows.len(), 2);
+        let third = application.windows[1].id;
+        assert_eq!(third, WindowId::for_test(2));
+        assert_eq!(application.windows[1].app.automation_window(), third);
+
+        let snapshot = controller_snapshot(&application);
+        let target = snapshot
+            .controller_targets
+            .iter()
+            .find(|candidate| candidate.reference.session() == third_tab.chip_id())
+            .unwrap();
+        assert_eq!(target.window, third);
+        assert!(!target.label.contains("Window 2"));
+        let primary_target = snapshot
+            .controller_targets
+            .iter()
+            .find(|candidate| candidate.window == WindowId::PRIMARY)
+            .unwrap();
+        assert_eq!(
+            application.windows[1]
+                .app
+                .automation_session(third_tab)
+                .unwrap()
+                .label,
+            application.windows[0]
+                .app
+                .automation_session(TabId::from_chip_id(primary_target.reference.session()))
+                .unwrap()
+                .label
+        );
+        assert_ne!(target.reference, primary_target.reference);
+        let reference = target.reference;
+        submit_controller_command(
+            &mut application,
+            &context,
+            1,
+            NativeCommand::ChooseController {
+                channel: 1,
+                registration,
+            },
+        );
+        let snapshot = controller_snapshot(&application);
+        let ControllerSelectionView::Choosing { token, window } = snapshot.controllers[0].selection
+        else {
+            panic!("expected native chooser");
+        };
+        assert_eq!(window, third);
+        submit_controller_command(
+            &mut application,
+            &context,
+            1,
+            NativeCommand::SelectControllerTarget {
+                channel: 1,
+                registration,
+                selection: token,
+                target: reference,
+            },
+        );
+        let snapshot = controller_snapshot(&application);
+        let ControllerSelectionView::Reviewing { token, window, .. } =
+            snapshot.controllers[0].selection
+        else {
+            panic!("expected native review");
+        };
+        assert_eq!(window, third);
+        submit_controller_command(
+            &mut application,
+            &context,
+            1,
+            NativeCommand::ConfirmController {
+                channel: 1,
+                registration,
+                selection: token,
+            },
+        );
+        assert_eq!(
+            controller_snapshot(&application).controllers[0].associated_target,
+            Some(reference)
+        );
+    }
+
+    #[test]
+    fn automation_disables_fence_stale_cross_window_saves_and_reload() {
+        for disabled in [Feature::Mcp, Feature::Javascript] {
+            let other = other_feature(disabled);
+            for other_initial in [false, true] {
+                for first_window in [0, 1] {
+                    let initial = with_feature(
+                        with_feature(
+                            Values {
+                                mcp: false,
+                                javascript: false,
+                            },
+                            disabled,
+                            true,
+                        ),
+                        other,
+                        other_initial,
+                    );
+                    let (mut application, context, file) =
+                        application_with_saved_automation_preferences(initial);
+                    let (stale, _, stale_reloader, ..) = application.windows[1 - first_window]
+                        .app
+                        .shared_application_services();
+
+                    application
+                        .window_mut(first_window)
+                        .toggle_automation_preference_for_test(disabled, &context);
+                    let mut expected = with_feature(initial, disabled, false);
+                    assert_saved_automation_preferences(&file.path, expected);
+
+                    application
+                        .window_mut(1 - first_window)
+                        .toggle_automation_preference_for_test(other, &context);
+                    expected = with_feature(expected, other, !other_initial);
+                    assert_saved_automation_preferences(&file.path, expected);
+
+                    let compact = !stale.interface_settings().compact_launcher_grid();
+                    let unrelated = stale
+                        .with_interface_settings(
+                            stale
+                                .interface_settings()
+                                .clone()
+                                .with_compact_launcher_grid(compact),
+                        )
+                        .unwrap();
+                    let saved = stale_reloader.save_configuration(&unrelated).unwrap();
+                    assert_eq!(saved.interface_settings().mcp_enabled(), expected.mcp);
+                    assert_eq!(
+                        saved.interface_settings().javascript_enabled(),
+                        expected.javascript
+                    );
+                    assert_eq!(saved.interface_settings().compact_launcher_grid(), compact);
+                    assert_saved_automation_preferences(&file.path, expected);
+
+                    application.settle_windows_and_drive_automation(&context);
+                    for window in &application.windows {
+                        let configuration = window.app.shared_application_services().0;
+                        assert_eq!(
+                            configuration.interface_settings().mcp_enabled(),
+                            expected.mcp
+                        );
+                        assert_eq!(
+                            configuration.interface_settings().javascript_enabled(),
+                            expected.javascript
+                        );
+                    }
+                    let apps: Vec<_> = application
+                        .windows
+                        .iter()
+                        .map(|window| &window.app)
+                        .collect();
+                    assert!(application
+                        .automation
+                        .settings(&apps)
+                        .status
+                        .contains("may not have been applied"));
+
+                    application.settle_windows_and_drive_automation(&context);
+                    assert_saved_automation_preferences(&file.path, expected);
+                    let loaded = Configuration::load_from_path(&file.path).unwrap();
+                    let restarted =
+                        FesTermApplication::new(FesTermApp::for_test_with_configuration(loaded));
+                    assert_eq!(
+                        restarted.windows[0].app.automation_mcp_enabled(),
+                        expected.mcp
+                    );
+                    assert_eq!(
+                        restarted.windows[0].app.automation_javascript_enabled(),
+                        expected.javascript
+                    );
+                    assert!(restarted
+                        .automation
+                        .settings(&[&restarted.windows[0].app])
+                        .channels
+                        .is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn automation_disables_survive_stale_broadcasts_unrelated_saves_and_close() {
+        let initial = Values {
+            mcp: true,
+            javascript: true,
+        };
+        for disabled in [Feature::Mcp, Feature::Javascript] {
+            for first_window in [0, 1] {
+                let (mut application, context, file) =
+                    application_with_saved_automation_preferences(initial);
+                let stale = application.windows[1 - first_window]
+                    .app
+                    .shared_application_services()
+                    .0;
+                application
+                    .window_mut(first_window)
+                    .toggle_automation_preference_for_test(disabled, &context);
+                assert!(application
+                    .window_mut(1 - first_window)
+                    .save_unrelated_interface_setting_for_test(&context));
+                let expected = with_feature(initial, disabled, false);
+                assert_saved_automation_preferences(&file.path, expected);
+
+                application
+                    .window_mut(1 - first_window)
+                    .broadcast_for_test(stale);
+                if first_window == 1 {
+                    application.window_mut(1).accept_window_close_for_test();
+                }
+                application.settle_windows_and_drive_automation(&context);
+                application.settle_windows_and_drive_automation(&context);
+                assert_saved_automation_preferences(&file.path, expected);
+                for window in &application.windows {
+                    let configuration = window.app.shared_application_services().0;
+                    assert_eq!(
+                        configuration.interface_settings().mcp_enabled(),
+                        expected.mcp
+                    );
+                    assert_eq!(
+                        configuration.interface_settings().javascript_enabled(),
+                        expected.javascript
+                    );
+                    assert_eq!(window.app.automation_mcp_enabled(), expected.mcp);
+                    assert_eq!(
+                        window.app.automation_javascript_enabled(),
+                        expected.javascript
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn automation_preference_save_failures_stay_stopped_and_visible_until_retry() {
+        let initial = Values {
+            mcp: true,
+            javascript: true,
+        };
+        for disabled in [Feature::Mcp, Feature::Javascript] {
+            for failure in [TestSaveFailure::BeforeWrite, TestSaveFailure::AfterWrite] {
+                for first_window in [0, 1] {
+                    let (mut application, context, file) =
+                        application_with_saved_automation_preferences(initial);
+                    let stale = application.windows[1 - first_window]
+                        .app
+                        .shared_application_services()
+                        .0;
+                    application.windows[first_window]
+                        .app
+                        .shared_application_services()
+                        .2
+                        .fail_next_save_for_test(failure);
+                    application
+                        .window_mut(first_window)
+                        .toggle_automation_preference_for_test(disabled, &context);
+                    for window in &application.windows {
+                        assert!(!window.app.automation_mcp_enabled());
+                        assert!(!window.app.automation_javascript_enabled());
+                        let warning = window
+                            .app
+                            .automation_preference_feedback_for_test()
+                            .unwrap();
+                        assert!(warning.contains("outcome is uncertain"));
+                        assert!(warning.contains("may remain on disk"));
+                        assert!(!warning.contains(file.path.to_string_lossy().as_ref()));
+                    }
+                    let desired = with_feature(initial, disabled, false);
+                    let expected_disk = match failure {
+                        TestSaveFailure::BeforeWrite => initial,
+                        TestSaveFailure::AfterWrite => desired,
+                    };
+                    assert_saved_automation_preferences(&file.path, expected_disk);
+                    let loaded = Configuration::load_from_path(&file.path).unwrap();
+                    let restarted =
+                        FesTermApplication::new(FesTermApp::for_test_with_configuration(loaded));
+                    assert!(restarted
+                        .automation
+                        .settings(&[&restarted.windows[0].app])
+                        .channels
+                        .is_empty());
+
+                    application
+                        .window_mut(1 - first_window)
+                        .broadcast_for_test(stale);
+                    application.settle_windows_and_drive_automation(&context);
+                    for window in &application.windows {
+                        let configuration = window.app.shared_application_services().0;
+                        assert_eq!(
+                            configuration.interface_settings().mcp_enabled(),
+                            desired.mcp
+                        );
+                        assert_eq!(
+                            configuration.interface_settings().javascript_enabled(),
+                            desired.javascript
+                        );
+                        assert!(!window.app.automation_mcp_enabled());
+                        assert!(!window.app.automation_javascript_enabled());
+                    }
+                    assert!(application
+                        .window_mut(1 - first_window)
+                        .save_unrelated_interface_setting_for_test(&context));
+                    assert_saved_automation_preferences(&file.path, desired);
+                    assert!(application.windows[0]
+                        .app
+                        .automation_preference_feedback_for_test()
+                        .unwrap()
+                        .contains("outcome is uncertain"));
+                    application.settle_windows_and_drive_automation(&context);
+                    application
+                        .window_mut(0)
+                        .retry_automation_preferences_for_test(&context);
+                    application.settle_windows_and_drive_automation(&context);
+                    for window in &application.windows {
+                        assert!(!window.app.automation_mcp_enabled());
+                        assert!(!window.app.automation_javascript_enabled());
+                        assert!(window
+                            .app
+                            .automation_preference_feedback_for_test()
+                            .unwrap()
+                            .contains("remain stopped until restart"));
+                    }
+                    assert_saved_automation_preferences(&file.path, desired);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn automation_uncertain_enable_is_not_copied_by_an_unrelated_save() {
+        let off = Values {
+            mcp: false,
+            javascript: false,
+        };
+        for feature in [Feature::Mcp, Feature::Javascript] {
+            for failure in [TestSaveFailure::BeforeWrite, TestSaveFailure::AfterWrite] {
+                let (mut application, context, file) =
+                    application_with_saved_automation_preferences(off);
+                application.windows[0]
+                    .app
+                    .shared_application_services()
+                    .2
+                    .fail_next_save_for_test(failure);
+                application
+                    .window_mut(0)
+                    .toggle_automation_preference_for_test(feature, &context);
+                let expected_disk = match failure {
+                    TestSaveFailure::BeforeWrite => off,
+                    TestSaveFailure::AfterWrite => with_feature(off, feature, true),
+                };
+                assert_saved_automation_preferences(&file.path, expected_disk);
+                assert!(!application.windows[0].app.automation_mcp_enabled());
+                assert!(!application.windows[1].app.automation_javascript_enabled());
+                assert!(application
+                    .window_mut(1)
+                    .save_unrelated_interface_setting_for_test(&context));
+                assert_saved_automation_preferences(&file.path, off);
+                assert!(application.windows[1]
+                    .app
+                    .automation_preference_feedback_for_test()
+                    .unwrap()
+                    .contains("outcome is uncertain"));
+            }
+        }
+    }
+
+    #[test]
+    fn automation_same_pass_stale_toggles_and_reset_cannot_reenable() {
+        let initial = Values {
+            mcp: true,
+            javascript: true,
+        };
+        for feature in [Feature::Mcp, Feature::Javascript] {
+            for first_window in [0, 1] {
+                let (mut application, context, file) =
+                    application_with_saved_automation_preferences(initial);
+                application
+                    .window_mut(first_window)
+                    .toggle_automation_preference_for_test(feature, &context);
+                application
+                    .window_mut(1 - first_window)
+                    .toggle_automation_preference_for_test(feature, &context);
+                let disabled = with_feature(initial, feature, false);
+                assert_saved_automation_preferences(&file.path, disabled);
+                assert!(application.windows[0]
+                    .app
+                    .automation_preference_feedback_for_test()
+                    .unwrap()
+                    .contains("may not have been applied"));
+                application.settle_windows_and_drive_automation(&context);
+                assert_saved_automation_preferences(&file.path, disabled);
+
+                application
+                    .window_mut(1 - first_window)
+                    .toggle_automation_preference_for_test(feature, &context);
+                application.settle_windows_and_drive_automation(&context);
+                assert_saved_automation_preferences(&file.path, initial);
+
+                application
+                    .window_mut(first_window)
+                    .reset_automation_preferences_for_test(&context);
+                application
+                    .window_mut(1 - first_window)
+                    .toggle_automation_preference_for_test(feature, &context);
+                let off = Values {
+                    mcp: false,
+                    javascript: false,
+                };
+                assert_saved_automation_preferences(&file.path, off);
+                application.settle_windows_and_drive_automation(&context);
+                assert_saved_automation_preferences(&file.path, off);
+                assert!(application.windows[0]
+                    .app
+                    .automation_preference_feedback_for_test()
+                    .unwrap()
+                    .contains("may not have been applied"));
+            }
+        }
+    }
+
+    #[test]
+    fn automation_cross_window_aba_invalidates_the_old_toggle_interaction() {
+        let off = Values {
+            mcp: false,
+            javascript: false,
+        };
+        for feature in [Feature::Mcp, Feature::Javascript] {
+            let (mut application, context, file) =
+                application_with_saved_automation_preferences(off);
+            let preferences = application.windows[0]
+                .app
+                .shared_application_services()
+                .2
+                .automation_preferences()
+                .unwrap();
+            let old_revision = preferences.ui_revision(feature);
+            application
+                .window_mut(1)
+                .toggle_automation_preference_for_test(feature, &context);
+            application
+                .window_mut(0)
+                .toggle_automation_preference_for_test(feature, &context);
+            assert_ne!(preferences.ui_revision(feature), old_revision);
+            assert_saved_automation_preferences(&file.path, off);
+            application.settle_windows_and_drive_automation(&context);
+            assert_saved_automation_preferences(&file.path, off);
+        }
+    }
+
+    #[test]
+    fn automation_disable_guard_survives_discarded_ui_pass() {
+        let initial = Values {
+            mcp: true,
+            javascript: true,
+        };
+        for feature in [Feature::Mcp, Feature::Javascript] {
+            let (mut application, context, file) =
+                application_with_saved_automation_preferences(initial);
+            context.options_mut(|options| options.max_passes = 2.try_into().unwrap());
+            let mut passes = 0;
+            context
+                .run_ui(egui::RawInput::default(), |ui| {
+                    if passes == 0 {
+                        application
+                            .window_mut(0)
+                            .toggle_automation_preference_for_test(feature, ui.ctx());
+                        ui.ctx().request_discard("preference conflict fixture");
+                    } else {
+                        application
+                            .window_mut(1)
+                            .toggle_automation_preference_for_test(feature, ui.ctx());
+                    }
+                    application.settle_windows_and_drive_automation(ui.ctx());
+                    passes += 1;
+                })
+                .drop_without_applying_deltas();
+            assert_eq!(passes, 2);
+            assert_saved_automation_preferences(&file.path, with_feature(initial, feature, false));
+            assert!(application.windows[0]
+                .app
+                .automation_preference_feedback_for_test()
+                .unwrap()
+                .contains("may not have been applied"));
+        }
+    }
+
+    #[test]
+    fn automation_reset_from_stale_default_window_saves_or_warns() {
+        let off = Values {
+            mcp: false,
+            javascript: false,
+        };
+        for feature in [Feature::Mcp, Feature::Javascript] {
+            for first_window in [0, 1] {
+                for failure in [
+                    None,
+                    Some(TestSaveFailure::BeforeWrite),
+                    Some(TestSaveFailure::AfterWrite),
+                ] {
+                    let (mut application, context, file) =
+                        application_with_saved_automation_preferences(off);
+                    application
+                        .window_mut(first_window)
+                        .toggle_automation_preference_for_test(feature, &context);
+                    let enabled = with_feature(off, feature, true);
+                    assert_saved_automation_preferences(&file.path, enabled);
+                    let resetting = 1 - first_window;
+                    if let Some(failure) = failure {
+                        application.windows[resetting]
+                            .app
+                            .shared_application_services()
+                            .2
+                            .fail_next_save_for_test(failure);
+                    }
+                    application
+                        .window_mut(resetting)
+                        .request_reset_interface_settings_for_test(&context);
+                    let expected_disk = match failure {
+                        Some(TestSaveFailure::BeforeWrite) => enabled,
+                        _ => off,
+                    };
+                    assert_saved_automation_preferences(&file.path, expected_disk);
+                    if failure.is_some() {
+                        assert!(application.windows[resetting]
+                            .app
+                            .automation_preference_feedback_for_test()
+                            .unwrap()
+                            .contains("may remain on disk"));
+                    }
+                    application.settle_windows_and_drive_automation(&context);
+                    for window in &application.windows {
+                        assert!(!window.app.automation_mcp_enabled());
+                        assert!(!window.app.automation_javascript_enabled());
+                    }
+                    assert_saved_automation_preferences(&file.path, expected_disk);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn automation_preferences_remain_independent_for_normal_toggles() {
+        let off = Values {
+            mcp: false,
+            javascript: false,
+        };
+        let (mut application, context, file) = application_with_saved_automation_preferences(off);
+        for (window, feature, expected) in [
+            (0, Feature::Mcp, with_feature(off, Feature::Mcp, true)),
+            (
+                1,
+                Feature::Javascript,
+                Values {
+                    mcp: true,
+                    javascript: true,
+                },
+            ),
+            (
+                0,
+                Feature::Javascript,
+                Values {
+                    mcp: true,
+                    javascript: false,
+                },
+            ),
+            (1, Feature::Mcp, off),
+        ] {
+            application
+                .window_mut(window)
+                .toggle_automation_preference_for_test(feature, &context);
+            application.settle_windows_and_drive_automation(&context);
+            assert_saved_automation_preferences(&file.path, expected);
+            for sibling in &application.windows {
+                assert_eq!(sibling.app.automation_mcp_enabled(), expected.mcp);
+                assert_eq!(
+                    sibling.app.automation_javascript_enabled(),
+                    expected.javascript
+                );
+                assert!(sibling
+                    .app
+                    .automation_preference_feedback_for_test()
+                    .is_none());
+            }
+        }
+        let loaded = Configuration::load_from_path(&file.path).unwrap();
+        let restarted = FesTermApplication::new(FesTermApp::for_test_with_configuration(loaded));
+        assert!(!restarted.windows[0].app.automation_mcp_enabled());
+        assert!(!restarted.windows[0].app.automation_javascript_enabled());
+    }
+
+    #[test]
+    fn automation_conflict_warning_survives_frames_and_unrelated_saves() {
+        let initial = Values {
+            mcp: true,
+            javascript: true,
+        };
+        let (mut application, context, file) =
+            application_with_saved_automation_preferences(initial);
+        application
+            .window_mut(0)
+            .queue_automation_command(crate::automation::NativeCommand::SafetyStop);
+        application.settle_windows_and_drive_automation(&context);
+        assert!(application
+            .window_mut(1)
+            .save_unrelated_interface_setting_for_test(&context));
+        application.settle_windows_and_drive_automation(&context);
+        for window in &application.windows {
+            assert!(window
+                .app
+                .automation_preference_feedback_for_test()
+                .unwrap()
+                .contains("may not have been applied"));
+        }
+        assert_saved_automation_preferences(&file.path, initial);
+
+        application
+            .window_mut(1)
+            .toggle_automation_preference_for_test(Feature::Javascript, &context);
+        application.settle_windows_and_drive_automation(&context);
+        assert_saved_automation_preferences(
+            &file.path,
+            with_feature(initial, Feature::Javascript, false),
+        );
+        assert!(application.windows[0]
+            .app
+            .automation_preference_feedback_for_test()
+            .is_none());
+    }
+
+    #[test]
+    fn automation_failed_disables_stop_live_admission_before_settlement() {
+        use crate::automation::WorkflowView;
+        use festerm_automation_js::snapshot::{ApprovedBundle, Manifest, SourceSnapshot};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        for disabled in [Feature::Mcp, Feature::Javascript] {
+            for failure in [TestSaveFailure::BeforeWrite, TestSaveFailure::AfterWrite] {
+                for first_window in [0, 1] {
+                    let LivePreferenceFixture {
+                        mut application,
+                        context,
+                        file,
+                        stop,
+                        _receive,
+                        ..
+                    } = live_preference_fixture(true);
+                    let bundle = ApprovedBundle::new(SourceSnapshot {
+                        manifest: Manifest {
+                            version: 1,
+                            api_version: 1,
+                            name: "test".into(),
+                            entry: "main.js".into(),
+                            modules: vec!["main.js".into()],
+                            parameters: BTreeMap::new(),
+                            capabilities: BTreeSet::new(),
+                        },
+                        modules: BTreeMap::from([("main.js".into(), "export default 1;".into())]),
+                    })
+                    .unwrap();
+                    let apps: Vec<_> = application
+                        .windows
+                        .iter()
+                        .map(|window| &window.app)
+                        .collect();
+                    let mut snapshot = application.automation.settings(&apps);
+                    assert!(snapshot.channels[0].approved);
+                    snapshot.workflow = WorkflowView::captured_for_test(bundle);
+                    let preview = snapshot.workflow.clone();
+                    for window in &mut application.windows {
+                        window.app.set_automation_settings(snapshot.clone());
+                    }
+                    application.windows[first_window]
+                        .app
+                        .shared_application_services()
+                        .2
+                        .fail_next_save_for_test(failure);
+                    application
+                        .window_mut(first_window)
+                        .toggle_automation_preference_for_test(disabled, &context);
+
+                    assert!(stop.load(Ordering::Acquire));
+                    assert!(preview.current_bundle().is_none());
+                    for window in &application.windows {
+                        assert!(!window.app.automation_mcp_enabled());
+                        assert!(!window.app.automation_javascript_enabled());
+                        assert!(window
+                            .app
+                            .automation_preference_feedback_for_test()
+                            .unwrap()
+                            .contains("may remain on disk"));
+                    }
+                    let apps: Vec<_> = application
+                        .windows
+                        .iter()
+                        .map(|window| &window.app)
+                        .collect();
+                    assert!(application.automation.settings(&apps).channels.is_empty());
+                    let expected_disk = match failure {
+                        TestSaveFailure::BeforeWrite => Values {
+                            mcp: true,
+                            javascript: true,
+                        },
+                        TestSaveFailure::AfterWrite => with_feature(
+                            Values {
+                                mcp: true,
+                                javascript: true,
+                            },
+                            disabled,
+                            false,
+                        ),
+                    };
+                    assert_saved_automation_preferences(&file.path, expected_disk);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn automation_cross_window_disable_blocks_queued_approvals() {
+        use crate::automation::NativeCommand;
+
+        for disabled in [Feature::Mcp, Feature::Javascript] {
+            for first_window in [0, 1] {
+                for approval_first in [false, true] {
+                    for failure in [
+                        None,
+                        Some(TestSaveFailure::BeforeWrite),
+                        Some(TestSaveFailure::AfterWrite),
+                    ] {
+                        let LivePreferenceFixture {
+                            mut application,
+                            context,
+                            file,
+                            target,
+                            stop,
+                            _receive,
+                        } = live_preference_fixture(false);
+                        if let Some(failure) = failure {
+                            application.windows[first_window]
+                                .app
+                                .shared_application_services()
+                                .2
+                                .fail_next_save_for_test(failure);
+                        }
+                        let approval = || NativeCommand::ApproveObservation {
+                            channel: 1,
+                            targets: vec![target],
+                        };
+                        if approval_first {
+                            application
+                                .window_mut(1 - first_window)
+                                .queue_automation_command(approval());
+                        }
+                        application
+                            .window_mut(first_window)
+                            .toggle_automation_preference_for_test(disabled, &context);
+                        if !approval_first {
+                            application
+                                .window_mut(1 - first_window)
+                                .queue_automation_command(approval());
+                        }
+                        application.settle_windows_and_drive_automation(&context);
+                        assert!(stop.load(Ordering::Acquire));
+                        let apps: Vec<_> = application
+                            .windows
+                            .iter()
+                            .map(|window| &window.app)
+                            .collect();
+                        let snapshot = application.automation.settings(&apps);
+                        assert!(snapshot.channels.is_empty());
+                        assert!(snapshot.status.contains("conflicted"));
+                        let initial = Values {
+                            mcp: true,
+                            javascript: true,
+                        };
+                        let expected = match failure {
+                            Some(TestSaveFailure::BeforeWrite) => initial,
+                            _ => with_feature(initial, disabled, false),
+                        };
+                        assert_saved_automation_preferences(&file.path, expected);
+                        application.settle_windows_and_drive_automation(&context);
+                        let apps: Vec<_> = application
+                            .windows
+                            .iter()
+                            .map(|window| &window.app)
+                            .collect();
+                        assert!(application.automation.settings(&apps).channels.is_empty());
+                        assert!(stop.load(Ordering::Acquire));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn automation_discarded_pass_never_approves_before_a_later_disable() {
+        use crate::automation::NativeCommand;
+
+        for disabled in [Feature::Mcp, Feature::Javascript] {
+            for approval_first in [false, true] {
+                let LivePreferenceFixture {
+                    mut application,
+                    context,
+                    file,
+                    target,
+                    stop,
+                    _receive,
+                } = live_preference_fixture(false);
+                context.options_mut(|options| options.max_passes = 2.try_into().unwrap());
+                let mut passes = 0;
+                context
+                    .run_ui(egui::RawInput::default(), |ui| {
+                        if passes == 0 {
+                            ui.ctx().request_discard("approval conflict fixture");
+                        }
+                        if (passes == 0) == approval_first {
+                            application.window_mut(1).queue_automation_command(
+                                NativeCommand::ApproveObservation {
+                                    channel: 1,
+                                    targets: vec![target],
+                                },
+                            );
+                        } else {
+                            application
+                                .window_mut(0)
+                                .toggle_automation_preference_for_test(disabled, ui.ctx());
+                        }
+                        application.settle_windows_and_drive_automation(ui.ctx());
+                        if passes == 0 && approval_first {
+                            let apps: Vec<_> = application
+                                .windows
+                                .iter()
+                                .map(|window| &window.app)
+                                .collect();
+                            let snapshot = application.automation.settings(&apps);
+                            assert_eq!(snapshot.channels.len(), 1);
+                            assert!(!snapshot.channels[0].approved);
+                        }
+                        passes += 1;
+                    })
+                    .drop_without_applying_deltas();
+                assert_eq!(passes, 2);
+                assert!(stop.load(Ordering::Acquire));
+                let apps: Vec<_> = application
+                    .windows
+                    .iter()
+                    .map(|window| &window.app)
+                    .collect();
+                let snapshot = application.automation.settings(&apps);
+                assert!(snapshot.channels.is_empty());
+                assert!(snapshot.status.contains("conflicted"));
+                assert_saved_automation_preferences(
+                    &file.path,
+                    with_feature(
+                        Values {
+                            mcp: true,
+                            javascript: true,
+                        },
+                        disabled,
+                        false,
+                    ),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn automation_discarded_pass_cancellation_suppresses_approval() {
+        use crate::automation::NativeCommand;
+
+        for clear_first in [false, true] {
+            let LivePreferenceFixture {
+                mut application,
+                context,
+                target,
+                stop,
+                file: _file,
+                _receive,
+            } = live_preference_fixture(false);
+            context.options_mut(|options| options.max_passes = 2.try_into().unwrap());
+            let mut passes = 0;
+            context
+                .run_ui(egui::RawInput::default(), |ui| {
+                    if passes == 0 {
+                        ui.ctx().request_discard("cancellation conflict fixture");
+                    }
+                    let command = if (passes == 0) == clear_first {
+                        NativeCommand::ClearWorkflow
+                    } else {
+                        NativeCommand::ApproveObservation {
+                            channel: 1,
+                            targets: vec![target],
+                        }
+                    };
+                    application
+                        .window_mut(passes)
+                        .queue_automation_command(command);
+                    application.settle_windows_and_drive_automation(ui.ctx());
+                    passes += 1;
+                })
+                .drop_without_applying_deltas();
+            assert_eq!(passes, 2);
+            assert!(!stop.load(Ordering::Acquire));
+            let apps: Vec<_> = application
+                .windows
+                .iter()
+                .map(|window| &window.app)
+                .collect();
+            let snapshot = application.automation.settings(&apps);
+            assert_eq!(snapshot.channels.len(), 1);
+            assert!(!snapshot.channels[0].approved);
+            assert!(snapshot.status.contains("blocked"));
+        }
+    }
+
+    #[test]
+    fn automation_cross_window_competing_captures_fail_closed_across_passes() {
+        use crate::automation::{NativeCommand, SelectedWorkflow, WorkflowStatus};
+
+        for identical in [false, true] {
+            for first_window in [0, 1] {
+                for split_passes in [false, true] {
+                    let LivePreferenceFixture {
+                        mut application,
+                        context,
+                        file,
+                        stop,
+                        _receive,
+                        ..
+                    } = live_preference_fixture(false);
+                    let capture =
+                        |path: &str| NativeCommand::CaptureWorkflow(SelectedWorkflow(path.into()));
+                    let complete_capture =
+                        application.automation.pending_workflow_capture_for_test();
+                    application.settle_windows_and_drive_automation(&context);
+                    let apps: Vec<_> = application
+                        .windows
+                        .iter()
+                        .map(|window| &window.app)
+                        .collect();
+                    assert_eq!(
+                        application.automation.settings(&apps).workflow.status,
+                        WorkflowStatus::Capturing
+                    );
+
+                    let second = if identical {
+                        "first.json"
+                    } else {
+                        "second.json"
+                    };
+                    context.options_mut(|options| options.max_passes = 2.try_into().unwrap());
+                    let mut passes = 0;
+                    context
+                        .run_ui(egui::RawInput::default(), |ui| {
+                            if passes == 0 {
+                                ui.ctx().request_discard("competing capture fixture");
+                                application
+                                    .window_mut(first_window)
+                                    .queue_automation_command(capture("first.json"));
+                                if !split_passes {
+                                    application
+                                        .window_mut(1 - first_window)
+                                        .queue_automation_command(capture(second));
+                                }
+                            } else if split_passes {
+                                application
+                                    .window_mut(1 - first_window)
+                                    .queue_automation_command(capture(second));
+                            }
+                            application.settle_windows_and_drive_automation(ui.ctx());
+                            if passes == 0 {
+                                let apps: Vec<_> = application
+                                    .windows
+                                    .iter()
+                                    .map(|window| &window.app)
+                                    .collect();
+                                let preview = application.automation.settings(&apps).workflow;
+                                if split_passes {
+                                    assert!(!stop.load(Ordering::Acquire));
+                                    assert_eq!(preview.status, WorkflowStatus::Capturing);
+                                } else {
+                                    assert!(stop.load(Ordering::Acquire));
+                                    assert_eq!(preview.status, WorkflowStatus::Cancelling);
+                                    assert!(application.windows[0]
+                                        .app
+                                        .automation_preference_feedback_for_test()
+                                        .unwrap()
+                                        .contains("conflicted"));
+                                }
+                            }
+                            passes += 1;
+                        })
+                        .drop_without_applying_deltas();
+                    assert_eq!(passes, 2);
+                    assert!(stop.load(Ordering::Acquire));
+                    let apps: Vec<_> = application
+                        .windows
+                        .iter()
+                        .map(|window| &window.app)
+                        .collect();
+                    let snapshot = application.automation.settings(&apps);
+                    assert!(snapshot.channels.is_empty());
+                    assert!(snapshot.status.contains("conflicted"));
+                    assert_eq!(snapshot.workflow.status, WorkflowStatus::Cancelling);
+                    assert!(snapshot.workflow.current_bundle().is_none());
+                    for window in &application.windows {
+                        assert!(window
+                            .app
+                            .automation_preference_feedback_for_test()
+                            .unwrap()
+                            .contains("conflicted"));
+                    }
+                    assert_saved_automation_preferences(
+                        &file.path,
+                        Values {
+                            mcp: true,
+                            javascript: true,
+                        },
+                    );
+                    complete_capture.send(Err("late result".into())).unwrap();
+                    application.settle_windows_and_drive_automation(&context);
+                    let apps: Vec<_> = application
+                        .windows
+                        .iter()
+                        .map(|window| &window.app)
+                        .collect();
+                    let snapshot = application.automation.settings(&apps);
+                    assert_eq!(snapshot.workflow.status, WorkflowStatus::Empty);
+                    assert!(snapshot.workflow.current_bundle().is_none());
+                    assert!(stop.load(Ordering::Acquire));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn presentation_routes_exact_tab_but_queueing_focus_is_not_confirmation() {
+        use festerm_automation::{Error, NativePresentationState, PresentationRequirement};
+
+        let context = egui::Context::default();
+        let (mut app, first) = FesTermApp::automation_fixture();
+        app.dispatch_for_test(AppCommand::OpenLauncher, &context);
+        let second = app.automation_replace_fixture_session();
+        app.automation_session_mut(first).label = "same".into();
+        app.automation_session_mut(second).label = "same".into();
+        let mut application = FesTermApplication::new(app);
+        let (channel, registration, enrollment, monitor, target) = application
+            .automation
+            .setup_presentation_for_test(&application.windows[0].app, first);
+        assert_eq!(application.primary_mut().active_tab_id_for_test(), second);
+        assert_eq!(
+            application.queue_controller_presentation(
+                channel,
+                registration,
+                enrollment,
+                std::time::Duration::from_secs(2),
+                &context,
+            ),
+            Err(Error::Unavailable)
+        );
+        assert_eq!(application.primary_mut().active_tab_id_for_test(), second);
+
+        let (held_send, held) = std::sync::mpsc::sync_channel(1);
+        let (release, released) = std::sync::mpsc::sync_channel(1);
+        let holder = std::thread::spawn(move || {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            held_send.send(()).unwrap();
+            released
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .is_ok()
+        });
+        held.recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(
+            application.queue_controller_presentation_if(
+                channel,
+                registration,
+                enrollment,
+                std::time::Duration::from_secs(2),
+                &context,
+                |_| true,
+            ),
+            Err(Error::Busy)
+        );
+        release.send(()).unwrap();
+        assert!(holder.join().unwrap());
+        assert_eq!(application.primary_mut().active_tab_id_for_test(), second);
+
+        let attempt = crate::automation::retry_automation_busy(|| {
+            application.queue_controller_presentation_if(
+                channel,
+                registration,
+                enrollment,
+                std::time::Duration::from_secs(2),
+                &context,
+                |_| true,
+            )
+        })
+        .unwrap();
+        assert_eq!(application.primary_mut().active_tab_id_for_test(), first);
+        assert_eq!(attempt.target(), target);
+        let revision = application.presentation_workspace.current().unwrap();
+        let (principal, broker) = application.automation.presentation_broker_for_test(channel);
+        assert_eq!(
+            broker.finish_presentation(principal, attempt, None, std::time::Instant::now()),
+            Ok(None)
+        );
+        let simulated = broker
+            .observe_presentation(
+                monitor,
+                NativePresentationState::Foreground {
+                    window: attempt.window(),
+                    selected: Some(target),
+                    workspace_revision: revision,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let confirmed = broker
+            .finish_presentation(
+                principal,
+                attempt,
+                Some(simulated),
+                std::time::Instant::now(),
+            )
+            .unwrap()
+            .unwrap();
+        let requirement =
+            PresentationRequirement::new(registration, enrollment, confirmed.revision);
+        application
+            .primary_mut()
+            .dispatch_for_test(AppCommand::ActivateTab(second), &context);
+        application
+            .primary_mut()
+            .dispatch_for_test(AppCommand::ActivateTab(first), &context);
+        let new_revision = application.presentation_workspace.current().unwrap();
+        assert!(new_revision > revision);
+        let (principal, broker) = application.automation.presentation_broker_for_test(channel);
+        let same_window_and_tab = broker
+            .observe_presentation(
+                monitor,
+                NativePresentationState::Foreground {
+                    window: attempt.window(),
+                    selected: Some(target),
+                    workspace_revision: new_revision,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            broker.revalidate_presentation(
+                principal,
+                requirement,
+                target,
+                same_window_and_tab,
+                std::time::Instant::now(),
+            ),
+            Err(Error::Revoked)
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn presentation_control_review_rejects_egui_ime_preedit_and_loss_regain() {
+        use festerm_automation::{
+            Digest, Error, GrantRequest, Invocation, InvocationBinding, Scope,
+        };
+        use std::{collections::BTreeSet, time::Duration};
+
+        for regain_before_decision in [false, true] {
+            let context = egui::Context::default();
+            let (app, tab) = FesTermApp::automation_fixture();
+            let mut application = FesTermApplication::new(app);
+            let ime = application.ime_admission.epoch.clone();
+            application.windows[0].app.set_automation_ime_epoch(&ime);
+            let (channel, _, _, _, target) = application
+                .automation
+                .setup_presentation_for_test(&application.windows[0].app, tab);
+            let request = GrantRequest {
+                scope: Scope {
+                    control: BTreeSet::from([target]),
+                    invoke_workflows: true,
+                    ..Scope::default()
+                },
+                bindings: BTreeSet::from([InvocationBinding {
+                    api_version: 1,
+                    invocation: Invocation::Workflow {
+                        bundle: Digest([1; 32]),
+                        manifest: Digest([2; 32]),
+                    },
+                    parameters: Digest([3; 32]),
+                }]),
+                direct_read_calls: BTreeSet::new(),
+            };
+            let review = crate::automation::retry_automation_busy(|| {
+                application.automation.prepare_control_handoff_review(
+                    channel,
+                    target,
+                    request.clone(),
+                    Duration::from_secs(60),
+                    &mut application.windows[0]
+                        .app
+                        .automation_session_mut(tab)
+                        .controller,
+                )
+            })
+            .unwrap();
+            let decision = review.accept_from_native();
+            let mut preedit = egui::RawInput {
+                events: vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "pending".to_owned(),
+                    active_range_chars: None,
+                })],
+                ..Default::default()
+            };
+            eframe::App::raw_input_hook(&mut application, &context, &mut preedit);
+            assert!(!application.ime_admission.finish_pass());
+
+            if regain_before_decision {
+                let mut commit = egui::RawInput {
+                    events: vec![egui::Event::Ime(egui::ImeEvent::Commit("x".into()))],
+                    ..Default::default()
+                };
+                eframe::App::raw_input_hook(&mut application, &context, &mut commit);
+                assert!(application.ime_admission.finish_pass());
+            }
+            assert_eq!(
+                crate::automation::retry_automation_busy(|| {
+                    application
+                        .automation
+                        .approve_control_handoff(channel, &review, &decision)
+                }),
+                Err(Error::Revoked)
+            );
+            if !regain_before_decision {
+                assert!(matches!(
+                    crate::automation::retry_automation_busy(|| {
+                        application.automation.prepare_control_handoff_review(
+                            channel,
+                            target,
+                            request.clone(),
+                            Duration::from_secs(60),
+                            &mut application.windows[0]
+                                .app
+                                .automation_session_mut(tab)
+                                .controller,
+                        )
+                    }),
+                    Err(Error::Unavailable)
+                ));
+                let mut commit = egui::RawInput {
+                    events: vec![egui::Event::Ime(egui::ImeEvent::Commit("x".into()))],
+                    ..Default::default()
+                };
+                eframe::App::raw_input_hook(&mut application, &context, &mut commit);
+                assert!(application.ime_admission.finish_pass());
+            }
+            let fresh = crate::automation::retry_automation_busy(|| {
+                application.automation.prepare_control_handoff_review(
+                    channel,
+                    target,
+                    request.clone(),
+                    Duration::from_secs(60),
+                    &mut application.windows[0]
+                        .app
+                        .automation_session_mut(tab)
+                        .controller,
+                )
+            })
+            .unwrap();
+            let fresh_decision = fresh.accept_from_native();
+            crate::automation::retry_automation_busy(|| {
+                application
+                    .automation
+                    .approve_control_handoff(channel, &fresh, &fresh_decision)
+            })
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn presentation_workspace_revision_tracks_all_window_selection_and_topology_changes() {
+        let (mut application, context) = application();
+        let initial_tab = application.primary_mut().active_tab_id_for_test();
+        let initial = application.presentation_workspace.current().unwrap();
+        application
+            .primary_mut()
+            .dispatch_for_test(AppCommand::OpenSettings, &context);
+        application
+            .primary_mut()
+            .dispatch_for_test(AppCommand::ActivateTab(initial_tab), &context);
+        let returned = application.presentation_workspace.current().unwrap();
+        assert!(returned >= initial + 2);
+        let index = application.open_window(&context, None);
+        let opened = application.presentation_workspace.current().unwrap();
+        assert!(opened > returned);
+        application.windows[index]
+            .app
+            .dispatch_for_test(AppCommand::OpenSettings, &context);
+        assert!(application.presentation_workspace.current().unwrap() > opened);
+    }
+
+    #[test]
+    fn ime_admission_observes_raw_input_before_same_frame_shortcuts() {
+        let (mut application, context) = application();
+        let captured = application.ime_admission.epoch.capture().unwrap();
+        let mut input = egui::RawInput {
+            events: vec![
+                egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "pending".to_owned(),
+                    active_range_chars: None,
+                }),
+                egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::CTRL,
+                },
+            ],
+            ..Default::default()
+        };
+        eframe::App::raw_input_hook(&mut application, &context, &mut input);
+        {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            assert!(!application.ime_admission.epoch.is_current(captured));
+        }
+        assert_eq!(input.events.len(), 2);
+        assert!(!application.ime_admission.finish_pass());
+        assert!(application.ime_admission.epoch.capture().is_none());
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn ime_admission_waits_for_each_window_and_processes_commit_before_reopening() {
+        let mut admission = ImeAdmission::new();
+        let original = admission.epoch.capture().unwrap();
+        let first = WindowId::PRIMARY;
+        let second = WindowId(1);
+        admission.observe(first, &[egui::Event::Ime(egui::ImeEvent::Disabled)]);
+        assert!(!admission.finish_pass());
+        {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            assert!(admission.epoch.is_current(original));
+        }
+        let preedit = egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "pending".to_owned(),
+            active_range_chars: None,
+        });
+        admission.observe(first, std::slice::from_ref(&preedit));
+        admission.observe(second, &[preedit]);
+        assert!(!admission.finish_pass());
+
+        admission.observe(
+            first,
+            &[
+                egui::Event::Text("ordinary".to_owned()),
+                egui::Event::WindowFocused(false),
+                egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: String::new(),
+                    active_range_chars: None,
+                }),
+            ],
+        );
+        assert!(!admission.finish_pass());
+        assert!(admission.epoch.capture().is_none());
+
+        admission.observe(
+            first,
+            &[egui::Event::Ime(egui::ImeEvent::Commit("x".into()))],
+        );
+        assert!(!admission.finish_pass());
+        admission.observe(second, &[egui::Event::Ime(egui::ImeEvent::Disabled)]);
+        assert!(admission.epoch.capture().is_none());
+        assert!(admission.finish_pass());
+        assert!(admission.epoch.capture().is_some());
+        let _guard = festerm_session::automation_admission_lock().unwrap();
+        assert!(!admission.epoch.is_current(original));
+    }
+
+    #[test]
+    fn automation_channel_updates_schedule_a_followup_frame() {
+        let (mut application, context) = application();
+        application.window_mut(0).set_automation_settings(
+            crate::automation::SettingsSnapshot::with_pending_channel_for_test(7),
+        );
+        for _ in 0..4 {
+            context
+                .run_ui(egui::RawInput::default(), |_| {})
+                .drop_without_applying_deltas();
+        }
+        assert!(!context.has_requested_repaint());
+        application.settle_windows_and_drive_automation(&context);
+        assert!(context.has_requested_repaint());
+    }
+
+    #[test]
+    fn automation_dispatch_repaint_panic_closes_live_grant() {
+        let (mut coordinator, mut app, target, stop, receive) =
+            crate::automation::preference_application_fixture(true);
+        app.adopt_broadcast_configuration(automation_configuration(Values {
+            mcp: true,
+            javascript: false,
+        }));
+        let (principal, liveness) =
+            crate::automation::application_disclosure_witness(&mut coordinator, target);
+        assert!(liveness.is_live(principal, Instant::now()));
+        let mut application = FesTermApplication::new(app);
+        application.automation = coordinator;
+        application.window_mut(0).set_automation_settings(
+            crate::automation::SettingsSnapshot::with_pending_channel_for_test(7),
+        );
+        let after_dispatch = Arc::new(AtomicBool::new(false));
+        application.after_automation_dispatch = Some(after_dispatch.clone());
+        let callback_entered = Arc::new(AtomicBool::new(false));
+        let authority_live_at_callback = Arc::new(AtomicBool::new(false));
+        let context = egui::Context::default();
+        for _ in 0..4 {
+            context
+                .run_ui(egui::RawInput::default(), |_| {})
+                .drop_without_applying_deltas();
+        }
+        let callback_armed = after_dispatch.clone();
+        let callback_entered_flag = callback_entered.clone();
+        let callback_authority_live = authority_live_at_callback.clone();
+        let callback_liveness = liveness.clone();
+        let callback_stop = stop.clone();
+        context.set_request_repaint_callback(move |_| {
+            if callback_armed.load(Ordering::Acquire) {
+                callback_entered_flag.store(true, Ordering::Release);
+                callback_authority_live.store(
+                    !callback_stop.load(Ordering::Acquire)
+                        && callback_liveness.is_live(principal, Instant::now()),
+                    Ordering::Release,
+                );
+                panic!("application dispatch repaint");
+            }
+        });
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            application.guarded_ui_dispatch(|application| {
+                application.settle_windows_and_drive_automation_inner(&context);
+            });
+        }))
+        .expect_err("dispatch repaint did not panic");
+        assert_eq!(
+            panic.downcast_ref::<&str>(),
+            Some(&"application dispatch repaint")
+        );
+        assert!(after_dispatch.load(Ordering::Acquire));
+        assert!(callback_entered.load(Ordering::Acquire));
+        assert!(authority_live_at_callback.load(Ordering::Acquire));
+        assert!(stop.load(Ordering::Acquire));
+        assert!(!liveness.is_live(principal, Instant::now()));
+        let apps: Vec<_> = application
+            .windows
+            .iter()
+            .map(|window| &window.app)
+            .collect();
+        let snapshot = application.automation.settings(&apps);
+        assert!(snapshot.channels.is_empty());
+        assert!(snapshot.status.contains("Restart MCP explicitly"));
+        assert!(receive().is_none());
     }
 
     #[test]
@@ -2515,6 +4734,18 @@ id = "tab-3"
             Some((120.0, 64.0, 900.0, 600.0)),
             "an additional window reopens where and as large as it was saved"
         );
+        let revision = application.presentation_workspace.current().unwrap();
+        let active = application.window_mut(1).active_tab_id_for_test();
+        let other = application
+            .window_mut(1)
+            .tab_ids_for_test()
+            .into_iter()
+            .find(|tab| *tab != active)
+            .unwrap();
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::ActivateTab(other), &context);
+        assert!(application.presentation_workspace.current().unwrap() > revision);
     }
 
     /// The compact Launcher layout is on by default, so the change a sibling

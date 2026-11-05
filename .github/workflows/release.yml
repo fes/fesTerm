@@ -439,7 +439,7 @@ jobs:
           FESTERM_INSTALLATION_KIND: appimage
         run: |
           set -euo pipefail
-          cargo build --release -p festerm -p festerm-sessiond
+          cargo build --release -p festerm -p festerm-sessiond -p festerm-automation-js
           cargo packager --config packaging/linux.toml --formats appimage
           appimage=$(find target/release -maxdepth 1 -name '*.AppImage' -print -quit)
           test -n "$appimage"
@@ -452,7 +452,7 @@ jobs:
           FESTERM_INSTALLATION_KIND: managed
         run: |
           set -euo pipefail
-          cargo build --release -p festerm -p festerm-sessiond
+          cargo build --release -p festerm -p festerm-sessiond -p festerm-automation-js
           cargo packager --config packaging/linux.toml --formats deb
           deb=$(find target/release -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$deb"
