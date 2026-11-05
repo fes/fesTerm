@@ -17,6 +17,7 @@ mod host_setup;
 mod key_press;
 #[cfg(feature = "live-ssh")]
 mod live_ssh;
+mod local_input;
 #[allow(dead_code)] // design-system surface used by the gallery before production wiring
 mod model;
 mod password_buffer;
@@ -369,6 +370,7 @@ pub struct MobileApp {
     menu_open: bool,
     /// Tab whose chip was long-pressed, awaiting close confirmation.
     confirm_close: Option<u64>,
+    tab_menu: Option<u64>,
     gestures: terminal_gesture::TerminalGesture,
     workspace: workspaces::Workspace,
     files: Option<Box<files::FilesSession>>,
@@ -388,6 +390,12 @@ pub struct MobileApp {
     terminal_keyboard_input: bool,
     dictation: Option<festerm_ios_window::Dictation>,
     dictation_tab: Option<u64>,
+    dictation_target: Option<dictation::Destination>,
+    dictation_owns_frame: bool,
+    dictation_frame: Option<u64>,
+    dictation_context: Option<egui::Context>,
+    pending_local_dictation: Option<egui::Id>,
+    dictation_source_handoff: bool,
     #[cfg(feature = "live-ssh")]
     tunnel: tunnel_link::TunnelUi,
     caps: model::Capabilities,
@@ -447,6 +455,7 @@ impl MobileApp {
             control_rect: None,
             menu_open: false,
             confirm_close: None,
+            tab_menu: None,
             gestures: terminal_gesture::TerminalGesture::default(),
             workspace: workspaces::Workspace::Terminal,
             files: None,
@@ -467,6 +476,12 @@ impl MobileApp {
             terminal_keyboard_input: false,
             dictation: None,
             dictation_tab: None,
+            dictation_target: None,
+            dictation_owns_frame: false,
+            dictation_frame: None,
+            dictation_context: None,
+            pending_local_dictation: None,
+            dictation_source_handoff: false,
             caps: model::Capabilities::production(),
             tabs: Vec::new(),
             active_tab: None,
@@ -588,14 +603,23 @@ impl MobileApp {
                 .poll(std::sync::Arc::new(move || context.request_repaint()));
         }
         self.terminal_keyboard_input = false;
+        let frame = ui.ctx().cumulative_frame_nr();
+        if self.dictation_frame != Some(frame) {
+            self.dictation_frame = Some(frame);
+            self.dictation_owns_frame = self.dictation_open();
+            self.dictation_source_handoff = false;
+        } else {
+            self.dictation_owns_frame |= self.dictation_open();
+        }
         // Accessory taps must not blur the terminal and restart UIKit's keyboard.
         let terminal_surface = self.terminal_surface();
         ui.ctx().options_mut(|options| {
-            options.input_options.surrender_focus_on = if terminal_surface {
-                egui::SurrenderFocusOn::Never
-            } else {
-                egui::SurrenderFocusOn::Clicks
-            };
+            options.input_options.surrender_focus_on =
+                if terminal_surface || self.source_input() || self.dictation_open() {
+                    egui::SurrenderFocusOn::Never
+                } else {
+                    egui::SurrenderFocusOn::Clicks
+                };
         });
         let mut safe_rect = ui.ctx().content_rect().intersect(ui.max_rect());
         let viewport = ui.ctx().viewport_rect();
@@ -610,14 +634,21 @@ impl MobileApp {
             ui.painter()
                 .rect_filled(safe_rect, 0.0, ui.visuals().panel_fill);
             if let Some(keyboard) = &self.keyboard {
-                apply_field_input(ui.ctx(), keyboard.take_field_input());
+                let inputs = keyboard.take_field_input();
+                if !self.dictation_open()
+                    || self.dictation.as_ref().is_some_and(|speech| {
+                        speech.phase() == festerm_ios_window::DictationPhase::Review
+                    })
+                {
+                    apply_field_input(ui.ctx(), inputs);
+                }
             }
             apply_field_edit(ui.ctx());
             self.show_content(ui);
         });
         let field = widgets::take_field_document(ui.ctx());
         self.keep_field_keyboard(ui.ctx());
-        if !ui.input(|input| input.focused) {
+        if !self.lifecycle.get().active || !ui.input(|input| input.focused) {
             ui.ctx().output_mut(|output| output.ime = None);
         }
         if let Some(keyboard) = &self.keyboard {
@@ -628,7 +659,18 @@ impl MobileApp {
                 festerm_ios_window::KeyboardMode::Terminal
             } else if ui.ctx().output(|output| output.ime.is_some()) {
                 if field.is_some() {
-                    festerm_ios_window::KeyboardMode::Field
+                    if (self.source_input() || self.dictation_open())
+                        && self.keyboard_kind != terminal_keyboard::KeyboardKind::Native
+                    {
+                        festerm_ios_window::KeyboardMode::FieldCustom
+                    } else if (self.source_input() || self.dictation_open())
+                        && !self.keyboard_visible
+                    {
+                        field = None;
+                        festerm_ios_window::KeyboardMode::Hidden
+                    } else {
+                        festerm_ios_window::KeyboardMode::Field
+                    }
                 } else {
                     festerm_ios_window::KeyboardMode::System
                 }
@@ -972,14 +1014,15 @@ impl MobileApp {
     fn show_content(&mut self, ui: &mut egui::Ui) {
         let lifecycle = self.lifecycle.get();
         // Permission alerts never count as suspensions (see NativeLifecycle).
-        if !self.terminal_surface()
-            || !self.terminal_input_ready(lifecycle)
-            || self.dictation_tab != self.active_tab
+        if (self.dictation_open() && !self.dictation_destination_valid())
             || lifecycle.suspensions != self.observed_suspensions
         {
             self.cancel_dictation();
         }
-        if !self.terminal_surface() || !lifecycle.active || !ui.input(|input| input.focused) {
+        if (!self.terminal_surface() && !self.source_input() && !self.dictation_open())
+            || !lifecycle.active
+            || !ui.input(|input| input.focused)
+        {
             self.terminal_keyboard.cancel();
         }
         if lifecycle.suspensions != self.observed_suspensions {
@@ -1020,6 +1063,13 @@ impl MobileApp {
             let hidden = lock.gate(ui, lifecycle.active);
             lock.frame_presented(ui.ctx());
             if hidden {
+                self.field_ime = None;
+                ui.output_mut(|output| output.ime = None);
+                ui.ctx().memory_mut(|memory| {
+                    if let Some(id) = memory.focused() {
+                        memory.surrender_focus(id);
+                    }
+                });
                 self.cancel_dictation();
                 self.gestures.cancel();
                 self.terminal_keyboard.cancel();
@@ -1038,17 +1088,22 @@ impl MobileApp {
             self.park_active();
             self.surface = Surface::Documents;
         }
-        match self.surface {
-            Surface::Tabs => self.show_tabs(ui),
-            Surface::Terminal => self.show_surface(ui, lifecycle),
-            Surface::Documents => self.show_documents(ui),
-        }
+        self.show_local_input(ui);
+        let content = ui.available_rect_before_wrap();
+        ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+            ui.set_clip_rect(content);
+            match self.surface {
+                Surface::Tabs => self.show_tabs(ui),
+                Surface::Terminal => self.show_surface(ui, lifecycle),
+                Surface::Documents => self.show_documents(ui),
+            }
+        });
         self.show_sheets(ui.ctx(), bounds);
         self.show_files_sheets(ui.ctx(), bounds);
         self.show_host_setup(ui.ctx(), bounds);
-        self.show_dictation(ui.ctx(), bounds);
         self.documents
             .show_sheets(ui.ctx(), bounds, self.surface == Surface::Documents);
+        self.finish_local_dictation_action(ui.ctx());
     }
 
     fn show_host_setup(&mut self, ctx: &egui::Context, bounds: egui::Rect) {
@@ -1079,7 +1134,7 @@ impl MobileApp {
     fn shell_data<'a>(
         &self,
         profiles: &'a [model::Profile],
-        recents: &'a [model::Profile],
+        _recents: &'a [model::Profile],
         surfaces: &'a [model::SurfaceSummary],
         reattachable: &'a [model::Reattachable],
         diagnostics: &'a [(String, String)],
@@ -1088,7 +1143,6 @@ impl MobileApp {
     ) -> shell::ShellData<'a> {
         shell::ShellData {
             profiles,
-            recents,
             surfaces,
             reattachable,
             profiles_persistent: self
@@ -1173,7 +1227,10 @@ impl MobileApp {
                         lock.apply(action);
                     }
                 }
-                ShellAction::OpenProfile(id) => self.connect_profile(ctx, &id),
+                ShellAction::OpenProfile(id) => {
+                    self.shell.tab = shell::Tab::Sessions;
+                    self.connect_profile(ctx, &id);
+                }
                 ShellAction::ForgetHost(index) => {
                     if let Some(profiles) = self.profiles.as_mut() {
                         let hosts = profiles.trusted_hosts();
@@ -1191,7 +1248,7 @@ impl MobileApp {
                         }
                     }
                 }
-                ShellAction::CloseSurface(id) => self.close_tab(id),
+                ShellAction::CloseSurface(id) => self.request_surface_close(id),
                 ShellAction::OpenSurface(id) => {
                     self.shell.sessions_sheet = false;
                     if self.documents.contains(id) {
@@ -1216,7 +1273,6 @@ impl MobileApp {
                     self.shell.sessions_sheet = false;
                     self.surface = Surface::Terminal;
                 }
-                ShellAction::ShowSessions => self.shell.sessions_sheet = true,
                 ShellAction::HideSessions => self.shell.sessions_sheet = false,
                 ShellAction::OpenProfilesTab => {
                     self.shell.sessions_sheet = false;
@@ -1224,9 +1280,11 @@ impl MobileApp {
                     self.leave_terminal();
                 }
                 ShellAction::OpenDocuments => {
-                    self.park_active();
-                    self.documents.active = None;
-                    self.surface = Surface::Documents;
+                    self.shell.sessions_sheet = false;
+                    self.shell.tab = shell::Tab::Sessions;
+                    self.leave_terminal();
+                    self.documents.browse();
+                    self.notice = self.documents.notice.take();
                 }
             }
         }
@@ -1369,11 +1427,25 @@ impl MobileApp {
             let actions = shell::sessions_sheet(ctx, bounds, &data);
             self.apply_shell_actions(ctx, actions);
         }
+        self.show_tab_menu(ctx, bounds);
         if let Some(id) = self.confirm_close {
             match self.tabs.iter().find(|tab| tab.id == id) {
                 Some(tab) => {
                     let title = tab.title.clone();
-                    match terminal_chrome::close_session_sheet(ctx, bounds, &title) {
+                    let durable = tab.tunnel.is_some()
+                        || tab
+                            .spec
+                            .as_ref()
+                            .and_then(profiles::SessionSpec::persistent_label)
+                            .is_some();
+                    let detail = if durable {
+                        "Close this tab and detach. The durable remote session keeps running."
+                    } else if tab.spec.is_some() {
+                        "Close this tab and disconnect. A plain SSH shell may end; a file browser has no shell to end."
+                    } else {
+                        "Close this offline tab. No remote process is running."
+                    };
+                    match terminal_chrome::close_session_sheet(ctx, bounds, &title, detail) {
                         Some(true) => {
                             self.confirm_close = None;
                             self.close_tab(id);
@@ -1846,7 +1918,7 @@ impl MobileApp {
                 self.activate_tab(id);
                 return;
             }
-            terminal_chrome::ChipAction::Close(id) => self.request_surface_close(id),
+            terminal_chrome::ChipAction::Menu(id) => self.request_tab_menu(id),
             terminal_chrome::ChipAction::All => self.shell.sessions_sheet = true,
             terminal_chrome::ChipAction::New => {
                 self.shell.tab = shell::Tab::Profiles;
@@ -1876,6 +1948,8 @@ impl MobileApp {
     fn terminal_input_ready(&self, lifecycle: Lifecycle) -> bool {
         let ready = lifecycle.active
             && !self.shell.sessions_sheet
+            && self.tab_menu.is_none()
+            && self.confirm_close.is_none()
             && !self.editor.open
             && !self.documents.modal_open();
         #[cfg(feature = "live-ssh")]
@@ -1891,7 +1965,7 @@ impl MobileApp {
     }
 
     fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
-        let input_ready = self.terminal_input_ready(lifecycle) && !self.dictation_open();
+        let input_ready = self.terminal_input_ready(lifecycle) && !self.dictation_owns_frame;
         #[cfg(feature = "live-ssh")]
         let read_only = self
             .sink
@@ -1902,7 +1976,7 @@ impl MobileApp {
             .is_some_and(|live| live.can_reset());
         #[cfg(not(feature = "live-ssh"))]
         let read_only = false;
-        if !input_ready {
+        if !input_ready && !self.dictation_owns_frame {
             self.clear_sticky_modifiers();
             self.terminal_keyboard.cancel();
         }
@@ -1930,7 +2004,9 @@ impl MobileApp {
                 self.keyboard_visible = true;
             }
         }
-        if !read_only {
+        if self.dictation_owns_frame {
+            self.toolbar_rect = None;
+        } else if !read_only {
             let mut row_action = terminal_chrome::KeyRowAction::None;
             let keyboard_kind = self.keyboard_kind;
             let custom_visible = keyboard_kind != terminal_keyboard::KeyboardKind::Native
@@ -2092,6 +2168,13 @@ impl MobileApp {
         }
         match action {
             KeyRowAction::None => {}
+            KeyRowAction::Undo
+            | KeyRowAction::Redo
+            | KeyRowAction::Outdent
+            | KeyRowAction::SelectAll
+            | KeyRowAction::Copy => {
+                self.input_notice = Some("This shortcut requires a local text field");
+            }
             KeyRowAction::Key(Key::Character(character)) => {
                 // Reuse sticky-modifier and local clipboard-shortcut arbitration.
                 ctx.input_mut(|input| input.events.push(egui::Event::Text(character.to_string())));

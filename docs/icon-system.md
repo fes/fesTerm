@@ -190,6 +190,9 @@ distinct triangle/circle forms and accessible labels remain required.
 
 ## Asset pipeline
 
+`Save`, `Undo`, and `Redo` use `save.svg`, `undo.svg`, and `redo.svg` for
+document editing actions.
+
 1. Edit or add a simple SVG under `assets/icons/source` using the visual rules
    above. Keep paths human-readable and do not include editor metadata,
    transforms, CSS, masks, filters, scripts, raster images, or embedded fonts.

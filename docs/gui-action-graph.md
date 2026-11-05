@@ -283,6 +283,31 @@ The mobile device descriptor requests downlevel GPU limits to accommodate the
 observed Simulator Metal limit; issue #261 remains the native startup gate.
 
 `MOB-08` also covers current-revision Markdown Edit/Preview and Contents.
+
+**November 5 workflow amendment (supersedes terminal-only dictation, review-sheet,
+short-height toolbar and close-only long-press descriptions in the baseline
+rows below):** `MOB-02` uses the existing preference for terminal, source and
+draft fields, sharing the main custom layout and routing only local shortcuts
+to local buffers. `MOB-07` is a compact same-panel composer above that keyboard,
+with real PCM level, partial/final text, Resume and bounded review. Terminal
+acceptance checks exact transport identity; `MOB-08` acceptance checks full
+document authority/revision/selection and is one undoable edit, never save.
+Draft input owns its entire frame even after Insert/Cancel. Lock cancels speech
+and clears local IME. `MOB-06` Profiles contains only saved configurations;
+Sessions owns Browse and all work. A common long press opens a menu, never
+immediate close. Explicit terminal close explains plain disconnect versus
+durable detach, not process termination. Dirty-document close offers
+Save/Discard/Cancel and waits for the matching successful save receipt.
+`MOB-08` has one 44-point icon toolbar, no Split, flowing soft breaks, and
+independently scrollable tables/code. Native clipboard/selection handles,
+audio quality, touch scrolling and accessibility remain unqualified.
+Preview long press exposes Copy/Select All for the selected plain rendering
+without requesting an editing keyboard; projection replacement clears selection.
+Mic waits for the current local edit batch before binding/resuming. Document
+Insert quarantines draft events and publishes source IME in the handoff frame.
+Review text uses a 12-point horizontal / 8-point vertical inset inside its
+rounded field, checked against actual painted geometry at narrow, phone and
+landscape sizes with both native and custom keyboard preferences.
 Switch modes after editing and confirm the same history and source selection;
 open Contents and navigate a heading without changing source or terminal bytes.
 Switching document views or changing the captured revision dismisses the sheet.
@@ -290,7 +315,7 @@ Check the wide Contents rail and short-height scrollable More controls, with no
 Edit/Preview split at any size. One worker includes cancelled work until actual
 completion; old/closed-document results cannot become current. Parser errors
 offer explicit retry, and links/images/HTML grant no loading/execution authority.
-Source syntax/line numbers, Find/Replace and local-copy/composer tools remain
+Source syntax/line numbers, Find/Replace and local-copy/Save As tools remain
 pending; native provider/keyboard/accessibility qualification is unchanged.
 Returning to Edit restores the source focus after handling the toolbar click.
 The actual wide reading viewport suppresses the compact Contents button/sheet.

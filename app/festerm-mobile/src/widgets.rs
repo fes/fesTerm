@@ -1582,6 +1582,41 @@ fn published_field_id() -> Id {
     Id::new("festerm-field-document")
 }
 
+/// Keep the selected keyboard attached while capture is read-only. Native
+/// edits are drained without replay until the draft enters Review.
+pub fn publish_input_placeholder(ui: &mut Ui, id: Id) {
+    let rect = ui.available_rect_before_wrap();
+    let response = ui.interact(rect, id, Sense::focusable_noninteractive());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Dictation capture")
+    });
+    response.request_focus();
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(published_field_id().with("current"), id);
+        data.insert_temp(
+            published_field_id(),
+            festerm_ios_window::FieldDocument {
+                field: id.value(),
+                text: String::new(),
+                selection: 0..0,
+                carets: vec![rect.left()],
+                top: rect.top(),
+                bottom: rect.bottom(),
+                rows: Vec::new(),
+                multiline: true,
+                secure: false,
+            },
+        );
+    });
+    ui.output_mut(|output| {
+        output.ime = Some(egui::output::IMEOutput {
+            purpose: egui::IMEPurpose::Normal,
+            rect,
+            cursor_rect: rect,
+            should_interrupt_composition: false,
+        })
+    });
+}
 /// The focused form field this frame, for the native keyboard to edit.
 pub fn take_field_document(ctx: &egui::Context) -> Option<festerm_ios_window::FieldDocument> {
     ctx.data_mut(|data| {

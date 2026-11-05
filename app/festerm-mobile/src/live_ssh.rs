@@ -123,6 +123,10 @@ pub(super) fn taken_over_fixture() -> LiveSsh {
 }
 
 impl LiveSsh {
+    pub(super) fn input_destination(&self) -> Option<std::sync::Weak<dyn Session>> {
+        self.session.as_ref().map(Arc::downgrade)
+    }
+
     /// Wraps an attached Dev Tunnel session. The host has already approved the
     /// adoption, so input is accepted at once.
     pub(super) fn from_tunnel(
@@ -1167,6 +1171,30 @@ mod tests {
         assert_eq!(*active.shutdowns.lock().unwrap(), 1);
         assert_eq!(*parked.shutdowns.lock().unwrap(), 1);
         assert!(!lifecycle.get().active);
+    }
+
+    #[test]
+    fn dictation_refuses_a_replacement_transport_in_the_same_tab() {
+        let lifecycle = std::rc::Rc::new(std::cell::Cell::new(crate::Lifecycle {
+            active: true,
+            ..Default::default()
+        }));
+        let mut app = crate::MobileApp::new_terminal(lifecycle);
+        let first = Arc::new(FakeSession::default());
+        *app.sink.live.connection.borrow_mut() = Some(connection(first.clone()));
+        app.begin_dictation(&egui::Context::default());
+        app.dictation.as_ref().unwrap().with_text(|draft| {
+            draft.phase = festerm_ios_window::DictationPhase::Review;
+            draft.text = "must not replay".to_owned();
+        });
+        let original_tab = app.active_tab;
+        let replacement = Arc::new(FakeSession::default());
+        *app.sink.live.connection.borrow_mut() = Some(connection(replacement.clone()));
+        assert_eq!(app.active_tab, original_tab);
+        assert!(!app.insert_dictation());
+        assert!(!app.dictation_open());
+        assert!(first.input.lock().unwrap().is_empty());
+        assert!(replacement.input.lock().unwrap().is_empty());
     }
 
     #[test]

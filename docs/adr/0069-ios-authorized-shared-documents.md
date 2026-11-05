@@ -124,6 +124,15 @@ No merge or release is authorized by this decision.
 
 ## Validation impact
 
+The November 5 workflow update also covers the existing keyboard preference
+across source/draft fields, the compact shared composer, exact target refusal,
+one-edit dictation undo, Sessions-owned Browse, explicit tab menus and
+receipt-bound Save/Discard/Cancel. The icon toolbar keeps five primary actions
+on one 44-point row; no Edit/Preview Split is added. Preview soft breaks now
+flow at display time without changing canonical source/search spans; tables
+and code have independent horizontal overflow. Actual native selection/copy
+and touch scrolling remain device gates, not headless acceptance.
+
 `MOB-08` covers shared mobile documents, authorized sources, independent
 views, cross-view undo, guarded transactions, conflicts, saves and close.
 The same change must update `docs/gui-action-graph.md`,
@@ -155,9 +164,24 @@ selection/history across mode changes, Contents navigation and view switching,
 external refresh invalidation and absence of terminal input. The opt-in gallery
 adds Preview and Contents at all four viewports; simulated occlusion remains
 non-native evidence. Source syntax/line numbers, Find/Replace, local copy/Save As
-and shared document dictation are still subsequent work.
+remain subsequent work. The P1–P4 follow-up wires shared document dictation
+under ADR 0068 and the same exact registry-target guards.
 Mode-switch regression also verifies restored source focus/native input metadata.
 Wide Preview uses only its measured Contents rail; any compact sheet is dismissed
 when the actual reading viewport becomes Wide, with no duplicate sheet/button.
 Contents heading navigation also preserves minimum 44-point touch targets,
 covered by actual-widget geometry assertions.
+Preview's long-press context menu offers Copy and Select All without entering
+an editable/native-keyboard surface. Copy uses validated current preview-label
+ranges or the explicitly selected complete plain rendering, never Markdown
+syntax or another view's selection. Replacing the projection clears selection.
+The opt-in egui label-selection seam preserves an existing range through a
+primary-touch context gesture; ordinary callers retain their selection policy.
+Projection replacement also clears the renderer's label selection, not only
+the workspace's Select All flag.
+Tests: `preview_touch_menu_selects_and_copies_all_rendered_text_without_markdown`,
+`preview_partial_selection_survives_touch_copy_but_not_projection_replacement`,
+`preview_code_blocks_scroll_independently_inside_the_viewport`,
+`dirty_close_requires_the_matching_successful_save_receipt_and_cancel_clears_intent`,
+`mic_transition_commits_same_frame_native_text_before_binding_or_resuming`,
+`document_dictation_insert_hands_off_ime_without_replaying_draft_events`.

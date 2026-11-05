@@ -16,6 +16,37 @@ use festerm_mobile_docs::{
 use super::model::{SurfaceKind, SurfaceState, SurfaceSummary};
 use super::theme::{color, space, type_scale};
 use super::widgets::{self, ButtonKind};
+use festerm_ui_egui::icon::{self, Icon};
+
+fn document_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    icon: Icon,
+    enabled: bool,
+    selected: bool,
+) -> egui::Response {
+    ui.add_enabled_ui(enabled, |ui| {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), egui::Sense::CLICK);
+        let visuals = ui.style().interact(&response);
+        ui.painter().rect_filled(
+            rect,
+            6,
+            if selected {
+                ui.visuals().selection.bg_fill
+            } else {
+                visuals.bg_fill
+            },
+        );
+        icon::paint(
+            ui.painter(),
+            icon,
+            rect.shrink(12.0),
+            visuals.fg_stroke.color,
+        );
+        widgets::labelled(response, label, ui.is_enabled()).on_hover_text(label)
+    })
+    .inner
+}
 
 struct Source {
     file: DocumentFile,
@@ -50,6 +81,7 @@ pub(super) struct DocumentHost {
     operation: u64,
     pub notice: Option<String>,
     close: Option<ViewId>,
+    save_close: Option<(ViewId, u64)>,
     close_requested: Option<ViewId>,
     compare: Option<EditTarget>,
     contents: Option<(ViewId, u64)>,
@@ -58,6 +90,59 @@ pub(super) struct DocumentHost {
 }
 
 impl DocumentHost {
+    pub fn source_field(&self) -> Option<egui::Id> {
+        let view = self.active?;
+        let entry = self.registry.view(view).ok()?;
+        (!self.modal_open()
+            && self
+                .views
+                .iter()
+                .any(|entry| entry.id == view && !entry.previewing)
+            && entry.available()
+            && entry.writable())
+        .then(|| body_id(view))
+    }
+
+    pub fn dictation_target(&self, ctx: &egui::Context) -> Result<EditTarget, DocumentError> {
+        let field = self.source_field().ok_or(DocumentError::ReadOnly)?;
+        let captured = ctx
+            .data(|data| data.get_temp::<EditTarget>(field.with("rendered-target")))
+            .ok_or(DocumentError::InvalidSelection)?;
+        let current = self
+            .registry
+            .target(captured.view, captured.selection.clone())?;
+        if current != captured {
+            return Err(DocumentError::Stale);
+        }
+        Ok(current)
+    }
+
+    pub fn insert_dictation(
+        &mut self,
+        ctx: &egui::Context,
+        captured: &EditTarget,
+        text: &str,
+    ) -> Result<(), DocumentError> {
+        let current = self.dictation_target(ctx)?;
+        let previous_len = self.registry.view(captured.view)?.text().text().len();
+        self.registry.replace(captured, &current, text)?;
+        let updated = self.registry.view(captured.view)?.text().text();
+        let inserted_len = updated.len() - (previous_len - captured.selection.len());
+        let caret = updated[..captured.selection.start + inserted_len]
+            .chars()
+            .count();
+        let id = body_id(captured.view);
+        let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(caret),
+            )));
+        state.store(ctx, id);
+        self.focus_source = Some(captured.view);
+        Ok(())
+    }
+
     pub fn modal_open(&self) -> bool {
         self.close.is_some()
             || self.close_requested.is_some()
@@ -404,8 +489,20 @@ impl DocumentHost {
                 self.registry
                     .finish_save(&ticket, SourceVersion(version))
                     .map_err(|error| error.message())?;
+                if let Some((view, pending)) = self.save_close {
+                    if pending == operation && self.registry.document_for(view) == Ok(id) {
+                        self.save_close = None;
+                        self.close_requested = Some(view);
+                    }
+                }
             }
             DocumentFileEvent::SaveFailed { operation, error } => {
+                if self
+                    .save_close
+                    .is_some_and(|(_, pending)| pending == operation)
+                {
+                    self.save_close = None;
+                }
                 let ticket = self.take_save(id, operation)?;
                 self.registry
                     .fail_save(&ticket)
@@ -514,7 +611,13 @@ impl DocumentHost {
         match self.registry.close(view, discard) {
             Ok(CloseOutcome::NeedsConfirmation) => self.close = Some(view),
             Ok(CloseOutcome::Closed { released }) => {
+                if self.save_close.is_some_and(|(owner, _)| owner == view) {
+                    self.save_close = None;
+                }
                 widgets::forget_local_text_edit(ctx, body_id(view));
+                ctx.data_mut(|data| {
+                    data.remove::<EditTarget>(body_id(view).with("rendered-target"))
+                });
                 self.views.retain(|entry| entry.id != view);
                 if let Some(id) = released {
                     self.sources.remove(&id);
@@ -563,7 +666,7 @@ impl DocumentHost {
 
     fn show_actions(&mut self, ui: &mut egui::Ui, view: ViewId) -> bool {
         let mut acted = false;
-        ui.horizontal_wrapped(|ui| {
+        ui.horizontal(|ui| {
             let writable = self.registry.view(view).is_ok_and(|entry| entry.writable());
             let can_save = self.registry.document_for(view).is_ok_and(|id| {
                 !self.refresh.contains(&id)
@@ -578,17 +681,26 @@ impl DocumentHost {
                             && entry.conflict().is_none_or(|change| change.kept_edits())
                     })
             });
-            let size = egui::vec2(80.0, space::BUTTON_HEIGHT);
-            if widgets::button_sized(ui, ButtonKind::Primary, "Save", can_save, size).clicked() {
+            if document_button(ui, "Save", Icon::Save, can_save, false).clicked() {
                 self.save(view);
                 acted = true;
             }
-            if widgets::button_sized(ui, ButtonKind::Secondary, "Undo", writable, size).clicked() {
+            let undo = writable
+                && self
+                    .registry
+                    .view(view)
+                    .is_ok_and(|entry| entry.text().can_undo());
+            let redo = writable
+                && self
+                    .registry
+                    .view(view)
+                    .is_ok_and(|entry| entry.text().can_redo());
+            if document_button(ui, "Undo", Icon::Undo, undo, false).clicked() {
                 let result = self.registry.undo(view).map(|_| ());
                 self.record(result);
                 acted = true;
             }
-            if widgets::button_sized(ui, ButtonKind::Secondary, "Redo", writable, size).clicked() {
+            if document_button(ui, "Redo", Icon::Redo, redo, false).clicked() {
                 let result = self.registry.redo(view).map(|_| ());
                 self.record(result);
                 acted = true;
@@ -597,16 +709,12 @@ impl DocumentHost {
         acted
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, compact: bool) {
+    pub fn show(&mut self, ui: &mut egui::Ui, composer: bool) {
         if let Some(notice) = &self.notice {
             ui.add(egui::Label::new(egui::RichText::new(notice).color(color::DANGER)).wrap());
         }
         let Some(view) = self.active else {
             widgets::screen_title(ui, "Documents", "Local text and Markdown");
-            widgets::footnote(
-                ui,
-                "Open a file in place through Files. Your terminal sessions remain independent.",
-            );
             if widgets::button(
                 ui,
                 ButtonKind::Primary,
@@ -631,28 +739,34 @@ impl DocumentHost {
             }
             return;
         };
-        if !compact {
-            self.show_actions(ui, view);
-            self.show_modes(ui, view);
-        }
-        if let Ok(entry) = self.registry.view(view) {
-            ui.small(format!(
-                "{} · {}",
-                entry.origin().file_name(),
-                if !entry.available() {
-                    "Access unavailable — reopen through Files"
-                } else if entry.conflict().is_some() {
-                    "Changed outside fesTerm — edits preserved"
-                } else if !entry.writable() {
-                    "Read-only"
-                } else if entry.saving() {
-                    "Saving…"
-                } else if entry.dirty() {
-                    "Unsaved changes"
+        if !composer {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = if ui.available_width() < 300.0 {
+                    0.0
                 } else {
-                    "Saved"
-                }
-            ));
+                    4.0
+                };
+                self.show_actions(ui, view);
+                self.show_modes(ui, view);
+            });
+        }
+        if let Some(entry) = self.registry.view(view).ok().filter(|_| !composer) {
+            let status = if !entry.available() {
+                Some("Access unavailable — reopen through Files")
+            } else if entry.conflict().is_some() {
+                Some("Changed outside fesTerm — edits preserved")
+            } else if !entry.writable() {
+                Some("Read-only")
+            } else if entry.saving() {
+                Some("Saving…")
+            } else if entry.dirty() {
+                Some("Unsaved changes")
+            } else {
+                None
+            };
+            if let Some(status) = status {
+                ui.small(status);
+            }
             if entry.conflict().is_some()
                 && widgets::button(ui, ButtonKind::Secondary, "Compare / resolve", true).clicked()
             {
@@ -700,15 +814,20 @@ impl DocumentHost {
         let contents_ready = self.views[index].preview_revision.is_some()
             && self.views[index].preview_revision == current;
         let mut acted = false;
-        ui.horizontal_wrapped(|ui| {
+        ui.horizontal(|ui| {
             for (label, previewing) in [("Edit", false), ("Preview", true)] {
-                let kind = if self.views[index].previewing == previewing {
-                    ButtonKind::Primary
-                } else {
-                    ButtonKind::Secondary
-                };
-                if widgets::button_sized(ui, kind, label, enabled, egui::vec2(96.0, space::TOUCH))
-                    .clicked()
+                if document_button(
+                    ui,
+                    label,
+                    if previewing {
+                        Icon::RenderedView
+                    } else {
+                        Icon::SourceView
+                    },
+                    enabled,
+                    self.views[index].previewing == previewing,
+                )
+                .clicked()
                 {
                     self.views[index].previewing = previewing;
                     widgets::blur_local_text_edit(ui.ctx(), body_id(view));
@@ -718,12 +837,13 @@ impl DocumentHost {
             }
             if self.views[index].previewing
                 && !self.views[index].wide_preview
-                && widgets::button_sized(
+                && ui.available_width() >= 44.0
+                && document_button(
                     ui,
-                    ButtonKind::Secondary,
                     "Contents",
+                    Icon::Outline,
                     enabled && contents_ready,
-                    egui::vec2(112.0, space::TOUCH),
+                    false,
                 )
                 .clicked()
             {
@@ -821,7 +941,7 @@ impl DocumentHost {
 
     fn show_source(&mut self, ui: &mut egui::Ui, view: ViewId) {
         let id = body_id(view);
-        let focus = self.focus_source.take() == Some(view);
+        let focus = ui.is_enabled() && self.focus_source.take() == Some(view);
         if ui.ctx().memory(|memory| memory.has_focus(id)) {
             let (redo, undo) = ui.input_mut(|input| {
                 let redo = input.consume_key(
@@ -855,6 +975,9 @@ impl DocumentHost {
             }
         };
         let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+        let inactive_cursor = (!ui.is_enabled())
+            .then(|| state.cursor.char_range())
+            .flatten();
         state.set_undoer(egui::util::undoer::Undoer::with_settings(
             egui::util::undoer::Settings {
                 max_undos: 1,
@@ -896,12 +1019,37 @@ impl DocumentHost {
         }
         // Never retain an independent widget history across document actions.
         let mut state = output.state;
+        if let Some(cursor) = inactive_cursor {
+            state.cursor.set_char_range(Some(cursor));
+        }
         state.set_undoer(egui::util::undoer::Undoer::with_settings(
             egui::util::undoer::Settings {
                 max_undos: 1,
                 ..Default::default()
             },
         ));
+        if let Some(range) = state.cursor.char_range() {
+            let range = range.as_sorted_char_range();
+            if let Ok(entry) = self.registry.view(view) {
+                let canonical = entry.text().text();
+                if range.end.0 <= canonical.chars().count() {
+                    let start = canonical
+                        .chars()
+                        .take(range.start.0)
+                        .map(char::len_utf8)
+                        .sum();
+                    let end = canonical
+                        .chars()
+                        .take(range.end.0)
+                        .map(char::len_utf8)
+                        .sum();
+                    if let Ok(target) = self.registry.target(view, start..end) {
+                        ui.ctx()
+                            .data_mut(|data| data.insert_temp(id.with("rendered-target"), target));
+                    }
+                }
+            }
+        }
         state.store(ui.ctx(), id);
         if output.response.lost_focus() {
             let result = self.registry.end_typing(view);
@@ -935,18 +1083,36 @@ impl DocumentHost {
         };
         let mut discard = false;
         let mut cancel = false;
+        let mut save = false;
+        let saving = self.registry.view(view).is_ok_and(|entry| entry.saving());
         let sheet = widgets::bottom_sheet(ctx, "document-dirty-close", bounds, |ui| {
             cancel |= widgets::sheet_title(ui, "Unsaved document", None);
             widgets::footnote(ui, &label);
-            ui.label("Discard unsaved changes in the last view? This cannot be undone.");
+            ui.label("Save changes before closing this view?");
+            if let Some(notice) = &self.notice {
+                ui.add(egui::Label::new(egui::RichText::new(notice).color(color::DANGER)).wrap());
+            }
+            save = widgets::button(
+                ui,
+                ButtonKind::Primary,
+                if saving { "Saving..." } else { "Save" },
+                !saving,
+            )
+            .clicked();
             discard =
-                widgets::button(ui, ButtonKind::Destructive, "Discard changes", true).clicked();
-            cancel |= widgets::button(ui, ButtonKind::Secondary, "Keep editing", true).clicked();
+                widgets::button(ui, ButtonKind::Destructive, "Discard changes", !saving).clicked();
+            cancel |= widgets::button(ui, ButtonKind::Secondary, "Cancel", true).clicked();
         });
-        if discard {
+        if save {
+            self.save(view);
+            if self.registry.view(view).is_ok_and(|entry| entry.saving()) {
+                self.save_close = Some((view, self.operation));
+            }
+        } else if discard {
             self.close_view(view, true, ctx);
         } else if cancel || sheet.dismissed {
             self.close = None;
+            self.save_close = None;
         }
     }
 }
@@ -1002,7 +1168,7 @@ impl DocumentHost {
         let sheet = widgets::bottom_sheet(ctx, "document-contents", bounds, |ui| {
             close |= widgets::sheet_title(ui, "Contents", None);
             ui.push_id(("document-contents", view.raw()), |ui| {
-                close |= preview.show_contents(ui);
+                close |= preview.show_contents(ui, false);
             });
         });
         if close || sheet.dismissed {
@@ -1131,7 +1297,6 @@ impl super::MobileApp {
         use super::{terminal_chrome, theme, Surface};
         let surfaces = self.surfaces();
         let bounds = ui.max_rect();
-        let compact = ui.available_height() < 360.0;
         let mut back = false;
         let mut chip = terminal_chrome::ChipAction::None;
         egui::Panel::top("mobile-document-header")
@@ -1158,10 +1323,23 @@ impl super::MobileApp {
                                 ui.close();
                             }
                             if let Some(view) = self.documents.active {
-                                if compact && self.documents.show_actions(ui, view) {
-                                    ui.close();
-                                }
-                                if compact && self.documents.show_modes(ui, view) {
+                                let revision = self
+                                    .documents
+                                    .registry
+                                    .view(view)
+                                    .ok()
+                                    .map(|entry| entry.text().revision());
+                                let ready = self.documents.views.iter().any(|entry| {
+                                    entry.id == view
+                                        && entry.previewing
+                                        && entry.preview_revision == revision
+                                });
+                                if ui
+                                    .add_enabled(ready, egui::Button::new("Contents"))
+                                    .clicked()
+                                {
+                                    self.documents.contents =
+                                        revision.map(|revision| (view, revision));
                                     ui.close();
                                 }
                                 if ui.button("New view of this document").clicked() {
@@ -1189,9 +1367,8 @@ impl super::MobileApp {
                 });
             });
         if back {
-            if self.documents.active.take().is_none() {
-                self.surface = Surface::Tabs;
-            }
+            self.shell.tab = super::shell::Tab::Sessions;
+            self.surface = Surface::Tabs;
             return;
         }
         match chip {
@@ -1199,10 +1376,11 @@ impl super::MobileApp {
                 self.activate_tab(id);
                 return;
             }
-            terminal_chrome::ChipAction::Close(id) => self.request_surface_close(id),
+            terminal_chrome::ChipAction::Menu(id) => self.request_tab_menu(id),
             terminal_chrome::ChipAction::All => self.shell.sessions_sheet = true,
             terminal_chrome::ChipAction::New => {
-                self.documents.active = None;
+                self.shell.tab = super::shell::Tab::Sessions;
+                self.surface = Surface::Tabs;
                 return;
             }
             terminal_chrome::ChipAction::None => {}
@@ -1216,8 +1394,11 @@ impl super::MobileApp {
                 ui.add_enabled_ui(
                     self.lifecycle.get().active
                         && !self.shell.sessions_sheet
+                        && self.tab_menu.is_none()
+                        && self.confirm_close.is_none()
+                        && (!self.dictation_owns_frame || self.dictation_source_handoff)
                         && !self.documents.modal_open(),
-                    |ui| self.documents.show(ui, compact),
+                    |ui| self.documents.show(ui, self.dictation_owns_frame),
                 );
             });
     }
