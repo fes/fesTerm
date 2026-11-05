@@ -199,7 +199,7 @@ async fn windows_direct_pipe_exchanges_sdk_frames_and_cuts_queued_output() {
     client_wake.wake();
 
     let connection = match next_event(&events, &ui_wake).await {
-        Event::Connected(connection) => connection,
+        Event::Connected { connection, .. } => connection,
         _ => panic!("expected direct connection"),
     };
     let request = json!({"jsonrpc":"2.0","method":"notifications/initialized"});

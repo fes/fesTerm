@@ -244,7 +244,10 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
                 return Ok(Step::Closed);
             }
             self.events
-                .try_send(Event::Connected(self.connection.clone()))
+                .try_send(Event::Connected {
+                    connection: self.connection.clone(),
+                    identity: None,
+                })
                 .map_err(|_| Error::Events)?;
             drop(guard);
             drop(native);
@@ -590,7 +593,7 @@ mod tests {
                 self.pump();
                 if let Ok(event) = self.events.try_recv() {
                     match event {
-                        Event::Connected(peer) => connection = Some(peer),
+                        Event::Connected { connection: peer, .. } => connection = Some(peer),
                         Event::Message { .. } => panic!("message preceded connection"),
                     }
                 }
@@ -927,7 +930,7 @@ mod tests {
         let connection = loop {
             assert_ne!(host.step().unwrap(), Step::Closed);
             client.poll(|| Ok(())).unwrap();
-            if let Ok(Event::Connected(connection)) = event_receiver.try_recv() {
+            if let Ok(Event::Connected { connection, .. }) = event_receiver.try_recv() {
                 break connection;
             }
             assert!(Instant::now() < deadline, "connection was not announced");
@@ -1421,7 +1424,7 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
             loop {
-                if let Ok(Event::Connected(connection)) = events_rx.try_recv() {
+                if let Ok(Event::Connected { connection, .. }) = events_rx.try_recv() {
                     break connection;
                 }
                 tokio::time::sleep(Duration::from_millis(1)).await;

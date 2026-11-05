@@ -1139,10 +1139,24 @@ fn automation_settings(
          Compare the public verification code from festerm_pairing_status below. \
          This code is not the direct-channel fingerprint; connecting never grants access.",
     );
+    ssh_paragraph(
+        ui,
+        "For a signed client identity, generate one key per client with fesTerm --mcp-keygen \
+         and provide it to that client's --mcp process as FESTERM_MCP_CLIENT_KEY. Keep the \
+         key private and out of command-line arguments. Without it, pairing is connection-scoped.",
+    );
     for channel in &snapshot.channels {
         ui.push_id(("automation_channel", channel.channel), |ui| {
             ui.separator();
             ui.label(format!("Client verification code: {}", channel.verification_code));
+            if let Some(fingerprint) = &channel.identity_fingerprint {
+                ui.label(format!("Authenticated client key: {fingerprint}"));
+            } else {
+                ssh_paragraph(
+                    ui,
+                    "This client has no authenticated identity; approvals remain connection-scoped.",
+                );
+            }
             if channel.approved {
                 ssh_paragraph(ui, "Observation granted for at most 5 minutes. No input or execution permission.");
                 for (target, label) in &snapshot.targets {
