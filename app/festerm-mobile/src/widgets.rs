@@ -1605,19 +1605,23 @@ pub fn take_field_document(ctx: &egui::Context) -> Option<festerm_ios_window::Fi
     })
 }
 
-pub fn forget_local_text_edit(ctx: &egui::Context, field: Id) {
+pub fn blur_local_text_edit(ctx: &egui::Context, field: Id) {
     let focused = ctx.memory(|memory| memory.has_focus(field));
     ctx.memory_mut(|memory| memory.surrender_focus(field));
     if focused {
         ctx.output_mut(|output| output.ime = None);
     }
+    if field_menu_owner(ctx) == Some(field) {
+        close_field_menu(ctx);
+    }
+}
+
+pub fn forget_local_text_edit(ctx: &egui::Context, field: Id) {
+    blur_local_text_edit(ctx, field);
     ctx.data_mut(|data| {
         data.remove::<egui::text_edit::TextEditState>(field);
         data.remove::<FieldLayout>(field.with("layout"));
     });
-    if field_menu_owner(ctx) == Some(field) {
-        close_field_menu(ctx);
-    }
 }
 
 /// A single-line form field: a sized `TextEdit` with the long-press caret

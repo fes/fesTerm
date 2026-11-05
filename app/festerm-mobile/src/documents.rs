@@ -31,6 +31,10 @@ struct Opening {
 struct View {
     tab: u64,
     id: ViewId,
+    previewing: bool,
+    preview: Option<super::workspaces::MarkdownWorkspace>,
+    preview_revision: Option<u64>,
+    wide_preview: bool,
 }
 
 #[derive(Default)]
@@ -48,11 +52,17 @@ pub(super) struct DocumentHost {
     close: Option<ViewId>,
     close_requested: Option<ViewId>,
     compare: Option<EditTarget>,
+    contents: Option<(ViewId, u64)>,
+    preview: super::document_preview::PreviewLoader,
+    focus_source: Option<ViewId>,
 }
 
 impl DocumentHost {
     pub fn modal_open(&self) -> bool {
-        self.close.is_some() || self.close_requested.is_some() || self.compare.is_some()
+        self.close.is_some()
+            || self.close_requested.is_some()
+            || self.compare.is_some()
+            || self.contents.is_some()
     }
 
     pub fn bind_picker(&mut self, picker: Option<DocumentPicker>) {
@@ -65,6 +75,9 @@ impl DocumentHost {
 
     pub fn activate(&mut self, tab: u64) -> bool {
         if let Some(view) = self.views.iter().find(|view| view.tab == tab) {
+            if self.active != Some(view.id) {
+                self.contents = None;
+            }
             self.active = Some(view.id);
             true
         } else {
@@ -283,6 +296,10 @@ impl DocumentHost {
         self.views.push(View {
             tab: *next_tab,
             id: view,
+            previewing: false,
+            preview: None,
+            preview_revision: None,
+            wide_preview: false,
         });
         *next_tab = next;
         self.active = Some(view);
@@ -502,6 +519,7 @@ impl DocumentHost {
                 if let Some(id) = released {
                     self.sources.remove(&id);
                     self.refresh.remove(&id);
+                    self.preview.forget(id);
                 }
                 if self.active == Some(view) {
                     self.active = None;
@@ -514,6 +532,9 @@ impl DocumentHost {
                 {
                     self.compare = None;
                 }
+                if self.contents.is_some_and(|(owner, _)| owner == view) {
+                    self.contents = None;
+                }
             }
             Err(error) => self.notice = Some(error.message()),
         }
@@ -523,7 +544,14 @@ impl DocumentHost {
         let result = (|| {
             let next = next_tab.checked_add(1).ok_or(DocumentError::Capacity)?;
             let id = self.registry.duplicate(view)?;
-            self.views.push(View { tab: *next_tab, id });
+            self.views.push(View {
+                tab: *next_tab,
+                id,
+                previewing: false,
+                preview: None,
+                preview_revision: None,
+                wide_preview: false,
+            });
             *next_tab = next;
             self.active = Some(id);
             Ok::<_, DocumentError>(())
@@ -605,6 +633,7 @@ impl DocumentHost {
         };
         if !compact {
             self.show_actions(ui, view);
+            self.show_modes(ui, view);
         }
         if let Ok(entry) = self.registry.view(view) {
             ui.small(format!(
@@ -633,7 +662,155 @@ impl DocumentHost {
                 }
             }
         }
-        self.show_source(ui, view);
+        if self
+            .views
+            .iter()
+            .any(|entry| entry.id == view && entry.previewing)
+        {
+            self.show_preview(ui, view);
+        } else {
+            self.show_source(ui, view);
+        }
+    }
+
+    fn show_modes(&mut self, ui: &mut egui::Ui, view: ViewId) -> bool {
+        let markdown = self.registry.view(view).is_ok_and(|entry| {
+            entry
+                .origin()
+                .file_name()
+                .rsplit_once('.')
+                .is_some_and(|(_, extension)| {
+                    ["md", "markdown", "mdown", "mkd"]
+                        .iter()
+                        .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+                })
+        });
+        if !markdown {
+            return false;
+        }
+        let Some(index) = self.views.iter().position(|entry| entry.id == view) else {
+            return false;
+        };
+        let enabled = !self.modal_open();
+        let current = self
+            .registry
+            .view(view)
+            .ok()
+            .map(|entry| entry.text().revision());
+        let contents_ready = self.views[index].preview_revision.is_some()
+            && self.views[index].preview_revision == current;
+        let mut acted = false;
+        ui.horizontal_wrapped(|ui| {
+            for (label, previewing) in [("Edit", false), ("Preview", true)] {
+                let kind = if self.views[index].previewing == previewing {
+                    ButtonKind::Primary
+                } else {
+                    ButtonKind::Secondary
+                };
+                if widgets::button_sized(ui, kind, label, enabled, egui::vec2(96.0, space::TOUCH))
+                    .clicked()
+                {
+                    self.views[index].previewing = previewing;
+                    widgets::blur_local_text_edit(ui.ctx(), body_id(view));
+                    self.focus_source = (!previewing).then_some(view);
+                    acted = true;
+                }
+            }
+            if self.views[index].previewing
+                && !self.views[index].wide_preview
+                && widgets::button_sized(
+                    ui,
+                    ButtonKind::Secondary,
+                    "Contents",
+                    enabled && contents_ready,
+                    egui::vec2(112.0, space::TOUCH),
+                )
+                .clicked()
+            {
+                self.contents = current.map(|revision| (view, revision));
+                acted = true;
+            }
+        });
+        acted
+    }
+
+    fn show_preview(&mut self, ui: &mut egui::Ui, view: ViewId) {
+        let result = self
+            .registry
+            .document_for(view)
+            .map_err(|error| error.message())
+            .and_then(|id| {
+                let entry = self.registry.get(id).map_err(|error| error.message())?;
+                self.preview.document(id, entry, ui.ctx())
+            });
+        match result {
+            Ok(Some(document)) => {
+                let id = self
+                    .registry
+                    .document_for(view)
+                    .expect("live preview document");
+                let revision = self
+                    .registry
+                    .view(view)
+                    .expect("live preview view")
+                    .text()
+                    .revision();
+                for entry in &mut self.views {
+                    if self.registry.document_for(entry.id).ok() == Some(id) {
+                        if let Some(preview) = &mut entry.preview {
+                            preview.update_shared(document.clone());
+                            entry.preview_revision = Some(revision);
+                        }
+                    }
+                }
+                let Some(entry) = self.views.iter_mut().find(|entry| entry.id == view) else {
+                    return;
+                };
+                if let Some(preview) = &mut entry.preview {
+                    preview.update_shared(document);
+                } else {
+                    let name = self
+                        .registry
+                        .view(view)
+                        .expect("live preview view")
+                        .origin()
+                        .file_name();
+                    entry.preview = Some(super::workspaces::MarkdownWorkspace::from_shared(
+                        name,
+                        "Local document",
+                        document,
+                    ));
+                }
+                entry.preview_revision = Some(revision);
+                let wide = super::workspaces::LayoutTier::for_size(ui.available_size())
+                    == super::workspaces::LayoutTier::Wide;
+                if entry.wide_preview != wide {
+                    entry.wide_preview = wide;
+                    ui.ctx().request_repaint();
+                }
+                ui.push_id(("document-preview", view.raw()), |ui| {
+                    entry
+                        .preview
+                        .as_mut()
+                        .expect("prepared preview")
+                        .show_projection(ui);
+                });
+            }
+            Ok(None) => {
+                ui.spinner();
+                ui.label("Updating Markdown preview…");
+            }
+            Err(error) => {
+                ui.colored_label(color::DANGER, error);
+                widgets::footnote(ui, "Your source is unchanged. Return to Edit to continue.");
+                if widgets::button(ui, ButtonKind::Secondary, "Retry preview", true).clicked() {
+                    if let Ok(id) = self.registry.document_for(view) {
+                        self.preview.forget(id);
+                        ui.ctx().request_repaint();
+                    }
+                }
+            }
+        }
     }
 
     fn record(&mut self, result: Result<(), DocumentError>) {
@@ -644,6 +821,7 @@ impl DocumentHost {
 
     fn show_source(&mut self, ui: &mut egui::Ui, view: ViewId) {
         let id = body_id(view);
+        let focus = self.focus_source.take() == Some(view);
         if ui.ctx().memory(|memory| memory.has_focus(id)) {
             let (redo, undo) = ui.input_mut(|input| {
                 let redo = input.consume_key(
@@ -708,6 +886,10 @@ impl DocumentHost {
                 )
             })
             .inner;
+        if focus && writable {
+            output.response.request_focus();
+            ui.ctx().request_repaint();
+        }
         if output.response.changed() {
             let result = self.registry.sync(&target, &text).map(|_| ());
             self.record(result);
@@ -727,12 +909,21 @@ impl DocumentHost {
         }
     }
 
-    pub fn show_close(&mut self, ctx: &egui::Context, bounds: egui::Rect) {
+    pub fn show_sheets(
+        &mut self,
+        ctx: &egui::Context,
+        bounds: egui::Rect,
+        documents_visible: bool,
+    ) {
+        if !documents_visible {
+            self.contents = None;
+        }
         if let Some(view) = self.close_requested.take() {
             self.close_view(view, false, ctx);
         }
         let Some(view) = self.close else {
             self.show_compare(ctx, bounds);
+            self.show_contents(ctx, bounds);
             return;
         };
         let label = match self.registry.view(view) {
@@ -761,6 +952,64 @@ impl DocumentHost {
 }
 
 impl DocumentHost {
+    fn show_contents(&mut self, ctx: &egui::Context, bounds: egui::Rect) {
+        let Some((view, revision)) = self.contents else {
+            return;
+        };
+        if self.active != Some(view) {
+            self.contents = None;
+            ctx.request_repaint();
+            return;
+        }
+        if self
+            .views
+            .iter()
+            .any(|entry| entry.id == view && entry.wide_preview)
+        {
+            self.contents = None;
+            ctx.request_repaint();
+            return;
+        }
+        let current = self
+            .registry
+            .view(view)
+            .ok()
+            .map(|entry| entry.text().revision());
+        if current != Some(revision)
+            || self
+                .views
+                .iter()
+                .find(|entry| entry.id == view)
+                .is_none_or(|entry| !entry.previewing || entry.preview_revision != Some(revision))
+        {
+            self.contents = None;
+            self.notice =
+                Some("Preview changed. Reopen Contents after it finishes updating.".to_owned());
+            return;
+        }
+        let Some(preview) = self
+            .views
+            .iter_mut()
+            .find(|entry| entry.id == view)
+            .and_then(|entry| entry.preview.as_mut())
+        else {
+            self.contents = None;
+            self.notice =
+                Some("Preview is still updating. Open Contents after it finishes.".to_owned());
+            return;
+        };
+        let mut close = false;
+        let sheet = widgets::bottom_sheet(ctx, "document-contents", bounds, |ui| {
+            close |= widgets::sheet_title(ui, "Contents", None);
+            ui.push_id(("document-contents", view.raw()), |ui| {
+                close |= preview.show_contents(ui);
+            });
+        });
+        if close || sheet.dismissed {
+            self.contents = None;
+        }
+    }
+
     fn resolve(&mut self, target: &EditTarget, keep: bool) -> Result<(), DocumentError> {
         if self
             .registry
@@ -881,6 +1130,7 @@ impl super::MobileApp {
     pub(super) fn show_documents(&mut self, ui: &mut egui::Ui) {
         use super::{terminal_chrome, theme, Surface};
         let surfaces = self.surfaces();
+        let bounds = ui.max_rect();
         let compact = ui.available_height() < 360.0;
         let mut back = false;
         let mut chip = terminal_chrome::ChipAction::None;
@@ -899,36 +1149,43 @@ impl super::MobileApp {
                 let header = terminal_chrome::header(ui, center);
                 back = header.back;
                 chip = header.chip;
-                egui::Popup::menu(&header.more).show(|ui| {
-                    if ui.button("Browse in Files").clicked() {
-                        self.documents.browse();
-                        ui.close();
-                    }
-                    if let Some(view) = self.documents.active {
-                        if compact && self.documents.show_actions(ui, view) {
-                            ui.close();
-                        }
-                        if ui.button("New view of this document").clicked() {
-                            self.documents.duplicate(view, &mut self.next_tab);
-                            ui.close();
-                        }
-                        if ui.button("Refresh source").clicked() {
-                            self.documents.refresh_active();
-                            ui.close();
-                        }
-                        if ui.button("Close document view").clicked() {
-                            let tab = self
-                                .documents
-                                .views
-                                .iter()
-                                .find(|entry| entry.id == view)
-                                .map(|entry| entry.tab);
-                            if let Some(tab) = tab {
-                                self.documents.close_tab(tab, ui.ctx());
+                egui::Popup::menu(&header.more).width(280.0).show(|ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height((bounds.height() - 88.0).max(0.0))
+                        .show(ui, |ui| {
+                            if ui.button("Browse in Files").clicked() {
+                                self.documents.browse();
+                                ui.close();
                             }
-                            ui.close();
-                        }
-                    }
+                            if let Some(view) = self.documents.active {
+                                if compact && self.documents.show_actions(ui, view) {
+                                    ui.close();
+                                }
+                                if compact && self.documents.show_modes(ui, view) {
+                                    ui.close();
+                                }
+                                if ui.button("New view of this document").clicked() {
+                                    self.documents.duplicate(view, &mut self.next_tab);
+                                    ui.close();
+                                }
+                                if ui.button("Refresh source").clicked() {
+                                    self.documents.refresh_active();
+                                    ui.close();
+                                }
+                                if ui.button("Close document view").clicked() {
+                                    let tab = self
+                                        .documents
+                                        .views
+                                        .iter()
+                                        .find(|entry| entry.id == view)
+                                        .map(|entry| entry.tab);
+                                    if let Some(tab) = tab {
+                                        self.documents.close_tab(tab, ui.ctx());
+                                    }
+                                    ui.close();
+                                }
+                            }
+                        });
                 });
             });
         if back {

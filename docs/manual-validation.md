@@ -811,6 +811,20 @@ Failure of either capture remains a failed attempt with evidence retained.
 |---|---|---|
 | MOB-08 | iPhone/iPad Simulator and physical devices; local, iCloud and an available third-party Files provider | Once the native surface is wired, open/reopen authorized files, revoke permission, move/delete/replace a source, edit across two views and undo/redo. Verify stable accessible saved/unsaved/conflict chip markers, local keyboard ownership with no terminal input, actual safe-area/keyboard occlusion at phone portrait/landscape, iPad and narrow Split View, and no Edit/Preview split panes. Exercise generation-checked saves, concurrent outside writes, simultaneous local transfers, storage denial/full-provider failures, Compare/Reload/Keep edits/Save As and final-dirty-view close. Remote SFTP must remain read-only, with an explicit distinct local copy. Compare real captures against numbered owner mockups using a Claude visual review; classify intentional no-Split/font/keyboard differences separately from true mismatches. Verify VoiceOver, Dynamic Type, hardware/floating keyboard, non-English IME and selection/context menus. A document dictation acceptance must be one Undo and must refuse stale targets; speech/model/privacy qualification is separately MOB-07/#564. |
 
+For the dependent Markdown slice, edit a local `.md` file and switch to Preview:
+verify current content, retained source selection and one shared undo history.
+Use Contents on phone, with keyboard reservation, in short landscape and on
+iPad; verify heading navigation and dismissal when switching views or after an
+external clean reload. Check the wide Contents rail and that compact More can
+scroll to Edit/Preview/Contents above actual occlusion. Duplicate views must
+retain independent mode/scroll/navigation. Close while a projection is updating;
+reopen another file and confirm no late content appears. Exercise visible parser
+failure/retry without source mutation. Links/images must not fetch resources and
+embedded HTML must remain literal. These actual-widget flows are implemented;
+native Files, keyboard, VoiceOver and Dynamic Type evidence is still required.
+Source syntax/line numbers, Find/Replace, local copy/Save As and shared document
+dictation are not part of this Markdown projection slice.
+
 ### On-device terminal dictation evidence
 
 | ID | Environment | Required evidence |

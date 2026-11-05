@@ -3768,12 +3768,21 @@
         "conflict_reload_discards_only_after_explicit_review_and_refuses_stale_decisions",
         "document_chip_close_from_terminal_uses_dirty_guard_and_blocks_background_input",
         "short_document_view_moves_touch_sized_actions_into_more",
-        "conflict_actions_stay_above_keyboard_occlusion_at_short_and_narrow_sizes"
+        "conflict_actions_stay_above_keyboard_occlusion_at_short_and_narrow_sizes",
+        "mobile_preview_keeps_one_worker_and_rejects_cancelled_old_revisions",
+        "mobile_preview_releases_closed_document_cache_without_adopting_late_results",
+        "mobile_preview_failed_projection_retries_without_mutating_source",
+        "shared_markdown_views_reuse_projection_but_keep_navigation_independent",
+        "markdown_edit_preview_keeps_source_selection_and_shared_history",
+        "markdown_contents_is_view_local_and_never_mutates_or_sends_terminal_input",
+        "markdown_contents_navigation_and_view_switch_dismiss_the_captured_sheet",
+        "markdown_contents_scrolls_to_an_offscreen_heading_without_editing",
+        "markdown_wide_preview_uses_contents_rail_and_dismisses_old_sheet"
       ],
       "manual_scenarios": ["MOB-08"],
       "status": "partial",
       "prerequisites": [
-        "Issue #570: draft #575 provides shared/native I/O foundations; the dependent local-editor slice wires Documents/Browse in Files, registry-backed source surfaces, shared undo/redo, guarded explicit conflict decisions and dirty-close handling from either surface. Actual-widget tests include large-document geometry/cache reuse and short-height action reachability but do not qualify picker grants or multiline UIKit/IME behavior. Live Markdown, Find/Replace, local copy/Save As and the shared keyboard-region dictation composer remain subsequent slices.",
+        "Issue #570: draft #575 provides shared/native I/O foundations; draft #579 wires Documents/Browse in Files, registry-backed source surfaces, shared undo/redo, guarded conflict decisions and dirty-close handling. The dependent Markdown slice adds current-revision Edit/Preview, shared cancellable projections and view/revision-bound Contents with no resource loading. Actual-widget tests/captures do not qualify picker grants or multiline UIKit/IME behavior. Source syntax/line numbers, Find/Replace, local copy/Save As and shared keyboard-region dictation remain subsequent slices.",
         "Simulator fixture smoke passed actual native publication, 0600 permissions, stale overwrite refusal, refresh, failed-revert closed-instance refusal, fresh-instance recovery/save, superseded pending failures, unopened/in-flight-drop lease release and close/cleanup; production recovery requires fresh Files authority rather than reopening the failed instance. Portable and real OpenSSH tests cover app-owned writer exclusion. Picker grants/reacquisition, iCloud/third-party provider coordination, revocation/move/delete, file-protection metadata, storage failures, actual keyboard/safe-area/IME, physical iPhone/iPad accessibility and Claude-based real-capture visual review remain MOB-08 qualification; no Edit/Preview split panes at any viewport size.",
         "On-device speech availability and privacy remain the separate MOB-07/#564 gate; online recognition remains deferred in #567."
       ]
