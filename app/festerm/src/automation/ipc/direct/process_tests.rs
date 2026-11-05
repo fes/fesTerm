@@ -1,5 +1,7 @@
 //! Separate-process interoperability with test-only comparison and approval.
 
+mod controller;
+
 use super::{owner, secure_transport, tests, Error, PeerContext, QualifiedBootstrap, Wake};
 use festerm_automation_mcp::secure_transport::MAX_FRAME_DURATION;
 use festerm_automation_mcp_client::DirectClientTransport;
@@ -25,20 +27,61 @@ use tokio::{
 };
 
 const CHILD_SOCKET: &str = "FESTERM_DIRECT_SDK_PROCESS_TEST_SOCKET";
-const TEST_NAME: &str =
-    "automation::ipc::direct::process_tests::sdk_observation_crosses_process_boundary";
-const TEST_TIMEOUT: Duration = Duration::from_secs(20);
+const TEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+type ControlReader = tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>;
+type ControlWriter = tokio::net::unix::OwnedWriteHalf;
+
+#[derive(Clone, Copy)]
+enum Scenario {
+    Observation,
+    Controller,
+}
+
+impl Scenario {
+    fn test_name(self) -> &'static str {
+        match self {
+            Self::Observation => {
+                "automation::ipc::direct::process_tests::sdk_observation_crosses_process_boundary"
+            }
+            Self::Controller => {
+                "automation::ipc::direct::process_tests::sdk_controller_crosses_process_boundary"
+            }
+        }
+    }
+
+    fn channel(self) -> u64 {
+        match self {
+            Self::Observation => 17,
+            Self::Controller => 1,
+        }
+    }
+}
+
+enum HostScenario {
+    Observation(crate::tabs::TabId),
+    Controller(controller::HostState),
+}
 
 #[tokio::test(flavor = "current_thread")]
 async fn sdk_observation_crosses_process_boundary() {
+    run_scenario(Scenario::Observation).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sdk_controller_crosses_process_boundary() {
+    run_scenario(Scenario::Controller).await;
+}
+
+async fn run_scenario(scenario: Scenario) {
     if let Some(path) = std::env::var_os(CHILD_SOCKET) {
-        tokio::time::timeout(TEST_TIMEOUT, child_client(PathBuf::from(path)))
+        tokio::time::timeout(TEST_TIMEOUT, child_client(PathBuf::from(path), scenario))
             .await
             .expect("client process timed out");
         return;
     }
     tokio::task::LocalSet::new()
-        .run_until(parent_coordinator())
+        .run_until(parent_coordinator(scenario))
         .await;
 }
 
@@ -70,8 +113,17 @@ async fn stalled_client_is_terminated_and_reaped() {
     assert!(child.try_wait().expect("check reaped client").is_some());
 }
 
-async fn parent_coordinator() {
-    let (app, tab, mut coordinator, events) = tests::observation_fixture();
+async fn parent_coordinator(scenario: Scenario) {
+    let (app, mut coordinator, events, host_scenario) = match scenario {
+        Scenario::Observation => {
+            let (app, tab, coordinator, events) = tests::observation_fixture();
+            (app, coordinator, events, HostScenario::Observation(tab))
+        }
+        Scenario::Controller => {
+            let (app, coordinator, events, state) = controller::fixture();
+            (app, coordinator, events, HostScenario::Controller(state))
+        }
+    };
     let directory = tempfile::Builder::new()
         .prefix("mcp-process-")
         .tempdir_in("/tmp")
@@ -84,11 +136,11 @@ async fn parent_coordinator() {
     let child_control: OwnedFd = child_control.into();
     let mut output = tempfile::tempfile().unwrap();
     let mut child = tokio::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", TEST_NAME, "--nocapture"])
+        .args(["--exact", scenario.test_name(), "--nocapture"])
         .env(CHILD_SOCKET, &path)
-        .stdin(Stdio::null())
+        .stdin(Stdio::from(child_control))
         .stdout(Stdio::from(output.try_clone().unwrap()))
-        .stderr(Stdio::from(child_control))
+        .stderr(Stdio::from(output.try_clone().unwrap()))
         .kill_on_drop(true)
         .spawn()
         .expect("spawn SDK client process");
@@ -115,7 +167,7 @@ async fn parent_coordinator() {
         },
         PeerContext {
             bootstrap: QualifiedBootstrap::synthetic(),
-            key: 17,
+            key: scenario.channel(),
             events,
             wake_ui: Arc::new(|| {}),
             stop: stop.clone(),
@@ -160,26 +212,13 @@ async fn parent_coordinator() {
         *native.decision.lock().unwrap() = Some(client_code.as_bytes().try_into().unwrap());
         exchange_wake.notify();
 
-        let context = eframe::egui::Context::default();
-        let mut approved = false;
-        loop {
-            coordinator.tick(&context, &[&app]);
-            tokio::select! {
-                line = lines.next_line() => {
-                    match line.unwrap().as_deref() {
-                        Some("APPROVE") if !approved => {
-                            let target = coordinator.targets[&tab.chip_id()].reference;
-                            super::super::super::tests::approve_for_test(
-                                &mut coordinator, 17, vec![target],
-                            ).unwrap();
-                            approved = true;
-                            write.write_all(b"APPROVED\n").await.unwrap();
-                        }
-                        Some("DONE") if approved => break,
-                        other => panic!("unexpected test control message: {other:?}"),
-                    }
-                }
-                _ = tokio::time::sleep(Duration::from_millis(1)) => {}
+        let mut app = app;
+        match host_scenario {
+            HostScenario::Observation(tab) => {
+                observation_host(&mut coordinator, &app, tab, &mut lines, &mut write).await;
+            }
+            HostScenario::Controller(state) => {
+                controller::host(&mut coordinator, &mut app, state, &mut lines, &mut write).await;
             }
         }
         (coordinator, app)
@@ -210,6 +249,10 @@ async fn parent_coordinator() {
                 "exchange task panicked: {cancelled}"
             );
         }
+        output.rewind().unwrap();
+        let mut child_output = String::new();
+        output.read_to_string(&mut child_output).unwrap();
+        eprintln!("SDK child output:\n{child_output}");
         match exchange {
             Ok(Err(error)) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
             Ok(Err(error)) => panic!("exchange task was interrupted: {error}"),
@@ -245,8 +288,40 @@ async fn parent_coordinator() {
     assert_eq!(host_status.wait().await, result);
 }
 
-async fn child_client(path: PathBuf) {
-    let control_fd = std::io::stderr().as_fd().try_clone_to_owned().unwrap();
+async fn observation_host(
+    coordinator: &mut super::super::super::Coordinator,
+    app: &super::super::super::FesTermApp,
+    tab: crate::tabs::TabId,
+    lines: &mut ControlReader,
+    write: &mut ControlWriter,
+) {
+    let context = eframe::egui::Context::default();
+    let mut approved = false;
+    loop {
+        coordinator.tick(&context, &[app]);
+        tokio::select! {
+            line = lines.next_line() => {
+                match line.unwrap().as_deref() {
+                    Some("APPROVE") if !approved => {
+                        let target = coordinator.targets[&tab.chip_id()].reference;
+                        super::super::super::tests::approve_for_test(
+                            coordinator, Scenario::Observation.channel(), vec![target],
+                        ).unwrap();
+                        approved = true;
+                        write.write_all(b"APPROVED\n").await.unwrap();
+                    }
+                    Some("DONE") if approved => break,
+                    other => panic!("unexpected test control message: {other:?}"),
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_millis(1)) => {}
+        }
+    }
+    write.write_all(b"FINISHED\n").await.unwrap();
+}
+
+async fn child_client(path: PathBuf, scenario: Scenario) {
+    let control_fd = std::io::stdin().as_fd().try_clone_to_owned().unwrap();
     let control = StdUnixStream::from(control_fd);
     control.set_nonblocking(true).unwrap();
     let control = UnixStream::from_std(control).unwrap();
@@ -286,6 +361,24 @@ async fn child_client(path: PathBuf) {
     let mut config = ClientConfig::default();
     config.protocol_version = ProtocolVersion::V_2025_11_25;
     let client = config.serve(transport).await.unwrap();
+    match scenario {
+        Scenario::Observation => observation_client(client.peer(), &mut lines, &mut write).await,
+        Scenario::Controller => controller::client(client.peer(), &mut lines, &mut write).await,
+    }
+    write.write_all(b"DONE\n").await.unwrap();
+    assert_eq!(
+        lines.next_line().await.unwrap().as_deref(),
+        Some("FINISHED")
+    );
+    client.cancel().await.unwrap();
+    assert_eq!(status.wait().await, Ok(()));
+}
+
+async fn observation_client(
+    client: &rmcp::service::Peer<rmcp::RoleClient>,
+    lines: &mut ControlReader,
+    write: &mut ControlWriter,
+) {
     let tools = client.list_all_tools().await.unwrap();
     assert!(tools
         .iter()
@@ -328,7 +421,4 @@ async fn child_client(path: PathBuf) {
         .as_str()
         .unwrap()
         .starts_with("approved source"));
-    write.write_all(b"DONE\n").await.unwrap();
-    client.cancel().await.unwrap();
-    assert_eq!(status.wait().await, Ok(()));
 }

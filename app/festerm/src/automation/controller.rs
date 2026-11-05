@@ -2957,7 +2957,7 @@ pub(super) mod tests {
         coordinator
     }
 
-    fn fixture(apps: &[&FesTermApp]) -> Coordinator {
+    pub(in crate::automation) fn fixture(apps: &[&FesTermApp]) -> Coordinator {
         fixture_with_workspace(apps, &WorkspaceRevision::default())
     }
 
@@ -3114,7 +3114,7 @@ pub(super) mod tests {
         }
     }
 
-    fn registration_row(
+    pub(in crate::automation) fn registration_row(
         coordinator: &Coordinator,
         apps: &[&FesTermApp],
         channel: u64,
@@ -3127,7 +3127,7 @@ pub(super) mod tests {
             .expect("registration is visible")
     }
 
-    fn native(
+    pub(in crate::automation) fn native(
         coordinator: &mut Coordinator,
         apps: &[&FesTermApp],
         window: WindowId,
@@ -3152,7 +3152,7 @@ pub(super) mod tests {
         }
     }
 
-    fn review(
+    pub(in crate::automation) fn review(
         coordinator: &mut Coordinator,
         apps: &[&FesTermApp],
         window: WindowId,
@@ -3197,7 +3197,7 @@ pub(super) mod tests {
         token
     }
 
-    fn confirm(
+    pub(in crate::automation) fn confirm(
         coordinator: &mut Coordinator,
         apps: &[&FesTermApp],
         window: WindowId,
@@ -3276,7 +3276,7 @@ pub(super) mod tests {
         (coordinator, app, tab, registration, enrollment)
     }
 
-    fn metadata_command_with_retry(
+    pub(in crate::automation) fn metadata_command_with_retry(
         coordinator: &mut Coordinator,
         app: &FesTermApp,
         window: WindowId,
@@ -3293,7 +3293,7 @@ pub(super) mod tests {
         }
     }
 
-    fn metadata_review_token(
+    pub(in crate::automation) fn metadata_review_token(
         coordinator: &Coordinator,
         app: &FesTermApp,
         registration: ControllerRegistrationId,
@@ -4092,7 +4092,11 @@ pub(super) mod tests {
         )
     }
 
-    fn settle_direct_input_for_test(coordinator: &mut Coordinator, token: u64, app: &FesTermApp) {
+    pub(in crate::automation) fn settle_direct_input_for_test(
+        coordinator: &mut Coordinator,
+        token: u64,
+        app: &FesTermApp,
+    ) {
         retry_automation_busy(|| {
             let broker = coordinator.broker.as_mut().unwrap();
             let peer = coordinator.peers.get_mut(&1).unwrap();

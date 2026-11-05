@@ -7609,3 +7609,13 @@ verifies refusal before simulated approval, then approved observation, while
 keeping input out of the observation-only catalog. Its comparison and approval
 channel is test-only; this is not native identity, privacy or production
 endpoint qualification.
+
+## Separate-process controller fixture
+
+The direct SDK test also exercises the #524 controller sequence across two
+test processes: exact enrollment of identically labelled sessions, separately
+approved metadata, retirement of one association and reviewed input to the
+other test backend. It verifies admission, simulated uncertainty without
+replay, and explicit refusal of unqualified presentation with JavaScript and
+observation disabled. All native decisions remain simulated; no production
+endpoint or platform boundary is qualified.

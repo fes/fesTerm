@@ -405,6 +405,7 @@
         "enrollment_metadata_host_never_waits_for_admission",
         "enrollment_metadata_route_requires_separate_approval_and_original_liveness",
         "official_rust_client_exercises_synthetic_enrollment_metadata",
+        "sdk_controller_crosses_process_boundary",
         "enrollment_metadata_refresh_charges_only_its_bounded_projection",
         "enrollment_metadata_route_keeps_identical_labels_independent",
         "enrollment_metadata_route_scopes_colliding_handles_to_each_connection",

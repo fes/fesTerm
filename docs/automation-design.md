@@ -816,6 +816,12 @@ within one process and from a separate process using a test-only Unix listener.
 The separate process runs the test binary, and a test control channel supplies
 the comparisons and approval. Neither test qualifies process identity,
 screen-lock behavior, native UI or production end-to-end availability.
+The separate-process controller fixture also enrolls two identically labelled
+test sessions, separately approves metadata, retires one association, and
+reviews input to the other test backend with JavaScript and observation
+disabled. It distinguishes admitted from simulated unknown outcomes, never
+replays the latter and observes explicit refusal of unqualified presentation.
+Its native decisions and backend are synthetic, not platform qualification.
 
 Once bootstrap is qualified, the application binds a distinct broker principal
 to the accepted handle; neither `clientInfo`, a wire ID nor a copied code owns

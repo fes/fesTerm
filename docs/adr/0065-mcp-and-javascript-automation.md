@@ -112,9 +112,10 @@ to bypass another's restrictions.
    coordinator queue. A dormant readiness-driven owner waits for socket events,
    deadlines and explicit lifecycle wakeups, and reports cleanup on
    cancellation. SDK/coordinator tests include a separate process and a
-   test-only Unix listener, with simulated comparisons and approval; no
-   production listener or native boundary is qualified. Windows and iOS
-   feasibility remain unqualified.
+   test-only Unix listener, with simulated comparisons and approval, including
+   controller enrollment, metadata and input to a test backend. Presentation
+   remains unavailable; no production listener or native boundary is
+   qualified. Windows and iOS feasibility remain unqualified.
    Neither binding grants session access on connection. The P1 checkpoint
    exposes bounded observation only. Named, reviewed workflow invocation follows
    P2 runtime qualification and the P3 control/authorization gates; no tool
