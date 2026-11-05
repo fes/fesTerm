@@ -433,13 +433,13 @@ fn stale_refresh_requeues_without_losing_edits_or_restoring_obsolete_access() {
         .registry
         .replace(&target, &target, "typing during read\n")
         .unwrap();
-    assert!(app
-        .documents
+    app.documents
         .source_event(
             id,
-            DocumentFileEvent::Loaded(snapshot(b"outside\n", 2, false))
+            DocumentFileEvent::Loaded(snapshot(b"outside\n", 2, false)),
         )
-        .is_err());
+        .unwrap();
+    assert!(app.documents.notice.is_none());
     assert!(app.documents.refresh.contains(&id));
     assert!(!app.documents.registry.view(view).unwrap().writable());
     assert!(app
@@ -471,13 +471,14 @@ fn stale_refresh_requeues_without_losing_edits_or_restoring_obsolete_access() {
     let pending = app.documents.registry.read_ticket(view).unwrap();
     app.documents.sources.get_mut(&id).unwrap().read = Some(pending);
     app.documents.invalidate_sources();
-    assert!(app
-        .documents
+    app.documents.refresh.clear();
+    app.documents
         .source_event(
             id,
-            DocumentFileEvent::Loaded(snapshot(b"outside\n", 2, true))
+            DocumentFileEvent::Loaded(snapshot(b"outside\n", 2, true)),
         )
-        .is_err());
+        .unwrap();
+    assert!(app.documents.refresh.contains(&id));
     assert!(!app.documents.registry.view(view).unwrap().available());
     assert!(!app.documents.registry.view(view).unwrap().writable());
 }

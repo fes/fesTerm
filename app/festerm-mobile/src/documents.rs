@@ -364,6 +364,9 @@ impl DocumentHost {
                                     .set_access(id, available, false)
                                     .map_err(|error| error.message())?;
                             }
+                            // Typing or a suspension raced a routine re-read;
+                            // the queued read retries, so this is not a conflict.
+                            return Ok(());
                         }
                         return Err(error.message());
                     }
