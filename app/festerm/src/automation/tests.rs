@@ -6745,11 +6745,14 @@ fn automation_pending_completion_retires_revoked_run_and_closes_for_missing_run(
     complete_screen_without_cleanup(&mut coordinator, &app, target);
     let principal = coordinator.peers[&1].principal;
     let pending = coordinator.peers[&1].pending_completion.unwrap();
-    coordinator
-        .broker
-        .as_mut()
-        .unwrap()
-        .revoke_ordinary(principal);
+    {
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .revoke_ordinary(principal, &guard);
+    }
     retry_completion_for_test(
         coordinator.broker.as_mut().unwrap(),
         coordinator.peers.get_mut(&1).unwrap(),
