@@ -32,6 +32,19 @@ APACHE_DECLARATIONS = {
     ("russh-cryptovec", "0.62.0"): "Copyright 2016 Pierre-Étienne Meunier",
     ("russh-util", "0.52.0"): "russh contributors, https://github.com/warp-tech/russh",
 }
+# These exact published objc2-family crates (macOS-only, via notify) omit their
+# license files. Select their declared MIT option and retain upstream attribution
+# from https://github.com/madsmtm/objc2/blob/main/LICENSE-MIT.txt.
+MIT_DECLARATIONS = {
+    (name, version): "Copyright 2026 Mads Marquart; https://github.com/madsmtm/objc2"
+    for name, version in (
+        ("dispatch2", "0.3.1"),
+        ("objc2", "0.6.4"),
+        ("objc2-core-foundation", "0.3.2"),
+        ("objc2-core-services", "0.3.2"),
+        ("objc2-encode", "4.1.0"),
+    )
+}
 MIT_LICENSE = """fesTerm standalone helpers
 Source: https://github.com/fes/fesTerm
 License declaration: workspace.package.license in Cargo.toml (MIT).
@@ -119,8 +132,14 @@ def third_party_notices(metadata, version, root):
         notices.append(f"Declared license: {package.get('license') or 'see retained license file'}\n")
         if package.get("repository"):
             notices.append(f"Source repository: {package['repository']}\n")
-        if not files:
-            declaration = APACHE_DECLARATIONS.get((package["name"], package["version"]))
+        key = (package["name"], package["version"])
+        if not files and key in MIT_DECLARATIONS:
+            if package["license"] not in ("MIT", "Zlib OR Apache-2.0 OR MIT"):
+                raise ValueError(f"missing dependency license/notice: {package['name']}")
+            terms = MIT_LICENSE.split("MIT License\n", 1)[1]
+            notices.append(f"{MIT_DECLARATIONS[key]}\nLicensed under MIT.\n\n{terms}\n")
+        elif not files:
+            declaration = APACHE_DECLARATIONS.get(key)
             if not declaration or package["license"] not in (
                 "Apache-2.0", "MIT OR Apache-2.0",
             ):

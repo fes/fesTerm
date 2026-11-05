@@ -214,6 +214,24 @@ class TunnelBundleTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "missing dependency license"):
                     bundle.third_party_notices(metadata, VERSION, self.root)
 
+    def test_explicit_mit_declarations_are_pinned_not_generic_fallbacks(self):
+        shutil.rmtree(self.root / "dependency")
+        for (name, version), attribution in bundle.MIT_DECLARATIONS.items():
+            with self.subTest(name=name):
+                metadata = copy.deepcopy(self.metadata)
+                metadata["packages"][-1].update({
+                    "name": name, "version": version, "license": "Zlib OR Apache-2.0 OR MIT",
+                })
+                text = bundle.third_party_notices(metadata, VERSION, self.root).decode()
+                self.assertIn(attribution, text)
+                self.assertIn("Permission is hereby granted", text)
+                metadata["packages"][-1]["license"] = "GPL-3.0"
+                with self.assertRaisesRegex(ValueError, "missing dependency license"):
+                    bundle.third_party_notices(metadata, VERSION, self.root)
+                metadata["packages"][-1].update({"license": "MIT", "version": "999.0.0"})
+                with self.assertRaisesRegex(ValueError, "missing dependency license"):
+                    bundle.third_party_notices(metadata, VERSION, self.root)
+
     def test_dependency_license_path_traversal_and_symlinks_are_rejected(self):
         for traversal in (True, False):
             with self.subTest(traversal=traversal):
