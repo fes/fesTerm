@@ -1492,8 +1492,10 @@ impl Coordinator {
     fn enrollment_metadata_delivery_qualified(&self) -> bool {
         #[cfg(test)]
         let delivery_qualified = self.synthetic_enrollment_metadata_delivery_qualified;
+        // Metadata delivery has no qualified recipient fence; the beta keeps
+        // it off while review and reviewed input are available.
         #[cfg(not(test))]
-        let delivery_qualified = BETA_NATIVE_QUALIFIED;
+        let delivery_qualified = false;
         delivery_qualified && self.enrollment_metadata_ui_qualified()
     }
 

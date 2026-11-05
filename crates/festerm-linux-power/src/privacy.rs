@@ -16,8 +16,10 @@
 //! have no documented delivery bound, and other bus clients can emit them;
 //! they only cut admission and never restore it. This is an observed-event
 //! cut, not an atomic physical cutoff. Installation fails closed when the
-//! session cannot be resolved, is already locked or inactive, or monitoring
-//! cannot start.
+//! session cannot be resolved, is remote or not graphical (SSH, headless or
+//! a text console have no lock screen), is already locked or inactive, or
+//! monitoring cannot start. Every bus call is bounded by [`CALL_TIMEOUT`];
+//! a stalled bus is loss. Dropping the monitor never waits for the bus.
 
 use std::future::Future;
 use std::io;
@@ -35,6 +37,10 @@ use zbus::{Connection, MatchRule, MessageStream};
 /// Upper bound between property reads when no signal is delivered.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
+/// Bound on one logind call; exceeding it is treated as loss.
+pub const CALL_TIMEOUT: Duration = Duration::from_secs(2);
+/// Session types with a desktop lock screen.
+const GRAPHICAL_TYPES: [&str; 3] = ["x11", "wayland", "mir"];
 
 const LOGIND: &str = "org.freedesktop.login1";
 const MANAGER_PATH: &str = "/org/freedesktop/login1";
@@ -45,6 +51,22 @@ const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 /// Classifies the two session properties that bound privacy.
 pub(crate) const fn private(locked_hint: bool, active: bool) -> bool {
     !locked_hint && active
+}
+
+/// Whether a session is local and graphical, so a lock screen can exist.
+pub(crate) fn lockable(remote: bool, kind: &str) -> bool {
+    !remote && GRAPHICAL_TYPES.contains(&kind)
+}
+
+async fn bounded<T>(call: impl Future<Output = io::Result<T>>) -> io::Result<T> {
+    tokio::time::timeout(CALL_TIMEOUT, call)
+        .await
+        .unwrap_or_else(|_| {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "logind call timed out",
+            ))
+        })
 }
 
 struct Shared {
@@ -134,10 +156,13 @@ impl PrivacyMonitor {
 
 impl Drop for PrivacyMonitor {
     fn drop(&mut self) {
+        // Latch first so a worker still finishing a bus call cannot invoke
+        // the callback after drop. The worker cancels any in-flight call on
+        // shutdown and exits on its own; it is detached rather than joined
+        // so a wedged bus cannot block the caller.
+        self.shared.lost.store(true, Ordering::Release);
         let _ = self.shutdown.send(true);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        drop(self.thread.take());
     }
 }
 
@@ -164,8 +189,17 @@ fn run<C, F>(
             return;
         }
     };
-    runtime.block_on(async move {
-        let mut watched = match Watched::start(connect).await {
+    let mut cancelled = stop.clone();
+    let shutdown = async move {
+        while !*cancelled.borrow_and_update() {
+            if cancelled.changed().await.is_err() {
+                return;
+            }
+        }
+    };
+    let ready_on_cancel = ready.clone();
+    let monitor = async move {
+        let mut watched = match bounded(Watched::start(connect)).await {
             Ok(watched) => watched,
             Err(error) => {
                 let _ = ready.send(Err(error));
@@ -211,6 +245,17 @@ fn run<C, F>(
                 return;
             }
         }
+    };
+    runtime.block_on(async move {
+        tokio::select! {
+            () = shutdown => {
+                let _ = ready_on_cancel.try_send(Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "logind privacy monitor stopped",
+                )));
+            }
+            () = monitor => {}
+        }
     });
 }
 
@@ -230,6 +275,19 @@ impl Watched {
     {
         let connection = connect().await.map_err(other)?;
         let session = resolve_session(&connection).await?;
+        let watched_session = WatchedSession {
+            connection: &connection,
+            session: &session,
+        };
+        if !lockable(
+            watched_session.get::<bool>("Remote").await?,
+            &watched_session.get::<String>("Type").await?,
+        ) {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "logind session is remote or has no graphical lock screen",
+            ));
+        }
         let signal = |path: &str, interface: &'static str, member: &'static str| {
             MatchRule::builder()
                 .msg_type(MessageType::Signal)
@@ -257,28 +315,46 @@ impl Watched {
         })
     }
 
-    async fn property(&self, name: &str) -> io::Result<bool> {
-        let reply = self
-            .connection
-            .call_method(
-                Some(LOGIND),
-                self.session.as_str(),
-                Some(PROPERTIES),
-                "Get",
-                &(SESSION, name),
-            )
-            .await
-            .map_err(other)?;
-        let value: OwnedValue = reply.body().deserialize().map_err(other)?;
-        bool::try_from(value).map_err(|error| other(error.into()))
-    }
-
     /// Returns whether the session is currently private.
     async fn read(&self) -> io::Result<bool> {
+        let session = WatchedSession {
+            connection: &self.connection,
+            session: &self.session,
+        };
         Ok(private(
-            self.property("LockedHint").await?,
-            self.property("Active").await?,
+            session.get::<bool>("LockedHint").await?,
+            session.get::<bool>("Active").await?,
         ))
+    }
+}
+
+struct WatchedSession<'a> {
+    connection: &'a Connection,
+    session: &'a OwnedObjectPath,
+}
+
+impl WatchedSession<'_> {
+    async fn get<T>(&self, name: &str) -> io::Result<T>
+    where
+        T: TryFrom<OwnedValue>,
+        T::Error: Into<zbus::Error>,
+    {
+        bounded(async {
+            let reply = self
+                .connection
+                .call_method(
+                    Some(LOGIND),
+                    self.session.as_str(),
+                    Some(PROPERTIES),
+                    "Get",
+                    &(SESSION, name),
+                )
+                .await
+                .map_err(other)?;
+            let value: OwnedValue = reply.body().deserialize().map_err(other)?;
+            T::try_from(value).map_err(|error| other(error.into()))
+        })
+        .await
     }
 }
 
@@ -343,6 +419,8 @@ mod tests {
     struct FakeSession {
         locked: bool,
         active: bool,
+        remote: bool,
+        kind: &'static str,
     }
 
     #[zbus::interface(name = "org.freedesktop.login1.Session")]
@@ -355,6 +433,16 @@ mod tests {
         #[zbus(property)]
         fn active(&self) -> bool {
             self.active
+        }
+
+        #[zbus(property)]
+        fn remote(&self) -> bool {
+            self.remote
+        }
+
+        #[zbus(property, name = "Type")]
+        fn kind(&self) -> String {
+            self.kind.to_owned()
         }
 
         #[zbus(signal)]
@@ -370,6 +458,18 @@ mod tests {
 
     impl Fixture {
         fn start(known: bool, locked: bool, active: bool) -> Self {
+            Self::start_session(
+                known,
+                FakeSession {
+                    locked,
+                    active,
+                    remote: false,
+                    kind: "wayland",
+                },
+            )
+        }
+
+        fn start_session(known: bool, session: FakeSession) -> Self {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -387,7 +487,7 @@ mod tests {
                             .p2p()
                             .serve_at(MANAGER_PATH, FakeManager { known })
                             .unwrap()
-                            .serve_at(SESSION_PATH, FakeSession { locked, active })
+                            .serve_at(SESSION_PATH, session)
                             .unwrap()
                             .build()
                             .await
@@ -449,6 +549,35 @@ mod tests {
         assert!(private(false, true));
         assert!(!private(true, true));
         assert!(!private(false, false));
+    }
+
+    #[test]
+    fn remote_or_non_graphical_sessions_fail_closed_once() {
+        assert!(lockable(false, "x11"));
+        for (remote, kind) in [(true, "wayland"), (false, "tty"), (false, "unspecified")] {
+            let fixture = Fixture::start_session(
+                true,
+                FakeSession {
+                    locked: false,
+                    active: true,
+                    remote,
+                    kind,
+                },
+            );
+            assert!(fixture.monitor.is_err());
+            assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[test]
+    fn drop_does_not_wait_for_the_bus_or_signal_loss() {
+        let fixture = Fixture::start(true, false, true);
+        let Fixture { monitor, calls, .. } = fixture;
+        let started = std::time::Instant::now();
+        drop(monitor.unwrap());
+        assert!(started.elapsed() < CALL_TIMEOUT);
+        thread::sleep(POLL_INTERVAL * 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]

@@ -1793,6 +1793,21 @@ mod tests {
         OwnedNativeMenuState, OPEN_DOCUMENT_ERROR_CAPACITY, OPEN_DOCUMENT_REQUEST_CAPACITY,
     };
 
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn unavailable_privacy_monitor_revokes_synchronously() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let caller = std::thread::current().id();
+        let result = super::PrivacyMonitor::install(Arc::new(move || {
+            assert_eq!(std::thread::current().id(), caller);
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(result, Err(error) if error.kind() == std::io::ErrorKind::Unsupported));
+    }
+
+    #[cfg(target_os = "macos")]
     #[test]
     fn privacy_monitor_installs_or_fails_closed_once() {
         let calls = Arc::new(AtomicUsize::new(0));
