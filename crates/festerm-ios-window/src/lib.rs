@@ -7,6 +7,8 @@ pub enum KeyboardMode {
     Terminal,
     /// The system keyboard edits the published form field via `UITextInput`.
     Field,
+    /// The same text-aware client with the app-owned keyboard on screen.
+    FieldCustom,
 }
 
 mod field;

@@ -37,6 +37,9 @@ pub enum DictationPhase {
 pub struct DictationText {
     pub text: String,
     pub phase: DictationPhase,
+    /// RMS microphone level in a -60..0 dBFS display range, not recognition.
+    pub audio_level: Option<f32>,
+    prefix: String,
     pub(crate) generation: u64,
     pub(crate) permission_pending: bool,
 }
@@ -44,11 +47,21 @@ pub struct DictationText {
 impl Drop for DictationText {
     fn drop(&mut self) {
         self.text.zeroize();
+        self.prefix.zeroize();
     }
 }
 
 impl DictationText {
     pub fn insertion_error(&self) -> Option<&'static str> {
+        self.document_insertion_error().or_else(|| {
+            self.text
+                .chars()
+                .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+                .then_some("Remove line breaks and control characters before inserting.")
+        })
+    }
+
+    pub fn document_insertion_error(&self) -> Option<&'static str> {
         if self.phase != DictationPhase::Review {
             Some("Stop recording before inserting.")
         } else if self.text.trim().is_empty() {
@@ -58,9 +71,9 @@ impl DictationText {
         } else if self
             .text
             .chars()
-            .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+            .any(|c| c.is_control() && !matches!(c, '\t' | '\r' | '\n'))
         {
-            Some("Remove line breaks and control characters before inserting.")
+            Some("Remove control characters before inserting.")
         } else {
             None
         }
@@ -69,8 +82,18 @@ impl DictationText {
     pub(crate) fn cancel(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.text.zeroize();
+        self.prefix.zeroize();
+        self.audio_level = None;
         self.phase = DictationPhase::Idle;
         self.permission_pending = false;
+    }
+
+    #[cfg(any(target_os = "ios", test))]
+    pub(crate) fn capture_failed(&mut self, message: &'static str) {
+        let reviewed = zeroize::Zeroizing::new(self.prefix.clone());
+        self.cancel();
+        self.text.push_str(&reviewed);
+        self.phase = DictationPhase::Failed(message);
     }
 
     /// Stop/deadline: Listening -> Finishing. Returns whether audio must end.
@@ -78,6 +101,7 @@ impl DictationText {
         let finishing = self.phase == DictationPhase::Listening;
         if finishing {
             self.phase = DictationPhase::Finishing;
+            self.audio_level = None;
         }
         finishing
     }
@@ -100,8 +124,7 @@ impl DictationText {
         match self.phase {
             DictationPhase::Finishing => self.phase = DictationPhase::Review,
             DictationPhase::Listening => {
-                self.cancel();
-                self.phase = DictationPhase::Failed(
+                self.capture_failed(
                     "On-device recognition failed. Try again; no cloud fallback was used.",
                 );
             }
@@ -123,21 +146,41 @@ impl DictationText {
         if !self.accepts_results(generation) {
             return;
         }
+        let separator = !self.prefix.is_empty()
+            && !text.is_empty()
+            && !self.prefix.ends_with(char::is_whitespace)
+            && !text.starts_with(char::is_whitespace);
         self.text.zeroize();
-        if text.len() > MAX_DICTATION_BYTES {
-            self.phase = DictationPhase::Failed(
-                "Dictation exceeded the 4096-byte limit. Try a shorter phrase.",
-            );
+        if self.prefix.len() + text.len() + usize::from(separator) > MAX_DICTATION_BYTES {
+            self.capture_failed("Dictation exceeded the 4096-byte limit. Try a shorter phrase.");
             return;
+        }
+        self.text.push_str(&self.prefix);
+        if separator {
+            self.text.push(' ');
         }
         self.text.push_str(text);
         if final_result {
             self.phase = DictationPhase::Review;
+            self.audio_level = None;
         }
     }
 }
 
 pub(crate) type Shared = Arc<Mutex<DictationText>>;
+
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn microphone_level(samples: &[f32]) -> Option<f32> {
+    if samples.is_empty() || samples.iter().any(|sample| !sample.is_finite()) {
+        return None;
+    }
+    let power = samples
+        .iter()
+        .map(|sample| f64::from(*sample).powi(2))
+        .sum::<f64>()
+        / samples.len() as f64;
+    Some(((10.0 * power.max(1e-6).log10() + 60.0) / 60.0).clamp(0.0, 1.0) as f32)
+}
 
 /// Native capture lives at this FFI boundary; insertion policy stays in the app.
 pub struct Dictation {
@@ -169,8 +212,26 @@ impl Dictation {
     }
 
     pub fn begin(&mut self) {
+        self.start(None);
+    }
+
+    pub fn resume(&mut self) {
+        if self.phase() != DictationPhase::Review {
+            return;
+        }
+        let prefix = self.with_text(|draft| zeroize::Zeroizing::new(draft.text.clone()));
+        self.start(Some(prefix));
+    }
+
+    fn start(&mut self, prefix: Option<zeroize::Zeroizing<String>>) {
         self.cancel();
-        self.with_text(|draft| draft.phase = DictationPhase::Authorizing);
+        self.with_text(|draft| {
+            if let Some(prefix) = prefix {
+                draft.text.push_str(&prefix);
+                draft.prefix.push_str(&prefix);
+            }
+            draft.phase = DictationPhase::Authorizing;
+        });
         #[cfg(target_os = "ios")]
         if let Some(native) = &mut self.native {
             native.poll();
@@ -232,12 +293,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn microphone_meter_measures_samples_not_transcription() {
+        assert_eq!(microphone_level(&[]), None);
+        assert_eq!(microphone_level(&[f32::NAN]), None);
+        assert_eq!(microphone_level(&[0.0; 1024]), Some(0.0));
+        assert_eq!(microphone_level(&[1.0, -1.0]), Some(1.0));
+        let quiet = microphone_level(&[0.01; 16]).unwrap();
+        let louder = microphone_level(&[0.1; 16]).unwrap();
+        assert!(quiet > 0.3 && quiet < 0.34);
+        assert!(louder > quiet && louder < 1.0);
+    }
+
+    #[test]
+    fn resumed_partials_replace_only_the_new_segment_and_keep_utf8_bounds() {
+        let mut draft = listening("edited first");
+        draft.prefix = "edited first".to_owned();
+        draft.recognize(3, "new", false);
+        draft.recognize(3, "new segment", false);
+        assert_eq!(draft.text, "edited first new segment");
+        draft.recognize(3, "new segment.", true);
+        assert_eq!(draft.text, "edited first new segment.");
+        draft.phase = DictationPhase::Review;
+        draft.text = "one\n\ttwo".to_owned();
+        assert_eq!(draft.document_insertion_error(), None);
+        assert!(draft.insertion_error().is_some());
+        draft.phase = DictationPhase::Listening;
+        draft.prefix = "é".repeat(MAX_DICTATION_BYTES / 2);
+        draft.recognize(3, "overflow", false);
+        assert!(matches!(draft.phase, DictationPhase::Failed(_)));
+        assert_eq!(draft.text, "é".repeat(MAX_DICTATION_BYTES / 2));
+        draft.cancel();
+        assert!(draft.prefix.is_empty() && draft.audio_level.is_none());
+    }
+
+    #[test]
     fn dictation_requires_review_and_single_line_bounded_text() {
         let mut draft = DictationText {
             phase: DictationPhase::Listening,
             text: String::new(),
             generation: 0,
             permission_pending: false,
+            audio_level: None,
+            prefix: String::new(),
         };
         draft.text = "echo hello".to_owned();
         assert!(draft.insertion_error().is_some());
@@ -271,6 +368,8 @@ mod tests {
             text: String::new(),
             generation: 0,
             permission_pending: false,
+            audio_level: None,
+            prefix: String::new(),
         };
         draft.recognize(0, "one", false);
         draft.recognize(0, "one two", false);
@@ -298,6 +397,8 @@ mod tests {
             text: text.to_owned(),
             generation: 3,
             permission_pending: false,
+            audio_level: None,
+            prefix: String::new(),
         }
     }
 

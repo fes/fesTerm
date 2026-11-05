@@ -18,7 +18,10 @@ pub mod ui_model;
 
 pub use applock::{AppLock, SettingsError};
 pub use clock::{ManualClock, MonotonicClock, SystemClock};
-pub use locker::{AuthFailure, AuthOutcome, Availability, BiometryKind, FakeLocker, Locker};
+pub use locker::{
+    AuthFailure, AuthMethod, AuthOutcome, Authentication, Availability, BiometryKind, FakeLocker,
+    Locker,
+};
 pub use policy::{BackgroundGrace, LifecycleEvent, LockPolicy, LockSettings, LockState};
 pub use store::{LoadStatus, SettingsStore};
 

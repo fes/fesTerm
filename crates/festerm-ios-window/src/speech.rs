@@ -218,8 +218,7 @@ impl Speech {
 
     fn fail(&self, message: &'static str) {
         let mut draft = self.shared.lock().expect("dictation state poisoned");
-        draft.cancel();
-        draft.phase = DictationPhase::Failed(message);
+        draft.capture_failed(message);
         drop(draft);
         self.stop();
         (self.wake)();
@@ -355,14 +354,39 @@ impl Speech {
                 return;
             }
             let (request, state) = (capture.request.clone(), self.shared.clone());
+            let meter_frames = std::sync::atomic::AtomicUsize::new(0);
+            let wake_meter = self.wake.clone();
             let tap = RcBlock::new(
                 move |buffer: NonNull<AVAudioPCMBuffer>, _: NonNull<AVAudioTime>| {
                     let accepts_audio = {
-                        let draft = state.lock().expect("dictation state poisoned");
-                        draft.generation == generation && draft.phase == DictationPhase::Listening
+                        let mut draft = state.lock().expect("dictation state poisoned");
+                        let accepts = draft.generation == generation
+                            && draft.phase == DictationPhase::Listening;
+                        if accepts {
+                            let buffer = buffer.as_ref();
+                            let channels = buffer.floatChannelData();
+                            let frames = (buffer.frameLength() as usize).min(1024);
+                            draft.audio_level = if channels.is_null() || frames == 0 {
+                                None
+                            } else {
+                                // AVAudioPCMBuffer owns these Float32 samples for
+                                // this tap invocation; no samples escape the tap.
+                                crate::dictation::microphone_level(std::slice::from_raw_parts(
+                                    (*channels).as_ptr(),
+                                    frames,
+                                ))
+                            };
+                        }
+                        accepts
                     };
                     if accepts_audio {
                         request.appendAudioPCMBuffer(buffer.as_ref());
+                        if meter_frames
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                            .is_multiple_of(4)
+                        {
+                            wake_meter();
+                        }
                     }
                 },
             );

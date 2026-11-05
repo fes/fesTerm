@@ -7,10 +7,10 @@ use super::terminal_keyboard::KeyboardKind;
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
     self, bottom_sheet, button, card, edit_zone_clicked, footnote, labelled, list_row,
-    list_row_height, paint_fit, screen_title, search_field, section_header, sheet_title, swipe_row,
+    list_row_height, screen_title, search_field, section_header, sheet_title, swipe_row,
     ButtonKind, Dot, RowSpec, TabItem, Trailing,
 };
-use eframe::egui::{self, Align2, CornerRadius, Margin, Rect, Sense, Stroke, StrokeKind, Ui};
+use eframe::egui::{self, CornerRadius, Margin, Rect, Sense, Stroke, Ui};
 use festerm_ui_egui::icon::Icon;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -53,8 +53,6 @@ const REORDER_EDGE: f32 = 56.0;
 
 pub struct ShellData<'a> {
     pub profiles: &'a [Profile],
-    /// Most recently launched profiles, for "Continue working".
-    pub recents: &'a [Profile],
     pub surfaces: &'a [SurfaceSummary],
     pub reattachable: &'a [Reattachable],
     pub profiles_persistent: bool,
@@ -120,7 +118,6 @@ pub enum ShellAction {
     Reattach(usize),
     OpenDemo,
     OpenHostSetup,
-    ShowSessions,
     HideSessions,
     OpenProfilesTab,
     OpenDocuments,
@@ -189,99 +186,6 @@ fn reattach_rows(ui: &mut Ui, reattachable: &[Reattachable], actions: &mut Vec<S
     });
 }
 
-fn continue_cards(
-    ui: &mut Ui,
-    recents: &[Profile],
-    surfaces: &[SurfaceSummary],
-    actions: &mut Vec<ShellAction>,
-) {
-    let gap = ui.spacing().item_spacing.x;
-    let width = (ui.available_width() - gap) / 2.0;
-    ui.horizontal(|ui| {
-        for profile in recents.iter().take(2) {
-            let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 112.0), Sense::CLICK);
-            let painter = ui.painter();
-            let corner = CornerRadius::same(radius::CARD);
-            painter.rect_filled(
-                rect,
-                corner,
-                if response.is_pointer_button_down_on() {
-                    color::SURFACE_RAISED
-                } else {
-                    color::SURFACE
-                },
-            );
-            painter.rect_stroke(
-                rect,
-                corner,
-                Stroke::new(1.0, color::DIVIDER),
-                StrokeKind::Inside,
-            );
-            widgets::icon_tile(
-                painter,
-                Rect::from_min_size(rect.min + egui::vec2(12.0, 12.0), egui::vec2(36.0, 36.0)),
-                profile.kind.glyph(),
-                color::ACCENT_TEXT,
-            );
-            paint_fit(
-                painter,
-                egui::pos2(rect.left() + 12.0, rect.top() + 62.0),
-                Align2::LEFT_CENTER,
-                &profile.name,
-                type_scale::font(type_scale::BODY),
-                color::TEXT,
-                width - 24.0,
-            );
-            let (protocol, _) = profile
-                .detail
-                .split_once(" · ")
-                .unwrap_or((&profile.detail, ""));
-            let open = surfaces.iter().any(|surface| {
-                surface.title == profile.name && surface.state != SurfaceState::Disconnected
-            });
-            let summary = if open {
-                format!("{protocol} · open")
-            } else {
-                format!("{protocol} · saved")
-            };
-            paint_fit(
-                painter,
-                egui::pos2(rect.left() + 12.0, rect.top() + 80.0),
-                Align2::LEFT_CENTER,
-                &summary,
-                type_scale::font(type_scale::MICRO + 0.5),
-                color::TEXT_MUTED,
-                width - 24.0,
-            );
-            painter.hline(
-                (rect.left() + 12.0)..=(rect.right() - 12.0),
-                rect.top() + 90.0,
-                Stroke::new(1.0, color::DIVIDER),
-            );
-            let open = painter.text(
-                egui::pos2(rect.left() + 12.0, rect.bottom() - 11.0),
-                Align2::LEFT_CENTER,
-                if open {
-                    "Switch to session"
-                } else {
-                    "Open terminal"
-                },
-                type_scale::font(type_scale::MICRO + 0.5),
-                color::ACCENT_TEXT,
-            );
-            widgets::paint_chevron(
-                painter,
-                egui::pos2(open.right() + 8.0, open.center().y),
-                3.0,
-                color::ACCENT_TEXT,
-            );
-            if labelled(response, &format!("Open {}", profile.name), true).clicked() {
-                actions.push(ShellAction::OpenProfile(profile.id.clone()));
-            }
-        }
-    });
-}
-
 fn profiles_screen(
     ui: &mut Ui,
     state: &mut ShellState,
@@ -299,15 +203,6 @@ fn profiles_screen(
         });
     });
     search_field(ui, &mut state.search, "Find a profile");
-    if state.search.trim().is_empty() {
-        let mut row = RowSpec::new("Documents");
-        row.icon = Some(Icon::SourceView);
-        row.subtitle = Some("Open local text or Markdown in Files");
-        row.trailing = Trailing::Chevron;
-        if list_row(ui, &row).clicked() {
-            actions.push(ShellAction::OpenDocuments);
-        }
-    }
     if let Some(notice) = data.notice {
         ui.add(
             egui::Label::new(
@@ -317,21 +212,6 @@ fn profiles_screen(
             )
             .wrap(),
         );
-    }
-    if !data.recents.is_empty() && state.search.trim().is_empty() {
-        let trailing =
-            (!data.surfaces.is_empty()).then(|| format!("All sessions {}", data.surfaces.len()));
-        if section_header(
-            ui,
-            "Continue working",
-            trailing.as_deref(),
-            trailing.is_some(),
-        )
-        .is_some_and(|response| response.clicked())
-        {
-            actions.push(ShellAction::ShowSessions);
-        }
-        continue_cards(ui, data.recents, data.surfaces, actions);
     }
     let needle = state.search.trim().to_lowercase();
     let visible: Vec<&Profile> = data
@@ -361,7 +241,6 @@ fn profiles_screen(
                             .size(type_scale::BODY)
                             .strong(),
                     );
-                    footnote(ui, "Create an SSH profile to connect.");
                     ui.add_space(space::XS);
                     if button(ui, ButtonKind::Primary, "New profile", true).clicked() {
                         actions.push(ShellAction::NewProfile);
@@ -379,16 +258,8 @@ fn profiles_screen(
     } else {
         saved_profile_rows(ui, state, &visible, needle.is_empty(), actions);
     }
-    if !data.profiles.is_empty() {
-        footnote(
-            ui,
-            if data.profiles_persistent {
-                "Profiles are saved on this iPhone. Tap Edit to change or delete one; \
-                 touch and hold one to drag it into a new order."
-            } else {
-                "Credentials last only until fesTerm closes; profiles are saved on this iPhone."
-            },
-        );
+    if !data.profiles.is_empty() && !data.profiles_persistent {
+        footnote(ui, "Credentials last only until fesTerm closes.");
     }
 }
 
@@ -560,10 +431,16 @@ fn saved_profile_rows(
 }
 
 fn sessions_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAction>) {
-    screen_title(ui, "Sessions", "Open terminals and files");
+    screen_title(ui, "Sessions", "Terminals, files and documents");
+    if let Some(notice) = data.notice {
+        ui.add(egui::Label::new(egui::RichText::new(notice).color(color::DANGER)).wrap());
+    }
+    if button(ui, ButtonKind::Secondary, "Browse documents", true).clicked() {
+        actions.push(ShellAction::OpenDocuments);
+    }
     section_header(
         ui,
-        "Open surfaces",
+        "Open work",
         Some(&data.surfaces.len().to_string()),
         false,
     );
@@ -574,10 +451,6 @@ fn sessions_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAct
         }
     } else {
         surface_rows(ui, data.surfaces, actions);
-        footnote(
-            ui,
-            "Tap an open surface to switch without reconnecting. Swipe left to close it.",
-        );
     }
     if !data.reattachable.is_empty() {
         section_header(ui, "Available to reattach", None, false);
