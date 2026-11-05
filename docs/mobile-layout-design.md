@@ -47,9 +47,7 @@ without replacing Profiles/Sessions/Settings. Document views join the shared
 chip/surface inventory but never own a terminal grid or worker. Local source
 typing, shared undo/redo and dirty-close handling use the registry; the native
 field bridge now publishes visual rows and mirrors multiline Return. Geometry
-uses a linear row/glyph walk and is cached for unchanged layout. Source actions
-use standard button heights; short-height views move them into More instead of
-consuming the editing area. Conflict review displays the external version:
+uses a linear row/glyph walk and is cached for unchanged layout.  Conflict review displays the external version:
 Keep edits requires a separate Save, Reload explicitly discards edits/history,
 and changed revision/source/access invalidates either decision.
 Actual provider grants and native keyboard behavior still require qualification.
@@ -66,8 +64,8 @@ actions in the scrollable More menu. Parser errors remain
 visible and offer explicit retry without changing source. The reused mobile
 renderer keeps links, images and embedded HTML inert; no resource authority or
 network loading is added.
-Source syntax/line numbers, Find/Replace, safe local copy/Save As and the shared
-keyboard-region dictation composer remain subsequent slices.
+Source syntax/line numbers, Find/Replace and safe local copy/Save As remain
+subsequent slices.
 Files URLs require retained authorization and file-provider coordination;
 display paths never grant access. Remote SFTP remains read-only beneath
 the UI, and saving an editable local copy creates a distinct origin/history.
@@ -76,16 +74,49 @@ No document path is interpolated into a terminal command.
 `MOB-08` owns the document workflow and its remaining native/visual gates;
 on-device speech remains separately qualified under `MOB-07`/#564.
 
+## November 5 workflow update
+
+Profiles contains saved configurations only: the row connects and its trailing
+edit control edits. Sessions inventories terminal, SFTP and document work and
+owns Browse documents. No Continue working or separate document launcher is
+needed. Shared header-chip tap activates; long press opens Activate/Close/Cancel,
+never a close action. Terminal close confirms disconnect versus durable detach;
+no remote process-kill command is added. Last-dirty-document close offers
+Save/Discard/Cancel and only closes after the matching successful save receipt.
+
+The existing keyboard preference also governs source and dictation fields.
+The custom main layout, holds, Shift and selection mechanics are shared; source
+shortcuts target local edits, never terminal encoders. A text-aware native
+responder uses an empty input view for custom local keyboards. Forms remain
+native. The document toolbar uses one row of 44-point first-party icons;
+additional Contents navigation remains in More when the row has no room.
+No Edit/Preview Split is introduced.
+
+Preview prose maps parsed soft breaks to spaces and explicit hard breaks to
+newlines. The generic old mobile plain-text rendering reproduced the unwanted
+soft break; the particular DQ-Agent source supplied in the review is not present,
+so its exact source-level cause is not claimed. Tables and code each own a
+horizontal scroller and overflow cue. Table columns grow with bounded content
+width rather than squeezing into a phone. Selectable rendered labels remain
+plain-text clipboard targets; native handles and real pasteboard behavior still
+require device qualification, not an assumption of a new selection defect.
+
 ## On-device dictation
 
 The experimental Hold symbols and Shell row keyboards add a microphone icon
 (accessible name **Mic**) immediately after the Left/Up/Down/Right arrows in the
-pinned utility row, before Extended keys. Dictation replaces terminal input
-with a bounded review sheet:
-explicit permission/capability checks, visible Listening, **Stop and review**,
-editable single-line text, **Insert**, and **Cancel**. Insert never presses
-Return; the user submits separately. It rejects control characters and line
-breaks, clears modifiers and revalidates the original ready session.
+pinned utility row, before Extended keys. A bounded composer sits above the
+still-visible selected keyboard, retaining the terminal/document context.
+Listening shows real PCM-derived microphone level and partial text; Stop leads
+through Finishing to editable same-panel review, Resume, Cancel and Insert.
+Silence is distinct from recognition, and unavailable samples are labelled.
+Resume preserves the edited prefix while replacing only the new partial.
+Terminal Insert rejects controls/line breaks, clears modifiers and revalidates
+the original tab and exact live transport, including reconnect in the same tab.
+It never presses Return. Document Insert validates captured authority, revision
+and UTF-8 selection and replaces it in one canonical undo transaction, without
+automatically saving. Draft-owned events cannot replay into a destination when
+Insert or Cancel closes the composer in that frame.
 
 Audio stays on-device, capture has a native 45-second maximum, and only the
 latest 4096-byte transcript revision is retained. Stop (or the deadline) ends

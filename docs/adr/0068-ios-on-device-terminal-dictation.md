@@ -61,6 +61,25 @@ configuration, synchronization or application transcript/error-detail logging
 are introduced. Zeroizing Rust buffers is not a full native/OS RAM-erasure
 guarantee.
 
+## November 5 shared-composer refinement
+
+One compact composer now serves terminal and authorized-document destinations
+above the unchanged preferred keyboard. Only the accessory shortcuts differ
+by context. The native local `UITextInput` client retains its text/selection
+model while suppressing the system input view for custom keyboards.
+The meter measures actual bounded PCM samples; no generated waveform stands
+in for captured audio. Resume retains the reviewed prefix, replaces successive
+new partials and preserves the 4096-byte total and per-capture deadlines.
+Terminal acceptance binds a weak reference to the exact live session, not
+only the tab. Local acceptance uses the document registry's exact captured
+target and one undoable replace, never save or terminal input. Frame ownership
+continues after Insert/Cancel to prevent queued local events reaching a terminal.
+Locking clears local IME requests as well as volatile speech state.
+Mic transitions wait until the focused local editor consumes the current
+native event batch, then bind the updated revision/selection or resume its
+edited draft. Document acceptance quarantines residual draft events before
+publishing source focus/IME, without a native keyboard hide/show transition.
+
 ## Alternatives considered
 
 - Switch to the built-in keyboard: retains existing OS dictation but does not
@@ -108,6 +127,16 @@ result; it is not evidence that native speech works.
   `dictation_editor_bounds_unicode_bytes_without_splitting_characters`,
   `dictation_failed_and_manual_review_sheets_render_without_terminal_input`,
   `terminal_keyboards_offer_dictation_as_one_non_repeating_action`.
+- **Additional shared-composer tests:** `microphone_meter_measures_samples_not_transcription`,
+  `resumed_partials_replace_only_the_new_segment_and_keep_utf8_bounds`,
+  `dictation_refuses_a_replacement_transport_in_the_same_tab`,
+  `shared_custom_keyboard_edits_source_and_dictation_replaces_unicode_as_one_undo`,
+  `document_dictation_cannot_replay_into_a_revised_or_invalidated_source`,
+  `locked_document_clears_field_keyboard_and_never_replays_local_input`,
+  `mic_transition_commits_same_frame_native_text_before_binding_or_resuming`,
+  `document_dictation_insert_hands_off_ime_without_replaying_draft_events`,
+  `dictation_close_frame_never_replays_queued_local_text_into_terminal`.
+  The affected graph/traceability now also includes `MOB-08`.
 - **Native/manual evidence required:** `MOB-07` physical-device permissions,
   offline recognition, language/model availability, microphone indicator,
   deadline, interruption, background/lock, session replacement and actual

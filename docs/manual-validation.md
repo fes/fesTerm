@@ -862,6 +862,24 @@ dictation are not part of this Markdown projection slice.
 |---|---|---|
 | MOB-07 | Physical iPhone/iPad with local speech model; Simulator for UI/unsupported state only | On both custom keyboard layouts, confirm Left/Up/Down/Right followed immediately by a microphone icon, then Extended keys; VoiceOver identifies the icon as Mic, and holding it never repeats. Tap it, test denied/restricted and granted speech/microphone permissions, and recognize with networking disabled. Confirm on-device support for the selected language/model; unsupported cases must never fall back to a server. Verify the recording indicator, latest-only revisions, 4096-byte Unicode cap, native 45-second deadline, Stop → brief Finishing → final punctuated transcript in an editable review, first-use permission alerts that keep a connected plain SSH session alive (and backgrounding during an alert still suspends it), single-use Insert with no Return/modifiers and rejection of pasted CR/LF/ESC/other controls. While recording and reviewing, test interruption, app switch/lock/background, session/tab/workspace replacement and reconnect: capture must stop even without another UI frame, text must not be replayed and stale callbacks must not restore it. Cancel leaves terminal bytes unchanged. Inspect app-owned storage/logs for absence of audio/transcripts using non-sensitive fixtures. Exercise actual shell/TUI insertion and VoiceOver/touch targets; remote programs may react to explicitly inserted text. Simulator launch/manual-preview tests do not establish native speech privacy or recognition quality. Tracked in #564; ADR 0066. |
 
+The November 5 P1–P4 update additionally requires **MOB-02/06/07/08** physical
+acceptance: keep the selected custom/native keyboard through source editing
+and listen/stop/review/resume/insert; distinguish silent/real microphone level
+from recognized text; inspect narrow/landscape/tablet composer bounds and
+VoiceOver/reduced-motion behavior. Reconnect in the same terminal tab during
+review and refuse the old draft; change document selection/revision/access and
+refuse it, with accepted document insertion exactly one Undo and no auto-save.
+Confirm Profiles is saved configurations only, Browse belongs to Sessions,
+tap activates and long press only opens a menu for every tab type. Explicit
+terminal close must describe disconnect versus durable detach; dirty documents
+offer Save/Discard/Cancel, and failed/cancelled/stale saves cannot close a view.
+Inspect one-row 44-point toolbar targets, per-table/code horizontal swipes,
+vertical document scrolling, soft versus explicit hard breaks, rendered/plain
+text Copy, native selection handles, Cut/Paste/Select All and actual pasteboard
+round trips. The reported DQ-Agent source is unavailable; only the generic
+mobile soft-break path has been reproduced. These remain native/manual checks,
+not claims established by host tests or synthetic captured meter levels.
+
 For MOB-02/MOB-06, verify copy/paste against the real iOS pasteboard, the native
 keyboard's 123 / #+= buttons, modifier highlighting, and full redraw while
 connected and while reading disconnected history. A linked device build and

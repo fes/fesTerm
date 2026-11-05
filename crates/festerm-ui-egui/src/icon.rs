@@ -39,6 +39,9 @@ pub enum Icon {
     Workspace,
     Profile,
     Copy,
+    Save,
+    Undo,
+    Redo,
     Paste,
     Clear,
     Diagnostics,
@@ -226,6 +229,9 @@ mod tests {
             Icon::Workspace,
             Icon::Profile,
             Icon::Copy,
+            Icon::Save,
+            Icon::Undo,
+            Icon::Redo,
             Icon::Paste,
             Icon::Clear,
             Icon::Diagnostics,
@@ -261,7 +267,7 @@ mod tests {
             Icon::SectionExpanded,
             Icon::SortOrder,
         ];
-        assert_eq!(icons.len(), 59);
+        assert_eq!(icons.len(), 62);
         let sources =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/source");
         assert_eq!(std::fs::read_dir(sources).unwrap().count(), icons.len());

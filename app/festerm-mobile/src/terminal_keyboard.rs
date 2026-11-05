@@ -67,6 +67,13 @@ pub struct TerminalKeyboard {
     bounds: Option<Rect>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum KeyboardContext {
+    Terminal,
+    Source,
+    Draft,
+}
+
 impl TerminalKeyboard {
     pub fn cancel(&mut self) {
         self.keys.cancel();
@@ -106,11 +113,25 @@ impl TerminalKeyboard {
         state: &KeyRowState,
         available_height: f32,
     ) -> KeyRowOutput {
+        self.show_for(ui, kind, state, available_height, KeyboardContext::Terminal)
+    }
+
+    pub(super) fn show_for(
+        &mut self,
+        ui: &mut Ui,
+        kind: KeyboardKind,
+        state: &KeyRowState,
+        available_height: f32,
+        context: KeyboardContext,
+    ) -> KeyRowOutput {
         let shell = kind == KeyboardKind::ShellRow;
         let rows = if shell { 7.0 } else { 6.0 };
         let budget = (available_height - 80.0).max(100.0);
         let gap = if budget < 320.0 { 4.0 } else { 6.0 };
-        let height = ((budget - 12.0 - gap * (rows - 1.0)) / rows).clamp(32.0, 44.0);
+        let key_budget = budget - 12.0 - gap * (rows - 1.0);
+        let height = (key_budget / rows)
+            .min((key_budget - 36.0) / (rows - 1.0))
+            .clamp(24.0, 44.0);
         let utility_height = height.max(36.0);
         let full_height = utility_height + height * (rows - 1.0) + gap * (rows - 1.0) + 12.0;
         let (outer, _) = ui.allocate_exact_size(
@@ -139,24 +160,82 @@ impl TerminalKeyboard {
                 let gap = ((ui.available_width() - 24.0 * 12.0) / 11.0).clamp(0.0, 4.0);
                 ui.spacing_mut().item_spacing.x = gap;
                 let width = (ui.available_width() - gap * 11.0) / 12.0;
-                for (label, key) in [("Esc", Key::Escape), ("Tab", Key::Tab)] {
-                    let response = draw_key(ui, width, utility_height, label, None, false, true);
-                    if let Some(key) =
-                        self.key(ui, &response, key, Glyph::text(label), Repeat::Auto)
-                    {
-                        output.action = KeyRowAction::Key(key);
+                let leading = match context {
+                    KeyboardContext::Terminal => [
+                        ("Esc", KeyRowAction::Key(Key::Escape)),
+                        ("Tab", KeyRowAction::Key(Key::Tab)),
+                    ],
+                    KeyboardContext::Source => {
+                        [("Undo", KeyRowAction::Undo), ("Redo", KeyRowAction::Redo)]
+                    }
+                    KeyboardContext::Draft => [
+                        ("All", KeyRowAction::SelectAll),
+                        ("Paste", KeyRowAction::Paste),
+                    ],
+                };
+                for (label, action) in leading {
+                    let glyph = match action {
+                        KeyRowAction::Undo => Glyph::Icon(Icon::Undo),
+                        KeyRowAction::Redo => Glyph::Icon(Icon::Redo),
+                        KeyRowAction::Paste => Glyph::Icon(Icon::Paste),
+                        _ => Glyph::text(label),
+                    };
+                    let response = if matches!(glyph, Glyph::Text(_)) {
+                        draw_key(ui, width, utility_height, label, None, false, true)
+                    } else {
+                        glyph_key(ui, width, utility_height, label, glyph.clone())
+                    };
+                    let response = if context == KeyboardContext::Source {
+                        labelled(response, &format!("Keyboard {label}"), ui.is_enabled())
+                    } else {
+                        response
+                    };
+                    let fired = if let KeyRowAction::Key(key) = action {
+                        self.key(ui, &response, key, glyph.clone(), Repeat::Auto)
+                            .is_some()
+                    } else {
+                        self.keys.toggle(ui, &response, glyph)
+                    };
+                    if fired {
+                        output.action = action;
                     }
                 }
-                for (label, action, active) in [
-                    ("Ctrl", KeyRowAction::ToggleControl, state.control),
-                    ("Alt", KeyRowAction::ToggleAlt, state.alt),
-                    ("Shift", KeyRowAction::ToggleShift, state.shift),
-                ] {
-                    let response = draw_key(ui, width, utility_height, label, None, active, true);
+                let shortcuts = if context == KeyboardContext::Terminal {
+                    [
+                        ("Ctrl", KeyRowAction::ToggleControl, state.control),
+                        ("Alt", KeyRowAction::ToggleAlt, state.alt),
+                    ]
+                } else {
+                    [
+                        ("Tab", KeyRowAction::Key(Key::Tab), false),
+                        if context == KeyboardContext::Source {
+                            ("Outdent", KeyRowAction::Outdent, false)
+                        } else {
+                            ("Copy", KeyRowAction::Copy, false)
+                        },
+                    ]
+                };
+                for (label, action, active) in
+                    shortcuts
+                        .into_iter()
+                        .chain([("Shift", KeyRowAction::ToggleShift, state.shift)])
+                {
+                    let glyph = match action {
+                        KeyRowAction::Copy => Glyph::Icon(Icon::Copy),
+                        KeyRowAction::Outdent => Glyph::Tab { reverse: true },
+                        KeyRowAction::Key(Key::Tab) => Glyph::Tab { reverse: false },
+                        KeyRowAction::ToggleShift => Glyph::Shift,
+                        _ => Glyph::text(label),
+                    };
+                    let response = if matches!(glyph, Glyph::Text(_)) {
+                        draw_key(ui, width, utility_height, label, None, active, true)
+                    } else {
+                        glyph_key_active(ui, width, utility_height, label, glyph.clone(), active)
+                    };
                     if label == "Ctrl" {
                         output.control_rect = response.rect;
                     }
-                    if self.keys.toggle(ui, &response, Glyph::text(label)) {
+                    if self.keys.toggle(ui, &response, glyph) {
                         output.action = action;
                     }
                 }
@@ -183,9 +262,23 @@ impl TerminalKeyboard {
                 if self.keys.toggle(ui, &mic, Glyph::Icon(Icon::Microphone)) {
                     output.action = KeyRowAction::Dictate;
                 }
-                let extended = glyph_key(ui, width, utility_height, "Extended keys", Glyph::Grid);
+                let extended = glyph_key(
+                    ui,
+                    width,
+                    utility_height,
+                    if context == KeyboardContext::Terminal {
+                        "Extended keys"
+                    } else {
+                        "Select all"
+                    },
+                    Glyph::Grid,
+                );
                 if self.keys.toggle(ui, &extended, Glyph::Grid) {
-                    output.action = KeyRowAction::TogglePanel;
+                    output.action = if context == KeyboardContext::Terminal {
+                        KeyRowAction::TogglePanel
+                    } else {
+                        KeyRowAction::SelectAll
+                    };
                 }
                 let hide =
                     terminal_chrome::keyboard_visibility_button(ui, width, utility_height, true);
@@ -463,15 +556,29 @@ fn draw_key(
 }
 
 fn glyph_key(ui: &mut Ui, width: f32, height: f32, label: &str, glyph: Glyph) -> Response {
-    let response = draw_key(ui, width, height, "", None, false, true);
+    glyph_key_active(ui, width, height, label, glyph, false)
+}
+
+fn glyph_key_active(
+    ui: &mut Ui,
+    width: f32,
+    height: f32,
+    label: &str,
+    glyph: Glyph,
+    active: bool,
+) -> Response {
+    let response = draw_key(ui, width, height, "", None, active, true);
     paint_glyph(
         ui.painter(),
         &glyph,
         response.rect.center(),
         1.0,
-        color::TEXT,
+        if active { SELECTED_INK } else { color::TEXT },
     );
-    labelled(response, label, ui.is_enabled())
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), active, label)
+    });
+    response
 }
 
 fn arrow_key(ui: &mut Ui, width: f32, height: f32, label: &str, key: Key) -> Response {
