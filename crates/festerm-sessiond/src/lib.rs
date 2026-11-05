@@ -3974,7 +3974,14 @@ mod client_worker_tests {
             assert!(epoch.is_current(current));
         }
 
-        session.try_shutdown().unwrap();
+        // The worker may observe the out-of-band stop before the command is sent.
+        assert!(matches!(
+            session.try_shutdown(),
+            Ok(())
+                | Err(SessionSendError::Closed {
+                    operation: SessionOperation::Shutdown
+                })
+        ));
         assert_eq!(epoch.capture(), None);
         {
             let _guard = festerm_session::automation_admission_lock().unwrap();
@@ -3998,7 +4005,13 @@ mod client_worker_tests {
         let epoch = session.automation_epoch().unwrap();
         let generation = epoch.capture().unwrap();
 
-        session.try_shutdown().unwrap();
+        assert!(matches!(
+            session.try_shutdown(),
+            Ok(())
+                | Err(SessionSendError::Closed {
+                    operation: SessionOperation::Shutdown
+                })
+        ));
         assert_eq!(epoch.capture(), None);
         {
             let _guard = festerm_session::automation_admission_lock().unwrap();
