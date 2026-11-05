@@ -48,6 +48,8 @@ struct Installation {
     no_takeover: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     recovery: Option<DaemonRecovery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    filesystem: Option<festerm_tunnel_bridge::file_protocol::Policy>,
     /// Helper executables an interrupted explicit upgrade may still find in
     /// the service definition; empty (and absent) outside phase `upgrading`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -143,6 +145,13 @@ fn state_path(args: &[OsString]) -> io::Result<PathBuf> {
 }
 
 fn validate_record(record: &Installation) -> io::Result<()> {
+    if record
+        .filesystem
+        .as_ref()
+        .is_some_and(|policy| !policy.root.is_absolute())
+    {
+        return Err(refused("setup.filesystem_policy"));
+    }
     let id =
         uuid::Uuid::parse_str(&record.id).map_err(|_| refused("setup.installation_identity"))?;
     if record.version != 1
@@ -269,6 +278,11 @@ fn print_profile(state: &Path, record: &Installation, ready: &Ready) -> io::Resu
             .ok_or_else(|| refused("setup.tunnel_missing"))?
     );
     println!("Verify host fingerprint: {}", record.fingerprint);
+    if let Some(policy) = &record.filesystem {
+        println!("Rooted filesystem access enabled; writes={}. Review the private installation policy for the configured root. Use --disable-files to revoke.", policy.write);
+    } else {
+        println!("Filesystem enumeration and transfers disabled.");
+    }
     println!("Paste the following PUBLIC JSON in fesTerm's Dev Tunnel profile import; authenticate separately:");
     let profile = serde_json::to_string_pretty(&serde_json::json!({
         "festerm_profile_version": 1,
@@ -360,7 +374,12 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         upgrade,
         friendly_name,
         restart_unexpected,
+        filesystem,
     } = managed_arguments(args)?;
+    if let Some(Some(policy)) = &filesystem {
+        festerm_tunnel_bridge::filesystem::Filesystem::open(policy)
+            .map_err(|_| refused("setup.filesystem_root_refused"))?;
+    }
     if !cli_path.is_absolute() || !state.is_absolute() {
         return Err(refused("setup.absolute_paths_required"));
     }
@@ -416,6 +435,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                 recovery: restart_unexpected
                     .unwrap_or(false)
                     .then(DaemonRecovery::default),
+                filesystem: filesystem.clone().flatten(),
                 upgrading_from: Vec::new(),
             };
             validate_record(&record)?;
@@ -529,12 +549,19 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     if changing_recovery && record.executable != executable && !upgrade {
         return Err(refused("setup.daemon_recovery_requires_helper_upgrade"));
     }
+    let changing_filesystem = filesystem
+        .as_ref()
+        .is_some_and(|policy| policy != &record.filesystem);
+    if changing_filesystem && record.executable != executable && !upgrade {
+        return Err(refused("setup.filesystem_policy_requires_helper_upgrade"));
+    }
     let plan = rerun_plan(&record, &executable, &cli_path, no_takeover, upgrade)?;
-    let plan = if changing_recovery {
+    let plan = if changing_recovery || changing_filesystem {
         Rerun::Upgrade
     } else {
         plan
     };
+    let revoking_filesystem = filesystem == Some(None);
     let mut record = match plan {
         Rerun::Keep(hint) => {
             if let Some(hint) = hint {
@@ -555,6 +582,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                 cli_path,
                 no_takeover,
                 restart_unexpected == Some(false),
+                filesystem.as_ref(),
             )
             .await?
         }
@@ -564,6 +592,22 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
             .unwrap_or(false)
             .then(DaemonRecovery::default);
         checkpoint(&directory, &record)?;
+    }
+    if revoking_filesystem && record.recovery.is_none() {
+        // Revocation succeeds even when the daemon/account is unavailable.
+        // The owned worker is stopped above; no cloud mutation is required.
+        if exact_target_alive(
+            &record.runtime_root,
+            record
+                .target
+                .as_ref()
+                .ok_or_else(|| refused("setup.target_missing"))?,
+        )
+        .is_err()
+        {
+            println!("Filesystem access disabled. The recorded shell is unavailable; hosting remains stopped.");
+            return Ok(());
+        }
     }
     if record.executable == executable
         && super::service_install::migrate_legacy_definition(&service(&record, &state))?
@@ -593,8 +637,14 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         }
         alive?;
     }
-    if verify_account(&record.cli).await? != record.account {
-        return Err(refused("setup.changed_cli_account"));
+    match verify_account(&record.cli).await {
+        Ok(account) if account == record.account => {}
+        _ if revoking_filesystem => {
+            println!("Filesystem access disabled. Account verification is unavailable or changed; hosting remains stopped.");
+            return Ok(());
+        }
+        Ok(_) => return Err(refused("setup.changed_cli_account")),
+        Err(error) => return Err(error),
     }
     // Keep an existing installation's executable/CLI paths: only an explicit
     // --upgrade switches helpers, and never replaces the daemon generation.
@@ -621,12 +671,13 @@ struct ManagedArguments {
     upgrade: bool,
     friendly_name: Option<String>,
     restart_unexpected: Option<bool>,
+    filesystem: Option<Option<festerm_tunnel_bridge::file_protocol::Policy>>,
 }
 
 fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
     let usage = || {
         refused(
-            "usage: --managed --devtunnel PATH --state-dir PRIVATE_DIRECTORY [--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected]",
+            "usage: --managed --devtunnel PATH --state-dir PRIVATE_DIRECTORY [--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected] [--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files]",
         )
     };
     let [flag, cli, state_flag, state, options @ ..] = args else {
@@ -637,6 +688,7 @@ fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
     }
     let (mut no_takeover, mut upgrade, mut friendly_name) = (false, false, None);
     let mut restart_unexpected = None;
+    let (mut file_root, mut file_write, mut disable_files) = (None, false, false);
     let mut index = 0;
     while index < options.len() {
         let option = &options[index];
@@ -653,6 +705,21 @@ fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
             &mut no_takeover
         } else if option == "--upgrade" {
             &mut upgrade
+        } else if option == "--allow-file-write" {
+            &mut file_write
+        } else if option == "--disable-files" {
+            &mut disable_files
+        } else if option == "--file-root" {
+            if file_root.is_some() || index + 1 >= options.len() {
+                return Err(usage());
+            }
+            let root = PathBuf::from(&options[index + 1]);
+            if !root.is_absolute() {
+                return Err(refused("setup.absolute_file_root_required"));
+            }
+            file_root = Some(root);
+            index += 2;
+            continue;
         } else if option == "--friendly-name" {
             if friendly_name.is_some() || index + 1 >= options.len() {
                 return Err(usage());
@@ -673,6 +740,20 @@ fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
         }
         index += 1;
     }
+    if (disable_files && (file_root.is_some() || file_write)) || (file_write && file_root.is_none())
+    {
+        return Err(refused("setup.conflicting_filesystem_policy"));
+    }
+    let filesystem = if disable_files {
+        Some(None)
+    } else {
+        file_root.map(|root| {
+            Some(festerm_tunnel_bridge::file_protocol::Policy {
+                root,
+                write: file_write,
+            })
+        })
+    };
     Ok(ManagedArguments {
         cli: PathBuf::from(cli),
         state: PathBuf::from(state),
@@ -680,6 +761,7 @@ fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
         upgrade,
         friendly_name,
         restart_unexpected,
+        filesystem,
     })
 }
 
@@ -785,8 +867,32 @@ fn upgrade_record(
     Ok(next)
 }
 
-fn upgrade_completed(record: &Installation) -> Installation {
+/// Journals the requested file policy with the upgrade marker, so a resumed
+/// `--upgrade` without file flags cannot restore a revoked or narrowed grant.
+/// Workers refuse to run while the record is upgrading.
+fn pending_upgrade(
+    record: &Installation,
+    executable: PathBuf,
+    cli: PathBuf,
+    no_takeover: bool,
+    filesystem: Option<&Option<festerm_tunnel_bridge::file_protocol::Policy>>,
+) -> io::Result<Installation> {
+    let mut next = upgrade_record(record, executable, cli, no_takeover)?;
+    if let Some(policy) = filesystem {
+        next.filesystem = policy.clone();
+        validate_record(&next)?;
+    }
+    Ok(next)
+}
+
+fn upgrade_completed(
+    record: &Installation,
+    filesystem: Option<&Option<festerm_tunnel_bridge::file_protocol::Policy>>,
+) -> Installation {
     let mut next = record.clone();
+    if let Some(policy) = filesystem {
+        next.filesystem = policy.clone();
+    }
     next.upgrading_from.clear();
     next.phase = "configured".into();
     next
@@ -808,6 +914,7 @@ async fn wait_worker_stopped(directory: &File) -> io::Result<()> {
     .map_err(|_| refused("setup.previous_worker_still_running"))?
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn upgrade_installation(
     directory: &File,
     state: &Path,
@@ -816,18 +923,19 @@ async fn upgrade_installation(
     cli: PathBuf,
     no_takeover: bool,
     revoking_recovery: bool,
+    filesystem: Option<&Option<festerm_tunnel_bridge::file_protocol::Policy>>,
 ) -> io::Result<Installation> {
     let target = record
         .target
         .as_ref()
         .ok_or_else(|| refused("setup.target_missing"))?;
-    if !revoking_recovery {
+    if !revoking_recovery && !matches!(filesystem, Some(None)) {
         exact_target_alive(&record.runtime_root, target)?;
         if verify_account(&cli).await? != record.account {
             return Err(refused("setup.changed_cli_account"));
         }
     }
-    let next = upgrade_record(record, executable, cli, no_takeover)?;
+    let next = pending_upgrade(record, executable, cli, no_takeover, filesystem)?;
     checkpoint(directory, &next)?;
     println!(
         "Upgrading host helpers from {} to {}; keeping tunnel {}, host key {} and recorded daemon session {} (pid {}). Only owned hosting workers are deliberately restarted.",
@@ -849,7 +957,7 @@ async fn upgrade_installation(
         .collect();
     super::service_install::stop_and_replace(&previous, &service(&next, state))?;
     wait_worker_stopped(directory).await?;
-    let next = upgrade_completed(&next);
+    let next = upgrade_completed(&next, filesystem);
     validate_record(&next)?;
     checkpoint(directory, &next)?;
     Ok(next)
@@ -1169,7 +1277,14 @@ async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
     let _run_directory =
         setup_storage::private_directory(&run, true).map_err(|_| refused("setup.worker_state"))?;
     let destination = run.join("destination.json");
-    let spawned = super::background_command(&bridge)
+    let mut command = super::background_command(&bridge);
+    if let Some(policy) = &record.filesystem {
+        command.arg("--file-root").arg(&policy.root);
+        if policy.write {
+            command.arg("--allow-file-write");
+        }
+    }
+    let spawned = command
         .env(variable, base)
         .args([
             "--experimental",
@@ -1562,6 +1677,7 @@ mod tests {
             fingerprint: "fixture".into(),
             no_takeover: false,
             recovery: None,
+            filesystem: None,
             upgrading_from: Vec::new(),
         };
         validate_record(&record).unwrap();
@@ -1674,6 +1790,7 @@ mod tests {
             fingerprint: host_fingerprint(public_key).unwrap(),
             no_takeover: false,
             recovery: None,
+            filesystem: None,
             upgrading_from: Vec::new(),
         };
         validate_record(&record).unwrap();
@@ -1754,6 +1871,7 @@ mod tests {
             fingerprint: "fixture-fingerprint".into(),
             no_takeover: true,
             recovery: None,
+            filesystem: None,
             upgrading_from: Vec::new(),
         }
     }
@@ -1958,6 +2076,77 @@ mod tests {
         fs::remove_dir_all(state).unwrap();
     }
 
+    #[test]
+    fn managed_filesystem_policy_requires_explicit_root_and_preserves_owned_upgrade_identity() {
+        let base: Vec<OsString> = ["--devtunnel", "cli", "--state-dir", "state"]
+            .into_iter()
+            .map(OsString::from)
+            .collect();
+        assert!(managed_arguments(&base).unwrap().filesystem.is_none());
+        let root = crate::test_support::private_directory("festerm-policy");
+        let mut args = base.clone();
+        args.extend([OsString::from("--file-root"), root.as_os_str().to_owned()]);
+        let readonly = managed_arguments(&args)
+            .unwrap()
+            .filesystem
+            .unwrap()
+            .unwrap();
+        assert!(!readonly.write);
+        args.push("--allow-file-write".into());
+        let writable = managed_arguments(&args)
+            .unwrap()
+            .filesystem
+            .unwrap()
+            .unwrap();
+        assert!(writable.write);
+        args.push("--disable-files".into());
+        assert!(managed_arguments(&args).is_err());
+        let mut disable = base.clone();
+        disable.push("--disable-files".into());
+        assert_eq!(managed_arguments(&disable).unwrap().filesystem, Some(None));
+        let mut invalid = base;
+        invalid.push("--allow-file-write".into());
+        assert!(managed_arguments(&invalid).is_err());
+        let mut record = configured_fixture(old_executable());
+        record.filesystem = Some(writable);
+        let upgraded = upgrade_completed(
+            &upgrade_record(
+                &record,
+                std::env::current_exe().unwrap(),
+                record.cli.clone(),
+                false,
+            )
+            .unwrap(),
+            None,
+        );
+        assert_eq!(upgraded.filesystem, record.filesystem);
+        assert_eq!(upgraded.tunnel, record.tunnel);
+        assert_eq!(upgraded.fingerprint, record.fingerprint);
+        let downgraded = upgrade_completed(&record, Some(&Some(readonly.clone())));
+        assert_eq!(downgraded.filesystem, Some(readonly));
+        let revoked = upgrade_completed(&record, Some(&None));
+        assert!(revoked.filesystem.is_none());
+        assert_eq!(revoked.tunnel, record.tunnel);
+        assert_eq!(revoked.fingerprint, record.fingerprint);
+        // An interrupted revocation resumed by a bare `--upgrade` stays revoked.
+        let interrupted = pending_upgrade(
+            &record,
+            std::env::current_exe().unwrap(),
+            record.cli.clone(),
+            false,
+            Some(&None),
+        )
+        .unwrap();
+        assert_eq!(interrupted.phase, UPGRADING);
+        assert!(interrupted.filesystem.is_none());
+        assert!(upgrade_completed(&interrupted, None).filesystem.is_none());
+        assert_eq!(
+            upgraded.target.unwrap().generation,
+            record.target.unwrap().generation
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     fn old_executable() -> PathBuf {
         std::env::current_dir()
             .unwrap()
@@ -1972,7 +2161,7 @@ mod tests {
         let upgrading = upgrade_record(&record, current.clone(), new_cli.clone(), false).unwrap();
         assert_eq!(upgrading.phase, UPGRADING);
         assert_eq!(upgrading.upgrading_from, [old_executable()]);
-        let done = upgrade_completed(&upgrading);
+        let done = upgrade_completed(&upgrading, None);
         validate_record(&done).unwrap();
         assert_eq!(
             (done.executable.clone(), done.cli.clone()),
@@ -2091,7 +2280,7 @@ mod tests {
             resumed.upgrading_from,
             [old_executable(), interrupted_target]
         );
-        assert_eq!(upgrade_completed(&resumed).executable, current);
+        assert_eq!(upgrade_completed(&resumed, None).executable, current);
         // The journal is consistent: sources exist exactly while upgrading.
         let mut inconsistent = decoded.clone();
         inconsistent.phase = "configured".into();

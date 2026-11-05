@@ -49,6 +49,18 @@ TrustedInstaller SID is admitted only for ancestors; final private objects stay
 current-user-only. Hosted policy/fixture tests are not clean-machine installer,
 native-service or credential-lifecycle acceptance under #432.
 
+Rooted host filesystem support (ADR 0067) has deterministic wire-level transfer
+and legacy-discovery coverage plus native isolated filesystem tests. DT-05 must
+still qualify signed-host enable/read-only/write/disable changes on an existing
+host, in-flight stream closure, unchanged tunnel/key/shell identity, directory
+pagination, large/empty transfers, disk-full/disconnect/crash cleanup, concurrent
+publication conflicts and symlink/reparse refusal on Windows/Linux/macOS.
+Force-killed staging/recovery files require deliberate operator handling; no
+crash-resumption claim is made. DT-07 desktop/physical-iOS browsing, recursive
+transfer, cancellation and overwrite-confirmation evidence is deferred behind
+the separate client implementation. No live installation was changed by these
+isolated tests.
+
 Windows task-file encoding has a deterministic Unicode regression and an
 opt-in Scheduler validation-only check in the optional Windows runner.
 A controlled native import rejected the old UTF-8 declaration, silently

@@ -2541,6 +2541,8 @@ dependencies = [
 name = "festerm-tunnel-bridge"
 version = "0.14.2"
 dependencies = [
+ "cap-fs-ext",
+ "cap-std",
  "festerm-core",
  "festerm-session",
  "festerm-sessiond",

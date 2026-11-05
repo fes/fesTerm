@@ -69,13 +69,24 @@
       ],
       "requirements": [
         "docs/adr/0053-separate-dev-tunnels-session-bridge.md#decision",
-        "docs/adr/0066-opt-in-managed-daemon-recovery.md#decision"
+        "docs/adr/0066-opt-in-managed-daemon-recovery.md#decision",
+        "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#decision"
       ],
       "decisions": [
         "ADR-0053",
-        "ADR-0066"
+        "ADR-0066",
+        "ADR-0067"
       ],
       "automated_tests": [
+        "file_requests_refuse_ambiguous_sizes_unknown_fields_and_oversized_frames",
+        "rooted_files_enumerate_stream_and_refuse_escape_and_read_only_writes",
+        "rooted_file_handles_bound_admission_and_release_capacity",
+        "rooted_uploads_create_replace_conflict_and_clean_up_without_truncation",
+        "rooted_uploads_refuse_concurrent_creation_bad_offsets_and_cancelled_publication",
+        "rooted_file_stream_negotiates_without_terminal_admission_and_transfers_large_files",
+        "rooted_files_refuse_symlink_escape",
+        "rooted_files_refuse_windows_junction_escape",
+        "managed_filesystem_policy_requires_explicit_root_and_preserves_owned_upgrade_identity",
         "private_token_line_preserves_bound_with_lf_crlf_and_invalid_input",
         "identity_roundtrip_preserves_host_id_and_key_fingerprint",
         "identity_malformed_unknown_oversized_and_trailing_bytes_never_rotate",

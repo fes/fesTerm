@@ -16,6 +16,9 @@ The [Dev Tunnels subset](docs/dev-tunnels-experiment.md), included in default de
 peer profiles, independently bound scoped credentials, exact-generation
 daemon attach/detach and optional bounded remote file snapshots. It is
 experimental; `DT-01`–`DT-06` real-service/native qualification remains open.
+An explicit default-off rooted host filesystem service adds enumeration,
+metadata, streamed read/write and mkdir under ADR 0067; its desktop/iOS clients
+and native transfer qualification remain separate, not accepted capabilities.
 Inventory/create/takeover/terminate remain unavailable. Native GitHub device
 authorization, account-bound refresh and tunnel-name discovery have deterministic
 coverage, not live qualification: the project-owned public client is registered

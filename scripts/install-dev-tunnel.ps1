@@ -8,6 +8,9 @@ param(
     [switch]$Upgrade,
     [switch]$RestartUnexpected,
     [switch]$NoRestartUnexpected,
+    [string]$FileRoot = '',
+    [switch]$AllowFileWrite,
+    [switch]$DisableFiles,
     [string]$FriendlyName = ''
 )
 
@@ -15,6 +18,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($RestartUnexpected -and $NoRestartUnexpected) {
     throw 'Choose only one unexpected-failure restart policy.'
+}
+if (($DisableFiles -and ($FileRoot -or $AllowFileWrite)) -or ($AllowFileWrite -and -not $FileRoot)) {
+    throw 'Use -FileRoot with optional -AllowFileWrite, or -DisableFiles.'
 }
 if ([Security.Principal.WindowsIdentity]::GetCurrent().IsSystem) {
     throw 'Run setup as your normal user, not SYSTEM.'
@@ -185,6 +191,9 @@ try {
     if ($Upgrade) { $setupArguments += '--upgrade' }
     if ($RestartUnexpected) { $setupArguments += '--restart-unexpected' }
     if ($NoRestartUnexpected) { $setupArguments += '--no-restart-unexpected' }
+    if ($FileRoot) { $setupArguments += @('--file-root', $FileRoot) }
+    if ($AllowFileWrite) { $setupArguments += '--allow-file-write' }
+    if ($DisableFiles) { $setupArguments += '--disable-files' }
     if ($FriendlyName) {
         $setupArguments += @('--friendly-name', $FriendlyName.Trim())
     }
