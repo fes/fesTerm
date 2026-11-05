@@ -1,0 +1,24 @@
+[package]
+name = "festerm-automation-mcp-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Experimental direct MCP transport for Rust clients"
+
+[dependencies]
+festerm-automation-mcp = { path = "../festerm-automation-mcp" }
+rmcp = { version = "3.8", default-features = false, features = ["client"] }
+serde = "1"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+festerm-windows-security = { path = "../festerm-windows-security" }
+
+[dev-dependencies]
+socket2 = "0.6"
+
+[lints]
+workspace = true

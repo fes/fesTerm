@@ -44,7 +44,8 @@ use festerm_pty::{
 use festerm_secret_store::{SecretBytes, SecretStore};
 use festerm_serial::{LineSettings, SerialSession, SerialSessionError};
 use festerm_session::{
-    HostKeyPrompt, PasswordPrompt, Session, SessionErrorKind, SessionEvent, SessionEventNotifier,
+    AutomationEpoch, HostKeyPrompt, PasswordPrompt, ReserveAutomationInputError,
+    ReservedAutomationInput, Session, SessionErrorKind, SessionEvent, SessionEventNotifier,
     SessionId, SessionLifecycle, SessionMetrics, SessionSendError, SessionTryReceiveError,
     ShutdownError, ShutdownResult, SshPortForwardDirection, SshPortForwardRuntime,
     SshPortForwardState, TerminalSize,
@@ -160,6 +161,8 @@ pub enum ApplicationSession {
     Serial(SerialSession),
     #[cfg(test)]
     TestSsh(crate::session_controller::fake::FakeSshSession),
+    #[cfg(test)]
+    TestLocal(crate::session_controller::fake::FakeSshSession),
 }
 
 /// The host-key decisions exposed by the application (ADR 0020).
@@ -287,7 +290,7 @@ impl ApplicationSession {
             }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => None,
             #[cfg(test)]
-            Self::TestSsh(_) => None,
+            Self::TestSsh(_) | Self::TestLocal(_) => None,
         }
     }
 
@@ -298,7 +301,7 @@ impl ApplicationSession {
             }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => false,
             #[cfg(test)]
-            Self::TestSsh(_) => false,
+            Self::TestSsh(_) | Self::TestLocal(_) => false,
         }
     }
 
@@ -316,7 +319,9 @@ impl ApplicationSession {
                 return Err(HostKeyTrustResolutionError::NotRemoteSession)
             }
             #[cfg(test)]
-            Self::TestSsh(_) => return Err(HostKeyTrustResolutionError::NotRemoteSession),
+            Self::TestSsh(_) | Self::TestLocal(_) => {
+                return Err(HostKeyTrustResolutionError::NotRemoteSession)
+            }
         };
         resolver
             .resolve(prompt, decision.into())
@@ -338,7 +343,9 @@ impl ApplicationSession {
                 return Err(PasswordResolutionError::NotRemoteSession)
             }
             #[cfg(test)]
-            Self::TestSsh(_) => return Err(PasswordResolutionError::NotRemoteSession),
+            Self::TestSsh(_) | Self::TestLocal(_) => {
+                return Err(PasswordResolutionError::NotRemoteSession)
+            }
         };
         resolver
             .resolve(prompt, password)
@@ -388,7 +395,7 @@ impl ApplicationSession {
             | Self::Sftp(_)
             | Self::Serial(_) => Ok(()),
             #[cfg(test)]
-            Self::TestSsh(_) => Ok(()),
+            Self::TestSsh(_) | Self::TestLocal(_) => Ok(()),
         }
     }
 
@@ -398,6 +405,8 @@ impl ApplicationSession {
             Self::Ssh(session) => session.lifecycle() == SessionLifecycle::Running,
             #[cfg(test)]
             Self::TestSsh(session) => session.lifecycle() == SessionLifecycle::Running,
+            #[cfg(test)]
+            Self::TestLocal(_) => false,
             Self::Local(_)
             | Self::Persistent(_)
             | Self::DevTunnel(_)
@@ -415,6 +424,8 @@ impl ApplicationSession {
             Self::Ssh(session) => session.try_add_port_forward(forward),
             #[cfg(test)]
             Self::TestSsh(session) => session.try_add_port_forward(forward),
+            #[cfg(test)]
+            Self::TestLocal(_) => Err(SshPortForwardRequestError::NotRunning),
             Self::Local(_)
             | Self::Persistent(_)
             | Self::DevTunnel(_)
@@ -437,6 +448,8 @@ impl ApplicationSession {
             Self::TestSsh(session) => {
                 session.try_remove_port_forward(direction, bind_host, bind_port)
             }
+            #[cfg(test)]
+            Self::TestLocal(_) => Err(SshPortForwardRequestError::NotRunning),
             Self::Local(_)
             | Self::Persistent(_)
             | Self::DevTunnel(_)
@@ -451,6 +464,8 @@ impl ApplicationSession {
             Self::Ssh(session) => session.try_query_port_forwards(),
             #[cfg(test)]
             Self::TestSsh(session) => session.try_query_port_forwards(),
+            #[cfg(test)]
+            Self::TestLocal(_) => Err(SshPortForwardRequestError::NotRunning),
             Self::Local(_)
             | Self::Persistent(_)
             | Self::DevTunnel(_)
@@ -474,6 +489,8 @@ impl ApplicationSession {
             | Self::Serial(_) => None,
             #[cfg(test)]
             Self::TestSsh(session) => session.terminal_file_cwd().map(|cwd| (cwd, PathBuf::new())),
+            #[cfg(test)]
+            Self::TestLocal(_) => None,
         }
     }
 
@@ -484,6 +501,8 @@ impl ApplicationSession {
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => None,
             #[cfg(test)]
             Self::TestSsh(session) => session.terminal_file_fingerprint(),
+            #[cfg(test)]
+            Self::TestLocal(_) => None,
         }
     }
 
@@ -493,7 +512,7 @@ impl ApplicationSession {
             Self::Sftp(session) => Some(session.remote_file_requestor()),
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => None,
             #[cfg(test)]
-            Self::TestSsh(_) => None,
+            Self::TestSsh(_) | Self::TestLocal(_) => None,
         }
     }
 }
@@ -511,7 +530,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.id(),
             Self::Serial(session) => session.id(),
             #[cfg(test)]
-            Self::TestSsh(session) => session.id(),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.id(),
         }
     }
 
@@ -523,7 +542,19 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.lifecycle(),
             Self::Serial(session) => session.lifecycle(),
             #[cfg(test)]
-            Self::TestSsh(session) => session.lifecycle(),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.lifecycle(),
+        }
+    }
+
+    fn automation_epoch(&self) -> Option<Arc<AutomationEpoch>> {
+        match self {
+            Self::Local(session) => session.automation_epoch(),
+            Self::Persistent(session) | Self::DevTunnel(session) => session.automation_epoch(),
+            Self::Ssh(session) => session.automation_epoch(),
+            Self::Sftp(session) => session.automation_epoch(),
+            Self::Serial(session) => session.automation_epoch(),
+            #[cfg(test)]
+            Self::TestSsh(session) | Self::TestLocal(session) => session.automation_epoch(),
         }
     }
 
@@ -535,7 +566,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.metrics(),
             Self::Serial(session) => session.metrics(),
             #[cfg(test)]
-            Self::TestSsh(session) => session.metrics(),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.metrics(),
         }
     }
 
@@ -547,7 +578,22 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.try_send_input(bytes),
             Self::Serial(session) => session.try_send_input(bytes),
             #[cfg(test)]
-            Self::TestSsh(session) => session.try_send_input(bytes),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.try_send_input(bytes),
+        }
+    }
+
+    fn reserve_automation_input(
+        &self,
+        controller_instance: u64,
+        bytes: &[u8],
+    ) -> Result<ReservedAutomationInput, ReserveAutomationInputError> {
+        match self {
+            Self::Local(session) => session.reserve_automation_input(controller_instance, bytes),
+            #[cfg(test)]
+            Self::TestSsh(session) | Self::TestLocal(session) => {
+                session.reserve_automation_input(controller_instance, bytes)
+            }
+            _ => Err(ReserveAutomationInputError::Unsupported),
         }
     }
 
@@ -559,7 +605,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.try_resize(size),
             Self::Serial(session) => session.try_resize(size),
             #[cfg(test)]
-            Self::TestSsh(session) => session.try_resize(size),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.try_resize(size),
         }
     }
 
@@ -571,7 +617,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.try_shutdown(),
             Self::Serial(session) => session.try_shutdown(),
             #[cfg(test)]
-            Self::TestSsh(session) => session.try_shutdown(),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.try_shutdown(),
         }
     }
 
@@ -583,7 +629,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.try_recv_event(),
             Self::Serial(session) => session.try_recv_event(),
             #[cfg(test)]
-            Self::TestSsh(session) => session.try_recv_event(),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.try_recv_event(),
         }
     }
 
@@ -595,7 +641,7 @@ impl Session for ApplicationSession {
             Self::Sftp(session) => session.shutdown(timeout),
             Self::Serial(session) => session.shutdown(timeout),
             #[cfg(test)]
-            Self::TestSsh(session) => session.shutdown(timeout),
+            Self::TestSsh(session) | Self::TestLocal(session) => session.shutdown(timeout),
         }
     }
 }
@@ -1895,6 +1941,8 @@ impl SessionTab {
             Some(ApplicationSession::Ssh(_)) => true,
             #[cfg(test)]
             Some(ApplicationSession::TestSsh(_)) => true,
+            #[cfg(test)]
+            Some(ApplicationSession::TestLocal(_)) => false,
             Some(ApplicationSession::Local(_))
             | Some(ApplicationSession::Persistent(_))
             | Some(ApplicationSession::DevTunnel(_))
@@ -2539,6 +2587,11 @@ pub enum AppCommand {
     ToggleDurableSessionInStatusBar,
     /// Toggles the occasional background check for a newer fesTerm release.
     ToggleAutomaticUpdateChecks,
+    ToggleMcpEnabled,
+    ToggleJavascriptEnabled,
+    RetryAutomationSettings,
+    OpenWorkflowPicker,
+    Automation(crate::automation::NativeCommand),
     /// Sets or clears the default starting local directory for new SFTP sessions.
     SetDefaultSftpLocalDirectory(Option<PathBuf>),
     /// Sets the visual left/right order for GUI SFTP panes.
@@ -2827,6 +2880,7 @@ pub struct AppState {
     tunnel_reconnects: tunnel_reconnect::TunnelReconnects,
     tabs: Vec<Tab>,
     active: TabId,
+    presentation_workspace: Option<crate::automation::WorkspaceRevision>,
     /// Which tabs were looked at, oldest first, so that closing the active tab
     /// can return to the one it was opened from rather than to whichever tab
     /// happens to sit next to it. Only tabs carrying their own content are
@@ -2879,6 +2933,8 @@ pub struct AppState {
     show_durable_session_in_status_bar: bool,
     /// Whether fesTerm occasionally checks GitHub for a newer release.
     automatic_update_checks: bool,
+    mcp_enabled: bool,
+    javascript_enabled: bool,
     /// Visual left/right order for GUI SFTP panes.
     sftp_pane_order: SftpPaneOrderPreference,
     /// The default starting local directory for new SFTP sessions.
@@ -2966,6 +3022,7 @@ impl AppState {
             tunnel_reconnects: Default::default(),
             tabs,
             active,
+            presentation_workspace: None,
             activation_history: Vec::new(),
             documents: DocumentRegistry::shared(),
             configuration,
@@ -2994,6 +3051,8 @@ impl AppState {
             show_resumable_sessions: settings.show_resumable_sessions(),
             show_durable_session_in_status_bar: settings.show_durable_session_in_status_bar(),
             automatic_update_checks: settings.automatic_update_checks(),
+            mcp_enabled: settings.mcp_enabled(),
+            javascript_enabled: settings.javascript_enabled(),
             keyboard_bindings: settings.keyboard_bindings().clone(),
             #[cfg(test)]
             interface_settings_snapshot_count: std::cell::Cell::new(0),
@@ -3277,6 +3336,8 @@ impl AppState {
         self.show_resumable_sessions = settings.show_resumable_sessions();
         self.show_durable_session_in_status_bar = settings.show_durable_session_in_status_bar();
         self.automatic_update_checks = settings.automatic_update_checks();
+        self.mcp_enabled = settings.mcp_enabled();
+        self.javascript_enabled = settings.javascript_enabled();
         self.keyboard_bindings = settings.keyboard_bindings().clone();
         self.sftp_pane_order = settings.sftp_pane_order();
         self.default_sftp_local_directory = settings
@@ -3495,6 +3556,19 @@ impl AppState {
         self.automatic_update_checks
     }
 
+    pub const fn mcp_enabled(&self) -> bool {
+        self.mcp_enabled
+    }
+
+    pub const fn javascript_enabled(&self) -> bool {
+        self.javascript_enabled
+    }
+
+    pub(crate) fn set_automation_preferences(&mut self, mcp: bool, javascript: bool) {
+        self.mcp_enabled = mcp;
+        self.javascript_enabled = javascript;
+    }
+
     pub const fn prefer_powershell(&self) -> bool {
         self.prefer_powershell
     }
@@ -3559,6 +3633,8 @@ impl AppState {
         .with_show_resumable_sessions(self.show_resumable_sessions)
         .with_show_durable_session_in_status_bar(self.show_durable_session_in_status_bar)
         .with_automatic_update_checks(self.automatic_update_checks)
+        .with_mcp_enabled(self.mcp_enabled)
+        .with_javascript_enabled(self.javascript_enabled)
         .with_keyboard_bindings(self.keyboard_bindings.clone())
         .with_sftp_pane_order(self.sftp_pane_order)
         .with_default_sftp_local_directory(
@@ -4098,6 +4174,15 @@ impl AppState {
             AppCommand::ToggleAutomaticUpdateChecks => {
                 self.automatic_update_checks = !self.automatic_update_checks;
             }
+            AppCommand::ToggleMcpEnabled => {
+                self.mcp_enabled = !self.mcp_enabled;
+            }
+            AppCommand::ToggleJavascriptEnabled => {
+                self.javascript_enabled = !self.javascript_enabled;
+            }
+            AppCommand::RetryAutomationSettings => {}
+            AppCommand::OpenWorkflowPicker => {}
+            AppCommand::Automation(_) => {}
             AppCommand::SetDefaultSftpLocalDirectory(path) => {
                 self.default_sftp_local_directory = path;
             }
@@ -4216,6 +4301,8 @@ impl AppState {
                 self.show_durable_session_in_status_bar =
                     InterfaceSettings::DEFAULT.show_durable_session_in_status_bar();
                 self.automatic_update_checks = InterfaceSettings::DEFAULT.automatic_update_checks();
+                self.mcp_enabled = InterfaceSettings::DEFAULT.mcp_enabled();
+                self.javascript_enabled = InterfaceSettings::DEFAULT.javascript_enabled();
                 self.keyboard_bindings = Default::default();
                 self.sftp_pane_order = InterfaceSettings::DEFAULT.sftp_pane_order();
                 self.default_sftp_local_directory = None;
@@ -6158,6 +6245,9 @@ impl AppState {
     /// notify them about.
     fn set_active(&mut self, id: TabId) {
         if self.active != id {
+            if let Some(revision) = &self.presentation_workspace {
+                revision.changed();
+            }
             if let Some(session) = self.session_tab_mut(self.active) {
                 session.view.cancel_rectangle_copy();
             }
@@ -6169,6 +6259,13 @@ impl AppState {
                 session.has_new_output_since_active = false;
             }
         }
+    }
+
+    pub(crate) fn set_presentation_workspace(
+        &mut self,
+        revision: &crate::automation::WorkspaceRevision,
+    ) {
+        self.presentation_workspace = Some(revision.clone());
     }
 
     /// Records the tab being left as the most recent place to return to.
@@ -9894,6 +9991,30 @@ mod tests {
             .and_then(|profile| local_profile_secondary(&profile));
 
         assert_eq!(session.launch_secondary, expected);
+    }
+
+    #[test]
+    fn automation_preferences_reset_and_replace_without_implicit_enablement() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(!state.mcp_enabled());
+        assert!(!state.javascript_enabled());
+        state.dispatch(AppCommand::ToggleMcpEnabled, &context);
+        assert!(state.mcp_enabled());
+        assert!(!state.javascript_enabled());
+        state.dispatch(AppCommand::ToggleJavascriptEnabled, &context);
+        let enabled = state.interface_settings();
+        assert!(enabled.mcp_enabled());
+        assert!(enabled.javascript_enabled());
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(!state.mcp_enabled());
+        assert!(!state.javascript_enabled());
+        let replacement = Configuration::empty()
+            .with_interface_settings(enabled)
+            .unwrap();
+        state.adopt_configuration(replacement);
+        assert!(state.mcp_enabled());
+        assert!(state.javascript_enabled());
     }
 
     #[test]

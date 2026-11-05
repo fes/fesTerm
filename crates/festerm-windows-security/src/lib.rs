@@ -1080,6 +1080,10 @@ mod imp {
     /// Reports whether an exact object is owned by the current user and has a
     /// protected DACL containing only one full-access ACE for that user.
     pub fn is_current_user_only(file: &File) -> io::Result<bool> {
+        is_handle_current_user_only(file)
+    }
+
+    pub(super) fn is_handle_current_user_only(handle: &impl AsRawHandle) -> io::Result<bool> {
         let mut token = ptr::null_mut();
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
             return Err(io::Error::last_os_error());
@@ -1087,7 +1091,7 @@ mod imp {
         let token = unsafe { OwnedHandle::from_raw_handle(token) };
         let user = token_information(token.as_raw_handle(), TokenUser)?;
         let token_user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
-        current_user_only_security(file, token_user.User.Sid)
+        current_user_only_security(handle, token_user.User.Sid)
     }
 
     /// Resolves an ordinary unelevated account and the OS system directory
@@ -1158,7 +1162,7 @@ mod imp {
     }
 
     fn current_user_only_security(
-        file: &File,
+        handle: &impl AsRawHandle,
         user_sid: *mut core::ffi::c_void,
     ) -> io::Result<bool> {
         const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
@@ -1167,7 +1171,7 @@ mod imp {
         let mut descriptor = ptr::null_mut();
         let status = unsafe {
             GetSecurityInfo(
-                file.as_raw_handle(),
+                handle.as_raw_handle(),
                 SE_FILE_OBJECT,
                 OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
                 &raw mut owner,
@@ -1246,8 +1250,10 @@ mod imp {
     /// grants the current user full access.
     ///
     /// Win32's named-pipe API uses the token default DACL when passed null
-    /// security attributes. Callers create the pipe while this guard is live,
-    /// then call [`DefaultDaclGuard::restore`] before launching the shell.
+    /// security attributes, but concurrent guards can restore a different
+    /// default during creation. Private pipes should use
+    /// [`crate::named_pipe::PipeListener::bind_current_user`] instead. Call
+    /// [`DefaultDaclGuard::restore`] before launching a child process.
     pub fn restrict_default_dacl_to_current_user() -> io::Result<DefaultDaclGuard> {
         let mut token = ptr::null_mut();
         let opened = unsafe {
@@ -1302,8 +1308,8 @@ mod imp {
         result
     }
 
-    fn with_current_user_only_security<T>(
-        create: impl FnOnce(*const SECURITY_ATTRIBUTES) -> io::Result<T>,
+    pub(super) fn with_current_user_only_security<T>(
+        create: impl FnOnce(&SECURITY_ATTRIBUTES) -> io::Result<T>,
     ) -> io::Result<T> {
         let mut token = ptr::null_mut();
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
@@ -1351,7 +1357,7 @@ mod imp {
             lpSecurityDescriptor: (&raw mut descriptor).cast(),
             bInheritHandle: 0,
         };
-        create(&raw const attributes)
+        create(&attributes)
     }
 
     fn relative_object_name(name: &Path) -> io::Result<(Vec<u16>, UNICODE_STRING)> {

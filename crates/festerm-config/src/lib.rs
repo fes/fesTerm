@@ -23,6 +23,7 @@ mod keyboard;
 mod profiles;
 mod session_names;
 mod settings;
+mod snapshot;
 mod workspace;
 pub use errors::{
     ConfigError, ConfigErrorKind, ConfigurationFileError, ConfigurationFileErrorKind,
@@ -45,6 +46,7 @@ pub use settings::{
     InterfaceSettings, ScrollSpeedPreference, ScrollbackLimitPreference, SftpPaneOrderPreference,
     TerminalFontPreference,
 };
+pub use snapshot::{ConfigurationRevision, EffectiveProfileSnapshot, ProfileSnapshotError};
 pub use workspace::{
     LauncherTabConfiguration, ProfilesTabConfiguration, SessionTabConfiguration,
     SettingsTabConfiguration, WorkspaceConfiguration, WorkspaceTab, WorkspaceWindow,
@@ -1300,6 +1302,28 @@ port = 47461
             .and_then(Profile::as_dev_tunnel)
             .unwrap()
             .auto_reconnect());
+    }
+
+    #[test]
+    fn automation_settings_are_independent_explicit_opt_ins() {
+        let legacy: InterfaceSettings = toml::from_str("status_bar_visible = true").unwrap();
+        assert!(!legacy.mcp_enabled());
+        assert!(!legacy.javascript_enabled());
+        let defaults = toml::to_string(&InterfaceSettings::DEFAULT).unwrap();
+        assert!(!defaults.contains("mcp_enabled"));
+        assert!(!defaults.contains("javascript_enabled"));
+
+        for (mcp, javascript) in [(true, false), (false, true), (true, true)] {
+            let settings = legacy
+                .clone()
+                .with_mcp_enabled(mcp)
+                .with_javascript_enabled(javascript);
+            let document = Configuration::empty()
+                .with_interface_settings(settings.clone())
+                .unwrap();
+            let restored = Configuration::parse(&document.to_toml().unwrap()).unwrap();
+            assert_eq!(restored.interface_settings(), &settings);
+        }
     }
 
     #[test]

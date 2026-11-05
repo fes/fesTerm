@@ -20,10 +20,10 @@ use std::{
 };
 
 use festerm_session::{
-    noop_session_event_notifier, Session, SessionError, SessionErrorKind, SessionEvent,
-    SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics, SessionOperation,
-    SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult, TerminalSize,
-    DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
+    noop_session_event_notifier, AutomationEpoch, Session, SessionError, SessionErrorKind,
+    SessionEvent, SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics,
+    SessionOperation, SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult,
+    TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
 
 /// How often the reader thread's blocking read times out to check for
@@ -304,6 +304,8 @@ enum SessionCommand {
 
 struct Shared {
     id: SessionId,
+    automation_epoch: Arc<AutomationEpoch>,
+    lifecycle_transition: Mutex<()>,
     lifecycle: Mutex<SessionLifecycle>,
     metrics: Mutex<SessionMetrics>,
     event_sender: SyncSender<SessionEvent>,
@@ -322,11 +324,26 @@ impl Shared {
     }
 
     fn set_lifecycle(&self, lifecycle: SessionLifecycle) {
-        *self
-            .lifecycle
-            .lock()
-            .expect("session lifecycle lock is not poisoned") = lifecycle.clone();
+        {
+            let transition = self.lifecycle_transition.lock();
+            let healthy = transition.is_ok();
+            let _transition = transition.unwrap_or_else(|poisoned| poisoned.into_inner());
+            self.automation_epoch
+                .transition(healthy && matches!(&lifecycle, SessionLifecycle::Running));
+            *self
+                .lifecycle
+                .lock()
+                .expect("session lifecycle lock is not poisoned") = lifecycle.clone();
+        }
         let _ = self.try_emit(SessionEvent::Lifecycle(lifecycle));
+    }
+
+    fn invalidate_automation_epoch(&self) {
+        let _transition = self
+            .lifecycle_transition
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.automation_epoch.transition(false);
     }
 
     fn record_error(&self, error: SessionError) {
@@ -492,6 +509,8 @@ impl SerialSession {
         let (reader_done_sender, reader_done_receiver) = mpsc::sync_channel(1);
         let shared = Arc::new(Shared {
             id: SessionId::next(),
+            automation_epoch: Arc::new(AutomationEpoch::new()),
+            lifecycle_transition: Mutex::new(()),
             lifecycle: Mutex::new(SessionLifecycle::Starting),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: DEFAULT_EVENT_QUEUE_CAPACITY,
@@ -547,6 +566,10 @@ impl Session for SerialSession {
 
     fn lifecycle(&self) -> SessionLifecycle {
         self.shared.lifecycle()
+    }
+
+    fn automation_epoch(&self) -> Option<Arc<AutomationEpoch>> {
+        Some(Arc::clone(&self.shared.automation_epoch))
     }
 
     fn metrics(&self) -> SessionMetrics {
@@ -694,6 +717,7 @@ fn reader_worker(
                     SessionErrorKind::Output,
                     "serial device closed unexpectedly",
                 );
+                shared.invalidate_automation_epoch();
                 shared.record_error(error.clone());
                 shared.cancel.store(true, Ordering::Release);
                 break Err(error);
@@ -715,6 +739,7 @@ fn reader_worker(
                     SessionErrorKind::Output,
                     format!("serial read failed: {error}"),
                 );
+                shared.invalidate_automation_epoch();
                 shared.record_error(error.clone());
                 shared.cancel.store(true, Ordering::Release);
                 break Err(error);
@@ -772,6 +797,7 @@ fn control_worker(
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
+                shared.invalidate_automation_epoch();
                 shared.cancel.store(true, Ordering::Release);
                 break;
             }
@@ -818,6 +844,49 @@ fn control_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automation_epoch_closes_when_serial_stop_event_is_lost() {
+        let (event_sender, event_receiver) = mpsc::sync_channel(1);
+        let (command_sender, _command_receiver) = mpsc::sync_channel(1);
+        let (_completion_sender, completion_receiver) = mpsc::sync_channel(1);
+        let shared = Arc::new(Shared {
+            id: SessionId::next(),
+            automation_epoch: Arc::new(AutomationEpoch::new()),
+            lifecycle_transition: Mutex::new(()),
+            lifecycle: Mutex::new(SessionLifecycle::Starting),
+            metrics: Mutex::new(SessionMetrics {
+                event_queue_capacity: 1,
+                ..SessionMetrics::default()
+            }),
+            event_sender,
+            event_notifier: noop_session_event_notifier(),
+            cancel: AtomicBool::new(false),
+            completion_receiver: Mutex::new(completion_receiver),
+            completion: Mutex::new(None),
+        });
+        let session = SerialSession {
+            shared: Arc::clone(&shared),
+            command_sender,
+            event_receiver: Mutex::new(event_receiver),
+        };
+        shared.set_lifecycle(SessionLifecycle::Running);
+        let epoch = session.automation_epoch().unwrap();
+        let generation = epoch.capture().unwrap();
+
+        session.try_shutdown().unwrap();
+        assert_eq!(session.lifecycle(), SessionLifecycle::Stopping);
+        assert_eq!(epoch.capture(), None);
+        {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            assert!(!epoch.is_current(generation));
+        }
+        assert!(matches!(
+            session.try_recv_event(),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running))
+        ));
+        assert_eq!(session.try_recv_event(), Err(SessionTryReceiveError::Empty));
+    }
 
     #[test]
     fn line_settings_reject_an_empty_device_or_zero_baud() {

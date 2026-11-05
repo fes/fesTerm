@@ -149,6 +149,102 @@ pub enum InputEventOutcome {
     Rejected,
 }
 
+/// Maximum number of events that may form one prepared input batch.
+pub const MAX_PREPARED_INPUT_EVENTS: usize = 64;
+
+/// Why an input batch could not be prepared.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputPreparationError {
+    Empty,
+    TooManyEvents,
+    TooLarge,
+    UnsupportedEvent,
+    Rejected,
+    Allocation,
+}
+
+/// Immutable bytes encoded against one snapshot of terminal modes.
+///
+/// This value does not reserve a transport position or authorize input.
+pub struct PreparedInput {
+    bytes: Vec<u8>,
+    modes: TerminalModes,
+}
+
+impl PreparedInput {
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub const fn modes(&self) -> TerminalModes {
+        self.modes
+    }
+}
+
+impl crate::Terminal {
+    /// Encodes keyboard and paste events as one bounded, inert input batch.
+    ///
+    /// This does not mutate the input queue. A caller must bind the result to
+    /// the exact target and, while retaining its admission fences, recheck the
+    /// terminal modes before publishing the reserved bytes. The byte limit is
+    /// additionally capped at the terminal's transport queue watermark.
+    pub fn prepare_input(
+        &self,
+        events: &[InputEvent],
+        max_bytes: usize,
+    ) -> Result<PreparedInput, InputPreparationError> {
+        use InputPreparationError as Refusal;
+
+        if events.is_empty() {
+            return Err(Refusal::Empty);
+        }
+        if events.len() > MAX_PREPARED_INPUT_EVENTS {
+            return Err(Refusal::TooManyEvents);
+        }
+        let modes = self.modes();
+        let limit = max_bytes.min(crate::TRANSPORT_QUEUE_HIGH_WATERMARK);
+        let mut bytes = Vec::new();
+        for event in events {
+            let remaining = limit - bytes.len();
+            let encoded = match event {
+                InputEvent::Key(key) => encode_key(*key, modes).ok_or(Refusal::Rejected)?,
+                InputEvent::ModifiedKey { key, modifiers } => {
+                    encode_modified_key(*key, *modifiers, modes).ok_or(Refusal::Rejected)?
+                }
+                InputEvent::Paste(text) => {
+                    // Even unbracketed CRLF normalization can remove at most
+                    // one byte from each pair.
+                    if text.len() > remaining.saturating_mul(2)
+                        || paste_encoded_length(text, modes).ok_or(Refusal::TooLarge)? > remaining
+                    {
+                        return Err(Refusal::TooLarge);
+                    }
+                    let mut owned = String::new();
+                    owned
+                        .try_reserve_exact(text.len())
+                        .map_err(|_| Refusal::Allocation)?;
+                    owned.push_str(text);
+                    encode_paste(owned, modes).ok_or(Refusal::Allocation)?
+                }
+                InputEvent::Focus(_) | InputEvent::Mouse(_) => {
+                    return Err(Refusal::UnsupportedEvent);
+                }
+            };
+            if encoded.len() > remaining {
+                return Err(Refusal::TooLarge);
+            }
+            bytes
+                .try_reserve(encoded.len())
+                .map_err(|_| Refusal::Allocation)?;
+            bytes.extend_from_slice(&encoded);
+        }
+        if bytes.is_empty() {
+            return Err(Refusal::Empty);
+        }
+        Ok(PreparedInput { bytes, modes })
+    }
+}
+
 pub(crate) fn encode_key(key: Key, modes: TerminalModes) -> Option<Vec<u8>> {
     if modes.keyboard_locked() {
         // KAM locks the keyboard rather than discarding what it produces, so
@@ -365,6 +461,161 @@ pub(crate) fn encode_paste(text: String, modes: TerminalModes) -> Option<Vec<u8>
     bytes.extend_from_slice(text.as_bytes());
     bytes.extend_from_slice(END);
     Some(bytes)
+}
+
+#[cfg(test)]
+mod prepared_input_tests {
+    use super::*;
+    use crate::{Dimensions, Terminal, TRANSPORT_QUEUE_HIGH_WATERMARK};
+
+    fn terminal() -> Terminal {
+        Terminal::new(Dimensions::new(20, 4).unwrap()).unwrap()
+    }
+
+    fn refusal(terminal: &Terminal, events: &[InputEvent], limit: usize) -> InputPreparationError {
+        match terminal.prepare_input(events, limit) {
+            Ok(_) => panic!("input preparation unexpectedly succeeded"),
+            Err(error) => error,
+        }
+    }
+
+    #[test]
+    fn prepared_input_matches_core_encoding_without_mutating_the_queue() {
+        for mode_sequence in [b"".as_slice(), b"\x1b[?1h\x1b=\x1b[?2004h"] {
+            let mut terminal = terminal();
+            terminal.ingest(mode_sequence);
+            terminal.queue_input(b"earlier");
+            let events = [
+                InputEvent::Key(Key::ArrowUp),
+                InputEvent::Key(Key::Keypad(KeypadKey::Digit(1))),
+                InputEvent::ModifiedKey {
+                    key: Key::ArrowLeft,
+                    modifiers: Modifiers::CONTROL.with(Modifiers::ALT),
+                },
+                InputEvent::Paste("first\r\nsecond\n".to_owned()),
+            ];
+            let prepared = terminal.prepare_input(&events, 16_384).unwrap();
+            assert_eq!(terminal.queued_input(), b"earlier");
+            assert_eq!(prepared.modes(), terminal.modes());
+
+            terminal.drain_input();
+            for event in events {
+                assert!(matches!(
+                    terminal.handle_input(event),
+                    InputEventOutcome::Encoded { .. }
+                ));
+            }
+            assert_eq!(prepared.bytes(), terminal.queued_input());
+
+            terminal.ingest(b"\x1b[?1l\x1b>");
+            if !mode_sequence.is_empty() {
+                assert_ne!(prepared.modes(), terminal.modes());
+            }
+        }
+    }
+
+    #[test]
+    fn prepared_input_refuses_entire_invalid_batch_without_touching_input() {
+        let mut terminal = terminal();
+        terminal.queue_input(b"earlier");
+        let prefix = InputEvent::Key(Key::Character('x'));
+        for (events, expected) in [
+            (vec![], InputPreparationError::Empty),
+            (
+                vec![InputEvent::Paste(String::new())],
+                InputPreparationError::Empty,
+            ),
+            (
+                vec![prefix.clone(), InputEvent::Key(Key::Control('1'))],
+                InputPreparationError::Rejected,
+            ),
+            (
+                vec![prefix.clone(), InputEvent::Focus(FocusEvent::In)],
+                InputPreparationError::UnsupportedEvent,
+            ),
+            (
+                vec![
+                    prefix.clone(),
+                    InputEvent::Mouse(MouseEvent {
+                        kind: MouseEventKind::Press(MouseButton::Left),
+                        column: 0,
+                        row: 0,
+                        modifiers: Modifiers::NONE,
+                    }),
+                ],
+                InputPreparationError::UnsupportedEvent,
+            ),
+            (
+                vec![prefix.clone(), InputEvent::Paste("too long".to_owned())],
+                InputPreparationError::TooLarge,
+            ),
+            (
+                vec![prefix.clone(); MAX_PREPARED_INPUT_EVENTS + 1],
+                InputPreparationError::TooManyEvents,
+            ),
+        ] {
+            assert_eq!(refusal(&terminal, &events, 4), expected);
+            assert_eq!(terminal.queued_input(), b"earlier");
+        }
+        terminal.ingest(b"\x1b[2h");
+        assert_eq!(
+            refusal(&terminal, &[prefix], 4),
+            InputPreparationError::Rejected
+        );
+        assert_eq!(terminal.queued_input(), b"earlier");
+    }
+
+    #[test]
+    fn prepared_input_bounds_include_normalization_and_paste_markers() {
+        let mut terminal = terminal();
+        let text = InputEvent::Paste("\r\n".repeat(8_192));
+        let prepared = terminal.prepare_input(&[text], 8_192).unwrap();
+        assert_eq!(prepared.bytes(), vec![b'\r'; 8_192]);
+        let events = [
+            InputEvent::Paste("\r\n".repeat(8_191)),
+            InputEvent::Key(Key::Character('x')),
+        ];
+        let prepared = terminal.prepare_input(&events, 8_192).unwrap();
+        assert_eq!(prepared.bytes().len(), 8_192);
+        assert_eq!(prepared.bytes().last(), Some(&b'x'));
+        assert_eq!(
+            refusal(&terminal, &events, 8_191),
+            InputPreparationError::TooLarge
+        );
+        assert_eq!(
+            refusal(&terminal, &[InputEvent::Paste("\r\n".repeat(8_193))], 8_192,),
+            InputPreparationError::TooLarge
+        );
+
+        terminal.ingest(b"\x1b[?2004h");
+        let prepared = terminal
+            .prepare_input(&[InputEvent::Paste("x".repeat(16_384 - 12))], 16_384)
+            .unwrap();
+        assert_eq!(prepared.bytes().len(), 16_384);
+        assert!(prepared.bytes().starts_with(b"\x1b[200~"));
+        assert!(prepared.bytes().ends_with(b"\x1b[201~"));
+        assert_eq!(
+            refusal(
+                &terminal,
+                &[InputEvent::Paste("x".repeat(16_384 - 11))],
+                16_384,
+            ),
+            InputPreparationError::TooLarge
+        );
+
+        terminal.ingest(b"\x1b[?2004l");
+        assert_eq!(
+            refusal(
+                &terminal,
+                &[InputEvent::Paste(
+                    "x".repeat(TRANSPORT_QUEUE_HIGH_WATERMARK + 1)
+                )],
+                usize::MAX,
+            ),
+            InputPreparationError::TooLarge
+        );
+        assert!(terminal.queued_input().is_empty());
+    }
 }
 
 pub(crate) fn paste_encoded_length(text: &str, modes: TerminalModes) -> Option<usize> {

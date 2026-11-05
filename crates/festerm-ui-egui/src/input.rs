@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use egui::{Pos2, Response, Ui};
 use festerm_core::{
     Dimensions, FocusEvent, InputEvent, InputEventOutcome, Key, Modifiers, MouseButton, MouseEvent,
-    MouseEventKind, MouseWheel, Terminal,
+    MouseEventKind, MouseTrackingMode, MouseWheel, Terminal,
 };
 
 use crate::{
@@ -59,6 +59,8 @@ pub trait EncodedInputSink {
     /// Distinguishes ordered keyboard/paste input from focus/mouse reports;
     /// no payload is exposed to this optional classification hook.
     fn begin_input_event(&mut self, _keyboard_input: bool) {}
+    /// Signals terminal-bound human input before its bytes reach the session.
+    fn begin_human_input(&mut self) {}
     /// Delivers transient encoded bytes. Implementations must not retain them
     /// unless they are an active session transport.
     fn record_encoded_input(&mut self, bytes: &[u8]);
@@ -113,10 +115,16 @@ fn route_input_with_metadata(
     sink: &mut impl EncodedInputSink,
     metadata: crate::routing_trace::Metadata,
 ) -> InputRoute {
-    sink.begin_input_event(matches!(
+    let keyboard_input = matches!(
         &event,
         InputEvent::Key(_) | InputEvent::ModifiedKey { .. } | InputEvent::Paste(_)
-    ));
+    );
+    let mouse_input = matches!(&event, InputEvent::Mouse(_))
+        && terminal.modes().mouse_tracking() != MouseTrackingMode::None;
+    sink.begin_input_event(keyboard_input);
+    if keyboard_input || mouse_input {
+        sink.begin_human_input();
+    }
     let outcome = terminal.handle_input(event);
     let queue_depth = terminal.queued_input().len();
     let bytes = terminal.drain_input();

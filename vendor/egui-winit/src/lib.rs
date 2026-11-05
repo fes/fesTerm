@@ -723,7 +723,12 @@ impl State {
             // [`winit::event::Ime::Enabled`] means different things in X11 and
             // Wayland, but it doesn't matter to us.
             // See <https://github.com/rust-windowing/winit/issues/2498>
-            winit::event::Ime::Enabled | winit::event::Ime::Disabled => {}
+            winit::event::Ime::Enabled => {}
+            winit::event::Ime::Disabled => {
+                #[allow(deprecated)]
+                let event = egui::Event::Ime(egui::ImeEvent::Disabled);
+                self.egui_input.events.push(event);
+            }
             winit::event::Ime::Preedit(text, active_range_bytes) => {
                 let active_range_chars = match *active_range_bytes {
                     Some((start_bytes, end_bytes)) => {

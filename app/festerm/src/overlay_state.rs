@@ -51,6 +51,7 @@ pub(crate) struct PendingCloseConfirmation {
 
 #[derive(Clone, Debug)]
 pub(crate) struct PendingPasteConfirmation {
+    pub(crate) _human_input_intent: std::sync::Arc<()>,
     pub(crate) clipboard_token: Option<u64>,
     pub(crate) opened_frame: u64,
     pub(crate) tab: TabId,
@@ -70,6 +71,7 @@ pub(crate) struct PendingPasteConfirmation {
 /// quoting - the same "otherwise" fallback the design doc specifies.
 #[derive(Clone, Debug)]
 pub(crate) struct PendingFileDropConfirmation {
+    pub(crate) _human_input_intent: std::sync::Arc<()>,
     pub(crate) tab: TabId,
     pub(crate) identity: String,
     /// The literal, unquoted, space-joined absolute paths in drop order -
@@ -274,6 +276,7 @@ pub(crate) struct OverlayState {
     /// manager's local-pane browsing widget instead of an OS-native file
     /// dialog.
     pub(crate) markdown_file_picker: Option<MarkdownFilePicker>,
+    pub(crate) workflow_file_picker: bool,
     /// The editor's "Save As" destination sheet (ADR 0034 §3).
     pub(crate) save_as_picker: Option<crate::save_as::SaveAsPicker>,
     /// The directory the last Save As sheet was browsing when it closed, so
@@ -484,6 +487,7 @@ mod tests {
 
         let pending_file_drop = OverlayState {
             pending_file_drop: Some(PendingFileDropConfirmation {
+                _human_input_intent: std::sync::Arc::new(()),
                 tab,
                 identity: "test".to_owned(),
                 text: "/tmp/notes.md".to_owned(),

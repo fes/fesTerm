@@ -1102,11 +1102,12 @@ impl FesTermApp {
             self.overlays.pending_settings_reset = None;
             self.state
                 .dispatch(AppCommand::ResetInterfaceSettings, context);
+            let before = self.reset_automation_preferences(context);
             self.image_budget
                 .set_preference(InterfaceSettings::DEFAULT.image_memory_budget());
             crate::markdown_images::wake_image_viewports(context);
             self.reinstall_terminal_font(context);
-            self.persist_interface_settings();
+            self.persist_reset_automation_preferences(before);
             self.updates
                 .set_automatic_checks_enabled(self.state.automatic_update_checks());
         }

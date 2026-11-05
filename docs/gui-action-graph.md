@@ -335,22 +335,56 @@ session” is one semantic edge exercised from the chip close control, chip
 context menu, shortcut, command palette, native menu, and failure overlay. A
 route must not grow its own policy.
 
-## Proposed MCP and JavaScript automation (deferred)
+## Staged MCP and JavaScript automation
 
 [ADR 0065](adr/0065-mcp-and-javascript-automation.md) and the
-[automation design](automation-design.md) define proposed future routes only.
-No current GUI, MCP server or JavaScript runtime implements these edges.
-The fixture checkpoint `A0` is a future isolated app instance with a controlled
-session, a test workflow bundle and no grants; returning to A0 revokes all test
+[automation design](automation-design.md) define the staged authority contract.
+The observation-only `AUT-07` path is partial; workflows, control and their
+broader routes remain deferred. The fixture checkpoint `A0` is an isolated app
+instance with a controlled session and no grants; workflow fixtures remain
+future work. Returning to A0 revokes all test
 principals/leases, stops owned workers and closes only fixture-owned sessions.
 Do not construct it with personal profiles, output or credentials.
 
+A synthetic-only `AUT-08` input-review stage displays the complete escaped
+action, exact sink and every current metadata source after an explicit review
+request. Cancellation, stale actions, human/IME input, terminal mode changes
+and source expiry or retirement reject the staged review. Synthetic confirmation
+can publish one frozen action to the controlled backend and exposes disarm; its
+response is admission, refusal or unknown, not command completion. A newly
+received matching action can reuse its still-live handoff only with the original
+target, sources, modes, fences, expiry and shared budgets. Changed actions need
+review, cancellation/disarm precede reuse, and unknown outcomes disarm without
+replay. Native consent, publication and usability remain deferred.
+The controller and presentation capability reports expose input only to an
+explicitly selected direct-input catalog with current backend and enrollment
+qualification; this is not a grant, and production remains unavailable.
+
+Prospective scoped-creation review has only non-authorizing profile/policy
+snapshot tests. Capture does not retrieve secret-store contents, but full
+profile fields may be sensitive; trusted code must not blindly log or disclose
+them to a worker, and redacted snapshot Debug does not sanitize those fields.
+`AUT-01` and `AUT-06` do not yet include a creation review,
+fresh-target binding or session-open edge; native review and launch remain gated.
+Explicit ordinary-slot, legacy metadata-slot and whole-principal broker
+revocations share admission, but presentation revocation, other cuts and
+physical delivery are not yet uniformly fenced.
+
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
-| `AUT-01` | A0 no authority → explicitly scoped invocation | Native user starts a reviewed immutable workflow or enables a paired local MCP caller; broker/grant UI prerequisite | Exact caller, bundle/parameter digests, target generations, disclosure/control scopes and expiry are shown; refusal or cancellation releases no data and admits no effects; connection/import alone grants nothing | Cancel/revoke to A0 | P, H, N, U; deferred |
-| `AUT-02` | Scoped invocation → running/waiting → terminal run state | Qualified confined JavaScript worker and bounded broker operations; explicit writer lease for control | Direct/child effects and results obey caller intersection, recipient checks and quotas; a successful input call means admission only; failures/cancellation show unknown admitted outcomes honestly | Cancel; reap owned worker; revoke; return A0 | P, N; deferred |
+| `AUT-01` | A0 no authority → explicitly scoped invocation | Native user starts a reviewed immutable workflow or enables a paired local MCP caller; broker/grant UI prerequisite | Exact caller, bundle/parameter digests, target generations, disclosure/control scopes and expiry are shown; refusal or cancellation releases no data and admits no effects; connection/import alone grants nothing | Cancel/revoke to A0 | P, H, N, U; intake/binding and non-authorizing desktop source preview automated, approval and execution deferred |
+| `AUT-02` | Scoped invocation → running/waiting → terminal run state | Qualified confined JavaScript worker and bounded broker operations; explicit writer lease for control | Direct/child effects and results obey caller intersection, recipient checks and quotas; a successful input call means admission only; failures/cancellation show unknown admitted outcomes honestly | Cancel; reap owned worker; revoke; return A0 | P, N; worker, early process entry, terminal-request encoding and local PTY reservation components automated, authority integration deferred |
 | `AUT-03` | Paired MCP caller → scoped observation or named workflow run | Authenticated private IPC, protocol-qualified adapter and caller grants; no raw eval | Tool/resource/list/subscription/result paths disclose only authorized data; forged/cross-client handles, replay and privileged workflow laundering refuse; lost responses cannot duplicate a run | Disconnect/revoke caller; cleanup to A0 | P, N; deferred |
-| `AUT-04` | Running/waiting → interrupted/revoked | Human input/take-control, lock/suspend, target replacement/disconnect, caller loss, expiry or worker fault | Admission closes and queued old-epoch effects/data reject; no retarget/replay/takeover/shell recreation after recovery; already admitted effects are not represented as rolled back | Explicit new invocation/grant or cleanup to A0 | P, H, N, U; deferred |
+| `AUT-04` | Running/waiting → interrupted/revoked | Human input/take-control, slot revocation, lock/suspend, target replacement/disconnect, caller loss, expiry or worker fault | Affected admission closes and queued old-epoch effects/data reject; OS lock, suspend and client-exit cuts follow detection, which can be delayed without a documented upper bound. Ordinary and metadata cuts preserve independently live authority in the other slot, while privacy loss and disconnect cut both; stale pending decisions are reclaimed without refunding lifetime charges; no retarget/replay/takeover/shell recreation after recovery; effects admitted before the cut are not represented as rolled back | Explicit new invocation/grant or cleanup to A0 | P, H, N, U; kernel direct-input takeover, slot revocation and local input fence components, integration deferred |
+| `AUT-05` | Default configuration → independent automation opt-in | Strict ordinary configuration parsing/persistence, one app-owned pair shared by Settings windows, and qualified adapters | Legacy settings are both off; either opt-in remains independent and grants no session access. Stale sibling saves/broadcasts cannot restore a successfully saved disable. Failure/unknown stops both features for the process and visibly warns disk may remain enabled; explicit retry confirms the pair without resuming. Same-pass conflicting automation actions/overflow stop and suppress approval with feedback; a saved preference does not qualify a platform | Disable/reset; after failure repair access and retry, remaining stopped until restart | P, U; deterministic application/Settings regressions added; native usability and general indeterminate-save reconciliation pending |
+| `AUT-06` | No kernel authority → native-scoped run → revoked/completed | Trusted application registers exact targets and constructs native approvals | Channel/target separation, shared and ancestor budgets, source-to-control closure, minted leases, completion cuts and idempotent admission refuse stale/expanded authority. A direct-input binding fixes the target and immutable input digest/length and permits one prepared action without workflow or observation scope. An unselected MCP catalog defines bounded requests and distinct refused, admitted and unknown outcomes; the app refuses them in its observation path. A separately approved metadata slot has independent epochs and delivery liveness, shares quotas, and composes with control only through explicitly reviewed cross-slot closure. Approval does not transfer a writer; explicit human takeover cuts old control grants/runs/leases. Admitted execution outcomes remain unknown | Revoke/disconnect/expire; release leases | P; metadata, control and worker integration pending |
+| `AUT-07` | MCP off → local channel → exact-target observation → revoked | Enable MCP, match the channel's public code and explicitly approve selected live attachments; a direct connection additionally requires complete independently read peer-fingerprint entry and explicit attestation in the originating Settings window | Until qualified, activation refuses. Connection alone reveals no targets; reads/waits stay bounded and channel/target-specific; MCP loss revokes its principals without destroying independently owned broker state; privacy loss globally revokes; expiry or replacement prevents queued data delivery. The dormant direct comparison is generation-bound and invalidated on stop; the bridge retains the original frame and admission through each encrypted write. Guarded closure wakes an announced direct owner after releasing admission. UI-owner destruction wakes and retires a stalled or established direct peer, without fencing effects already in flight. Neither it nor the readiness-driven owner qualifies the final recipient. JavaScript and input stay unavailable | Reject comparison, revoke/disconnect or disable MCP | P, U; Settings and separate-process simulated SDK exchange automated; native/client evidence pending |
+| `AUT-08` | Native opt-in → connection-local registration → explicit current-window choice and confirmation → invalidated | Qualified private bootstrap and privacy, then a native Settings opt-in for new connections; choose and confirm one exact live local PTY in the Settings window | The desktop beta opens this path on macOS, Linux and Windows as owner-accepted risk; production qualification remains open. A combined catalog reports current enrollment availability alongside refusal-only presentation without granting authority. Registration never opens a prompt or selects a target; labels and tab positions are sanitized hints, not authority. Distinct principals and identical labels cannot retarget; tracked away-and-back tab changes, moves, stale decisions/references and competing cancellation refuse. An association grants no metadata, content, control, presentation or workflow authority. A separate dormant Settings review binds one metadata grant to the exact association and attachment, refuses active control and legacy observation, and immediately invalidates cancelled review snapshots while guarded cleanup is pending. A test-qualified metadata consumer admits only that separate grant and retains original grant, run, association and attachment liveness in queued replies. A later dormant direct-input review must explicitly include every active enrollment source and bind both sides of its metadata-to-control flow | Cancel/unregister, disconnect, global privacy revocation, close, replacement or broker restart | P, H; separate-process synthetic SDK/controller, metadata routing and Settings tests; authenticated client, qualified consent/delivery, platform and usability evidence deferred |
+| `AUT-09` | Separately granted enrolled target → bounded pending presentation → confirmed or refused | Exact local target, native-only grant and qualified uninterrupted activation source with admission barrier; all production sources currently unavailable | A combined catalog preserves explicit presentation refusal while reporting live enrollment availability. A queued command is not success; exact selected tab/window and native foreground produce a fresh principal-bound revision only after a real barrier. Focus/selection ABA, event gaps, privacy/human takeover and attachment changes reject old evidence. Modeled control and separate metadata reviews freeze exact sources and cross-flow before native consent, retaining guards through lease and publication; source retirement cuts affected scopes, not unrelated principals. Publication followed by barrier failure is unknown | Cancel/expire/revoke; explicit new request and handoff, never automatic reacquisition | P, H; synthetic barrier and refusal-only MCP automated, native qualification deferred |
+
+Windows monitor cleanup status and callback delivery alone do not qualify
+admission, privacy or physical-recipient fencing; the desktop MCP beta accepts
+this as residual risk.
 
 ## Known-state checkpoints
 

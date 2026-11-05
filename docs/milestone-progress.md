@@ -11,6 +11,723 @@ before launch; interruption reconciles that exact shell or refuses without
 creating another. Live sessions remain untouched and clients reconnect
 explicitly. Signed/native cross-platform qualification remains DT-05 work.
 
+## Opening the desktop MCP beta
+
+The owner accepted a desktop MCP beta. macOS now has a privacy monitor that
+polls the session dictionary and listens for lock/sleep notifications; Linux
+watches its logind session. Both fail closed. The stdio bootstrap and the
+controller, metadata-review and reviewed-input gates are open on macOS, Linux
+and Windows behind a default-off **Enable local MCP (Beta)** setting. A real
+macOS broker served initialize, tool listing and pairing status to the official
+TypeScript SDK client. Native approval, lock and sleep checks remain manual.
+
+## Extending the dormant direct transport to Windows pipes
+
+The experimental Rust SDK connector and dormant host owner can use an
+already-connected synchronous Windows named pipe without pending overlapped
+writes. A Windows-only fixture exercises encrypted bidirectional messages and
+an observed privacy cut with simulated native decisions; it must still run on
+Windows. Blocked and idle pipe I/O is retried every 20 ms, whose power and
+scaling costs are unqualified. No production endpoint, caller identity,
+client-exit monitor or final-recipient boundary is established.
+
+## Exploring a direct authenticated MCP channel
+
+The owner authorized an additional direct local-socket connector so an MCP
+client need not forward replies through an unqualified stdio recipient. The
+experimental channel composes bounded encrypted I/O, independently simulated
+comparisons, role-bound mutual confirmation and a separate handshake domain.
+It exchanges frames over a Unix socket pair but does not start a listener or
+connect the MCP SDK. Caller liveness, native verification and privacy,
+recipient fencing and the production control path remain open gates.
+
+## Reporting direct-input capability
+
+The controller and presentation capability tools now agree on direct-input
+availability for a selected catalog and its currently qualified backend. This
+reports a feature, not a grant or admission guarantee. Production input remains
+unqualified and unavailable.
+
+## Exercising enrollment with an official Rust MCP client
+
+The official Rust SDK negotiates MCP and drives two initially identical-label
+synthetic enrollments through an in-memory coordinator bridge. Separate
+simulated reviews authorize metadata; a later label change and target move
+exercise exact association rather than name-based retargeting. The same client
+uses simulated review and disarm to send input to the remaining test backend and
+observes refused, admitted and unknown outcomes. The exchange does not qualify
+native transport, privacy, presentation or production controller support.
+
+## Reusing a synthetic direct-input handoff
+
+A new matching wire invocation can reuse the same still-live synthetic handoff
+after the original action, association, sources, modes and safety fences are
+revalidated. Its original expiry and shared budgets are retained; disarm,
+queued cancellation and unknown outcomes do not cause automatic replay. A
+different action still needs review. This does not qualify production input.
+
+## Dispatching one synthetic direct-input action
+
+The test-qualified MCP route can explicitly confirm a frozen review, reserve
+the exact local test backend queue and settle one input as refused, admitted or
+unknown. Queued cancellation is ordered before publication and settlement;
+disarm targets the original control grant. At this checkpoint, a later wire
+invocation still needed a fresh review. No production input, native presentation
+or private bootstrap is qualified by these tests.
+
+## Staging direct-input reviews
+
+The synthetic-only adapter stages one exact-enrollment input request per peer
+and displays the complete escaped action, sink and current metadata-source
+closure after an explicit review request. Cancellation, source expiry,
+human/IME or mode changes, enrollment retirement and stale UI actions
+invalidate the staged decision.
+At this checkpoint Settings could not approve or publish input; the later
+synthetic-only dispatch above does not qualify production control.
+
+## Defining bounded direct-input protocol
+
+An unselected MCP catalog defines exact-enrollment text/key operations with
+bounded arguments and explicit refused, queue-admitted and unknown results.
+Cancellation and late completions do not replay an action. Existing catalogs
+remain unchanged, and the app explicitly refuses input in its observation
+path. No input adapter, native handoff or production qualification is enabled.
+
+## Reviewing direct input after enrollment metadata
+
+The dormant direct-action review can follow separately approved enrollment
+metadata only after the explicit readable-source scope includes every active
+enrollment. Its modeled decision binds both sides of each exact grant's flow
+to the control sink; grant replacement or association retirement invalidates
+a pending review. This metadata-first integration remains synthetic: native
+handoff UI, delivery qualification and production control are unavailable.
+
+## Routing exact-enrollment metadata in synthetic integration
+
+The test-qualified controller route now resolves an association only within its
+connection, uses its separately reviewed grant for a charged exact-target
+discovery, and returns bounded label/lifecycle metadata without a raw target
+reference. Queued frames retain the original disclosure, association and
+attachment liveness; synthetic tests exercise independent identical labels,
+cross-connection collisions, revocation, expiry and legacy observation.
+Production metadata availability remains false: authenticated bootstrap,
+native privacy and consent, all cancellation/revocation/expiry cuts and the
+physical-recipient boundary are not qualified.
+
+## Combining metadata review with capability discovery
+
+The combined controller and refusal-only presentation catalog now composes with
+the dormant exact-enrollment metadata review. A synthetic regression checks
+pending, approved and revoked reviews on the same connection: enrollment may
+be available, but a metadata grant alone does not make production metadata
+delivery, presentation or input available. Production qualification remains
+closed.
+
+## Modeling native enrollment metadata review
+
+The dormant Settings route now models a separate same-window review for one
+exact enrollment and describes its bounded metadata-only scope. Cancellation
+invalidates stale review snapshots immediately; proposal cleanup and scoped
+revocation are deferred through admission and reported as pending. The route
+is test-qualified only, refuses active control and legacy observation
+composition, and provides no metadata delivery or production capability.
+
+## Guarding ordinary and metadata grant replacement
+
+Ordinary and legacy metadata approval now retain the shared admission guard
+while replacing their own grant slots. A contention regression orders each
+replacement after guarded queue insertion, cuts the old slot's liveness and
+preserves the independent opposite slot. Other broker cuts, expiry and
+destruction are not uniformly guarded; the queued legacy frame is not bound to
+that liveness and no final-recipient delivery fence is established.
+
+## Combining enrollment metadata with completion safety
+
+The host enrollment-review seam now composes with retained completion and its
+unwind cuts. Reconciliation errors keep the temporarily taken broker under the
+unwind sentinel until privacy shutdown returns; a regression verifies that a
+repaint panic invalidates an exact metadata grant and that deferred cleanup
+discards its pending review. This does not add a metadata route or a recipient
+delivery fence.
+
+## Binding enrollment metadata review to the host association
+
+The dormant coordinator can now freeze one exact local association and its
+attachment before a separate metadata review, then install the matching broker
+grant only if that binding and the workspace revision remain current. Two
+identically labelled enrolled terminals retain independent grants and cuts.
+The seam refuses active control and legacy observation composition pending
+reviewed host cross-consent and delivery fencing. It adds no native consent UI,
+MCP metadata route, recipient fence or production qualification.
+
+## Guarding principal grant revocations
+
+Ordinary-slot, legacy metadata-slot and whole-principal revocation now require
+the shared admission guard. A contention regression checks the cut and preserves
+independently approved enrollment metadata for the two slot-specific operations.
+Other cuts and expiry are not uniformly guarded, and broker destruction
+remains outside the boundary; these cuts alone do not provide a
+recipient-delivery fence.
+
+## Adding exact-enrollment metadata authority in the broker
+
+The kernel adds separate discovery-only grants and quota-charged runs for exact
+enrollments, with scoped lifecycle cuts and fresh two-sided, epoch-bound
+cross-consent against ordinary control. The older model decisions remain inert
+and the legacy unbound slot is not a fallback. This is broker authority only:
+native review, metadata routing and recipient-delivery fencing are still absent.
+
+## Modeling enrollment-scoped metadata decisions
+
+The kernel now models separate, bounded metadata reviews for exact controller
+enrollments without giving those decisions any route to runs or disclosure.
+Review freezes current control ownership and requires explicit compatible
+cross-flow consent; independent registrations can be revoked separately.
+Native consent, usable per-enrollment grants and publication fencing remain
+future work, and controller metadata remains unavailable.
+
+## Retaining peer completion cleanup
+
+Live observation peers retain one exact run/request cleanup record before
+finishing a response. Admission contention after sending defers subsequent
+peer events and waits until cleanup succeeds, without replaying the response.
+Poison and inconsistent cleanup fail closed; an unwind sentinel closes the
+adapter and privacy flags before a temporarily taken broker is dropped. Focused
+tests cover contention, multiple peers, wait completion, expiry, revocation,
+missing runs, teardown, poison and unwind; execution remains pending.
+Repaint callbacks run before the taken broker is restored, and privacy-loss
+shutdown borrows it until shutdown returns, so a panic in either path still
+closes the flags before broker destruction. A tick-wide borrowing unwind guard
+also closes the flags and drops any broker still in the coordinator if a
+pre-take callback panics, without acquiring admission or suppressing the panic.
+Command and overflow entry points and the surrounding application input,
+logic and UI dispatch have equivalent idempotent unwind cuts, including
+post-dispatch repaint callbacks. A latched enabled MCP setting now visibly
+requires explicit restart rather than appearing disabled.
+It clears startup intents and opt-ins, latches MCP startup closed until an
+explicit restart, atomically disarms workflow selections, and defers retirement
+of pending startup workers and queued selection closures to normal cleanup.
+Workflow selection can independently rearm after cleanup by explicitly
+enabling JavaScript after a disabled state is observed; unchanged settings
+cannot rearm it, and settings show the recovery instruction.
+It does not stop capture work already running or recall an extracted bundle.
+Completion alone does not guard the public completion API or other broker cuts,
+or establish metadata, final-recipient or physical-delivery safety.
+
+## Serializing outbound queue admission
+
+The app now retains the shared admission guard from its connection, deadline
+and target checks through the bounded nonblocking response-queue insertion;
+queue failure closes the connection before releasing that guard. A
+child-isolated regression pauses at insertion and verifies that a competing
+revocation cannot cross the checks. The legacy frame remains non-authorizing,
+and broker liveness and final-recipient delivery fences are still missing.
+
+## Closing poison paths before diagnostics
+
+The shared admission-flag helper, privacy gate and MCP stop now apply their
+atomic closure and broker-drop cuts before reporting admission poison, without
+logging under admission. An isolated panic-subscriber regression covers the
+asynchronous privacy callback, both flag directions, multiple peers and
+metadata disclosure liveness. At the controller request limit, a poisoned
+connection also closes before the same diagnostic. Later cleanup may still
+be interrupted; this does not qualify a platform adapter or add a
+final-recipient delivery fence.
+
+## Guarding peer wait cancellation
+
+Peer cancellation now retains a bounded, already-consumed cancellation on
+admission contention, suppresses the affected wait, and retries its broker
+cut before processing further peer events. `Broker::cancel_run` requires the
+shared guard; poison follows the existing global privacy-stop path. Regression
+execution is tracked with the PR. Cleanup now disconnects under admission but
+defers bounded error logging until after releasing it, so a tracing subscriber
+cannot reenter the non-reentrant guard from those logs. This does not guard
+other run cuts or broker Drop, or qualify enqueue, metadata output or physical
+delivery.
+
+## Outbound queue ownership extraction
+
+The existing four-frame IPC response queue and its frame/target guards now live
+in the authority crate and feed the same app-owned connection and writer.
+That extraction changed ownership only: insertion was not yet guarded through
+enqueue, did not bind an enrollment or metadata grant, and proved no revocable
+enqueue or physical delivery. Production qualification and metadata routing
+remain closed. Focused queue and connection regressions cover capacity,
+ordering, closure and guard freshness; execution results are tracked with the
+PR.
+
+## Wiring non-authorizing controller enrollment
+
+The local integration work adds an application adapter from an explicitly
+opted-in controller catalog to the existing principal-owned broker, and a
+native Settings flow that requires a separate choose, exact current-window
+local-PTY selection and confirmation. Untrusted identifiers and labels preserve
+readable Unicode while bounded and escaped for quoted display; registration
+alone opens no prompt or grants access.
+Status exposes only connection-owned opaque correlation IDs. Moves, close,
+disconnect, privacy loss, newer decisions, conflicting actions and bounded
+queue exhaustion invalidate or refuse stale work; queued stale replies close
+the connection. JavaScript is not involved.
+
+Production private bootstrap and controller qualification remain
+unconditionally closed: synthetic peers and injected qualification are not
+platform or client evidence. Metadata association-handle consumption,
+separate metadata grant UI/publication fencing, presentation, input, and native
+handoff remain unimplemented or unqualified. The controller and presentation
+catalogs are separate and `Machine::new()` remains observation-only. The
+integration remains subject to combined-tree validation; #506 is untouched.
+
+The assembly's preference-disable regression observes metadata liveness only
+after a direct-input commit triggers coordinator revocation, not at an
+independent metadata-publication boundary. Future metadata publication must
+check the shared stop/privacy/recipient and discovery-grant fences itself.
+The existing preference owner still cannot promise a durable off bit after an
+arbitrary failed or indeterminate save.
+
+## Guarding enrollment identity mutation
+
+The broker now requires the existing shared opaque admission guard for
+registration membership, enrollment identity and proposal-revision changes,
+including target and connection retirement and global revocation. Host
+lifecycle cuts keep related flags and registry changes together; reconciliation
+captures current attachment epochs under that guard. Reconciliation try-locks:
+a busy tick retains the broker, defers peer/disclosure processing and schedules
+a retry, refusing transient approval rather than replaying it. Observation
+approval checks and installs its grant under one try-guard, and startup defers
+admission-dependent binding without losing pending state. Completely dormant
+shutdown skips the new guard acquisition. Presentation-only updates and
+ordinary grant APIs remain separate. Focused contention, lifecycle, startup
+and retry tests cover these in-memory boundaries.
+
+When combined with native enrollment, target and controller reconciliation
+share the same try-acquired guard; a busy tick does not replay a controller
+confirmation. Controller settings report an incomplete view while admission
+is busy. Native controller actions now distinguish pre-mutation contention
+from other refusals and ask the user to retry; they are never automatically
+replayed. A later successful action replaces a stale busy or pending-safety-work
+message without claiming to change any existing grants. Test helpers retry
+only these proven pre-mutation refusals or an incomplete
+snapshot. These integration changes still require combined-tree validation.
+
+This is only a prerequisite: there is no enrollment witness or metadata-grant
+binding, no final-recipient/write fence or native consent, and no production
+qualification change. Mandatory lifecycle cuts and existing response sends can
+still wait for the guard. Nonblocking response delivery needs bounded retained
+responses, not a lossy shortcut.
+
+## Sharing the existing automation admission boundary
+
+The existing process-wide admission mutex, opaque guard and attachment epoch
+now live in a small dependency-neutral crate shared by the session abstraction
+and authority kernel. Session retains its original APIs; both crates name the
+same guard. Existing private-field exhaustion coverage moves with its epoch,
+and a bounded cross-crate test covers contention and isolated poison. Focused
+crate tests and strict Clippy passed; independent source review found no
+significant issue.
+
+This is a behavior-preserving boundary extraction, not a metadata grant link,
+native consent or delivery fence. Production automation gates are unchanged.
+
+## Freezing direct input through backend reservation
+
+The host-only seam prepares bounded text or keys with the exact tab's core
+encoder before modeled review, freezing the bytes, terminal modes and binding
+with that handoff. It reserves those bytes on the same tab's backend and
+revalidates authority, attachment, modes and publication fences; admission
+means queueing only, and post-admission loss is unknown rather than a replay
+permit. Synthetic tests exercise the seam, not native behavior.
+
+Independent metadata grants never automatically widen the reviewed readable
+closure: cross-flow requires explicit consent and current grant epochs.
+Production MCP input, native UI and presentation sources remain unqualified;
+writer-epoch installation, recipient fencing and MCP cancellation remain open.
+P1 stays observation-only.
+
+## Composing metadata and modeled controller handoff
+
+The inactive host seam freezes exact metadata source guards and the current
+control sink before native review, and exposes already authorized metadata
+sources in a later control review. Reapproval requires fresh explicit flow
+consent and cannot widen the frozen control closure. Slot-specific withdrawal
+preserves an independently live other slot; privacy loss and disconnect cut
+both. Presentation independently reaps ordinary-grant expiry at every
+admission boundary, and active presentation deadlines cannot outlive an
+ordinary grant. Unbound metadata replacement cuts control rather than widening
+it.
+
+The legacy observation adapter cannot coexist with this seam until queued
+frames have per-grant delivery fences. This adds no native metadata UI, MCP
+route, real terminal input or platform qualification; P1 remains
+observation-only.
+
+## Separating metadata approval from terminal control
+
+The broker can now hold a narrow discovery-only grant independently of its
+ordinary grant on the same connection. Separate epochs, expiry and delivery
+liveness allow human takeover to cut control without automatically losing
+metadata. Both slots still share principal/global ceilings, and reapproving one
+cannot refill the other. The kernel refuses combined metadata and control unless
+native decisions explicitly cover every source-to-sink flow; stale decisions
+cannot survive slot or ownership changes. Independent ordinary/metadata cuts
+preserve the other live grant; revision-stale pending proposals release bounded
+capacity without refunding their lifetime charges.
+
+Deterministic tests cover routing, closure, takeover, revocation, exact target
+replacement and quotas. This is not a metadata UI, MCP tool, enrollment,
+terminal write or platform qualification. P1 remains observation-only; native
+approval and per-write publication fencing require separate integration and
+review.
+
+## Sharing automation preferences across windows
+
+The desktop application now owns the independent, default-off MCP and
+JavaScript preference pair across its windows. Its configuration writes and
+broadcasts overlay that pair, so a stale sibling save cannot undo a successful
+disable. Same-pass conflicting automation actions stop admission and suppress
+approval with visible feedback. Preference-save failure or an uncertain result
+stops both live features for the process and warns that disk may still contain
+an enabled value; explicit retry can save the pair but does not resume it.
+
+This is not a durable failure latch: restart can read an enabled value that
+remained on disk, though prior grants are not restored. Unrelated configuration
+outcomes, external writers and filesystem namespace races remain outside the
+feature-specific fence. Deterministic multi-window and Settings regressions
+cover the owner; native usability and full validation remain pending. No
+controller UI, protocol operation, listener, worker or production qualification
+is added by this preference slice, and the private bootstrap/privacy gates remain
+closed.
+
+The local integration assembly adds a regression for a preference disable or
+failed save while a separately reviewed metadata grant and a presented
+direct-input reservation are live. A successful JavaScript-only disable
+preserves the independent direct-control path; MCP disable or either preference
+save failure closes it. Another regression combines new/restored secondary
+workspace preservation with a stale profile save after a preference disable.
+These synthetic regressions are not native qualification.
+
+## Binding direct input without a workflow
+
+The shared authority kernel can now bind a direct input invocation to an exact
+target, immutable encoded-input digest and length while retaining its canonical
+parameter digest. It requires the existing native control scope and handoff,
+checks the writer lease and exact commit, and permits only one prepared control
+request per invocation. Explicit human takeover cuts old grants, runs and
+leases; ordinary approval does not transfer another writer. A future native
+adapter must explicitly serialize the cut/handoff before a transfer. A still-live
+grant may authorize a new intentional repeat within its budgets; a lost response
+never authorizes automatic replay, and #524 leaves the durable uncertain-action
+interlock to the client.
+
+Deterministic broker tests cover these boundaries without workflow or
+observation scope. This does not add an MCP tool, native control UI, terminal
+write, presentation or enrollment path; P1 remains observation-only. The real
+application adapter and native/platform security and usability evidence remain
+open.
+## Guarding the full readable-source closure
+
+Re-review found that an unreconciled disconnect of an approved source could
+otherwise leave control of a different target usable, and that synchronizing
+an already-retired handoff could revoke unrelated principals. The modeled
+review now freezes every approved readable source's exact lifecycle,
+registration and attachment guards before consent and checks them through
+input publication. Retirement cuts affected broker scopes while preserving
+unrelated live grants. Deterministic tests cover disconnect, loss/regain,
+replacement and guard changes before review, lease and publication, including
+serialization with a concurrent transition and first-try review after target
+replacement. These tests do not qualify native focus, worker disclosure or
+any production input path.
+
+## Freezing the control review before consent
+
+Re-review found that an old native control decision could otherwise be applied
+after human input when no handoff was retained, and that creating the first
+fresh proposal before cutting a stale handoff invalidated that proposal. The
+modeled coordinator now cuts stale handoffs/reviews first, freezes the exact
+controller/IME/attachment fence with a bounded pending proposal before native
+review, and binds the native decision to that proposal. Tests cover first-grant
+and pruned-handoff input, IME/preedit/paste and attachment loss/regain,
+cross-channel isolation and first-try fresh approval. Expected-success tests
+retry only bounded `Busy` results; explicit contention assertions still call
+the nonblocking production path directly. All native and production gates
+remain closed.
+
+## Binding presentation input to the original handoff and transport
+
+Independent review found that recapturing a current human-input fence could
+otherwise reuse an old control grant, that equal bytes did not identify the
+reserved PTY, and that a native barrier error after publication could be
+misreported as an unadmitted refusal. The modeled coordinator now retains the
+original native-handoff fence with the principal's grant and exact lease/run,
+propagates stale handoffs before recapture, and checks the reservation's
+controller and backend attachment identity/generation under the same admission
+lock. A post-publication barrier failure is unknown and cannot authorize replay.
+The UI admission and focus-queue paths refuse a contended lock without waiting.
+
+Deterministic cross-component tests cover typing followed by recapture,
+IME loss/regain and pending input, multiple principals, wrong or replaced PTYs,
+and callback success followed by barrier failure. These tests use injected
+barriers, not native activation evidence. Production presentation, native
+handoff UI, direct input and worker disclosure remain unavailable.
+
+## Refusing presentation without a continuous native witness
+
+The controller kernel now separates exact-target enrollment from an explicit
+native presentation grant and bounds pending activation, expiry and attempts.
+The application reuses its tab command and tracks non-reusable workspace
+changes; a modeled admission seam rechecks presentation together with the
+existing privacy, attachment, human-input and reserved-byte fences. An
+away-and-back transition cannot be repaired by seeing the same tab again.
+
+No current platform supplies the required complete native event history and
+ordering barrier through admission, and secondary eframe viewports lack a
+uniform raw-handle path. The later-stage MCP capability advertises
+unavailability and its presentation call refuses without prompting or focusing.
+Injected event tests are not native proof; enrollment usability/qualification,
+real activation, response delivery, direct input and Windows qualification
+remain open.
+## Specifying a dormant controller protocol
+
+The MCP protocol crate now has an explicitly selected catalog for bounded,
+typed controller registration and status requests. The default observation
+catalog is unchanged. At that checkpoint the application refused controller
+operations even with the optional catalog; the later local adapter above
+routes them only behind native opt-in and qualification. Requests cannot open
+a native prompt or grant authority. At that checkpoint association IDs had no
+metadata consumer; the later synthetic-only route is described above. No
+production listener is enabled, and production metadata remains unavailable
+regardless of enrollment or grant status. Private bootstrap, privacy
+qualification and client integration remain open.
+
+## Selecting exact controller targets without granting authority
+
+An external controller's local registration can now be represented as bounded,
+connection-owned opaque bytes in the application-owned kernel. A typed native
+decision binds one registration to one exact existing target generation and
+returns a fresh association ID. Rebinding invalidates old IDs and stale
+decisions; even a new selection whose target has just gone stale invalidates
+older pending decisions without disturbing the current binding. Disconnect,
+privacy revocation, closure, replacement and broker restart discard affected
+associations. Identical session labels play no role.
+
+This was a non-authorizing foundation for [#524](https://github.com/fes/fesTerm/issues/524),
+not a client feature; the later local adapter above remains unqualified for
+production.
+Separately approved metadata, native-confirmed presentation and end-to-end
+admission-time revalidation, native handoff/disarm, uncertain-outcome/no-replay
+handling, JavaScript-independent controller operation and platform/backend
+capability reporting remain open. The P1 #506 checkpoint remains observation-only.
+
+## Encoding explicit worker input without admitting it
+
+Worker text and key requests now have an inert, bounded adapter to the
+terminal's existing paste and keyboard encoders. Key names and modifiers have
+an explicit grammar, unsupported chords refuse the whole batch, and captured
+terminal modes travel with the exact bytes. This is not a writer lease or an
+automation execution path; native authority, target and lifecycle checks remain
+required at admission.
+
+## Closing record channels on unknown write outcomes
+
+A physical record write can panic after the operating system accepts bytes,
+leaving its actual progress unknown. The output guard now closes and discards
+the channel during unwinding instead of permitting the same ciphertext to be
+retried. The transport owner must also discard the underlying stream; this
+does not enable MCP or replace its disclosure and privacy gates.
+
+## Preparing exact terminal input without admission
+
+The terminal core can encode a bounded keyboard/paste batch against one
+captured set of terminal modes without mutating its input queue. It reuses the
+ordinary input encoder, refuses unsupported or oversized batches as a whole,
+and returns immutable bytes for a later reservation.
+
+This is not control authority. The application must still bind the target,
+enforce the automation limit, compare the modes under the live admission
+fences and complete the broker/transport commit. No automation execution is
+enabled by this component.
+
+## Fencing controller-known human input
+
+The session controller can capture a composite input, IME and backend
+attachment fence only while queued input and pending confirmations are clear.
+Terminal-bound human input invalidates an armed fence before delivery.
+Application-wide IME tracking sees events before filtering without retaining
+their text; focus reports do not count as human takeover. Missing native IME
+cancellation can conservatively block capture until application restart.
+
+This is not a writer lease, remote-state proof or native approval. An adapter
+must still hold the shared admission fence, cut the broker grant and worker,
+and validate every target and recipient. No automation execution is enabled.
+
+## Reserving ordered local input without granting authority
+
+The local PTY's existing bounded command queue can now hold an inert,
+time-bounded automation input reservation. Its exact bytes are published only
+after an application callback commits authority; cancellation, expiry or a
+failed callback release no input, and later commands do not overtake it.
+If authority commits after the slot is lost, the caller must treat the outcome
+conservatively and never replay it automatically.
+
+Component and controlled-PTY tests cover ordering, refusal and stalled
+commitment. This is not a control adapter or a lease: native handoff, human
+takeover, privacy and broker integration remain open, as do reservations for
+SSH, persistent, tunnel and serial backends.
+
+## Separating shared automation and MCP lifetimes
+
+The application coordinator now prepares the broker and privacy gate separately
+from MCP's listener and peer cleanup. MCP-only loss or restart disconnects its
+own principals without discarding independent broker state; privacy loss and
+application shutdown still close admission and revoke everything. The
+unqualified MCP bootstrap remains closed, and the JavaScript preference alone
+starts no adapter. Worker integration and native platform evidence remain open.
+
+## Reviewing the captured workflow source
+
+The desktop workflow preview now lets the user browse every captured module
+without reopening the selected file. Bounded pages preserve UTF-8 boundaries;
+an escaped representation exposes controls and non-ASCII characters rather
+than allowing them to change the surrounding UI. Browsing is not
+consent, and exact approval, execution and native usability remain open.
+
+## Selecting a workflow without granting access
+
+When JavaScript workflows are enabled, desktop Settings can select a local JSON
+bundle and preview its captured digest, requested capabilities, parameter
+schema and module names. Capture runs off the UI thread, retains its single
+slot until I/O finishes, and discards cancelled or superseded results. This is
+not approval: source review within approval, parameter/target selection,
+worker execution, iOS selection and native platform qualification remain open.
+
+## Packaging a separate Linux automation worker
+
+The Linux AppImage and Debian package definitions now include the smaller
+standalone JavaScript helper, rather than relying on the GUI executable fitting
+under the worker's hard address-space ceiling. Package smoke checks its native
+Ready frame before providing any source, both from the extracted AppImage and
+the installed Debian package. The smoke harness requires Linux procfs and
+pidfds for bounded descendant cleanup, and does not execute the helper until
+the launcher has a pidfd. A stalled launch, abrupt outer termination, or pidfd
+exhaustion during cleanup can still prevent reaping; such failures require
+quarantining the test environment rather than assuming cleanup succeeded.
+
+Packaging the helper does not establish trusted executable provenance, approve
+a workflow or activate JavaScript. Those application, privacy and native
+qualification gates remain open.
+
+## Early application worker entry without authority
+
+The desktop executable now recognizes the private worker argument before any
+GUI or application initialization, using the same confined stdio entry and
+content-free failure frames as the standalone helper. Extra arguments are
+refused. Subprocess tests exercise the real application binary, including
+explicit unavailability or the qualified worker's loading deadline and a
+supervised, authority-free script.
+
+This does not launch a workflow or establish install provenance. Linux rejects
+an application executable whose initial mappings exceed the hard process limit,
+so a separate packaged helper may still be necessary. Native confinement,
+privacy monitoring, approval and broker integration remain separate gates.
+
+## Capturing a selected workflow before consent
+
+The P2 composition crate can now ingest one explicitly user-selected JSON
+snapshot into a frozen bundle. It walks retained directories without following
+links or reparse points, bounds the file read, and hands the captured source to
+the existing strict graph validator and canonical digest. Changing the file
+afterward cannot change the frozen invocation; execution must use the frozen
+source without reopening the file. This is not an approval, provenance
+guarantee, MCP eval path or executable integration; pending-approval
+invalidation, platform evidence and worker authorization remain open. Other
+platforms and unsupported path shapes refuse.
+The iOS build excludes the unqualified interpreter and refuses worker startup;
+compilation does not establish native document access or execution support.
+
+## Freezing workflow targets before consent
+
+The workflow intake component now binds validated parameters to the complete,
+one-to-one mapping of opaque names to application-instance and attachment
+generations, in addition to the immutable source and manifest. Swapping two
+targets therefore changes the invocation binding even if both remain in scope.
+Manifest capabilities and requested target scopes are checked again when host
+calls are projected. These checks do not grant access: native approval,
+single-broker dispatch, worker lifecycle, session creation and child workflows
+remain separate, disabled integration work.
+
+Target-valued parameters now reach the worker as exact generation-bound handles
+derived from that frozen mapping, without requiring broader session discovery.
+The launch rejects bindings made for a different source bundle. These handles
+remain references only and do not bypass the broker or native approval.
+
+## Isolated JavaScript worker without authority
+
+The P2 worker snapshots and hashes a bounded static JavaScript module graph
+before a fresh process starts. Host calls are typed requests to the parent,
+not grants; the application must still bind the snapshot, parameters, targets
+and recipients to native approval before integrating the worker.
+
+On Linux ARM64, an owned subprocess passed active denial and resource-limit
+probes under its own seccomp policy, including with the container seccomp
+profile disabled. The worker refuses unsupported platforms and failed
+qualification rather than running unconfined. Installed-helper provenance,
+native x86-64 and broader distribution evidence, GUI grants and end-to-end
+lifecycle integration remain open; this component does not enable scripting.
+
+The worker's completion boundary also has an explicit admission
+acknowledgement: JavaScript cannot settle while an earlier forwarded effect is
+still awaiting broker admission. A one-shot atomic claim orders exact prepared
+broker commits against watchdog closure, while explicit cancellation serializes
+the broker cut before signalling the worker. Promise jobs retain their order
+between staged results, and a result that wins an acknowledgement race does not
+fail the run. This is a component protocol, not yet proof of application-level
+lifecycle integration.
+
+An independently changing target or privacy epoch can invalidate a result after
+the broker queues it but before the worker receives it. Host-result frames now
+require an application-supplied, nonblocking disclosure guard for every pipe
+write. The application must still supply and qualify the guard against its live
+broker, recipients and source generations; this change does not enable runs.
+
+The worker can now signal a bounded, coalescing event-wake channel without
+calling the GUI from its watchdog. A future application bridge must drain
+active runs and handle startup and per-frame backlogs; an unresponsive GUI
+cannot block the worker deadline through this channel.
+
+## Framing handshakes before exposing channels
+
+The experimental Noise handshake now has a bounded nonblocking driver for
+both roles. It tolerates fragmented I/O and readiness transitions, refuses
+malformed or truncated frames, and withholds the unverified responder channel
+until its entire reply has actually been written. Raw handshake entry points
+are private, so callers cannot bypass that ordering. The physical writer must
+truthfully report accepted bytes; a buffered queue is not the write boundary.
+
+This is not peer authentication or an MCP activation path. Independent trusted
+human comparison of complete fingerprints, deadlines, cancellation, privacy,
+transport identity and platform qualification remain caller-owned prerequisites.
+
+## Framing verified channels without blocking on full messages
+
+The experimental Noise channel now has a bounded incremental record-framing
+component. It handles partial writes and fragmented input in both directions,
+authenticates complete frames before release, and closes on malformed records,
+truncation or failed partial output. It does not supply I/O deadlines, a
+disclosure guard or a transport, and it does not enable MCP.
+
+## Exploring channel binding without trusting process names
+
+The observation prototype remains disabled because a same-user pipe and an
+executable path cannot prove the identity of a running peer. An independent
+Noise NN channel component now derives a full transcript fingerprint at each
+endpoint, rejects non-contributory X25519 inputs, and bounds authenticated
+records. Adversarial tests cover split handshakes, replay, malformed framing and
+failed fingerprint comparison.
+
+This is not peer authentication by itself. Trusted human confirmation,
+adapter/client integration, relay and disconnect liveness, native privacy
+monitoring and real-platform qualification remain open; the production gate
+has not changed.
 ## 0.15.0: iOS dictation and documents, Dev Tunnel host files and observation
 
 This minor release packages the reviewed iOS and Dev Tunnel work since 0.14.2.
@@ -310,6 +1027,53 @@ An opt-in native regression starts the default shell in an isolated registry
 and verifies actual interactive output and the requested working directory.
 No failed installation is silently replaced or retargeted, and survival after
 the containing job closes remains a separate Windows lifetime limitation.
+
+## Shared automation authority before external access
+
+The owner authorized the P1-P3 MCP/JavaScript campaign in
+[#501](https://github.com/fes/fesTerm/issues/501), with an observation-only MCP PR
+checkpoint before isolated JavaScript and terminal control. The first foundation
+is a memory-only application-owned authority kernel plus independent default-off
+configuration fields. Channels, targets, grants, nested runs, budgets and input
+lease epochs have typed state and explicit refusal/completion boundaries.
+Cancellation never claims to roll back admitted shell input.
+
+Deterministic tests cover hostile delegation, replacement/revocation races,
+disclosure, shared quotas, unsettled work and idempotent starts. They do not
+qualify transport authentication, worker confinement or native UI/controller
+integration. No server/interpreter is enabled. iOS and unsupported desktop
+execution remain unavailable until their separate platform gates can be proved;
+P4 is not pulled into this campaign.
+
+The observation prototype excludes text-mode SFTP: its worker can continue
+producing local output after the SSH transport or SFTP subsystem is lost, and
+its backend cannot yet invalidate automation authority at that boundary. Other
+session types retain their own attachment-generation checks. All MCP bootstrap
+paths remain fail-closed pending authenticated native pairing.
+
+The Windows privacy monitor's listener previously released its permit before
+TLS teardown and could detach a worker or silently leak a notification buffer
+after uncertain cancellation. A separate ownership prerequisite now uses one
+process-lifetime reaper and a single listener slot, keeps native outcomes and
+the notification buffer owned through actual join, and exposes pending/unknown
+cleanup without blocking monitor close. Its fault-injection fixtures target
+stalled teardown, failed-submission storage and once-latched supervisor
+callback attempts. The portable fixtures passed on macOS; Windows code was
+cross-checked but not run natively. A callback can
+block on the admission lock while an admitted operation continues. Neither
+cleanup status nor callback delivery qualifies admission, privacy, or
+final-recipient fencing; the coordinator remains unqualified and bootstrap
+remains closed.
+
+The application now retains the Windows monitor's cleanup result through
+listener join and slot release, including cancelled or failed startup, and
+blocks restart on unresolved cleanup. Native privacy-loss dispatch marks an
+early gate that private input and transport writes recheck even while the
+admission lock is busy. Lock and client-exit cuts are explicitly event-driven: notification
+delay has no documented upper bound, and previously admitted effects cannot be
+undone.
+These changes do not qualify native notification coverage, caller identity or
+the final recipient, and they do not enable MCP.
 
 ## Verify the Dev Tunnel installer before execution
 
@@ -7085,3 +7849,118 @@ implementation the shell can host like SSH. Displacement by another client ends
 the session with a typed reason and is never reattached silently. Offline tests
 and a real-daemon loopback pass on macOS; live Microsoft service, Keychain and
 device validation, and file reads over the tunnel remain open.
+
+## Scoped creation: immutable review data, not authority
+
+The configured launch paths resolve profiles at use time, SSH also reads the
+then-current known-host record and can consume an opaque secret reference
+asynchronously, and tab placement can reuse a launcher identity. A host-side
+snapshot now copies supported plain profiles and their separate SSH trust
+record for prospective review. Exact value checks and an opaque revision token
+are tested, but the application does not yet maintain a shared revision or
+fence. The token must change on every adoption/mutation; value equality alone
+cannot detect remove/recreate. Persistent profiles, SFTP and Dev Tunnels are
+refused. No session creation, grant, native approval or platform evidence is
+added by this slice.
+
+Capture never retrieves secret-store contents, but copied freeform profile data
+may itself be sensitive. Trusted handling, no blind logging and no worker
+disclosure are required; redacted snapshot Debug does not sanitize the profile.
+
+## Secondary window workspace document preservation
+
+With workspace restore enabled, new and restored secondary windows keep the
+complete supplied configuration for later saves without restoring the primary
+window's tabs. When restore is off, stale workspace metadata remains scrubbed.
+Focused regressions cover both cases; cross-window save ordering and
+configuration-generation ownership remain unresolved.
+
+## Consistent controller and presentation discovery
+
+The opt-in controller and refusal-only presentation catalogs were mutually
+exclusive, so one controller connection could not discover both contracts.
+The combined catalog now asks the same bounded backend path for enrollment
+availability in either capability response and continues to refuse presentation.
+Synthetic tests cover qualification changes, cancellation and pending limits;
+the default observation-only catalog is unchanged. This adds neither native
+qualification nor metadata delivery, presentation or input.
+
+## Experimental Rust MCP connector
+
+The official Rust SDK can now drive the bounded direct channel through a
+separate Unix client crate without adding the SDK to the application. An
+event-driven socket-pair test exercises protocol initialization and an unknown
+input outcome against a synthetic host; cancellation, partial writes and queue
+limits close the connection without automatic replay. This does not open a
+listener or qualify human verification, privacy, the real peer or caller
+liveness. Windows and iOS transport feasibility remain open.
+
+## Connecting the direct channel to the host queue
+
+The dormant direct host bridge now preserves the original coordinator frame
+through each encrypted socket write, including target, disclosure and expiry
+checks under the existing admission fence. It announces a connection only after
+mutual confirmation, refuses stopped input and wakes its owner after queued
+output. A single-process Rust SDK test reaches the real coordinator and a
+controlled session with simulated comparison and approval; revocation tests
+cover contention and partially written replies. There is still no production
+listener or qualified native caller, privacy, recipient or lifecycle boundary.
+
+## Readiness-driven direct host ownership
+
+The dormant direct peer now has an owner that waits on socket readiness,
+explicit native/lifecycle notifications and transport deadlines instead of
+polling. It yields after bounded work and reports cleanup completion even when
+its task is cancelled; unobserved or failed cleanup requires quarantine. The
+SDK/coordinator fixture exercises this loop with simulated decisions. No
+listener, native identity, screen-lock monitor or effect boundary is qualified.
+
+## Separate-process SDK observation fixture
+
+The official Rust SDK now reaches the actual coordinator and a controlled
+session from another test process via a temporary Unix listener. The test
+verifies refusal before simulated approval, then approved observation, while
+keeping input out of the observation-only catalog. Its comparison and approval
+channel is test-only; this is not native identity, privacy or production
+endpoint qualification.
+
+## Separate-process controller fixture
+
+The direct SDK test also exercises the #524 controller sequence across two
+test processes: exact enrollment of identically labelled sessions, separately
+approved metadata, retirement of one association and reviewed input to the
+other test backend. It verifies admission, simulated uncertainty without
+replay, and explicit refusal of unqualified presentation with JavaScript and
+observation disabled. All native decisions remain simulated; no production
+endpoint or platform boundary is qualified.
+
+## Dormant direct fingerprint comparison
+
+The direct host now has a bounded Settings comparison model for the complete
+handshake fingerprint. It requires an independently entered peer value and
+explicit attestation, binds decisions to the originating window and generation,
+and invalidates stale views on stop or retirement. Synthetic Settings and
+separate-process SDK tests exercise this path, including cleanup quarantine;
+their simulated human input is not proof of independent comparison. No
+production listener, caller identity, privacy monitor or recipient fence is
+qualified.
+
+## Waking a closed direct peer
+
+Closing an announced direct connection under the shared admission lock now
+retains a deferred owner wake until the lock is released. Coordinator stop,
+expiry and exceptional closure paths use the same release rule, avoiding both
+an idle owner and executor callbacks under admission. Tests cover guarded
+closure and coordinator stop. Waking an owner before connection announcement
+is also covered for a reserved verifier on normal coordinator stop or UI-owner
+destruction before fingerprint display. Other lifecycle wakeups and
+qualification of the production listener and native boundaries remain open.
+
+## Retiring a peer after comparison-owner loss
+
+The direct owner now retains the UI-owner liveness associated with its
+verifier. Destroying that owner wakes and retires a stalled handshake or an
+established peer instead of waiting for socket activity or the bootstrap
+deadline. Synthetic tests cover both states. This does not serialize owner
+destruction with effects already in flight, qualify other lifecycle cuts or
+open a production endpoint.

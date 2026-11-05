@@ -6,6 +6,15 @@ fesTerm measures compatibility in terms of observable application behavior. Reco
 
 ## Compatibility Baseline
 
+The [automation campaign](docs/automation-design.md) has a default-off local
+MCP **beta** on macOS, Linux and Windows: observation and per-input-reviewed
+control of exact local terminals, gated by verification-code matching and
+native lock/sleep monitors that fail closed. iOS and JavaScript execution
+remain unavailable. Automated tests are not native lifecycle, client
+interoperability, sandbox or mobile qualification evidence.
+The controller presentation tools report unavailable on every platform. A
+queued focus request is not success.
+
 The experimental iOS terminal keyboards include an on-device-only dictation
 spike with explicit bounded review/Insert (no implicit Return or cloud fallback).
 Portable tests and Simulator launch are not physical-device speech/privacy

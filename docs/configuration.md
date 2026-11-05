@@ -286,6 +286,25 @@ embeds complete notices for bundled JetBrains Mono and Noto Emoji as well as
 all three optional families, including in packaged/offline applications.
 
 The optional `[settings]` table includes these interface preferences:
+`mcp_enabled` and `javascript_enabled` (independent booleans, both default
+`false`). They record explicit feature opt-in, not caller/session permissions:
+pairing and exact native grants are still required, and an unqualified platform
+must refuse execution even if its preference was enabled. Resetting interface
+settings disables both. Neither approval nor a reusable bearer token is stored
+in configuration. See [the automation contract](automation-design.md).
+
+Desktop windows share this pair for fesTerm's in-process saves and broadcasts,
+so a stale sibling save cannot restore a successfully saved disable. If saving
+an automation preference fails or its outcome is uncertain, MCP and JavaScript
+stop for the current process and Settings warns that an enabled value may
+remain on disk. Retry explicitly after repairing configuration access; a
+successful retry saves the requested pair but keeps automation stopped until
+restart. No durable off latch is written on failure, so restart can read an
+enabled value still on disk, although prior grants are not restored. This
+feature-specific fence does not resolve unrelated indeterminate configuration
+outcomes or coordinate with external editors.
+
+Other interface preferences are
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
 `"single-row-scroll"`), `status_bar_visible` (default `true`),
 `show_session_details` (default `false`), `confirm_session_close` (default
@@ -513,6 +532,12 @@ saved as one complete replacement, preserving profiles, trust, credentials,
 settings and update bookkeeping. Verified native reattachment seeds save even
 with workspace restoration off; every restorable tab kind saves its own alias
 only with opted-in workspace metadata.
+New secondary windows start on a Launcher, while restored secondary windows
+restore only their own saved tabs. With workspace restore enabled, both retain
+the complete document supplied by the primary window, including the workspace,
+when preparing later saves. With restore disabled, stale workspace metadata is
+discarded. This does not resolve stale cross-window saves or ambiguous
+filesystem outcomes.
 A failed rename/reset save leaves the saved configuration and sibling documents
 unchanged while the local display edit remains usable. Every open window gets
 a visible bounded notice that the changes are not saved; repeating Rename or

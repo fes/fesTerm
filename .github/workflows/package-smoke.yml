@@ -9,10 +9,13 @@ on:
       - 'Cargo.lock'
       - 'Cargo.toml'
       - 'app/festerm/**'
+      - 'crates/festerm-automation-js/**'
       - 'crates/festerm-windows-direct2d/**'
       - 'assets/app-icon/**'
       - 'packaging/**'
       - 'scripts/check_packaging.py'
+      - 'scripts/smoke_linux_automation_worker.py'
+      - 'scripts/tests/test_check_packaging.py'
       - 'scripts/stage-conpty.ps1'
       - 'scripts/stage-windows-sessiond.ps1'
       - 'third_party/conpty/**'
@@ -343,7 +346,7 @@ jobs:
         env:
           FESTERM_INSTALLATION_KIND: appimage
         run: |
-          cargo build --release -p festerm -p festerm-sessiond
+          cargo build --release -p festerm -p festerm-sessiond -p festerm-automation-js
           cargo packager --config packaging/linux.toml --formats appimage
           appimage="$(find target/release -maxdepth 1 -name '*.AppImage' -print -quit)"
           test -n "$appimage"
@@ -355,6 +358,7 @@ jobs:
             test -x squashfs-root/AppRun
             test -x squashfs-root/usr/bin/festerm
             test -x squashfs-root/usr/bin/festerm-sessiond
+            timeout --kill-after=6s 15s python3 ../../scripts/smoke_linux_automation_worker.py squashfs-root/usr/bin/festerm-automation-js-worker
             desktop="$(find squashfs-root/usr/share/applications -maxdepth 1 -name '*.desktop' -print -quit)"
             test -n "$desktop"
             python - "$desktop" <<'PY'
@@ -381,13 +385,14 @@ jobs:
         env:
           FESTERM_INSTALLATION_KIND: managed
         run: |
-          cargo build --release -p festerm -p festerm-sessiond
+          cargo build --release -p festerm -p festerm-sessiond -p festerm-automation-js
           cargo packager --config packaging/linux.toml --formats deb
           deb="$(find target/release -maxdepth 1 -name '*.deb' -print -quit)"
           test -n "$deb"
           dpkg-deb --info "$deb" >/dev/null
           dpkg-deb --contents "$deb" | grep -q 'usr/bin/festerm$'
           dpkg-deb --contents "$deb" | grep -q 'usr/bin/festerm-sessiond$'
+          dpkg-deb --contents "$deb" | grep -q 'usr/bin/festerm-automation-js-worker$'
           deb_desktop="$(dpkg-deb --contents "$deb" | awk '/usr\/share\/applications\/.*\.desktop$/ { print $6; exit }')"
           test -n "$deb_desktop"
           desktop_entry="$(dpkg-deb --fsys-tarfile "$deb" | tar -xOf - "$deb_desktop")"
@@ -411,6 +416,8 @@ jobs:
           sudo dpkg --install "$deb"
           test -x /usr/bin/festerm
           test -x /usr/bin/festerm-sessiond
+          timeout --kill-after=6s 15s python3 scripts/smoke_linux_automation_worker.py /usr/bin/festerm-automation-js-worker
           sudo dpkg --remove festerm
           test ! -e /usr/bin/festerm
           test ! -e /usr/bin/festerm-sessiond
+          test ! -e /usr/bin/festerm-automation-js-worker

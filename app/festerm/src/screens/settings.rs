@@ -1,6 +1,6 @@
 //! Settings application-surface presentation, split out of `screens.rs`.
 
-use std::path::PathBuf;
+use std::{collections::BTreeSet, path::PathBuf};
 
 use eframe::egui::{self, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
@@ -54,6 +54,16 @@ pub(crate) struct SettingsViewModel {
     pub show_resumable_sessions: bool,
     pub show_durable_session_in_status_bar: bool,
     pub automatic_update_checks: bool,
+    pub mcp_enabled: bool,
+    pub javascript_enabled: bool,
+    pub automation_mcp_enabled: bool,
+    pub automation_javascript_enabled: bool,
+    pub automation_mcp_ui_revision: u64,
+    pub automation_javascript_ui_revision: u64,
+    pub automation_preference_feedback: Option<&'static str>,
+    pub automation_preference_retry_available: bool,
+    pub automation_window: crate::application::WindowId,
+    pub automation: crate::automation::SettingsSnapshot,
     pub default_sftp_local_directory: Option<String>,
     pub sftp_pane_order: SftpPaneOrderPreference,
 }
@@ -99,6 +109,16 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         show_resumable_sessions,
         show_durable_session_in_status_bar,
         automatic_update_checks,
+        mcp_enabled,
+        javascript_enabled,
+        automation_mcp_enabled,
+        automation_javascript_enabled,
+        automation_mcp_ui_revision,
+        automation_javascript_ui_revision,
+        automation_preference_feedback,
+        automation_preference_retry_available,
+        automation_window,
+        automation,
         default_sftp_local_directory,
         sftp_pane_order,
     } = settings;
@@ -123,6 +143,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
     }
     state.sftp_pane_order.get_or_insert(sftp_pane_order);
     let mut command = None;
+    let mut automation_command = SettingsAutomationCommands::default();
     ui.horizontal(|ui| {
         ui.add_space(26.0);
         // Bound Settings' own height to whatever room is actually left
@@ -340,7 +361,61 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             }
                             ui.add_space(10.0);
                             if ui.button("Reset interface settings to defaults").clicked() {
-                                command = Some(AppCommand::ResetInterfaceSettings);
+                                automation_command.record(AppCommand::ResetInterfaceSettings);
+                            }
+                        });
+
+                        ui.add_space(12.0);
+
+                        settings_card(ui, "Automation", |ui| {
+                            if let Some(feedback) = automation_preference_feedback {
+                                ssh_paragraph(ui, feedback);
+                                if automation_preference_retry_available
+                                    && ui.button("Retry saving automation preferences (stay stopped)").clicked()
+                                {
+                                    automation_command.record(AppCommand::RetryAutomationSettings);
+                                }
+                                ui.add_space(10.0);
+                            }
+                            let viewport = ui.ctx().viewport_id();
+                            if ui.push_id(("mcp_preference", viewport, mcp_enabled, automation_mcp_ui_revision), |ui| {
+                                settings_toggle_row(
+                                    ui,
+                                    "Enable local MCP (Beta)",
+                                    "Allow a local assistant adapter to request access. Each connection \
+                                     still needs a separate native grant for exact terminals. Terminal \
+                                     output can contain secrets. Off by default.",
+                                    mcp_enabled,
+                                )
+                            }).inner {
+                                automation_command.record(AppCommand::ToggleMcpEnabled);
+                            }
+                            ssh_paragraph(ui, "Beta: any process running as your user can connect, so always match the verification code before approving. Access stops when the screen locks or the computer sleeps, but an action already in flight may still complete. Enabling grants no terminal access by itself.");
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if ui.push_id(("javascript_preference", viewport, javascript_enabled, automation_javascript_ui_revision), |ui| {
+                                settings_toggle_row(
+                                    ui,
+                                    "Enable JavaScript workflows",
+                                    "Allow explicitly approved workflows only where isolated execution \
+                                     is qualified. This does not grant terminal access or shell control. \
+                                     Off by default.",
+                                    javascript_enabled,
+                                )
+                            }).inner {
+                                automation_command.record(AppCommand::ToggleJavascriptEnabled);
+                            }
+                            if let Some(action) =
+                                workflow_settings(ui, &automation, automation_javascript_enabled)
+                            {
+                                if matches!(&action, AppCommand::OpenWorkflowPicker) {
+                                    command = Some(AppCommand::OpenWorkflowPicker);
+                                }
+                                automation_command.record(action);
+                            }
+                            if let Some(action) = automation_settings(ui, &automation, automation_mcp_enabled, automation_window) {
+                                automation_command.record(AppCommand::Automation(action));
                             }
                         });
 
@@ -747,7 +822,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         });
     });
     ui.data_mut(|data| data.insert_temp(state_id, state));
-    command
+    automation_command.resolve(command)
 }
 
 const fn terminal_font_label(font: TerminalFontPreference) -> &'static str {
@@ -759,10 +834,944 @@ const fn terminal_font_label(font: TerminalFontPreference) -> &'static str {
     }
 }
 
+const WORKFLOW_SOURCE_PAGE_BYTES: usize = 2048;
+
+#[derive(Clone, Default)]
+struct WorkflowSourceCursor {
+    digest: String,
+    module: String,
+    page: usize,
+}
+
+fn workflow_source_page(source: &str, requested: usize) -> (usize, usize, std::ops::Range<usize>) {
+    let pages = source.len().div_ceil(WORKFLOW_SOURCE_PAGE_BYTES).max(1);
+    let page = requested.min(pages - 1);
+    let boundary = |offset: usize| {
+        let mut offset = offset.min(source.len());
+        while !source.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        offset
+    };
+    let start = boundary(page * WORKFLOW_SOURCE_PAGE_BYTES);
+    let end = boundary((page + 1) * WORKFLOW_SOURCE_PAGE_BYTES);
+    (page, pages, start..end)
+}
+
+fn escape_workflow_source(source: &str) -> String {
+    let mut escaped = String::new();
+    for character in source.chars() {
+        match character {
+            '\n' => escaped.push_str("\\n\n"),
+            '\\' => escaped.push_str("\\\\"),
+            ' '..='~' => escaped.push(character),
+            _ => escaped.extend(character.escape_unicode()),
+        }
+    }
+    escaped
+}
+
+fn workflow_source_review(ui: &mut Ui, bundle: &festerm_automation_js::snapshot::ApprovedBundle) {
+    let snapshot = bundle.snapshot();
+    ui.collapsing("Review captured source (not approval)", |ui| {
+        ssh_paragraph(
+            ui,
+            "This is the captured source, not a live file. Backslashes are doubled; \
+             non-ASCII and control characters are shown as Unicode escapes. \
+             Each newline is marked \\n before the line break. Pages may split a line.",
+        );
+        let id = ui.id().with("workflow-source-review");
+        let mut cursor = ui
+            .data(|data| data.get_temp::<WorkflowSourceCursor>(id))
+            .unwrap_or_default();
+        if cursor.digest != bundle.digest() || !snapshot.modules.contains_key(&cursor.module) {
+            cursor = WorkflowSourceCursor {
+                digest: bundle.digest().to_owned(),
+                module: snapshot.manifest.entry.clone(),
+                page: 0,
+            };
+        }
+        egui::ComboBox::from_label("Source module")
+            .selected_text(&cursor.module)
+            .show_ui(ui, |ui| {
+                for module in &snapshot.manifest.modules {
+                    if ui
+                        .selectable_label(cursor.module == *module, module)
+                        .clicked()
+                    {
+                        cursor.module.clone_from(module);
+                        cursor.page = 0;
+                    }
+                }
+            });
+        let source = &snapshot.modules[&cursor.module];
+        let (page, pages, _) = workflow_source_page(source, cursor.page);
+        cursor.page = page;
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(cursor.page > 0, egui::Button::new("Previous source page"))
+                .clicked()
+            {
+                cursor.page -= 1;
+            }
+            if ui
+                .add_enabled(
+                    cursor.page + 1 < pages,
+                    egui::Button::new("Next source page"),
+                )
+                .clicked()
+            {
+                cursor.page += 1;
+            }
+        });
+        let (page, pages, range) = workflow_source_page(source, cursor.page);
+        let first = if range.is_empty() { 0 } else { range.start + 1 };
+        ui.label(format!(
+            "Page {} of {} - source bytes {}-{} of {}",
+            page + 1,
+            pages,
+            first,
+            range.end,
+            source.len()
+        ));
+        ui.label(egui::RichText::new(escape_workflow_source(&source[range])).monospace());
+        ui.data_mut(|data| data.insert_temp(id, cursor));
+    });
+}
+
+fn workflow_settings(
+    ui: &mut Ui,
+    snapshot: &crate::automation::SettingsSnapshot,
+    enabled: bool,
+) -> Option<AppCommand> {
+    use crate::automation::{NativeCommand, WorkflowStatus};
+    use festerm_automation_js::snapshot::{Capability, ParameterType};
+
+    ssh_paragraph(
+        ui,
+        "JavaScript execution is not yet available. Selecting a workflow captures a \
+         preview only; it grants no access and cannot run the workflow.",
+    );
+    if !enabled {
+        return None;
+    }
+
+    let mut command = SettingsAutomationCommands::default();
+    if ui
+        .add_enabled(
+            !snapshot.workflow.busy(),
+            egui::Button::new("Select workflow JSON"),
+        )
+        .clicked()
+    {
+        command.record(AppCommand::OpenWorkflowPicker);
+    }
+    match &snapshot.workflow.status {
+        WorkflowStatus::Empty => {}
+        WorkflowStatus::Capturing => {
+            ssh_paragraph(ui, "Capturing the selected workflow in the background.");
+        }
+        WorkflowStatus::Waiting => {
+            ssh_paragraph(
+                ui,
+                "The newer selection will be captured after the previous file read exits.",
+            );
+        }
+        WorkflowStatus::Cancelling => {
+            ssh_paragraph(
+                ui,
+                "The cancelled file read is still finishing. Select another workflow after it exits.",
+            );
+        }
+        WorkflowStatus::Failed(error) => {
+            ui.colored_label(theme::STATUS_ERROR, error);
+        }
+        WorkflowStatus::Captured => {
+            if let Some(bundle) = snapshot.workflow.current_bundle() {
+                let manifest = bundle.manifest();
+                ui.label(format!("Workflow: {}", manifest.name));
+                ui.label(format!("Captured snapshot SHA-256: {}", bundle.digest()));
+                ssh_paragraph(
+                    ui,
+                    "This snapshot has not been approved. The selected file is not proof \
+                     of publisher identity.",
+                );
+                ui.collapsing("Requested capabilities (not granted)", |ui| {
+                    if manifest.capabilities.is_empty() {
+                        ui.label("None");
+                    }
+                    for capability in &manifest.capabilities {
+                        ui.label(match capability {
+                            Capability::Observe => "Discover approved terminal attachments",
+                            Capability::ReadScreen => "Read terminal screens",
+                            Capability::ReadScrollback => "Read retained terminal history",
+                            Capability::GetSelection => "Read terminal selections",
+                            Capability::WaitForChange => "Wait for terminal changes",
+                            Capability::SendText => "Send terminal text",
+                            Capability::SendKeys => "Send terminal keys",
+                            Capability::Open => "Open terminal sessions",
+                            Capability::InvokeWorkflow => "Invoke other workflows",
+                        });
+                    }
+                });
+                ui.collapsing("Parameters and modules", |ui| {
+                    for (name, kind) in &manifest.parameters {
+                        let description = match kind {
+                            ParameterType::Text { max_bytes } => {
+                                format!("text, at most {max_bytes} bytes")
+                            }
+                            ParameterType::Integer { min, max } => {
+                                format!("integer from {min} to {max}")
+                            }
+                            ParameterType::Boolean {} => "boolean".to_owned(),
+                            ParameterType::Target {} => "terminal attachment".to_owned(),
+                        };
+                        ui.label(format!("{name}: {description}"));
+                    }
+                    for module in &manifest.modules {
+                        let suffix = if module == &manifest.entry {
+                            " (entry)"
+                        } else {
+                            ""
+                        };
+                        ui.label(format!("{module}{suffix}"));
+                    }
+                });
+                workflow_source_review(ui, bundle);
+            }
+        }
+    }
+    if (snapshot.workflow.busy() || snapshot.workflow.current_bundle().is_some())
+        && ui.button("Clear workflow preview").clicked()
+    {
+        command.record(AppCommand::Automation(NativeCommand::ClearWorkflow));
+    }
+    command.resolve(None)
+}
+
+// Settings emits one AppCommand per frame, so conflicts must not discard a stop.
+#[derive(Default)]
+struct SettingsAutomationCommands(Option<AppCommand>);
+
+impl SettingsAutomationCommands {
+    fn record(&mut self, action: AppCommand) {
+        self.0 = Some(if self.0.is_some() {
+            AppCommand::Automation(crate::automation::NativeCommand::SafetyStop)
+        } else {
+            action
+        });
+    }
+
+    fn resolve(self, other: Option<AppCommand>) -> Option<AppCommand> {
+        match self.0 {
+            Some(AppCommand::OpenWorkflowPicker) => other.or(Some(AppCommand::OpenWorkflowPicker)),
+            action => action.or(other),
+        }
+    }
+}
+
+fn record_automation_action(
+    slot: &mut Option<crate::automation::NativeCommand>,
+    action: crate::automation::NativeCommand,
+) {
+    *slot = Some(if slot.is_some() {
+        crate::automation::NativeCommand::SafetyStop
+    } else {
+        action
+    });
+}
+
+fn cancel_controller_input_button(
+    ui: &mut Ui,
+    command: &mut Option<crate::automation::NativeCommand>,
+    channel: u64,
+    registration: festerm_automation::ControllerRegistrationId,
+    token: u64,
+) {
+    ui.push_id(("controller-input-cancel", token), |ui| {
+        if ui.button("Cancel requested input").clicked() {
+            record_automation_action(
+                command,
+                crate::automation::NativeCommand::CancelControllerInput {
+                    channel,
+                    registration,
+                    input: token,
+                },
+            );
+        }
+    });
+}
+
 /// A titled card matching the launcher/profile-editor "quiet section" visual
 /// language (`ssh_section_heading` + a bordered, rounded surface), so
 /// Settings groups related controls the same way the rest of the app does
 /// instead of a flat, plain list of buttons.
+fn automation_settings(
+    ui: &mut Ui,
+    snapshot: &crate::automation::SettingsSnapshot,
+    enabled: bool,
+    window: crate::application::WindowId,
+) -> Option<crate::automation::NativeCommand> {
+    use crate::automation::{
+        presentation::DirectActionDisplay, ControllerInputView, ControllerMetadataView,
+        ControllerSelectionView, NativeCommand,
+    };
+    use festerm_automation::TargetRef;
+    ui.add_space(10.0);
+    ssh_paragraph(ui, snapshot.status);
+    if !enabled {
+        clear_direct_comparison_input(ui, direct_comparison_state_id(ui, window));
+        return None;
+    }
+    let mut command = None;
+    if ui
+        .button("Restart local MCP (revokes MCP access)")
+        .clicked()
+    {
+        record_automation_action(&mut command, NativeCommand::RestartMcp);
+    }
+    if let Some(action) = direct_verification_settings(ui, snapshot, window) {
+        record_automation_action(&mut command, action);
+    }
+    ssh_paragraph(
+        ui,
+        "Connect your MCP client using this installed executable with --mcp. \
+         Compare the public verification code from festerm_pairing_status below. \
+         This code is not the direct-channel fingerprint; connecting never grants access.",
+    );
+    for channel in &snapshot.channels {
+        ui.push_id(("automation_channel", channel.channel), |ui| {
+            ui.separator();
+            ui.label(format!("Client verification code: {}", channel.verification_code));
+            if channel.approved {
+                ssh_paragraph(ui, "Observation granted for at most 5 minutes. No input or execution permission.");
+                for (target, label) in &snapshot.targets {
+                    if channel.approved_targets.contains(target) {
+                        ui.label(format!("Shared: {label}"));
+                    }
+                }
+                if ui.button("Revoke this MCP connection").clicked() {
+                    record_automation_action(&mut command, NativeCommand::Revoke { channel: channel.channel });
+                }
+                return;
+            }
+            if ui.button("Disconnect this MCP connection").clicked() {
+                record_automation_action(&mut command, NativeCommand::Revoke { channel: channel.channel });
+            }
+            ssh_paragraph(ui, "Choose exact attachments. This discloses their labels, live screen, retained history and selections, including any secrets they contain. \
+                At most 1 MiB and 256 operations per grant; no shell input. Lock, suspend, disconnect, replacement, expiry or disabling MCP revokes access.");
+            let id = ui.id().with("observation_approval");
+            let (mut verified, mut selected) = ui.data(|data| {
+                data.get_temp::<(bool, BTreeSet<TargetRef>)>(id).unwrap_or_default()
+            });
+            selected.retain(|reference| snapshot.targets.iter().any(|(target, _)| target == reference));
+            ui.checkbox(&mut verified, "I verified this exact code in my MCP client");
+            for (target, label) in &snapshot.targets {
+                ui.push_id((target.session(), target.generation()), |ui| {
+                    let mut checked = selected.contains(target);
+                    if ui.checkbox(&mut checked, label).changed() {
+                        if checked {
+                            selected.insert(*target);
+                        } else {
+                            selected.remove(target);
+                        }
+                    }
+                });
+            }
+            if selected.len() > 32 {
+                ssh_paragraph(ui, "Select at most 32 exact attachments.");
+            }
+            let allowed = verified && !selected.is_empty() && selected.len() <= 32;
+            if ui.add_enabled(allowed, egui::Button::new("Approve observation for 5 minutes")).clicked() {
+                record_automation_action(&mut command, NativeCommand::ApproveObservation {
+                    channel: channel.channel, targets: selected.iter().copied().collect(),
+                });
+                verified = false;
+                selected.clear();
+            }
+            ui.data_mut(|data| data.insert_temp(id, (verified, selected)));
+        });
+    }
+    ui.separator();
+    ui.label("Controller registrations");
+    ssh_paragraph(
+        ui,
+        "Beta: client identifiers and terminal names are untrusted. Registration does not choose a terminal, \
+         open a prompt or grant access. Choose and confirm a local terminal in this window, then review \
+         each requested input before it is sent. Metadata delivery and presentation are unavailable.",
+    );
+    if snapshot.controller_opted_in {
+        ssh_paragraph(
+            ui,
+            "Controller registration is opted in for new connections. Restart or disable MCP to end the opt-in.",
+        );
+    } else if ui
+        .add_enabled(
+            snapshot.controller_opt_in_available,
+            egui::Button::new("Enable controller registration for new connections"),
+        )
+        .clicked()
+    {
+        record_automation_action(&mut command, NativeCommand::EnableControllerEnrollment);
+    }
+    if snapshot.controllers.is_empty() {
+        ssh_paragraph(ui, "No controller registrations on active connections.");
+    }
+    for row in &snapshot.controllers {
+        ui.push_id(
+            ("controller_registration", row.channel, row.public_id.to_wire()),
+            |ui| {
+                ui.separator();
+                let code = snapshot
+                    .channels
+                    .iter()
+                    .find(|channel| channel.channel == row.channel)
+                    .map_or("unavailable", |channel| channel.verification_code.as_str());
+                ui.label(format!(
+                    "Client {code}; untrusted identifier: \"{}\"",
+                    row.label
+                ));
+                if let Some(target) = row.associated_target {
+                    if let Some(candidate) = snapshot
+                        .controller_targets
+                        .iter()
+                        .find(|candidate| candidate.reference == target && candidate.window == window)
+                    {
+                        ui.label(format!("Associated in this window: {}", candidate.label));
+                    } else {
+                        ssh_paragraph(ui, "Associated with a local terminal outside this view.");
+                    }
+                    ssh_paragraph(ui, "This association grants no terminal access.");
+                } else {
+                    ssh_paragraph(ui, "No terminal associated.");
+                }
+                if ui.button("Choose local terminal").clicked() {
+                    record_automation_action(
+                        &mut command,
+                        NativeCommand::ChooseController {
+                            channel: row.channel,
+                            registration: row.registration,
+                        },
+                    );
+                }
+                if ui.button("Unregister controller").clicked() {
+                    record_automation_action(
+                        &mut command,
+                        NativeCommand::UnregisterController {
+                            channel: row.channel,
+                            registration: row.registration,
+                        },
+                    );
+                }
+                match row.selection {
+                    ControllerSelectionView::Idle => {}
+                    ControllerSelectionView::Choosing {
+                        token,
+                        window: chooser_window,
+                    } => {
+                        if chooser_window != window {
+                            ssh_paragraph(ui, "Continue this selection in its originating window, or cancel it.");
+                        } else if snapshot.controller_targets_incomplete {
+                            ssh_paragraph(ui, "The local terminal list is incomplete or over its limit. Close terminals and try again.");
+                        } else if !snapshot.controller_targets.iter().any(|target| target.window == window) {
+                            ssh_paragraph(ui, "No live local terminal is available in this window.");
+                        } else {
+                            ssh_paragraph(
+                                ui,
+                                "Select one exact local terminal in this window. Positions count all chips from the start of this window's tab row. Nothing is selected by default.",
+                            );
+                            for candidate in snapshot.controller_targets.iter().filter(|target| target.window == window) {
+                                ui.push_id(
+                                    (token, candidate.reference.session(), candidate.reference.generation()),
+                                    |ui| {
+                                        if ui.button(format!("This window — {}", candidate.label)).clicked() {
+                                            record_automation_action(
+                                                &mut command,
+                                                NativeCommand::SelectControllerTarget {
+                                                    channel: row.channel,
+                                                    registration: row.registration,
+                                                    selection: token,
+                                                    target: candidate.reference,
+                                                },
+                                            );
+                                        }
+                                    },
+                                );
+                            }
+                        }
+                        if ui.button("Cancel controller selection").clicked() {
+                            record_automation_action(
+                                &mut command,
+                                NativeCommand::CancelController {
+                                    channel: row.channel,
+                                    registration: row.registration,
+                                },
+                            );
+                        }
+                    }
+                    ControllerSelectionView::Reviewing {
+                        token,
+                        target,
+                        window: review_window,
+                    } => {
+                        let candidate = snapshot.controller_targets.iter().find(|candidate| {
+                            candidate.reference == target && candidate.window == window
+                        });
+                        if review_window != window {
+                            ssh_paragraph(ui, "Confirm in the originating window, or cancel.");
+                        } else if let Some(candidate) = candidate {
+                            ui.label(format!("Review this window — {}", candidate.label));
+                            ui.push_id(
+                                (token, target.session(), target.generation()),
+                                |ui| {
+                                    if ui
+                                        .add_enabled(
+                                            !snapshot.controller_targets_incomplete,
+                                            egui::Button::new("Confirm association (no access granted)"),
+                                        )
+                                        .clicked()
+                                    {
+                                        record_automation_action(
+                                            &mut command,
+                                            NativeCommand::ConfirmController {
+                                                channel: row.channel,
+                                                registration: row.registration,
+                                                selection: token,
+                                            },
+                                        );
+                                    }
+                                },
+                            );
+                        } else {
+                            ssh_paragraph(ui, "The selected local terminal is no longer available.");
+                        }
+                        if ui.button("Cancel controller selection").clicked() {
+                            record_automation_action(
+                                &mut command,
+                                NativeCommand::CancelController {
+                                    channel: row.channel,
+                                    registration: row.registration,
+                                },
+                            );
+                        }
+                    }
+                }
+                match row.metadata {
+                    ControllerMetadataView::Unavailable => {}
+                    ControllerMetadataView::Idle {
+                        enrollment,
+                        window: association_window,
+                        target,
+                        granted,
+                    } => {
+                        if association_window == window
+                            && snapshot.controller_targets.iter().any(|candidate| {
+                                candidate.reference == target && candidate.window == window
+                            })
+                        {
+                            if granted {
+                                ssh_paragraph(
+                                    ui,
+                                    "Metadata access is approved for this association; delivery remains unavailable.",
+                                );
+                                if ui.button("Revoke this metadata grant").clicked() {
+                                    record_automation_action(
+                                        &mut command,
+                                        NativeCommand::RevokeControllerMetadata {
+                                            channel: row.channel,
+                                            registration: row.registration,
+                                            enrollment,
+                                        },
+                                    );
+                                }
+                            } else if ui
+                                .add_enabled(
+                                    !snapshot.controller_targets_incomplete,
+                                    egui::Button::new("Review metadata access"),
+                                )
+                                .clicked()
+                            {
+                                record_automation_action(
+                                    &mut command,
+                                    NativeCommand::ReviewControllerMetadata {
+                                        channel: row.channel,
+                                        registration: row.registration,
+                                        enrollment,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    ControllerMetadataView::Reviewing {
+                        token,
+                        window: review_window,
+                        target,
+                    } => {
+                        let candidate = snapshot.controller_targets.iter().find(|candidate| {
+                            candidate.reference == target && candidate.window == window
+                        });
+                        if review_window != window {
+                            ssh_paragraph(ui, "Confirm metadata in the originating window, or cancel.");
+                        } else if let Some(candidate) = candidate {
+                            if snapshot.controller_metadata_review_is_current(row) {
+                                ui.label(format!(
+                                    "Review metadata for client {code}: {}",
+                                    candidate.label
+                                ));
+                                ssh_paragraph(
+                                    ui,
+                                    "Approve only the terminal label and lifecycle status for at most 5 minutes. \
+                                     This grants no screen, history, selection or input access and does not require JavaScript. \
+                                     Metadata delivery remains unavailable.",
+                                );
+                                ui.push_id(
+                                    (token, target.session(), target.generation()),
+                                    |ui| {
+                                        if ui
+                                            .add_enabled(
+                                                !snapshot.controller_targets_incomplete,
+                                                egui::Button::new("Approve this metadata grant"),
+                                            )
+                                            .clicked()
+                                        {
+                                            record_automation_action(
+                                                &mut command,
+                                                NativeCommand::ConfirmControllerMetadata {
+                                                    channel: row.channel,
+                                                    registration: row.registration,
+                                                    review: token,
+                                                },
+                                            );
+                                        }
+                                    },
+                                );
+                            } else {
+                                ssh_paragraph(ui, "Metadata review was cancelled.");
+                            }
+                        } else {
+                            ssh_paragraph(ui, "The selected local terminal is no longer available.");
+                        }
+                        if ui.button("Cancel metadata review").clicked() {
+                            record_automation_action(
+                                &mut command,
+                                NativeCommand::CancelControllerMetadata {
+                                    channel: row.channel,
+                                    registration: row.registration,
+                                    review: token,
+                                },
+                            );
+                        }
+                    }
+                    ControllerMetadataView::Cancelling => {
+                        ssh_paragraph(ui, "Cancelling metadata review.");
+                    }
+                    ControllerMetadataView::Revoking => {
+                        ssh_paragraph(ui, "Revoking metadata access.");
+                    }
+                }
+                match &row.input {
+                    ControllerInputView::Unavailable => {}
+                    ControllerInputView::Requested {
+                        token,
+                        window: input_window,
+                        target,
+                    } => {
+                        if *input_window == window
+                            && snapshot.controller_input_review_is_current(row)
+                        {
+                            if let Some(candidate) = snapshot.controller_targets.iter().find(|candidate| {
+                                candidate.reference == *target && candidate.window == window
+                            }) {
+                                ui.label(format!("Client {code} requested input for {}", candidate.label));
+                                ui.push_id(("controller-input-review", *token), |ui| {
+                                    if ui
+                                        .add_enabled(
+                                            !snapshot.controller_targets_incomplete,
+                                            egui::Button::new("Review requested input"),
+                                        )
+                                        .clicked()
+                                    {
+                                        record_automation_action(
+                                            &mut command,
+                                            NativeCommand::ReviewControllerInput {
+                                                channel: row.channel,
+                                                registration: row.registration,
+                                                input: *token,
+                                            },
+                                        );
+                                    }
+                                });
+                            }
+                        } else {
+                            ssh_paragraph(ui, "Review this input in the associated window, or cancel.");
+                        }
+                        cancel_controller_input_button(
+                            ui, &mut command, row.channel, row.registration, *token,
+                        );
+                    }
+                    ControllerInputView::Preparing { token, window: input_window } => {
+                        if *input_window == window {
+                            ssh_paragraph(ui, "Preparing the exact input and existing metadata disclosures.");
+                        }
+                        cancel_controller_input_button(
+                            ui, &mut command, row.channel, row.registration, *token,
+                        );
+                    }
+                    ControllerInputView::Reviewing {
+                        token,
+                        window: input_window,
+                        target,
+                        action,
+                        metadata_sources,
+                    } => {
+                        let candidate = snapshot.controller_targets.iter().find(|candidate| {
+                            candidate.reference == *target && candidate.window == window
+                        });
+                        if *input_window != window {
+                            ssh_paragraph(ui, "Review this input in the associated window, or cancel.");
+                        } else if let Some(candidate) = candidate.filter(|_| {
+                            snapshot.controller_input_review_is_current(row)
+                        }) {
+                            ui.label(format!(
+                                "Client {code}; input target: {} (session {}, attachment {})",
+                                candidate.label,
+                                target.session(),
+                                target.generation(),
+                            ));
+                            ssh_paragraph(
+                                ui,
+                                "Review the complete escaped input below. Text can execute even without Enter.",
+                            );
+                            egui::ScrollArea::vertical()
+                                .id_salt(("controller-input", row.channel, *token))
+                                .max_height(240.0)
+                                .show(ui, |ui| match action {
+                                    DirectActionDisplay::Text { escaped, submit } => {
+                                        ui.add(egui::Label::new(format!("Text: \"{escaped}\"")).wrap());
+                                        ui.label(if *submit {
+                                            "Enter will be sent after the text."
+                                        } else {
+                                            "No extra Enter will be sent."
+                                        });
+                                    }
+                                    DirectActionDisplay::Keys(keys) => {
+                                        for (index, key) in keys.iter().enumerate() {
+                                            ui.add(
+                                                egui::Label::new(format!("Key {}: \"{}\"", index + 1, key))
+                                                    .wrap(),
+                                            );
+                                        }
+                                    }
+                                });
+                            if metadata_sources.is_empty() {
+                                ssh_paragraph(ui, "No independently approved metadata sources are included.");
+                            } else {
+                                ssh_paragraph(
+                                    ui,
+                                    "Information available from each metadata source below can influence input at this target:",
+                                );
+                                for source in metadata_sources {
+                                    ui.add(egui::Label::new(source).wrap());
+                                }
+                            }
+                            ssh_paragraph(
+                                ui,
+                                "Approval sends this exact input to the terminal queue and permits \
+                                 new intentional requests for the same action while armed, for at \
+                                 most five minutes and subject to shared operation budgets. Queue \
+                                 admission does not mean a command completed. Never automatically \
+                                 replay after an unknown or lost response.",
+                            );
+                            ui.push_id(("controller-input-confirm", *token), |ui| {
+                                if ui
+                                    .add_enabled(
+                                        !snapshot.controller_targets_incomplete,
+                                        egui::Button::new("Approve and send this input"),
+                                    )
+                                    .clicked()
+                                {
+                                    record_automation_action(
+                                        &mut command,
+                                        NativeCommand::ConfirmControllerInput {
+                                            channel: row.channel,
+                                            registration: row.registration,
+                                            input: *token,
+                                        },
+                                    );
+                                }
+                            });
+                        } else {
+                            ssh_paragraph(ui, "This input review is no longer current.");
+                        }
+                        cancel_controller_input_button(
+                            ui, &mut command, row.channel, row.registration, *token,
+                        );
+                    }
+                    ControllerInputView::Submitting {
+                        token,
+                        window: input_window,
+                        may_be_admitted,
+                    } => {
+                        if *input_window == window {
+                            ssh_paragraph(
+                                ui,
+                                if *may_be_admitted {
+                                    "The input may already have been admitted; cancellation cannot undo it."
+                                } else {
+                                    "Submitting the approved input."
+                                },
+                            );
+                        }
+                        cancel_controller_input_button(
+                            ui, &mut command, row.channel, row.registration, *token,
+                        );
+                    }
+                    ControllerInputView::Cancelling => {
+                        ssh_paragraph(ui, "Cancelling requested input.");
+                    }
+                }
+                if let Some(control) = row.control.filter(|control| control.window == window) {
+                    ui.label(format!(
+                        "Control handoff armed for session {} (attachment {}).",
+                        control.target.session(),
+                        control.target.generation(),
+                    ));
+                    ssh_paragraph(
+                        ui,
+                        "The same approved action may be requested again until the original \
+                         expiry or shared budgets are reached. Disarming stops later input but \
+                         cannot undo input already admitted.",
+                    );
+                    ui.push_id(("controller-input-disarm", row.channel, control.token), |ui| {
+                        if ui.button("Disarm terminal control").clicked() {
+                            record_automation_action(
+                                &mut command,
+                                NativeCommand::DisarmControllerInput {
+                                    channel: row.channel,
+                                    registration: row.registration,
+                                    input: control.token,
+                                },
+                            );
+                        }
+                    });
+                }
+            },
+        );
+    }
+    command
+}
+
+#[derive(Clone, Default)]
+struct DirectComparisonInput {
+    generation: u64,
+    peer: String,
+    verified: bool,
+}
+
+fn direct_comparison_state_id(ui: &Ui, window: crate::application::WindowId) -> egui::Id {
+    ui.id().with(("direct_mcp_comparison_state", window))
+}
+
+fn clear_direct_comparison_input(ui: &Ui, state_id: egui::Id) {
+    ui.data_mut(|data| {
+        if let Some(previous) = data.remove_temp::<DirectComparisonInput>(state_id) {
+            data.remove::<egui::text_edit::TextEditState>(
+                state_id.with(("entry", previous.generation)),
+            );
+        }
+    });
+}
+
+fn direct_verification_settings(
+    ui: &mut Ui,
+    snapshot: &crate::automation::SettingsSnapshot,
+    window: crate::application::WindowId,
+) -> Option<crate::automation::NativeCommand> {
+    use crate::automation::{verification::valid_fingerprint, NativeCommand};
+
+    let state_id = direct_comparison_state_id(ui, window);
+    let Some(view) = snapshot
+        .direct_verification
+        .as_ref()
+        .filter(|view| view.window == window && view.is_current())
+    else {
+        clear_direct_comparison_input(ui, state_id);
+        return None;
+    };
+    let previous = ui.data(|data| data.get_temp::<DirectComparisonInput>(state_id));
+    let mut state = match previous {
+        Some(state) if state.generation == view.generation => state,
+        _ => {
+            clear_direct_comparison_input(ui, state_id);
+            DirectComparisonInput {
+                generation: view.generation,
+                ..DirectComparisonInput::default()
+            }
+        }
+    };
+    let entry_id = state_id.with(("entry", view.generation));
+    let mut command = None;
+    ui.push_id(("direct_mcp_comparison", view.generation), |ui| {
+        ui.separator();
+        ui.label("Compare the direct MCP connection");
+        ssh_paragraph(
+            ui,
+            "Read the complete fingerprint independently in your MCP client and enter it here. \
+             Do not copy the fingerprint shown below. This comparison alone does not grant access.",
+        );
+        ui.add(egui::Label::new(egui::RichText::new(&view.fingerprint).monospace()).wrap());
+        let label = ui.label("Fingerprint read from the MCP client");
+        let input = ui
+            .add(
+                egui::TextEdit::singleline(&mut state.peer)
+                    .id(entry_id)
+                    .char_limit(64)
+                    .hint_text("64 hexadecimal characters"),
+            )
+            .labelled_by(label.id);
+        if input.changed() {
+            state.verified = false;
+        }
+        let valid = valid_fingerprint(&state.peer);
+        ui.add_enabled(
+            valid && !input.changed(),
+            egui::Checkbox::new(
+                &mut state.verified,
+                "I read this complete fingerprint independently in my MCP client",
+            ),
+        );
+        if ui
+            .add_enabled(
+                state.verified && valid && view.is_current(),
+                egui::Button::new("Compare fingerprints"),
+            )
+            .clicked()
+        {
+            command = Some(NativeCommand::CompareDirectPeer {
+                generation: view.generation,
+                fingerprint: state.peer.clone(),
+            });
+            state.peer.clear();
+            state.verified = false;
+        }
+        if ui.button("Reject direct MCP connection").clicked() {
+            record_automation_action(
+                &mut command,
+                NativeCommand::DenyDirectPeer {
+                    generation: view.generation,
+                },
+            );
+            state.peer.clear();
+            state.verified = false;
+        }
+    });
+    if command.is_some() {
+        ui.data_mut(|data| data.remove::<egui::text_edit::TextEditState>(entry_id));
+    }
+    ui.data_mut(|data| data.insert_temp(state_id, state));
+    command
+}
+
 fn settings_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
     let _ = settings_card_response(ui, title, body);
 }
@@ -1037,12 +2046,22 @@ fn settings_clickstop_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui_kittest::{kittest::Queryable, Harness};
+    use egui_kittest::{
+        kittest::{NodeT, Queryable},
+        Harness,
+    };
 
     struct SettingsHarnessState {
         command: Option<AppCommand>,
         keyboard_bindings: festerm_config::KeyboardBindings,
         font_download_failed: bool,
+        mcp_enabled: bool,
+        javascript_enabled: bool,
+        mcp_ui_revision: u64,
+        javascript_ui_revision: u64,
+        automation_stopped: bool,
+        automation_preference_feedback: Option<&'static str>,
+        automation_preference_retry_available: bool,
     }
 
     fn settings_harness() -> Harness<'static, SettingsHarnessState> {
@@ -1159,6 +2178,18 @@ mod tests {
                             show_resumable_sessions: false,
                             show_durable_session_in_status_bar: false,
                             automatic_update_checks: false,
+                            mcp_enabled: state.mcp_enabled,
+                            javascript_enabled: state.javascript_enabled,
+                            automation_mcp_enabled: state.mcp_enabled && !state.automation_stopped,
+                            automation_javascript_enabled: state.javascript_enabled
+                                && !state.automation_stopped,
+                            automation_mcp_ui_revision: state.mcp_ui_revision,
+                            automation_javascript_ui_revision: state.javascript_ui_revision,
+                            automation_preference_feedback: state.automation_preference_feedback,
+                            automation_preference_retry_available: state
+                                .automation_preference_retry_available,
+                            automation_window: crate::application::WindowId::PRIMARY,
+                            automation: Default::default(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                         },
@@ -1176,8 +2207,1385 @@ mod tests {
                     command: None,
                     keyboard_bindings: bindings,
                     font_download_failed: false,
+                    mcp_enabled: false,
+                    javascript_enabled: false,
+                    mcp_ui_revision: 0,
+                    javascript_ui_revision: 0,
+                    automation_stopped: false,
+                    automation_preference_feedback: None,
+                    automation_preference_retry_available: false,
                 },
             )
+    }
+
+    #[test]
+    fn settings_exposes_independent_native_automation_toggles() {
+        let mut harness = settings_harness();
+        harness.run();
+        harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable local MCP (Beta)")
+            .click();
+        harness.step();
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ToggleMcpEnabled)
+        ));
+        harness.state_mut().command = None;
+        harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable JavaScript workflows")
+            .click();
+        harness.step();
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ToggleJavascriptEnabled)
+        ));
+    }
+
+    #[test]
+    fn workflow_selection_is_available_only_when_javascript_is_enabled() {
+        for enabled in [false, true] {
+            let snapshot = crate::automation::SettingsSnapshot::default();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(800.0, 500.0))
+                .build_ui_state(
+                    move |ui, command: &mut Option<AppCommand>| {
+                        if let Some(action) = workflow_settings(ui, &snapshot, enabled) {
+                            *command = Some(action);
+                        }
+                    },
+                    None,
+                );
+            harness.run();
+            if enabled {
+                harness.get_by_label("Select workflow JSON").click();
+                harness.step();
+                assert!(matches!(
+                    harness.state(),
+                    Some(AppCommand::OpenWorkflowPicker)
+                ));
+            } else {
+                assert!(harness.query_by_label("Select workflow JSON").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn workflow_source_pages_cover_utf8_without_splitting_characters() {
+        let source = format!(
+            "{}\u{1f512}{}",
+            "a".repeat(WORKFLOW_SOURCE_PAGE_BYTES - 2),
+            "b".repeat(WORKFLOW_SOURCE_PAGE_BYTES + 1)
+        );
+        let (_, pages, _) = workflow_source_page(&source, 0);
+        let mut reconstructed = String::new();
+        let mut previous_end = 0;
+        for requested in 0..pages {
+            let (page, count, range) = workflow_source_page(&source, requested);
+            assert_eq!(page, requested);
+            assert_eq!(count, pages);
+            assert_eq!(range.start, previous_end);
+            assert!(source.is_char_boundary(range.start));
+            assert!(source.is_char_boundary(range.end));
+            assert!(range.len() <= WORKFLOW_SOURCE_PAGE_BYTES + 3);
+            previous_end = range.end;
+            reconstructed.push_str(&source[range]);
+        }
+        assert_eq!(reconstructed, source);
+        assert_eq!(
+            workflow_source_page(&source, usize::MAX).0,
+            pages.saturating_sub(1)
+        );
+        assert_eq!(workflow_source_page("", 7), (0, 1, 0..0));
+    }
+
+    #[test]
+    fn workflow_source_display_escapes_spoofing_and_literal_backslashes() {
+        assert_eq!(
+            escape_workflow_source("say\\\t\u{1b}\u{202e}\u{e9}\n"),
+            concat!(r"say\\\u{9}\u{1b}\u{202e}\u{e9}\n", "\n")
+        );
+    }
+
+    #[test]
+    fn workflow_source_review_pages_the_captured_snapshot_and_revokes_display() {
+        use festerm_automation_js::snapshot::{ApprovedBundle, Manifest, SourceSnapshot};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let source = format!(
+            "import 'helper.js';\n//{}\nexport default 1;",
+            "a".repeat(WORKFLOW_SOURCE_PAGE_BYTES)
+        );
+        let bundle = ApprovedBundle::new(SourceSnapshot {
+            manifest: Manifest {
+                version: 1,
+                api_version: 1,
+                name: "source-review".into(),
+                entry: "main.js".into(),
+                modules: vec!["helper.js".into(), "main.js".into()],
+                parameters: BTreeMap::new(),
+                capabilities: BTreeSet::new(),
+            },
+            modules: BTreeMap::from([
+                ("helper.js".into(), "export const helper = 2;".into()),
+                ("main.js".into(), source),
+            ]),
+        })
+        .unwrap();
+        let mut snapshot = crate::automation::SettingsSnapshot::default();
+        snapshot.workflow = crate::automation::WorkflowView::captured_for_test(bundle);
+        let other_window_view = snapshot.workflow.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 700.0))
+            .build_ui_state(
+                move |ui, _: &mut ()| {
+                    workflow_settings(ui, &snapshot, true);
+                },
+                (),
+            );
+        harness.run();
+        harness
+            .get_by_label("Review captured source (not approval)")
+            .click();
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("Page 1 of 2 - source bytes 1-2048")
+            .is_some());
+        harness.get_by_label("Next source page").click();
+        harness.step();
+        assert!(harness
+            .query_by_label_contains("Page 2 of 2 - source bytes 2049-")
+            .is_some());
+        assert!(harness
+            .query_by_label_contains("export default 1;")
+            .is_some());
+        assert!(harness.query_by_label("Run workflow").is_none());
+
+        harness
+            .get_by_role_and_label(accesskit::Role::ComboBox, "Source module")
+            .click();
+        harness.run();
+        harness.get_by_label("helper.js").click();
+        harness.run();
+        assert!(harness.query_by_label_contains("Page 1 of 1").is_some());
+        assert!(harness
+            .query_by_label_contains("export const helper = 2;")
+            .is_some());
+
+        other_window_view.disable();
+        harness.step();
+        assert!(harness
+            .query_by_label("Review captured source (not approval)")
+            .is_none());
+        assert!(harness
+            .query_by_label_contains("export const helper = 2;")
+            .is_none());
+    }
+
+    #[test]
+    fn workflow_preview_disappears_when_another_window_disables_it() {
+        use festerm_automation_js::snapshot::{ApprovedBundle, Manifest, SourceSnapshot};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let bundle = ApprovedBundle::new(SourceSnapshot {
+            manifest: Manifest {
+                version: 1,
+                api_version: 1,
+                name: "cancelled-preview".into(),
+                entry: "main.js".into(),
+                modules: vec!["main.js".into()],
+                parameters: BTreeMap::new(),
+                capabilities: BTreeSet::new(),
+            },
+            modules: BTreeMap::from([("main.js".into(), "export default 1;".into())]),
+        })
+        .unwrap();
+        let mut snapshot = crate::automation::SettingsSnapshot::default();
+        snapshot.workflow = crate::automation::WorkflowView::captured_for_test(bundle);
+        let other_window_view = snapshot.workflow.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 500.0))
+            .build_ui_state(
+                move |ui, _: &mut ()| {
+                    workflow_settings(ui, &snapshot, true);
+                },
+                (),
+            );
+        harness.run();
+        assert!(harness
+            .query_by_label("Workflow: cancelled-preview")
+            .is_some());
+
+        other_window_view.disable();
+        harness.step();
+        assert!(harness
+            .query_by_label("Workflow: cancelled-preview")
+            .is_none());
+    }
+
+    #[test]
+    fn settings_can_disconnect_an_unapproved_mcp_channel() {
+        let snapshot = crate::automation::SettingsSnapshot::with_pending_channel_for_test(7);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 1000.0))
+            .build_ui_state(
+                move |ui, command: &mut Option<crate::automation::NativeCommand>| {
+                    if let Some(action) = automation_settings(
+                        ui,
+                        &snapshot,
+                        true,
+                        crate::application::WindowId::PRIMARY,
+                    ) {
+                        *command = Some(action);
+                    }
+                },
+                None,
+            );
+        harness.run();
+        harness
+            .get_by_label("Disconnect this MCP connection")
+            .click();
+        harness.step();
+        assert!(matches!(
+            harness.state(),
+            Some(crate::automation::NativeCommand::Revoke { channel: 7 })
+        ));
+    }
+
+    #[test]
+    fn direct_comparison_requires_complete_peer_entry_and_fresh_attestation() {
+        use crate::application::WindowId;
+        use crate::automation::{verification::View, NativeCommand, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            window: WindowId,
+            command: Option<NativeCommand>,
+        }
+
+        let view = View::for_test(WindowId::PRIMARY);
+        let mut snapshot = SettingsSnapshot::default();
+        snapshot.direct_verification = Some(view.clone());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    if let Some(command) =
+                        direct_verification_settings(ui, &state.snapshot, state.window)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                State {
+                    snapshot,
+                    window: WindowId::for_test(1),
+                    command: None,
+                },
+            );
+        harness.run();
+        assert!(harness.query_by_label("Compare fingerprints").is_none());
+        harness.state_mut().window = WindowId::PRIMARY;
+        harness.run();
+
+        let entry = "Fingerprint read from the MCP client";
+        let attestation = "I read this complete fingerprint independently in my MCP client";
+        assert!(harness
+            .get_by_label(attestation)
+            .accesskit_node()
+            .is_disabled());
+        assert!(harness
+            .get_by_label("Compare fingerprints")
+            .accesskit_node()
+            .is_disabled());
+        harness
+            .get_by_role_and_label(accesskit::Role::TextInput, entry)
+            .focus();
+        harness
+            .get_by_role_and_label(accesskit::Role::TextInput, entry)
+            .type_text(&"B".repeat(64));
+        harness.run();
+        assert_eq!(
+            harness
+                .get_by_role_and_label(accesskit::Role::TextInput, entry)
+                .value(),
+            Some("B".repeat(64))
+        );
+        assert!(!harness
+            .get_by_label(attestation)
+            .accesskit_node()
+            .is_disabled());
+        harness.get_by_label(attestation).click();
+        harness.run();
+        assert_eq!(
+            harness.get_by_label(attestation).accesskit_node().toggled(),
+            Some(accesskit::Toggled::True)
+        );
+        assert!(!harness
+            .get_by_label("Compare fingerprints")
+            .accesskit_node()
+            .is_disabled());
+
+        harness
+            .get_by_role_and_label(accesskit::Role::TextInput, entry)
+            .click();
+        harness.key_press(egui::Key::End);
+        harness.key_press(egui::Key::Backspace);
+        harness.run();
+        harness
+            .get_by_role_and_label(accesskit::Role::TextInput, entry)
+            .type_text("c");
+        harness.run();
+        assert!(harness
+            .get_by_label("Compare fingerprints")
+            .accesskit_node()
+            .is_disabled());
+        harness.get_by_label(attestation).click();
+        harness.run();
+        harness.get_by_label("Compare fingerprints").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::CompareDirectPeer {
+                generation: 1,
+                fingerprint,
+            }) if fingerprint == &format!("{}c", "B".repeat(63))
+        ));
+
+        view.retire_for_test();
+        harness.step();
+        assert!(harness.query_by_label("Compare fingerprints").is_none());
+    }
+
+    #[test]
+    fn direct_comparison_reclaims_entry_state_when_prompt_changes() {
+        use crate::application::WindowId;
+        use crate::automation::{verification::View, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            enabled: bool,
+        }
+
+        let first = View::for_test(WindowId::PRIMARY);
+        let mut snapshot = SettingsSnapshot::default();
+        snapshot.direct_verification = Some(first);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 1000.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    let _ =
+                        automation_settings(ui, &state.snapshot, state.enabled, WindowId::PRIMARY);
+                },
+                State {
+                    snapshot,
+                    enabled: true,
+                },
+            );
+        harness.run();
+        let entry = "Fingerprint read from the MCP client";
+        let attestation = "I read this complete fingerprint independently in my MCP client";
+        harness
+            .get_by_role_and_label(accesskit::Role::TextInput, entry)
+            .focus();
+        harness
+            .get_by_role_and_label(accesskit::Role::TextInput, entry)
+            .type_text(&"b".repeat(64));
+        harness.run();
+        assert_eq!(
+            harness
+                .get_by_role_and_label(accesskit::Role::TextInput, entry)
+                .value(),
+            Some("b".repeat(64))
+        );
+        harness.get_by_label(attestation).click();
+        harness.run();
+        assert_eq!(
+            harness.get_by_label(attestation).accesskit_node().toggled(),
+            Some(accesskit::Toggled::True)
+        );
+
+        let mut second = View::for_test(WindowId::PRIMARY);
+        second.generation = 2;
+        harness.state_mut().snapshot.direct_verification = Some(second);
+        harness.run();
+        assert!(harness
+            .get_by_label(attestation)
+            .accesskit_node()
+            .is_disabled());
+        assert!(harness
+            .get_by_label("Compare fingerprints")
+            .accesskit_node()
+            .is_disabled());
+        assert_eq!(
+            harness
+                .ctx
+                .data(|data| data.count::<egui::text_edit::TextEditState>()),
+            1
+        );
+        harness.state_mut().enabled = false;
+        harness.step();
+        assert_eq!(
+            harness
+                .ctx
+                .data(|data| data.count::<egui::text_edit::TextEditState>()),
+            0
+        );
+        assert_eq!(
+            harness
+                .ctx
+                .data(|data| data.count::<DirectComparisonInput>()),
+            0
+        );
+    }
+
+    #[test]
+    fn controller_settings_require_explicit_current_window_choice_and_confirmation() {
+        use crate::application::WindowId;
+        use crate::automation::{ControllerSelectionView, NativeCommand, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            window: WindowId,
+            command: Option<NativeCommand>,
+        }
+        let (snapshot, registration, first, second, _, _) =
+            SettingsSnapshot::with_controller_for_test();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 1800.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    if let Some(command) =
+                        automation_settings(ui, &state.snapshot, true, state.window)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                State {
+                    snapshot,
+                    window: WindowId::PRIMARY,
+                    command: None,
+                },
+            );
+        harness.run();
+        assert!(harness
+            .query_by_label("Confirm association (no access granted)")
+            .is_none());
+        assert!(harness
+            .query_by_label("This window — tab position 2 — untrusted name \"Same\"")
+            .is_none());
+        harness.get_by_label("Choose local terminal").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::ChooseController {
+                channel: 7,
+                registration: actual,
+            }) if *actual == registration
+        ));
+
+        harness.state_mut().command = None;
+        harness.state_mut().snapshot.controllers[0].selection = ControllerSelectionView::Choosing {
+            token: 17,
+            window: WindowId::PRIMARY,
+        };
+        harness.run();
+        assert!(harness
+            .query_by_label("This window — tab position 3 — untrusted name \"Same\"")
+            .is_none());
+        harness
+            .get_by_label("This window — tab position 2 — untrusted name \"Same\"")
+            .click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::SelectControllerTarget {
+                channel: 7,
+                registration: actual,
+                selection: 17,
+                target,
+            }) if *actual == registration && *target == second && *target != first
+        ));
+
+        harness.state_mut().command = None;
+        harness.state_mut().snapshot.controllers[0].selection =
+            ControllerSelectionView::Reviewing {
+                token: 18,
+                target: second,
+                window: WindowId::PRIMARY,
+            };
+        harness.state_mut().window = WindowId::for_test(2);
+        harness.run();
+        assert!(harness
+            .query_by_label("Confirm association (no access granted)")
+            .is_none());
+        harness.state_mut().window = WindowId::PRIMARY;
+        harness.run();
+        harness
+            .get_by_label("Confirm association (no access granted)")
+            .click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::ConfirmController {
+                channel: 7,
+                registration: actual,
+                selection: 18,
+            }) if *actual == registration
+        ));
+        harness.state_mut().command = None;
+        harness.get_by_label("Cancel controller selection").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::CancelController {
+                channel: 7,
+                registration: actual,
+            }) if *actual == registration
+        ));
+    }
+
+    #[test]
+    fn controller_metadata_settings_require_a_separate_same_window_review() {
+        use crate::application::WindowId;
+        use crate::automation::{ControllerMetadataView, NativeCommand, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            window: WindowId,
+            command: Option<NativeCommand>,
+        }
+        let (mut snapshot, registration, _, target, _, enrollment) =
+            SettingsSnapshot::with_controller_for_test();
+        snapshot.controllers[0].associated_target = Some(target);
+        snapshot.controllers[0].metadata = ControllerMetadataView::Idle {
+            enrollment,
+            window: WindowId::PRIMARY,
+            target,
+            granted: false,
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 1800.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    if let Some(command) =
+                        automation_settings(ui, &state.snapshot, true, state.window)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                State {
+                    snapshot,
+                    window: WindowId::PRIMARY,
+                    command: None,
+                },
+            );
+        harness.run();
+        assert!(harness
+            .query_by_label("Approve this metadata grant")
+            .is_none());
+        harness.get_by_label("Review metadata access").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::ReviewControllerMetadata {
+                channel: 7,
+                registration: actual,
+                enrollment: actual_enrollment,
+            }) if *actual == registration && *actual_enrollment == enrollment
+        ));
+
+        harness.state_mut().command = None;
+        harness.state_mut().snapshot.controllers[0].set_metadata_review_for_test(
+            42,
+            WindowId::PRIMARY,
+            target,
+        );
+        harness.state_mut().window = WindowId::for_test(2);
+        harness.run();
+        assert!(harness
+            .query_by_label("Approve this metadata grant")
+            .is_none());
+        harness.state_mut().window = WindowId::PRIMARY;
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("Review metadata for client 0123456789abcdef: tab position 2",)
+            .is_some());
+        assert!(harness
+            .query_by_label_contains("Approve only the terminal label and lifecycle status")
+            .is_some());
+        harness.get_by_label("Approve this metadata grant").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::ConfirmControllerMetadata {
+                channel: 7,
+                registration: actual,
+                review: 42,
+            }) if *actual == registration
+        ));
+
+        harness.state_mut().command = None;
+        let other_window_snapshot = harness.state().snapshot.clone();
+        other_window_snapshot.cancel_controller_metadata_review(7, registration, 42);
+        harness.run();
+        assert!(harness
+            .query_by_label("Approve this metadata grant")
+            .is_none());
+        assert!(harness
+            .query_by_label("Metadata review was cancelled.")
+            .is_some());
+        harness.get_by_label("Cancel metadata review").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::CancelControllerMetadata {
+                channel: 7,
+                registration: actual,
+                review: 42,
+            }) if *actual == registration
+        ));
+    }
+
+    #[test]
+    fn controller_input_settings_show_the_review_and_cancel_stale_snapshots() {
+        use crate::application::WindowId;
+        use crate::automation::{
+            presentation::DirectActionDisplay, NativeCommand, SettingsSnapshot,
+        };
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            window: WindowId,
+            command: Option<NativeCommand>,
+        }
+        let (mut snapshot, registration, _, target, _, _) =
+            SettingsSnapshot::with_controller_for_test();
+        snapshot.controllers[0].associated_target = Some(target);
+        snapshot.controllers[0].set_input_requested_for_test(53, WindowId::PRIMARY, target);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 1800.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    if let Some(command) =
+                        automation_settings(ui, &state.snapshot, true, state.window)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                State {
+                    snapshot,
+                    window: WindowId::PRIMARY,
+                    command: None,
+                },
+            );
+        harness.run();
+        harness.get_by_label("Review requested input").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::ReviewControllerInput {
+                channel: 7,
+                registration: actual,
+                input: 53,
+            }) if *actual == registration
+        ));
+        harness.state_mut().command = None;
+        harness.state_mut().snapshot.controllers[0].set_input_review_for_test(
+            53,
+            WindowId::PRIMARY,
+            target,
+            DirectActionDisplay::Text {
+                escaped: "long escaped text\\nend".into(),
+                submit: true,
+            },
+            vec!["Enrollment source: exact metadata terminal".into()],
+        );
+        harness.state_mut().window = WindowId::for_test(2);
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("Text: \"long escaped")
+            .is_none());
+        harness.state_mut().window = WindowId::PRIMARY;
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("Text: \"long escaped text\\nend\"")
+            .is_some());
+        assert!(harness
+            .query_by_label("Enter will be sent after the text.")
+            .is_some());
+        assert!(harness
+            .query_by_label("Enrollment source: exact metadata terminal")
+            .is_some());
+        assert!(harness
+            .query_by_label_contains("new intentional requests for the same action")
+            .is_some());
+        assert!(harness
+            .query_by_label_contains("Never automatically replay after an unknown or lost response")
+            .is_some());
+        harness.get_by_label("Approve and send this input").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::ConfirmControllerInput {
+                channel: 7,
+                registration: actual,
+                input: 53,
+            }) if *actual == registration
+        ));
+        harness.state_mut().command = None;
+        let other_window_snapshot = harness.state().snapshot.clone();
+        other_window_snapshot.cancel_controller_input_review(7, registration, 53);
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("Text: \"long escaped")
+            .is_none());
+        assert!(harness
+            .query_by_label("Approve and send this input")
+            .is_none());
+        harness.get_by_label("Cancel requested input").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::CancelControllerInput {
+                channel: 7,
+                registration: actual,
+                input: 53,
+            }) if *actual == registration
+        ));
+    }
+
+    #[test]
+    fn controller_metadata_review_ignores_stale_pointer_and_accessibility_actions() {
+        use crate::application::WindowId;
+        use crate::automation::{NativeCommand, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            command: Option<NativeCommand>,
+        }
+        for accessibility in [false, true] {
+            let (mut snapshot, registration, _, target, _, _) =
+                SettingsSnapshot::with_controller_for_test();
+            snapshot.controllers[0].associated_target = Some(target);
+            snapshot.controllers[0].set_metadata_review_for_test(42, WindowId::PRIMARY, target);
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(900.0, 1800.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        if let Some(command) =
+                            automation_settings(ui, &state.snapshot, true, WindowId::PRIMARY)
+                        {
+                            state.command = Some(command);
+                        }
+                    },
+                    State {
+                        snapshot,
+                        command: None,
+                    },
+                );
+            harness.run();
+            let label = "Approve this metadata grant";
+            let position = harness.get_by_label(label).rect().center();
+            if accessibility {
+                harness.get_by_label(label).click_accesskit();
+            } else {
+                harness.event(egui::Event::PointerMoved(position));
+                harness.event(egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.step();
+            }
+            harness.state_mut().snapshot.controllers[0].set_metadata_review_for_test(
+                43,
+                WindowId::PRIMARY,
+                target,
+            );
+            if !accessibility {
+                harness.event(egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            harness.step();
+            assert!(harness.state().command.is_none());
+            harness.get_by_label(label).click();
+            harness.step();
+            assert!(matches!(
+                &harness.state().command,
+                Some(NativeCommand::ConfirmControllerMetadata {
+                    channel: 7,
+                    registration: actual,
+                    review: 43,
+                }) if *actual == registration
+            ));
+        }
+    }
+
+    #[test]
+    fn controller_input_review_ignores_stale_pointer_and_accessibility_actions() {
+        use crate::application::WindowId;
+        use crate::automation::{NativeCommand, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            command: Option<NativeCommand>,
+        }
+        for (accessibility, cancel) in [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let (mut snapshot, registration, _, target, _, _) =
+                SettingsSnapshot::with_controller_for_test();
+            snapshot.controllers[0].associated_target = Some(target);
+            snapshot.controllers[0].set_input_requested_for_test(53, WindowId::PRIMARY, target);
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(900.0, 1800.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        if let Some(command) =
+                            automation_settings(ui, &state.snapshot, true, WindowId::PRIMARY)
+                        {
+                            state.command = Some(command);
+                        }
+                    },
+                    State {
+                        snapshot,
+                        command: None,
+                    },
+                );
+            harness.run();
+            let label = if cancel {
+                "Cancel requested input"
+            } else {
+                "Review requested input"
+            };
+            let position = harness.get_by_label(label).rect().center();
+            if accessibility {
+                harness.get_by_label(label).click_accesskit();
+            } else {
+                harness.event(egui::Event::PointerMoved(position));
+                harness.event(egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.step();
+            }
+            harness.state_mut().snapshot.controllers[0].set_input_requested_for_test(
+                54,
+                WindowId::PRIMARY,
+                target,
+            );
+            if !accessibility {
+                harness.event(egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            harness.step();
+            assert!(harness.state().command.is_none());
+            harness.get_by_label(label).click();
+            harness.step();
+            let correct = if cancel {
+                matches!(
+                    &harness.state().command,
+                    Some(NativeCommand::CancelControllerInput {
+                        channel: 7,
+                        registration: actual,
+                        input: 54,
+                    }) if *actual == registration
+                )
+            } else {
+                matches!(
+                    &harness.state().command,
+                    Some(NativeCommand::ReviewControllerInput {
+                        channel: 7,
+                        registration: actual,
+                        input: 54,
+                    }) if *actual == registration
+                )
+            };
+            assert!(correct);
+        }
+    }
+
+    #[test]
+    fn controller_input_confirmation_and_disarm_ignore_stale_actions() {
+        use crate::application::WindowId;
+        use crate::automation::{
+            presentation::DirectActionDisplay, ControllerArmedControl, NativeCommand,
+            SettingsSnapshot,
+        };
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            command: Option<NativeCommand>,
+        }
+        for disarm in [false, true] {
+            for accessibility in [false, true] {
+                let (mut snapshot, registration, _, target, _, _) =
+                    SettingsSnapshot::with_controller_for_test();
+                snapshot.controllers[0].associated_target = Some(target);
+                if disarm {
+                    snapshot.controllers[0].control = Some(ControllerArmedControl {
+                        token: 53,
+                        target,
+                        window: WindowId::PRIMARY,
+                    });
+                } else {
+                    snapshot.controllers[0].set_input_review_for_test(
+                        53,
+                        WindowId::PRIMARY,
+                        target,
+                        DirectActionDisplay::Text {
+                            escaped: "input".into(),
+                            submit: false,
+                        },
+                        vec!["source".into()],
+                    );
+                }
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(900.0, 1800.0))
+                    .build_ui_state(
+                        |ui, state: &mut State| {
+                            if let Some(command) =
+                                automation_settings(ui, &state.snapshot, true, WindowId::PRIMARY)
+                            {
+                                state.command = Some(command);
+                            }
+                        },
+                        State {
+                            snapshot,
+                            command: None,
+                        },
+                    );
+                harness.run();
+                let label = if disarm {
+                    "Disarm terminal control"
+                } else {
+                    "Approve and send this input"
+                };
+                let position = harness.get_by_label(label).rect().center();
+                if accessibility {
+                    harness.get_by_label(label).click_accesskit();
+                } else {
+                    harness.event(egui::Event::PointerMoved(position));
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                    harness.step();
+                }
+                if disarm {
+                    harness.state_mut().snapshot.controllers[0]
+                        .control
+                        .as_mut()
+                        .unwrap()
+                        .token = 54;
+                } else {
+                    harness.state_mut().snapshot.controllers[0].set_input_review_for_test(
+                        54,
+                        WindowId::PRIMARY,
+                        target,
+                        DirectActionDisplay::Text {
+                            escaped: "input".into(),
+                            submit: false,
+                        },
+                        vec!["source".into()],
+                    );
+                }
+                if !accessibility {
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+                harness.step();
+                assert!(harness.state().command.is_none());
+                harness.get_by_label(label).click();
+                harness.step();
+                if disarm {
+                    assert!(matches!(
+                        &harness.state().command,
+                        Some(NativeCommand::DisarmControllerInput {
+                            channel: 7,
+                            registration: actual,
+                            input: 54,
+                        }) if *actual == registration
+                    ));
+                } else {
+                    assert!(matches!(
+                        &harness.state().command,
+                        Some(NativeCommand::ConfirmControllerInput {
+                            channel: 7,
+                            registration: actual,
+                            input: 54,
+                        }) if *actual == registration
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn controller_confirmation_ignores_stale_accessibility_and_pointer_actions() {
+        use crate::application::WindowId;
+        use crate::automation::{ControllerSelectionView, NativeCommand, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            command: Option<NativeCommand>,
+        }
+
+        for accessibility in [false, true] {
+            for same_target in [false, true] {
+                let (mut snapshot, registration, first, second, _, _) =
+                    SettingsSnapshot::with_controller_for_test();
+                snapshot.controllers[0].selection = ControllerSelectionView::Reviewing {
+                    token: 18,
+                    target: first,
+                    window: WindowId::PRIMARY,
+                };
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(900.0, 1800.0))
+                    .build_ui_state(
+                        |ui, state: &mut State| {
+                            if let Some(command) =
+                                automation_settings(ui, &state.snapshot, true, WindowId::PRIMARY)
+                            {
+                                state.command = Some(command);
+                            }
+                        },
+                        State {
+                            snapshot,
+                            command: None,
+                        },
+                    );
+                harness.run();
+                let label = "Confirm association (no access granted)";
+                let position = harness.get_by_label(label).rect().center();
+                if accessibility {
+                    harness.get_by_label(label).click_accesskit();
+                } else {
+                    harness.event(egui::Event::PointerMoved(position));
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                    harness.step();
+                }
+
+                harness.state_mut().snapshot.controllers[0].selection =
+                    ControllerSelectionView::Reviewing {
+                        token: 20,
+                        target: if same_target { first } else { second },
+                        window: WindowId::PRIMARY,
+                    };
+                if !accessibility {
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+                harness.step();
+                assert!(
+                    harness.state().command.is_none(),
+                    "a stale action confirmed the replacement review"
+                );
+
+                harness.get_by_label(label).click_accesskit();
+                harness.step();
+                assert!(matches!(
+                    &harness.state().command,
+                    Some(NativeCommand::ConfirmController {
+                        channel: 7,
+                        registration: actual,
+                        selection: 20,
+                    }) if *actual == registration
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn automation_toggle_release_cannot_reenable_a_changed_preference() {
+        for label in ["Enable local MCP (Beta)", "Enable JavaScript workflows"] {
+            let mut harness = settings_harness();
+            harness.state_mut().mcp_enabled = true;
+            harness.state_mut().javascript_enabled = true;
+            harness.run();
+            let position = harness
+                .get_by_role_and_label(accesskit::Role::CheckBox, label)
+                .rect()
+                .center();
+            harness.event(egui::Event::PointerMoved(position));
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+            if label == "Enable local MCP (Beta)" {
+                harness.state_mut().mcp_enabled = false;
+            } else {
+                harness.state_mut().javascript_enabled = false;
+            }
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+            assert!(harness.state().command.is_none());
+
+            harness
+                .get_by_role_and_label(accesskit::Role::CheckBox, label)
+                .click();
+            harness.step();
+            assert!(matches!(
+                (&harness.state().command, label),
+                (
+                    Some(AppCommand::ToggleMcpEnabled),
+                    "Enable local MCP (Beta)"
+                ) | (
+                    Some(AppCommand::ToggleJavascriptEnabled),
+                    "Enable JavaScript workflows"
+                )
+            ));
+        }
+    }
+
+    #[test]
+    fn automation_toggle_release_cannot_reenable_after_same_pass_aba() {
+        use crate::automation::preferences::{Feature, Shared, Values};
+
+        for (label, feature) in [
+            ("Enable local MCP (Beta)", Feature::Mcp),
+            ("Enable JavaScript workflows", Feature::Javascript),
+        ] {
+            let preferences = Shared::new(Values {
+                mcp: false,
+                javascript: false,
+            });
+            let mut harness = settings_harness();
+            harness.run();
+            let position = harness
+                .get_by_role_and_label(accesskit::Role::CheckBox, label)
+                .rect()
+                .center();
+            harness.event(egui::Event::PointerMoved(position));
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+
+            assert!(preferences.toggle(feature).is_some());
+            assert!(preferences.toggle(feature).is_some());
+            let revision = preferences.ui_revision(feature);
+            match feature {
+                Feature::Mcp => harness.state_mut().mcp_ui_revision = revision,
+                Feature::Javascript => harness.state_mut().javascript_ui_revision = revision,
+            }
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+            assert!(harness.state().command.is_none());
+
+            harness
+                .get_by_role_and_label(accesskit::Role::CheckBox, label)
+                .click();
+            harness.step();
+            assert!(matches!(
+                (&harness.state().command, feature),
+                (Some(AppCommand::ToggleMcpEnabled), Feature::Mcp)
+                    | (
+                        Some(AppCommand::ToggleJavascriptEnabled),
+                        Feature::Javascript
+                    )
+            ));
+        }
+    }
+
+    #[test]
+    fn settings_automation_conflicts_stop_before_approval_or_unrelated_actions() {
+        use crate::automation::NativeCommand;
+
+        #[derive(Clone, Copy, Debug)]
+        enum Action {
+            Javascript,
+            Mcp,
+            OpenWorkflow,
+            ClearWorkflow,
+            ResetSettings,
+            Retry,
+            Approve,
+            Revoke,
+            ConfirmController,
+            CancelController,
+        }
+        let (_, registration, _, _, _, _) =
+            crate::automation::SettingsSnapshot::with_controller_for_test();
+        let make = |action| match action {
+            Action::Javascript => AppCommand::ToggleJavascriptEnabled,
+            Action::Mcp => AppCommand::ToggleMcpEnabled,
+            Action::OpenWorkflow => AppCommand::OpenWorkflowPicker,
+            Action::ClearWorkflow => AppCommand::Automation(NativeCommand::ClearWorkflow),
+            Action::ResetSettings => AppCommand::ResetInterfaceSettings,
+            Action::Retry => AppCommand::RetryAutomationSettings,
+            Action::Approve => AppCommand::Automation(NativeCommand::ApproveObservation {
+                channel: 7,
+                targets: Vec::new(),
+            }),
+            Action::Revoke => AppCommand::Automation(NativeCommand::Revoke { channel: 7 }),
+            Action::ConfirmController => AppCommand::Automation(NativeCommand::ConfirmController {
+                channel: 7,
+                registration,
+                selection: 9,
+            }),
+            Action::CancelController => AppCommand::Automation(NativeCommand::CancelController {
+                channel: 7,
+                registration,
+            }),
+        };
+        for (first, second) in [
+            (Action::Javascript, Action::Approve),
+            (Action::Javascript, Action::ClearWorkflow),
+            (Action::Javascript, Action::Mcp),
+            (Action::ClearWorkflow, Action::Approve),
+            (Action::OpenWorkflow, Action::ClearWorkflow),
+            (Action::ResetSettings, Action::Approve),
+            (Action::Retry, Action::Approve),
+            (Action::Revoke, Action::Approve),
+            (Action::Javascript, Action::ConfirmController),
+            (Action::Mcp, Action::ConfirmController),
+            (Action::CancelController, Action::ConfirmController),
+        ] {
+            for (first, second) in [(first, second), (second, first)] {
+                let mut commands = SettingsAutomationCommands::default();
+                commands.record(make(first));
+                commands.record(make(second));
+                commands.record(make(Action::Approve));
+                assert!(
+                    matches!(
+                        commands.resolve(Some(AppCommand::ToggleStatusBar)),
+                        Some(AppCommand::Automation(NativeCommand::SafetyStop))
+                    ),
+                    "{first:?} followed by {second:?} must stop, even with later actions"
+                );
+            }
+        }
+        for action in [
+            Action::Javascript,
+            Action::Mcp,
+            Action::ClearWorkflow,
+            Action::ResetSettings,
+            Action::Retry,
+            Action::Revoke,
+        ] {
+            let mut commands = SettingsAutomationCommands::default();
+            commands.record(make(action));
+            assert!(!matches!(
+                commands.resolve(Some(AppCommand::ToggleStatusBar)),
+                Some(AppCommand::ToggleStatusBar) | None
+            ));
+        }
+        let mut commands = SettingsAutomationCommands::default();
+        commands.record(make(Action::OpenWorkflow));
+        assert!(matches!(
+            commands.resolve(Some(AppCommand::ToggleStatusBar)),
+            Some(AppCommand::ToggleStatusBar)
+        ));
+        assert!(matches!(
+            SettingsAutomationCommands::default().resolve(Some(AppCommand::ToggleStatusBar)),
+            Some(AppCommand::ToggleStatusBar)
+        ));
+
+        let mut actions = None;
+        record_automation_action(&mut actions, NativeCommand::Revoke { channel: 7 });
+        record_automation_action(
+            &mut actions,
+            NativeCommand::ApproveObservation {
+                channel: 7,
+                targets: Vec::new(),
+            },
+        );
+        assert!(matches!(actions, Some(NativeCommand::SafetyStop)));
+    }
+
+    #[test]
+    fn uncertain_automation_preferences_show_warning_and_safe_retry() {
+        use crate::automation::preferences::{Shared, Values};
+
+        let enabled = Values {
+            mcp: true,
+            javascript: true,
+        };
+        let preferences = Shared::new(enabled);
+        preferences.save_failed(enabled);
+        let mut harness = settings_harness();
+        harness.state_mut().mcp_enabled = true;
+        harness.state_mut().javascript_enabled = true;
+        harness.state_mut().automation_stopped = true;
+        harness.state_mut().automation_preference_feedback = preferences.feedback();
+        harness.state_mut().automation_preference_retry_available = preferences.retry_available();
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("may remain on disk and be read after restart")
+            .is_some());
+        assert!(harness.query_by_label("Select workflow JSON").is_none());
+        assert!(harness
+            .query_by_label("Restart local MCP (revokes MCP access)")
+            .is_none());
+        harness
+            .get_by_label("Retry saving automation preferences (stay stopped)")
+            .click();
+        harness.step();
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::RetryAutomationSettings)
+        ));
+    }
+
+    #[test]
+    fn conflicting_automation_actions_are_visible_in_settings() {
+        use crate::automation::preferences::{Shared, Values};
+
+        let preferences = Shared::new(Values {
+            mcp: true,
+            javascript: true,
+        });
+        preferences.action_conflicted();
+        let mut harness = settings_harness();
+        harness.state_mut().automation_preference_feedback = preferences.feedback();
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("conflicted or overflowed")
+            .is_some());
+        assert!(harness
+            .query_by_label_contains("workflow previews cancelled")
+            .is_some());
     }
 
     #[test]
@@ -1849,6 +4257,16 @@ mod tests {
                             show_resumable_sessions: false,
                             show_durable_session_in_status_bar: false,
                             automatic_update_checks: false,
+                            mcp_enabled: false,
+                            javascript_enabled: false,
+                            automation_mcp_enabled: false,
+                            automation_javascript_enabled: false,
+                            automation_mcp_ui_revision: 0,
+                            automation_javascript_ui_revision: 0,
+                            automation_preference_feedback: None,
+                            automation_preference_retry_available: false,
+                            automation_window: crate::application::WindowId::PRIMARY,
+                            automation: Default::default(),
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                         },
@@ -1860,6 +4278,13 @@ mod tests {
                     command: None,
                     keyboard_bindings: Default::default(),
                     font_download_failed: false,
+                    mcp_enabled: false,
+                    javascript_enabled: false,
+                    mcp_ui_revision: 0,
+                    javascript_ui_revision: 0,
+                    automation_stopped: false,
+                    automation_preference_feedback: None,
+                    automation_preference_retry_available: false,
                 },
             );
         harness.run();
