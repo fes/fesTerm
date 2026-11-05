@@ -138,12 +138,20 @@ impl WakeMonitor {
     }
 }
 
-/// Privacy monitoring is unavailable until a reliable screen-lock source is
-/// qualified. Installation synchronously revokes and returns an error.
+#[cfg(target_os = "linux")]
+mod privacy;
+
+#[cfg(target_os = "linux")]
+pub use privacy::PrivacyMonitor;
+
+/// Privacy monitoring is unavailable off Linux. Installation synchronously
+/// revokes and returns an error.
+#[cfg(not(target_os = "linux"))]
 pub struct PrivacyMonitor {
     _private: (),
 }
 
+#[cfg(not(target_os = "linux"))]
 impl PrivacyMonitor {
     pub fn install(callback: std::sync::Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
         callback();
@@ -158,6 +166,7 @@ impl PrivacyMonitor {
 mod tests {
     use super::{classify_prepare_for_sleep, WakeEvent};
 
+    #[cfg(not(target_os = "linux"))]
     #[test]
     fn unavailable_privacy_monitor_revokes_synchronously() {
         use std::sync::atomic::{AtomicUsize, Ordering};

@@ -1017,12 +1017,20 @@ impl WakeMonitor {
     }
 }
 
-/// Privacy monitoring is unavailable until a reliable screen-lock source is
-/// qualified. Installation synchronously revokes and returns an error.
+#[cfg(target_os = "macos")]
+mod privacy;
+
+#[cfg(target_os = "macos")]
+pub use privacy::PrivacyMonitor;
+
+/// Privacy monitoring is unavailable off macOS. Installation synchronously
+/// revokes and returns an error.
+#[cfg(not(target_os = "macos"))]
 pub struct PrivacyMonitor {
     _private: (),
 }
 
+#[cfg(not(target_os = "macos"))]
 impl PrivacyMonitor {
     pub fn install(callback: std::sync::Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
         callback();
@@ -1786,16 +1794,24 @@ mod tests {
     };
 
     #[test]
-    fn unavailable_privacy_monitor_revokes_synchronously() {
+    fn privacy_monitor_installs_or_fails_closed_once() {
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = calls.clone();
-        let caller = std::thread::current().id();
         let result = super::PrivacyMonitor::install(Arc::new(move || {
-            assert_eq!(std::thread::current().id(), caller);
             counter.fetch_add(1, Ordering::SeqCst);
         }));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(matches!(result, Err(error) if error.kind() == std::io::ErrorKind::Unsupported));
+        match result {
+            // An unlocked console session (developer machine).
+            Ok(monitor) => {
+                assert!(!monitor.is_lost());
+                assert_eq!(calls.load(Ordering::SeqCst), 0);
+                drop(monitor);
+            }
+            // A headless runner has no unlocked console session.
+            Err(_) => assert_eq!(calls.load(Ordering::SeqCst), 1),
+        }
+        std::thread::sleep(super::privacy::POLL_INTERVAL * 2);
+        assert!(calls.load(Ordering::SeqCst) <= 1);
     }
 
     #[test]

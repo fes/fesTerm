@@ -5,9 +5,13 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Linux resume-from-suspend wake notification support for fesTerm."
+description = "Linux resume-from-suspend wake and automation privacy monitoring for fesTerm."
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5.18", default-features = false, features = ["async-io"] }
-tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros"] }
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros", "time"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus = { version = "5.18", default-features = false, features = ["async-io", "p2p"] }
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros", "time"] }
