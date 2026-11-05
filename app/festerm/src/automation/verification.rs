@@ -271,17 +271,19 @@ impl Surface {
             .reserved
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| Error::Busy)?;
-        let generation = match self.0.generation.fetch_update(
-            Ordering::AcqRel,
-            Ordering::Acquire,
-            |generation| generation.checked_add(1),
-        ) {
-            Ok(generation) => generation + 1,
-            Err(_) => {
-                self.0.quarantined.store(true, Ordering::Release);
-                return Err(Error::Unavailable);
-            }
-        };
+        let generation =
+            match self
+                .0
+                .generation
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |generation| {
+                    generation.checked_add(1)
+                }) {
+                Ok(generation) => generation + 1,
+                Err(_) => {
+                    self.0.quarantined.store(true, Ordering::Release);
+                    return Err(Error::Unavailable);
+                }
+            };
         let live = Arc::new(Liveness {
             alive: AtomicBool::new(true),
             pending: AtomicBool::new(false),
