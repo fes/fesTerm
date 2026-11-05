@@ -2260,15 +2260,19 @@ fn presentation_unbound_metadata_replacement_cuts_control_without_revoking_metad
     let id = broker
         .request_metadata_approval(principal, request.clone(), now)
         .unwrap();
-    broker
-        .approve_metadata(
-            principal,
-            id,
-            NativeMetadataApproval::new(request.clone(), Duration::from_secs(60))
-                .accept_control_disclosure(fixture.barrier.target, request.targets),
-            now,
-        )
-        .unwrap();
+    {
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        broker
+            .approve_metadata(
+                principal,
+                id,
+                NativeMetadataApproval::new(request.clone(), Duration::from_secs(60))
+                    .accept_control_disclosure(fixture.barrier.target, request.targets),
+                now,
+                &guard,
+            )
+            .unwrap();
+    }
     let unbound = broker.native_metadata_grant(principal, now).unwrap();
     assert!(!old_delivery.is_live(principal, now));
     let (result, mut pending) = commit_direct_input_retry(
@@ -3022,12 +3026,15 @@ fn presentation_control_review_rejects_typing_after_prior_handoff_pruned() {
     let _serial = presentation_admission_test_guard();
     let mut fixture = presented_input_fixture();
     let principal = fixture.coordinator.peers[&1].principal;
-    fixture
-        .coordinator
-        .broker
-        .as_mut()
-        .unwrap()
-        .revoke(principal);
+    {
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        fixture
+            .coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .revoke(principal, &guard);
+    }
     let (request, _, _) = presentation_control_request(fixture.barrier.target);
     let review = prepare_control_review(
         &mut fixture.coordinator,
@@ -3605,7 +3612,14 @@ fn presentation_control_review_slots_are_reclaimed_after_cancel_revocation_and_e
         &request,
         &mut app.automation_session_mut(tab).controller,
     );
-    coordinator.broker.as_mut().unwrap().revoke(principal);
+    {
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .revoke(principal, &guard);
+    }
     let fresh = prepare_control_review(
         &mut coordinator,
         1,
@@ -4630,14 +4644,18 @@ fn independent_run(
     let approval = broker
         .request_approval(connection, request.clone(), now)
         .unwrap();
-    broker
-        .approve(
-            connection,
-            approval,
-            NativeApproval::new(request, Duration::from_secs(300)),
-            now,
-        )
-        .unwrap();
+    {
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        broker
+            .approve(
+                connection,
+                approval,
+                NativeApproval::new(request, Duration::from_secs(300)),
+                now,
+                &guard,
+            )
+            .unwrap();
+    }
     let run = broker
         .admit_run(
             connection,
@@ -6737,11 +6755,14 @@ fn automation_pending_completion_retires_revoked_run_and_closes_for_missing_run(
     complete_screen_without_cleanup(&mut coordinator, &app, target);
     let principal = coordinator.peers[&1].principal;
     let pending = coordinator.peers[&1].pending_completion.unwrap();
-    coordinator
-        .broker
-        .as_mut()
-        .unwrap()
-        .revoke_ordinary(principal);
+    {
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .revoke_ordinary(principal, &guard);
+    }
     retry_completion_for_test(
         coordinator.broker.as_mut().unwrap(),
         coordinator.peers.get_mut(&1).unwrap(),

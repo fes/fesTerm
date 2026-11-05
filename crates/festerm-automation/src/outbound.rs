@@ -3,7 +3,7 @@
 //! These types do not authorize a disclosure. The host still owns admission,
 //! connection closure, frame limits and the final transport checks.
 
-use festerm_admission::AutomationEpoch;
+use festerm_admission::{AutomationAdmissionGuard, AutomationEpoch};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -57,7 +57,22 @@ pub fn outbound_channel() -> (OutboundSender, OutboundReceiver) {
 }
 
 impl OutboundSender {
-    pub fn try_send(&self, frame: OutboundFrame) -> Result<(), TrySendError<OutboundFrame>> {
+    /// Insert while retaining the caller's admission boundary.
+    ///
+    /// The guard alone does not authorize the frame. The host must validate
+    /// the frame and its connection under this same guard before insertion.
+    ///
+    /// ```compile_fail
+    /// use festerm_automation::{OutboundFrame, OutboundSender};
+    /// fn enqueue_without_admission(sender: &OutboundSender, frame: OutboundFrame) {
+    ///     let _ = sender.try_send(frame);
+    /// }
+    /// ```
+    pub fn try_send(
+        &self,
+        frame: OutboundFrame,
+        _guard: &AutomationAdmissionGuard,
+    ) -> Result<(), TrySendError<OutboundFrame>> {
         self.0.try_send(frame)
     }
 }
@@ -85,14 +100,22 @@ mod tests {
         }
     }
 
+    fn try_send_with_admission(
+        sender: &OutboundSender,
+        frame: OutboundFrame,
+    ) -> Result<(), TrySendError<OutboundFrame>> {
+        let guard = festerm_admission::automation_admission_lock().unwrap();
+        sender.try_send(frame, &guard)
+    }
+
     #[test]
     fn outbound_queue_retains_capacity_fifo_and_disconnect_semantics() {
         let (sender, receiver) = outbound_channel();
         let other_sender = sender.clone();
         for byte in 0..4 {
-            assert!(sender.try_send(frame(byte)).is_ok());
+            assert!(try_send_with_admission(&sender, frame(byte)).is_ok());
         }
-        let rejected = match other_sender.try_send(frame(4)) {
+        let rejected = match try_send_with_admission(&other_sender, frame(4)) {
             Err(TrySendError::Full(frame)) => frame,
             _ => panic!("expected full queue"),
         };
@@ -103,12 +126,12 @@ mod tests {
         assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
         drop(receiver);
         assert!(matches!(
-            other_sender.try_send(rejected),
+            try_send_with_admission(&other_sender, rejected),
             Err(TrySendError::Disconnected(_))
         ));
 
         let (sender, receiver) = outbound_channel();
-        assert!(sender.try_send(frame(5)).is_ok());
+        assert!(try_send_with_admission(&sender, frame(5)).is_ok());
         drop(sender);
         assert_eq!(receiver.try_recv().unwrap().bytes, [5]);
         assert!(matches!(
@@ -133,7 +156,7 @@ mod tests {
         });
         frame.flags.push(flag.clone());
         let (sender, receiver) = outbound_channel();
-        assert!(sender.try_send(frame).is_ok());
+        assert!(try_send_with_admission(&sender, frame).is_ok());
         let frame = receiver.try_recv().unwrap();
         let (initial, flag_invalid, registration_invalid) = {
             let _guard = festerm_admission::automation_admission_lock().unwrap();

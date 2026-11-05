@@ -8,16 +8,19 @@ platforms and unqualified adapters disabled in the application.
 The crate also owns the existing four-frame in-memory host outbound queue and
 its frame/target-guard representation. The application still owns frame-size
 limits, connection closure, deadlines, admission checks and physical writes.
-The queue and its publicly constructible frames are not authority: insertion
-does not check a broker grant, bind an enrollment or fence revocation. A future
-bound metadata path must prevent bypass through the legacy sender and establish
-its own publication and delivery prerequisites.
+The sender requires the shared admission guard, which the app retains through
+its checks and nonblocking insertion. The queue and its publicly constructible
+frames are not authority: insertion does not check a broker grant, bind an
+enrollment or fence every revocation. A future bound metadata path must prevent
+bypass through the legacy sender and establish its own publication and delivery
+prerequisites.
 
-`Broker::cancel_run` requires the shared admission guard; callers must pass an
-already-held guard rather than acquire it recursively. Other grant/run cuts and
-expiry paths are not uniformly guarded, and broker/epoch destruction still
-invalidates liveness without that guard. This partial migration does not fence
-publication or physical delivery.
+`Broker::cancel_run` and explicit ordinary-slot, legacy metadata-slot and
+whole-principal revocations require the shared admission guard. Callers must
+pass an already-held guard rather than acquire it recursively. Other grant/run
+cuts, grant replacement and expiry are not uniformly guarded, and broker/epoch
+destruction still invalidates liveness without that guard. This partial
+migration does not fence publication or physical delivery.
 
 ## Application integration
 

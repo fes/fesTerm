@@ -17,6 +17,15 @@ revocation are deferred through admission and reported as pending. The route
 is test-qualified only, refuses active control and legacy observation
 composition, and provides no metadata delivery or production capability.
 
+## Guarding ordinary and metadata grant replacement
+
+Ordinary and legacy metadata approval now retain the shared admission guard
+while replacing their own grant slots. A contention regression orders each
+replacement after guarded queue insertion, cuts the old slot's liveness and
+preserves the independent opposite slot. Other broker cuts, expiry and
+destruction are not uniformly guarded; the queued legacy frame is not bound to
+that liveness and no final-recipient delivery fence is established.
+
 ## Combining enrollment metadata with completion safety
 
 The host enrollment-review seam now composes with retained completion and its
@@ -35,6 +44,15 @@ identically labelled enrolled terminals retain independent grants and cuts.
 The seam refuses active control and legacy observation composition pending
 reviewed host cross-consent and delivery fencing. It adds no native consent UI,
 MCP metadata route, recipient fence or production qualification.
+
+## Guarding principal grant revocations
+
+Ordinary-slot, legacy metadata-slot and whole-principal revocation now require
+the shared admission guard. A contention regression checks the cut and preserves
+independently approved enrollment metadata for the two slot-specific operations.
+Other cuts and expiry are not uniformly guarded, and broker destruction
+remains outside the boundary; these cuts alone do not provide a
+recipient-delivery fence.
 
 ## Adding exact-enrollment metadata authority in the broker
 
@@ -78,8 +96,17 @@ Workflow selection can independently rearm after cleanup by explicitly
 enabling JavaScript after a disabled state is observed; unchanged settings
 cannot rearm it, and settings show the recovery instruction.
 It does not stop capture work already running or recall an extracted bundle.
-This does not guard the public completion API or other broker cuts, and does
-not establish metadata, enqueue, final-recipient or physical-delivery safety.
+Completion alone does not guard the public completion API or other broker cuts,
+or establish metadata, final-recipient or physical-delivery safety.
+
+## Serializing outbound queue admission
+
+The app now retains the shared admission guard from its connection, deadline
+and target checks through the bounded nonblocking response-queue insertion;
+queue failure closes the connection before releasing that guard. A
+child-isolated regression pauses at insertion and verifies that a competing
+revocation cannot cross the checks. The legacy frame remains non-authorizing,
+and broker liveness and final-recipient delivery fences are still missing.
 
 ## Closing poison paths before diagnostics
 
@@ -101,18 +128,19 @@ shared guard; poison follows the existing global privacy-stop path. Regression
 execution is tracked with the PR. Cleanup now disconnects under admission but
 defers bounded error logging until after releasing it, so a tracing subscriber
 cannot reenter the non-reentrant guard from those logs. This does not guard
-other cuts or broker Drop, or qualify enqueue, metadata output or physical
+other run cuts or broker Drop, or qualify enqueue, metadata output or physical
 delivery.
 
 ## Outbound queue ownership extraction
 
 The existing four-frame IPC response queue and its frame/target guards now live
 in the authority crate and feed the same app-owned connection and writer.
-This changes ownership only: insertion is not guarded through publication,
-does not bind an enrollment or metadata grant, and proves no revocable enqueue
-or physical delivery. Production qualification and metadata routing remain
-closed. Focused queue and connection regressions cover capacity, ordering,
-closure and guard freshness; execution results are tracked with the PR.
+That extraction changed ownership only: insertion was not yet guarded through
+enqueue, did not bind an enrollment or metadata grant, and proved no revocable
+enqueue or physical delivery. Production qualification and metadata routing
+remain closed. Focused queue and connection regressions cover capacity,
+ordering, closure and guard freshness; execution results are tracked with the
+PR.
 
 ## Wiring non-authorizing controller enrollment
 

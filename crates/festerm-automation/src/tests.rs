@@ -83,9 +83,47 @@ impl Broker {
         self.0.disconnect(connection, &guard);
     }
 
+    fn revoke_ordinary(&mut self, connection: ConnectionId) {
+        let guard = automation_admission_lock().unwrap();
+        self.0.revoke_ordinary(connection, &guard);
+    }
+
+    fn revoke_metadata(&mut self, connection: ConnectionId) {
+        let guard = automation_admission_lock().unwrap();
+        self.0.revoke_metadata(connection, &guard);
+    }
+
+    fn revoke(&mut self, connection: ConnectionId) {
+        let guard = automation_admission_lock().unwrap();
+        self.0.revoke(connection, &guard);
+    }
+
     fn revoke_all(&mut self) {
         let guard = automation_admission_lock().unwrap();
         self.0.revoke_all(&guard);
+    }
+
+    fn approve(
+        &mut self,
+        connection: ConnectionId,
+        id: ApprovalId,
+        approval: NativeApproval,
+        now: Instant,
+    ) -> Result<()> {
+        let guard = automation_admission_lock().unwrap();
+        self.0.approve(connection, id, approval, now, &guard)
+    }
+
+    fn approve_metadata(
+        &mut self,
+        connection: ConnectionId,
+        id: ApprovalId,
+        approval: NativeMetadataApproval,
+        now: Instant,
+    ) -> Result<()> {
+        let guard = automation_admission_lock().unwrap();
+        self.0
+            .approve_metadata(connection, id, approval, now, &guard)
     }
 
     fn cancel_run(&mut self, connection: ConnectionId, id: RunId, now: Instant) -> Result<()> {
@@ -162,6 +200,7 @@ fn enrollment_registry_mutations_share_the_admission_boundary() {
                 approval,
                 NativeApproval::new(ordinary_request, Duration::from_secs(60)),
                 now,
+                &guard,
             )
             .unwrap();
         let registration = broker
@@ -4387,6 +4426,188 @@ fn committed_discovery(f: &mut Fixture, run: RunId) -> DisclosureLiveness {
         .unwrap();
     f.broker.forget_run(f.connection, run).unwrap();
     liveness
+}
+
+#[test]
+fn ordinary_legacy_metadata_and_principal_revocations_share_admission() {
+    for action in 0..3 {
+        let mut f = Fixture::new();
+        let target = f.a;
+        let scope = Scope {
+            discover: BTreeSet::from([target]),
+            ..Scope::default()
+        };
+        f.approve(scope.clone(), &[direct(DirectKind::Discovery)]);
+        approve_metadata(&mut f, &[target], &[], MAX_GRANT_LIFETIME);
+        let (registration, enrollment) = authority_enrollment(&mut f, b"controller", target);
+        let proposal = authority_proposal(&mut f, registration, enrollment);
+        authority_approve(&mut f, proposal, MAX_GRANT_LIFETIME, &[]).unwrap();
+        let ordinary_run = f.run(scope, direct(DirectKind::Discovery));
+        let ordinary = committed_discovery(&mut f, ordinary_run);
+        let deadline = f.now + Duration::from_secs(30);
+        let metadata_run = metadata_run(&mut f, &[target], deadline);
+        let metadata = committed_discovery(&mut f, metadata_run);
+        let enrollment_run = authority_run(
+            &mut f,
+            registration,
+            enrollment,
+            target,
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        let enrolled = committed_authority_discovery(&mut f, enrollment_run, target);
+        let connection = f.connection;
+        let now = f.now;
+        let mut broker = f.broker.0;
+        let guard = automation_admission_lock().unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let busy = matches!(
+                try_automation_admission_lock(),
+                Err(AutomationAdmissionTryError::Busy)
+            );
+            ready_tx.send(busy).unwrap();
+            let guard = automation_admission_lock().unwrap();
+            match action {
+                0 => broker.revoke_ordinary(connection, &guard),
+                1 => broker.revoke_metadata(connection, &guard),
+                _ => broker.revoke(connection, &guard),
+            }
+            drop(guard);
+            broker
+        });
+        let busy = ready_rx.recv_timeout(Duration::from_secs(2));
+        let before = (
+            ordinary.is_live(connection, now),
+            metadata.is_live(connection, now),
+            enrolled.is_live(connection, now),
+        );
+        drop(guard);
+        let broker = worker.join().unwrap();
+
+        assert_eq!(busy, Ok(true));
+        assert_eq!(before, (true, true, true));
+        assert_eq!(
+            (
+                ordinary.is_live(connection, now),
+                metadata.is_live(connection, now),
+                enrolled.is_live(connection, now)
+            ),
+            match action {
+                0 => (false, true, true),
+                1 => (true, false, true),
+                _ => (false, false, false),
+            }
+        );
+        drop(broker);
+    }
+}
+
+#[test]
+fn ordinary_and_metadata_replacement_wait_for_guarded_enqueue() {
+    enum Replacement {
+        Ordinary(ApprovalId, NativeApproval),
+        Metadata(ApprovalId, NativeMetadataApproval),
+    }
+
+    for metadata_slot in [false, true] {
+        let mut f = Fixture::new();
+        let target = f.a;
+        let scope = Scope {
+            discover: BTreeSet::from([target]),
+            ..Scope::default()
+        };
+        let binding = direct(DirectKind::Discovery);
+        f.approve(scope.clone(), &[binding]);
+        approve_metadata(&mut f, &[target], &[], MAX_GRANT_LIFETIME);
+        let ordinary_run = f.run(scope.clone(), binding);
+        let ordinary = committed_discovery(&mut f, ordinary_run);
+        let deadline = f.now + Duration::from_secs(30);
+        let metadata_run = metadata_run(&mut f, &[target], deadline);
+        let metadata = committed_discovery(&mut f, metadata_run);
+        let replacement = if metadata_slot {
+            let request = MetadataGrantRequest {
+                targets: BTreeSet::from([target]),
+            };
+            let id = f
+                .broker
+                .request_metadata_approval(f.connection, request.clone(), f.now)
+                .unwrap();
+            Replacement::Metadata(id, NativeMetadataApproval::new(request, MAX_GRANT_LIFETIME))
+        } else {
+            let request = GrantRequest {
+                scope,
+                bindings: BTreeSet::from([binding]),
+                direct_read_calls: BTreeSet::new(),
+            };
+            let id = f
+                .broker
+                .request_approval(f.connection, request.clone(), f.now)
+                .unwrap();
+            Replacement::Ordinary(id, NativeApproval::new(request, MAX_GRANT_LIFETIME))
+        };
+        let connection = f.connection;
+        let now = f.now;
+        let mut broker = f.broker.0;
+        let (sender, receiver) = outbound_channel();
+        let guard = automation_admission_lock().unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let busy = matches!(
+                try_automation_admission_lock(),
+                Err(AutomationAdmissionTryError::Busy)
+            );
+            ready_tx.send(busy).unwrap();
+            let guard = automation_admission_lock().unwrap();
+            let result = match replacement {
+                Replacement::Ordinary(id, approval) => {
+                    broker.approve(connection, id, approval, now, &guard)
+                }
+                Replacement::Metadata(id, approval) => {
+                    broker.approve_metadata(connection, id, approval, now, &guard)
+                }
+            };
+            drop(guard);
+            (broker, result)
+        });
+        let busy = ready_rx.recv_timeout(Duration::from_secs(2));
+        let before = (
+            ordinary.is_live(connection, now),
+            metadata.is_live(connection, now),
+        );
+        let queued = sender.try_send(
+            OutboundFrame {
+                bytes: b"non-authorizing frame".to_vec(),
+                expires: now + Duration::from_secs(30),
+                targets: Vec::new(),
+                flags: Vec::new(),
+            },
+            &guard,
+        );
+        drop(guard);
+        let (broker, result) = worker.join().unwrap();
+
+        assert_eq!(busy, Ok(true));
+        assert_eq!(before, (true, true));
+        assert!(queued.is_ok());
+        assert_eq!(result, Ok(()));
+        assert_eq!(
+            (
+                ordinary.is_live(connection, now),
+                metadata.is_live(connection, now)
+            ),
+            if metadata_slot {
+                (true, false)
+            } else {
+                (false, true)
+            }
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap().bytes.as_slice(),
+            b"non-authorizing frame"
+        );
+        drop(broker);
+    }
 }
 
 #[test]

@@ -759,8 +759,13 @@ admission/safety work defers the tick. Poison closes shared privacy. The
 exact run is cancelled under the guard; cleanup failures close and disconnect
 the peer under it. Bounded error details are logged only after its release,
 because tracing subscribers can reenter admission. It is also released before
-any response send. This does not migrate other broker cut or expiry APIs,
-serialize broker destruction, or fence enqueue and physical delivery. Queued
+any response send. Explicit ordinary-slot, legacy metadata-slot and
+whole-principal broker revocations also require that guard; the first two
+preserve independently approved enrollment metadata. Ordinary and legacy
+metadata reapproval also requires the guard through its own slot replacement,
+preserving the opposite slot. Other broker cuts and expiry are not uniformly
+guarded, and broker destruction remains unguarded. Guarded queue insertion
+does not bind the legacy frame to a grant or fence physical delivery. Queued
 or written bytes cannot be recalled.
 
 For the live observation peer paths, one fixed-size record per peer retains the
@@ -806,11 +811,14 @@ or physical delivery, and does not qualify or enable any platform or adapter.
 The existing capacity-four outbound queue and its frame/target-guard
 representation live in `festerm-automation`, while the app retains the same
 connection and writer. The frame limit and expiration remain host checks; the
-queue itself does not authorize or bound frame bytes. In particular,
-`Connection::send_guarded` releases its admission guard before queue insertion,
-and the publicly constructible legacy frames and sender are not an enrollment
-witness or revocable metadata publication boundary. A future bound path must
-prevent bypass and establish all relevant lifetime and final-recipient fences.
+queue itself does not authorize or bound frame bytes. `Connection::send_guarded`
+retains the shared guard through its existing connection, expiry, target and
+flag checks and nonblocking queue insertion; the sender requires that guard.
+A full or disconnected queue closes the connection before releasing it.
+Publicly constructible legacy frames are still not an enrollment witness or
+revocable metadata publication boundary, and other broker cuts remain
+unguarded. A future bound path must prevent bypass and establish all relevant
+lifetime and final-recipient fences.
 
 The handwritten adapter implements the MCP `2025-11-25` protocol baseline;
 native client interoperability is not yet qualified. Support only negotiated versions;
