@@ -21,7 +21,7 @@ const CONFIG: &str = "installation.json";
 const READY: &str = "ready.json";
 const PROFILE_JSON: &str = "festerm-profile.json";
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct Target {
     name: String,
@@ -46,6 +46,12 @@ struct Installation {
     /// Remote takeover is on unless this is set; absent from older records.
     #[serde(default, skip_serializing_if = "is_false")]
     no_takeover: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    filesystem: Option<festerm_tunnel_bridge::file_protocol::Policy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    observation: Option<festerm_tunnel_bridge::observation_protocol::Policy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery: Option<DaemonRecovery>,
     /// Helper executables an interrupted explicit upgrade may still find in
     /// the service definition; empty (and absent) outside phase `upgrading`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -54,6 +60,37 @@ struct Installation {
 
 const UPGRADING: &str = "upgrading";
 const MAX_UPGRADE_SOURCES: usize = 8;
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct DaemonRecovery {
+    attempts: Vec<u128>,
+    pending_generation: Option<u128>,
+}
+
+impl DaemonRecovery {
+    fn reserve(&mut self, now: u128, generation: u128) -> io::Result<()> {
+        if self.attempts.iter().any(|time| *time > now) {
+            return Err(refused("setup.daemon_restart_clock_changed"));
+        }
+        self.attempts.retain(|time| now - *time < 600_000);
+        if self.attempts.len() >= 3 {
+            return Err(refused("setup.daemon_restart_limit"));
+        }
+        self.attempts.push(now);
+        self.pending_generation = Some(generation);
+        Ok(())
+    }
+}
+
+fn native_target(target: &Target) -> festerm_sessiond::NativeSessionIdentity {
+    festerm_sessiond::NativeSessionIdentity {
+        name: target.name.clone(),
+        pid: target.pid,
+        created_at_unix_ms: target.generation,
+        endpoint: target.endpoint.clone(),
+    }
+}
 
 fn is_false(value: &bool) -> bool {
     !*value
@@ -110,6 +147,20 @@ fn state_path(args: &[OsString]) -> io::Result<PathBuf> {
 }
 
 fn validate_record(record: &Installation) -> io::Result<()> {
+    if record.observation.as_ref().is_some_and(|policy| {
+        policy.roots.is_empty()
+            || policy.roots.len() > 4
+            || policy.roots.iter().any(|root| !root.is_absolute())
+    }) {
+        return Err(refused("setup.observation_policy"));
+    }
+    if record
+        .filesystem
+        .as_ref()
+        .is_some_and(|policy| !policy.root.is_absolute())
+    {
+        return Err(refused("setup.filesystem_policy"));
+    }
     let id =
         uuid::Uuid::parse_str(&record.id).map_err(|_| refused("setup.installation_identity"))?;
     if record.version != 1
@@ -126,6 +177,13 @@ fn validate_record(record: &Installation) -> io::Result<()> {
     if (record.phase == UPGRADING) == record.upgrading_from.is_empty()
         || record.upgrading_from.len() > MAX_UPGRADE_SOURCES
         || !record.upgrading_from.iter().all(|path| path.is_absolute())
+    {
+        return Err(refused("setup.installation_identity"));
+    }
+    if record
+        .recovery
+        .as_ref()
+        .is_some_and(|policy| policy.attempts.len() > 3 || policy.pending_generation == Some(0))
     {
         return Err(refused("setup.installation_identity"));
     }
@@ -200,13 +258,19 @@ fn healthy_record(directory: &File, record: &Installation) -> io::Result<Option<
             Ok(None)
         }
         Err(error) if festerm_sessiond::lock_is_contended(&error) => {
-            exact_target_alive(
+            let alive = exact_target_alive(
                 &record.runtime_root,
                 record
                     .target
                     .as_ref()
                     .ok_or_else(|| refused("setup.target_missing"))?,
-            )?;
+            );
+            if let Err(error) = alive {
+                if error.to_string() == "setup.exact_daemon_gone_no_replacement_created" {
+                    return Ok(None);
+                }
+                return Err(error);
+            }
             ready_record(directory, record).map(Some)
         }
         Err(error) => Err(error),
@@ -223,6 +287,16 @@ fn print_profile(state: &Path, record: &Installation, ready: &Ready) -> io::Resu
             .ok_or_else(|| refused("setup.tunnel_missing"))?
     );
     println!("Verify host fingerprint: {}", record.fingerprint);
+    if let Some(policy) = &record.filesystem {
+        println!("Rooted filesystem access enabled; writes={}. Review the private installation policy for the configured root. Use --disable-files to revoke.", policy.write);
+    } else {
+        println!("Filesystem enumeration and transfers disabled.");
+    }
+    if let Some(policy) = &record.observation {
+        println!("Read-only observation enabled for {} approved root(s); use --disable-observation to revoke. No browsing/write or MCP grant is implied.", policy.roots.len());
+    } else {
+        println!("Remote observation disabled.");
+    }
     println!("Paste the following PUBLIC JSON in fesTerm's Dev Tunnel profile import; authenticate separately:");
     let profile = serde_json::to_string_pretty(&serde_json::json!({
         "festerm_profile_version": 1,
@@ -248,7 +322,12 @@ fn print_profile(state: &Path, record: &Installation, ready: &Ready) -> io::Resu
     println!(
         "No credentials are included. Host key stays in the protected target state directory."
     );
-    println!("Service starts at user sign-in (Linux boot only when user lingering is already enabled). A reboot does not preserve the daemon shell; stale generations refuse, never silently create a replacement.");
+    println!("Service starts at user sign-in (Linux boot only when user lingering is already enabled). A reboot does not preserve the daemon shell.");
+    if record.recovery.is_some() {
+        println!("Unexpected daemon failures may start a NEW shell (at most three in ten minutes). Intentional exit/stop stays stopped. Reconnect explicitly to the new generation; running programs and terminal state are not restored.");
+    } else {
+        println!("Stale generations refuse; no replacement shell is created automatically.");
+    }
     Ok(())
 }
 
@@ -308,7 +387,30 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         no_takeover,
         upgrade,
         friendly_name,
+        filesystem,
+        observation,
+        restart_unexpected,
     } = managed_arguments(args)?;
+    if let Some(Some(policy)) = &filesystem {
+        festerm_tunnel_bridge::filesystem::Filesystem::open(policy)
+            .map_err(|_| refused("setup.filesystem_root_refused"))?;
+    }
+    if let Some(Some(policy)) = &observation {
+        for root in &policy.roots {
+            festerm_tunnel_bridge::filesystem::Filesystem::open(
+                &festerm_tunnel_bridge::file_protocol::Policy {
+                    root: root.clone(),
+                    write: false,
+                },
+            )
+            .map_err(|_| refused("setup.observation_root_refused"))?;
+        }
+    }
+    let updates = GrantUpdates {
+        filesystem,
+        observation,
+        restart_unexpected,
+    };
     if !cli_path.is_absolute() || !state.is_absolute() {
         return Err(refused("setup.absolute_paths_required"));
     }
@@ -326,6 +428,8 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         return Err(refused("setup.upgrade_requires_an_existing_installation"));
     }
     super::service_install::ensure_unprivileged_user()?;
+    #[cfg(windows)]
+    super::service_install::check_windows_worker(&std::env::current_exe()?)?;
     let directory = setup_storage::private_directory(&state, create)?;
     let installer = lock(&directory, "installer.lock")?;
     installer
@@ -359,6 +463,11 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                 target: None,
                 fingerprint: identity.fingerprint()?,
                 no_takeover,
+                filesystem: updates.filesystem.clone().flatten(),
+                observation: updates.observation.clone().flatten(),
+                recovery: restart_unexpected
+                    .unwrap_or(false)
+                    .then(DaemonRecovery::default),
                 upgrading_from: Vec::new(),
             };
             validate_record(&record)?;
@@ -467,7 +576,31 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     };
     validate_record(&record)?;
     let executable = std::env::current_exe()?;
-    let record = match rerun_plan(&record, &executable, &cli_path, no_takeover, upgrade)? {
+    let changing_filesystem = updates
+        .filesystem
+        .as_ref()
+        .is_some_and(|policy| policy != &record.filesystem);
+    let changing_observation = updates
+        .observation
+        .as_ref()
+        .is_some_and(|policy| policy != &record.observation);
+    let changing_grants = changing_filesystem || changing_observation;
+    if changing_grants && record.executable != executable && !upgrade {
+        return Err(refused("setup.filesystem_policy_requires_helper_upgrade"));
+    }
+    let changing_recovery =
+        restart_unexpected.is_some_and(|enabled| enabled != record.recovery.is_some());
+    if changing_recovery && record.executable != executable && !upgrade {
+        return Err(refused("setup.daemon_recovery_requires_helper_upgrade"));
+    }
+    let plan = rerun_plan(&record, &executable, &cli_path, no_takeover, upgrade)?;
+    let plan = if changing_grants || changing_recovery {
+        Rerun::Upgrade
+    } else {
+        plan
+    };
+    let revoking_grants = updates.revoking_only();
+    let record = match plan {
         Rerun::Keep(hint) => {
             if let Some(hint) = hint {
                 println!("{hint}");
@@ -486,10 +619,28 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                 executable.clone(),
                 cli_path,
                 no_takeover,
+                &updates,
             )
             .await?
         }
     };
+    if stops_hosting_after_revocation(&updates, &record) {
+        // Revocation succeeds even when the daemon/account is unavailable.
+        // With recovery still enabled the worker is restarted below instead.
+        // The owned worker is stopped above; no cloud mutation is required.
+        if exact_target_alive(
+            &record.runtime_root,
+            record
+                .target
+                .as_ref()
+                .ok_or_else(|| refused("setup.target_missing"))?,
+        )
+        .is_err()
+        {
+            println!("Requested grant revocation saved. The recorded shell is unavailable; hosting remains stopped.");
+            return Ok(());
+        }
+    }
     if record.executable == executable
         && super::service_install::migrate_legacy_definition(&service(&record, &state))?
     {
@@ -499,22 +650,34 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         print_profile(&state, &record, &ready)?;
         return Ok(());
     }
-    exact_target_alive(
-        &record.runtime_root,
-        record
-            .target
-            .as_ref()
-            .ok_or_else(|| refused("setup.target_missing"))?,
-    )?;
-    if verify_account(&record.cli).await? != record.account {
-        return Err(refused("setup.changed_cli_account"));
+    if record.recovery.is_none() {
+        exact_target_alive(
+            &record.runtime_root,
+            record
+                .target
+                .as_ref()
+                .ok_or_else(|| refused("setup.target_missing"))?,
+        )?;
+    }
+    match verify_account(&record.cli).await {
+        Ok(account) if account == record.account => {}
+        _ if revoking_grants => {
+            println!("Requested grant revocation saved. Account verification is unavailable or changed; hosting remains stopped.");
+            return Ok(());
+        }
+        Ok(_) => return Err(refused("setup.changed_cli_account")),
+        Err(error) => return Err(error),
     }
     // Keep an existing installation's executable/CLI paths: only an explicit
     // --upgrade switches helpers, and never replaces the daemon generation.
     let specification = service(&record, &state);
+    // The record is final. Release the installer lock so the started worker's
+    // recovery fence can replace an exited daemon during the readiness wait.
+    drop(installer);
     super::service_install::install_and_start(&specification)?;
     timeout(Duration::from_secs(50), async {
         loop {
+            let record: Installation = read_json(&directory, CONFIG)?;
             if let Some(ready) = healthy_record(&directory, &record)? {
                 return print_profile(&state, &record, &ready);
             }
@@ -532,12 +695,39 @@ struct ManagedArguments {
     no_takeover: bool,
     upgrade: bool,
     friendly_name: Option<String>,
+    filesystem: Option<Option<festerm_tunnel_bridge::file_protocol::Policy>>,
+    observation: Option<Option<festerm_tunnel_bridge::observation_protocol::Policy>>,
+    restart_unexpected: Option<bool>,
+}
+
+#[derive(Default)]
+struct GrantUpdates {
+    filesystem: Option<Option<festerm_tunnel_bridge::file_protocol::Policy>>,
+    observation: Option<Option<festerm_tunnel_bridge::observation_protocol::Policy>>,
+    restart_unexpected: Option<bool>,
+}
+
+/// A revocation-only rerun leaves hosting stopped when the exact daemon is gone,
+/// unless recovery remains enabled to replace it.
+fn stops_hosting_after_revocation(updates: &GrantUpdates, record: &Installation) -> bool {
+    updates.revoking_only() && record.recovery.is_none()
+}
+
+impl GrantUpdates {
+    fn revoking_only(&self) -> bool {
+        (matches!(self.filesystem, Some(None))
+            || matches!(self.observation, Some(None))
+            || self.restart_unexpected == Some(false))
+            && !self.filesystem.as_ref().is_some_and(Option::is_some)
+            && !self.observation.as_ref().is_some_and(Option::is_some)
+            && self.restart_unexpected != Some(true)
+    }
 }
 
 fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
     let usage = || {
         refused(
-            "usage: --managed --devtunnel PATH --state-dir PRIVATE_DIRECTORY [--no-takeover] [--upgrade] [--friendly-name NAME]",
+            "usage: --managed --devtunnel PATH --state-dir PRIVATE_DIRECTORY [--no-takeover] [--upgrade] [--friendly-name NAME] [--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files] [--observe-root ABSOLUTE_DIRECTORY ... | --disable-observation] [--restart-unexpected|--no-restart-unexpected]",
         )
     };
     let [flag, cli, state_flag, state, options @ ..] = args else {
@@ -547,13 +737,53 @@ fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
         return Err(refused("setup.managed_arguments"));
     }
     let (mut no_takeover, mut upgrade, mut friendly_name) = (false, false, None);
+    let (mut file_root, mut file_write, mut disable_files) = (None, false, false);
+    let (mut observation_roots, mut disable_observation) = (Vec::new(), false);
+    let mut restart_unexpected = None;
     let mut index = 0;
     while index < options.len() {
         let option = &options[index];
-        let seen = if option == "--no-takeover" {
+        let seen = if option == "--restart-unexpected" || option == "--no-restart-unexpected" {
+            if restart_unexpected
+                .replace(option == "--restart-unexpected")
+                .is_some()
+            {
+                return Err(usage());
+            }
+            index += 1;
+            continue;
+        } else if option == "--no-takeover" {
             &mut no_takeover
         } else if option == "--upgrade" {
             &mut upgrade
+        } else if option == "--allow-file-write" {
+            &mut file_write
+        } else if option == "--disable-files" {
+            &mut disable_files
+        } else if option == "--disable-observation" {
+            &mut disable_observation
+        } else if option == "--observe-root" {
+            if observation_roots.len() >= 4 || index + 1 >= options.len() {
+                return Err(usage());
+            }
+            let root = PathBuf::from(&options[index + 1]);
+            if !root.is_absolute() || observation_roots.contains(&root) {
+                return Err(refused("setup.absolute_unique_observation_root_required"));
+            }
+            observation_roots.push(root);
+            index += 2;
+            continue;
+        } else if option == "--file-root" {
+            if file_root.is_some() || index + 1 >= options.len() {
+                return Err(usage());
+            }
+            let root = PathBuf::from(&options[index + 1]);
+            if !root.is_absolute() {
+                return Err(refused("setup.absolute_file_root_required"));
+            }
+            file_root = Some(root);
+            index += 2;
+            continue;
         } else if option == "--friendly-name" {
             if friendly_name.is_some() || index + 1 >= options.len() {
                 return Err(usage());
@@ -574,12 +804,41 @@ fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
         }
         index += 1;
     }
+    if (disable_files && (file_root.is_some() || file_write)) || (file_write && file_root.is_none())
+    {
+        return Err(refused("setup.conflicting_filesystem_policy"));
+    }
+    let filesystem = if disable_files {
+        Some(None)
+    } else {
+        file_root.map(|root| {
+            Some(festerm_tunnel_bridge::file_protocol::Policy {
+                root,
+                write: file_write,
+            })
+        })
+    };
+    if disable_observation && !observation_roots.is_empty() {
+        return Err(refused("setup.conflicting_observation_policy"));
+    }
+    let observation = if disable_observation {
+        Some(None)
+    } else if observation_roots.is_empty() {
+        None
+    } else {
+        Some(Some(festerm_tunnel_bridge::observation_protocol::Policy {
+            roots: observation_roots,
+        }))
+    };
     Ok(ManagedArguments {
         cli: PathBuf::from(cli),
         state: PathBuf::from(state),
         no_takeover,
         upgrade,
         friendly_name,
+        filesystem,
+        observation,
+        restart_unexpected,
     })
 }
 
@@ -685,8 +944,41 @@ fn upgrade_record(
     Ok(next)
 }
 
-fn upgrade_completed(record: &Installation) -> Installation {
+/// Journal policy changes so a bare retry cannot restore revoked access or recovery.
+/// Workers refuse to run while the record is upgrading.
+fn pending_upgrade(
+    record: &Installation,
+    executable: PathBuf,
+    cli: PathBuf,
+    no_takeover: bool,
+    updates: &GrantUpdates,
+) -> io::Result<Installation> {
+    let mut next = upgrade_record(record, executable, cli, no_takeover)?;
+    if let Some(policy) = &updates.filesystem {
+        next.filesystem = policy.clone();
+    }
+    if let Some(policy) = &updates.observation {
+        next.observation = policy.clone();
+    }
+    if let Some(enabled) = updates.restart_unexpected {
+        if !enabled {
+            next.recovery = None;
+        } else if next.recovery.is_none() {
+            next.recovery = Some(DaemonRecovery::default());
+        }
+    }
+    validate_record(&next)?;
+    Ok(next)
+}
+
+fn upgrade_completed(record: &Installation, updates: &GrantUpdates) -> Installation {
     let mut next = record.clone();
+    if let Some(policy) = &updates.filesystem {
+        next.filesystem = policy.clone();
+    }
+    if let Some(policy) = &updates.observation {
+        next.observation = policy.clone();
+    }
     next.upgrading_from.clear();
     next.phase = "configured".into();
     next
@@ -715,19 +1007,22 @@ async fn upgrade_installation(
     executable: PathBuf,
     cli: PathBuf,
     no_takeover: bool,
+    updates: &GrantUpdates,
 ) -> io::Result<Installation> {
     let target = record
         .target
         .as_ref()
         .ok_or_else(|| refused("setup.target_missing"))?;
-    exact_target_alive(&record.runtime_root, target)?;
-    if verify_account(&cli).await? != record.account {
-        return Err(refused("setup.changed_cli_account"));
+    if !updates.revoking_only() {
+        exact_target_alive(&record.runtime_root, target)?;
+        if verify_account(&cli).await? != record.account {
+            return Err(refused("setup.changed_cli_account"));
+        }
     }
-    let next = upgrade_record(record, executable, cli, no_takeover)?;
+    let next = pending_upgrade(record, executable, cli, no_takeover, updates)?;
     checkpoint(directory, &next)?;
     println!(
-        "Upgrading host helpers from {} to {}; keeping tunnel {}, host key {} and daemon session {} (pid {}). Only the bridge restarts.",
+        "Upgrading host helpers from {} to {}; keeping tunnel {}, host key {} and recorded daemon session {} (pid {}). Only owned hosting workers are deliberately restarted.",
         release_label(next.upgrading_from.last().unwrap_or(&record.executable)),
         release_label(&next.executable),
         next.tunnel.as_deref().unwrap_or("-"),
@@ -746,7 +1041,7 @@ async fn upgrade_installation(
         .collect();
     super::service_install::stop_and_replace(&previous, &service(&next, state))?;
     wait_worker_stopped(directory).await?;
-    let next = upgrade_completed(&next);
+    let next = upgrade_completed(&next, updates);
     validate_record(&next)?;
     checkpoint(directory, &next)?;
     Ok(next)
@@ -766,10 +1061,197 @@ const PERMANENT_REFUSALS: &[&str] = &[
     "setup.changed_host_identity",
     "setup.tunnel_missing",
     "setup.tunnel_identity",
+    "setup.worker_state",
+    "setup.worker_cleanup",
+    "setup.bridge_cleanup",
+    "setup.daemon_exit_unknown",
+    "setup.daemon_stopped_intentionally",
+    "setup.daemon_restart_clock_changed",
+    "setup.daemon_restart_limit",
+    "setup.daemon_restart_interrupted",
+    "setup.daemon_restart_identity",
+    "setup.daemon_restart_state",
 ];
+
+async fn recover_daemon<F, R>(
+    directory: &File,
+    state: &Path,
+    record: &mut Installation,
+    log: &WorkerLog,
+    launch: F,
+) -> io::Result<()>
+where
+    F: FnOnce(Command) -> R,
+    R: std::future::Future<Output = io::Result<()>>,
+{
+    let installer = lock(directory, "installer.lock")?;
+    installer
+        .try_lock_exclusive()
+        .map_err(|_| refused("setup.installation_update_in_progress"))?;
+    let current: Installation = read_json(directory, CONFIG)?;
+    validate_record(&current)?;
+    if current.phase != "configured" {
+        return Err(refused("setup.incomplete_installation"));
+    }
+    if current.id != record.id
+        || current.target != record.target
+        || current.runtime_root != record.runtime_root
+        || current.account != record.account
+        || current.tunnel != record.tunnel
+        || current.fingerprint != record.fingerprint
+        || current.executable != record.executable
+        || current.cli != record.cli
+    {
+        return Err(refused("setup.installation_changed_retry"));
+    }
+    *record = current;
+    let old = record
+        .target
+        .clone()
+        .ok_or_else(|| refused("setup.target_missing"))?;
+    let pending = record
+        .recovery
+        .as_ref()
+        .ok_or_else(|| refused("setup.exact_daemon_gone_no_replacement_created"))?
+        .pending_generation;
+    let generation = if let Some(generation) = pending {
+        generation
+    } else {
+        let history =
+            festerm_sessiond::lifecycle::history(&record.runtime_root, &native_target(&old))
+                .map_err(|_| refused("setup.daemon_exit_unknown"))?;
+        if history.is_empty() {
+            return Err(refused("setup.daemon_exit_unknown"));
+        }
+        if !festerm_sessiond::lifecycle::unexpected_exit(&history) {
+            return Err(refused("setup.daemon_stopped_intentionally"));
+        }
+        let now = festerm_sessiond::lifecycle::now_ms();
+        let generation = now.max(
+            old.generation
+                .checked_add(1)
+                .ok_or_else(|| refused("setup.daemon_restart_identity"))?,
+        );
+        record
+            .recovery
+            .as_mut()
+            .expect("checked policy")
+            .reserve(now, generation)?;
+        checkpoint(directory, record).map_err(|_| refused("setup.daemon_restart_state"))?;
+        log.event(
+            "worker.daemon_restart_start",
+            &[("generation", &generation.to_string())],
+        );
+        let daemon = record
+            .executable
+            .parent()
+            .ok_or_else(|| refused("setup.helpers"))?
+            .join(format!("festerm-sessiond{}", std::env::consts::EXE_SUFFIX));
+        let (variable, base) = daemon_namespace(&record.runtime_root)?;
+        let mut start = super::background_command(&daemon);
+        start
+            .env(variable, base)
+            .env("FESTERM_SESSIOND_GENERATION", generation.to_string())
+            .args([
+                "start",
+                "--name",
+                &old.name,
+                "--cols",
+                "80",
+                "--rows",
+                "24",
+                "--scrollback-limit-bytes",
+                "1048576",
+            ])
+            .current_dir(state)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        #[cfg(unix)]
+        super::shell_command(&mut start);
+        if let Some(home) = super::shell_home() {
+            start.arg("--cwd").arg(home);
+        }
+        launch(start).await?;
+        generation
+    };
+    // A worker killed after launching but before publication may adopt only its
+    // journaled generation. Never create again or adopt an unrelated live shell.
+    let selected = festerm_sessiond::list_unattached_sessions_in(&record.runtime_root)
+        .map_err(|_| refused("setup.daemon_restart_identity"))?
+        .into_iter()
+        .find(|session| session.name == old.name && session.created_at_unix_ms == generation)
+        .ok_or_else(|| refused("setup.daemon_restart_interrupted"))?;
+    record.target = Some(Target {
+        name: selected.name,
+        pid: selected.pid,
+        generation,
+        endpoint: selected.endpoint,
+    });
+    record
+        .recovery
+        .as_mut()
+        .expect("checked policy")
+        .pending_generation = None;
+    validate_record(record)?;
+    checkpoint(directory, record).map_err(|_| refused("setup.daemon_restart_state"))?;
+    log.event(
+        "worker.daemon_restarted",
+        &[
+            ("old_generation", &old.generation.to_string()),
+            ("generation", &generation.to_string()),
+            ("pid", &selected.pid.to_string()),
+        ],
+    );
+    Ok(())
+}
+
+async fn launch_replacement(mut start: Command, log: &WorkerLog) -> io::Result<()> {
+    let status = timeout(Duration::from_secs(10), start.status())
+        .await
+        .map_err(|_| refused("setup.daemon_restart_interrupted"))?
+        .map_err(|_| refused("setup.daemon_restart_interrupted"))?;
+    log.event(
+        "worker.daemon_start_exit",
+        &[("status", &exit_status(&status))],
+    );
+    if !status.success() {
+        return Err(refused("setup.daemon_restart_interrupted"));
+    }
+    Ok(())
+}
+
+async fn target_loss(root: &Path, target: &Target) -> io::Error {
+    loop {
+        if let Err(error) = exact_target_alive(root, target) {
+            return error;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
 
 pub(super) fn is_permanent_refusal(error: &io::Error) -> bool {
     PERMANENT_REFUSALS.contains(&error.to_string().as_str())
+}
+
+async fn retry_worker<F, R>(log: &WorkerLog, delay: Duration, mut attempt: F) -> io::Result<()>
+where
+    F: FnMut() -> R,
+    R: std::future::Future<Output = io::Result<()>>,
+{
+    loop {
+        match attempt().await {
+            Err(error) if !is_permanent_refusal(&error) => {
+                log.event(
+                    "worker.retry",
+                    &[("reason", worker_log::code(&error.to_string()))],
+                );
+                tokio::time::sleep(delay).await;
+            }
+            result => return result,
+        }
+    }
 }
 
 pub(super) async fn serve(args: &[OsString]) -> io::Result<()> {
@@ -785,7 +1267,15 @@ pub(super) async fn serve(args: &[OsString]) -> io::Result<()> {
         }));
     }
     log.event("worker.start", &[("version", env!("CARGO_PKG_VERSION"))]);
-    let result = run_worker(&state, &log).await;
+    let supervise = cfg!(windows)
+        || setup_storage::private_directory(&state, false)
+            .and_then(|directory| read_json::<Installation>(&directory, CONFIG))
+            .is_ok_and(|record| record.recovery.is_some());
+    let result = if supervise {
+        retry_worker(&log, Duration::from_secs(15), || run_worker(&state, &log)).await
+    } else {
+        run_worker(&state, &log).await
+    };
     match &result {
         Ok(()) => log.event("worker.exit", &[("reason", "bridge_stopped_cleanly")]),
         Err(error) => log.event(
@@ -817,16 +1307,11 @@ async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
     worker
         .try_lock_exclusive()
         .map_err(|_| refused("setup.worker_already_running"))?;
-    let record: Installation = read_json(&directory, CONFIG)?;
+    let mut record: Installation = read_json(&directory, CONFIG)?;
     validate_record(&record)?;
     if record.phase != "configured" {
         return Err(refused("setup.incomplete_installation"));
     }
-    let target = record
-        .target
-        .as_ref()
-        .ok_or_else(|| refused("setup.target_missing"))?;
-    exact_target_alive(&record.runtime_root, target)?;
     if verify_account(&record.cli).await? != record.account {
         return Err(refused("setup.changed_cli_account"));
     }
@@ -836,14 +1321,14 @@ async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
     }
     let qualified = record
         .tunnel
-        .as_deref()
+        .clone()
         .ok_or_else(|| refused("setup.tunnel_missing"))?;
     let (tunnel, cluster) = qualified
         .rsplit_once('.')
         .ok_or_else(|| refused("setup.tunnel_identity"))?;
     let token_bytes = cli(
         &record.cli,
-        &["token", qualified, "--scopes", "host", "--json"],
+        &["token", qualified.as_str(), "--scopes", "host", "--json"],
         "setup.host_token",
     )
     .await?;
@@ -852,9 +1337,38 @@ async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
     if verify_account(&record.cli).await? != record.account {
         return Err(refused("setup.changed_cli_account_after_token"));
     }
-    let run = state.join(format!("run-{}", uuid::Uuid::new_v4()));
-    let _run_directory = setup_storage::private_directory(&run, true)?;
-    let destination = run.join("destination.json");
+    let target = record
+        .target
+        .as_ref()
+        .ok_or_else(|| refused("setup.target_missing"))?;
+    match exact_target_alive(&record.runtime_root, target) {
+        Ok(())
+            if record
+                .recovery
+                .as_ref()
+                .is_some_and(|policy| policy.pending_generation.is_some()) =>
+        {
+            return Err(refused("setup.daemon_restart_identity"));
+        }
+        Ok(()) => {}
+        Err(error) if error.to_string() == "setup.exact_daemon_gone_no_replacement_created" => {
+            // Withdraw stale readiness before replacement, while holding health.
+            match fs::remove_file(state.join(READY)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(_) => return Err(refused("setup.worker_cleanup")),
+            }
+            recover_daemon(&directory, &state, &mut record, log, |start| {
+                launch_replacement(start, log)
+            })
+            .await?;
+        }
+        Err(error) => return Err(error),
+    }
+    let target = record
+        .target
+        .as_ref()
+        .ok_or_else(|| refused("setup.target_missing"))?;
     let bridge = record
         .executable
         .parent()
@@ -864,7 +1378,23 @@ async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
             std::env::consts::EXE_SUFFIX
         ));
     let (variable, base) = daemon_namespace(&record.runtime_root)?;
-    let mut child = Command::new(bridge)
+    let run = state.join(format!("run-{}", uuid::Uuid::new_v4()));
+    let _run_directory =
+        setup_storage::private_directory(&run, true).map_err(|_| refused("setup.worker_state"))?;
+    let destination = run.join("destination.json");
+    let mut command = super::background_command(&bridge);
+    if let Some(policy) = &record.filesystem {
+        command.arg("--file-root").arg(&policy.root);
+        if policy.write {
+            command.arg("--allow-file-write");
+        }
+    }
+    if let Some(policy) = &record.observation {
+        for root in &policy.roots {
+            command.arg("--observe-root").arg(root);
+        }
+    }
+    let spawned = command
         .env(variable, base)
         .args([
             "--experimental",
@@ -895,94 +1425,177 @@ async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
         .stdin(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()
-        .map_err(|_| refused("setup.start_bridge"))?;
-    let events = child.stderr.take().map(|stderr| {
-        let log = log.clone();
-        tokio::spawn(async move {
-            use tokio::io::AsyncBufReadExt;
-            // Drain to EOF regardless of content: a stopped reader would make
-            // the bridge's next stderr write fail.
-            let mut reader = tokio::io::BufReader::new(stderr);
-            let mut line = Vec::new();
-            while matches!(reader.read_until(b'\n', &mut line).await, Ok(read) if read > 0) {
-                if let Some(text) = std::str::from_utf8(&line)
-                    .ok()
-                    .and_then(|line| worker_log::bridge_event(line.trim_end()))
-                {
-                    log.raw_event(&text);
+        .spawn();
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(_) => {
+            cleanup_worker_run(&state, &run)?;
+            return Err(refused("setup.start_bridge"));
+        }
+    };
+    let mut published = false;
+    let result = async {
+        let events = child.stderr.take().map(|stderr| {
+            let log = log.clone();
+            tokio::spawn(async move {
+                use tokio::io::AsyncBufReadExt;
+                // Drain to EOF regardless of content: a stopped reader would make
+                // the bridge's next stderr write fail.
+                let mut reader = tokio::io::BufReader::new(stderr);
+                let mut line = Vec::new();
+                while matches!(reader.read_until(b'\n', &mut line).await, Ok(read) if read > 0) {
+                    if let Some(text) = std::str::from_utf8(&line)
+                        .ok()
+                        .and_then(|line| worker_log::bridge_event(line.trim_end()))
+                    {
+                        log.raw_event(&text);
+                    }
+                    line.clear();
                 }
-                line.clear();
+            })
+        });
+        let mut input = child
+            .stdin
+            .take()
+            .ok_or_else(|| refused("setup.bridge_input"))?;
+        timeout(Duration::from_secs(5), async {
+            input.write_all(token.as_bytes()).await?;
+            input.write_all(b"\n").await
+        })
+        .await
+        .map_err(|_| refused("setup.bridge_input_timeout"))??;
+        drop(input);
+        drop(token);
+        let ready = timeout(Duration::from_secs(40), async {
+            loop {
+                if child.try_wait()?.is_some() {
+                    return Err(refused("setup.bridge_exited_before_ready"));
+                }
+                match fs::File::open(&destination) {
+                    Ok(file) => {
+                        use std::io::Read;
+                        let mut bytes = Vec::new();
+                        file.take(64 * 1024 + 1).read_to_end(&mut bytes)?;
+                        if bytes.len() > 64 * 1024 {
+                            return Err(refused("setup.destination_size"));
+                        }
+                        if let Ok(destination) = serde_json::from_slice::<Destination>(&bytes) {
+                            return Ok(Ready {
+                                installation: record.id.clone(),
+                                destination,
+                            });
+                        }
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         })
-    });
-    let mut input = child
-        .stdin
-        .take()
-        .ok_or_else(|| refused("setup.bridge_input"))?;
-    timeout(Duration::from_secs(5), async {
-        input.write_all(token.as_bytes()).await?;
-        input.write_all(b"\n").await
-    })
-    .await
-    .map_err(|_| refused("setup.bridge_input_timeout"))??;
-    drop(input);
-    drop(token);
-    let ready = timeout(Duration::from_secs(40), async {
-        loop {
-            if child.try_wait()?.is_some() {
-                return Err(refused("setup.bridge_exited_before_ready"));
-            }
-            match fs::File::open(&destination) {
-                Ok(file) => {
-                    use std::io::Read;
-                    let mut bytes = Vec::new();
-                    file.take(64 * 1024 + 1).read_to_end(&mut bytes)?;
-                    if bytes.len() > 64 * 1024 {
-                        return Err(refused("setup.destination_size"));
-                    }
-                    if let Ok(destination) = serde_json::from_slice::<Destination>(&bytes) {
-                        return Ok(Ready {
-                            installation: record.id.clone(),
-                            destination,
-                        });
-                    }
+        .await
+        .map_err(|_| refused("setup.bridge_ready_timeout"))??;
+        setup_storage::replace_private(
+            &directory,
+            Path::new(READY),
+            &serde_json::to_vec(&ready).map_err(|_| refused("setup.ready_encode"))?,
+        )?;
+        ready_record(&directory, &record)?;
+        FileExt::unlock(&health)?;
+        published = true;
+        log.event("worker.bridge_ready", &[]);
+        log.event(
+            "worker.daemon_alive",
+            &[
+                ("pid", &target.pid.to_string()),
+                ("generation", &target.generation.to_string()),
+            ],
+        );
+        eprintln!(
+            "Managed experimental bridge ready; exact generation, no file capability. \
+         Reauthentication or a stale daemon requires explicit operator action."
+        );
+        let status = tokio::select! {
+                status = child.wait() => {
+                    status.map_err(|_| refused("setup.bridge_wait"))?
                 }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+                error = target_loss(&record.runtime_root, target) => {
+                        log.event("worker.daemon_lost", &[
+                            ("pid", &target.pid.to_string()),
+                            ("generation", &target.generation.to_string()),
+                            ("reason", worker_log::code(&error.to_string())),
+                        ]);
+                        return Err(error);
+                }
+        };
+        if let Some(events) = events {
+            let _ = timeout(Duration::from_secs(2), events).await;
+        }
+        log.event("worker.bridge_exit", &[("status", &exit_status(&status))]);
+        if !status.success() {
+            return Err(refused("setup.bridge_stopped"));
+        }
+        Ok(())
+    }
+    .await;
+    if child
+        .try_wait()
+        .map_err(|_| refused("setup.bridge_cleanup"))?
+        .is_none()
+    {
+        child
+            .kill()
+            .await
+            .map_err(|_| refused("setup.bridge_cleanup"))?;
+    }
+    if published && !reacquire_health(&health).await? {
+        // A setup rerun is still reading the published record; leave ready.json
+        // (it is ignored without a live worker) and let the next attempt retry.
+        cleanup_worker_destination(&run)?;
+        return Err(refused("setup.health_publication_busy"));
+    }
+    cleanup_worker_run(&state, &run)?;
+    result.map_err(|error| {
+        if error.to_string() == "setup.exact_daemon_gone_no_replacement_created"
+            && record.recovery.is_some()
+        {
+            refused("setup.daemon_lost")
+        } else {
+            error
         }
     })
-    .await
-    .map_err(|_| refused("setup.bridge_ready_timeout"))??;
-    setup_storage::replace_private(
-        &directory,
-        Path::new(READY),
-        &serde_json::to_vec(&ready).map_err(|_| refused("setup.ready_encode"))?,
-    )?;
-    ready_record(&directory, &record)?;
-    FileExt::unlock(&health)?;
-    log.event("worker.bridge_ready", &[]);
-    eprintln!("Managed experimental bridge ready; exact generation, no file capability. Reauthentication or a stale daemon requires explicit operator action.");
-    let status = child
-        .wait()
-        .await
-        .map_err(|_| refused("setup.bridge_wait"))?;
-    if let Some(events) = events {
-        let _ = timeout(Duration::from_secs(2), events).await;
+}
+
+/// Readers (`healthy_record`) hold the shared health lock only briefly, so
+/// contention after the bridge exits is transient rather than a refusal.
+async fn reacquire_health(health: &File) -> io::Result<bool> {
+    for _ in 0..50 {
+        match health.try_lock_exclusive() {
+            Ok(()) => return Ok(true),
+            Err(error) if festerm_sessiond::lock_is_contended(&error) => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(_) => return Err(refused("setup.worker_cleanup")),
+        }
     }
-    log.event("worker.bridge_exit", &[("status", &exit_status(&status))]);
-    health.try_lock_exclusive()?;
-    if destination.exists() {
-        fs::remove_file(&destination)?;
+    Ok(false)
+}
+
+fn cleanup_worker_destination(run: &Path) -> io::Result<()> {
+    match fs::remove_file(run.join("destination.json")) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(_) => return Err(refused("setup.worker_cleanup")),
     }
-    fs::remove_dir(&run)?;
-    fs::remove_file(state.join(READY))?;
-    if !status.success() {
-        return Err(refused("setup.bridge_stopped"));
+    fs::remove_dir(run).map_err(|_| refused("setup.worker_cleanup"))
+}
+
+fn cleanup_worker_run(state: &Path, run: &Path) -> io::Result<()> {
+    cleanup_worker_destination(run)?;
+    match fs::remove_file(state.join(READY)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(refused("setup.worker_cleanup")),
     }
-    Ok(())
 }
 
 fn exit_status(status: &std::process::ExitStatus) -> String {
@@ -1009,6 +1622,130 @@ fn refuse_orphaned_state(state: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn managed_worker_waits_out_a_setup_rerun_reading_health_instead_of_refusing() {
+        let state = crate::test_support::private_directory("festerm-worker-health-contention");
+        let path = state.join("health.lock");
+        let worker = File::create(&path).unwrap();
+        let reader = File::open(&path).unwrap();
+        FileExt::lock_shared(&reader).unwrap();
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            FileExt::unlock(&reader).unwrap();
+        });
+        assert!(reacquire_health(&worker).await.unwrap());
+        release.await.unwrap();
+        FileExt::unlock(&worker).unwrap();
+
+        let reader = File::open(&path).unwrap();
+        FileExt::lock_shared(&reader).unwrap();
+        assert!(!reacquire_health(&worker).await.unwrap());
+        assert!(!is_permanent_refusal(&refused(
+            "setup.health_publication_busy"
+        )));
+        let run = state.join("run-test");
+        fs::create_dir(&run).unwrap();
+        fs::write(run.join("destination.json"), b"{}").unwrap();
+        cleanup_worker_destination(&run).unwrap();
+        assert!(!run.exists());
+        drop(reader);
+        drop(worker);
+        fs::remove_dir_all(state).unwrap();
+    }
+
+    #[tokio::test]
+    async fn managed_windows_worker_retries_until_recovery_and_stops_on_refusal() {
+        let state = crate::test_support::private_directory("festerm-worker-retry");
+        let log = WorkerLog::new(&state);
+        let mut outcomes = [
+            Err(refused("setup.bridge_stopped")),
+            Err(refused("setup.host_token")),
+            Ok(()),
+        ]
+        .into_iter();
+        retry_worker(&log, Duration::ZERO, || {
+            std::future::ready(outcomes.next().expect("clean shutdown must stop retries"))
+        })
+        .await
+        .unwrap();
+        assert!(outcomes.next().is_none());
+        for stage in PERMANENT_REFUSALS {
+            let mut attempts = 0;
+            let error = retry_worker(&log, Duration::ZERO, || {
+                attempts += 1;
+                assert_eq!(attempts, 1, "operator refusals must not retry");
+                std::future::ready(Err(refused(stage)))
+            })
+            .await
+            .unwrap_err();
+            assert_eq!(error.to_string(), *stage);
+        }
+        let mut outcomes = [
+            Err(refused("setup.bridge_exited_before_ready")),
+            Err(refused("setup.changed_host_identity")),
+        ]
+        .into_iter();
+        let error = retry_worker(&log, Duration::ZERO, || {
+            std::future::ready(outcomes.next().expect("a new refusal must stop retries"))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "setup.changed_host_identity");
+        assert!(outcomes.next().is_none());
+        let text = fs::read_to_string(state.join("worker.log")).unwrap();
+        assert_eq!(text.matches("worker.retry").count(), 3);
+        fs::remove_dir_all(state).unwrap();
+    }
+
+    #[tokio::test]
+    async fn managed_worker_retry_waits_and_can_be_cancelled_before_another_attempt() {
+        let state = crate::test_support::private_directory("festerm-worker-retry-wait");
+        let log = WorkerLog::new(&state);
+        let mut attempts = 0;
+        let result = timeout(
+            Duration::from_millis(20),
+            retry_worker(&log, Duration::from_secs(60), || {
+                attempts += 1;
+                std::future::ready(Err(refused("setup.bridge_stopped")))
+            }),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(
+            attempts, 1,
+            "do not retry immediately or after cancellation"
+        );
+        fs::remove_dir_all(state).unwrap();
+    }
+
+    #[test]
+    fn managed_worker_cleans_ready_and_pre_ready_runs_without_touching_installation() {
+        let state = crate::test_support::private_directory("festerm-worker-cleanup");
+        fs::write(state.join(CONFIG), b"unchanged installation").unwrap();
+        for published in [false, true] {
+            let run = state.join("run-fixture");
+            fs::create_dir(&run).unwrap();
+            if published {
+                fs::write(run.join("destination.json"), b"destination").unwrap();
+                fs::write(state.join(READY), b"ready").unwrap();
+            }
+            cleanup_worker_run(&state, &run).unwrap();
+            assert!(!run.exists());
+            assert!(!state.join(READY).exists());
+            assert_eq!(
+                fs::read(state.join(CONFIG)).unwrap(),
+                b"unchanged installation"
+            );
+        }
+        let run = state.join("run-refuse-unknown");
+        fs::create_dir(&run).unwrap();
+        fs::write(run.join("foreign"), b"do not recursively delete").unwrap();
+        let error = cleanup_worker_run(&state, &run).unwrap_err();
+        assert!(is_permanent_refusal(&error));
+        assert!(run.join("foreign").exists());
+        fs::remove_dir_all(state).unwrap();
+    }
 
     #[test]
     fn managed_worker_retries_transient_failures_but_not_operator_refusals() {
@@ -1049,6 +1786,9 @@ mod tests {
             }),
             fingerprint: "fixture".into(),
             no_takeover: false,
+            filesystem: None,
+            observation: None,
+            recovery: None,
             upgrading_from: Vec::new(),
         };
         validate_record(&record).unwrap();
@@ -1160,6 +1900,9 @@ mod tests {
             }),
             fingerprint: host_fingerprint(public_key).unwrap(),
             no_takeover: false,
+            filesystem: None,
+            observation: None,
+            recovery: None,
             upgrading_from: Vec::new(),
         };
         validate_record(&record).unwrap();
@@ -1203,7 +1946,7 @@ mod tests {
             &*setup_storage::read_private(&directory, Path::new(CONFIG), 65536).unwrap()
         );
         FileExt::unlock(&lease).unwrap();
-        assert!(healthy_record(&directory, &record).is_err());
+        assert!(healthy_record(&directory, &record).unwrap().is_none());
         FileExt::unlock(&worker).unwrap();
         assert!(healthy_record(&directory, &record).unwrap().is_none());
         drop(worker);
@@ -1239,8 +1982,548 @@ mod tests {
             }),
             fingerprint: "fixture-fingerprint".into(),
             no_takeover: true,
+            filesystem: None,
+            observation: None,
+            recovery: None,
             upgrading_from: Vec::new(),
         }
+    }
+
+    #[test]
+    fn managed_filesystem_policy_requires_explicit_root_and_preserves_owned_upgrade_identity() {
+        let base: Vec<OsString> = ["--devtunnel", "cli", "--state-dir", "state"]
+            .into_iter()
+            .map(OsString::from)
+            .collect();
+        assert!(managed_arguments(&base).unwrap().filesystem.is_none());
+        let root = crate::test_support::private_directory("festerm-policy");
+        let mut args = base.clone();
+        args.extend([OsString::from("--file-root"), root.as_os_str().to_owned()]);
+        let readonly = managed_arguments(&args)
+            .unwrap()
+            .filesystem
+            .unwrap()
+            .unwrap();
+        assert!(!readonly.write);
+        args.push("--allow-file-write".into());
+        let writable = managed_arguments(&args)
+            .unwrap()
+            .filesystem
+            .unwrap()
+            .unwrap();
+        assert!(writable.write);
+        args.push("--disable-files".into());
+        assert!(managed_arguments(&args).is_err());
+        let mut disable = base.clone();
+        disable.push("--disable-files".into());
+        assert_eq!(managed_arguments(&disable).unwrap().filesystem, Some(None));
+        let mut invalid = base;
+        invalid.push("--allow-file-write".into());
+        assert!(managed_arguments(&invalid).is_err());
+        let mut record = configured_fixture(old_executable());
+        record.filesystem = Some(writable);
+        let upgraded = upgrade_completed(
+            &upgrade_record(
+                &record,
+                std::env::current_exe().unwrap(),
+                record.cli.clone(),
+                false,
+            )
+            .unwrap(),
+            &GrantUpdates::default(),
+        );
+        assert_eq!(upgraded.filesystem, record.filesystem);
+        assert_eq!(upgraded.tunnel, record.tunnel);
+        assert_eq!(upgraded.fingerprint, record.fingerprint);
+        let downgraded = upgrade_completed(
+            &record,
+            &GrantUpdates {
+                filesystem: Some(Some(readonly.clone())),
+                ..Default::default()
+            },
+        );
+        assert_eq!(downgraded.filesystem, Some(readonly));
+        let revoked = upgrade_completed(
+            &record,
+            &GrantUpdates {
+                filesystem: Some(None),
+                ..Default::default()
+            },
+        );
+        assert!(revoked.filesystem.is_none());
+        assert_eq!(revoked.tunnel, record.tunnel);
+        assert_eq!(revoked.fingerprint, record.fingerprint);
+        // An interrupted revocation resumed by a bare `--upgrade` stays revoked.
+        let interrupted = pending_upgrade(
+            &record,
+            std::env::current_exe().unwrap(),
+            record.cli.clone(),
+            false,
+            &GrantUpdates {
+                filesystem: Some(None),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(interrupted.phase, UPGRADING);
+        assert!(interrupted.filesystem.is_none());
+        assert!(upgrade_completed(&interrupted, &GrantUpdates::default())
+            .filesystem
+            .is_none());
+        assert_eq!(
+            upgraded.target.unwrap().generation,
+            record.target.unwrap().generation
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn managed_observation_consent_is_independent_bounded_and_transactional() {
+        let base: Vec<OsString> = ["--devtunnel", "cli", "--state-dir", "state"]
+            .into_iter()
+            .map(OsString::from)
+            .collect();
+        assert!(managed_arguments(&base).unwrap().observation.is_none());
+        let root = crate::test_support::private_directory("festerm-observation-policy");
+        let mut args = base.clone();
+        args.extend([
+            OsString::from("--observe-root"),
+            root.as_os_str().to_owned(),
+        ]);
+        let observation = managed_arguments(&args)
+            .unwrap()
+            .observation
+            .unwrap()
+            .unwrap();
+        assert_eq!(observation.roots.as_slice(), std::slice::from_ref(&root));
+        assert!(managed_arguments(&args).unwrap().filesystem.is_none());
+        let mut conflict = args.clone();
+        conflict.push("--disable-observation".into());
+        assert!(managed_arguments(&conflict).is_err());
+        let mut duplicate = args.clone();
+        duplicate.extend([
+            OsString::from("--observe-root"),
+            root.as_os_str().to_owned(),
+        ]);
+        assert!(managed_arguments(&duplicate).is_err());
+        let mut too_many = base.clone();
+        for index in 0..4 {
+            too_many.extend([
+                OsString::from("--observe-root"),
+                root.join(index.to_string()).into_os_string(),
+            ]);
+        }
+        assert_eq!(
+            managed_arguments(&too_many)
+                .unwrap()
+                .observation
+                .unwrap()
+                .unwrap()
+                .roots
+                .len(),
+            4
+        );
+        too_many.extend([
+            OsString::from("--observe-root"),
+            root.join("4").into_os_string(),
+        ]);
+        assert!(managed_arguments(&too_many).is_err());
+        let mut relative = base.clone();
+        relative.extend([OsString::from("--observe-root"), OsString::from("relative")]);
+        assert!(managed_arguments(&relative).is_err());
+        let mut disable = base;
+        disable.push("--disable-observation".into());
+        let revocation = managed_arguments(&disable).unwrap();
+        assert_eq!(revocation.observation, Some(None));
+        assert!(revocation.filesystem.is_none());
+        let mut record = configured_fixture(old_executable());
+        record.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            root: root.clone(),
+            write: true,
+        });
+        let enabled = upgrade_completed(
+            &record,
+            &GrantUpdates {
+                observation: Some(Some(observation.clone())),
+                ..Default::default()
+            },
+        );
+        assert_eq!(enabled.observation, Some(observation));
+        assert_eq!(enabled.filesystem, record.filesystem);
+        assert_eq!(enabled.phase, "configured");
+        assert_eq!(
+            upgrade_completed(&enabled, &GrantUpdates::default()).observation,
+            enabled.observation
+        );
+        let persisted: Installation =
+            serde_json::from_slice(&serde_json::to_vec(&enabled).unwrap()).unwrap();
+        assert_eq!(persisted.observation, enabled.observation);
+        assert_eq!(persisted.filesystem, enabled.filesystem);
+        let updates = GrantUpdates {
+            observation: Some(None),
+            ..Default::default()
+        };
+        assert!(updates.revoking_only());
+        let revoked = upgrade_completed(&enabled, &updates);
+        assert!(revoked.observation.is_none());
+        let interrupted = pending_upgrade(
+            &enabled,
+            std::env::current_exe().unwrap(),
+            enabled.cli.clone(),
+            false,
+            &updates,
+        )
+        .unwrap();
+        let persisted: Installation =
+            serde_json::from_slice(&serde_json::to_vec(&interrupted).unwrap()).unwrap();
+        assert_eq!(persisted.phase, UPGRADING);
+        assert!(persisted.observation.is_none());
+        assert_eq!(persisted.filesystem, enabled.filesystem);
+        assert!(upgrade_completed(&persisted, &GrantUpdates::default())
+            .observation
+            .is_none());
+        let mut recovering = enabled.clone();
+        recovering.recovery = Some(DaemonRecovery::default());
+        let revoke_both = GrantUpdates {
+            observation: Some(None),
+            restart_unexpected: Some(false),
+            ..Default::default()
+        };
+        assert!(revoke_both.revoking_only());
+        let pending = pending_upgrade(
+            &recovering,
+            std::env::current_exe().unwrap(),
+            recovering.cli.clone(),
+            false,
+            &revoke_both,
+        )
+        .unwrap();
+        assert!(pending.recovery.is_none());
+        assert!(pending.observation.is_none());
+        assert_eq!(pending.filesystem, enabled.filesystem);
+        assert!(upgrade_completed(&pending, &GrantUpdates::default())
+            .recovery
+            .is_none());
+        // Revoking a grant while recovery stays enabled must not strand hosting.
+        let revoke_observation = GrantUpdates {
+            observation: Some(None),
+            ..Default::default()
+        };
+        assert!(!stops_hosting_after_revocation(
+            &revoke_observation,
+            &upgrade_completed(&recovering, &revoke_observation)
+        ));
+        assert!(stops_hosting_after_revocation(&revoke_both, &pending));
+        assert!(stops_hosting_after_revocation(&updates, &revoked));
+        assert!(!GrantUpdates {
+            observation: Some(None),
+            restart_unexpected: Some(true),
+            ..Default::default()
+        }
+        .revoking_only());
+        assert!(!GrantUpdates {
+            observation: Some(enabled.observation.clone()),
+            restart_unexpected: Some(false),
+            ..Default::default()
+        }
+        .revoking_only());
+        assert_eq!(revoked.filesystem, record.filesystem);
+        assert_eq!(revoked.tunnel, record.tunnel);
+        assert_eq!(revoked.fingerprint, record.fingerprint);
+        assert_eq!(
+            revoked.target.as_ref().unwrap().generation,
+            record.target.as_ref().unwrap().generation
+        );
+        assert!(!GrantUpdates {
+            filesystem: Some(record.filesystem),
+            observation: Some(None),
+            ..Default::default()
+        }
+        .revoking_only());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn managed_daemon_restart_budget_survives_reload_and_refuses_clock_rollback() {
+        let base: Vec<OsString> = ["--devtunnel", "cli", "--state-dir", "state"]
+            .into_iter()
+            .map(OsString::from)
+            .collect();
+        for enabled in [true, false] {
+            let mut args = base.clone();
+            args.push(
+                if enabled {
+                    "--restart-unexpected"
+                } else {
+                    "--no-restart-unexpected"
+                }
+                .into(),
+            );
+            assert_eq!(
+                managed_arguments(&args).unwrap().restart_unexpected,
+                Some(enabled)
+            );
+            args.push("--restart-unexpected".into());
+            assert!(managed_arguments(&args).is_err());
+        }
+        let mut policy = DaemonRecovery::default();
+        for generation in 1..=3 {
+            policy.reserve(1_000 + generation, generation).unwrap();
+            policy = serde_json::from_slice(&serde_json::to_vec(&policy).unwrap()).unwrap();
+        }
+        assert_eq!(
+            policy.reserve(1_004, 4).unwrap_err().to_string(),
+            "setup.daemon_restart_limit"
+        );
+        assert_eq!(
+            policy.reserve(999, 4).unwrap_err().to_string(),
+            "setup.daemon_restart_clock_changed"
+        );
+        policy.reserve(601_004, 4).unwrap();
+        assert_eq!(policy.attempts, [601_004]);
+    }
+
+    #[tokio::test]
+    async fn managed_daemon_recovery_cannot_overwrite_concurrent_policy_revocation() {
+        use festerm_sessiond::lifecycle::{self, Event};
+        let state = crate::test_support::private_directory("festerm-recovery-revocation");
+        let directory = setup_storage::private_directory(&state, false).unwrap();
+        let application_path = state.join(if cfg!(windows) { "fesTerm" } else { "festerm" });
+        let application = setup_storage::private_directory(&application_path, true).unwrap();
+        let runtime_path = application_path.join("sessiond");
+        let runtime = setup_storage::private_directory(&runtime_path, true).unwrap();
+        let mut stale = configured_fixture(state.join("fixture-setup"));
+        stale.runtime_root = runtime_path.clone();
+        stale.observation = Some(festerm_tunnel_bridge::observation_protocol::Policy {
+            roots: vec![state.clone()],
+        });
+        stale.recovery = Some(DaemonRecovery::default());
+        lifecycle::record(
+            &runtime_path,
+            &native_target(stale.target.as_ref().unwrap()),
+            Event::Ready,
+        )
+        .unwrap();
+        let updates = GrantUpdates {
+            observation: Some(None),
+            restart_unexpected: Some(false),
+            ..Default::default()
+        };
+        let revoked = pending_upgrade(
+            &stale,
+            stale.executable.clone(),
+            stale.cli.clone(),
+            false,
+            &updates,
+        )
+        .unwrap();
+        let installer = lock(&directory, "installer.lock").unwrap();
+        installer.try_lock_exclusive().unwrap();
+        checkpoint(&directory, &revoked).unwrap();
+        let before = serde_json::to_value(&revoked).unwrap();
+        let log = WorkerLog::new(&state);
+        let error = recover_daemon(&directory, &state, &mut stale, &log, |_| async {
+            panic!("an installer owns the policy transition")
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "setup.installation_update_in_progress");
+        let saved: Installation = read_json(&directory, CONFIG).unwrap();
+        assert_eq!(serde_json::to_value(saved).unwrap(), before);
+        FileExt::unlock(&installer).unwrap();
+        let error = recover_daemon(&directory, &state, &mut stale, &log, |_| async {
+            panic!("an interrupted revocation must remain unavailable")
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "setup.incomplete_installation");
+        let completed = upgrade_completed(&revoked, &GrantUpdates::default());
+        checkpoint(&directory, &completed).unwrap();
+        assert!(
+            recover_daemon(&directory, &state, &mut stale, &log, |_| async {
+                panic!("fresh policy has revoked recovery")
+            })
+            .await
+            .is_err()
+        );
+        assert!(stale.observation.is_none());
+        assert!(stale.recovery.is_none());
+        let saved: Installation = read_json(&directory, CONFIG).unwrap();
+        assert_eq!(
+            serde_json::to_value(saved).unwrap(),
+            serde_json::to_value(completed).unwrap()
+        );
+        drop(installer);
+        drop(runtime);
+        drop(application);
+        drop(directory);
+        fs::remove_dir_all(state).unwrap();
+    }
+
+    #[tokio::test]
+    async fn managed_daemon_recovery_replaces_only_the_authorized_generation() {
+        use festerm_sessiond::lifecycle::{self, Event};
+        let state = crate::test_support::private_directory("festerm-daemon-restart");
+        let directory = setup_storage::private_directory(&state, false).unwrap();
+        let application_path = state.join(if cfg!(windows) { "fesTerm" } else { "festerm" });
+        let application = setup_storage::private_directory(&application_path, true).unwrap();
+        let runtime_path = application_path.join("sessiond");
+        let runtime = setup_storage::private_directory(&runtime_path, true).unwrap();
+        let mut record = configured_fixture(state.join(format!(
+            "festerm-tunnel-setup{}",
+            std::env::consts::EXE_SUFFIX
+        )));
+        record.runtime_root = runtime_path.clone();
+        record.recovery = Some(DaemonRecovery::default());
+        checkpoint(&directory, &record).unwrap();
+        let old = record.target.clone().unwrap();
+        lifecycle::record(&runtime_path, &native_target(&old), Event::Ready).unwrap();
+        let before = serde_json::to_value(&record).unwrap();
+        let log = WorkerLog::new(&state);
+        let mut leases = Vec::new();
+        let mut generation = 0;
+        recover_daemon(&directory, &state, &mut record, &log, |start| {
+            let competing_installer = lock(&directory, "installer.lock").unwrap();
+            assert!(competing_installer.try_lock_exclusive().is_err());
+            let command = start.as_std();
+            generation = command
+                .get_envs()
+                .find(|(key, _)| *key == "FESTERM_SESSIOND_GENERATION")
+                .unwrap()
+                .1
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .parse::<u128>()
+                .unwrap();
+            assert_eq!(command.get_args().next().unwrap(), "start");
+            let saved: Installation = read_json(&directory, CONFIG).unwrap();
+            assert_eq!(saved.recovery.unwrap().pending_generation, Some(generation));
+            let pid = std::process::id();
+            let lease = setup_storage::open_private_file(
+                &runtime,
+                Path::new(&format!("lease-{pid}-{generation}")),
+                true,
+            )
+            .unwrap();
+            lease.try_lock_exclusive().unwrap();
+            leases.push(lease);
+            // Unix discovery ignores a record whose socket does not exist.
+            let socket = runtime_path.join(format!("fixture-{pid}-{generation}.sock"));
+            fs::write(&socket, b"").unwrap();
+            fs::write(
+                runtime_path.join("registry.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "sessions": { (old.name.clone()): {
+                        "name": old.name, "pid": pid, "created_at_unix_ms": generation,
+                        "socket": socket.to_string_lossy(),
+                        "protocol_version": 3, "snapshot_schema_version": 3
+                    }}
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            std::future::ready(Ok(()))
+        })
+        .await
+        .unwrap();
+        assert_eq!(record.target.as_ref().unwrap().generation, generation);
+        let saved: Installation = read_json(&directory, CONFIG).unwrap();
+        assert_eq!(saved.target.unwrap().generation, generation);
+        let after = serde_json::to_value(&record).unwrap();
+        for key in [
+            "id",
+            "account",
+            "tunnel",
+            "fingerprint",
+            "cli",
+            "executable",
+            "no_takeover",
+        ] {
+            assert_eq!(before[key], after[key], "{key} must not change");
+        }
+        assert!(record
+            .recovery
+            .as_ref()
+            .unwrap()
+            .pending_generation
+            .is_none());
+
+        // Simulate interruption after spawning, before checkpointing its target.
+        record.target = Some(old.clone());
+        record.recovery.as_mut().unwrap().pending_generation = Some(generation);
+        checkpoint(&directory, &record).unwrap();
+        recover_daemon(&directory, &state, &mut record, &log, |_| async {
+            panic!("must reconcile, not launch again")
+        })
+        .await
+        .unwrap();
+        assert_eq!(record.target.as_ref().unwrap().generation, generation);
+        record.target = Some(old.clone());
+        record.recovery.as_mut().unwrap().pending_generation = Some(generation + 1);
+        checkpoint(&directory, &record).unwrap();
+        assert!(
+            recover_daemon(&directory, &state, &mut record, &log, |_| async {
+                panic!("must not adopt another generation")
+            })
+            .await
+            .is_err()
+        );
+        assert_eq!(record.target.as_ref().unwrap().generation, old.generation);
+
+        for (index, event) in [
+            None,
+            Some(Event::ShellExited { code: 0 }),
+            Some(Event::ShellExited { code: 1 }),
+            Some(Event::StopRequested),
+            Some(Event::Shutdown { success: true }),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let target = record.target.as_mut().unwrap();
+            target.generation = 100 + index as u128;
+            record.recovery = Some(DaemonRecovery::default());
+            checkpoint(&directory, &record).unwrap();
+            if let Some(event) = event {
+                lifecycle::record(
+                    &runtime_path,
+                    &native_target(record.target.as_ref().unwrap()),
+                    event,
+                )
+                .unwrap();
+            }
+            let error = recover_daemon(&directory, &state, &mut record, &log, |_| async {
+                panic!("unknown or deliberate exits never launch a replacement")
+            })
+            .await
+            .unwrap_err();
+            assert!(is_permanent_refusal(&error));
+        }
+        // The real watchdog watches the lease, not merely a still-live reused PID.
+        let live = Target {
+            name: old.name,
+            pid: std::process::id(),
+            generation,
+            endpoint: format!("fixture-{}-{generation}.sock", std::process::id()),
+        };
+        assert!(
+            timeout(Duration::from_millis(10), target_loss(&runtime_path, &live))
+                .await
+                .is_err()
+        );
+        drop(leases);
+        let error = timeout(Duration::from_secs(2), target_loss(&runtime_path, &live))
+            .await
+            .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "setup.exact_daemon_gone_no_replacement_created"
+        );
+        drop(runtime);
+        drop(application);
+        drop(directory);
+        fs::remove_dir_all(state).unwrap();
     }
 
     fn old_executable() -> PathBuf {
@@ -1257,7 +2540,7 @@ mod tests {
         let upgrading = upgrade_record(&record, current.clone(), new_cli.clone(), false).unwrap();
         assert_eq!(upgrading.phase, UPGRADING);
         assert_eq!(upgrading.upgrading_from, [old_executable()]);
-        let done = upgrade_completed(&upgrading);
+        let done = upgrade_completed(&upgrading, &GrantUpdates::default());
         validate_record(&done).unwrap();
         assert_eq!(
             (done.executable.clone(), done.cli.clone()),
@@ -1376,7 +2659,10 @@ mod tests {
             resumed.upgrading_from,
             [old_executable(), interrupted_target]
         );
-        assert_eq!(upgrade_completed(&resumed).executable, current);
+        assert_eq!(
+            upgrade_completed(&resumed, &GrantUpdates::default()).executable,
+            current
+        );
         // The journal is consistent: sources exist exactly while upgrading.
         let mut inconsistent = decoded.clone();
         inconsistent.phase = "configured".into();

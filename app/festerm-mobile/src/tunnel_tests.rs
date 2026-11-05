@@ -169,6 +169,23 @@ fn rig_with(
     trusted: bool,
     after_adopt: &[(u8, Vec<u8>)],
 ) -> Rig {
+    rig_signing_in_as(
+        attached_by,
+        take_over,
+        trusted,
+        after_adopt,
+        FakeGithub::new(42, "octo"),
+    )
+}
+
+/// `github` is the identity a new device-code sign-in approves.
+fn rig_signing_in_as(
+    attached_by: Option<Displacer>,
+    take_over: bool,
+    trusted: bool,
+    after_adopt: &[(u8, Vec<u8>)],
+    github: FakeGithub,
+) -> Rig {
     let script = Arc::new(Script {
         attached_by,
         displace: tokio::sync::Notify::new(),
@@ -194,7 +211,7 @@ fn rig_with(
     });
     let client = TunnelClient::with_parts(
         store.clone(),
-        Arc::new(FakeGithub::new(42, "octo")),
+        Arc::new(github),
         directory.clone(),
         Arc::new(ProbedConnector {
             streams: connector,
@@ -725,4 +742,179 @@ fn lifecycle_resume_checks_transport_while_lock_keeps_content_hidden() {
     assert_eq!(rig.script.probes.load(Ordering::SeqCst), 1);
     assert_eq!(rig.script.connections.load(Ordering::SeqCst), dials);
     assert!(rig.script.input.lock().unwrap().is_empty());
+}
+
+#[test]
+fn choosing_another_tunnel_account_clears_discovery_and_preserves_saved_binding() {
+    let mut rig = rig(None, false, true);
+    let profiles = rig.app.profiles.as_ref().unwrap();
+    let original = profiles.tunnel_spec(&rig.profile).unwrap().account.unwrap();
+    let second = seed_account(&profiles.store_handle(), 43, "other", false);
+    rig.app.editor.tunnel_account = Some(original.clone());
+    rig.app.editor.tunnel_name = "devbox.euw".into();
+    rig.app.editor.session_name = "old-session".into();
+    rig.app.editor.tunnel = Some(model::DevTunnelChoices {
+        accounts: vec![
+            (original.clone(), "octo".into()),
+            (second.clone(), "other".into()),
+        ],
+        ..Default::default()
+    });
+    rig.app.tunnel.list = Some(tunnel_link::TunnelList {
+        account: original.clone(),
+        job: None,
+        items: Vec::new(),
+        error: Some("old error".into()),
+    });
+    rig.app
+        .apply_tunnel_editor_action(&rig.ctx, forms::EditorAction::SelectTunnelAccount(1));
+    assert_eq!(rig.app.editor.tunnel_account, Some(second));
+    assert!(rig.app.editor.tunnel_name.is_empty());
+    assert!(rig.app.editor.session_name.is_empty());
+    assert!(rig.app.tunnel.list.is_none());
+    assert!(rig.app.editor.tunnel.is_none());
+    assert_eq!(rig.app.tunnel_accounts().len(), 2);
+    assert_eq!(
+        rig.app
+            .profiles
+            .as_ref()
+            .unwrap()
+            .tunnel_spec(&rig.profile)
+            .unwrap()
+            .account,
+        Some(original)
+    );
+}
+
+#[test]
+fn choosing_the_same_tunnel_account_keeps_the_draft_target() {
+    let mut rig = rig(None, false, true);
+    let account = rig.app.tunnel_accounts()[0].clone();
+    rig.app.editor.tunnel_account = Some(account.0.clone());
+    rig.app.editor.tunnel_name = "devbox.euw".into();
+    rig.app.editor.tunnel = Some(model::DevTunnelChoices {
+        accounts: vec![account],
+        ..Default::default()
+    });
+    rig.app
+        .apply_tunnel_editor_action(&rig.ctx, forms::EditorAction::SelectTunnelAccount(0));
+    assert_eq!(rig.app.editor.tunnel_name, "devbox.euw");
+    rig.app
+        .apply_tunnel_editor_action(&rig.ctx, forms::EditorAction::SelectTunnelAccount(99));
+    assert_eq!(rig.app.editor.tunnel_name, "devbox.euw");
+}
+
+#[test]
+fn an_unbound_saved_tunnel_does_not_choose_another_account() {
+    let mut rig = rig(None, false, true);
+    let profiles = rig.app.profiles.as_ref().unwrap();
+    let spec = profiles.tunnel_spec(&rig.profile).unwrap();
+    seed_account(&profiles.store_handle(), 43, "other", false);
+    rig.app.sign_out_account(spec.account.as_deref().unwrap());
+    let spec = rig
+        .app
+        .profiles
+        .as_ref()
+        .unwrap()
+        .tunnel_spec(&rig.profile)
+        .unwrap();
+    assert!(spec.account.is_none());
+    rig.app
+        .editor
+        .open_edit_tunnel(&rig.profile, &spec, rig.app.caps);
+    rig.app.sync_editor_tunnel(&rig.ctx);
+    assert!(rig.app.editor.tunnel_account.is_none());
+    assert!(rig
+        .app
+        .editor
+        .tunnel
+        .as_ref()
+        .unwrap()
+        .account_login
+        .is_none());
+    assert_eq!(rig.app.editor.tunnel.as_ref().unwrap().accounts.len(), 1);
+    assert!(rig.app.tunnel.list.is_none());
+}
+
+#[test]
+fn adding_a_github_account_keeps_the_first_and_selects_the_new_identity() {
+    let mut rig = rig_signing_in_as(None, false, true, &[], FakeGithub::new(43, "other"));
+    let original = rig.app.tunnel_accounts()[0].0.clone();
+    rig.app.editor.tunnel_account = Some(original.clone());
+    rig.app.editor.tunnel_name = "devbox.euw".into();
+    rig.app.editor.session_name = "main".into();
+    rig.app
+        .apply_tunnel_editor_action(&rig.ctx, forms::EditorAction::SignIn);
+    // The device flow's first poll waits the protocol's 5 s minimum interval.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while rig.app.tunnel.sign_in.is_some() {
+        rig.app.poll_tunnels(&rig.ctx);
+        assert!(Instant::now() < deadline, "sign-in timed out");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let accounts = rig.app.tunnel_accounts();
+    let logins: Vec<_> = accounts.iter().map(|(_, login)| login.as_str()).collect();
+    assert_eq!(logins.len(), 2, "{logins:?}");
+    assert!(logins.contains(&"octo") && logins.contains(&"other"));
+    let added = accounts
+        .iter()
+        .find(|(_, login)| login == "other")
+        .map(|(id, _)| id.clone())
+        .unwrap();
+    assert_eq!(rig.app.editor.tunnel_account.as_ref(), Some(&added));
+    assert!(rig.app.editor.tunnel_name.is_empty());
+    assert!(rig.app.editor.session_name.is_empty());
+    assert_eq!(
+        rig.app.tunnel.list.as_ref().map(|list| &list.account),
+        Some(&added)
+    );
+    let profiles = rig.app.profiles.as_ref().unwrap();
+    assert_eq!(
+        profiles.tunnel_spec(&rig.profile).unwrap().account,
+        Some(original)
+    );
+}
+
+#[test]
+fn the_editor_lists_every_stored_account_and_shows_the_bound_login() {
+    let mut rig = rig(None, false, true);
+    let profiles = rig.app.profiles.as_ref().unwrap();
+    seed_account(&profiles.store_handle(), 43, "other", false);
+    let spec = profiles.tunnel_spec(&rig.profile).unwrap();
+    rig.app
+        .editor
+        .open_edit_tunnel(&rig.profile, &spec, rig.app.caps);
+    rig.app.sync_editor_tunnel(&rig.ctx);
+    let choices = rig.app.editor.tunnel.as_ref().unwrap();
+    assert_eq!(choices.accounts.len(), 2);
+    assert_eq!(choices.account_login.as_deref(), Some("octo"));
+    assert_eq!(rig.app.editor.tunnel_account, spec.account);
+}
+
+#[test]
+fn signing_out_the_selected_account_clears_its_draft_and_it_cannot_be_saved() {
+    let mut rig = rig(None, false, true);
+    let profiles = rig.app.profiles.as_ref().unwrap();
+    let original = profiles.tunnel_spec(&rig.profile).unwrap().account.unwrap();
+    let other = seed_account(&profiles.store_handle(), 43, "other", false);
+    rig.app.editor.tunnel_account = Some(original.clone());
+    rig.app.editor.tunnel_name = "devbox.euw".into();
+    rig.app.editor.session_name = "main".into();
+    rig.app
+        .apply_tunnel_editor_action(&rig.ctx, forms::EditorAction::SignOut);
+    assert!(rig.app.editor.tunnel_account.is_none());
+    assert!(rig.app.editor.tunnel_name.is_empty());
+    assert!(rig.app.editor.session_name.is_empty());
+    let remaining = rig.app.tunnel_accounts();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].0, other);
+
+    // A stale draft can never persist a removed identity.
+    rig.app.editor.tunnel_account = Some(original);
+    rig.app.editor.tunnel_name = "devbox.euw".into();
+    assert!(rig.app.save_tunnel_editor().is_none());
+    assert_eq!(
+        rig.app.editor.error.as_deref(),
+        Some("Sign in with GitHub first")
+    );
 }

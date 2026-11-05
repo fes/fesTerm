@@ -717,6 +717,265 @@ This is not peer authentication by itself. Trusted human confirmation,
 adapter/client integration, relay and disconnect liveness, native privacy
 monitoring and real-platform qualification remain open; the production gate
 has not changed.
+## 0.15.0: iOS dictation and documents, Dev Tunnel host files and observation
+
+This minor release packages the reviewed iOS and Dev Tunnel work since 0.14.2.
+iOS gains on-device terminal dictation with review-before-insert (#565, ADR
+0068), drag-to-reorder saved profiles (#554), and authorized shared documents
+with local editing, guarded conflict recovery and Markdown preview (#575, #579,
+#581, ADR 0069). Dev Tunnel hosts gain opt-in managed daemon recovery (#566,
+ADR 0066), a default-off rooted host filesystem with managed grants (#585, ADR
+0067), and independently authorized read-only observation for external
+controllers (#593, ADR 0070). The relay host now keeps up to four concurrently
+open forwarded channels per client so observation streams share the verified
+transport, and grant and recovery changes are journaled and fenced so an
+interrupted revocation persists. An SSH lifecycle test wait was also hardened
+(#583).
+
+## Read-only remote evidence for external controllers
+
+An external Copilot-status controller needs to tail large remote logs without
+whole-file copies or terminal scraping. The rooted transfer service alone
+could not authorize disclosure to an MCP caller or guarantee safe saved-offset
+reads after replacement. ADR 0070 separates default-off observation roots from
+browsing/writes, checks native identity and revision before releasing chunks,
+and bounds native watches with explicit rescan/ended results.
+
+New daemon generations inject a non-authorizing correlation marker into the
+actual shell environment instead of exposing machine-wide process arguments.
+Pending changes to both grants are journaled with the upgrade marker, so a bare
+retry after interruption cannot restore revoked access.
+Recovery is serialized with that installer journal and reloads policy under the
+same lock; a concurrent worker cannot overwrite revocation with stale grants.
+Managed root changes preserve the tunnel, host key and shell; old shells do not
+gain a marker through a helper upgrade. A stacked broker slice adds independent
+native per-controller/exact-tab/root approval and completion-time revocation
+fences, with JavaScript disabled. External controllers still own parsing,
+offsets and privacy. Signed-host, native grant/lock, live controller and
+physical-device qualification remain explicit gates, not inferred from fixtures.
+
+## Diagnosing dead tunnel targets and opting into fresh-shell recovery
+
+A healthy Windows relay outlived its exported daemon. iOS presented the daemon
+attachment failure as disabled takeover even though takeover was enabled, while
+the surviving host lacked evidence explaining the daemon's disappearance.
+Lifecycle journals now preserve bounded, private, content-free startup, Windows
+breakaway, shell-exit, panic, failure and stop/shutdown evidence. The worker
+watches the exact daemon lease independently of relay connectivity and withdraws
+stale hosting. Undifferentiated host refusals no longer claim takeover is off.
+
+The owner selected opt-in recovery of unexpected daemon loss, not resurrection
+of an ended shell. ADR 0066 records the narrow change: a persisted three-start
+budget and exact-generation launch reservation can create a fresh default shell
+from the managed worker while keeping the tunnel and host key. Deliberate exit,
+operator stop, missing evidence and uncertain creation refuse; automatic client
+reconnect remains pinned to the original session. Isolated regressions cover the
+policy and publication boundaries; signed service and physical-iOS qualification
+remain in DT-05/07. The existing live installation was not changed.
+
+## Shared iOS documents: current Markdown projection and Contents
+
+The next dependent slice connects Edit/Preview to the canonical document
+revision. A bounded read-only worker produces a shared immutable Markdown
+projection, retaining cancelled jobs until actual completion and rejecting old
+results. Views keep their own mode, source selection, scroll and heading
+navigation. Compact Contents uses a revision-bound dismissible sheet; wide
+Preview reuses the existing Contents rail. There are no Edit/Preview split
+panes. The renderer adds no resource loading or path authority.
+
+Tests cover cancellation and close, projection reuse, visible failure/retry,
+mode/history preservation, Contents navigation/view changes, external refresh
+and no terminal input. The actual-widget gallery includes Preview and Contents
+at phone, keyboard-reserved, short-landscape and tablet sizes. These are not
+native keyboard/provider/accessibility acceptance. Source syntax/line numbers,
+Find/Replace, safe local copy/Save As and shared document dictation remain open.
+
+## Shared iOS documents: local surfaces without terminal ownership
+
+The dependent local-editor slice connects the authorized Files picker and
+document registry to a Documents launcher inside the existing shell. Source
+views join session chips and the Sessions inventory without becoming terminal
+tabs or acquiring workers. Native input, shared undo/redo, dirty markers and
+last-view close use the same canonical engine across views. Fresh Files
+authority preserves dirty bytes and observes conflicts rather than replacing
+content. Failed saves remain dirty; closed native instances are discarded,
+not reopened.
+Explicit conflict review now offers Keep edits followed by a separate Save or
+Reload and discard. Decisions refuse if their captured revision/source/access
+changes. Stale refreshes requeue and cannot restore obsolete authority;
+terminal-side document-chip closes use the same dirty guard and input gating.
+
+Multiline editing extends the existing form-field responder's caret geometry
+and Return mirroring instead of adding another UIKit text stack. Tests replay
+local native edits, guard read-only views and modal input, and keep widget
+selection independent of shared history. Actual-widget capture is available
+at phone/tablet/short-landscape sizes, including conflict review. A bounded
+million-character regression checks complete linear geometry and unchanged
+cache reuse; short-height actions move into More. This is not provider, physical IME or
+accessibility acceptance; Markdown tools and shared dictation follow.
+
+## Shared iOS documents: shared ownership and native I/O first
+
+The approved editor handoff asks for an editor, Markdown projection and
+document dictation, but excludes all Edit/Preview split panes. The first
+#570 slice extends the existing UI-free `festerm-mobile-docs` seam with a
+bounded registry over `festerm-document`, rather than copying the desktop
+widget or creating another undo engine. Repeated opens share identity and
+history while delayed edits bind the exact view, revision, selection, origin
+and access epoch. Dirty external changes conflict; Keep edits does not write.
+Save completion marks only the history point actually published, and revoked
+access gates further edits even when an admitted save is finishing.
+
+The native boundary now stages bounded I/O through UIDocument without giving
+it canonical text or undo ownership. A real Simulator fixture proves actual
+safe publication, BOM/CRLF/Unicode preservation, 0600 permissions, stale
+overwrite refusal, external refresh and close/cleanup. App-owned Files
+mutations and SFTP downloads retain admission through actual worker
+publication, excluding a concurrent document save even after a Files view
+closes. Real OpenSSH tests preserve existing round trips and prove refusal
+does not touch existing files. This is intentionally conservative exclusion,
+not per-path scheduling.
+
+This is the ownership/I/O foundation, not a wired Files/editor delivery claim.
+The imported proposed artwork and ADR 0069 preserve the native authorization,
+keyboard, visual and shared-composer gates for the following draft slices.
+The engine now exposes its existing newline normalization for reuse, and the
+mobile admission limit accounts for original encoded line endings and BOM.
+
+## iOS on-device terminal dictation spike
+
+The owner asked to dictate without leaving either terminal-user keyboard.
+The existing native input boundary now adds public Speech/AVFAudio capture,
+while the mobile composition root owns a volatile review/Insert sheet. Local
+capability checks and per-request on-device enforcement exclude cloud fallback.
+Revisions replace rather than append, native recording has a 45-second limit,
+and explicit Insert rejects line breaks/controls and reuses core paste encoding
+without modifiers or an implicit Return. Generation and source-tab checks,
+native lifecycle cancellation and navigation cleanup prevent late replay.
+
+The owner changed delivery from a physical iPhone to Simulator. An explicitly
+labelled manual editor can exercise review there if Apple's local recognizer
+is unavailable; it does not fabricate recognition evidence. ADR 0068 and #564
+keep device/language/model, offline audio, permission and privacy qualification
+separate from portable tests and a Simulator build/launch.
+
+Review found two lifecycle defects. winit maps `applicationWillResignActive` to
+`Suspended`, so the first Speech/Microphone permission alert stopped plain SSH
+and cancelled dictation; the host now defers that one suspension while a
+permission request is in flight and applies it only if the app really enters
+the background. Stop also cancelled the recognition task immediately after
+ending audio, so review showed the last lagging partial; a short `Finishing`
+phase now waits for the final result, an error or a 1.5-second grace timer.
+
+## Rooted Dev Tunnel host filesystem
+
+The bridge's opt-in known-file snapshot reader could not support browsing or
+large transfers. The host now has a separately negotiated, default-off rooted
+filesystem service: bounded directory pages, metadata, chunked read/write and
+mkdir, independent of terminal attachment. Operators choose the root and
+read-only/write grant explicitly, including on an existing managed tunnel;
+revocation stops the owned hosting workers without replacing the tunnel, key
+or daemon shell.
+
+Uploads stage private files and publish without clobbering concurrent creates;
+explicit replacement binds to a previously opened file and checks for changes,
+preserving a recovery backup when restoration is unsafe. ADR 0067 and the
+[wire contract](dev-tunnel-files-protocol.md) define the host/client boundary.
+Deterministic tests cover legacy negotiation, streamed files above the old
+snapshot bound, conflicts, cancellation and link refusal. Desktop/iOS clients
+and signed-host/native transfer qualification remain separate work.
+
+## 0.14.2: iOS field editing and Dev Tunnel resiliency
+
+This patch packages five fixes. iOS profile form fields now support the native
+paste menu, long-press caret dragging and the space-bar trackpad (#536, #538).
+Dev Tunnel listing no longer drops tunnels whose listing omits port details
+(#537). Windows managed tunnel workers retry transient relay failures, and a
+worker whose health record is briefly held by a setup rerun now waits rather
+than stopping permanently (#539). The desktop Dev Tunnel profile editor is
+simplified to Save, Save and Connect and Cancel; saved profiles still connect
+when secure storage is unavailable, without keeping the sign-in (#545).
+
+Each change passed its hosted Windows, macOS and Linux checks before merge. The
+iOS field navigation was also checked by hand on an iPhone. Live signed-helper
+recovery qualification and clean-machine gates remain under #432.
+
+## Dev Tunnel profile editor cleanup and theme alignment
+
+The native Dev Tunnel profile editor was pruned to a single, consistent form.
+The heading now carries a standard **Back** control, the stale "profile
+created" banner and the "Save & connect signs in…" explainer are gone
+(actionable validation, authentication and persistence errors stay), and
+**Advanced** sits directly above one action row ordered **Save**, **Save and
+Connect**, **Cancel**. The duplicate bottom Save/Cancel row and both transient
+"Connect once" affordances were removed from this form (one-off attaches remain
+on the New Session surface); the scoped-token **Store token** action stays.
+
+**Save** now routes through the composition root's real persistence: the editor
+emits the dedicated `SaveDevTunnelProfile` command, and its handler returns to
+the profile list only after the configuration write succeeds, keeping the exact
+draft and an actionable failure message when the write fails. It never connects,
+signs in, or closes the window. **Save and Connect** preserves the explicit
+save/authenticate/connect flow; **Cancel**/**Back** never save or connect.
+Form chrome, fonts, spacing and the accent-primary Save button reuse the shared
+approved theming, and the narrow layout wraps the header instead of clipping it.
+
+Coverage is automated via deterministic structural render tests for button
+presence/order, duplicate removal, Back/Cancel navigation, Save
+close-without-connect versus Save and Connect, persistence-failure draft
+retention, the legacy Advanced state, and header/control bounds at narrow width,
+plus fixture-only themed render artifacts (default and narrow). Native GitHub
+device sign-in, live account/host acceptance and cross-platform service gates
+are not exercised here and remain tracked under
+[#432](https://github.com/fes/fesTerm/issues/432) and
+[#429](https://github.com/fes/fesTerm/issues/429).
+
+Save acknowledgements are bound to their source tab and pending request;
+stale results cannot close another or replacement draft. A new profile's name
+remains editable after a failed write. Regression tests exercise actual disk
+success/failure as well as editor acknowledgements and stale-result rejection.
+
+## Windows tunnel recovery after a relay disconnect
+
+A Windows host reached READY and worked, then its relay transport disconnected.
+The bridge recorded a transient error, but the one-shot Windows logon task left
+hosting stopped indefinitely. The daemon shell had not crashed: starting the
+existing worker restored iOS discovery and attachment with the same tunnel,
+host key and shell generation. The old stage-only log cannot identify which
+network or relay condition caused that particular disconnect.
+
+Windows managed workers now retry transient failures after 15 seconds, following
+the existing Linux policy. Each attempt repeats the original identity checks
+and obtains a fresh scoped token; permanent refusals and clean shutdown still
+stop. Retries live inside the setup worker so an explicit upgrade can stop it
+without the windowless launcher respawning an old helper. Attempt cleanup also
+covers pre-ready failures, preventing unattended retries from accumulating
+temporary directories or bridge processes. Deterministic regressions cover
+recovery, refusal, cancellation and cleanup. The restored live host was not
+upgraded or interrupted; signed-helper automatic-recovery qualification remains
+separate.
+
+## Windows tunnel hosting without a desktop console
+
+The corrected Windows installer reached READY, but Task Scheduler started the
+console-subsystem setup helper in a new desktop window. That window belonged
+to the live host worker, so closing it could disconnect the tunnel rather than
+merely dismissing setup output.
+
+Windows tasks now start a small GUI-subsystem `festerm-tunnel-worker.exe`.
+It invokes only its sibling setup helper's existing `--serve` path with
+`CREATE_NO_WINDOW`, waits for it, and preserves its exit status. Noninteractive
+CLI and bridge children also suppress console creation. The interactive setup
+binary, device sign-in, stdout/stderr pipes, private worker log, exact daemon
+generation and user-only service policy remain unchanged.
+
+The Windows bundle includes and signs the launcher; Unix bundles are unchanged.
+Explicit upgrades accept only the byte-exact owned legacy task definitions and
+the recorded Scheduler snapshot before replacing the action. Existing live
+hosts are not changed automatically. Native probes verify the built launcher's
+GUI subsystem, console-free child execution, Unicode/space-bearing argument
+delivery and exit propagation without creating cloud resources or tasks.
+Full live-service upgrade and containing-job survival remain separate gates.
 
 ## 0.14.1: Windows Dev Tunnel startup correction
 

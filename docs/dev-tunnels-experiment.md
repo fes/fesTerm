@@ -254,6 +254,14 @@ and keeps the old helpers; an interrupted upgrade is completed by rerunning
 with `--upgrade`. Daemon-side improvements apply only to a daemon started by a
 release that includes them.
 
+Windows tasks use a signed, windowless `festerm-tunnel-worker.exe` launcher;
+the setup helper and device-code sign-in still run in the invoking console.
+The launcher waits for the existing `--serve` worker and preserves its exit
+status, while noninteractive children suppress console creation. An older
+installation's visible worker console must remain open until an explicit
+upgrade switches its owned task to the new launcher. This does not fix a
+daemon's inability to break away from the original terminal's Windows job.
+
 When setup finishes, the installer prints the public connection JSON, saves it
 as `festerm-profile.json` in the private state directory (`~/.local/share/festerm-tunnels/state`
 or `fesTerm-tunnels\state` under the per-user local app data folder) and copies it to the clipboard when one is
@@ -299,7 +307,8 @@ apps, tunnels or services. Required license/notice texts accompany the binaries.
 First setup opens official GitHub **device-code authentication**, creates a new
 private 30-day tunnel, marks one virtual bridge port and starts one uniquely
 named daemon session running your login shell (`$SHELL -l`, falling back to
-`/bin/sh`) or Windows `cmd.exe`, started in your home directory. It requests a scoped **host**
+`/bin/sh`) or the daemon's Windows default shell (preferring `pwsh.exe`, with
+COMSPEC/Windows PowerShell fallback), started in your home directory. It requests a scoped **host**
 token into bounded, zeroized memory and passes it only through the bridge's
 stdin. No token is printed, placed in argv/environment or saved by fesTerm.
 The official CLI owns its own sign-in/cache policy; the installer does not read
@@ -314,16 +323,48 @@ enable Linux lingering or modify the original web-forwarding service. Setup
 returns after verified worker readiness; the terminal need not remain open.
 Auto-start is at sign-in (Linux can start at boot when lingering was already
 enabled). Neither daemon-shell reboot survival nor automatic replacement of a
-dead/stale generation is promised.
+dead/stale generation is promised by default.
 
-On Linux the service restarts the worker 15 seconds after a transient failure
+For an updated managed host, `--restart-unexpected` (`-RestartUnexpected` on
+Windows) explicitly opts into [bounded daemon replacement](adr/0066-opt-in-managed-daemon-recovery.md).
+Use `--no-restart-unexpected` / `-NoRestartUnexpected` to disable it; combine
+with the existing upgrade flag when switching helper releases. Changing this
+policy stops/restarts only the owned worker. It preserves tunnel, account and
+host key, but a replacement is a **new default shell**, not recovery of running
+programs or terminal state. Automatic client reconnect never switches to that
+new generation: attach explicitly. Three starts within ten minutes stop further
+replacement; interrupted creation, clock rollback and uncertain identity refuse.
+Named profiles discover the new target; generation-pinned connection JSON must
+be refreshed through a setup rerun before a new explicit attach.
+Observed shell exit (even nonzero), operator termination and normal shutdown
+stay stopped. Legacy/missing/corrupt lifecycle evidence also refuses; a bridge
+upgrade cannot retrofit diagnostics into an already-running old daemon.
+
+The worker checks daemon liveness every second independently of relay health,
+stops advertising a dead target and, when opted in, retries after 15 seconds.
+New daemons retain a private `lifecycle/<session-name>.json` under their original
+runtime directory: at most 64 typed entries / 32 KiB per name, including UTC
+epoch-millisecond timestamps, PID/generation, startup/readiness, Windows
+breakaway outcome, shell exit status, stop intent, panic, sanitized failure
+stage/native error code and shutdown result. The host worker log records loss
+and replacement generations. Neither contains terminal output, credentials or
+raw error strings. An abrupt disappearance still does not identify its killer.
+
+Linux services and Windows workers retry 15 seconds after a transient failure
 (relay drop, bridge exit/crash, token or network error), indefinitely, keeping
 the same tunnel, host key and daemon session. Refusals a restart cannot fix
-(the recorded daemon generation is gone, or the account, host identity or
+(the recorded daemon generation is gone without authorized recovery, or the account, host identity or
 tunnel changed) exit with status 78 and stay stopped until setup is rerun.
-macOS and Windows services are unchanged: they start at sign-in and are not
-restarted. On every platform the
-worker appends start, ready, bridge-exit, worker-exit and client open/close
+Windows retries within the existing worker process, without changing its
+owned task or restarting the windowless launcher. Every attempt rechecks the
+recorded account, host key and exact daemon generation and obtains a fresh
+scoped token. Clean bridge shutdown stops the worker. Failed attempts terminate
+their bridge and remove temporary readiness data before retrying; failure to
+clean up refuses rather than accumulating children or files. Existing Windows
+installations gain this behavior only after an explicit helper upgrade.
+Without daemon-recovery opt-in, macOS services still start only at sign-in and
+do not retry. On every platform the
+worker appends start, ready, retry, bridge-exit, worker-exit and client open/close
 events to `worker.log` in its private state directory (one 256 KiB file plus
 one rotated `worker.log.1`). Lines hold timestamps, PIDs and stage codes only:
 no tokens, paths, addresses or terminal data. Only `--upgrade` migrates a
@@ -456,14 +497,15 @@ picker. The running-tunnel list follows `show_running_dev_tunnels`. See
 
 The preferred client needs no CLI, metadata transfer or token paste.
 Choose **New profile → Dev Tunnel**, enter **Name** and **Tunnel** (logical
-alias or `tunnel-id.cluster`), and **Save profile**. Choose **Sign in with
-GitHub**, then click the code button to copy it and open GitHub in one action.
+alias or `tunnel-id.cluster`), and **Save** to persist and return to the
+profile list, or **Save and Connect** to sign in and connect in one step.
+On sign-in, click the code button to copy it and open GitHub in one action.
 Authorize **Microsoft Dev Tunnels** using the intended account.
 Displaying the dialog does not modify the clipboard or open a browser, and
 clicking the code does not approve or finish sign-in.
 Verify the displayed account and host fingerprint against the remote
-operator before approval; Cancel is the default. **Connect** also starts sign-in
-when necessary. Launcher and Profiles use the same commands.
+operator before approval; Cancel is the default. **Save and Connect** starts
+sign-in when necessary. Launcher and Profiles use the same commands.
 
 Default builds use the service's published GitHub App,
 `Iv1.e7b89e013f801f03`. Users do not register an application or configure a
@@ -579,9 +621,12 @@ launch recipe. The tab/Inspector explicitly say Experimental Dev Tunnel.
 
 For the advanced legacy route, choose **New profile → Dev Tunnel → Advanced →
 Use destination file**, enter a name and trusted destination JSON path, then
-**Save profile**. Reopen its editor's Advanced section, enter the connect token
+**Save**. Reopen its editor's Advanced section, enter the connect token
 in the hidden field and choose **Store token**. Saving metadata alone does not
-save that field. Launch through Launcher or Profiles, or use **Connect once**.
+save that field. Launch the saved profile through Launcher or Profiles. For a
+one-off attach without saving a profile, use the New Session Dev Tunnel card's
+**Connect once**; the profile editor itself no longer offers a transient
+connect.
 
 Configuration contains only the destination-file path and opaque native-store
 reference. Each saved profile has its own reference; duplication clears it.
@@ -595,6 +640,15 @@ The host token stays on the remote bridge and is never a client credential.
 Mock isolation tests are not two-account real-service qualification.
 
 ### Detected and OSC 8 remote files
+
+For general **host-side** rooted enumeration, metadata, chunked download/upload
+and mkdir, see the [filesystem protocol](dev-tunnel-files-protocol.md) and
+[ADR 0067](adr/0067-rooted-dev-tunnel-host-filesystem.md). Managed installers can
+explicitly enable/reconfigure `--file-root` with optional `--allow-file-write`,
+or revoke using `--disable-files`, on an existing tunnel without replacing
+its identity or shell. This default-off grant uses separate negotiated streams;
+desktop/iOS file-manager clients are a separate implementation. It does not
+silently enable the legacy unrestricted snapshot capability below.
 
 Add **`--allow-file-read`** to the host command to explicitly authorize reads.
 The resulting destination advertises the capability and remote path style.

@@ -7,8 +7,9 @@ use super::model::{Capabilities, DevTunnelChoices, HostDecision, HostVerificatio
 use super::profiles::{SftpSpec, TunnelSpec};
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
-    bottom_sheet, button, button_sized, caption_label, card, footnote, labelled, list_row,
-    paint_fit, segmented, sheet_title, switch_row, text_field, ButtonKind, RowSpec, Trailing,
+    bottom_sheet, button, button_sized, caption_label, card, footnote, form_field, labelled,
+    list_row, paint_fit, segmented, sheet_title, switch_row, text_field, ButtonKind, RowSpec,
+    Trailing,
 };
 use eframe::egui::{self, Align2, CornerRadius, Rect, Sense, Stroke, StrokeKind, Ui};
 use festerm_mobile_profiles::{RemoteSession, SshAuth, SshProfile};
@@ -267,6 +268,7 @@ pub enum EditorAction {
     OpenAuthentication,
     Delete,
     SignIn,
+    SelectTunnelAccount(usize),
     RefreshTunnels,
     PickTunnel(usize),
     DeleteTunnel(usize),
@@ -618,8 +620,10 @@ pub fn authentication_sheet(
             ),
             AuthMode::Password => {
                 caption_label(ui, "Password");
-                ui.add_sized(
+                form_field(
+                    ui,
                     [ui.available_width(), space::FIELD_HEIGHT],
+                    "profile_password",
                     egui::TextEdit::singleline(&mut state.password)
                         .password(true)
                         .sensitive(true)
@@ -630,6 +634,7 @@ pub fn authentication_sheet(
                         })
                         .margin(egui::Margin::symmetric(14, 14))
                         .char_limit(1024),
+                    true,
                 );
                 footnote(
                     ui,
@@ -712,14 +717,17 @@ fn key_section(
     }
     if state.needs_passphrase {
         caption_label(ui, "Key passphrase");
-        ui.add_sized(
+        form_field(
+            ui,
             [ui.available_width(), space::FIELD_HEIGHT],
+            "key_passphrase",
             egui::TextEdit::singleline(&mut state.key_passphrase)
                 .password(true)
                 .sensitive(true)
                 .hint_text("Passphrase to decrypt the key")
                 .margin(egui::Margin::symmetric(14, 14))
                 .char_limit(1024),
+            true,
         );
         if button(ui, ButtonKind::Primary, "Unlock & import key", true).clicked() {
             *action = AuthAction::ImportPending;
@@ -746,6 +754,14 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 6.0;
         caption_label(ui, "GitHub account");
+        for (index, (id, login)) in choices.accounts.iter().enumerate() {
+            if ui
+                .selectable_label(state.tunnel_account.as_ref() == Some(id), login)
+                .clicked()
+            {
+                *action = EditorAction::SelectTunnelAccount(index);
+            }
+        }
         match &choices.account_login {
             Some(login) => {
                 info_row(
@@ -758,7 +774,13 @@ fn dev_tunnel_fields(ui: &mut Ui, state: &mut EditorState, action: &mut EditorAc
                 if button(ui, ButtonKind::Secondary, "Sign out", true).clicked() {
                     *action = EditorAction::SignOut;
                 }
-                footnote(ui, "Your account can be reused by other tunnel profiles.");
+                if button(ui, ButtonKind::Secondary, "Add GitHub account", true).clicked() {
+                    *action = EditorAction::SignIn;
+                }
+                footnote(
+                    ui,
+                    "Choose the account for this profile. Other profiles keep their accounts.",
+                );
             }
             None => {
                 if button(ui, ButtonKind::Primary, "Sign in with GitHub", true).clicked() {
@@ -1056,13 +1078,16 @@ pub fn password_sheet(
                     .color(color::WARNING),
             );
         }
-        ui.add_sized(
+        form_field(
+            ui,
             [ui.available_width(), space::FIELD_HEIGHT],
+            "auth_password",
             egui::TextEdit::singleline(password)
                 .password(true)
                 .sensitive(true)
                 .margin(egui::Margin::symmetric(14, 14))
                 .char_limit(4096),
+            true,
         );
         if button(ui, ButtonKind::Primary, "Authenticate", true).clicked() {
             decision = PasswordDecision::Submit;

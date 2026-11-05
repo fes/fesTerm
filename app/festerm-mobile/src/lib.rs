@@ -1,6 +1,9 @@
 //! iOS feasibility host: offline by default, with opt-in transient live SSH.
 
 mod app_lock;
+mod dictation;
+mod document_preview;
+mod documents;
 #[cfg_attr(not(feature = "live-ssh"), allow(dead_code))] // SFTP needs the SSH transport
 mod files;
 #[cfg(test)]
@@ -173,6 +176,84 @@ impl SuspensionHandle {
     }
 }
 
+/// Applies native lifecycle callbacks to the shared [`Lifecycle`] and live sessions.
+///
+/// winit reports `applicationWillResignActive` as `Suspended`. A dictation
+/// permission alert only resigns active, so that suspension is deferred: live
+/// sessions and dictation survive the alert. If the app then really enters the
+/// background, the deferred suspension is applied as before.
+pub struct NativeLifecycle {
+    lifecycle: Rc<Cell<Lifecycle>>,
+    #[cfg(feature = "live-ssh")]
+    suspension: SuspensionHandle,
+    deferred: bool,
+}
+
+impl NativeLifecycle {
+    pub fn new(
+        lifecycle: Rc<Cell<Lifecycle>>,
+        #[cfg(feature = "live-ssh")] suspension: SuspensionHandle,
+    ) -> Self {
+        Self {
+            lifecycle,
+            #[cfg(feature = "live-ssh")]
+            suspension,
+            deferred: false,
+        }
+    }
+
+    pub fn get(&self) -> Lifecycle {
+        self.lifecycle.get()
+    }
+
+    fn update(&self, update: impl FnOnce(&mut Lifecycle)) {
+        let mut state = self.lifecycle.get();
+        update(&mut state);
+        self.lifecycle.set(state);
+    }
+
+    /// Returns whether the renderer should also be resumed.
+    pub fn resumed(&mut self) -> bool {
+        if std::mem::take(&mut self.deferred) {
+            return false;
+        }
+        self.update(Lifecycle::resume);
+        true
+    }
+
+    /// Returns whether the app was suspended (false when deferred for a
+    /// dictation permission alert).
+    pub fn suspended(&mut self, permission_prompt: bool) -> bool {
+        if permission_prompt {
+            self.deferred = true;
+            return false;
+        }
+        self.deferred = false;
+        self.suspend();
+        true
+    }
+
+    /// The app entered the background. Returns whether a deferred suspension
+    /// was applied now.
+    pub fn entered_background(&mut self) -> bool {
+        if !std::mem::take(&mut self.deferred) {
+            return false;
+        }
+        self.suspend();
+        true
+    }
+
+    pub fn memory_warning(&self) {
+        self.update(Lifecycle::memory_warning);
+    }
+
+    fn suspend(&self) {
+        #[cfg(feature = "live-ssh")]
+        self.suspension.suspend();
+        self.update(Lifecycle::suspend);
+    }
+}
+
 /// Deliberately discards bytes: the spike must not pretend to be a shell or
 /// save what a tester types. Uses the renderer's existing input contract.
 #[derive(Default)]
@@ -239,6 +320,7 @@ enum Surface {
     #[default]
     Tabs,
     Terminal,
+    Documents,
 }
 
 /// Content-free view of the live SSH worker for chrome decisions.
@@ -250,6 +332,12 @@ struct LiveView {
 }
 
 pub struct MobileApp {
+    #[cfg(all(
+        target_os = "ios",
+        target_abi = "sim",
+        feature = "native-document-smoke"
+    ))]
+    document_smoke: festerm_ios_window::DocumentSmoke,
     reported_first_ui: bool,
     terminal: Terminal,
     view: TerminalView,
@@ -274,6 +362,7 @@ pub struct MobileApp {
     files: Option<Box<files::FilesSession>>,
     files_ctx: files_shell::FilesContext,
     markdown: Option<workspaces::MarkdownWorkspace>,
+    documents: documents::DocumentHost,
     surface: Surface,
     shell: shell::ShellState,
     profiles: Option<profiles::Profiles>,
@@ -285,6 +374,8 @@ pub struct MobileApp {
     last_custom_keyboard: terminal_keyboard::KeyboardKind,
     terminal_keyboard: terminal_keyboard::TerminalKeyboard,
     terminal_keyboard_input: bool,
+    dictation: Option<festerm_ios_window::Dictation>,
+    dictation_tab: Option<u64>,
     #[cfg(feature = "live-ssh")]
     tunnel: tunnel_link::TunnelUi,
     caps: model::Capabilities,
@@ -320,6 +411,12 @@ fn mobile_terminal_view() -> TerminalView {
 impl MobileApp {
     pub fn new(lifecycle: Rc<Cell<Lifecycle>>) -> Self {
         Self {
+            #[cfg(all(
+                target_os = "ios",
+                target_abi = "sim",
+                feature = "native-document-smoke"
+            ))]
+            document_smoke: festerm_ios_window::DocumentSmoke::default(),
             reported_first_ui: false,
             terminal: fixture_terminal(),
             view: mobile_terminal_view(),
@@ -343,6 +440,7 @@ impl MobileApp {
             files: None,
             files_ctx: files_shell::FilesContext::default(),
             markdown: None,
+            documents: documents::DocumentHost::default(),
             #[cfg(feature = "live-ssh")]
             tunnel: tunnel_link::TunnelUi::default(),
             surface: Surface::Tabs,
@@ -355,6 +453,8 @@ impl MobileApp {
             last_custom_keyboard: terminal_keyboard::KeyboardKind::HoldSymbols,
             terminal_keyboard: terminal_keyboard::TerminalKeyboard::default(),
             terminal_keyboard_input: false,
+            dictation: None,
+            dictation_tab: None,
             caps: model::Capabilities::production(),
             tabs: Vec::new(),
             active_tab: None,
@@ -443,6 +543,11 @@ impl MobileApp {
     }
 
     pub fn with_keyboard(mut self, keyboard: Option<festerm_ios_window::KeyboardBridge>) -> Self {
+        self.documents.bind_picker(
+            keyboard
+                .as_ref()
+                .and_then(|bridge| bridge.document_picker()),
+        );
         self.keyboard = keyboard;
         self
     }
@@ -460,6 +565,16 @@ impl MobileApp {
     }
 
     fn show_with_occlusion(&mut self, ui: &mut egui::Ui, occlusion: f32) {
+        #[cfg(all(
+            target_os = "ios",
+            target_abi = "sim",
+            feature = "native-document-smoke"
+        ))]
+        {
+            let context = ui.ctx().clone();
+            self.document_smoke
+                .poll(std::sync::Arc::new(move || context.request_repaint()));
+        }
         self.terminal_keyboard_input = false;
         // Accessory taps must not blur the terminal and restart UIKit's keyboard.
         let terminal_surface = self.terminal_surface();
@@ -482,21 +597,35 @@ impl MobileApp {
             ui.set_style(mobile_style(ui.style()));
             ui.painter()
                 .rect_filled(safe_rect, 0.0, ui.visuals().panel_fill);
+            if let Some(keyboard) = &self.keyboard {
+                apply_field_input(ui.ctx(), keyboard.take_field_input());
+            }
+            apply_field_edit(ui.ctx());
             self.show_content(ui);
         });
+        let field = widgets::take_field_document(ui.ctx());
         self.keep_field_keyboard(ui.ctx());
         if !ui.input(|input| input.focused) {
             ui.ctx().output_mut(|output| output.ime = None);
         }
         if let Some(keyboard) = &self.keyboard {
+            let mut field = field;
             let mode = if self.terminal_keyboard_input {
                 ui.ctx().output_mut(|output| output.ime = None);
+                field = None;
                 festerm_ios_window::KeyboardMode::Terminal
             } else if ui.ctx().output(|output| output.ime.is_some()) {
-                festerm_ios_window::KeyboardMode::System
+                if field.is_some() {
+                    festerm_ios_window::KeyboardMode::Field
+                } else {
+                    festerm_ios_window::KeyboardMode::System
+                }
             } else {
+                field = None;
                 festerm_ios_window::KeyboardMode::Hidden
             };
+            // Publish before switching, so the keyboard reads the new field.
+            keyboard.set_field_document(field);
             if let Err(error) = keyboard.set_keyboard_mode(mode) {
                 log::error!("{error}");
                 self.input_notice = Some(error);
@@ -787,7 +916,9 @@ impl MobileApp {
         if let Some(sessions) = &self.sessions_override {
             return model::SessionSource::surfaces(sessions);
         }
-        self.tab_surfaces()
+        let mut surfaces = self.tab_surfaces();
+        surfaces.extend(self.documents.surfaces(self.surface == Surface::Documents));
+        surfaces
     }
 
     fn reattachable(&self) -> Vec<model::Reattachable> {
@@ -828,10 +959,19 @@ impl MobileApp {
 
     fn show_content(&mut self, ui: &mut egui::Ui) {
         let lifecycle = self.lifecycle.get();
+        // Permission alerts never count as suspensions (see NativeLifecycle).
+        if !self.terminal_surface()
+            || !self.terminal_input_ready(lifecycle)
+            || self.dictation_tab != self.active_tab
+            || lifecycle.suspensions != self.observed_suspensions
+        {
+            self.cancel_dictation();
+        }
         if !self.terminal_surface() || !lifecycle.active || !ui.input(|input| input.focused) {
             self.terminal_keyboard.cancel();
         }
         if lifecycle.suspensions != self.observed_suspensions {
+            self.documents.invalidate_sources();
             #[cfg(feature = "live-ssh")]
             self.suspend_sessions();
             self.gestures.cancel();
@@ -868,6 +1008,7 @@ impl MobileApp {
             let hidden = lock.gate(ui, lifecycle.active);
             lock.frame_presented();
             if hidden {
+                self.cancel_dictation();
                 self.gestures.cancel();
                 self.terminal_keyboard.cancel();
                 self.clear_sticky_modifiers();
@@ -881,13 +1022,21 @@ impl MobileApp {
             self.show_host_setup(ui.ctx(), bounds);
             return;
         }
+        if lifecycle.active && self.documents.poll(&mut self.next_tab) {
+            self.park_active();
+            self.surface = Surface::Documents;
+        }
         match self.surface {
             Surface::Tabs => self.show_tabs(ui),
             Surface::Terminal => self.show_surface(ui, lifecycle),
+            Surface::Documents => self.show_documents(ui),
         }
         self.show_sheets(ui.ctx(), bounds);
         self.show_files_sheets(ui.ctx(), bounds);
         self.show_host_setup(ui.ctx(), bounds);
+        self.show_dictation(ui.ctx(), bounds);
+        self.documents
+            .show_sheets(ui.ctx(), bounds, self.surface == Surface::Documents);
     }
 
     fn show_host_setup(&mut self, ctx: &egui::Context, bounds: egui::Rect) {
@@ -1023,9 +1172,22 @@ impl MobileApp {
                         }
                     }
                 }
+                ShellAction::MoveProfile { id, before } => {
+                    if let Some(profiles) = self.profiles.as_mut() {
+                        if let Err(error) = profiles.move_before(&id, before.as_deref()) {
+                            self.notice = Some(error);
+                        }
+                    }
+                }
                 ShellAction::CloseSurface(id) => self.close_tab(id),
                 ShellAction::OpenSurface(id) => {
                     self.shell.sessions_sheet = false;
+                    if self.documents.contains(id) {
+                        self.park_active();
+                        self.documents.activate(id);
+                        self.surface = Surface::Documents;
+                        continue;
+                    }
                     self.activate_tab(id);
                     if self.active_tab == Some(id) {
                         self.surface = Surface::Terminal;
@@ -1048,6 +1210,11 @@ impl MobileApp {
                     self.shell.sessions_sheet = false;
                     self.shell.tab = shell::Tab::Profiles;
                     self.leave_terminal();
+                }
+                ShellAction::OpenDocuments => {
+                    self.park_active();
+                    self.documents.active = None;
+                    self.surface = Surface::Documents;
                 }
             }
         }
@@ -1250,6 +1417,7 @@ impl MobileApp {
             }
             forms::EditorAction::Delete => self.delete_editor_profile(),
             forms::EditorAction::SignIn
+            | forms::EditorAction::SelectTunnelAccount(_)
             | forms::EditorAction::RefreshTunnels
             | forms::EditorAction::SignOut
             | forms::EditorAction::PickTunnel(_)
@@ -1492,6 +1660,7 @@ impl MobileApp {
     }
 
     fn switch_workspace(&mut self, workspace: workspaces::Workspace) {
+        self.cancel_dictation();
         if self.workspace == workspace {
             return;
         }
@@ -1506,6 +1675,7 @@ impl MobileApp {
     }
 
     fn reset_fixture(&mut self) {
+        self.cancel_dictation();
         self.switch_workspace(workspaces::Workspace::Terminal);
         self.gestures.cancel();
         if self.active_is_local() {
@@ -1559,6 +1729,12 @@ impl MobileApp {
                 back = header.back;
                 chip_action = header.chip;
                 let menu = egui::Popup::menu(&header.more).show(|ui| {
+                    if ui.button("Documents").clicked() {
+                        self.park_active();
+                        self.documents.active = None;
+                        self.surface = Surface::Documents;
+                        ui.close();
+                    }
                     if in_terminal && self.active_tab.is_some() {
                         ui.weak(&chrome.line.label);
                         ui.separator();
@@ -1622,6 +1798,9 @@ impl MobileApp {
                 });
                 self.menu_open = menu.is_some();
             });
+        if self.surface != Surface::Terminal {
+            return;
+        }
         if let Some(id) = close_tab {
             self.close_tab(id);
             return;
@@ -1655,7 +1834,7 @@ impl MobileApp {
                 self.activate_tab(id);
                 return;
             }
-            terminal_chrome::ChipAction::Close(id) => self.confirm_close = Some(id),
+            terminal_chrome::ChipAction::Close(id) => self.request_surface_close(id),
             terminal_chrome::ChipAction::All => self.shell.sessions_sheet = true,
             terminal_chrome::ChipAction::New => {
                 self.shell.tab = shell::Tab::Profiles;
@@ -1683,7 +1862,10 @@ impl MobileApp {
     }
 
     fn terminal_input_ready(&self, lifecycle: Lifecycle) -> bool {
-        let ready = lifecycle.active && !self.shell.sessions_sheet && !self.editor.open;
+        let ready = lifecycle.active
+            && !self.shell.sessions_sheet
+            && !self.editor.open
+            && !self.documents.modal_open();
         #[cfg(feature = "live-ssh")]
         let ready = ready
             && self
@@ -1697,7 +1879,7 @@ impl MobileApp {
     }
 
     fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
-        let input_ready = self.terminal_input_ready(lifecycle);
+        let input_ready = self.terminal_input_ready(lifecycle) && !self.dictation_open();
         #[cfg(feature = "live-ssh")]
         let read_only = self
             .sink
@@ -1806,7 +1988,11 @@ impl MobileApp {
                 return;
             }
         }
-        let history_ready = lifecycle.active && !self.editor.open && (input_ready || read_only);
+        let input_ready = input_ready && !self.dictation_open();
+        let history_ready = lifecycle.active
+            && !self.editor.open
+            && !self.dictation_open()
+            && (input_ready || read_only);
         if self.menu_open || !ui.input(|input| input.focused) {
             self.terminal_keyboard.cancel();
         }
@@ -1889,6 +2075,9 @@ impl MobileApp {
 
     fn apply_key_row(&mut self, ctx: &egui::Context, action: terminal_chrome::KeyRowAction) {
         use terminal_chrome::KeyRowAction;
+        if self.dictation_open() {
+            return;
+        }
         match action {
             KeyRowAction::None => {}
             KeyRowAction::Key(Key::Character(character)) => {
@@ -1914,6 +2103,7 @@ impl MobileApp {
                     self.input_notice = Some("The clipboard has no text to paste");
                 }
             }
+            KeyRowAction::Dictate => self.begin_dictation(ctx),
             KeyRowAction::Escape => self.send_key(Key::Escape),
             KeyRowAction::Tab => self.send_key(Key::Tab),
             KeyRowAction::ToggleControl => self.control = !self.control,
@@ -2230,6 +2420,129 @@ mod tests {
         let reopened =
             MobileApp::new(Rc::new(Cell::new(Lifecycle::default()))).with_profiles(profiles);
         assert!(large(reopened.view.font_size_points()));
+    }
+
+    #[test]
+    fn touch_and_hold_drags_a_saved_profile_into_a_new_order() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let mut store = profiles::testing::profiles();
+        for name in ["alpha", "bravo", "charlie"] {
+            store
+                .save_ssh(
+                    None,
+                    name,
+                    festerm_mobile_profiles::SshProfile::new("web.example.net", "deploy"),
+                )
+                .unwrap();
+        }
+        let app = Rc::new(RefCell::new(
+            MobileApp::new(Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            })))
+            .with_profiles(store),
+        ));
+        let displayed = app.clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(
+                move |ui, _: &mut ()| displayed.borrow_mut().show_with_occlusion(ui, 0.0),
+                (),
+            );
+        harness.run();
+        let order = |app: &Rc<RefCell<MobileApp>>| -> Vec<String> {
+            let app = app.borrow();
+            app.profiles
+                .as_ref()
+                .unwrap()
+                .rows(app.caps)
+                .into_iter()
+                .map(|row| row.name)
+                .collect()
+        };
+        let row = |harness: &Harness<'_, ()>, name: &str| harness.get_by_label(name).rect();
+        let pointer = |pressed: bool, pos: egui::Pos2| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let alpha = row(&harness, "alpha");
+        let grip = egui::pos2(alpha.left() + 60.0, alpha.center().y);
+        let below = egui::pos2(grip.x, row(&harness, "charlie").bottom() - 4.0);
+
+        // A press that moves at once scrolls; it never lifts the row.
+        let now = harness.ctx.input(|input| input.time);
+        let mut at = 0.0;
+        let mut play = |harness: &mut Harness<'_, ()>, steps: Vec<(f64, Vec<egui::Event>)>| {
+            for (elapsed, events) in steps {
+                at += elapsed;
+                harness.input_mut().time = Some(now + at);
+                for event in events {
+                    harness.event(event);
+                }
+                harness.step();
+            }
+        };
+        play(
+            &mut harness,
+            vec![
+                (
+                    0.01,
+                    vec![egui::Event::PointerMoved(grip), pointer(true, grip)],
+                ),
+                (0.05, vec![egui::Event::PointerMoved(below)]),
+                (0.6, vec![]),
+                (0.05, vec![pointer(false, below)]),
+            ],
+        );
+        harness.run();
+        assert_eq!(order(&app), ["alpha", "bravo", "charlie"]);
+
+        play(
+            &mut harness,
+            vec![
+                (
+                    0.5,
+                    vec![egui::Event::PointerMoved(grip), pointer(true, grip)],
+                ),
+                (0.3, vec![]),
+                (0.3, vec![]),
+                (0.05, vec![egui::Event::PointerMoved(below)]),
+                (0.05, vec![]),
+                (0.05, vec![pointer(false, below), egui::Event::PointerGone]),
+            ],
+        );
+        harness.run();
+        assert_eq!(order(&app), ["bravo", "charlie", "alpha"]);
+        assert_eq!(
+            app.borrow().surface,
+            Surface::Tabs,
+            "the release that drops a profile does not open it"
+        );
+        assert!(app.borrow().shell.reorder.is_none());
+
+        // A touch cancelled without a release abandons the drag in place.
+        let charlie = row(&harness, "charlie");
+        let grip = egui::pos2(charlie.left() + 60.0, charlie.center().y);
+        let top = egui::pos2(grip.x, row(&harness, "bravo").top() + 4.0);
+        play(
+            &mut harness,
+            vec![
+                (
+                    0.5,
+                    vec![egui::Event::PointerMoved(grip), pointer(true, grip)],
+                ),
+                (0.3, vec![]),
+                (0.3, vec![]),
+                (0.05, vec![egui::Event::PointerMoved(top)]),
+                (0.05, vec![egui::Event::PointerGone]),
+            ],
+        );
+        harness.run();
+        assert_eq!(order(&app), ["bravo", "charlie", "alpha"]);
+        assert!(app.borrow().shell.reorder.is_none());
     }
 
     #[test]
@@ -3250,4 +3563,91 @@ mod tests {
         assert_eq!(app.terminal.row_text(0), before);
         assert_eq!(app.observed_memory_warnings, 1);
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_CLIPBOARD: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(all(test, feature = "live-ssh"))]
+fn set_test_clipboard(text: Option<&str>) {
+    TEST_CLIPBOARD.with(|clipboard| *clipboard.borrow_mut() = text.map(str::to_owned));
+}
+
+fn clipboard_text() -> Option<String> {
+    #[cfg(test)]
+    if let Some(text) = TEST_CLIPBOARD.with(|clipboard| clipboard.borrow().clone()) {
+        return Some(text);
+    }
+    festerm_ios_window::clipboard_text()
+}
+
+/// Replays an edit chosen from a form field's menu as the clipboard or
+/// keyboard event egui's `TextEdit` already understands.
+/// Replays native keyboard edits into the focused form field as the events
+/// egui's `TextEdit` handles. A selection change leads its batch and is set
+/// on the field's state directly, before the field runs this frame.
+fn apply_field_input(ctx: &egui::Context, inputs: Vec<festerm_ios_window::FieldInput>) {
+    use festerm_ios_window::FieldInput;
+    let Some(field) = ctx.memory(|memory| memory.focused()) else {
+        return;
+    };
+    let key = |key| {
+        [true, false].map(|pressed| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        })
+    };
+    let mut events = Vec::new();
+    for input in inputs {
+        match input {
+            FieldInput::Select(range) => {
+                let mut state = egui::TextEdit::load_state(ctx, field).unwrap_or_default();
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(range.start),
+                        egui::text::CCursor::new(range.end),
+                    )));
+                state.store(ctx, field);
+            }
+            FieldInput::Insert(text) if text == "\n" => events.extend(key(egui::Key::Enter)),
+            FieldInput::Insert(text) => events.push(egui::Event::Text(text)),
+            FieldInput::DeleteBackward => events.extend(key(egui::Key::Backspace)),
+            FieldInput::Preedit { text, selected } => {
+                events.push(egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text,
+                    active_range_chars: Some(selected),
+                }));
+            }
+            FieldInput::Commit(text) => events.push(egui::Event::Ime(egui::ImeEvent::Commit(text))),
+        }
+    }
+    ctx.input_mut(|input| input.events.extend(events));
+}
+
+fn apply_field_edit(ctx: &egui::Context) {
+    let Some(edit) = widgets::take_field_edit(ctx) else {
+        return;
+    };
+    let event = match edit {
+        widgets::FieldEdit::Paste => match clipboard_text() {
+            Some(text) if !text.is_empty() => egui::Event::Paste(text),
+            _ => return,
+        },
+        widgets::FieldEdit::Copy => egui::Event::Copy,
+        widgets::FieldEdit::Cut => egui::Event::Cut,
+        widgets::FieldEdit::SelectAll => egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        },
+    };
+    ctx.input_mut(|input| input.events.push(event));
 }

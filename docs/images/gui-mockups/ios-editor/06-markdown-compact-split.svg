@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844">
+<rect x="0" y="0" width="390" height="844" rx="0" fill="#0F141C"/>
+<text x="23" y="32" font-family="Inter" font-size="14" font-weight="600" fill="#E6EDF3" text-anchor="start">12:18</text>
+<rect x="134" y="12" width="122" height="32" rx="17" fill="#000000"/>
+<rect x="306" y="29" width="2.7" height="4" rx="1" fill="#E6EDF3"/>
+<rect x="310" y="27" width="2.7" height="6" rx="1" fill="#E6EDF3"/>
+<rect x="314" y="25" width="2.7" height="8" rx="1" fill="#E6EDF3"/>
+<rect x="318" y="22" width="2.7" height="11" rx="1" fill="#E6EDF3"/>
+<path d="M327 24q7-6 14 0M330 27q4-4 8 0M333 30h2" fill="none" stroke="#E6EDF3" stroke-width="2" stroke-linecap="round"/>
+<rect x="349" y="22" width="24" height="12" rx="3" fill="none" stroke="#AFBDCC" stroke-width="1"/>
+<rect x="351" y="24" width="19" height="8" rx="1.6" fill="#E6EDF3"/>
+<rect x="374" y="26" width="2" height="4" rx="1" fill="#AFBDCC"/>
+<rect x="0" y="58" width="390" height="54" rx="0" fill="#1B2A40"/>
+<g transform="translate(12 74) scale(0.9583333333333334)" fill="none" stroke="#64A7F8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5-7 7 7 7"/></g>
+<rect x="43" y="68" width="182" height="34" rx="12" fill="#234A6C" stroke="#64A7F8" stroke-width="1.2"/>
+<g transform="translate(52 76) scale(0.75)" fill="none" stroke="#64A7F8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m5 15 0-6 3 4 3-4v6M14 10v5m-2-2 2 2 2-2"/></g>
+<text x="77" y="90" font-family="Inter" font-size="13.5" font-weight="500" fill="#E6EDF3" text-anchor="start">RUNBOOK.md</text>
+<circle cx="211" cy="86" r="3.6" fill="none" stroke="#E9B780" stroke-width="1.5"/>
+<rect x="243" y="69" width="64" height="32" rx="10" fill="#23334B" stroke="#344A68" stroke-width="1"/>
+<text x="253" y="90" font-family="Inter" font-size="12" font-weight="400" fill="#AFBDCC" text-anchor="start">All</text>
+<rect x="283" y="73" width="20" height="25" rx="8" fill="#254761"/>
+<text x="293" y="90" font-family="Inter" font-size="12" font-weight="400" fill="#E6EDF3" text-anchor="middle">3</text>
+<g transform="translate(315 75) scale(0.9166666666666666)" fill="none" stroke="#AFBDCC" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M4 12h16"/></g>
+<g transform="translate(355 75) scale(0.875)" fill="none" stroke="#AFBDCC" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></g>
+<rect x="0" y="112" width="390" height="43" rx="0" fill="#0F141C"/>
+<text x="16" y="129" font-family="Inter" font-size="10.5" font-weight="600" fill="#64A7F8" text-anchor="start">ON MY IPHONE</text>
+<text x="16" y="146" font-family="Inter" font-size="12" font-weight="400" fill="#AFBDCC" text-anchor="start">fesTerm / Notes / RUNBOOK.md</text>
+<circle cx="322" cy="136" r="3" fill="#E9B780"/>
+<text x="374" y="140" font-family="Inter" font-size="11.3" font-weight="400" fill="#E9B780" text-anchor="end">Unsaved</text>
+<path d="M0 154L390 154" fill="none" stroke="#263746" stroke-width="1" stroke-linecap="round"/>
+<rect x="0" y="155" width="390" height="51" rx="0" fill="#0F141C"/>
+<rect x="16" y="164" width="191" height="33" rx="9" fill="#23334B"/>
+<text x="47.83333333333333" y="185" font-family="Inter" font-size="12.5" font-weight="400" fill="#AFBDCC" text-anchor="middle">Edit</text>
+<text x="111.49999999999999" y="185" font-family="Inter" font-size="12.5" font-weight="400" fill="#AFBDCC" text-anchor="middle">Preview</text>
+<rect x="144.33333333333331" y="166" width="61.666666666666664" height="29" rx="8" fill="#30415B"/>
+<text x="175.16666666666666" y="185" font-family="Inter" font-size="12.5" font-weight="600" fill="#E6EDF3" text-anchor="middle">Split</text>
+<g transform="translate(224 170) scale(0.9166666666666666)" fill="none" stroke="#8C9CAC" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5v6h6M4 11a8 8 0 1 1 0 6"/></g>
+<g transform="translate(268 171) scale(0.875)" fill="none" stroke="#64A7F8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V3m-5 5 5-5 5 5M4 13v8h16v-8"/></g>
+<text x="371" y="186" font-family="Inter" font-size="13" font-weight="500" fill="#64A7F8" text-anchor="end">Edit</text>
+<path d="M0 206L390 206" fill="none" stroke="#263746" stroke-width="1" stroke-linecap="round"/>
+<rect x="16" y="218" width="358" height="242" rx="11" fill="#1B252F" stroke="#344A68" stroke-width="1"/>
+<rect x="16" y="218" width="358" height="33" rx="10" fill="#182638"/>
+<g transform="translate(27 224) scale(0.75)" fill="none" stroke="#64A7F8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></g>
+<text x="53" y="239" font-family="Inter" font-size="10.5" font-weight="600" fill="#AFBDCC" text-anchor="start">PREVIEW</text>
+<g transform="translate(337 224) scale(0.75)" fill="none" stroke="#8C9CAC" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M4 12h16"/></g>
+<text x="29" y="280" font-family="Inter" font-size="18" font-weight="600" fill="#E6EDF3" text-anchor="start">Remote session recovery</text>
+<text x="29" y="307" font-family="Inter" font-size="12.5" font-weight="400" fill="#E6EDF3" text-anchor="start">Keep work running when connectivity</text>
+<text x="29" y="326" font-family="Inter" font-size="12.5" font-weight="400" fill="#E6EDF3" text-anchor="start">changes.</text>
+<text x="29" y="364" font-family="Inter" font-size="15" font-weight="600" fill="#E6EDF3" text-anchor="start">Recovery checklist</text>
+<text x="29" y="390" font-family="Inter" font-size="12.4" font-weight="400" fill="#E6EDF3" text-anchor="start">1. Preserve the attachment</text>
+<text x="29" y="409" font-family="Inter" font-size="12.4" font-weight="400" fill="#E6EDF3" text-anchor="start">2. Probe on return</text>
+<text x="29" y="428" font-family="Inter" font-size="12.4" font-weight="400" fill="#E6EDF3" text-anchor="start">3. Reattach only if needed</text>
+<rect x="163" y="467" width="64" height="6" rx="3" fill="#344A68"/>
+<rect x="16" y="484" width="358" height="263" rx="11" fill="#131D27" stroke="#344A68" stroke-width="1"/>
+<rect x="16" y="484" width="358" height="32" rx="10" fill="#182638"/>
+<g transform="translate(26 489) scale(0.75)" fill="none" stroke="#64A7F8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m8 5-6 7 6 7M16 5l6 7-6 7M14 3l-4 18"/></g>
+<text x="53" y="505" font-family="Inter" font-size="10.5" font-weight="600" fill="#AFBDCC" text-anchor="start">SOURCE</text>
+<g transform="translate(338 489) scale(0.75)" fill="none" stroke="#8C9CAC" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M4 12h16"/></g>
+<text x="32" y="543" font-family="DejaVu Sans Mono" font-size="11" font-weight="400" fill="#8C9CAC" text-anchor="start">1</text>
+<text x="60" y="543" font-family="DejaVu Sans Mono" font-size="11.9" font-weight="400" fill="#64A7F8" text-anchor="start"># Remote session recovery</text>
+<text x="32" y="571" font-family="DejaVu Sans Mono" font-size="11" font-weight="400" fill="#8C9CAC" text-anchor="start">2</text>
+<text x="60" y="571" font-family="DejaVu Sans Mono" font-size="11.9" font-weight="400" fill="#E6EDF3" text-anchor="start"></text>
+<text x="32" y="599" font-family="DejaVu Sans Mono" font-size="11" font-weight="400" fill="#8C9CAC" text-anchor="start">3</text>
+<text x="60" y="599" font-family="DejaVu Sans Mono" font-size="11.9" font-weight="400" fill="#E6EDF3" text-anchor="start">Keep work running when</text>
+<text x="32" y="627" font-family="DejaVu Sans Mono" font-size="11" font-weight="400" fill="#8C9CAC" text-anchor="start">4</text>
+<text x="60" y="627" font-family="DejaVu Sans Mono" font-size="11.9" font-weight="400" fill="#E6EDF3" text-anchor="start">connectivity changes.</text>
+<text x="32" y="655" font-family="DejaVu Sans Mono" font-size="11" font-weight="400" fill="#8C9CAC" text-anchor="start">5</text>
+<text x="60" y="655" font-family="DejaVu Sans Mono" font-size="11.9" font-weight="400" fill="#E6EDF3" text-anchor="start"></text>
+<text x="32" y="683" font-family="DejaVu Sans Mono" font-size="11" font-weight="400" fill="#8C9CAC" text-anchor="start">6</text>
+<text x="60" y="683" font-family="DejaVu Sans Mono" font-size="11.9" font-weight="400" fill="#64A7F8" text-anchor="start">## Recovery checklist</text>
+<text x="32" y="711" font-family="DejaVu Sans Mono" font-size="11" font-weight="400" fill="#8C9CAC" text-anchor="start">7</text>
+<text x="60" y="711" font-family="DejaVu Sans Mono" font-size="11.9" font-weight="400" fill="#E6EDF3" text-anchor="start"></text>
+<rect x="0" y="774" width="390" height="70" rx="0" fill="#1B2A40"/>
+<path d="M0 774L390 774" fill="none" stroke="#344A68" stroke-width="1" stroke-linecap="round"/>
+<text x="16" y="795" font-family="Inter" font-size="11.2" font-weight="400" fill="#AFBDCC" text-anchor="start">Split / vertical</text>
+<text x="373" y="795" font-family="Inter" font-size="11.2" font-weight="400" fill="#8C9CAC" text-anchor="end">Drag divider to resize</text>
+<rect x="140.0" y="831" width="110" height="4" rx="2" fill="#E6EDF3"/>
+</svg>

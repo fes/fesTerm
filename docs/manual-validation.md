@@ -26,9 +26,21 @@ The expected SHA-256 is derived from the app's embedded installer, not fetched
 with the download.
 
 The standard Dev Tunnel cards, shared code/action buttons and distinct tunnel
-mark have structural/geometry regressions. Native dark/light and 1x/2x visual
-comparison, including selected/disabled rows, keyboard focus and accessibility,
-remains manual DT-01/07 evidence, not an accepted result of those tests.
+mark have structural/geometry regressions. The Name/Tunnel profile editor also
+has deterministic structural coverage for its cleanup: the **Back** control,
+the single action row ordered **Save**, **Save and Connect**, **Cancel** with
+**Advanced** above it, removal of the duplicate bottom row and both transient
+"Connect once" affordances, Back/Cancel returning to the list without
+saving/connecting, **Save** emitting `SaveDevTunnelProfile` and closing to the
+list only on a reported persistence success while retaining the exact draft and
+an actionable error on failure, **Save and Connect** preserving the
+save/authenticate/connect command, the legacy Advanced **Store token** state,
+and header/control bounds at narrow width. Themed fixture-only render artifacts
+(default and narrow) accompany this as visual-alignment aids. These do not
+promote native theming/scale/accessibility acceptance; native dark/light and
+1x/2x visual comparison, including selected/disabled rows, keyboard focus and
+accessibility, plus live sign-in/persistence, remain manual DT-01/07 evidence,
+not an accepted result of those tests.
 
 Windows managed-host qualification must exercise servicing-owned system
 ancestors and refuse foreign directory-delete, child-delete and ACL/owner
@@ -36,6 +48,41 @@ mutation permissions without repairing existing ACLs. The exact
 TrustedInstaller SID is admitted only for ancestors; final private objects stay
 current-user-only. Hosted policy/fixture tests are not clean-machine installer,
 native-service or credential-lifecycle acceptance under #432.
+
+Rooted host filesystem support (ADR 0067) has deterministic wire-level transfer
+and legacy-discovery coverage plus native isolated filesystem tests. DT-05 must
+still qualify signed-host enable/read-only/write/disable changes on an existing
+host, in-flight stream closure, unchanged tunnel/key/shell identity, directory
+pagination, large/empty transfers, disk-full/disconnect/crash cleanup, concurrent
+publication conflicts and symlink/reparse refusal on Windows/Linux/macOS.
+Force-killed staging/recovery files require deliberate operator handling; no
+crash-resumption claim is made. DT-07 desktop/physical-iOS browsing, recursive
+transfer, cancellation and overwrite-confirmation evidence is deferred behind
+the separate client implementation. No live installation was changed by these
+isolated tests.
+
+Read-only observation (ADR 0070/#584) is independent of the transfer grant.
+Automated coverage targets strict negotiation, bounded root/page/read/watch
+admission, same-handle identity/revision checks and explicit change/rescan/ended
+results, plus managed consent preservation/revocation and daemon generation
+correlation without terminal admission. These are not signed-host or external
+controller acceptance. DT-05 must qualify enabling/replacing/revoking roots on
+an existing signed host while preserving its tunnel/key/shell, real filesystem
+watch coverage/loss and link/reparse refusal on each desktop OS. DT-07 must
+qualify scoped-token expiry while a relay remains connected, disconnect/restart
+retirement and an actual controller tailing a growing/replaced/truncated log.
+The daemon marker requires a newly created shell generation; upgrading a host
+does not inject it into old shells or match existing Copilot folders.
+Desktop exact-caller/tab/root native approval, late-completion fencing, lock,
+revocation and JavaScript-disabled MCP operation belong to the stacked AUTO
+integration gates. Physical-iOS observation UI/usability remains deferred
+behind a separately implemented mobile client; this adds no mobile UI or
+implicit SSH/SFTP fallback. No live host was enabled or restarted by this work.
+Windows isolated native identity/watch tests passed; Linux/macOS remain
+unqualified locally. macOS currently advertises polling-only stat/list/read
+with native watch unavailable, pending a safe retained-directory watch adapter.
+Root IDs are service-incarnation scoped, while provider/grant authority and
+revisions/cursors/subscriptions retire on reconnect even when a root ID repeats.
 
 Windows task-file encoding has a deterministic Unicode regression and an
 opt-in Scheduler validation-only check in the optional Windows runner.
@@ -59,6 +106,38 @@ helper probes reproduced immediate clean shell/daemon exit with
 constrained job. These local probes create no cloud tunnels or tasks and do not
 qualify survival after a containing job closes; full native setup remains
 DT-01/#432 evidence.
+
+Windows background hosting has deterministic task-action/legacy-upgrade
+coverage and native, task-free console probes:
+`windows_worker_is_windowless_and_preserves_owned_setup_arguments_and_exit_status`
+checks the actual GUI-subsystem launcher and a console child with
+`GetConsoleWindow() == 0`, exact Unicode/space-bearing arguments and exit status;
+`background_commands_do_not_allocate_a_console` checks the same property for
+noninteractive children. Both passed locally. The ordinary setup executable's
+asInvoker/help regression still verifies interactive output. Bundle checks
+require the new Windows-only helper, and release signing/installer verification
+include it. A live signed upgrade under DT-05 must still prove that the window
+disappears while the tunnel, host fingerprint and exact daemon generation stay
+unchanged; no existing live installation was upgraded by these local tests.
+This does not qualify daemon survival after the originating job closes.
+
+Opt-in daemon replacement (ADR 0066) adds deterministic journal, persistent
+crash-budget, exact-generation reconciliation, watchdog-lease and honest iOS
+refusal coverage. DT-05 still requires signed-host tests for abrupt daemon
+termination with a healthy relay, initial Windows job containment, intentional
+shell exit (including nonzero), operator kill, supervisor interruption,
+crash-loop refusal and policy revocation on Windows/Linux/macOS. DT-07 retains
+physical iOS confirmation that automatic recovery refuses a replacement
+generation and explicit reconnect opens a fresh shell without replay. Legacy
+uninstrumented generations must refuse automatic replacement. These are native
+qualification checks, not evidence that the disappeared shell was recovered.
+
+Isolated Windows native probes also passed for PowerShell 7 startup with the
+requested generation and a retained readiness journal, and for ordinary shell
+exit with a retained exit-code marker that refuses replacement. Windows native
+fixtures use user temporary storage so journal validation retains the same
+trusted-parent policy as production, rather than weakening it for a workspace
+drive. These task-free probes do not qualify signed service supervision.
 
 Publication and broader qualification remain gated on clarification of
 standalone fesTerm usage rights, as recorded in ADR 0053. The owner subsequently
@@ -242,9 +321,9 @@ terminate unrelated shells. Keep all failed attempts as failed evidence.
 | --- | --- | --- | --- |
 | DT-01 | Use GitHub-first official CLI provisioning for private dedicated tunnels and scoped host/connect tokens. Exercise peer profile/editor/launcher/Inspector routing, separate profiles/accounts and simultaneous sessions, transient/native-store isolation and replacement without live retargeting. Verify host binding, denied/wrong/expired credentials, secret redaction, service policy and cleanup ownership. | Real-service functional + security/policy | Partial: deterministic profile/routing/rotation tests, independent source review, the private GitHub/Windows scoped-token fixture and native macOS/Pi credential-store refresh/reload passed. Expired/revoked credentials, other native stores and actual two-account qualification remain pending. Native Entra/MFA/Conditional Access is separate future scope. |
 | DT-02 | Attach a supported exact remote session; exercise PowerShell/cmd on native Windows and shells/TUIs on Linux/macOS, Unicode, keyboard/mouse modes, Ctrl+C, resize and output/backpressure. | Real-service functional + native usability | Partial: controlled Windows recovery adoption and executed PowerShell input/output passed. Broader shell/TUI, resize, backpressure and physical-input/rendering/accessibility judgments remain open. |
-| DT-03 | Disconnect/restart client and bridge; verify same daemon-owned process and ordered recovery without duplicate replies or stale input; refuse changed identities and unconfirmed takeover. | Controlled lifecycle automation + native functional | Partial: explicit client detach/reopen preserved the Windows shell's state and recovered prior output; changed host pins/generations refused. Native macOS/Pi reconnect after desktop exit and saved-identity refresh passed without another GitHub sign-in. Bridge restart and broader native lifecycle evidence remain open. |
+| DT-03 | Disconnect/restart client and bridge; verify same daemon-owned process and ordered recovery without duplicate replies or stale input; refuse changed identities and unconfirmed takeover. | Controlled lifecycle automation + native functional | Partial: explicit client detach/reopen preserved the Windows shell's state and recovered prior output; changed host pins/generations refused. Manually restarting a stopped Windows host after relay loss restored iOS discovery and attachment with the same tunnel, host fingerprint and daemon generation. Native macOS/Pi reconnect after desktop exit and saved-identity refresh passed without another GitHub sign-in. Automatic bridge recovery on new signed helpers and broader native lifecycle evidence remain open. |
 | DT-04 | Exercise only advertised inventory/create/terminate operations; reject stale generations, preserve occupied/replacement sessions and verify Cancel defaults and uncertain-result handling. | Deterministic/headless automation + native usability | Deferred: implemented operation subset and command routing. Missing operations are unsupported, not passed by omission. |
-| DT-05 | Rotate/reject/revoke credentials, lose the relay, restart/upgrade the bridge and separately test logoff/reboot/daemon termination boundaries. | Real-service/platform lifecycle + usability | Deferred: DT-01/03; record observed established-stream revocation behavior. Explicit installer `--upgrade`/`-Upgrade` of the bridge helpers has deterministic journal/definition/installer tests; a native upgrade on each platform (daemon shell survives, fingerprint and profile unchanged) remains pending. No daemon hot-upgrade or reboot-survival claim. |
+| DT-05 | Rotate/reject/revoke credentials, lose the relay, restart/upgrade the bridge and separately test logoff/reboot/daemon termination boundaries. | Real-service/platform lifecycle + usability | Partial: deterministic Windows worker tests cover delayed transient retry, clean stop, permanent refusal, cancellation and bounded attempt cleanup. Manual Windows worker restart restored iOS discovery/attachment without changing the existing shell or host identity; automatic recovery after a real relay drop on new signed helpers remains pending. DT-01/03 prerequisites and observed established-stream revocation behavior remain open. Explicit installer `--upgrade`/`-Upgrade` has deterministic journal/definition/installer tests; signed native upgrade on each platform remains pending. No daemon hot-upgrade or reboot-survival claim. |
 | DT-06 | From SSH/SFTP and Dev Tunnel sessions, deliberately open detected and OSC 8 remote Windows/POSIX text/Markdown paths, including source-relative file:///localhost, misleading labels, absent capability, foreign authorities, oversized/non-text content and stale/disconnected/changed bindings. Verify independent profiles/accounts and no client-local, OS-handler or shell-command fallback. | Deterministic routing/security + native real-service usability | Partial: shared capability/resolver, bounded bridge read RPC and snapshot identity implemented. Native Windows/Linux/macOS and real two-account qualification remain pending. |
 | DT-07 | Using the explicitly selected and consented service GitHub App, exercise Name/Tunnel editor and Launcher, one-click code-copy/browser open, native device flow, actual account confirmation, connect-token mint, labeled-port/pinned-host discovery, changed-host Cancel default, expiry/refresh/revocation, independent accounts and stale/cancelled saves. Verify no CLI dependency, secret leakage or mutation of live sessions. | Deterministic auth/discovery/UI + real-service/native security/usability | Partial: SDK-published service application, terse standard dialog, exact device/refresh contracts, application/account-bound V2 vault encoding, legacy/cross-app refusal and stale/cancelled publication have automated coverage. Native macOS/Pi sign-in, one-click clipboard/browser delivery, approved pinned attachment and actual shell input/output passed. A private checker passed real secretless refresh, native-store save/reload, account reverification and fresh scoped-token discovery with unchanged host binding; the owner confirmed saved-profile reconnect after desktop restart without another sign-in. Remaining [#429](https://github.com/fes/fesTerm/issues/429) gates include actual expiry/revocation, two accounts, other native platforms and keyboard/accessibility. iOS runtime/Keychain/mobile GUI and standalone usage rights remain unqualified. |
 
@@ -699,6 +778,82 @@ navigation grid to Home/Up/End/PgUp, Left/Down/Right/PgDn and
 Insert/Delete/Shift+Tab/Return. Actual-widget tests cover that order and narrow
 row fit, local Ctrl+Shift+C selection-copy output, Ctrl+Shift+P clipboard-read
 and paste ordering, and More → Force redraw without terminal input or reset.
+### Shared iOS documents
+
+The first #570/ADR 0069 slice implements the portable document registry and
+native I/O boundary (draft #575). Its dependent local-editor slice wires the
+Documents launcher/Browse in Files and shared local source views into the
+existing shell. Local multiline replay, shared undo/redo, independent view
+selection, read-only refusal and dirty-close input gating have actual-widget
+tests; native keyboard/IME and picker/provider qualification remain open.
+Additional regressions cover a focused 1,024,000-character document with cached
+linear caret geometry, hardware Tab, stale-refresh requeue and permission
+downgrades, explicit target-bound Compare/Keep/Reload, and document-chip close
+from a terminal without background input. Short-height actions live in More.
+Conflict actions stay pinned above keyboard occlusion; automated coordinates
+check complete touch-target visibility at landscape, phone and narrow widths.
+Its deterministic tests prove shared
+identity/history, independent selection targets, exact multiline Unicode/BOM/
+line-ending undo, read-only/revoked mutation refusal, encoded bounds, last-view
+close, stale reads and save completion. A Simulator-only native smoke proves
+actual BOM/CRLF/Unicode publication through a Unicode/space-bearing filename,
+preservation of 0600 permissions, stale
+overwrite refusal, external refresh and asynchronous close/fixture cleanup.
+The extended fixture induces a real oversized-file revert failure, verifies
+that refresh/save/reopen on the failed instance refuse without a UIKit
+exception, then recovers with a fresh native instance and verifies actual
+publication again. A deliberately seeded older failure must be superseded by
+the fresh read. Native lease counts prove unopened and in-flight-drop objects
+are released. Production recovery must reacquire authority through Files;
+reopening the failed instance is intentionally not supported.
+Writer-admission tests cover save/mutation exclusion and worker lifetimes;
+real OpenSSH integration additionally checks refused downloads/mutations leave
+existing files untouched and the blocking publication worker owns its lease.
+
+Run `python3 scripts/build-ios-spike.py --live-ssh --native-document-smoke --run`
+with the documented iOS toolchain to enable the smoke. Its console must reach
+`festerm-document-smoke: PASS`; a launch or build alone is not a pass.
+The fixture is freshly created under this app's Caches and removed after
+successful native close. The smoke is compiled out of normal and physical-device
+builds; rebuild without the opt-in flag before user testing.
+The iPhone 17 Pro/iOS 26.5 Simulator passed this fixture smoke on 2026-11-04.
+This does not qualify picker grants, iCloud/third-party providers, file
+protection metadata, background operation or UI behavior.
+Native provider and visual evidence remains open:
+
+The opt-in `capture_document_ui` test emits actual-widget phone, landscape
+and tablet images plus hashes/source attribution to a new directory named by
+`FESTERM_DOCUMENT_UI_OUT`. Fixtures use the refusing non-iOS native stub, never
+real Files grants. Keyboard occlusion is simulated and no UIKit keyboard
+pixels are present; do not treat these as native acceptance.
+The existing `scripts/capture-mobile-ui.py` runner (and optional-validation
+entry point) includes this gallery under `documents/`, with its own manifest.
+Failure of either capture remains a failed attempt with evidence retained.
+
+| ID | Environment | Required evidence |
+|---|---|---|
+| MOB-08 | iPhone/iPad Simulator and physical devices; local, iCloud and an available third-party Files provider | Once the native surface is wired, open/reopen authorized files, revoke permission, move/delete/replace a source, edit across two views and undo/redo. Verify stable accessible saved/unsaved/conflict chip markers, local keyboard ownership with no terminal input, actual safe-area/keyboard occlusion at phone portrait/landscape, iPad and narrow Split View, and no Edit/Preview split panes. Exercise generation-checked saves, concurrent outside writes, simultaneous local transfers, storage denial/full-provider failures, Compare/Reload/Keep edits/Save As and final-dirty-view close. Remote SFTP must remain read-only, with an explicit distinct local copy. Compare real captures against numbered owner mockups using a Claude visual review; classify intentional no-Split/font/keyboard differences separately from true mismatches. Verify VoiceOver, Dynamic Type, hardware/floating keyboard, non-English IME and selection/context menus. A document dictation acceptance must be one Undo and must refuse stale targets; speech/model/privacy qualification is separately MOB-07/#564. |
+
+For the dependent Markdown slice, edit a local `.md` file and switch to Preview:
+verify current content, retained source selection and one shared undo history.
+Use Contents on phone, with keyboard reservation, in short landscape and on
+iPad; verify heading navigation and dismissal when switching views or after an
+external clean reload. Check the wide Contents rail and that compact More can
+scroll to Edit/Preview/Contents above actual occlusion. Duplicate views must
+retain independent mode/scroll/navigation. Close while a projection is updating;
+reopen another file and confirm no late content appears. Exercise visible parser
+failure/retry without source mutation. Links/images must not fetch resources and
+embedded HTML must remain literal. These actual-widget flows are implemented;
+native Files, keyboard, VoiceOver and Dynamic Type evidence is still required.
+Source syntax/line numbers, Find/Replace, local copy/Save As and shared document
+dictation are not part of this Markdown projection slice.
+
+### On-device terminal dictation evidence
+
+| ID | Environment | Required evidence |
+|---|---|---|
+| MOB-07 | Physical iPhone/iPad with local speech model; Simulator for UI/unsupported state only | On both custom keyboard layouts, confirm Left/Up/Down/Right followed immediately by a microphone icon, then Extended keys; VoiceOver identifies the icon as Mic, and holding it never repeats. Tap it, test denied/restricted and granted speech/microphone permissions, and recognize with networking disabled. Confirm on-device support for the selected language/model; unsupported cases must never fall back to a server. Verify the recording indicator, latest-only revisions, 4096-byte Unicode cap, native 45-second deadline, Stop → brief Finishing → final punctuated transcript in an editable review, first-use permission alerts that keep a connected plain SSH session alive (and backgrounding during an alert still suspends it), single-use Insert with no Return/modifiers and rejection of pasted CR/LF/ESC/other controls. While recording and reviewing, test interruption, app switch/lock/background, session/tab/workspace replacement and reconnect: capture must stop even without another UI frame, text must not be replayed and stale callbacks must not restore it. Cancel leaves terminal bytes unchanged. Inspect app-owned storage/logs for absence of audio/transcripts using non-sensitive fixtures. Exercise actual shell/TUI insertion and VoiceOver/touch targets; remote programs may react to explicitly inserted text. Simulator launch/manual-preview tests do not establish native speech privacy or recognition quality. Tracked in #564; ADR 0066. |
+
 For MOB-02/MOB-06, verify copy/paste against the real iOS pasteboard, the native
 keyboard's 123 / #+= buttons, modifier highlighting, and full redraw while
 connected and while reading disconnected history. A linked device build and
@@ -2962,3 +3117,13 @@ same change.
   evidence handling.
 - `gui-design.md` defines intended behavior and identifies usability
   hypotheses; this registry says where their validation is tracked.
+
+For MOB-06 / TUNNEL-11, add two distinct GitHub accounts on iPhone and iPad;
+choose the intended identity in GitHub's device approval page. Verify both
+accounts survive relaunch, each lists its own tunnels, and two saved profiles
+connect using their respective accounts. Switch during a pending listing and
+confirm no old results or draft target survive. Cancel adding an account and
+verify the previous selection remains. Reauthorize the same user without a
+duplicate entry. Sign out one account and verify the other remains available
+and the removed account's profiles never silently use the remaining identity.
+These native/service checks remain pending.

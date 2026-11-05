@@ -46,6 +46,31 @@ class MobileCaptureTests(unittest.TestCase):
             self.assertEqual(run.call_args.kwargs["env"]["FESTERM_MOBILE_UI_OUT"], str(output))
             self.assertEqual((output / "partial.png").read_bytes(), b"synthetic partial evidence")
 
+    def test_document_capture_is_separate_attributed_evidence_and_failure_is_not_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory).resolve() / "new"
+
+            def capture_then_fail(arguments, **kwargs):
+                if arguments[-4] == "ui_gallery::capture_mobile_ui_gallery":
+                    output.mkdir()
+                    (output / "manifest.json").write_text("shell evidence")
+                else:
+                    documents = Path(kwargs["env"]["FESTERM_DOCUMENT_UI_OUT"])
+                    documents.mkdir()
+                    (documents / "partial.png").write_bytes(b"partial documents")
+                    raise subprocess.CalledProcessError(1, arguments)
+
+            with patch.object(capture.subprocess, "run", side_effect=capture_then_fail) as run:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    capture.main(["--output", str(output)])
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args.args[0][-4:],
+                             ["documents::tests::capture_document_ui", "--", "--ignored", "--exact"])
+            self.assertEqual(run.call_args.kwargs["timeout"], 600)
+            self.assertTrue(run.call_args.kwargs["check"])
+            self.assertEqual((output / "manifest.json").read_text(), "shell evidence")
+            self.assertEqual((output / "documents/partial.png").read_bytes(), b"partial documents")
+
 
 if __name__ == "__main__":
     unittest.main()

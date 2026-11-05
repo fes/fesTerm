@@ -155,6 +155,7 @@ impl MobileApp {
         tab: Option<u64>,
         automatic: bool,
     ) {
+        self.cancel_dictation();
         self.notice = None;
         self.tunnel.attach_error = None;
         let Some(spec) = self
@@ -473,7 +474,7 @@ impl MobileApp {
                             self.start_tunnel_connect(ctx, &profile, tab, false);
                         }
                         Resume::Nothing => {
-                            self.editor.tunnel_account = Some(account.id.clone());
+                            self.select_tunnel_account(account.id.clone());
                             self.refresh_tunnel_list(ctx, account.id);
                         }
                     }
@@ -601,6 +602,24 @@ impl MobileApp {
 }
 
 impl MobileApp {
+    /// Changing identity invalidates account-scoped discovery and the draft target.
+    fn select_tunnel_account(&mut self, account: String) {
+        if self.editor.tunnel_account.as_ref() != Some(&account) {
+            self.clear_tunnel_draft();
+            self.editor.tunnel_account = Some(account);
+        }
+    }
+
+    fn clear_tunnel_draft(&mut self) {
+        self.editor.tunnel_name.clear();
+        self.editor.session_name.clear();
+        self.editor.confirm_delete_tunnel = false;
+        self.editor.renaming_tunnel = None;
+        self.editor.friendly_name_draft.clear();
+        self.editor.tunnel = None;
+        self.tunnel.list = None;
+    }
+
     /// Fills the editor's account and tunnel choices from the live backend.
     pub(super) fn sync_editor_tunnel(&mut self, ctx: &egui::Context) {
         if !self.editor.open || self.editor.kind(self.caps) != model::ProfileKind::DevTunnel {
@@ -614,17 +633,21 @@ impl MobileApp {
             return;
         }
         let accounts = self.tunnel_accounts();
-        let bound = self
-            .editor
-            .tunnel_account
-            .clone()
-            .filter(|id| accounts.iter().any(|(known, _)| known == id))
-            .or_else(|| accounts.first().map(|(id, _)| id.clone()));
+        let bound = self.editor.tunnel_account.clone().or_else(|| {
+            if self.editor.editing.is_none() {
+                accounts.first().map(|(id, _)| id.clone())
+            } else {
+                None
+            }
+        });
         if bound != self.editor.tunnel_account {
             self.editor.tunnel_account = bound.clone();
         }
         let listed = self.tunnel.list.as_ref().map(|list| list.account.clone());
-        if let Some(account) = &bound {
+        if let Some(account) = bound
+            .as_ref()
+            .filter(|id| accounts.iter().any(|(known, _)| known == *id))
+        {
             if listed.as_ref() != Some(account) {
                 self.refresh_tunnel_list(ctx, account.clone());
             }
@@ -635,8 +658,13 @@ impl MobileApp {
                 .find(|(known, _)| known == id)
                 .map(|(_, login)| login.clone())
         });
-        let list = self.tunnel.list.as_ref();
+        let list = self
+            .tunnel
+            .list
+            .as_ref()
+            .filter(|list| Some(&list.account) == bound.as_ref());
         self.editor.tunnel = Some(model::DevTunnelChoices {
+            accounts,
             account_login: login,
             tunnels: list
                 .map(|list| {
@@ -661,12 +689,30 @@ impl MobileApp {
         action: forms::EditorAction,
     ) {
         match action {
+            forms::EditorAction::SelectTunnelAccount(index) => {
+                let account = self
+                    .editor
+                    .tunnel
+                    .as_ref()
+                    .and_then(|choices| choices.accounts.get(index))
+                    .map(|(id, _)| id.clone());
+                if let Some(account) = account {
+                    if self.tunnel_accounts().iter().any(|(id, _)| id == &account) {
+                        self.select_tunnel_account(account);
+                    }
+                }
+            }
             forms::EditorAction::SignIn => {
                 self.start_sign_in(ctx, None, Resume::Nothing);
             }
             forms::EditorAction::SignOut => {
-                if let Some(account) = self.editor.tunnel_account.take() {
+                if let Some(account) = self.editor.tunnel_account.clone() {
                     self.sign_out_account(&account);
+                    if !self.tunnel_accounts().iter().any(|(id, _)| *id == account) {
+                        // The draft target belonged to the removed identity.
+                        self.clear_tunnel_draft();
+                        self.editor.tunnel_account = None;
+                    }
                 }
             }
             forms::EditorAction::RefreshTunnels => {
@@ -705,7 +751,12 @@ impl MobileApp {
             self.editor.error = Some("Choose or enter a tunnel name".to_owned());
             return None;
         }
-        let Some(account) = self.editor.tunnel_account.clone() else {
+        let Some(account) = self
+            .editor
+            .tunnel_account
+            .clone()
+            .filter(|id| self.tunnel_accounts().iter().any(|(known, _)| known == id))
+        else {
             self.editor.error = Some("Sign in with GitHub first".to_owned());
             return None;
         };

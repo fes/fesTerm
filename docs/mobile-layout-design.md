@@ -7,6 +7,98 @@ Companion to ADR 0031 and
 narrow-width precedent to phone/tablet form factors rather than introducing
 a separate device-specific layout system.
 
+## Shared iOS document editor
+
+The owner-approved November 4 handoff is tracked in
+[#570](https://github.com/fes/fesTerm/issues/570) and
+[ADR 0069](adr/0069-ios-authorized-shared-documents.md). Numbered PNGs and
+matching SVGs in `images/gui-mockups/ios-editor/` are proposed UI references,
+not screenshots of implemented or accepted native behavior. Their source is
+the owner-supplied `festerm-ios-editor-markdown.zip`, SHA-256
+`316ca725a604e09f2ed28f77bae6a2dd3bb01c59c97b76cefffeb36747f7b208`.
+
+**Owner override: do not implement Edit/Preview split panes at any size.**
+Screen 06 is deferred in full; screen 15 supplies wide typography, chrome
+and Contents-rail guidance only. The current registered UI and monospace
+fonts supersede the artwork's Inter/DejaVu stand-ins. Native keyboard
+drawings are schematic; actual safe area and UIKit occlusion govern layout.
+Use the existing mobile theme, first-party icons, 4/8/12/16/24-point spacing
+and minimum 44-point primary touch regions.
+
+The first implementation slice adds the portable registry in
+`festerm-mobile-docs`, reusing `festerm-document::TextDocument`. One canonical
+origin owns text, revision, encoding, undo, dirty/conflict and save state;
+views own selection, focus and scroll. Reopening an origin must not replace
+unsaved text. Guarded replacements reject stale revisions, selections,
+source/access epochs and closed views. One accepted replacement is one
+non-coalesced undo transaction; Unicode and original line endings survive undo.
+
+Reads and saves are token-bound. A changed clean source reloads; a changed
+dirty source conflicts. Keep edits neither writes nor enables automatic
+overwrite. Saves establish the history point actually written, not newer
+edits; permission revocation gates input immediately even while an admitted
+save is finishing. Only the last dirty view prompts on close.
+
+The native boundary stages bounded snapshots through UIDocument and a
+single-selection Files picker, with safe publication and app-owned writer
+admission tested independently of the UI. The dependent local-editor slice
+wires Browse in Files and source views into the existing global shell,
+without replacing Profiles/Sessions/Settings. Document views join the shared
+chip/surface inventory but never own a terminal grid or worker. Local source
+typing, shared undo/redo and dirty-close handling use the registry; the native
+field bridge now publishes visual rows and mirrors multiline Return. Geometry
+uses a linear row/glyph walk and is cached for unchanged layout. Source actions
+use standard button heights; short-height views move them into More instead of
+consuming the editing area. Conflict review displays the external version:
+Keep edits requires a separate Save, Reload explicitly discards edits/history,
+and changed revision/source/access invalidates either decision.
+Actual provider grants and native keyboard behavior still require qualification.
+The next dependent slice connects Markdown Edit/Preview and Contents to that
+same revision, without a second editor or history. One cancellable, read-only
+parser worker per host produces shared immutable projections; cancelled work
+retains its slot until actual completion. Stale results never become current.
+Each view retains its own mode, source selection, preview scroll and heading
+navigation. Compact Contents is a bounded sheet captured against its view and
+revision; switching views or updating the source dismisses it. Wide Contents
+uses the existing reading rail, never an Edit/Preview split. Contents headings
+retain minimum 44-point touch regions. Short-height mode controls join source
+actions in the scrollable More menu. Parser errors remain
+visible and offer explicit retry without changing source. The reused mobile
+renderer keeps links, images and embedded HTML inert; no resource authority or
+network loading is added.
+Source syntax/line numbers, Find/Replace, safe local copy/Save As and the shared
+keyboard-region dictation composer remain subsequent slices.
+Files URLs require retained authorization and file-provider coordination;
+display paths never grant access. Remote SFTP remains read-only beneath
+the UI, and saving an editable local copy creates a distinct origin/history.
+No document path is interpolated into a terminal command.
+
+`MOB-08` owns the document workflow and its remaining native/visual gates;
+on-device speech remains separately qualified under `MOB-07`/#564.
+
+## On-device dictation
+
+The experimental Hold symbols and Shell row keyboards add a microphone icon
+(accessible name **Mic**) immediately after the Left/Up/Down/Right arrows in the
+pinned utility row, before Extended keys. Dictation replaces terminal input
+with a bounded review sheet:
+explicit permission/capability checks, visible Listening, **Stop and review**,
+editable single-line text, **Insert**, and **Cancel**. Insert never presses
+Return; the user submits separately. It rejects control characters and line
+breaks, clears modifiers and revalidates the original ready session.
+
+Audio stays on-device, capture has a native 45-second maximum, and only the
+latest 4096-byte transcript revision is retained. Stop (or the deadline) ends
+audio and briefly shows **Finishing transcription** while the recognizer
+delivers its final punctuated result (at most 1.5 seconds). A first-use
+permission alert does not suspend the app's sessions. Background/lock/interruption,
+navigation and session replacement stop and cancel without replay. No audio
+or transcript is saved or logged. Unsupported recognition fails explicitly,
+without cloud fallback. **Edit text manually** permits preview-flow testing
+on Simulator but does not simulate or qualify speech recognition.
+See [ADR 0068](adr/0068-ios-on-device-terminal-dictation.md), `MOB-07` and
+[#564](https://github.com/fes/fesTerm/issues/564) for the remaining native gates.
+
 ## Principle: key layout off measured breakpoints, not device type
 
 `docs/sftp-ui-design.md` already documents a narrow-width fallback for the
@@ -94,7 +186,7 @@ Forms and authentication
 continue to use the native keyboard regardless of the terminal preference.
 
 Both terminal layouts follow the owner's 2026-11-02 keyboard bundle: a grouped
-Esc/Tab/Ctrl/Alt/Shift utility strip with Left/Down/Up/Right arrows, permanent
+Esc/Tab/Ctrl/Alt/Shift utility strip with Left/Up/Down/Right arrows, permanent
 number row, QWERTY with an inset middle row, synchronized lower Shift and
 Backspace, and a symbols/ABC layer, comma, Space, period and Return. Shell row
 adds directly tappable `/ \ - _ ' " | & $ ~`. Hold symbols instead shows those
@@ -477,5 +569,7 @@ Saved profiles, the New/Edit profile editor, session chips, the All-sessions
 sheet, the reconnect banner and the host-verification sheet are now backed by
 `festerm-mobile-profiles`. Trust persists across launches and a changed key is a
 hard refusal with no approve action. Reconnect is honest: a plain shell starts
-new, tmux/screen profiles reattach by name. Bottom sheets grow in place up to
+new, tmux/screen profiles reattach by name. Touching and holding a saved
+profile lifts it so it can be dragged into a new order, which is saved at once;
+reordering is off while a search filters the list. Bottom sheets grow in place up to
 88% of the screen and scroll beyond that.

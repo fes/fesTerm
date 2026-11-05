@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package only the standalone helpers; never the GUI or a ConPTY sidecar.
+"""Package only the standalone helpers; never the desktop app or a ConPTY sidecar.
 
 Checksums provide integrity, not an independent publisher signature. macOS and
 Windows executables must be signed and verified by the protected release job
@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BINARIES = ("festerm-sessiond", "festerm-tunnel-bridge", "festerm-tunnel-setup")
 PLATFORMS = ("linux", "macos", "windows")
 ARCHITECTURES = ("x86_64", "aarch64")
+WINDOWS_WORKER = "festerm-tunnel-worker.exe"
 # These exact published crates omit their license files. Select their declared
 # Apache-2.0 option and retain attribution; an upgrade requires renewed review.
 APACHE_DECLARATIONS = {
@@ -30,6 +31,19 @@ APACHE_DECLARATIONS = {
     ("pageant", "0.2.1"): "Declared author: Eugene; https://github.com/warp-tech/russh",
     ("russh-cryptovec", "0.62.0"): "Copyright 2016 Pierre-Étienne Meunier",
     ("russh-util", "0.52.0"): "russh contributors, https://github.com/warp-tech/russh",
+}
+# These exact published objc2-family crates (macOS-only, via notify) omit their
+# license files. Select their declared MIT option and retain upstream attribution
+# from https://github.com/madsmtm/objc2/blob/main/LICENSE-MIT.txt.
+MIT_DECLARATIONS = {
+    (name, version): "Copyright 2026 Mads Marquart; https://github.com/madsmtm/objc2"
+    for name, version in (
+        ("dispatch2", "0.3.1"),
+        ("objc2", "0.6.4"),
+        ("objc2-core-foundation", "0.3.2"),
+        ("objc2-core-services", "0.3.2"),
+        ("objc2-encode", "4.1.0"),
+    )
 }
 MIT_LICENSE = """fesTerm standalone helpers
 Source: https://github.com/fes/fesTerm
@@ -118,8 +132,14 @@ def third_party_notices(metadata, version, root):
         notices.append(f"Declared license: {package.get('license') or 'see retained license file'}\n")
         if package.get("repository"):
             notices.append(f"Source repository: {package['repository']}\n")
-        if not files:
-            declaration = APACHE_DECLARATIONS.get((package["name"], package["version"]))
+        key = (package["name"], package["version"])
+        if not files and key in MIT_DECLARATIONS:
+            if package["license"] not in ("MIT", "Zlib OR Apache-2.0 OR MIT"):
+                raise ValueError(f"missing dependency license/notice: {package['name']}")
+            terms = MIT_LICENSE.split("MIT License\n", 1)[1]
+            notices.append(f"{MIT_DECLARATIONS[key]}\nLicensed under MIT.\n\n{terms}\n")
+        elif not files:
+            declaration = APACHE_DECLARATIONS.get(key)
             if not declaration or package["license"] not in (
                 "Apache-2.0", "MIT OR Apache-2.0",
             ):
@@ -139,10 +159,15 @@ def third_party_notices(metadata, version, root):
 
 
 def entry_names(platform):
-    suffix = ".exe" if platform == "windows" else ""
-    return tuple(name + suffix for name in BINARIES) + (
+    return binary_names(platform) + (
         "VERSION", "LICENSE", "THIRD_PARTY_NOTICES.txt",
     )
+
+
+def binary_names(platform):
+    suffix = ".exe" if platform == "windows" else ""
+    names = tuple(name + suffix for name in BINARIES)
+    return names + (WINDOWS_WORKER,) if platform == "windows" else names
 
 
 def verify_bundle(archive, version, platform):
@@ -152,7 +177,7 @@ def verify_bundle(archive, version, platform):
             if sorted(bundle.getnames()) != sorted(expected):
                 raise ValueError("bundle must contain exactly the allowlisted entries")
             for entry in bundle.getmembers():
-                expected_mode = 0o755 if entry.name in expected[:3] else 0o644
+                expected_mode = 0o755 if entry.name in binary_names(platform) else 0o644
                 if not entry.isfile() or entry.mode != expected_mode:
                     raise ValueError(f"unexpected bundle entry mode/type: {entry.name}")
                 content = bundle.extractfile(entry).read()
@@ -168,7 +193,7 @@ def verify_bundle(archive, version, platform):
                 raise ValueError("bundle VERSION does not match release version")
             for entry in bundle.infolist():
                 mode = entry.external_attr >> 16
-                expected_mode = 0o755 if entry.filename in expected[:3] else 0o644
+                expected_mode = 0o755 if entry.filename in binary_names(platform) else 0o644
                 if not stat.S_ISREG(mode) or stat.S_IMODE(mode) != expected_mode:
                     raise ValueError(f"unexpected bundle entry mode: {entry.filename}")
                 if not bundle.read(entry):
@@ -181,9 +206,8 @@ def build_bundle(root, binary_dir, output_dir, version, platform, arch, metadata
     validate_version(version, root)
     if platform not in PLATFORMS or arch not in ARCHITECTURES:
         raise ValueError("unsupported platform or architecture")
-    names = entry_names(platform)
     entries = {}
-    for name in names[:3]:
+    for name in binary_names(platform):
         path = binary_dir / name
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"missing regular helper binary: {name}")
@@ -213,7 +237,7 @@ def build_bundle(root, binary_dir, output_dir, version, platform, arch, metadata
                 for name in sorted(entries):
                     info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
                     info.create_system = 3
-                    mode = 0o755 if name in names[:3] else 0o644
+                    mode = 0o755 if name in binary_names(platform) else 0o644
                     info.external_attr = (stat.S_IFREG | mode) << 16
                     bundle.writestr(
                         info, entries[name], compress_type=zipfile.ZIP_DEFLATED,
@@ -224,7 +248,7 @@ def build_bundle(root, binary_dir, output_dir, version, platform, arch, metadata
                 with tarfile.open(fileobj=compressed, mode="w", format=tarfile.USTAR_FORMAT) as bundle:
                     for name in sorted(entries):
                         info = tarfile.TarInfo(name)
-                        info.mode = 0o755 if name in names[:3] else 0o644
+                        info.mode = 0o755 if name in binary_names(platform) else 0o644
                         info.size = len(entries[name])
                         bundle.addfile(info, io.BytesIO(entries[name]))
         archive_file.close()

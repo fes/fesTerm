@@ -651,15 +651,17 @@ pub fn text_field_with_limit(
         ui.set_width(width);
         caption_label(ui, caption);
         let margin = Margin::symmetric(14, 14);
-        let response = ui.add_sized(
+        // A stable id keeps focus (and the keyboard) when content above the
+        // field appears or disappears between frames.
+        let response = form_field(
+            ui,
             [width, space::FIELD_HEIGHT],
-            // A stable id keeps focus (and the keyboard) when content above
-            // the field appears or disappears between frames.
+            ("text_field", caption),
             egui::TextEdit::singleline(text)
-                .id_salt(("text_field", caption))
                 .hint_text(hint)
                 .margin(margin)
                 .char_limit(char_limit),
+            false,
         );
         if response.has_focus() && !ui.clip_rect().contains_rect(response.rect) {
             response.scroll_to_me(Some(egui::Align::Center));
@@ -1038,6 +1040,26 @@ pub fn bottom_sheet(
     bounds: Rect,
     content: impl FnOnce(&mut Ui),
 ) -> SheetOutcome {
+    bottom_sheet_inner(ctx, id, bounds, content, None::<fn(&mut Ui)>)
+}
+
+pub fn bottom_sheet_with_footer(
+    ctx: &egui::Context,
+    id: &str,
+    bounds: Rect,
+    content: impl FnOnce(&mut Ui),
+    footer: impl FnOnce(&mut Ui),
+) -> SheetOutcome {
+    bottom_sheet_inner(ctx, id, bounds, content, Some(footer))
+}
+
+fn bottom_sheet_inner(
+    ctx: &egui::Context,
+    id: &str,
+    bounds: Rect,
+    content: impl FnOnce(&mut Ui),
+    footer: Option<impl FnOnce(&mut Ui)>,
+) -> SheetOutcome {
     let mut outcome = SheetOutcome::default();
     let scrim_id = Id::new(("sheet-scrim", id));
     egui::Area::new(scrim_id)
@@ -1097,7 +1119,15 @@ pub fn bottom_sheet(
                     );
                     // A ScrollArea sizes itself from last frame's content, so the
                     // content height is tracked here to follow in-place changes.
-                    let cap = max_height - 40.0;
+                    let footer_id = Id::new(("sheet-footer-height", id));
+                    let reserved = if footer.is_some() {
+                        ctx.data_mut(|data| data.get_temp::<f32>(footer_id))
+                            .unwrap_or(space::BUTTON_HEIGHT)
+                            + ui.spacing().item_spacing.y
+                    } else {
+                        0.0
+                    };
+                    let cap = (max_height - 40.0 - reserved).max(0.0);
                     ui.set_max_height(cap);
                     let content_id = Id::new(("sheet-content", id));
                     let known = ctx.data_mut(|data| data.get_temp::<f32>(content_id));
@@ -1113,6 +1143,14 @@ pub fn bottom_sheet(
                     if known.is_none_or(|known| (known - content_height).abs() > 0.5) {
                         ctx.data_mut(|data| data.insert_temp(content_id, content_height));
                         ctx.request_repaint();
+                    }
+                    if let Some(footer) = footer {
+                        let height = ui.scope(footer).response.rect.height();
+                        let previous = ctx.data_mut(|data| data.get_temp::<f32>(footer_id));
+                        if previous.is_none_or(|previous| (previous - height).abs() > 0.5) {
+                            ctx.data_mut(|data| data.insert_temp(footer_id, height));
+                            ctx.request_repaint();
+                        }
                     }
                 });
             frame.response.rect.height()
@@ -1213,4 +1251,574 @@ pub fn paint_plus(painter: &egui::Painter, center: egui::Pos2, half: f32, tint: 
         ],
         stroke,
     );
+}
+
+/// Hold time before a form field offers its edit menu (UIKit uses ~0.5 s).
+pub const FIELD_LONG_PRESS_SECS: f64 = 0.5;
+/// Finger travel that turns a hold into a scroll or selection drag instead.
+const FIELD_LONG_PRESS_SLOP: f32 = 10.0;
+
+/// An edit the field menu asked for, applied to the focused field next pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FieldEdit {
+    Paste,
+    SelectAll,
+    Copy,
+    Cut,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FieldMenu {
+    field: Id,
+    opened_at: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingFieldEdit {
+    field: Id,
+    edit: FieldEdit,
+}
+
+fn field_menu_id() -> Id {
+    Id::new("festerm-field-edit-menu")
+}
+
+fn pending_field_edit_id() -> Id {
+    Id::new("festerm-field-pending-edit")
+}
+
+/// The field whose edit menu is showing, if any.
+pub fn field_menu_owner(ctx: &egui::Context) -> Option<Id> {
+    ctx.data(|data| data.get_temp::<FieldMenu>(field_menu_id()))
+        .map(|menu| menu.field)
+}
+
+/// Removes the edit queued by the field menu if its field still has focus.
+pub fn take_field_edit(ctx: &egui::Context) -> Option<FieldEdit> {
+    let pending = ctx.data_mut(|data| {
+        let pending = data.get_temp::<PendingFieldEdit>(pending_field_edit_id());
+        data.remove::<PendingFieldEdit>(pending_field_edit_id());
+        pending
+    })?;
+    (ctx.memory(|memory| memory.focused()) == Some(pending.field)).then_some(pending.edit)
+}
+
+/// egui draws form fields itself, so UIKit has no text view to attach its
+/// Paste menu to. A press-and-hold on a field opens an equivalent menu; its
+/// edits are replayed as ordinary egui clipboard events into that field.
+pub fn field_edit_menu(ui: &mut Ui, response: &Response, has_text: bool, secret: bool) {
+    let ctx = ui.ctx().clone();
+    let field = response.id;
+    let now = ui.input(|input| input.time);
+    let drag = caret_drag(&ctx).filter(|drag| drag.field == field);
+    if let Some(mut drag) = drag {
+        if ui.input(|input| input.pointer.any_down()) {
+            let latest = ui.input(|input| input.pointer.latest_pos());
+            if !drag.moved
+                && latest.is_some_and(|at| at.distance(drag.origin) > FIELD_LONG_PRESS_SLOP)
+            {
+                drag.moved = true;
+                ctx.data_mut(|data| data.insert_temp(caret_drag_id(), drag));
+            }
+        } else {
+            ctx.data_mut(|data| data.remove::<CaretDrag>(caret_drag_id()));
+            // Like UIKit: a hold that never moved offers the edit menu.
+            if !drag.moved {
+                ctx.data_mut(|data| {
+                    data.insert_temp(
+                        field_menu_id(),
+                        FieldMenu {
+                            field,
+                            opened_at: now,
+                        },
+                    );
+                });
+                ctx.memory_mut(|memory| memory.request_focus(field));
+            }
+        }
+    } else if response.is_pointer_button_down_on() && ui.input(|input| input.any_touches()) {
+        let (start, origin, latest) = ui.input(|input| {
+            (
+                input.pointer.press_start_time(),
+                input.pointer.press_origin(),
+                input.pointer.latest_pos(),
+            )
+        });
+        let still = matches!((origin, latest), (Some(a), Some(b)) if a.distance(b) <= FIELD_LONG_PRESS_SLOP);
+        if let (Some(start), true, Some(latest)) = (start, still, latest) {
+            let held = now - start;
+            if held >= FIELD_LONG_PRESS_SECS {
+                // The held finger now carries the caret until it lifts.
+                close_field_menu(&ctx);
+                ctx.data_mut(|data| {
+                    data.insert_temp(
+                        caret_drag_id(),
+                        CaretDrag {
+                            field,
+                            origin: latest,
+                            moved: false,
+                        },
+                    );
+                });
+                ctx.memory_mut(|memory| memory.request_focus(field));
+                ctx.request_repaint();
+            } else {
+                // A stationary finger delivers no events; wake to notice the hold.
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(
+                    FIELD_LONG_PRESS_SECS - held + 0.01,
+                ));
+            }
+        }
+    }
+    let Some(menu) = ctx
+        .data(|data| data.get_temp::<FieldMenu>(field_menu_id()))
+        .filter(|menu| menu.field == field)
+    else {
+        return;
+    };
+    let area_id = field.with("edit-menu");
+    let pressing_menu = ui.input(|input| input.pointer.any_down() || input.pointer.any_released())
+        && ui
+            .input(|input| input.pointer.interact_pos())
+            .zip(ctx.memory(|memory| memory.area_rect(area_id)))
+            .is_some_and(|(origin, rect)| rect.contains(origin));
+    if pressing_menu {
+        // The field surrenders focus to a press outside it; hold on to it so
+        // UIKit's keyboard stays up while the finger rests on the menu.
+        ctx.memory_mut(|memory| memory.request_focus(field));
+    }
+    if ctx.memory(|memory| memory.focused()) != Some(field) && now > menu.opened_at {
+        close_field_menu(&ctx);
+        return;
+    }
+    let selected = egui::TextEdit::load_state(&ctx, field)
+        .and_then(|state| state.cursor.char_range())
+        .is_some_and(|range| !range.is_empty());
+    let mut items = Vec::with_capacity(4);
+    if selected && !secret {
+        items.push(("Cut", FieldEdit::Cut));
+        items.push(("Copy", FieldEdit::Copy));
+    }
+    items.push(("Paste", FieldEdit::Paste));
+    if has_text {
+        items.push(("Select All", FieldEdit::SelectAll));
+    }
+    let bounds = ctx.content_rect();
+    let item_width = 92.0;
+    let size = egui::vec2(item_width * items.len() as f32, space::TOUCH);
+    let mut pos = egui::pos2(
+        response.rect.left() + space::SM,
+        response.rect.top() - size.y - space::SM,
+    );
+    if pos.y < bounds.top() {
+        pos.y = response.rect.bottom() + space::SM;
+    }
+    pos.x = pos
+        .x
+        .min(bounds.right() - size.x - space::SM)
+        .max(bounds.left() + space::SM);
+    let mut chosen = None;
+    let area = egui::Area::new(area_id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos)
+        .show(&ctx, |ui| {
+            egui::Frame::new()
+                .fill(color::SURFACE_RAISED)
+                .stroke(Stroke::new(1.0, color::BORDER))
+                .corner_radius(CornerRadius::same(radius::CONTROL))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.horizontal(|ui| {
+                        for (index, (label, edit)) in items.iter().enumerate() {
+                            if index > 0 {
+                                let x = ui.cursor().left();
+                                ui.painter().vline(
+                                    x,
+                                    ui.max_rect().y_range().shrink(space::SM),
+                                    Stroke::new(1.0, color::DIVIDER),
+                                );
+                            }
+                            let (rect, item) = ui.allocate_exact_size(
+                                egui::vec2(item_width, space::TOUCH),
+                                Sense::CLICK,
+                            );
+                            if item.is_pointer_button_down_on() {
+                                ui.painter().rect_filled(
+                                    rect,
+                                    CornerRadius::same(radius::CONTROL),
+                                    color::SELECTED,
+                                );
+                            }
+                            ui.painter().text(
+                                rect.center(),
+                                Align2::CENTER_CENTER,
+                                *label,
+                                FontId::proportional(type_scale::BODY),
+                                color::TEXT,
+                            );
+                            let item = labelled(item, label, true);
+                            if item.clicked() {
+                                chosen = Some(*edit);
+                            }
+                        }
+                    });
+                });
+        });
+    if let Some(edit) = chosen {
+        if edit == FieldEdit::SelectAll {
+            // Like UIKit, keep the menu up so the selection can be copied.
+            ctx.data_mut(|data| {
+                data.insert_temp(
+                    field_menu_id(),
+                    FieldMenu {
+                        field,
+                        opened_at: now,
+                    },
+                );
+            });
+        } else {
+            close_field_menu(&ctx);
+        }
+        ctx.data_mut(|data| {
+            data.insert_temp(pending_field_edit_id(), PendingFieldEdit { field, edit });
+        });
+        // Tapping the menu is a click outside the field; keep its keyboard.
+        ctx.memory_mut(|memory| memory.request_focus(field));
+        ctx.request_repaint();
+    } else if now > menu.opened_at
+        && ui.input(|input| input.pointer.any_pressed())
+        && !ui
+            .input(|input| input.pointer.interact_pos())
+            .is_some_and(|pos| area.response.rect.contains(pos))
+    {
+        close_field_menu(&ctx);
+    }
+}
+
+fn close_field_menu(ctx: &egui::Context) {
+    ctx.data_mut(|data| data.remove::<FieldMenu>(field_menu_id()));
+}
+
+/// A long-press that turned the finger into the field's caret.
+#[derive(Clone, Copy, Debug)]
+struct CaretDrag {
+    field: Id,
+    origin: egui::Pos2,
+    moved: bool,
+}
+
+fn caret_drag_id() -> Id {
+    Id::new("festerm-field-caret-drag")
+}
+
+fn caret_drag(ctx: &egui::Context) -> Option<CaretDrag> {
+    ctx.data(|data| data.get_temp::<CaretDrag>(caret_drag_id()))
+}
+
+/// Where a field's text was drawn last frame.
+#[derive(Clone)]
+struct FieldLayout {
+    galley: std::sync::Arc<egui::Galley>,
+    galley_pos: egui::Pos2,
+    multiline: bool,
+    geometry: Option<std::sync::Arc<FieldGeometry>>,
+}
+
+#[derive(Clone)]
+struct FieldGeometry {
+    carets: Vec<f32>,
+    rows: Vec<(f32, f32)>,
+}
+
+fn field_geometry(galley: &egui::Galley, pos: egui::Pos2, multiline: bool) -> FieldGeometry {
+    use egui::epaint::text::cursor::LayoutCursor;
+    let chars = galley.text().chars().count();
+    let mut geometry = FieldGeometry {
+        carets: Vec::with_capacity(chars + 1),
+        rows: if multiline {
+            Vec::with_capacity(chars + 1)
+        } else {
+            Vec::new()
+        },
+    };
+    let mut base = 0;
+    for (row_index, row) in galley.rows.iter().enumerate() {
+        for column in 0..=row.char_count_excluding_newline().0 {
+            // A soft-wrap offset belongs to the preceding row's endpoint.
+            if base + column < geometry.carets.len() {
+                continue;
+            }
+            let rect = galley
+                .pos_from_layout_cursor(&LayoutCursor {
+                    row: row_index,
+                    column: egui::text::CharIndex(column),
+                })
+                .translate(pos.to_vec2());
+            geometry.carets.push(rect.left());
+            if multiline {
+                geometry
+                    .rows
+                    .push((rect.top(), rect.bottom().max(rect.top() + 1.0)));
+            }
+        }
+        base += row.char_count_including_newline().0;
+    }
+    let end = galley
+        .pos_from_layout_cursor(&LayoutCursor {
+            row: galley.rows.len(),
+            column: egui::text::CharIndex(0),
+        })
+        .translate(pos.to_vec2());
+    geometry.carets.resize(chars + 1, end.left());
+    if multiline {
+        geometry
+            .rows
+            .resize(chars + 1, (end.top(), end.bottom().max(end.top() + 1.0)));
+    }
+    geometry
+}
+
+fn published_field_id() -> Id {
+    Id::new("festerm-field-document")
+}
+
+/// The focused form field this frame, for the native keyboard to edit.
+pub fn take_field_document(ctx: &egui::Context) -> Option<festerm_ios_window::FieldDocument> {
+    ctx.data_mut(|data| {
+        let document = data.get_temp::<festerm_ios_window::FieldDocument>(published_field_id());
+        data.remove::<festerm_ios_window::FieldDocument>(published_field_id());
+        let owner = published_field_id().with("owner");
+        let current = data.get_temp::<Id>(published_field_id().with("current"));
+        data.remove::<Id>(published_field_id().with("current"));
+        if let Some(previous) = data.get_temp::<Id>(owner) {
+            if current != Some(previous) {
+                data.remove::<FieldLayout>(previous.with("layout"));
+            }
+        }
+        match current {
+            Some(current) => {
+                data.insert_temp(owner, current);
+            }
+            None => data.remove::<Id>(owner),
+        }
+        document
+    })
+}
+
+pub fn blur_local_text_edit(ctx: &egui::Context, field: Id) {
+    let focused = ctx.memory(|memory| memory.has_focus(field));
+    ctx.memory_mut(|memory| memory.surrender_focus(field));
+    if focused {
+        ctx.output_mut(|output| output.ime = None);
+    }
+    if field_menu_owner(ctx) == Some(field) {
+        close_field_menu(ctx);
+    }
+}
+
+pub fn forget_local_text_edit(ctx: &egui::Context, field: Id) {
+    blur_local_text_edit(ctx, field);
+    ctx.data_mut(|data| {
+        data.remove::<egui::text_edit::TextEditState>(field);
+        data.remove::<FieldLayout>(field.with("layout"));
+    });
+}
+
+/// A single-line form field: a sized `TextEdit` with the long-press caret
+/// drag, the edit menu, and the native keyboard's view of its text.
+pub fn form_field(
+    ui: &mut Ui,
+    size: impl Into<egui::Vec2>,
+    id_salt: impl egui::AsIdSalt,
+    edit: egui::TextEdit<'_>,
+    secret: bool,
+) -> Response {
+    let layout = egui::Layout::centered_and_justified(ui.layout().main_dir());
+    ui.allocate_ui_with_layout(size.into(), layout, |ui| {
+        let id = ui.make_persistent_id(id_salt);
+        local_text_edit(ui, id, edit, secret, false)
+            .response
+            .response
+    })
+    .inner
+}
+
+/// Shared local field presentation for forms, source editors and drafts.
+pub fn local_text_edit(
+    ui: &mut Ui,
+    id: Id,
+    edit: egui::TextEdit<'_>,
+    secret: bool,
+    multiline: bool,
+) -> egui::text_edit::TextEditOutput {
+    follow_caret_drag(ui, id);
+    let output = edit.id(id).show(ui);
+    let response = output.response.response.clone();
+    let ctx = ui.ctx().clone();
+    let geometry = response.has_focus().then(|| {
+        ctx.data(|data| data.get_temp::<FieldLayout>(id.with("layout")))
+            .filter(|previous| {
+                std::sync::Arc::ptr_eq(&previous.galley, &output.galley)
+                    && previous.galley_pos == output.galley_pos
+                    && previous.multiline == multiline
+            })
+            .and_then(|previous| previous.geometry)
+            .unwrap_or_else(|| {
+                std::sync::Arc::new(field_geometry(&output.galley, output.galley_pos, multiline))
+            })
+    });
+    let layout = FieldLayout {
+        galley: output.galley.clone(),
+        galley_pos: output.galley_pos,
+        multiline,
+        geometry,
+    };
+    if response.has_focus() {
+        let galley = &layout.galley;
+        let chars = galley.text().chars().count();
+        let geometry = layout.geometry.as_ref().expect("focused field geometry");
+        let selection = output
+            .cursor_range
+            .map(|range| range.as_sorted_char_range())
+            .map_or(chars..chars, |range| range.start.0..range.end.0);
+        let row = galley.rect.translate(layout.galley_pos.to_vec2());
+        ctx.data_mut(|data| {
+            data.insert_temp(published_field_id().with("current"), response.id);
+            data.insert_temp(
+                published_field_id(),
+                festerm_ios_window::FieldDocument {
+                    field: response.id.value(),
+                    text: galley.text().to_owned(),
+                    selection,
+                    carets: geometry.carets.clone(),
+                    top: row.top(),
+                    bottom: row.bottom().max(row.top() + 1.0),
+                    rows: geometry.rows.clone(),
+                    multiline,
+                    secure: secret,
+                },
+            );
+        });
+    }
+    ctx.data_mut(|data| data.insert_temp(response.id.with("layout"), layout));
+    field_edit_menu(ui, &response, !output.galley.text().is_empty(), secret);
+    output
+}
+
+/// Before the field runs, pins its caret under a long-pressed finger. egui's
+/// own drag would select from the press point instead, so it is released;
+/// egui hands out a new drag only on the next press.
+fn follow_caret_drag(ui: &Ui, field: Id) {
+    let ctx = ui.ctx();
+    if caret_drag(ctx).is_none_or(|drag| drag.field != field)
+        || !ui.input(|input| input.pointer.any_down())
+    {
+        return;
+    }
+    let (Some(pointer), Some(layout)) = (
+        ui.input(|input| input.pointer.latest_pos()),
+        ctx.data(|data| data.get_temp::<FieldLayout>(field.with("layout"))),
+    ) else {
+        return;
+    };
+    let at = egui::vec2(
+        pointer.x - layout.galley_pos.x,
+        if layout.multiline {
+            pointer.y - layout.galley_pos.y
+        } else {
+            layout.galley.rect.center().y
+        },
+    );
+    let caret = layout.galley.cursor_from_pos(at);
+    ctx.stop_dragging();
+    let mut state = egui::TextEdit::load_state(ctx, field).unwrap_or_default();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(caret)));
+    state.store(ctx, field);
+}
+
+#[cfg(test)]
+mod field_geometry_tests {
+    use super::*;
+    use egui_kittest::Harness;
+
+    #[test]
+    fn linear_field_geometry_preserves_wrapped_unicode_and_newline_carets() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, galleys: &mut Vec<std::sync::Arc<egui::Galley>>| {
+                if galleys.is_empty() {
+                    for text in [
+                        "",
+                        "a\n",
+                        "a\n\nb",
+                        "one two three four five",
+                        "é👩\u{200d}💻\n最後\n",
+                    ] {
+                        galleys.push(ui.fonts_mut(|fonts| {
+                            fonts.layout(
+                                text.to_owned(),
+                                egui::FontId::monospace(14.0),
+                                Color32::WHITE,
+                                35.0,
+                            )
+                        }));
+                    }
+                }
+            },
+            Vec::new(),
+        );
+        harness.run();
+        let pos = egui::pos2(17.0, -23.0);
+        for galley in harness.state() {
+            for multiline in [false, true] {
+                let geometry = field_geometry(galley, pos, multiline);
+                assert_eq!(geometry.carets.len(), galley.text().chars().count() + 1);
+                for (index, x) in geometry.carets.iter().enumerate() {
+                    let rect = galley
+                        .pos_from_cursor(egui::text::CCursor::new(index))
+                        .translate(pos.to_vec2());
+                    assert_eq!(*x, rect.left());
+                    if multiline {
+                        assert_eq!(
+                            geometry.rows[index],
+                            (rect.top(), rect.bottom().max(rect.top() + 1.0))
+                        );
+                    }
+                }
+                assert_eq!(geometry.rows.is_empty(), !multiline);
+            }
+        }
+    }
+
+    #[test]
+    fn maximum_document_field_geometry_is_complete_and_cached_between_frames() {
+        let text = format!("{}\n", "x".repeat(63)).repeat(16_000);
+        let chars = text.chars().count();
+        let id = Id::new("maximum-document-field");
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, text: &mut String| {
+                local_text_edit(ui, id, egui::TextEdit::multiline(text), false, true);
+            },
+            text,
+        );
+        harness.ctx.memory_mut(|memory| memory.request_focus(id));
+        harness.run();
+        let first = harness
+            .ctx
+            .data(|data| data.get_temp::<FieldLayout>(id.with("layout")))
+            .unwrap()
+            .geometry
+            .unwrap();
+        assert_eq!(first.carets.len(), chars + 1);
+        assert_eq!(first.rows.len(), chars + 1);
+        harness.run();
+        let second = harness
+            .ctx
+            .data(|data| data.get_temp::<FieldLayout>(id.with("layout")))
+            .unwrap()
+            .geometry
+            .unwrap();
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+    }
 }

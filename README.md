@@ -12,6 +12,17 @@ service qualification remains open under
 [#429](https://github.com/fes/fesTerm/issues/429);
 advanced scoped-token activation remains available.
 
+The host also offers an explicitly enabled
+[rooted filesystem protocol](docs/dev-tunnel-files-protocol.md) for enumeration
+and streaming transfers. Desktop/iOS file-manager integration is separate work;
+the grant is off by default and can be changed/revoked on an existing host.
+
+An independent [read-only observation protocol](docs/remote-observation-protocol.md)
+adds explicitly approved roots, revision-checked offset reads, bounded native
+watches and daemon generation correlation. It never grants transfer writes or
+MCP consent; the stacked broker integration requires separate native
+per-controller, exact-tab/root approval. Native service qualification remains open.
+
 > [!NOTE]
 > **AI authorship:** fesTerm's code, tests, documentation, and first-party
 > assets were written entirely by GitHub Copilot under human guidance. The

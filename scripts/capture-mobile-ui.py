@@ -20,12 +20,17 @@ def main(argv=None):
     output.parent.mkdir(parents=True, exist_ok=True)
     # The Rust generator only constructs controlled in-memory MobileApp fixtures.
     # It never constructs the native host or connects a session.
-    subprocess.run(
-        ["cargo", "test", "--locked", "-p", "festerm-mobile", "--features", "live-ssh",
-         "--lib", "ui_gallery::capture_mobile_ui_gallery", "--", "--ignored", "--exact"],
-        cwd=ROOT, env=dict(os.environ, FESTERM_MOBILE_UI_OUT=str(output)),
-        check=True, timeout=600,
-    )
+    command = ["cargo", "test", "--locked", "-p", "festerm-mobile",
+               "--features", "live-ssh", "--lib"]
+    for test, variable, destination in [
+        ("ui_gallery::capture_mobile_ui_gallery", "FESTERM_MOBILE_UI_OUT", output),
+        ("documents::tests::capture_document_ui", "FESTERM_DOCUMENT_UI_OUT", output / "documents"),
+    ]:
+        subprocess.run(
+            command + [test, "--", "--ignored", "--exact"],
+            cwd=ROOT, env=dict(os.environ, **{variable: str(destination)}),
+            check=True, timeout=600,
+        )
     print(output)
     return 0
 

@@ -5,10 +5,11 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Bounded read-only document viewer model for the iOS host (Markdown from the sandbox or SFTP)."
+description = "Bounded shared document and Markdown viewer models for the iOS host."
 publish = false
 
 [dependencies]
+festerm-document = { path = "../festerm-document" }
 festerm-markdown = { path = "../festerm-markdown" }
 
 [lints]

@@ -28,6 +28,17 @@ fn refused(stage: &'static str) -> io::Error {
     io::Error::other(stage)
 }
 
+fn background_command(path: &Path) -> Command {
+    let command = Command::new(path);
+    #[cfg(windows)]
+    let command = {
+        let mut command = command;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        command
+    };
+    command
+}
+
 #[derive(Deserialize)]
 struct Account {
     status: String,
@@ -86,7 +97,7 @@ fn split_created_id(value: &str, expected: &str) -> io::Result<(String, String)>
 }
 
 async fn cli(path: &Path, args: &[&str], stage: &'static str) -> io::Result<Zeroizing<Vec<u8>>> {
-    let mut child = Command::new(path)
+    let mut child = background_command(path)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -406,7 +417,42 @@ fn main() {
         return;
     }
     if args == ["--help"] {
-        println!("festerm-tunnel-setup [--managed] --devtunnel ABSOLUTE_CLI_PATH --state-dir ABSOLUTE_PRIVATE_DIRECTORY [--no-takeover] [--upgrade] [--friendly-name NAME]\nDefault: new foreground-only setup in a new directory.\n--managed: explicit per-user service setup; healthy reruns reuse the original private tunnel, host identity and exact shell generation, printing public profile JSON without credentials. Stale/partial/foreign state refuses, never creates a replacement. Add --upgrade to switch an existing installation's service to this release's helpers, keeping its tunnel, host key and running daemon session. Add --friendly-name NAME on first setup to name the tunnel's user-visible description.\n--serve --state-dir ABSOLUTE_PRIVATE_DIRECTORY: existing installation worker, no provisioning or key regeneration.\nFirst setup uses interactive official GitHub login and creates one private 30-day tunnel, marked virtual port and retained /bin/sh or cmd.exe session. Managed startup requires an unelevated user; sign-in auto-start does not preserve a shell through reboot. Linux services restart the worker 15s after a transient bridge/relay failure (never after a stale-daemon/account/identity refusal, exit 78). The worker always records start/ready/exit and client open/close events, without credentials or terminal data, in the state directory's bounded worker.log. No remote file access, ACL widening, takeover or automatic reconnect.");
+        println!(concat!(
+            "festerm-tunnel-setup [--managed] --devtunnel ABSOLUTE_CLI_PATH --state-dir ABSOLUTE_PRIVATE_DIRECTORY ",
+            "[--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected] ",
+            "[--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files]\n",
+            "Default: new foreground-only setup in a new directory.\n",
+            "--managed: explicit per-user service setup; healthy reruns reuse the original private tunnel, ",
+            "host identity and exact shell generation, printing public profile JSON without credentials. ",
+            "By default stale/partial/foreign state refuses, never creates a replacement. ",
+            "Add --upgrade to switch an existing installation's service to this release's helpers, ",
+            "keeping its tunnel, host key and running daemon session. ",
+            "Add --friendly-name NAME on first setup to name the tunnel's user-visible description.\n",
+            "--restart-unexpected: explicitly allow a NEW default shell after instrumented unexpected daemon loss, ",
+            "at most three starts per ten minutes; never after observed shell exit or operator stop. ",
+            "Missing evidence and uncertain creation refuse. --no-restart-unexpected disables this policy. ",
+            "Policy changes restart the owned worker; older helpers require --upgrade. ",
+            "Automatic client recovery never switches generations; reconnect explicitly. Programs/state are not restored.\n",
+            "Managed filesystem policy: --file-root ABSOLUTE_DIRECTORY enables rooted enumeration/downloads; ",
+            "add --allow-file-write for uploads/mkdir. Rerun --file-root without writes to make it read-only, ",
+            "or --disable-files to revoke. Omitted policy preserves existing consent. ",
+            "Changes restart only owned hosting workers, never the shell or cloud tunnel. ",
+            "Different helper releases require --upgrade.\n",
+            "Independent read-only observation: repeat --observe-root ABSOLUTE_DIRECTORY for at most four approved roots; ",
+            "--disable-observation revokes only observation. Omission preserves consent. ",
+            "Observation never grants filesystem writes, MCP enrollment or JavaScript. ",
+            "Revocation leaves hosting stopped if account/target verification is unavailable.\n",
+            "--serve --state-dir ABSOLUTE_PRIVATE_DIRECTORY: existing installation worker, no cloud provisioning or key regeneration.\n",
+            "First setup uses interactive official GitHub login and creates one private 30-day tunnel, ",
+            "marked virtual port and retained platform-default shell session. Managed startup requires an unelevated user; ",
+            "sign-in auto-start does not preserve a shell through reboot. Linux services and Windows workers retry 15s ",
+            "after transient bridge/relay failure; opted-in daemon supervision also retries on macOS. ",
+            "Identity, unauthorized stale-generation and unsafe-cleanup refusals exit 78. ",
+            "Existing hosts need an explicit helper upgrade. The worker records start/ready/retry/exit, ",
+            "daemon loss/replacement and client open/close events in bounded worker.log. ",
+            "Daemons retain bounded private lifecycle journals under the runtime root. ",
+            "No credentials or terminal data are logged. No remote file access by default; no ACL widening or automatic client takeover/reconnect."
+        ));
         return;
     }
     let result = tokio::runtime::Builder::new_multi_thread()
@@ -436,6 +482,33 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn background_commands_do_not_allocate_a_console() {
+        let powershell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        let output = timeout(
+            Duration::from_secs(15),
+            background_command(&powershell)
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class ConsoleProbe { [DllImport(\"kernel32.dll\")] public static extern IntPtr GetConsoleWindow(); }'; [ConsoleProbe]::GetConsoleWindow().ToInt64(); exit 37",
+                ])
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .expect("console probe exceeded its deadline")
+        .expect("console probe must launch");
+        assert_eq!(output.status.code(), Some(37), "{output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "0");
+    }
 
     #[cfg(unix)]
     #[test]

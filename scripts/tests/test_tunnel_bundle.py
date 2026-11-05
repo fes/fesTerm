@@ -35,7 +35,7 @@ class TunnelBundleTests(unittest.TestCase):
         self.binaries = self.root / "bin"
         self.binaries.mkdir()
         for platform in bundle.PLATFORMS:
-            for name in bundle.entry_names(platform)[:3]:
+            for name in bundle.binary_names(platform):
                 (self.binaries / name).write_bytes(f"mock binary {name}".encode())
         dependency = self.root / "dependency"
         dependency.mkdir()
@@ -100,7 +100,7 @@ class TunnelBundleTests(unittest.TestCase):
                         self.assertTrue(stat.S_ISREG(mode))
                         self.assertEqual(
                             stat.S_IMODE(mode),
-                            0o755 if name in bundle.entry_names(platform)[:3] else 0o644,
+                            0o755 if name in bundle.binary_names(platform) else 0o644,
                         )
                     checksum = archive.with_name(archive.name + ".sha256")
                     self.assertEqual(
@@ -125,6 +125,15 @@ class TunnelBundleTests(unittest.TestCase):
         (self.binaries / "unexpected-dir").mkdir()
         archive = self.build()
         self.assertEqual(set(self.contents(archive, "linux")), set(bundle.entry_names("linux")))
+
+    def test_windows_worker_is_required_only_for_windows_payloads(self):
+        worker = self.binaries / "festerm-tunnel-worker.exe"
+        worker.unlink()
+        with self.assertRaisesRegex(ValueError, "festerm-tunnel-worker.exe"):
+            self.build("windows")
+        self.assertFalse((self.root / "dist").exists())
+        archive = self.build("linux")
+        self.assertNotIn("festerm-tunnel-worker.exe", self.contents(archive, "linux"))
 
     def test_missing_empty_or_symlinked_binaries_fail_before_output(self):
         for kind in ("missing", "empty", "symlink"):
@@ -202,6 +211,24 @@ class TunnelBundleTests(unittest.TestCase):
                 self.assertIn(attribution, text)
                 self.assertIn("Actual retained terms", text)
                 metadata["packages"][-1]["version"] = "999.0.0"
+                with self.assertRaisesRegex(ValueError, "missing dependency license"):
+                    bundle.third_party_notices(metadata, VERSION, self.root)
+
+    def test_explicit_mit_declarations_are_pinned_not_generic_fallbacks(self):
+        shutil.rmtree(self.root / "dependency")
+        for (name, version), attribution in bundle.MIT_DECLARATIONS.items():
+            with self.subTest(name=name):
+                metadata = copy.deepcopy(self.metadata)
+                metadata["packages"][-1].update({
+                    "name": name, "version": version, "license": "Zlib OR Apache-2.0 OR MIT",
+                })
+                text = bundle.third_party_notices(metadata, VERSION, self.root).decode()
+                self.assertIn(attribution, text)
+                self.assertIn("Permission is hereby granted", text)
+                metadata["packages"][-1]["license"] = "GPL-3.0"
+                with self.assertRaisesRegex(ValueError, "missing dependency license"):
+                    bundle.third_party_notices(metadata, VERSION, self.root)
+                metadata["packages"][-1].update({"license": "MIT", "version": "999.0.0"})
                 with self.assertRaisesRegex(ValueError, "missing dependency license"):
                     bundle.third_party_notices(metadata, VERSION, self.root)
 

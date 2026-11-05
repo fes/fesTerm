@@ -21,6 +21,26 @@ use super::model::{HostDecision, HostVerification};
 
 const MAX_PASSWORD_ATTEMPTS: usize = 3;
 
+#[cfg(target_os = "ios")]
+struct NativeWriteAdmission(egui::Context);
+
+#[cfg(target_os = "ios")]
+impl std::fmt::Debug for NativeWriteAdmission {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("NativeWriteAdmission")
+    }
+}
+
+#[cfg(target_os = "ios")]
+impl festerm_sftp::LocalWriteAdmission for NativeWriteAdmission {
+    fn acquire(&self) -> festerm_sftp::Result<Box<dyn Send>> {
+        let wake = self.0.clone();
+        festerm_ios_window::try_local_file_mutation(Arc::new(move || wake.request_repaint()))
+            .map(|permit| Box::new(permit) as Box<dyn Send>)
+            .map_err(|error| festerm_sftp::SftpError::Io(error.message().to_owned()))
+    }
+}
+
 pub(crate) struct SftpRequest {
     pub(crate) host: String,
     pub(crate) port: u16,
@@ -220,6 +240,8 @@ fn run(
     )
     .map_err(|error| super::files::describe_error(&error))?;
     let local = LocalFs::new(&local_root).map_err(|error| super::files::describe_error(&error))?;
+    #[cfg(target_os = "ios")]
+    let local = local.with_write_admission(Arc::new(NativeWriteAdmission(wake.clone())));
     let manager = TransferManager::new(client.clone(), local.clone(), TransferConfig::default());
     let wake_transfers = wake.clone();
     manager.set_event_callback(move |_| wake_transfers.request_repaint());

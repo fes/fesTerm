@@ -567,13 +567,19 @@ impl FesTermApp {
         else {
             return;
         };
-        let store = match &self.secret_store {
-            Ok(store) => Arc::clone(store),
-            Err(_) if !remember => Arc::new(festerm_secret_store::MemorySecretStore::new()),
+        // Without secure storage, still connect the saved profile, but keep
+        // its sign-in in memory only for this connection.
+        let (store, remember): (Arc<dyn SecretStore>, bool) = match &self.secret_store {
+            Ok(store) => (Arc::clone(store), remember),
             Err(_) => {
-                self.secure_storage_feedback =
-                    Some("Secure storage unavailable. Use Connect once.");
-                return;
+                if remember {
+                    self.secure_storage_feedback =
+                        Some("Secure storage unavailable. Connecting without keeping the sign-in.");
+                }
+                (
+                    Arc::new(festerm_secret_store::MemorySecretStore::new()),
+                    false,
+                )
             }
         };
         self.start_native_workflow(

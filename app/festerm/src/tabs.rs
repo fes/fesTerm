@@ -2182,21 +2182,11 @@ pub enum AppCommand {
     SaveAndConnectDevTunnel {
         profile: festerm_config::Profile,
     },
-    NativeDevTunnel {
-        profile_id: String,
-        sign_in: bool,
-        remember: bool,
-        connect: bool,
-    },
     StartConfiguredDevTunnelProfile {
         profile_id: String,
     },
     StoreDevTunnelConnectToken {
         profile_id: String,
-        token: TunnelConnectToken,
-    },
-    ConnectTransientDevTunnel {
-        destination_file: String,
         token: TunnelConnectToken,
     },
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -2640,6 +2630,17 @@ pub enum AppCommand {
     SaveProfile {
         profile: festerm_config::Profile,
     },
+    /// Persists a native Dev Tunnel profile edited in the Profiles surface and
+    /// reports the committed/failed outcome back to the editor
+    /// (`screens::profiles::report_dev_tunnel_save_outcome`) so it closes to
+    /// the list only on a successful write and otherwise keeps the exact draft
+    /// with an actionable error. Fully intercepted by the composition root
+    /// like `SaveProfile`; it never connects.
+    SaveDevTunnelProfile {
+        tab_id: TabId,
+        request: egui::Id,
+        profile: festerm_config::Profile,
+    },
     /// Creates a profile and stores its initial native credential only after
     /// the profile metadata has been persisted successfully.
     SaveProfileWithCredential {
@@ -2702,10 +2703,6 @@ impl TunnelConnectToken {
 
     pub(crate) fn new(value: String) -> Self {
         Self(zeroize::Zeroizing::new(value))
-    }
-    #[cfg(feature = "experimental-dev-tunnels")]
-    pub(crate) fn into_secret_bytes(self) -> SecretBytes {
-        SecretBytes::copy_from_slice(self.0.as_bytes())
     }
     pub(crate) fn into_stored_secret(self) -> SecretBytes {
         let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(
@@ -3801,30 +3798,6 @@ impl AppState {
             AppCommand::ConnectDevTunnel(launch) => {
                 self.start_tunnel_launch(None, None, move || Ok(launch), context);
             }
-            AppCommand::ConnectTransientDevTunnel {
-                destination_file,
-                token,
-            } => {
-                #[cfg(feature = "experimental-dev-tunnels")]
-                self.start_tunnel_launch(
-                    None,
-                    None,
-                    move || {
-                        crate::tunnel_activation::Launch::from_secret(
-                            std::path::Path::new(&destination_file),
-                            token.into_secret_bytes(),
-                        )
-                    },
-                    context,
-                );
-                #[cfg(not(feature = "experimental-dev-tunnels"))]
-                {
-                    let _ = (destination_file, token);
-                    self.resume_error = Some(
-                        "Dev Tunnel connections require an experimental-dev-tunnels build.".into(),
-                    );
-                }
-            }
             AppCommand::OpenLauncher => self.open_launcher(),
             AppCommand::OpenWindow => self.window_open_requested = true,
             AppCommand::MoveTabToWindow {
@@ -3943,7 +3916,6 @@ impl AppState {
             | AppCommand::SaveAndConnectDevTunnel { .. }
             | AppCommand::ConnectRunningDevTunnel { .. }
             | AppCommand::ConnectDevTunnelForm { .. }
-            | AppCommand::NativeDevTunnel { .. }
             | AppCommand::StartConfiguredDevTunnelProfile { .. }
             | AppCommand::StoreProfilePrivateKey { .. }
             | AppCommand::StartConfiguredSshProfile { .. }
@@ -4340,6 +4312,7 @@ impl AppState {
             // `StoreSshPassword`); they never reach this match with real
             // work to do here.
             AppCommand::SaveProfile { .. }
+            | AppCommand::SaveDevTunnelProfile { .. }
             | AppCommand::SaveProfileWithCredential { .. }
             | AppCommand::DeleteProfile { .. }
             | AppCommand::ReorderProfiles { .. } => {}

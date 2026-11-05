@@ -6,20 +6,33 @@ fesTerm measures compatibility in terms of observable application behavior. Reco
 
 ## Compatibility Baseline
 
-The [automation campaign](docs/automation-design.md) has default-off local MCP
-observation infrastructure, but refuses activation on all platforms until
-private peer authentication is qualified. macOS and Linux also require
-qualified screen-lock monitoring; iOS, JavaScript execution and terminal
-control remain unavailable. Automated tests are not native lifecycle, client
+The [automation campaign](docs/automation-design.md) has a default-off local
+MCP **beta** on macOS, Linux and Windows: observation and per-input-reviewed
+control of exact local terminals, gated by verification-code matching and
+native lock/sleep monitors that fail closed. iOS and JavaScript execution
+remain unavailable. Automated tests are not native lifecycle, client
 interoperability, sandbox or mobile qualification evidence.
-The later-stage controller presentation tools report unavailable on every
-platform: native event continuity, foreground/admission ordering, enrollment
-UI and direct control are not qualified. A queued focus request is not success.
+The controller presentation tools report unavailable on every platform. A
+queued focus request is not success.
+
+The experimental iOS terminal keyboards include an on-device-only dictation
+spike with explicit bounded review/Insert (no implicit Return or cloud fallback).
+Portable tests and Simulator launch are not physical-device speech/privacy
+qualification; that remains `MOB-07` under
+[#564](https://github.com/fes/fesTerm/issues/564).
 
 The [Dev Tunnels subset](docs/dev-tunnels-experiment.md), included in default desktop builds, implements
 peer profiles, independently bound scoped credentials, exact-generation
 daemon attach/detach and optional bounded remote file snapshots. It is
 experimental; `DT-01`–`DT-06` real-service/native qualification remains open.
+An explicit default-off rooted host filesystem service adds enumeration,
+metadata, streamed read/write and mkdir under ADR 0067; its desktop/iOS clients
+and native transfer qualification remain separate, not accepted capabilities.
+Independent read-only observation under ADR 0070 adds approved roots,
+identity/revision-checked offset reads, bounded watch/rescan semantics and
+daemon generation correlation. Separate exact-caller/tab/root MCP consent is
+implemented in a dependent broker slice; native DT/AUTO qualification is still
+open, and unsupported SSH combinations remain unavailable.
 Inventory/create/takeover/terminate remain unavailable. Native GitHub device
 authorization, account-bound refresh and tunnel-name discovery have deterministic
 coverage, not live qualification: the project-owned public client is registered

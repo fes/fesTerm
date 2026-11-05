@@ -21,6 +21,13 @@ A file opened twice is not two buffers that can disagree. Two windows, a split,
 and a live Markdown preview are all views of the same text, the same undo
 history, and the same unsaved marker.
 
+The phased iOS adaptation uses the same engine through `festerm-mobile-docs`;
+see [the mobile contract](mobile-layout-design.md#shared-ios-document-editor)
+and [ADR 0069](adr/0069-ios-authorized-shared-documents.md). Its portable
+registry is implemented first; native Files/editor integration is not implied.
+The owner's iOS-specific override excludes Edit/Preview split panes, without
+changing desktop Split.
+
 ## One document, many views
 
 The application owns a registry of open documents. A view owns only

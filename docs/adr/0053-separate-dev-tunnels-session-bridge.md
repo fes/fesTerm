@@ -35,6 +35,25 @@ Those boundaries must survive the addition of remote access.
 
 ## Decision
 
+The owner-requested rooted host filesystem extension is specified separately
+in [ADR 0067](0067-rooted-dev-tunnel-host-filesystem.md) and its
+[wire contract](../dev-tunnel-files-protocol.md). It adds explicit, default-off
+listing/download/upload/mkdir grants without moving filesystem or network
+ownership into sessiond, changing legacy terminal frames or implementing client
+file-manager policy.
+
+The no-shell-replacement statements below remain the default. Owner-requested
+[ADR 0066](0066-opt-in-managed-daemon-recovery.md) adds explicit host opt-in to
+bounded fresh-shell replacement after instrumented unexpected daemon loss;
+it does not relax client generation pins or revive the old shell.
+
+The owner-requested rooted host filesystem extension is specified separately
+in [ADR 0067](0067-rooted-dev-tunnel-host-filesystem.md) and its
+[wire contract](../dev-tunnel-files-protocol.md). It adds explicit, default-off
+listing/download/upload/mkdir grants without moving filesystem or network
+ownership into sessiond, changing legacy terminal frames or implementing client
+file-manager policy.
+
 Introduce an optional **separate executable/process**, provisionally
 `festerm-tunnel-bridge`, on the remote host. It terminates the Dev Tunnels
 connection and mediates access to that host user's existing daemon APIs.
@@ -718,6 +737,16 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   the original setup executable filename without a UAC prompt; the manifest
   prevents installer-detection elevation, not the existing elevated-token
   refusal. No executable renaming or administrator fallback is permitted.
+  Windows background-host coverage additionally includes
+  `windows_worker_is_windowless_and_preserves_owned_setup_arguments_and_exit_status`,
+  `background_commands_do_not_allocate_a_console` and
+  `service_windows_windowless_upgrade_accepts_only_exact_owned_legacy_tasks`.
+  `service_windows_plain_rerun_keeps_the_owned_legacy_console_definition`
+  preserves a plain rerun's old worker until an explicit upgrade.
+  The native probes verify actual console absence, argument delivery and exit
+  status without registering a service or provisioning a tunnel. Windows
+  bundles must require/sign the launcher; signed live-service upgrade remains
+  DT-05 evidence rather than a result of these fixtures.
   `private_storage_ancestor_trust_adds_only_the_exact_servicing_sid` distinguishes
   the private-storage exception from unchanged save staging and rejects unrelated
   services/users. `staging_parent_rejects_a_dacl_that_allows_child_substitution`
@@ -802,6 +831,28 @@ installer test `test_upgrade_installs_next_to_the_previous_release_and_passes_th
 A real-service upgrade on each platform (daemon shell survives, profile and
 fingerprint unchanged) remains native `DT-05` evidence.
 
+## Amendment: windowless Windows worker launch
+
+The Windows interactive-token task must not expose a console window whose
+close button can terminate hosting. It now executes a dedicated GUI-subsystem
+`festerm-tunnel-worker.exe` from the same immutable, verified release directory.
+The launcher takes only an absolute `--state-dir`, invokes its sibling setup
+helper with fixed `--serve` arguments and `CREATE_NO_WINDOW`, waits, and
+propagates the exit code. Noninteractive CLI/bridge children likewise suppress
+console allocation; the existing interactive setup/sign-in binary is unchanged.
+No shell-command parsing, native FFI, new crate boundary or daemon ownership
+change is introduced.
+
+The launcher is Windows-only in bundles and is covered by the same archive
+allowlist, Authenticode verification and protected release signing as the
+other helpers. Missing/substituted launchers refuse before provisioning.
+Existing installations change only through explicit upgrade. Complete legacy
+UTF-16/BOM and earlier UTF-8 setup-helper task definitions are accepted only
+when their owned file and Scheduler-normalized snapshot match; edited,
+foreign, privileged or differently scoped tasks still refuse. The service
+continues targeting the original exact daemon generation. The launcher fixes
+console hosting, not the originating Windows job's breakaway policy.
+
 ## Amendment: Linux worker restart and private worker log
 
 A Linux host went offline overnight when its bridge exited. `Restart=no` and
@@ -839,3 +890,38 @@ Automated tests: `service_definitions_are_deterministic_scoped_and_have_no_secre
 `worker_log_forwards_only_well_formed_bridge_events` and
 `worker_log_timestamps_are_utc_iso8601`. Restarting after a real relay drop
 on Linux remains native evidence.
+
+## Amendment: Windows worker recovery after relay loss
+
+A Windows host lost its relay transport, logged a transient bridge exit, and
+stayed offline because its logon task was one-shot. The daemon shell remained
+alive; manually starting the same worker restored iOS discovery and attachment
+without changing the tunnel, host fingerprint or daemon generation.
+
+Windows `--serve` now retries transient worker failures in-process after
+15 seconds, matching the Linux retry interval. It runs only one bridge attempt
+at a time and repeats the existing account, host-key and exact-daemon checks
+before obtaining a fresh scoped host token. It never provisions another tunnel,
+key or shell. A clean bridge shutdown or permanent operator refusal stops;
+identity refusals still exit 78. macOS remains unchanged.
+
+Retries stay inside the setup worker rather than the GUI launcher: the existing
+owned-task upgrade stop operation can terminate that worker without a surviving
+launcher respawning it during replacement. No Scheduler definition, ownership
+snapshot, privilege or live-installation migration rule changes. Existing hosts
+need an explicit helper upgrade.
+
+Every attempt terminates a still-running bridge and removes its temporary
+destination directory and readiness file before another attempt. Failure to
+create protected attempt state, terminate a bridge or clean up is a permanent
+refusal, preventing retry loops from accumulating children or files. Retry
+events use the existing bounded private log and contain stage codes only.
+
+Automated coverage:
+`managed_windows_worker_retries_until_recovery_and_stops_on_refusal`,
+`managed_worker_retry_waits_and_can_be_cancelled_before_another_attempt`, and
+`managed_worker_cleans_ready_and_pre_ready_runs_without_touching_installation`.
+These extend the existing `TUNNEL-01`/`TUNNEL-05` validation impact. Manual
+worker recovery passed on the existing Windows-to-iOS fixture; automatic
+recovery after a real relay drop on the new signed helpers remains DT-05
+native evidence, not an accepted gate.

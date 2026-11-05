@@ -123,6 +123,7 @@ impl Write for ValidatedStream {
 pub struct ClientSession {
     pub session: PersistentSession,
     pub files: Option<FileRequestor>,
+    pub observation: Option<crate::observation_client::ObservationRequestor>,
 }
 
 pub fn start_client(
@@ -149,6 +150,8 @@ pub fn start_client_with_takeover(
     let (output, events) = flume::bounded(QUEUE);
     let cancel = CancellationToken::new();
     let stopped = cancel.clone();
+    let (observation, observation_driver) =
+        crate::observation_client::ObservationRequestor::pending(&cancel);
     let (file_tx, file_rx) = flume::bounded(1);
     static NEXT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let generation = crate::reserve_sequence(&NEXT_GENERATION)?;
@@ -184,7 +187,7 @@ pub fn start_client_with_takeover(
             runtime.block_on(async move {
                 tokio::select! {
                     _ = stopped.cancelled() => {}
-                    _ = client_session(destination, token, commands, output, file_rx, takeover, client) => {}
+                    _ = client_session(destination, token, commands, output, file_rx, takeover, client, observation_driver) => {}
                 }
                 stopped.cancel();
             });
@@ -199,9 +202,14 @@ pub fn start_client_with_takeover(
         notifier,
     )
     .map_err(|_| invalid())?;
-    Ok(ClientSession { session, files })
+    Ok(ClientSession {
+        session,
+        files,
+        observation: Some(observation),
+    })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn client_session(
     destination: Destination,
     token: Zeroizing<String>,
@@ -210,11 +218,15 @@ async fn client_session(
     files: flume::Receiver<FileCall>,
     takeover: bool,
     client: Option<ClientId>,
+    observation: crate::observation_client::ObservationDriver,
 ) -> io::Result<()> {
     let mut connection = tokio::time::timeout(DEADLINE, relay::connect(&destination, &token))
         .await
         .map_err(|_| invalid())??;
+    observation.fence_expiry(connection.observation_expiry);
     drop(token);
+    let observation_binding = connection.observation_binding();
+    tokio::spawn(observation.run(observation_binding, destination.target.clone()));
     client_io_with_files(
         &mut connection.stream,
         destination.target,
@@ -527,7 +539,43 @@ pub async fn serve_with_reclaim(
     let (kind, bytes) = tokio::time::timeout(DEADLINE, read_client_frame(&mut stream))
         .await
         .map_err(|_| invalid())??;
+    if kind == crate::file_protocol::OPEN {
+        let filesystem = file_service.filesystem().ok_or_else(invalid)?.clone();
+        return crate::filesystem::serve(stream, filesystem, target, &bytes).await;
+    }
+    if kind == crate::observation_protocol::OPEN {
+        let observation = file_service.observation().ok_or_else(invalid)?.clone();
+        return crate::observation::serve(stream, observation, selected, target, &bytes).await;
+    }
     if kind == DISCOVER {
+        if bytes == crate::observation_protocol::DISCOVERY_VERSION.to_be_bytes() {
+            let observation = if let Some(service) = file_service.observation() {
+                Some(service.live_capabilities(selected.clone()).await?)
+            } else {
+                None
+            };
+            let description = crate::observation_protocol::Discovery {
+                version: crate::observation_protocol::DISCOVERY_VERSION,
+                target,
+                filesystem: file_service
+                    .filesystem()
+                    .map(|filesystem| filesystem.capabilities()),
+                observation,
+            };
+            write_frame(&mut stream, DESCRIPTION, &serde_json::to_vec(&description)?).await?;
+            return Ok(());
+        }
+        if bytes == crate::file_protocol::DISCOVERY_VERSION.to_be_bytes() {
+            let description = crate::file_protocol::Discovery {
+                version: crate::file_protocol::DISCOVERY_VERSION,
+                target,
+                filesystem: file_service
+                    .filesystem()
+                    .map(|filesystem| filesystem.capabilities()),
+            };
+            write_frame(&mut stream, DESCRIPTION, &serde_json::to_vec(&description)?).await?;
+            return Ok(());
+        }
         if bytes != VERSION.to_be_bytes() {
             return Err(invalid());
         }
@@ -558,7 +606,7 @@ pub async fn serve_with_reclaim(
             && (!file_service.allows_read() || hello.files.windows_paths != cfg!(windows)))
     {
         write_frame(&mut stream, REFUSED, &[]).await?;
-        return Err(invalid());
+        return Err(io::Error::other("daemon.hello_incompatible"));
     }
     // Reclaiming needs the same host consent as takeover; it is advertised only
     // with it. The check and the daemon admission below are not atomic: a
@@ -577,6 +625,19 @@ pub async fn serve_with_reclaim(
         &[u8::from(file_read_admitted), u8::from(cfg!(windows))],
     )
     .await?;
+    let root = festerm_sessiond::runtime_root()
+        .map_err(|_| io::Error::other("daemon.runtime_unavailable"))?;
+    if !festerm_sessiond::daemon_generation_is_live(
+        &root,
+        selected.pid,
+        selected.created_at_unix_ms,
+        &selected.endpoint,
+    )
+    .map_err(|_| io::Error::other("daemon.identity_unavailable"))?
+    {
+        write_frame(&mut stream, REFUSED, &[]).await?;
+        return Err(io::Error::other("daemon.session_unavailable"));
+    }
     let notify = Arc::new(tokio::sync::Notify::new());
     struct Wake(Arc<tokio::sync::Notify>);
     impl SessionEventNotifier for Wake {
@@ -602,7 +663,7 @@ pub async fn serve_with_reclaim(
             Ok(session) => session,
             Err(_) => {
                 write_frame(&mut stream, REFUSED, &[]).await?;
-                return Err(invalid());
+                return Err(io::Error::other("daemon.attach_refused"));
             }
         };
     let _held = holder.claim(hello.client);

@@ -2,25 +2,39 @@ use block2::RcBlock;
 use objc2::{
     define_class, msg_send,
     rc::{Retained, Weak},
-    runtime::ProtocolObject,
+    runtime::{AnyObject, ProtocolObject},
     sel, ClassType, DeclaredClass, MainThreadOnly, Message,
 };
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{
     MainThreadMarker, NSDictionary, NSNotification, NSNotificationCenter, NSObject,
     NSObjectProtocol, NSString, NSURL,
 };
+use objc2_foundation::{NSArray, NSAttributedStringKey, NSComparisonResult, NSInteger, NSRange};
+use objc2_ui_kit::{
+    NSWritingDirection, UITextInput, UITextInputDelegate, UITextInputStringTokenizer,
+    UITextInputTokenizer, UITextLayoutDirection, UITextPosition, UITextRange, UITextSelectionRect,
+    UITextStorageDirection,
+};
 use objc2_ui_kit::{
     UIApplication, UIDevice, UIInputViewAudioFeedback, UIKeyInput,
     UIKeyboardDidChangeFrameNotification, UIKeyboardWillChangeFrameNotification, UIPasteboard,
-    UIScene, UISceneConnectionOptions, UISceneDelegate, UISceneSession,
+    UIResponder, UIScene, UISceneConnectionOptions, UISceneDelegate, UISceneSession,
     UITextAutocapitalizationType, UITextAutocorrectionType, UITextInputTraits,
     UITextSmartDashesType, UITextSmartQuotesType, UITextSpellCheckingType, UIView, UIWindow,
     UIWindowScene, UIWindowSceneDelegate,
 };
 use raw_window_handle::{RawWindowHandle, WindowHandle};
-use std::{cell::Cell, ptr::NonNull, sync::Arc};
+use std::{
+    cell::{Cell, OnceCell, RefCell},
+    ops::Range,
+    ptr::NonNull,
+    sync::Arc,
+};
 
-use crate::KeyboardMode;
+use crate::{FieldDocument, FieldInput, FieldModel, FieldSync, KeyboardMode};
+
+type Repaint = Arc<dyn Fn() + Send + Sync>;
 
 /// Main-thread-only: owns a retain on the host view and removes observers on
 /// drop. Notification callbacks capture only a Send + Sync repaint closure.
@@ -29,6 +43,8 @@ pub struct KeyboardBridge {
     center: Retained<NSNotificationCenter>,
     observers: Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>,
     terminal_responder: Retained<TerminalResponder>,
+    field_responder: Retained<FieldResponder>,
+    repaint: Repaint,
 }
 
 struct TerminalResponderIvars {
@@ -119,6 +135,529 @@ define_class!(
     }
 );
 
+struct FieldPositionIvars {
+    offset: usize,
+}
+
+define_class!(
+    /// A char offset into the focused field's [`FieldModel`].
+    #[unsafe(super(UITextPosition))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "FesTermFieldPosition"]
+    #[ivars = FieldPositionIvars]
+    struct FieldPosition;
+
+    unsafe impl NSObjectProtocol for FieldPosition {}
+);
+
+impl FieldPosition {
+    fn create(mtm: MainThreadMarker, offset: usize) -> Retained<UITextPosition> {
+        let this = Self::alloc(mtm).set_ivars(FieldPositionIvars { offset });
+        // SAFETY: NSObject initializer on a newly allocated main-thread object.
+        let this: Retained<Self> = unsafe { msg_send![super(this), init] };
+        Retained::into_super(this)
+    }
+}
+
+struct FieldRangeIvars {
+    start: usize,
+    end: usize,
+}
+
+define_class!(
+    #[unsafe(super(UITextRange))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "FesTermFieldRange"]
+    #[ivars = FieldRangeIvars]
+    struct FieldRange;
+
+    unsafe impl NSObjectProtocol for FieldRange {}
+
+    impl FieldRange {
+        #[unsafe(method(isEmpty))]
+        fn is_empty(&self) -> bool {
+            self.ivars().start == self.ivars().end
+        }
+
+        #[unsafe(method_id(start))]
+        fn start(&self) -> Retained<UITextPosition> {
+            FieldPosition::create(MainThreadMarker::from(self), self.ivars().start)
+        }
+
+        #[unsafe(method_id(end))]
+        fn end(&self) -> Retained<UITextPosition> {
+            FieldPosition::create(MainThreadMarker::from(self), self.ivars().end)
+        }
+    }
+);
+
+impl FieldRange {
+    fn create(mtm: MainThreadMarker, range: Range<usize>) -> Retained<UITextRange> {
+        let this = Self::alloc(mtm).set_ivars(FieldRangeIvars {
+            start: range.start,
+            end: range.end.max(range.start),
+        });
+        // SAFETY: NSObject initializer on a newly allocated main-thread object.
+        let this: Retained<Self> = unsafe { msg_send![super(this), init] };
+        Retained::into_super(this)
+    }
+}
+
+fn offset(position: &UITextPosition) -> usize {
+    position
+        .downcast_ref::<FieldPosition>()
+        .map_or(0, |position| position.ivars().offset)
+}
+
+fn range(range: &UITextRange) -> Range<usize> {
+    range
+        .downcast_ref::<FieldRange>()
+        .map_or(0..0, |range| range.ivars().start..range.ivars().end)
+}
+
+/// Converts a UTF-16 range within `text` to chars.
+fn char_range(text: &str, utf16: NSRange) -> Range<usize> {
+    let mut units = 0;
+    let mut start = None;
+    let mut end = None;
+    for (index, ch) in text.chars().chain(std::iter::once('\0')).enumerate() {
+        if start.is_none() && units >= utf16.location {
+            start = Some(index);
+        }
+        if end.is_none() && units >= utf16.location + utf16.length {
+            end = Some(index);
+            break;
+        }
+        units += ch.len_utf16();
+    }
+    let len = text.chars().count();
+    let start = start.unwrap_or(len);
+    start..end.unwrap_or(len).max(start)
+}
+
+struct FieldResponderIvars {
+    target: Weak<UIView>,
+    model: RefCell<FieldModel>,
+    delegate: RefCell<Option<Weak<ProtocolObject<dyn UITextInputDelegate>>>>,
+    tokenizer: OnceCell<Retained<UITextInputStringTokenizer>>,
+    repaint: Repaint,
+}
+
+define_class!(
+    /// The system keyboard's text-aware client for egui form fields: it
+    /// answers `UITextInput` from the app-published [`FieldModel`], so iOS
+    /// offers the space-bar trackpad and marked text, and queues edits back.
+    #[unsafe(super(UIView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "FesTermFieldResponder"]
+    #[ivars = FieldResponderIvars]
+    struct FieldResponder;
+
+    unsafe impl NSObjectProtocol for FieldResponder {}
+
+    impl FieldResponder {
+        #[unsafe(method(canBecomeFirstResponder))]
+        fn can_become_first_responder(&self) -> bool { true }
+
+        #[unsafe(method(beginFloatingCursorAtPoint:))]
+        fn begin_floating_cursor(&self, point: CGPoint) {
+            self.move_caret_to(point);
+        }
+
+        #[unsafe(method(updateFloatingCursorAtPoint:))]
+        fn update_floating_cursor(&self, point: CGPoint) {
+            self.move_caret_to(point);
+        }
+
+        #[unsafe(method(endFloatingCursor))]
+        fn end_floating_cursor(&self) {}
+
+        #[unsafe(method_id(textInputView))]
+        fn text_input_view(&self) -> Retained<UIView> {
+            self.ivars()
+                .target
+                .load()
+                .unwrap_or_else(|| Retained::into_super(self.retain()))
+        }
+
+        #[unsafe(method(selectionAffinity))]
+        fn selection_affinity(&self) -> UITextStorageDirection {
+            UITextStorageDirection::Forward
+        }
+    }
+
+    unsafe impl UITextInputTraits for FieldResponder {
+        #[unsafe(method(autocapitalizationType))]
+        fn autocapitalization_type(&self) -> UITextAutocapitalizationType {
+            UITextAutocapitalizationType::None
+        }
+        #[unsafe(method(autocorrectionType))]
+        fn autocorrection_type(&self) -> UITextAutocorrectionType {
+            UITextAutocorrectionType::No
+        }
+        #[unsafe(method(spellCheckingType))]
+        fn spell_checking_type(&self) -> UITextSpellCheckingType {
+            UITextSpellCheckingType::No
+        }
+        #[unsafe(method(smartQuotesType))]
+        fn smart_quotes_type(&self) -> UITextSmartQuotesType {
+            UITextSmartQuotesType::No
+        }
+        #[unsafe(method(smartDashesType))]
+        fn smart_dashes_type(&self) -> UITextSmartDashesType {
+            UITextSmartDashesType::No
+        }
+        #[unsafe(method(isSecureTextEntry))]
+        fn is_secure_text_entry(&self) -> bool {
+            self.ivars().model.borrow().secure()
+        }
+    }
+
+    unsafe impl UIKeyInput for FieldResponder {
+        #[unsafe(method(hasText))]
+        fn has_text(&self) -> bool {
+            !self.ivars().model.borrow().is_empty()
+        }
+
+        #[unsafe(method(insertText:))]
+        fn insert_text(&self, text: &NSString) {
+            self.edit(|model| model.insert(&text.to_string()));
+        }
+
+        #[unsafe(method(deleteBackward))]
+        fn delete_backward(&self) {
+            self.edit(FieldModel::delete_backward);
+        }
+    }
+
+    unsafe impl UITextInput for FieldResponder {
+        #[unsafe(method_id(textInRange:))]
+        fn text_in_range(&self, text_range: &UITextRange) -> Option<Retained<NSString>> {
+            let model = self.ivars().model.borrow();
+            let range = model.clamp(range(text_range));
+            Some(NSString::from_str(&if model.secure() {
+                "\u{2022}".repeat(range.len())
+            } else {
+                model.text(range)
+            }))
+        }
+
+        #[unsafe(method(replaceRange:withText:))]
+        fn replace_range(&self, text_range: &UITextRange, text: &NSString) {
+            let range = range(text_range);
+            self.edit(|model| model.replace(range, &text.to_string()));
+        }
+
+        #[unsafe(method_id(selectedTextRange))]
+        fn selected_text_range(&self) -> Option<Retained<UITextRange>> {
+            let selection = self.ivars().model.borrow().selection();
+            Some(FieldRange::create(MainThreadMarker::from(self), selection))
+        }
+
+        #[unsafe(method(setSelectedTextRange:))]
+        fn set_selected_text_range(&self, text_range: Option<&UITextRange>) {
+            if let Some(text_range) = text_range {
+                let range = range(text_range);
+                self.edit(|model| model.set_selection(range));
+            }
+        }
+
+        #[unsafe(method_id(markedTextRange))]
+        fn marked_text_range(&self) -> Option<Retained<UITextRange>> {
+            let marked = self.ivars().model.borrow().marked();
+            marked.map(|marked| FieldRange::create(MainThreadMarker::from(self), marked))
+        }
+
+        #[unsafe(method_id(markedTextStyle))]
+        fn marked_text_style(
+            &self,
+        ) -> Option<Retained<NSDictionary<NSAttributedStringKey, AnyObject>>> {
+            None
+        }
+
+        #[unsafe(method(setMarkedTextStyle:))]
+        fn set_marked_text_style(
+            &self,
+            _style: Option<&NSDictionary<NSAttributedStringKey, AnyObject>>,
+        ) {
+        }
+
+        #[unsafe(method(setMarkedText:selectedRange:))]
+        fn set_marked_text(&self, text: Option<&NSString>, selected: NSRange) {
+            let text = text.map(NSString::to_string).unwrap_or_default();
+            let selected = char_range(&text, selected);
+            self.edit(|model| model.set_marked(&text, selected));
+        }
+
+        #[unsafe(method(unmarkText))]
+        fn unmark_text(&self) {
+            self.edit(FieldModel::unmark);
+        }
+
+        #[unsafe(method_id(beginningOfDocument))]
+        fn beginning_of_document(&self) -> Retained<UITextPosition> {
+            FieldPosition::create(MainThreadMarker::from(self), 0)
+        }
+
+        #[unsafe(method_id(endOfDocument))]
+        fn end_of_document(&self) -> Retained<UITextPosition> {
+            let len = self.ivars().model.borrow().len();
+            FieldPosition::create(MainThreadMarker::from(self), len)
+        }
+
+        #[unsafe(method_id(textRangeFromPosition:toPosition:))]
+        fn text_range_from_position(
+            &self,
+            from: &UITextPosition,
+            to: &UITextPosition,
+        ) -> Option<Retained<UITextRange>> {
+            let (from, to) = (offset(from), offset(to));
+            Some(FieldRange::create(
+                MainThreadMarker::from(self),
+                from.min(to)..from.max(to),
+            ))
+        }
+
+        #[unsafe(method_id(positionFromPosition:offset:))]
+        fn position_from_position(
+            &self,
+            position: &UITextPosition,
+            by: NSInteger,
+        ) -> Option<Retained<UITextPosition>> {
+            let len = self.ivars().model.borrow().len();
+            offset(position)
+                .checked_add_signed(by)
+                .filter(|target| *target <= len)
+                .map(|target| FieldPosition::create(MainThreadMarker::from(self), target))
+        }
+
+        #[unsafe(method_id(positionFromPosition:inDirection:offset:))]
+        fn position_from_position_in_direction(
+            &self,
+            position: &UITextPosition,
+            direction: UITextLayoutDirection,
+            by: NSInteger,
+        ) -> Option<Retained<UITextPosition>> {
+            let model = self.ivars().model.borrow();
+            let len = model.len();
+            let from = offset(position);
+            let target = match direction {
+                UITextLayoutDirection::Left => from.saturating_add_signed(by.saturating_neg()).min(len),
+                UITextLayoutDirection::Right => from.saturating_add_signed(by).min(len),
+                UITextLayoutDirection::Up => model.vertical(from, by.saturating_neg()),
+                UITextLayoutDirection::Down => model.vertical(from, by),
+                _ => from.min(len),
+            };
+            Some(FieldPosition::create(MainThreadMarker::from(self), target))
+        }
+
+        #[unsafe(method(comparePosition:toPosition:))]
+        fn compare_position(
+            &self,
+            position: &UITextPosition,
+            other: &UITextPosition,
+        ) -> NSComparisonResult {
+            match offset(position).cmp(&offset(other)) {
+                std::cmp::Ordering::Less => NSComparisonResult::Ascending,
+                std::cmp::Ordering::Equal => NSComparisonResult::Same,
+                std::cmp::Ordering::Greater => NSComparisonResult::Descending,
+            }
+        }
+
+        #[unsafe(method(offsetFromPosition:toPosition:))]
+        fn offset_from_position(&self, from: &UITextPosition, to: &UITextPosition) -> NSInteger {
+            offset(to) as NSInteger - offset(from) as NSInteger
+        }
+
+        #[unsafe(method_id(inputDelegate))]
+        fn input_delegate(&self) -> Option<Retained<ProtocolObject<dyn UITextInputDelegate>>> {
+            self.ivars().delegate.borrow().as_ref().and_then(Weak::load)
+        }
+
+        #[unsafe(method(setInputDelegate:))]
+        fn set_input_delegate(&self, delegate: Option<&ProtocolObject<dyn UITextInputDelegate>>) {
+            *self.ivars().delegate.borrow_mut() = delegate.map(Weak::new);
+        }
+
+        #[unsafe(method_id(tokenizer))]
+        fn tokenizer(&self) -> Retained<ProtocolObject<dyn UITextInputTokenizer>> {
+            let tokenizer = self.ivars().tokenizer.get_or_init(|| {
+                let responder: &UIResponder = self;
+                // SAFETY: this responder implements UITextInput; the
+                // tokenizer is created and used on the main thread.
+                unsafe {
+                    UITextInputStringTokenizer::initWithTextInput(
+                        UITextInputStringTokenizer::alloc(MainThreadMarker::from(self)),
+                        responder,
+                    )
+                }
+            });
+            ProtocolObject::from_retained(tokenizer.clone())
+        }
+
+        #[unsafe(method_id(positionWithinRange:farthestInDirection:))]
+        fn position_within_range(
+            &self,
+            text_range: &UITextRange,
+            direction: UITextLayoutDirection,
+        ) -> Option<Retained<UITextPosition>> {
+            let range = range(text_range);
+            let target = match direction {
+                UITextLayoutDirection::Left | UITextLayoutDirection::Up => range.start,
+                _ => range.end,
+            };
+            Some(FieldPosition::create(MainThreadMarker::from(self), target))
+        }
+
+        #[unsafe(method_id(characterRangeByExtendingPosition:inDirection:))]
+        fn character_range_by_extending(
+            &self,
+            position: &UITextPosition,
+            direction: UITextLayoutDirection,
+        ) -> Option<Retained<UITextRange>> {
+            let len = self.ivars().model.borrow().len();
+            let at = offset(position).min(len);
+            let range = match direction {
+                UITextLayoutDirection::Left | UITextLayoutDirection::Up => {
+                    at.saturating_sub(1)..at
+                }
+                _ => at..(at + 1).min(len),
+            };
+            Some(FieldRange::create(MainThreadMarker::from(self), range))
+        }
+
+        #[unsafe(method(baseWritingDirectionForPosition:inDirection:))]
+        fn base_writing_direction(
+            &self,
+            _position: &UITextPosition,
+            _direction: UITextStorageDirection,
+        ) -> NSWritingDirection {
+            NSWritingDirection::LeftToRight
+        }
+
+        #[unsafe(method(setBaseWritingDirection:forRange:))]
+        fn set_base_writing_direction(
+            &self,
+            _direction: NSWritingDirection,
+            _range: &UITextRange,
+        ) {
+        }
+
+        #[unsafe(method(firstRectForRange:))]
+        fn first_rect_for_range(&self, text_range: &UITextRange) -> CGRect {
+            let model = self.ivars().model.borrow();
+            let range = range(text_range);
+            let (top, bottom) = model.row_at(range.start);
+            let start = model.caret_x(range.start);
+            let end = (range.start..=range.end.min(model.len()))
+                .take_while(|offset| model.row_at(*offset) == (top, bottom))
+                .map(|offset| model.caret_x(offset))
+                .fold(start, f32::max);
+            CGRect::new(
+                CGPoint::new(start.min(end).into(), top.into()),
+                CGSize::new((end - start).abs().into(), (bottom - top).into()),
+            )
+        }
+
+        #[unsafe(method(caretRectForPosition:))]
+        fn caret_rect_for_position(&self, position: &UITextPosition) -> CGRect {
+            let model = self.ivars().model.borrow();
+            let (top, bottom) = model.row_at(offset(position));
+            CGRect::new(
+                CGPoint::new(model.caret_x(offset(position)).into(), top.into()),
+                CGSize::new(2.0, (bottom - top).into()),
+            )
+        }
+
+        #[unsafe(method_id(selectionRectsForRange:))]
+        fn selection_rects_for_range(
+            &self,
+            _range: &UITextRange,
+        ) -> Retained<NSArray<UITextSelectionRect>> {
+            NSArray::new()
+        }
+
+        #[unsafe(method_id(closestPositionToPoint:))]
+        fn closest_position_to_point(&self, point: CGPoint) -> Option<Retained<UITextPosition>> {
+            let closest = self.ivars().model.borrow().closest_at(point.x as f32, point.y as f32);
+            Some(FieldPosition::create(MainThreadMarker::from(self), closest))
+        }
+
+        #[unsafe(method_id(closestPositionToPoint:withinRange:))]
+        fn closest_position_within_range(
+            &self,
+            point: CGPoint,
+            text_range: &UITextRange,
+        ) -> Option<Retained<UITextPosition>> {
+            let range = range(text_range);
+            let closest = self.ivars().model.borrow().closest_at(point.x as f32, point.y as f32);
+            Some(FieldPosition::create(
+                MainThreadMarker::from(self),
+                closest.clamp(range.start, range.end),
+            ))
+        }
+
+        #[unsafe(method_id(characterRangeAtPoint:))]
+        fn character_range_at_point(&self, point: CGPoint) -> Option<Retained<UITextRange>> {
+            let model = self.ivars().model.borrow();
+            let at = model.closest_at(point.x as f32, point.y as f32);
+            let range = model.clamp(at..at + 1);
+            Some(FieldRange::create(MainThreadMarker::from(self), range))
+        }
+    }
+);
+
+impl FieldResponder {
+    fn edit(&self, change: impl FnOnce(&mut FieldModel)) {
+        if !self.ivars().model.borrow().is_active() {
+            return;
+        }
+        change(&mut self.ivars().model.borrow_mut());
+        (self.ivars().repaint)();
+    }
+
+    fn move_caret_to(&self, point: CGPoint) {
+        let closest = self
+            .ivars()
+            .model
+            .borrow()
+            .closest_at(point.x as f32, point.y as f32);
+        self.edit(|model| model.set_selection(closest..closest));
+    }
+
+    fn sync(&self, document: Option<FieldDocument>) {
+        let was_secure = self.ivars().model.borrow().secure();
+        let change = self.ivars().model.borrow_mut().sync(document);
+        if change == FieldSync::Unchanged {
+            return;
+        }
+        if self.ivars().model.borrow().secure() != was_secure && self.isFirstResponder() {
+            self.reloadInputViews();
+        }
+        let Some(delegate) = self.ivars().delegate.borrow().as_ref().and_then(Weak::load) else {
+            return;
+        };
+        let input = ProtocolObject::<dyn UITextInput>::from_ref(self);
+        // The model is not borrowed here: the delegate re-enters UITextInput.
+        if change == FieldSync::Text {
+            delegate.textWillChange(Some(input));
+            delegate.textDidChange(Some(input));
+        } else {
+            delegate.selectionWillChange(Some(input));
+            delegate.selectionDidChange(Some(input));
+        }
+    }
+
+    fn take_input(&self) -> Vec<FieldInput> {
+        let mut model = self.ivars().model.borrow_mut();
+        let batch = model.take_batch();
+        if model.has_pending() {
+            (self.ivars().repaint)();
+        }
+        batch
+    }
+}
+
 impl KeyboardBridge {
     pub fn new(
         window: WindowHandle<'_>,
@@ -149,10 +688,20 @@ impl KeyboardBridge {
         let terminal_responder: Retained<TerminalResponder> =
             unsafe { msg_send![super(responder), init] };
         view.addSubview(&terminal_responder);
+        let repaint: Repaint = Arc::new(repaint);
+        let field = FieldResponder::alloc(main_thread).set_ivars(FieldResponderIvars {
+            target: Weak::from_retained(&view),
+            model: RefCell::default(),
+            delegate: RefCell::default(),
+            tokenizer: OnceCell::new(),
+            repaint: repaint.clone(),
+        });
+        // SAFETY: UIView initializer on a newly allocated main-thread object.
+        let field_responder: Retained<FieldResponder> = unsafe { msg_send![super(field), init] };
+        view.addSubview(&field_responder);
         // Create the guide before the first keyboard animation/layout pass.
         let _ = view.keyboardLayoutGuide();
         let center = NSNotificationCenter::defaultCenter();
-        let repaint = Arc::new(repaint);
         let mut observers = Vec::with_capacity(2);
         // SAFETY: these UIKit notification names are immutable system globals.
         for name in unsafe {
@@ -174,7 +723,16 @@ impl KeyboardBridge {
             center,
             observers,
             terminal_responder,
+            field_responder,
+            repaint,
         })
+    }
+
+    pub fn document_picker(&self) -> Option<crate::DocumentPicker> {
+        Some(crate::DocumentPicker::new(
+            self.view.clone(),
+            self.repaint.clone(),
+        ))
     }
 
     /// Docked keyboard occlusion in view-relative units. Hidden/hardware or
@@ -191,6 +749,12 @@ impl KeyboardBridge {
     }
 
     pub fn set_keyboard_mode(&self, mode: KeyboardMode) -> Result<(), &'static str> {
+        if mode != KeyboardMode::Field
+            && self.field_responder.isFirstResponder()
+            && !self.field_responder.resignFirstResponder()
+        {
+            return Err("The field keyboard could not release input");
+        }
         match mode {
             KeyboardMode::Terminal => {
                 if self.view.isFirstResponder() && !self.view.resignFirstResponder() {
@@ -203,6 +767,13 @@ impl KeyboardBridge {
                         );
                     }
                     self.terminal_responder.reloadInputViews();
+                }
+            }
+            KeyboardMode::Field => {
+                if !self.field_responder.isFirstResponder()
+                    && !self.field_responder.becomeFirstResponder()
+                {
+                    return Err("The built-in keyboard is unavailable");
                 }
             }
             KeyboardMode::System | KeyboardMode::Hidden => {
@@ -223,6 +794,16 @@ impl KeyboardBridge {
         Ok(())
     }
 
+    /// Publishes the focused form field (or none) for the keyboard to edit.
+    pub fn set_field_document(&self, document: Option<FieldDocument>) {
+        self.field_responder.sync(document);
+    }
+
+    /// Keyboard edits for the published field, to apply before egui runs it.
+    pub fn take_field_input(&self) -> Vec<FieldInput> {
+        self.field_responder.take_input()
+    }
+
     pub fn play_input_click(&self) {
         if self.terminal_responder.isFirstResponder() {
             UIDevice::currentDevice(MainThreadMarker::from(&*self.terminal_responder))
@@ -235,6 +816,8 @@ impl Drop for KeyboardBridge {
     fn drop(&mut self) {
         self.terminal_responder.resignFirstResponder();
         self.terminal_responder.removeFromSuperview();
+        self.field_responder.resignFirstResponder();
+        self.field_responder.removeFromSuperview();
         for observer in &self.observers {
             // SAFETY: each token was returned by this center and is still
             // retained; removal prevents callbacks after the bridge is gone.

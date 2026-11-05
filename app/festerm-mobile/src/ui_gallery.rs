@@ -662,3 +662,424 @@ fn dev_tunnel_host_session_field_keeps_the_keyboard_up() {
         "the focused field scrolls above the keyboard: {field:?}"
     );
 }
+
+fn placeholder(text: &'static str) -> egui_kittest::kittest::By<'static> {
+    egui_kittest::kittest::By::new().predicate(move |node| node.placeholder() == Some(text))
+}
+
+struct FieldTouch {
+    harness: Harness<'static, MobileApp>,
+    occlusion: Rc<Cell<f32>>,
+    time: f64,
+    username_at: egui::Pos2,
+}
+
+impl FieldTouch {
+    fn editor() -> Self {
+        let lifecycle = Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        }));
+        let mut app = MobileApp::new(lifecycle);
+        configure(&mut app, "editor-new");
+        let occlusion = Rc::new(Cell::new(0.0_f32));
+        let shared = Rc::clone(&occlusion);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(
+                move |ui, app: &mut MobileApp| app.show_with_occlusion(ui, shared.get()),
+                app,
+            );
+        harness.run_steps(3);
+        let time = harness.ctx.input(|input| input.time);
+        let username_at = {
+            use egui_kittest::kittest::Queryable;
+            harness.get(placeholder("dev")).rect().center()
+        };
+        Self {
+            harness,
+            occlusion,
+            time,
+            username_at,
+        }
+    }
+
+    fn frame(&mut self, events: Vec<egui::Event>, dt: f64) {
+        self.time += dt;
+        self.harness.input_mut().time = Some(self.time);
+        for event in events {
+            self.harness.event(event);
+        }
+        self.harness.step();
+        let ime = self.harness.output().platform_output.ime.is_some();
+        self.occlusion.set(if ime { 0.36 } else { 0.0 });
+    }
+
+    fn center(&self, by: egui_kittest::kittest::By<'_>) -> egui::Pos2 {
+        use egui_kittest::kittest::Queryable;
+        self.harness.get(by).rect().center()
+    }
+
+    fn touch(&mut self, pos: egui::Pos2, hold: f64) {
+        self.touch_path(&[pos], hold);
+    }
+
+    /// Presses at `path[0]`, holds, slides through the rest, then lifts.
+    fn touch_path(&mut self, path: &[egui::Pos2], hold: f64) {
+        let touch = |phase, pos| egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase,
+            pos,
+            force: None,
+        };
+        let press = |pressed, pos| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let start = path[0];
+        self.frame(
+            vec![
+                touch(egui::TouchPhase::Start, start),
+                egui::Event::PointerMoved(start),
+                press(true, start),
+            ],
+            0.02,
+        );
+        let mut held = 0.0;
+        while held < hold {
+            self.frame(vec![], 0.1);
+            held += 0.1;
+        }
+        for pos in &path[1..] {
+            self.frame(
+                vec![
+                    touch(egui::TouchPhase::Move, *pos),
+                    egui::Event::PointerMoved(*pos),
+                ],
+                0.03,
+            );
+        }
+        let end = *path.last().expect("a touch has a position");
+        self.frame(
+            vec![
+                touch(egui::TouchPhase::End, end),
+                press(false, end),
+                egui::Event::PointerGone,
+            ],
+            0.02,
+        );
+        for _ in 0..3 {
+            self.frame(vec![], 0.02);
+        }
+    }
+
+    fn caret(&self) -> Option<std::ops::Range<usize>> {
+        let field = self.harness.ctx.memory(|memory| memory.focused())?;
+        let range = egui::TextEdit::load_state(&self.harness.ctx, field)?
+            .cursor
+            .char_range()?
+            .as_sorted_char_range();
+        Some(range.start.0..range.end.0)
+    }
+
+    fn long_press_username(&mut self) {
+        self.touch(self.username_at, 0.7);
+    }
+
+    fn tap_menu(&mut self, label: &'static str) {
+        let item = self.center(egui_kittest::kittest::By::new().label(label));
+        self.touch(item, 0.0);
+    }
+
+    fn has_menu(&self, label: &str) -> bool {
+        use egui_kittest::kittest::{By, Queryable};
+        self.harness.query(By::new().label(label)).is_some()
+    }
+
+    fn keyboard_up(&self) -> bool {
+        self.harness.output().platform_output.ime.is_some()
+            && self.harness.ctx.memory(|memory| memory.focused()).is_some()
+    }
+
+    fn username(&self) -> &str {
+        &self.harness.state().editor.username
+    }
+}
+
+#[test]
+fn long_pressing_a_form_field_offers_paste_and_keeps_the_keyboard() {
+    let mut rig = FieldTouch::editor();
+    assert!(!rig.has_menu("Paste"));
+    rig.long_press_username();
+    assert!(rig.has_menu("Paste"), "a held field offers its edit menu");
+    assert!(
+        !rig.has_menu("Select All"),
+        "nothing to select in an empty field"
+    );
+    assert!(
+        rig.keyboard_up(),
+        "the held field takes focus and its keyboard"
+    );
+
+    super::set_test_clipboard(Some("fes\nlabs"));
+    rig.tap_menu("Paste");
+    assert_eq!(
+        rig.username(),
+        "fes labs",
+        "single-line paste flattens newlines"
+    );
+    assert!(!rig.has_menu("Paste"), "choosing an item closes the menu");
+    assert!(
+        rig.keyboard_up(),
+        "tapping the menu must not drop the keyboard"
+    );
+
+    rig.long_press_username();
+    assert!(rig.has_menu("Select All"));
+    rig.tap_menu("Select All");
+    assert!(rig.has_menu("Copy"), "a selection offers Copy");
+    assert!(rig.has_menu("Cut"));
+    super::set_test_clipboard(Some("root"));
+    rig.tap_menu("Paste");
+    assert_eq!(
+        rig.username(),
+        "root",
+        "pasting over a selection replaces it"
+    );
+    super::set_test_clipboard(None);
+}
+
+#[test]
+fn a_quick_tap_or_drag_on_a_form_field_does_not_open_the_edit_menu() {
+    let mut rig = FieldTouch::editor();
+    let field = rig.username_at;
+    rig.touch(field, 0.2);
+    assert!(!rig.has_menu("Paste"), "a tap only focuses the field");
+    assert!(rig.keyboard_up());
+
+    rig.long_press_username();
+    assert!(rig.has_menu("Paste"));
+    rig.touch(field + egui::vec2(0.0, 120.0), 0.0);
+    assert!(
+        !rig.has_menu("Paste"),
+        "pressing outside dismisses the menu"
+    );
+}
+
+#[test]
+fn holding_then_sliding_on_a_form_field_moves_its_caret_without_selecting() {
+    let mut rig = FieldTouch::editor();
+    let field = {
+        use egui_kittest::kittest::Queryable;
+        rig.harness.get(placeholder("dev")).rect()
+    };
+    rig.harness.state_mut().editor.username = "festerm".to_owned();
+    let end_of_text = rig.username_at;
+    rig.touch(end_of_text, 0.2);
+    assert_eq!(
+        rig.caret(),
+        Some(7..7),
+        "a tap past the text puts the caret at its end"
+    );
+
+    let start_of_text = egui::pos2(field.left() + 14.0, field.center().y);
+    let path: Vec<egui::Pos2> = (0..=6)
+        .map(|step| end_of_text.lerp(start_of_text, step as f32 / 6.0))
+        // A finger drifting off the row still steers the caret sideways.
+        .chain([start_of_text + egui::vec2(0.0, 60.0)])
+        .collect();
+    rig.touch_path(&path, 0.7);
+    assert_eq!(
+        rig.caret(),
+        Some(0..0),
+        "the held finger carries a caret, not a selection"
+    );
+    assert!(
+        !rig.has_menu("Paste"),
+        "a moved hold does not open the menu"
+    );
+    assert!(rig.keyboard_up());
+    assert_eq!(rig.username(), "festerm");
+}
+
+#[test]
+fn native_keyboard_edits_reach_the_focused_form_field_in_order() {
+    use festerm_ios_window::{FieldDocument, FieldInput};
+    type Field = (String, Vec<FieldInput>, Option<FieldDocument>);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(390.0, 200.0))
+        .build_ui_state(
+            |ui, (text, inputs, document): &mut Field| {
+                super::apply_field_input(ui.ctx(), std::mem::take(inputs));
+                let response = crate::widgets::form_field(
+                    ui,
+                    [ui.available_width(), 48.0],
+                    "field",
+                    egui::TextEdit::singleline(text),
+                    false,
+                );
+                if ui.ctx().memory(|memory| memory.focused()).is_none() {
+                    response.request_focus();
+                }
+                *document = crate::widgets::take_field_document(ui.ctx());
+            },
+            ("abc".to_owned(), Vec::new(), None),
+        );
+    harness.run_steps(2);
+    let document = harness
+        .state()
+        .2
+        .clone()
+        .expect("the focused field is published");
+    assert_eq!(document.text, "abc");
+    assert_eq!(document.selection, 3..3);
+    assert_eq!(document.carets.len(), 4);
+    assert!(document.carets.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(!document.secure);
+
+    let mut send = |inputs: Vec<FieldInput>| {
+        harness.state_mut().1 = inputs;
+        harness.run_steps(1);
+        let (text, _, document) = harness.state();
+        (
+            text.clone(),
+            document.as_ref().map(|document| document.selection.clone()),
+        )
+    };
+    assert_eq!(
+        send(vec![
+            FieldInput::Select(1..1),
+            FieldInput::Insert("X".into())
+        ]),
+        ("aXbc".to_owned(), Some(2..2)),
+        "a trackpad move lands before the typed text"
+    );
+    assert_eq!(
+        send(vec![FieldInput::DeleteBackward]),
+        ("abc".to_owned(), Some(1..1))
+    );
+    assert_eq!(
+        send(vec![FieldInput::Preedit {
+            text: "k".into(),
+            selected: 1..1,
+        }])
+        .0,
+        "akbc"
+    );
+    assert_eq!(
+        send(vec![FieldInput::Commit("か".into())]),
+        ("aかbc".to_owned(), Some(2..2)),
+        "a commit replaces the marked text"
+    );
+    assert_eq!(send(vec![FieldInput::Select(0..4)]).1, Some(0..4));
+}
+
+#[test]
+fn a_password_field_menu_pastes_but_never_offers_copy_or_cut() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(390.0, 400.0))
+        .build_ui_state(
+            |ui, password: &mut String| {
+                super::apply_field_edit(ui.ctx());
+                ui.add_space(120.0);
+                crate::widgets::form_field(
+                    ui,
+                    [ui.available_width(), 48.0],
+                    "password",
+                    egui::TextEdit::singleline(password)
+                        .password(true)
+                        .sensitive(true)
+                        .hint_text("Password"),
+                    true,
+                );
+            },
+            "hunter2".to_owned(),
+        );
+    harness.run_steps(2);
+    let mut time = harness.ctx.input(|input| input.time);
+    let mut touch = |harness: &mut Harness<'_, String>, pos: egui::Pos2, hold: f64| {
+        let finger = |phase| egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase,
+            pos,
+            force: None,
+        };
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut step = |harness: &mut Harness<'_, String>, events: Vec<egui::Event>, dt: f64| {
+            time += dt;
+            harness.input_mut().time = Some(time);
+            for event in events {
+                harness.event(event);
+            }
+            harness.step();
+        };
+        step(
+            harness,
+            vec![
+                finger(egui::TouchPhase::Start),
+                egui::Event::PointerMoved(pos),
+                button(true),
+            ],
+            0.02,
+        );
+        let mut held = 0.0;
+        while held < hold {
+            step(harness, vec![], 0.1);
+            held += 0.1;
+        }
+        step(
+            harness,
+            vec![
+                finger(egui::TouchPhase::End),
+                button(false),
+                egui::Event::PointerGone,
+            ],
+            0.02,
+        );
+        for _ in 0..3 {
+            step(harness, vec![], 0.02);
+        }
+    };
+    let at = |harness: &Harness<'_, String>, by: egui_kittest::kittest::By<'_>| {
+        use egui_kittest::kittest::Queryable;
+        harness.get(by).rect().center()
+    };
+    let has = |harness: &Harness<'_, String>, label: &str| {
+        use egui_kittest::kittest::{By, Queryable};
+        harness.query(By::new().label(label)).is_some()
+    };
+    let field = at(
+        &harness,
+        egui_kittest::kittest::By::new().predicate(|node| {
+            matches!(
+                node.role(),
+                egui::accesskit::Role::PasswordInput | egui::accesskit::Role::TextInput
+            )
+        }),
+    );
+    touch(&mut harness, field, 0.7);
+    let select_all = at(
+        &harness,
+        egui_kittest::kittest::By::new().label("Select All"),
+    );
+    touch(&mut harness, select_all, 0.0);
+    assert!(has(&harness, "Paste"));
+    assert!(
+        !has(&harness, "Copy") && !has(&harness, "Cut"),
+        "secrets stay put"
+    );
+    super::set_test_clipboard(Some("s3cret"));
+    let paste = at(&harness, egui_kittest::kittest::By::new().label("Paste"));
+    touch(&mut harness, paste, 0.0);
+    super::set_test_clipboard(None);
+    assert_eq!(harness.state(), "s3cret");
+}

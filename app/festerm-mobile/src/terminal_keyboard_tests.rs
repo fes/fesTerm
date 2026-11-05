@@ -39,6 +39,78 @@ fn pointer(pressed: bool, pos: egui::Pos2) -> egui::Event {
 }
 
 #[test]
+fn terminal_keyboards_offer_dictation_as_one_non_repeating_action() {
+    for kind in [KeyboardKind::HoldSymbols, KeyboardKind::ShellRow] {
+        for width in [320.0, 390.0, 768.0] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, 844.0))
+                .build_ui_state(
+                    move |ui, (keyboard, actions): &mut (TerminalKeyboard, Vec<KeyRowAction>)| {
+                        let output = keyboard.show(
+                            ui,
+                            kind,
+                            &KeyRowState {
+                                control: false,
+                                alt: false,
+                                shift: false,
+                                panel_open: false,
+                                keyboard_visible: true,
+                                paste: true,
+                            },
+                            700.0,
+                        );
+                        if output.action != KeyRowAction::None {
+                            actions.push(output.action);
+                        }
+                    },
+                    (TerminalKeyboard::default(), Vec::new()),
+                );
+            harness.run();
+            let mic = harness.get_by_label("Mic").rect();
+            assert!(mic.left() >= 0.0 && mic.right() <= width);
+            assert!(mic.width() >= 24.0 && mic.height() >= 24.0);
+            for pair in ["Left", "Up", "Down", "Right", "Mic", "Extended keys"].windows(2) {
+                let left = harness.get_by_label(pair[0]).rect();
+                let right = harness.get_by_label(pair[1]).rect();
+                assert!(left.right() < right.left(), "{kind:?}: {pair:?} at {width}");
+                assert_eq!(left.top(), right.top());
+            }
+            for label in ["Left", "Up", "Down", "Right"] {
+                harness.get_by_label(label).click();
+                harness.run();
+            }
+            assert_eq!(
+                harness.state().1,
+                [
+                    KeyRowAction::Key(Key::ArrowLeft),
+                    KeyRowAction::Key(Key::ArrowUp),
+                    KeyRowAction::Key(Key::ArrowDown),
+                    KeyRowAction::Key(Key::ArrowRight),
+                ]
+            );
+            harness.state_mut().1.clear();
+            let now = harness.ctx.input(|input| input.time);
+            harness.event(egui::Event::PointerMoved(mic.center()));
+            harness.event(pointer(true, mic.center()));
+            harness.step();
+            assert_eq!(
+                harness.state().0.keys.preview_glyph(),
+                Some(&Glyph::Icon(Icon::Microphone))
+            );
+            harness.input_mut().time = Some(now + REPEAT_DELAY + REPEAT_INTERVAL);
+            harness.step();
+            assert!(
+                harness.state().1.is_empty(),
+                "holding Mic must not start capture"
+            );
+            harness.event(pointer(false, mic.center()));
+            harness.run();
+            assert_eq!(harness.state().1, [KeyRowAction::Dictate]);
+        }
+    }
+}
+
+#[test]
 fn terminal_keyboard_hold_emits_one_alternate_and_never_its_base_on_release() {
     let mut harness = harness();
     harness.run();

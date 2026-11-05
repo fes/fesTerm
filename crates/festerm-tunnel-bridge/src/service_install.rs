@@ -14,6 +14,24 @@ use std::{
 
 const OUTPUT_LIMIT: usize = 64 * 1024;
 const DEADLINE: Duration = Duration::from_secs(15);
+#[cfg(any(windows, test))]
+const WINDOWS_WORKER: &str = "festerm-tunnel-worker.exe";
+
+#[cfg(windows)]
+pub(super) fn check_windows_worker(setup: &Path) -> io::Result<()> {
+    let directory = festerm_windows_security::lock_directory_path_without_delete_sharing(
+        setup
+            .parent()
+            .ok_or_else(|| refused("service.executable"))?,
+    )
+    .map_err(|_| refused("service.worker_executable"))?;
+    if festerm_windows_security::secure_staging_parent(&directory)?.is_none() {
+        return Err(refused("service.worker_executable"));
+    }
+    festerm_windows_security::open_file_no_reparse(&directory, Path::new(WINDOWS_WORKER))
+        .map_err(|_| refused("service.worker_executable"))?;
+    Ok(())
+}
 
 pub struct ServiceSpec {
     pub id: String,
@@ -311,18 +329,33 @@ fn windows_argument(value: &str) -> io::Result<String> {
 
 #[cfg(any(windows, test))]
 fn windows_definition(spec: &ServiceSpec, sid: &str) -> io::Result<String> {
+    windows_definition_with_console_policy(spec, sid, true)
+}
+
+#[cfg(any(windows, test))]
+fn windows_definition_with_console_policy(
+    spec: &ServiceSpec,
+    sid: &str,
+    windowless: bool,
+) -> io::Result<String> {
     spec.validate_syntax()?;
     if !valid_sid(sid) {
         return Err(refused("service.user_context"));
     }
-    let executable = path_text(&spec.executable)?;
+    let launcher = if windowless {
+        spec.executable.with_file_name(WINDOWS_WORKER)
+    } else {
+        spec.executable.clone()
+    };
+    let executable = path_text(&launcher)?;
     // Scheduler expands paired %NAME% references even without a shell. There
     // is no documented literal-percent escape, so reject ambiguous paths.
     if executable.contains('"') || executable.matches('%').count() > 1 {
         return Err(refused("service.invalid_path"));
     }
     let arguments = format!(
-        "--serve --state-dir {}",
+        "{}--state-dir {}",
+        if windowless { "" } else { "--serve " },
         windows_argument(path_text(&spec.state)?)?
     );
     Ok(format!(
@@ -356,6 +389,39 @@ fn windows_task_bytes(definition: &str) -> Vec<u8> {
         .into_iter()
         .chain(definition.encode_utf16().flat_map(u16::to_le_bytes))
         .collect()
+}
+
+#[cfg(any(windows, test))]
+fn windows_owned_definitions(spec: &ServiceSpec, sid: &str) -> io::Result<[Vec<u8>; 3]> {
+    let current = windows_definition(spec, sid)?;
+    let legacy = windows_definition_with_console_policy(spec, sid, false)?;
+    Ok([
+        windows_task_bytes(&current),
+        windows_task_bytes(&legacy),
+        legacy
+            .replacen("encoding=\"UTF-16\"", "encoding=\"UTF-8\"", 1)
+            .into_bytes(),
+    ])
+}
+
+#[cfg(any(windows, test))]
+fn windows_registration_definition(
+    state: &File,
+    spec: &ServiceSpec,
+    sid: &str,
+) -> io::Result<Vec<u8>> {
+    let definitions = windows_owned_definitions(spec, sid)?;
+    let definition =
+        match setup_storage::open_private_file(state, Path::new("service-task.xml"), false) {
+            Ok(file) => owned_bytes(file, &definitions[..2])?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => definitions[0].clone(),
+            Err(error) => return Err(error),
+        };
+    #[cfg(windows)]
+    if definition == definitions[0] {
+        check_windows_worker(&spec.executable)?;
+    }
+    Ok(definition)
 }
 
 struct NativeOutput {
@@ -902,21 +968,14 @@ fn windows_stop_script(owned: &[&ServiceSpec], state: &Path, own_pid: u32) -> io
 #[cfg(windows)]
 fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
     let state = spec.validate()?;
+    check_windows_worker(&spec.executable)?;
     let (sid, system) = festerm_windows_security::current_user_service_context()
         .map_err(|_| refused("service.user_context"))?;
     let expected = windows_task_bytes(&windows_definition(spec, &sid)?);
     let accepted = previous
         .iter()
         .chain([spec])
-        .map(|prior| {
-            let definition = windows_definition(prior, &sid)?;
-            Ok([
-                windows_task_bytes(&definition),
-                definition
-                    .replacen("encoding=\"UTF-16\"", "encoding=\"UTF-8\"", 1)
-                    .into_bytes(),
-            ])
-        })
+        .map(|prior| windows_owned_definitions(prior, &sid))
         .collect::<io::Result<Vec<_>>>()?
         .into_iter()
         .flatten()
@@ -1136,7 +1195,7 @@ fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
     let state = spec.validate()?;
     let (sid, system) = festerm_windows_security::current_user_service_context()
         .map_err(|_| refused("service.user_context"))?;
-    let definition = windows_task_bytes(&windows_definition(spec, &sid)?);
+    let definition = windows_registration_definition(&state, spec, &sid)?;
     let definition_name = Path::new("service-task.xml");
     let snapshot_name = Path::new("service-task-owned.xml");
     let tool = system.join("schtasks.exe");
@@ -1326,6 +1385,57 @@ mod tests {
         assert!(!linux.contains("ExecStop="));
         assert!(!linux.contains("sessiond"));
         assert!(!mac.contains("sessiond"));
+    }
+
+    #[test]
+    fn service_windows_plain_rerun_keeps_the_owned_legacy_console_definition() {
+        let spec = spec();
+        let sid = "S-1-5-21-123-456-789-1001";
+        let path = crate::test_support::private_directory("festerm-legacy-console");
+        let state = setup_storage::private_directory(&path, false).unwrap();
+        let legacy =
+            windows_task_bytes(&windows_definition_with_console_policy(&spec, sid, false).unwrap());
+        setup_storage::write_new_private(&state, Path::new("service-task.xml"), &legacy).unwrap();
+        assert_eq!(
+            windows_registration_definition(&state, &spec, sid).unwrap(),
+            legacy
+        );
+        drop(state);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn service_windows_windowless_upgrade_accepts_only_exact_owned_legacy_tasks() {
+        let spec = spec();
+        let sid = "S-1-5-21-123-456-789-1001";
+        let current = windows_definition(&spec, sid).unwrap();
+        let legacy = windows_definition_with_console_policy(&spec, sid, false).unwrap();
+        let legacy_command = format!(
+            "<Command>{}</Command>",
+            xml(spec.executable.to_str().unwrap())
+        );
+        assert!(current.contains("festerm-tunnel-worker.exe</Command>"));
+        assert!(current.contains("<Arguments>--state-dir "));
+        assert!(!current.contains("--serve"));
+        assert!(legacy.contains(&legacy_command));
+        assert!(legacy.contains("<Arguments>--serve --state-dir "));
+        let accepted = windows_owned_definitions(&spec, sid).unwrap();
+        assert_eq!(accepted[0], windows_task_bytes(&current));
+        assert_eq!(accepted[1], windows_task_bytes(&legacy));
+        assert_eq!(
+            accepted[2],
+            legacy
+                .replacen("encoding=\"UTF-16\"", "encoding=\"UTF-8\"", 1)
+                .as_bytes()
+        );
+        for altered in [
+            legacy.replace("LeastPrivilege", "HighestAvailable"),
+            legacy.replace(&legacy_command, "<Command>foreign.exe</Command>"),
+            legacy.replace("été", "other-state"),
+            legacy.replace(&spec.id, "00000000-0000-0000-0000-000000000001"),
+        ] {
+            assert!(!accepted.contains(&windows_task_bytes(&altered)));
+        }
     }
 
     #[test]

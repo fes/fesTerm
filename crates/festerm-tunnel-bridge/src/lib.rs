@@ -1,10 +1,18 @@
 //! Experimental attach-only bridge. Network dependencies are explicitly opt-in.
+pub mod file_protocol;
 #[cfg(feature = "client")]
 pub mod files;
+#[cfg(feature = "relay")]
+pub mod filesystem;
 #[cfg(feature = "relay")]
 pub mod host_identity;
 #[cfg(feature = "client")]
 pub mod mobile;
+#[cfg(feature = "relay")]
+pub mod observation;
+#[cfg(feature = "client")]
+pub mod observation_client;
+pub mod observation_protocol;
 pub mod protocol;
 #[cfg(feature = "client")]
 pub mod relay;

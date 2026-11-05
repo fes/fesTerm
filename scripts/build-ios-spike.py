@@ -82,6 +82,8 @@ def bundle_info(live_ssh: bool = False) -> dict:
         "LSRequiresIPhoneOS": True,
         # Required by LocalAuthentication (festerm-ios-lock); without it Face ID is denied.
         "NSFaceIDUsageDescription": "fesTerm uses Face ID to unlock the app when app lock is on.",
+        "NSMicrophoneUsageDescription": "Record speech only when you choose on-device dictation. Audio is not saved or sent to a server.",
+        "NSSpeechRecognitionUsageDescription": "Transcribe speech on this device for review before you insert text into the terminal.",
         # Make Documents/ (the This iPhone pane's root) visible in the Files app.
         "UIFileSharingEnabled": True,
         "LSSupportsOpeningDocumentsInPlace": True,
@@ -118,6 +120,8 @@ def main() -> int:
     parser.add_argument("--run", action="store_true", help="install and launch on a booted Simulator")
     parser.add_argument("--simulator", default="booted", help="Simulator UDID (default: booted)")
     parser.add_argument("--live-ssh", action="store_true", help="include the opt-in live SSH connection UI")
+    parser.add_argument("--native-document-smoke", action="store_true",
+                        help="run document I/O qualification against a fresh app-owned Simulator fixture")
     parser.add_argument("--check-dependencies", action="store_true", help="check mobile/SSH/Dev Tunnels graphs for both iOS targets only; works on Linux")
     args = parser.parse_args()
     if args.check_dependencies:
@@ -153,8 +157,13 @@ def main() -> int:
     rustflags += ["-C", f"link-arg=-Wl,-sectcreate,__TEXT,__entitlements,{entitlements}"]
     env = dict(os.environ, SDKROOT=sdk, IPHONEOS_DEPLOYMENT_TARGET=MINIMUM_IOS,
                CARGO_ENCODED_RUSTFLAGS="\x1f".join(rustflags))
+    features = []
+    if args.live_ssh:
+        features.append("live-ssh")
+    if args.native_document_smoke:
+        features.append("native-document-smoke")
     run("cargo", "build", "--locked", "-p", "festerm-mobile", "--target", target,
-        *(["--features", "live-ssh"] if args.live_ssh else []),
+        *(["--features", ",".join(features)] if features else []),
         "--target-dir", str(ROOT / "target"), env=env)
     output = "ios-spike-live" if args.live_ssh else "ios-spike"
     bundle = ROOT / "target" / output / "fesTermSpike.app"

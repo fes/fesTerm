@@ -228,11 +228,16 @@ Command execution should follow the ownership boundaries in `ARCHITECTURE.md`:
 ## Evolution
 
 Experimental Dev Tunnel profiles emit `CreateProfile`, `SaveProfile`,
-`StoreDevTunnelConnectToken`, `StartConfiguredDevTunnelProfile` and
-`ConnectTransientDevTunnel`; CLI launch converges through `ConnectDevTunnel`.
-Native Name/Tunnel profiles emit `NativeDevTunnel` for explicit GitHub device
-sign-in or transient connection, and `StartConfiguredDevTunnelProfile` for
-normal launch. The composition root, not widgets, owns cancellable auth,
+`SaveDevTunnelProfile`, `SaveAndConnectDevTunnel`, `StoreDevTunnelConnectToken`
+and `StartConfiguredDevTunnelProfile`; CLI launch converges through
+`ConnectDevTunnel`. The profile editor's Save emits `SaveDevTunnelProfile`,
+whose composition-root handler persists through the configuration reloader and
+reports the committed/failed outcome to the exact source tab and pending save
+request, rejecting stale results for replaced drafts, so the form closes to
+the profile list only on a successful write and otherwise keeps the exact draft
+with an actionable error (it never connects). **Save and Connect** keeps the
+explicit save/authenticate/connect flow through `SaveAndConnectDevTunnel`. The
+composition root, not widgets, owns cancellable auth,
 profile/account compare-before-publication, native credential rotation,
 Cancel-default host approval and bounded pre-admission discovery.
 The composition root owns native-store transactions; AppState captures each

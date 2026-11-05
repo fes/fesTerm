@@ -1732,10 +1732,15 @@ Accent primary second). The preferred editor reuses the destination
 form's labeled **Name** and **Tunnel** fields, an **Account** selector
 (shared GitHub accounts, or Not signed in), **Add GitHub account**, **Pick from
 my tunnels** (shown once an account is selected, using that account without
-another sign-in), and concise **Save & connect**, **Connect**, **Connect once**,
-**Save profile** and **Cancel** controls. **Save & connect** saves the profile,
+another sign-in), and a single action row of concise **Save**, **Save and
+Connect** and **Cancel** controls, reached from a standard **Back** control
+beside the editor heading. **Save** persists the profile through the
+application command model and, only on success, returns to the profile list
+without connecting or signing in. **Save and Connect** saves the profile,
 signs in first when it has no account, and connects, so nothing has to be saved
-before authenticating. Settings lists the shared accounts with how many
+before authenticating. **Cancel** and **Back** return to the list without
+saving or connecting; neither closes the window or ends a session. Advanced
+sits above this action row. Settings lists the shared accounts with how many
 profiles use each, **Sign out** and **Add GitHub account**. Device authorization displays the short code
 as a standard monospace button with a **Copy code and open GitHub** tooltip.
 One explicit activation copies the code and opens the fixed GitHub device URL,
@@ -1757,9 +1762,15 @@ first use/account change or changed host. Profiles using the same account share 
 identity/refresh reference; each profile has its own scoped-connect reference;
 there is no global current account.
 Rotation preserves live launch bindings; duplication or changing the tunnel
-clears bindings. Connect once uses a fresh transient identity and never rotates
-a saved profile's credentials. Advanced retains legacy destination-file/token
-input. Inventory/create/takeover/terminate and filesystem writes are unavailable.
+clears bindings. **Save** persists the profile through the composition root and
+returns to the profile list only once the write succeeds, keeping the draft and
+an actionable error on failure; it never connects or signs in. **Save and
+Connect** runs the explicit save/authenticate/connect flow. **Cancel**/**Back**
+discard staged edits through standard editor navigation without saving or
+connecting. Advanced retains legacy destination-file/token input and a **Store
+token** action for the scoped connect credential; one-off transient attaches
+live on the New Session **Connect once** surface, not in the profile editor.
+Inventory/create/takeover/terminate and filesystem writes are unavailable.
 **Paste setup JSON** opens a bounded public-metadata input followed by
 **Preview**. Show the tunnel/server and host fingerprint, require explicit
 confirmation and **Save imported profile**, then return to the editor without

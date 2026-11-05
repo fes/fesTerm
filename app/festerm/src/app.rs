@@ -1929,6 +1929,23 @@ impl FesTermApp {
     /// same upsert-by-identifier write, `docs/gui-design.md` "Profile
     /// editing"). The in-memory configuration only changes after the atomic
     /// file write succeeds, matching every other automatic-save path here.
+    fn save_dev_tunnel_profile(
+        &mut self,
+        tab_id: crate::tabs::TabId,
+        request: egui::Id,
+        profile: festerm_config::Profile,
+        context: &egui::Context,
+    ) -> bool {
+        let saved = self.save_profile(profile);
+        let outcome = if saved {
+            Ok(())
+        } else {
+            Err(self.configuration_status.settings_message().to_owned())
+        };
+        screens::report_dev_tunnel_save_outcome(context, tab_id, request, outcome);
+        saved
+    }
+
     fn save_profile(&mut self, profile: festerm_config::Profile) -> bool {
         #[cfg(feature = "experimental-dev-tunnels")]
         let previous = self
@@ -6599,7 +6616,7 @@ impl FesTermApp {
                             &ui.ctx().clone(),
                         );
                     } else {
-                        self.secure_storage_feedback = Some("Native connect credential storage is unavailable. Use the profile editor's connect-once option.");
+                        self.secure_storage_feedback = Some("Secure storage is unavailable, so this legacy Dev Tunnel profile cannot connect. Use New Session > Connect once with its tunnel name.");
                     }
                     #[cfg(not(feature = "experimental-dev-tunnels"))]
                     {
@@ -6659,19 +6676,6 @@ impl FesTermApp {
                     }
                     #[cfg(not(feature = "experimental-dev-tunnels"))]
                     let _ = profile;
-                }
-                AppCommand::NativeDevTunnel {
-                    profile_id,
-                    sign_in,
-                    remember,
-                    connect,
-                } => {
-                    #[cfg(feature = "experimental-dev-tunnels")]
-                    self.begin_native_tunnel(profile_id, sign_in, remember, connect, ui.ctx());
-                    #[cfg(not(feature = "experimental-dev-tunnels"))]
-                    {
-                        let _ = (profile_id, sign_in, remember, connect);
-                    }
                 }
                 AppCommand::StoreDevTunnelConnectToken { profile_id, token } => {
                     if !token.is_valid() {
@@ -6770,6 +6774,13 @@ impl FesTermApp {
                 ),
                 AppCommand::SaveProfile { profile } => {
                     self.save_profile(profile);
+                }
+                AppCommand::SaveDevTunnelProfile {
+                    tab_id,
+                    request,
+                    profile,
+                } => {
+                    self.save_dev_tunnel_profile(tab_id, request, profile, ui.ctx());
                 }
                 AppCommand::SaveProfileWithCredential {
                     profile,
@@ -9567,6 +9578,51 @@ mod tests {
         assert!(harness
             .query_by_label_contains("remain stopped until restart")
             .is_some());
+    }
+
+    #[test]
+    fn dev_tunnel_profile_save_uses_real_disk_result_without_connecting() {
+        for fail in [false, true] {
+            let directory = std::env::temp_dir().join(format!(
+                "festerm-dtui-save-{}-{:?}-{fail}",
+                std::process::id(),
+                std::thread::current().id(),
+            ));
+            fs::create_dir(&directory).unwrap();
+            let path = directory.join("config.toml");
+            let configuration = Configuration::empty();
+            if fail {
+                fs::create_dir(&path).unwrap();
+            } else {
+                fs::write(&path, configuration.to_toml().unwrap()).unwrap();
+            }
+            let mut app = FesTermApp::for_test_with_configuration(configuration);
+            app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone());
+            let profile = festerm_config::Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+            let tab_id = app.state.active();
+            let tabs_before = app.state.tabs().len();
+            assert_eq!(
+                app.save_dev_tunnel_profile(
+                    tab_id,
+                    egui::Id::new(("save-test", fail)),
+                    profile.clone(),
+                    &egui::Context::default(),
+                ),
+                !fail
+            );
+            assert_eq!(app.state.active(), tab_id);
+            assert_eq!(app.state.tabs().len(), tabs_before);
+            if fail {
+                assert!(path.is_dir());
+                assert!(app.state.configuration().profile("owned").is_none());
+                assert!(!app.configuration_status.was_saved());
+            } else {
+                assert_eq!(app.state.configuration().profile("owned"), Some(&profile));
+                let saved = Configuration::parse(&fs::read_to_string(&path).unwrap()).unwrap();
+                assert_eq!(saved.profile("owned"), Some(&profile));
+            }
+            fs::remove_dir_all(directory).unwrap();
+        }
     }
 
     #[test]

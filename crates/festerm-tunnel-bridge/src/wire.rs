@@ -69,7 +69,19 @@ pub(crate) async fn read_frame_inner(
     if from_client
         && !matches!(
             header[0],
-            HELLO | DISCOVER | ADOPTED | INPUT | RESIZE | DETACH | SYNC | FILE_READ
+            HELLO
+                | DISCOVER
+                | ADOPTED
+                | INPUT
+                | RESIZE
+                | DETACH
+                | SYNC
+                | FILE_READ
+                | crate::file_protocol::OPEN
+                | crate::file_protocol::REQUEST
+                | crate::file_protocol::DATA
+                | crate::observation_protocol::OPEN
+                | crate::observation_protocol::REQUEST
         )
     {
         return Err(invalid());

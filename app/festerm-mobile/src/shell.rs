@@ -34,7 +34,22 @@ pub struct ShellState {
     pub tab: Tab,
     pub search: String,
     pub sessions_sheet: bool,
+    /// A saved profile lifted by touch-and-hold, following the finger.
+    pub reorder: Option<ProfileDrag>,
 }
+
+#[derive(Clone, Debug)]
+pub struct ProfileDrag {
+    id: String,
+    /// Where the finger holds the row, measured from the row's top.
+    grab: f32,
+    /// The finger's last known height. A lifted touch reports no position,
+    /// so the drop uses this.
+    finger: f32,
+}
+
+/// Finger distance from the list's edge that scrolls it while reordering.
+const REORDER_EDGE: f32 = 56.0;
 
 pub struct ShellData<'a> {
     pub profiles: &'a [Profile],
@@ -108,15 +123,22 @@ pub enum ShellAction {
     ShowSessions,
     HideSessions,
     OpenProfilesTab,
+    OpenDocuments,
     Lock(super::app_lock::LockAction),
     SetTextSize(TextSize),
     SetDefaultKeyboard(KeyboardKind),
+    /// Move a saved profile before another, or to the end when `before` is
+    /// `None`.
+    MoveProfile {
+        id: String,
+        before: Option<String>,
+    },
 }
 
 fn state_dot(state: SurfaceState) -> Dot {
     match state {
         SurfaceState::Connected => Dot::Connected,
-        SurfaceState::Connecting => Dot::Warning,
+        SurfaceState::Connecting | SurfaceState::Modified => Dot::Warning,
         SurfaceState::Disconnected => Dot::Idle,
     }
 }
@@ -277,6 +299,15 @@ fn profiles_screen(
         });
     });
     search_field(ui, &mut state.search, "Find a profile");
+    if state.search.trim().is_empty() {
+        let mut row = RowSpec::new("Documents");
+        row.icon = Some(Icon::SourceView);
+        row.subtitle = Some("Open local text or Markdown in Files");
+        row.trailing = Trailing::Chevron;
+        if list_row(ui, &row).clicked() {
+            actions.push(ShellAction::OpenDocuments);
+        }
+    }
     if let Some(notice) = data.notice {
         ui.add(
             egui::Label::new(
@@ -346,32 +377,186 @@ fn profiles_screen(
     } else if visible.is_empty() {
         footnote(ui, "No profiles match your search.");
     } else {
-        card(ui, |ui| {
-            for (index, profile) in visible.iter().enumerate() {
-                let mut row = RowSpec::new(&profile.name);
-                row.icon = Some(profile.kind.glyph());
-                row.subtitle = Some(&profile.detail);
-                row.trailing = Trailing::Edit;
-                row.divider = index > 0;
-                let response = list_row(ui, &row);
-                if edit_zone_clicked(&response) {
-                    actions.push(ShellAction::EditProfile(profile.id.clone()));
-                } else if response.clicked() {
-                    actions.push(ShellAction::OpenProfile(profile.id.clone()));
-                }
-            }
-        });
+        saved_profile_rows(ui, state, &visible, needle.is_empty(), actions);
     }
     if !data.profiles.is_empty() {
         footnote(
             ui,
             if data.profiles_persistent {
-                "Profiles are saved on this iPhone. Tap Edit to change or delete one."
+                "Profiles are saved on this iPhone. Tap Edit to change or delete one; \
+                 touch and hold one to drag it into a new order."
             } else {
                 "Credentials last only until fesTerm closes; profiles are saved on this iPhone."
             },
         );
     }
+}
+
+fn profile_row<'a>(profile: &'a Profile, divider: bool) -> RowSpec<'a> {
+    let mut row = RowSpec::new(&profile.name);
+    row.icon = Some(profile.kind.glyph());
+    row.subtitle = Some(&profile.detail);
+    row.trailing = Trailing::Edit;
+    row.divider = divider;
+    row
+}
+
+/// The saved-profile list. Touch and hold lifts a row; it follows the finger
+/// (scrolling the list near its edges) and drops where the insertion line
+/// shows. Reordering is unavailable while a search filters the list.
+fn saved_profile_rows(
+    ui: &mut Ui,
+    state: &mut ShellState,
+    visible: &[&Profile],
+    reorderable: bool,
+    actions: &mut Vec<ShellAction>,
+) {
+    if !reorderable
+        || state
+            .reorder
+            .as_ref()
+            .is_some_and(|drag| !visible.iter().any(|profile| profile.id == drag.id))
+    {
+        state.reorder = None;
+    }
+    let lifted = state.reorder.as_ref().map(|drag| drag.id.clone());
+    let mut slots: Vec<(usize, Rect)> = Vec::with_capacity(visible.len());
+    let card_rect = card(ui, |ui| {
+        for (index, profile) in visible.iter().enumerate() {
+            let row = profile_row(profile, index > 0);
+            if lifted.as_deref() == Some(profile.id.as_str()) {
+                // Keep the lifted row's slot so the list does not jump.
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), widgets::list_row_height(&row)),
+                    Sense::hover(),
+                );
+                slots.push((index, rect));
+                continue;
+            }
+            let response = list_row(ui, &row);
+            slots.push((index, response.rect));
+            if lifted.is_some() {
+                continue;
+            }
+            let (long, tap) = if reorderable {
+                widgets::long_press_or_click(ui, &response)
+            } else {
+                (false, response.clicked())
+            };
+            if long {
+                let finger = ui
+                    .input(|input| input.pointer.latest_pos())
+                    .map_or(response.rect.center().y, |pos| pos.y);
+                state.reorder = Some(ProfileDrag {
+                    id: profile.id.clone(),
+                    grab: finger - response.rect.top(),
+                    finger,
+                });
+                ui.ctx().request_repaint();
+            } else if tap && edit_zone_clicked(&response) {
+                actions.push(ShellAction::EditProfile(profile.id.clone()));
+            } else if tap {
+                actions.push(ShellAction::OpenProfile(profile.id.clone()));
+            }
+        }
+        ui.min_rect()
+    });
+    let Some(mut drag) = state.reorder.clone() else {
+        return;
+    };
+    let Some(from) = visible.iter().position(|profile| profile.id == drag.id) else {
+        state.reorder = None;
+        return;
+    };
+    // Lifting a touch releases the button and forgets the pointer in the same
+    // frame; a cancelled touch forgets it without a release.
+    let (down, position) = ui.input(|input| {
+        (
+            input.pointer.primary_down(),
+            input.pointer.latest_pos().map(|pos| pos.y),
+        )
+    });
+    if down && position.is_none() {
+        state.reorder = None;
+        return;
+    }
+    if let Some(y) = position {
+        drag.finger = y;
+    }
+    let finger = drag.finger;
+    // The drop slot among the other rows: before the first whose middle is
+    // below the finger.
+    let others: Vec<(usize, Rect)> = slots
+        .iter()
+        .copied()
+        .filter(|(index, _)| *index != from)
+        .collect();
+    let slot = others
+        .iter()
+        .position(|(_, rect)| finger < rect.center().y)
+        .unwrap_or(others.len());
+    if !down {
+        state.reorder = None;
+        if slot != from {
+            actions.push(ShellAction::MoveProfile {
+                id: drag.id,
+                before: others
+                    .get(slot)
+                    .map(|(index, _)| visible[*index].id.clone()),
+            });
+        }
+        return;
+    }
+    state.reorder = Some(drag.clone());
+    let painter = ui.painter().with_clip_rect(ui.clip_rect());
+    if slot != from {
+        let y = others
+            .get(slot)
+            .map_or_else(|| card_rect.bottom(), |(_, rect)| rect.top());
+        painter.hline(
+            (card_rect.left() + 8.0)..=(card_rect.right() - 8.0),
+            y,
+            Stroke::new(3.0, color::PRIMARY),
+        );
+    }
+    let row = profile_row(visible[from], false);
+    let height = widgets::list_row_height(&row);
+    let top = (finger - drag.grab).clamp(
+        card_rect.top() - height / 2.0,
+        card_rect.bottom() - height / 2.0,
+    );
+    egui::Area::new(egui::Id::new("profile-reorder-lift"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(egui::pos2(card_rect.left(), top))
+        .interactable(false)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(color::SURFACE_RAISED)
+                .stroke(Stroke::new(1.0, color::BORDER))
+                .corner_radius(CornerRadius::same(radius::CARD))
+                .shadow(egui::Shadow {
+                    offset: [0, 6],
+                    blur: 18,
+                    spread: 0,
+                    color: egui::Color32::from_black_alpha(140),
+                })
+                .show(ui, |ui| {
+                    ui.set_width(card_rect.width() - 2.0);
+                    list_row(ui, &row);
+                });
+        });
+    let view = ui.clip_rect();
+    let edge = if finger < view.top() + REORDER_EDGE {
+        (view.top() + REORDER_EDGE - finger).min(REORDER_EDGE)
+    } else if finger > view.bottom() - REORDER_EDGE {
+        -(finger - (view.bottom() - REORDER_EDGE)).min(REORDER_EDGE)
+    } else {
+        0.0
+    };
+    if edge != 0.0 {
+        ui.scroll_with_delta(egui::vec2(0.0, edge * 0.25));
+    }
+    ui.ctx().request_repaint();
 }
 
 fn sessions_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAction>) {
@@ -536,8 +721,21 @@ pub fn show_tabs(ui: &mut Ui, state: &mut ShellState, data: &ShellData<'_>) -> V
                 state.tab = Tab::ALL[index];
             }
         });
+    if state.tab != Tab::Profiles {
+        state.reorder = None;
+    }
+    // A lifted profile owns the finger; the list must not also scroll by drag.
+    let scroll_source = if state.reorder.is_some() {
+        egui::scroll_area::ScrollSource {
+            drag: egui::scroll_area::DragScroll::Never,
+            ..Default::default()
+        }
+    } else {
+        egui::scroll_area::ScrollSource::default()
+    };
     egui::ScrollArea::vertical()
         .id_salt(("shell-tab", state.tab.index()))
+        .scroll_source(scroll_source)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             egui::Frame::new()

@@ -81,7 +81,7 @@ impl Launch {
         store: &dyn festerm_secret_store::SecretStore,
     ) -> io::Result<Self> {
         let profile = profile.as_dev_tunnel().ok_or_else(invalid)?;
-        let reference = profile.credential_reference().ok_or_else(|| io::Error::other("This Dev Tunnel profile has no stored connect token. Edit the profile to store one, or connect once."))?;
+        let reference = profile.credential_reference().ok_or_else(|| io::Error::other("This Dev Tunnel profile has no stored connect token. Edit the profile to store one, or use New Session > Connect once."))?;
         let secret = store
             .get(reference)
             .map_err(|_| io::Error::other("Native connect credential unavailable."))?;
