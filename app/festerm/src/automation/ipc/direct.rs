@@ -115,9 +115,10 @@ impl Drop for HeldFrame {
 ///
 /// The I/O owner calls `step` immediately after progress and waits on socket
 /// readiness, `wake`, or `next_deadline` after `Blocked`. It must notify `wake`
-/// after all native decision, admission and lifecycle changes, including cuts
-/// that update the stop/closed flags under admission. Run this off the UI
-/// thread: the existing host admission boundary may briefly block.
+/// after native decisions, admission changes and lifecycle cuts that do not
+/// close an announced connection. Guarded connection closes defer their wake
+/// until admission is released. Run this off the UI thread: the existing host
+/// admission boundary may briefly block.
 pub(super) struct Peer<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> {
     channel: SecureTransport<S, N>,
     admission: Option<A>,
@@ -598,6 +599,43 @@ mod tests {
             fixture.host.output.try_recv(),
             Err(TryRecvError::Empty)
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn direct_peer_close_defers_wake_until_admission_release() {
+        let mut fixture = Fixture::new(|socket| socket);
+        let connection = fixture.host.connection.clone();
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        let wake = connection.close_under_admission(&guard);
+        assert!(connection.is_closed());
+        tokio::select! {
+            biased;
+            _ = fixture.wake.notified() => panic!("owner woke while admission was held"),
+            _ = async {} => {}
+        }
+
+        super::super::wake_after_admission(guard, [wake]);
+        tokio::time::timeout(Duration::from_secs(1), fixture.wake.notified())
+            .await
+            .expect("closed peer did not wake its owner");
+        assert_eq!(fixture.host.step(), Ok(Step::Closed));
+        assert!(fixture.cancelled.load(Ordering::Acquire));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn coordinator_stop_wakes_a_closed_direct_peer() {
+        let mut fixture = Fixture::new(|socket| socket);
+        let connection = fixture.host.connection.clone();
+        let (mut coordinator, _app, _, _) = super::super::super::tests::fixture();
+        coordinator.peers.get_mut(&1).unwrap().connection = connection.clone();
+
+        coordinator.stop_mcp();
+        assert!(connection.is_closed());
+        tokio::time::timeout(Duration::from_secs(1), fixture.wake.notified())
+            .await
+            .expect("coordinator stop did not wake the direct owner");
+        assert_eq!(fixture.host.step(), Ok(Step::Closed));
+        assert!(fixture.cancelled.load(Ordering::Acquire));
     }
 
     #[test]

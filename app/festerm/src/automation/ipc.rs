@@ -25,6 +25,28 @@ const FRAME_DEADLINE: Duration = Duration::from_secs(2);
 type Waker = Arc<dyn Fn() + Send + Sync>;
 type Connections = BTreeMap<u64, (Connection, JoinHandle<()>)>;
 
+#[must_use = "release admission and wake the direct owner"]
+pub(super) struct DeferredCloseWake {
+    #[cfg(unix)]
+    wake: Option<direct::Wake>,
+}
+
+/// Release admission before waking an executor, which may invoke a waker.
+pub(super) fn wake_after_admission(
+    guard: festerm_session::AutomationAdmissionGuard,
+    wakes: impl IntoIterator<Item = DeferredCloseWake>,
+) {
+    drop(guard);
+    for wake in wakes {
+        #[cfg(unix)]
+        if let Some(wake) = wake.wake {
+            wake.notify();
+        }
+        #[cfg(not(unix))]
+        let _ = wake;
+    }
+}
+
 #[cfg(test)]
 struct EnqueueTestGate {
     entered: SyncSender<()>,
@@ -66,15 +88,23 @@ impl Connection {
         self.wake_output();
     }
 
-    fn wake_output(&self) {
+    /// Call only after releasing the application admission guard.
+    pub(super) fn wake_output(&self) {
         #[cfg(unix)]
         if let Some(wake) = &self.output_wake {
             wake.notify();
         }
     }
 
-    pub fn close_under_admission(&self, _guard: &festerm_session::AutomationAdmissionGuard) {
+    pub fn close_under_admission(
+        &self,
+        _guard: &festerm_session::AutomationAdmissionGuard,
+    ) -> DeferredCloseWake {
         self.closed.store(true, Ordering::Release);
+        DeferredCloseWake {
+            #[cfg(unix)]
+            wake: self.output_wake.clone(),
+        }
     }
 
     pub fn closed_flag(&self) -> Arc<AtomicBool> {
@@ -97,9 +127,8 @@ impl Connection {
             return Err(io::ErrorKind::BrokenPipe.into());
         };
         if self.is_closed() || stop.load(Ordering::Acquire) {
-            self.close_under_admission(&guard);
-            drop(guard);
-            self.wake_output();
+            let wake = self.close_under_admission(&guard);
+            wake_after_admission(guard, [wake]);
             return Err(io::ErrorKind::BrokenPipe.into());
         }
         if self
@@ -109,9 +138,8 @@ impl Connection {
             })
             .is_err()
         {
-            self.close_under_admission(&guard);
-            drop(guard);
-            self.wake_output();
+            let wake = self.close_under_admission(&guard);
+            wake_after_admission(guard, [wake]);
             return Err(io::ErrorKind::BrokenPipe.into());
         }
         if events
@@ -121,9 +149,8 @@ impl Connection {
             })
             .is_err()
         {
-            self.close_under_admission(&guard);
-            drop(guard);
-            self.wake_output();
+            let wake = self.close_under_admission(&guard);
+            wake_after_admission(guard, [wake]);
             return Err(io::ErrorKind::WouldBlock.into());
         }
         Ok(())
@@ -202,9 +229,8 @@ impl Connection {
             || Instant::now() >= frame.expires
             || !frame.is_valid()
         {
-            self.close_under_admission(&guard);
-            drop(guard);
-            self.wake_output();
+            let wake = self.close_under_admission(&guard);
+            wake_after_admission(guard, [wake]);
             return Err(io::ErrorKind::BrokenPipe.into());
         }
         #[cfg(test)]
@@ -217,9 +243,8 @@ impl Connection {
             }
         });
         if self.output.try_send(frame, &guard).is_err() {
-            self.close_under_admission(&guard);
-            drop(guard);
-            self.wake_output();
+            let wake = self.close_under_admission(&guard);
+            wake_after_admission(guard, [wake]);
             return Err(io::ErrorKind::WouldBlock.into());
         }
         drop(guard);

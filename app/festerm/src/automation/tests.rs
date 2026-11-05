@@ -31,7 +31,7 @@ fn ready() -> Machine {
     ready_with(Machine::new())
 }
 
-fn fixture() -> (Coordinator, FesTermApp, TabId, impl Fn() -> Option<Vec<u8>>) {
+pub(super) fn fixture() -> (Coordinator, FesTermApp, TabId, impl Fn() -> Option<Vec<u8>>) {
     let (app, id) = FesTermApp::automation_fixture();
     let mut coordinator = Coordinator::default();
     coordinator.broker = Some(Broker::new([1; 16]));

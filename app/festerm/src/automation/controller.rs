@@ -876,10 +876,12 @@ pub(super) fn execute(
 ) {
     if peer.controller.requests >= MAX_CONTROLLER_REQUESTS {
         if let Some(guard) = festerm_session::automation_admission_lock() {
-            peer.connection.close_under_admission(&guard);
+            let wake = peer.connection.close_under_admission(&guard);
             broker.disconnect(peer.principal, &guard);
+            ipc::wake_after_admission(guard, [wake]);
         } else {
             peer.connection.closed_flag().store(true, Ordering::Release);
+            peer.connection.wake_output();
             tracing::error!("automation admission lock poisoned; disclosure remains closed");
         }
         peer.machine.close();
@@ -2201,14 +2203,16 @@ fn metadata_command(
                 valid.set(false);
                 return Err(CommandError::Refused(Refusal::NotAuthorized));
             }
+            let mut wake = None;
             let result = coordinator.approve_enrollment_metadata_review_locked(
                 channel,
                 &pending_review,
                 &decision,
                 apps,
                 &guard,
+                &mut wake,
             );
-            drop(guard);
+            ipc::wake_after_admission(guard, wake);
             match result {
                 Ok(()) => {
                     valid.set(false);

@@ -1876,7 +1876,12 @@ impl Coordinator {
         apps: &[&FesTermApp],
     ) -> festerm_automation::Result<()> {
         let guard = try_admission()?;
-        self.approve_enrollment_metadata_review_locked(channel, review, decision, apps, &guard)
+        let mut wake = None;
+        let result = self.approve_enrollment_metadata_review_locked(
+            channel, review, decision, apps, &guard, &mut wake,
+        );
+        ipc::wake_after_admission(guard, wake);
+        result
     }
 
     pub(super) fn approve_enrollment_metadata_review_locked(
@@ -1886,6 +1891,7 @@ impl Coordinator {
         decision: &NativeEnrollmentMetadataDecision,
         apps: &[&FesTermApp],
         guard: &AutomationAdmissionGuard,
+        wake: &mut Option<ipc::DeferredCloseWake>,
     ) -> festerm_automation::Result<()> {
         let principal = self.admission_principal_locked(channel, guard)?;
         if review.principal != principal
@@ -1963,7 +1969,7 @@ impl Coordinator {
                     review.enrollment,
                     guard,
                 ) {
-                    self.peers[&channel].connection.close_under_admission(guard);
+                    *wake = Some(self.peers[&channel].connection.close_under_admission(guard));
                     broker.disconnect(principal, guard);
                     return Err(revoke_error);
                 }

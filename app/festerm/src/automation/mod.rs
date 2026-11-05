@@ -1339,9 +1339,10 @@ impl Coordinator {
         self.enrollment_metadata_grants.clear();
         self.pending_enrollment_metadata_reviews.clear();
         let peers = std::mem::take(&mut self.peers);
+        let mut wakes = Vec::with_capacity(peers.len());
         if let Some(guard) = guard.as_ref() {
             for peer in peers.values() {
-                peer.connection.close_under_admission(guard);
+                wakes.push(peer.connection.close_under_admission(guard));
                 if let Some(broker) = &mut self.broker {
                     broker.disconnect(peer.principal, guard);
                 }
@@ -1353,7 +1354,13 @@ impl Coordinator {
             self.broker = None;
         }
         let poisoned = needs_guard && guard.is_none();
-        drop(guard);
+        if let Some(guard) = guard {
+            ipc::wake_after_admission(guard, wakes);
+        } else if needs_guard {
+            for peer in peers.values() {
+                peer.connection.wake_output();
+            }
+        }
         self.verification.revoke();
         if poisoned {
             tracing::error!("automation admission lock poisoned; disclosure remains closed");
@@ -1956,9 +1963,9 @@ impl Coordinator {
                 return;
             };
             if let Some(mut peer) = self.peers.remove(&key) {
-                peer.connection.close_under_admission(&guard);
+                let wake = peer.connection.close_under_admission(&guard);
                 broker.disconnect(peer.principal, &guard);
-                drop(guard);
+                ipc::wake_after_admission(guard, [wake]);
                 peer.machine.close();
                 self.control_handoffs.remove(&peer.principal);
                 self.pending_control_reviews
@@ -3057,11 +3064,14 @@ fn retry_completion(
         .is_ok()
         .then(|| broker.complete(peer.principal, pending.run, Completion::Returned, now));
     let forget = settlement.and_then(|()| broker.forget_run(peer.principal, pending.run));
-    if forget.is_err() {
-        peer.connection.close_under_admission(&guard);
+    let wake = if forget.is_err() {
+        let wake = peer.connection.close_under_admission(&guard);
         broker.disconnect(peer.principal, &guard);
-    }
-    drop(guard);
+        Some(wake)
+    } else {
+        None
+    };
+    ipc::wake_after_admission(guard, wake);
     if let Some(result) = completion {
         match result {
             Ok(status) if status.state != festerm_automation::RunState::Completed => {
@@ -3102,6 +3112,7 @@ fn retry_cancelled_waits(
     }
     let mut cancellation_errors = Vec::with_capacity(peer.waits.len());
     let mut cleanup_error = None;
+    let mut wake = None;
     let guard = festerm_session::try_automation_admission_lock()?;
     while let Some(index) = peer.waits.iter().position(|wait| wait.cancel_pending) {
         let wait = peer.waits.remove(index);
@@ -3109,13 +3120,13 @@ fn retry_cancelled_waits(
             cancellation_errors.push(error);
         }
         if let Err(error) = broker.forget_run(peer.principal, wait.run) {
-            peer.connection.close_under_admission(&guard);
+            wake = Some(peer.connection.close_under_admission(&guard));
             broker.disconnect(peer.principal, &guard);
             cleanup_error = Some(error);
             break;
         }
     }
-    drop(guard);
+    ipc::wake_after_admission(guard, wake);
     for error in cancellation_errors {
         match error {
             festerm_automation::Error::Expired

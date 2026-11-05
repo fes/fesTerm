@@ -51,10 +51,12 @@ impl Status {
 /// The caller supplies one exclusively owned socket and all native boundaries.
 ///
 /// Run off the UI thread on a Tokio runtime with I/O and time enabled. Callers
-/// must wake it for native decisions and every lifecycle/admission cut,
-/// including stop and `close_under_admission`. This loop does not qualify those
-/// boundaries or attach a listener. Keep `Status` until cleanup finishes before
-/// reusing a native surface; failed or unobserved cleanup requires quarantine.
+/// must wake it for native decisions and lifecycle/admission cuts that do not
+/// close an announced connection, including stop before announcement. Guarded
+/// connection closes wake it after releasing admission. This loop does not
+/// qualify those boundaries or attach a listener. Keep `Status` until cleanup
+/// finishes before reusing a native surface; failed or unobserved cleanup
+/// requires quarantine.
 /// An interrupted owner may have been cancelled or panicked; its task result
 /// must also be observed.
 pub(super) struct Owner<N: TrustedNativeVerification, A: NativeAdmission> {

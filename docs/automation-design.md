@@ -802,15 +802,16 @@ A dormant direct host bridge connects that channel to the existing connection
 and coordinator event queues. It announces a peer only after both comparisons
 and receipts, refuses incoming frames after stop, and retains the original
 outbound frame while rechecking its target, flags, disclosure and expiry under
-admission through each physical write. Queue insertion wakes the owner after
-the admission guard is released. A dormant Tokio owner drives the peer from
+admission through each physical write. Queue insertion and guarded closure of
+an announced connection wake the owner after the admission guard is released.
+A dormant Tokio owner drives the peer from
 socket readiness, explicit wakeups and deadlines, yielding after bounded
 progress. It publishes cleanup completion even when its task is cancelled;
 failed or unobserved cleanup quarantines the native surface. Its caller must
-independently provide native caller/recipient admission, wake it after every
-lifecycle cut and fence the actual effects. An opaque bootstrap gate cannot be
-obtained in production until qualification. The owner is not attached to a
-listener.
+independently provide native caller/recipient admission, wake it after other
+lifecycle cuts (including stop before a connection is announced), and fence the
+actual effects. An opaque bootstrap gate cannot be obtained in production
+until qualification. The owner is not attached to a listener.
 Official SDK tests reach the actual coordinator and a controlled session both
 within one process and from a separate process using a test-only Unix listener.
 The separate process runs the test binary, and a test control channel simulates

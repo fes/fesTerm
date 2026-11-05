@@ -607,6 +607,8 @@
         "direct_host_bootstrap_refuses_without_native_qualification",
         "direct_peer_bridges_guarded_host_events_and_wakes_output",
         "direct_peer_queue_overflow_closes_and_wakes_owner",
+        "direct_peer_close_defers_wake_until_admission_release",
+        "coordinator_stop_wakes_a_closed_direct_peer",
         "direct_peer_rechecks_original_frame_after_admission_contention",
         "direct_peer_closes_if_incoming_admission_is_temporarily_unavailable",
         "direct_peer_never_finishes_a_partially_written_revoked_frame",
