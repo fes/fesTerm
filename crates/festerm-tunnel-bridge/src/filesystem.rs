@@ -147,7 +147,7 @@ pub(crate) fn open_file(parent: &Dir, name: &str) -> io::Result<File> {
     #[cfg(unix)]
     return festerm_unix_security::open_file_nofollow(&parent, Path::new(name));
     #[cfg(windows)]
-    return festerm_windows_security::open_file_no_reparse_for_capture(&parent, Path::new(name));
+    return festerm_windows_security::open_file_no_reparse(&parent, Path::new(name));
 }
 
 pub(crate) fn open_observation_file(parent: &Dir, name: &str) -> io::Result<File> {

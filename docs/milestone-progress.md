@@ -11,6 +11,8 @@ and bounds native watches with explicit rescan/ended results.
 
 New daemon generations inject a non-authorizing correlation marker into the
 actual shell environment instead of exposing machine-wide process arguments.
+Pending changes to both grants are journaled with the upgrade marker, so a bare
+retry after interruption cannot restore revoked access.
 Managed root changes preserve the tunnel, host key and shell; old shells do not
 gain a marker through a helper upgrade. A stacked broker slice adds independent
 native per-controller/exact-tab/root approval and completion-time revocation

@@ -854,6 +854,26 @@ fn upgrade_record(
     Ok(next)
 }
 
+/// Journal both grants so a bare retry cannot restore revoked or narrowed access.
+/// Workers refuse to run while the record is upgrading.
+fn pending_upgrade(
+    record: &Installation,
+    executable: PathBuf,
+    cli: PathBuf,
+    no_takeover: bool,
+    updates: &GrantUpdates,
+) -> io::Result<Installation> {
+    let mut next = upgrade_record(record, executable, cli, no_takeover)?;
+    if let Some(policy) = &updates.filesystem {
+        next.filesystem = policy.clone();
+    }
+    if let Some(policy) = &updates.observation {
+        next.observation = policy.clone();
+    }
+    validate_record(&next)?;
+    Ok(next)
+}
+
 fn upgrade_completed(record: &Installation, updates: &GrantUpdates) -> Installation {
     let mut next = record.clone();
     if let Some(policy) = &updates.filesystem {
@@ -902,7 +922,7 @@ async fn upgrade_installation(
             return Err(refused("setup.changed_cli_account"));
         }
     }
-    let next = upgrade_record(record, executable, cli, no_takeover)?;
+    let next = pending_upgrade(record, executable, cli, no_takeover, updates)?;
     checkpoint(directory, &next)?;
     println!(
         "Upgrading host helpers from {} to {}; keeping tunnel {}, host key {} and daemon session {} (pid {}). Only the bridge restarts.",
@@ -1713,6 +1733,23 @@ mod tests {
         assert!(revoked.filesystem.is_none());
         assert_eq!(revoked.tunnel, record.tunnel);
         assert_eq!(revoked.fingerprint, record.fingerprint);
+        // An interrupted revocation resumed by a bare `--upgrade` stays revoked.
+        let interrupted = pending_upgrade(
+            &record,
+            std::env::current_exe().unwrap(),
+            record.cli.clone(),
+            false,
+            &GrantUpdates {
+                filesystem: Some(None),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(interrupted.phase, UPGRADING);
+        assert!(interrupted.filesystem.is_none());
+        assert!(upgrade_completed(&interrupted, &GrantUpdates::default())
+            .filesystem
+            .is_none());
         assert_eq!(
             upgraded.target.unwrap().generation,
             record.target.unwrap().generation
@@ -1809,6 +1846,22 @@ mod tests {
         assert!(updates.revoking_only());
         let revoked = upgrade_completed(&enabled, &updates);
         assert!(revoked.observation.is_none());
+        let interrupted = pending_upgrade(
+            &enabled,
+            std::env::current_exe().unwrap(),
+            enabled.cli.clone(),
+            false,
+            &updates,
+        )
+        .unwrap();
+        let persisted: Installation =
+            serde_json::from_slice(&serde_json::to_vec(&interrupted).unwrap()).unwrap();
+        assert_eq!(persisted.phase, UPGRADING);
+        assert!(persisted.observation.is_none());
+        assert_eq!(persisted.filesystem, enabled.filesystem);
+        assert!(upgrade_completed(&persisted, &GrantUpdates::default())
+            .observation
+            .is_none());
         assert_eq!(revoked.filesystem, record.filesystem);
         assert_eq!(revoked.tunnel, record.tunnel);
         assert_eq!(revoked.fingerprint, record.fingerprint);
