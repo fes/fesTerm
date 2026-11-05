@@ -2704,12 +2704,15 @@ cross-checked but not run natively. These fixtures are not native cancellation
 or UI evidence.
 Before qualification, `AUTO-03` must additionally verify real Windows listener
 registration/cancellation and pending/unknown cleanup reporting, including
-shutdown/restart with a stalled listener. The current coordinator does not
-consume the monitor's cleanup status and retains independent blocking paths;
-it must be redesigned before UI responsiveness or a physical recipient fence
-can be claimed. In the model, unknown cleanup and callback entry can coexist
-with an already-admitted operation while the callback waits for the lock. The
-fixtures cannot qualify admission, privacy, or final-recipient fencing, and
+shutdown/restart with a stalled listener. The coordinator now retains cleanup
+through join and slot release off the UI thread, blocks restart on unresolved
+cleanup, and marks native privacy loss before acquiring admission. It
+retains independent blocking paths, so UI responsiveness and a physical
+recipient fence remain unqualified. OS lock and client-exit notifications can
+arrive without a documented upper delay; verify the event-driven cut after
+detection without claiming a cutoff at the actual OS event. Effects admitted
+before the cut can complete. The fixtures cannot qualify admission, privacy,
+or final-recipient fencing, and
 callback delivery is not proof of those fences. Panic hooks may observe caught
 callback payloads. Bootstrap remains closed, and native privacy remains
 unqualified.

@@ -128,6 +128,27 @@ impl super::presentation::NativePresentationBarrier for SimulatedPresentationBar
     }
 }
 
+struct PrivacyLossDuringBarrier<'a> {
+    inner: &'a mut SimulatedPresentationBarrier,
+    gate: Arc<PrivacyGate>,
+}
+
+impl NativePresentationBarrier for PrivacyLossDuringBarrier<'_> {
+    fn with_observation<T>(
+        &mut self,
+        broker: &mut Broker,
+        workspace_revision: u64,
+        operation: impl FnOnce(&mut Broker, festerm_automation::NativePresentationObservation) -> T,
+    ) -> festerm_automation::Result<T> {
+        let gate = self.gate.clone();
+        self.inner
+            .with_observation(broker, workspace_revision, |broker, observation| {
+                gate.signal_loss();
+                operation(broker, observation)
+            })
+    }
+}
+
 struct PresentedInputFixture {
     coordinator: Coordinator,
     app: FesTermApp,
@@ -1172,6 +1193,34 @@ fn direct_action_after_publication_loss_is_unknown_and_not_replayed() {
             ),
         Err(Error::Closed)
     );
+}
+
+#[test]
+fn observed_privacy_loss_cuts_reserved_input_before_broker_admission() {
+    use festerm_automation::Error;
+    use festerm_session::{AutomationInputStatus, CommitAutomationInputError};
+
+    let _serial = presentation_admission_test_guard();
+    let mut fixture = presented_input_fixture_with_binding(&[], true);
+    let target = fixture.barrier.target;
+    let mut barrier = PrivacyLossDuringBarrier {
+        inner: &mut fixture.barrier,
+        gate: fixture.coordinator.privacy_gate.clone(),
+    };
+    let (result, mut pending) = commit_direct_input_with_retry(
+        &mut fixture.coordinator,
+        1,
+        fixture.request,
+        Some(&mut barrier),
+        |coordinator| reserve_presented_input(coordinator, target, b"test"),
+        fixture.app.automation_session(fixture.tab).unwrap(),
+    );
+    assert_eq!(
+        result,
+        Err(CommitAutomationInputError::Refused(Error::Revoked))
+    );
+    assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    assert!(!fixture.coordinator.stop.load(Ordering::Acquire));
 }
 
 #[test]
@@ -5245,6 +5294,142 @@ fn automation_privacy_gate_closes_replaced_and_later_mcp_stops() {
     assert!(late.load(Ordering::Acquire));
 }
 
+#[test]
+fn automation_observed_privacy_loss_closes_gate_during_admission() {
+    let gate = PrivacyGate::new(false);
+    let stop = Arc::new(AtomicBool::new(false));
+    assert!(gate.bind_mcp(&stop));
+    let guard = festerm_session::automation_admission_lock().unwrap();
+
+    assert!(gate.try_admit());
+    gate.signal_loss();
+    assert!(gate.is_closed());
+    assert!(!gate.try_admit());
+    assert!(!stop.load(Ordering::Acquire));
+    let late = Arc::new(AtomicBool::new(false));
+    assert!(!gate.bind_mcp_under_admission(&late, &guard));
+    assert!(late.load(Ordering::Acquire));
+
+    drop(guard);
+    gate.close();
+    assert!(stop.load(Ordering::Acquire));
+}
+
+#[test]
+fn automation_privacy_cleanup_requires_completion_or_quarantines() {
+    assert!(await_privacy_cleanup(
+        || PrivacyCleanupProgress::Complete,
+        || panic!("completed cleanup must not be quarantined"),
+        Duration::ZERO,
+    ));
+    assert!(!await_privacy_cleanup(
+        || PrivacyCleanupProgress::Unknown,
+        || panic!("unknown cleanup is already quarantined"),
+        Duration::ZERO,
+    ));
+    let quarantined = AtomicBool::new(false);
+    assert!(!await_privacy_cleanup(
+        || PrivacyCleanupProgress::Pending,
+        || {
+            quarantined.store(true, Ordering::Release);
+            false
+        },
+        Duration::ZERO,
+    ));
+    assert!(quarantined.load(Ordering::Acquire));
+    assert!(await_privacy_cleanup(
+        || PrivacyCleanupProgress::Pending,
+        || true,
+        Duration::ZERO,
+    ));
+}
+
+#[test]
+fn automation_cancelled_shared_start_retains_cleanup_failure() {
+    let (release, blocked) = mpsc::sync_channel::<()>(1);
+    let (send, result) = mpsc::sync_channel::<Result<Prepared, StartFailure>>(1);
+    let worker = thread::spawn(move || {
+        blocked.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(send.send(Err(StartFailure::PrivacyCleanup)).is_ok());
+    });
+    let mut coordinator = Coordinator::default();
+    coordinator.starting = Some(Starting {
+        result,
+        thread: worker,
+    });
+    coordinator.privacy_gate = Arc::new(PrivacyGate::new(false));
+    coordinator.stop = Arc::new(AtomicBool::new(false));
+    assert!(coordinator.privacy_gate.bind_mcp(&coordinator.stop));
+    coordinator.enabled = true;
+
+    coordinator.shutdown();
+    assert!(coordinator.retiring.thread.is_some());
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !coordinator.retiring.thread.as_ref().unwrap().is_finished() {
+        assert!(Instant::now() < deadline);
+        thread::yield_now();
+    }
+    let context = egui::Context::default();
+    assert!(!cleanup_ready(&mut coordinator.retiring, &context, true));
+    assert!(coordinator.retiring.failed);
+    coordinator.restart_with_bootstrap(&context, Ok(()));
+    assert_eq!(coordinator.status, CLEANUP_FAILED);
+    assert!(coordinator.starting.is_none());
+}
+
+#[test]
+fn automation_cancelled_shared_start_waits_for_monitor_retirement() {
+    let (send, result) = mpsc::sync_channel::<Result<(), StartFailure>>(1);
+    let worker = thread::spawn(move || {
+        assert!(send.send(Ok(())).is_ok());
+    });
+    let (entered, waiting) = mpsc::sync_channel(1);
+    let (release, blocked) = mpsc::sync_channel::<()>(1);
+    let retirement = thread::spawn(move || {
+        retire_start(
+            Starting {
+                result,
+                thread: worker,
+            },
+            |_| {
+                entered.send(()).unwrap();
+                blocked.recv_timeout(Duration::from_secs(5)).unwrap();
+                true
+            },
+        )
+    });
+    waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(!retirement.is_finished());
+    release.send(()).unwrap();
+    assert!(retirement.join().unwrap());
+}
+
+#[test]
+fn automation_lost_shared_start_result_blocks_restart() {
+    let (send, result) = mpsc::sync_channel::<Result<Prepared, StartFailure>>(1);
+    drop(send);
+    let mut coordinator = Coordinator::default();
+    coordinator.starting = Some(Starting {
+        result,
+        thread: thread::spawn(|| {}),
+    });
+    coordinator.privacy_gate = Arc::new(PrivacyGate::new(false));
+    coordinator.stop = Arc::new(AtomicBool::new(false));
+    assert!(coordinator.privacy_gate.bind_mcp(&coordinator.stop));
+    coordinator.enabled = true;
+    coordinator.want_start = true;
+
+    let context = egui::Context::default();
+    coordinator.advance_shared(&context);
+    assert!(coordinator.privacy_gate.is_closed());
+    assert!(coordinator.retiring.failed);
+    assert_eq!(coordinator.status, CLEANUP_FAILED);
+    coordinator.restart_with_bootstrap(&context, Ok(()));
+    assert_eq!(coordinator.status, CLEANUP_FAILED);
+    assert!(coordinator.starting.is_none());
+}
+
 struct PanicOnAdmissionPoison;
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for PanicOnAdmissionPoison {
@@ -5435,7 +5620,7 @@ fn automation_shared_start_refuses_privacy_or_randomness_failure() {
     let stop = Arc::new(AtomicBool::new(false));
     assert!(gate.bind_mcp(&stop));
     assert_eq!(
-        prepare_shared(&gate, || Ok(()), || Err(StartFailure::Randomness)),
+        prepare_shared(&gate, || Ok(()), || Err(StartFailure::Randomness), |_| true),
         Err(StartFailure::Randomness)
     );
     assert!(gate.is_closed());
@@ -5447,10 +5632,25 @@ fn automation_shared_start_refuses_privacy_or_randomness_failure() {
             &gate,
             || Err::<(), _>(StartFailure::Privacy),
             || panic!("randomness must not run without privacy monitoring"),
+            |_| panic!("nothing was installed"),
         ),
         Err(StartFailure::Privacy)
     );
     assert!(gate.is_closed());
+
+    let gate = PrivacyGate::new(false);
+    assert_eq!(
+        prepare_shared(
+            &gate,
+            || Ok(()),
+            || Err(StartFailure::Randomness),
+            |_| {
+                assert!(gate.is_closed());
+                false
+            },
+        ),
+        Err(StartFailure::PrivacyCleanup)
+    );
 }
 
 #[test]

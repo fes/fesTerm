@@ -72,7 +72,8 @@
         "slot_revision_cuts_reclaim_principal_pending_capacity_without_refunds",
         "slot_expiry_reclaims_stale_opposite_slot_proposals",
         "slot_revocation_isolates_observation_metadata_and_pending_delivery",
-        "ordinary_control_revocation_preserves_metadata_and_unknown_outcomes"
+        "ordinary_control_revocation_preserves_metadata_and_unknown_outcomes",
+        "observed_privacy_loss_cuts_reserved_input_before_broker_admission"
       ],
       "manual_scenarios": [
         "AUTO-01",
@@ -86,6 +87,7 @@
         "P1 authenticated broker/adapter and observation gates; P2 engine plus per-platform OS confinement qualification",
         "P3 writer-lease/lifecycle/unknown-outcome and native grant UI qualification before control",
         "Controller input-epoch integration with broker cut and worker disclosure remains unavailable",
+        "OS lock, suspend and client-exit revocation begins on host detection; notification delay has no documented upper bound and effects admitted before the cut may complete",
         "Independent metadata UI, enrollment and per-grant transport delivery fencing remain unavailable",
         "P4 separate review for command jobs, HTTP, file APIs, unattended grants/triggers and iOS execution"
       ]
@@ -531,6 +533,7 @@
         "direct_action_review_refuses_invalid_or_oversize_input",
         "direct_action_without_presentation_admits_core_bytes_once",
         "direct_action_after_publication_loss_is_unknown_and_not_replayed",
+        "observed_privacy_loss_cuts_reserved_input_before_broker_admission",
         "direct_action_is_cut_by_pending_human_input",
         "direct_action_reserves_frozen_bytes_in_backend_order",
         "preference_disables_fence_presented_reservation_and_composed_metadata",
@@ -604,6 +607,8 @@
         "disconnect_discards_buffered_sdk_messages",
         "admission_cleanup_failure_is_reported_before_completion",
         "connection_refuses_incoming_events_after_stop",
+        "incoming_message_rechecks_observed_privacy_loss_under_admission",
+        "queued_reply_rechecks_observed_privacy_loss_before_write",
         "direct_host_bootstrap_refuses_without_native_qualification",
         "direct_peer_bridges_guarded_host_events_and_wakes_output",
         "direct_peer_queue_overflow_closes_and_wakes_owner",
@@ -615,6 +620,7 @@
         "direct_peer_rechecks_original_frame_after_admission_contention",
         "direct_peer_closes_if_incoming_admission_is_temporarily_unavailable",
         "direct_peer_never_finishes_a_partially_written_revoked_frame",
+        "direct_peer_stops_partial_frame_after_observed_privacy_loss",
         "direct_peer_reports_native_admission_cleanup_failure",
         "direct_owner_wakes_on_stop_and_reports_cleanup",
         "direct_owner_expires_without_socket_activity",
@@ -694,6 +700,11 @@
         "automation_mcp_loss_preserves_independent_broker_state",
         "automation_privacy_loss_revokes_every_principal_and_invalidates_targets",
         "automation_privacy_gate_closes_replaced_and_later_mcp_stops",
+        "automation_observed_privacy_loss_closes_gate_during_admission",
+        "automation_privacy_cleanup_requires_completion_or_quarantines",
+        "automation_cancelled_shared_start_retains_cleanup_failure",
+        "automation_cancelled_shared_start_waits_for_monitor_retirement",
+        "automation_lost_shared_start_result_blocks_restart",
         "automation_poison_diagnostics_follow_fail_closed_cuts",
         "automation_queued_restart_cannot_cross_privacy_loss",
         "automation_cancelled_shared_start_discards_queued_restart",
@@ -731,6 +742,7 @@
         "submission_failure_exposes_unknown_cleanup",
         "monitor_ownership_fault_models_use_killable_subprocesses",
         "native_loss_dispatch_attempts_callback_once_after_dispatch",
+        "privacy_loss_flag_closes_before_a_stalled_callback",
         "ordinary_active_shutdown_disarms_the_failure_guard",
         "automation_ascii_selection_uses_its_actual_encoded_size",
         "automation_wait_observes_applied_persistent_recovery_sync",

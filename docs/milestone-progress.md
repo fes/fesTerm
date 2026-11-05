@@ -775,6 +775,16 @@ cleanup status nor callback delivery qualifies admission, privacy, or
 final-recipient fencing; the coordinator remains unqualified and bootstrap
 remains closed.
 
+The application now retains the Windows monitor's cleanup result through
+listener join and slot release, including cancelled or failed startup, and
+blocks restart on unresolved cleanup. Native privacy-loss dispatch marks an
+early gate that private input and transport writes recheck even while the
+admission lock is busy. Lock and client-exit cuts are explicitly event-driven: notification
+delay has no documented upper bound, and previously admitted effects cannot be
+undone.
+These changes do not qualify native notification coverage, caller identity or
+the final recipient, and they do not enable MCP.
+
 ## Verify the Dev Tunnel installer before execution
 
 The setup panel could display the exact embedded installer for review, but its

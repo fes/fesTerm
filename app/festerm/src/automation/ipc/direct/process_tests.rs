@@ -200,6 +200,7 @@ async fn parent_coordinator(scenario: Scenario) {
             events,
             wake_ui: Arc::new(|| {}),
             stop: stop.clone(),
+            privacy_closed: coordinator.privacy_gate.closed_flag(),
             wake: wake.clone(),
         },
         Duration::from_secs(8),

@@ -46,18 +46,31 @@ const fn classify_windows_power_event(
 struct PrivacyRevocation {
     callback: std::sync::Arc<dyn Fn() + Send + Sync>,
     revoked: std::sync::atomic::AtomicBool,
+    loss: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[cfg(any(windows, test))]
 impl PrivacyRevocation {
     fn new(callback: std::sync::Arc<dyn Fn() + Send + Sync>) -> Self {
+        Self::with_loss_flag(
+            callback,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+    }
+
+    fn with_loss_flag(
+        callback: std::sync::Arc<dyn Fn() + Send + Sync>,
+        loss: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
         Self {
             callback,
             revoked: std::sync::atomic::AtomicBool::new(false),
+            loss,
         }
     }
 
     fn revoke(&self) {
+        self.loss.store(true, std::sync::atomic::Ordering::Release);
         if !self.revoked.swap(true, std::sync::atomic::Ordering::AcqRel) {
             (self.callback)();
         }
@@ -295,8 +308,10 @@ impl WakeMonitor {
 /// session lock/logoff, console/remote disconnection (including user switch),
 /// and `PBT_APMSUSPEND`. Suspend is explicitly registered: message-only windows
 /// do not receive ordinary broadcast messages. Service stop and message-loop
-/// failure also request shutdown and attempt a loss callback. A loss does not
-/// itself establish revocation; resume and unlock never grant authority.
+/// failure also request shutdown and attempt a loss callback. With
+/// `install_with_loss_flag`, native dispatch also marks the caller's one-way
+/// flag; the caller must use it at admission. Resume and unlock never grant
+/// authority.
 ///
 /// The callback runs outside native dispatch, on the listener or, on a
 /// supervisor failure, the reaper. It and its captured destructors must not
@@ -340,9 +355,9 @@ impl PrivacyMonitor {
 
 #[cfg(windows)]
 mod privacy {
-    use std::cell::{Cell, RefCell, UnsafeCell};
+    use std::cell::{Cell, OnceCell, RefCell, UnsafeCell};
     use std::io;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{mpsc, Arc, OnceLock};
     use std::thread;
     use std::time::Duration;
@@ -392,10 +407,16 @@ mod privacy {
 
     thread_local! {
         static CALLBACK: RefCell<Option<Callback>> = const { RefCell::new(None) };
+        static LOSS: OnceCell<Arc<AtomicBool>> = const { OnceCell::new() };
         static FAILED: Cell<bool> = const { Cell::new(false) };
     }
 
     fn note_loss() {
+        let _ = LOSS.try_with(|loss| {
+            if let Some(loss) = loss.get() {
+                loss.store(true, Ordering::Release);
+            }
+        });
         let _ = FAILED.try_with(|failed| failed.set(true));
         let _ = CALLBACK.try_with(|slot| {
             let Ok(callback) = slot.try_borrow() else {
@@ -791,6 +812,13 @@ mod privacy {
         revocation: Arc<PrivacyRevocation>,
         ready: mpsc::SyncSender<bool>,
     ) -> bool {
+        if !matches!(
+            LOSS.try_with(|slot| slot.set(revocation.loss.clone())),
+            Ok(Ok(()))
+        ) {
+            let _ = ready.try_send(false);
+            return false;
+        }
         CALLBACK.with(|slot| {
             *slot.borrow_mut() = Some(Callback {
                 lifecycle: lifecycle.clone(),
@@ -872,6 +900,21 @@ mod privacy {
         /// fencing; MCP bootstrap remains closed.
         pub fn install(callback: Arc<dyn Fn() + Send + Sync>) -> io::Result<Self> {
             let revocation = Arc::new(PrivacyRevocation::new(callback));
+            Self::start(revocation)
+        }
+
+        /// Atomically marks `loss` when native loss is observed, before the
+        /// callback runs outside native dispatch. The caller must never clear
+        /// the flag or treat it as native or recipient qualification.
+        pub fn install_with_loss_flag(
+            callback: Arc<dyn Fn() + Send + Sync>,
+            loss: Arc<AtomicBool>,
+        ) -> io::Result<Self> {
+            let revocation = Arc::new(PrivacyRevocation::with_loss_flag(callback, loss));
+            Self::start(revocation)
+        }
+
+        fn start(revocation: Arc<PrivacyRevocation>) -> io::Result<Self> {
             let (ready, started) = mpsc::sync_channel(1);
             let cleanup = privacy_lifecycle::launch(revocation, move |lifecycle, revocation| {
                 listen(lifecycle, revocation, ready)
@@ -927,6 +970,7 @@ mod privacy {
             let revocation = Arc::new(PrivacyRevocation::new(Arc::new(move || {
                 counter.fetch_add(1, Ordering::SeqCst);
             })));
+            LOSS.with(|slot| assert!(slot.set(revocation.loss.clone()).is_ok()));
             CALLBACK.with(|slot| {
                 *slot.borrow_mut() = Some(Callback {
                     lifecycle: lifecycle.clone(),
@@ -938,6 +982,8 @@ mod privacy {
                 unsafe { service_failed(std::ptr::null()) };
             });
             assert!(FAILED.get());
+            assert!(revocation.loss.load(Ordering::Acquire));
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
             assert!(!lifecycle.cancelled());
             FAILED.set(false);
             // SAFETY: these callbacks do not dereference their native
@@ -1026,7 +1072,7 @@ mod tests {
         classify_windows_power_event, session_is_available, PrivacyRevocation, WakeEvent,
         WindowsPowerEventCodes,
     };
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier};
 
     const CODES: WindowsPowerEventCodes = WindowsPowerEventCodes {
@@ -1074,6 +1120,32 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         revocation.revoke();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn privacy_loss_flag_closes_before_a_stalled_callback() {
+        let loss = Arc::new(AtomicBool::new(false));
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (release, blocked) = std::sync::mpsc::sync_channel::<()>(1);
+        let blocked = std::sync::Mutex::new(blocked);
+        let revocation = PrivacyRevocation::with_loss_flag(
+            Arc::new(move || {
+                entered.send(()).unwrap();
+                blocked
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+            }),
+            loss.clone(),
+        );
+        let worker = std::thread::spawn(move || revocation.revoke());
+        waiting
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(loss.load(Ordering::Acquire));
+        release.send(()).unwrap();
+        worker.join().unwrap();
     }
 
     #[test]

@@ -120,13 +120,17 @@ impl Connection {
         events: &SyncSender<Event>,
         bytes: Vec<u8>,
         stop: &AtomicBool,
+        privacy_closed: &AtomicBool,
     ) -> io::Result<()> {
         let Some(guard) = festerm_session::automation_admission_lock() else {
             self.closed.store(true, Ordering::Release);
             self.wake_output();
             return Err(io::ErrorKind::BrokenPipe.into());
         };
-        if self.is_closed() || stop.load(Ordering::Acquire) {
+        if self.is_closed()
+            || stop.load(Ordering::Acquire)
+            || !super::try_privacy_admission(privacy_closed)
+        {
             let wake = self.close_under_admission(&guard);
             wake_after_admission(guard, [wake]);
             return Err(io::ErrorKind::BrokenPipe.into());
@@ -261,6 +265,7 @@ pub(super) enum Event {
 pub(super) struct Server {
     events: Receiver<Event>,
     stop: Arc<AtomicBool>,
+    privacy_closed: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -279,16 +284,21 @@ fn reap_finished(connections: &mut Connections) {
 }
 
 impl Server {
-    pub fn start(wake: Waker, stop: Arc<AtomicBool>) -> io::Result<Self> {
+    pub fn start(
+        wake: Waker,
+        stop: Arc<AtomicBool>,
+        privacy_closed: Arc<AtomicBool>,
+    ) -> io::Result<Self> {
         require_qualified_bootstrap()?;
         let listener = Listener::bind()?;
         let (sender, events) = mpsc::sync_channel(32);
         let cancelled = stop.clone();
+        let privacy = privacy_closed.clone();
         let thread = thread::Builder::new()
             .name("festerm-automation-ipc".into())
             .spawn(move || {
                 let mut connections = Connections::new();
-                while !cancelled.load(Ordering::Acquire) {
+                while !cancelled.load(Ordering::Acquire) && !privacy.load(Ordering::Acquire) {
                     reap_finished(&mut connections);
                     match listener.accept(&cancelled) {
                         Ok(Some(stream)) => {
@@ -317,10 +327,19 @@ impl Server {
                             let events = sender.clone();
                             let notify = wake.clone();
                             let server_stop = cancelled.clone();
+                            let server_privacy = privacy.clone();
                             let spawn = thread::Builder::new()
                                 .name("festerm-automation-peer".into())
                                 .spawn(move || {
-                                    serve_peer(stream, peer, receiver, events, notify, server_stop)
+                                    serve_peer(
+                                        stream,
+                                        peer,
+                                        receiver,
+                                        events,
+                                        notify,
+                                        server_stop,
+                                        server_privacy,
+                                    )
                                 });
                             match spawn {
                                 Ok(thread) => {
@@ -352,6 +371,7 @@ impl Server {
         Ok(Self {
             events,
             stop,
+            privacy_closed,
             thread: Some(thread),
         })
     }
@@ -362,6 +382,7 @@ impl Server {
 
     pub fn failed(&self) -> bool {
         self.stop.load(Ordering::Acquire)
+            || self.privacy_closed.load(Ordering::Acquire)
             || self.thread.as_ref().is_some_and(JoinHandle::is_finished)
     }
 }
@@ -386,23 +407,31 @@ fn serve_peer(
     events: SyncSender<Event>,
     wake: Waker,
     stop: Arc<AtomicBool>,
+    privacy_closed: Arc<AtomicBool>,
 ) {
     let result = (|| -> io::Result<()> {
         let mut writer = stream.try_clone()?;
         prepare_writer(&mut writer)?;
         let writer_connection = connection.clone();
         let writer_stop = stop.clone();
+        let writer_privacy = privacy_closed.clone();
         let writer_wake = wake.clone();
         let output_thread = thread::Builder::new()
             .name("festerm-automation-replies".into())
             .spawn(move || {
-                while !writer_connection.is_closed() && !writer_stop.load(Ordering::Acquire) {
+                while !writer_connection.is_closed()
+                    && !writer_stop.load(Ordering::Acquire)
+                    && !writer_privacy.load(Ordering::Acquire)
+                {
                     match output.recv_timeout(IO_SLICE) {
                         Ok(frame) => {
                             let allowed = || {
-                                !writer_connection.is_closed()
-                                    && !writer_stop.load(Ordering::Acquire)
-                                    && frame.is_valid()
+                                peer_frame_is_live(
+                                    &writer_connection,
+                                    &writer_stop,
+                                    &writer_privacy,
+                                    &frame,
+                                )
                             };
                             if write_frame_until(&mut writer, &frame.bytes, frame.expires, allowed)
                                 .is_err()
@@ -417,17 +446,25 @@ fn serve_peer(
                 writer_connection.close();
                 writer_wake();
             })?;
-        if events
-            .try_send(Event::Connected(connection.clone()))
-            .is_err()
+        if stop.load(Ordering::Acquire)
+            || privacy_closed.load(Ordering::Acquire)
+            || events
+                .try_send(Event::Connected(connection.clone()))
+                .is_err()
         {
             connection.close();
         } else {
             wake();
-            while !connection.is_closed() && !stop.load(Ordering::Acquire) {
+            while !connection.is_closed()
+                && !stop.load(Ordering::Acquire)
+                && !privacy_closed.load(Ordering::Acquire)
+            {
                 match read_frame(&mut stream, &connection.closed, &stop) {
                     Ok(Some(bytes)) => {
-                        if connection.enqueue_message(&events, bytes, &stop).is_err() {
+                        if connection
+                            .enqueue_message(&events, bytes, &stop, &privacy_closed)
+                            .is_err()
+                        {
                             break;
                         }
                         wake();
@@ -447,6 +484,18 @@ fn serve_peer(
     }
     connection.close();
     wake();
+}
+
+fn peer_frame_is_live(
+    connection: &Connection,
+    stop: &AtomicBool,
+    privacy_closed: &AtomicBool,
+    frame: &OutboundFrame,
+) -> bool {
+    !connection.is_closed()
+        && !stop.load(Ordering::Acquire)
+        && frame.is_valid()
+        && super::try_privacy_admission(privacy_closed)
 }
 
 fn prepare_writer(writer: &mut Stream) -> io::Result<()> {
@@ -1029,6 +1078,7 @@ pub(super) fn test_server(stop: Arc<AtomicBool>) -> (Server, SyncSender<Event>) 
         Server {
             events,
             stop,
+            privacy_closed: Arc::new(AtomicBool::new(false)),
             thread: None,
         },
         sender,
@@ -1069,9 +1119,10 @@ mod tests {
         let (connection, _) = test_connection(47);
         let (events, incoming) = mpsc::sync_channel(1);
         let stop = AtomicBool::new(true);
+        let privacy_closed = AtomicBool::new(false);
         assert_eq!(
             connection
-                .enqueue_message(&events, b"request".to_vec(), &stop)
+                .enqueue_message(&events, b"request".to_vec(), &stop, &privacy_closed)
                 .unwrap_err()
                 .kind(),
             io::ErrorKind::BrokenPipe
@@ -1080,6 +1131,69 @@ mod tests {
         assert!(incoming.try_recv().is_err());
         let guard = festerm_session::automation_admission_lock().unwrap();
         assert!(!connection.has_pending_input(&guard));
+    }
+
+    #[test]
+    fn incoming_message_rechecks_observed_privacy_loss_under_admission() {
+        let (connection, _) = test_connection(47);
+        let (events, incoming) = mpsc::sync_channel(1);
+        let stop = Arc::new(AtomicBool::new(false));
+        let gate = super::super::PrivacyGate::new(false);
+        let privacy_closed = gate.closed_flag();
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        let worker_connection = connection.clone();
+        let worker_stop = stop.clone();
+        let (started, ready) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            started.send(()).unwrap();
+            worker_connection.enqueue_message(
+                &events,
+                b"request".to_vec(),
+                &worker_stop,
+                &privacy_closed,
+            )
+        });
+        ready.recv_timeout(FRAME_DEADLINE).unwrap();
+        gate.signal_loss();
+        assert!(!stop.load(Ordering::Acquire));
+        drop(guard);
+
+        assert_eq!(
+            worker.join().unwrap().unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        assert!(connection.is_closed());
+        assert!(incoming.try_recv().is_err());
+    }
+
+    #[test]
+    fn queued_reply_rechecks_observed_privacy_loss_before_write() {
+        let (connection, receive) = test_connection_with_frames(47);
+        let deadline = Instant::now() + FRAME_DEADLINE;
+        connection.send(b"private".to_vec(), deadline, &[]).unwrap();
+        let frame = receive().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let gate = super::super::PrivacyGate::new(false);
+        let privacy_closed = gate.closed_flag();
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        let worker_stop = stop.clone();
+        let (started, ready) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            let mut written = Vec::new();
+            started.send(()).unwrap();
+            let result = write_frame_until(&mut written, &frame.bytes, frame.expires, || {
+                peer_frame_is_live(&connection, &worker_stop, &privacy_closed, &frame)
+            });
+            (result, written)
+        });
+        ready.recv_timeout(FRAME_DEADLINE).unwrap();
+        gate.signal_loss();
+        assert!(!stop.load(Ordering::Acquire));
+        drop(guard);
+
+        let (result, written) = worker.join().unwrap();
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert!(written.is_empty());
     }
 
     #[test]
@@ -1212,7 +1326,11 @@ mod tests {
 
     #[test]
     fn unqualified_bootstrap_refuses_server_and_stdio_before_ipc() {
-        let server = Server::start(Arc::new(|| {}), Arc::new(AtomicBool::new(false)));
+        let server = Server::start(
+            Arc::new(|| {}),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
         assert_eq!(server.err().unwrap().kind(), io::ErrorKind::Unsupported);
         assert_eq!(run_stdio().unwrap_err().kind(), io::ErrorKind::Unsupported);
     }
@@ -1954,6 +2072,7 @@ mod tests {
                 events,
                 Arc::new(|| {}),
                 Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicBool::new(false)),
             )
         });
         worker.join().unwrap();
@@ -1994,6 +2113,7 @@ mod tests {
                 events,
                 Arc::new(|| {}),
                 Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicBool::new(false)),
             )
         });
         worker.join().unwrap();
@@ -2031,7 +2151,15 @@ mod tests {
         let peer = connection.clone();
         let worker_stop = stop.clone();
         let worker = thread::spawn(move || {
-            serve_peer(server, peer, replies, events, Arc::new(|| {}), worker_stop)
+            serve_peer(
+                server,
+                peer,
+                replies,
+                events,
+                Arc::new(|| {}),
+                worker_stop,
+                Arc::new(AtomicBool::new(false)),
+            )
         });
 
         assert!(matches!(

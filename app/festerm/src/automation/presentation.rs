@@ -2669,6 +2669,7 @@ impl Coordinator {
         ) {
             return Err(refused(Error::BindingMismatch));
         }
+        let privacy = self.privacy_gate.clone();
         let broker = self
             .broker
             .as_mut()
@@ -2691,6 +2692,9 @@ impl Coordinator {
                 }
                 let exact_bytes = u32::try_from(bytes.len()).map_err(|_| Error::InvalidRequest)?;
                 let digest = Digest(Sha256::digest(bytes).into());
+                if !privacy.try_admit() {
+                    return Err(Error::Revoked);
+                }
                 match observation {
                     Some(observation) => broker.commit_presented_control(
                         principal,

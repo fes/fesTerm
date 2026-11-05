@@ -791,6 +791,7 @@ struct Prepared {
 #[derive(Debug, PartialEq, Eq)]
 enum StartFailure {
     Privacy,
+    PrivacyCleanup,
     PeerIdentity,
     Randomness,
     Endpoint,
@@ -820,9 +821,9 @@ impl Drop for Retirement {
     }
 }
 
-// Privacy loss and adapter-stop replacement share the write-admission lock.
+// The early loss flag is also checked by transport admission and physical writes.
 struct PrivacyGate {
-    closed: AtomicBool,
+    closed: Arc<AtomicBool>,
     mcp_stop: Mutex<Option<Arc<AtomicBool>>>,
 }
 
@@ -857,7 +858,7 @@ impl Drop for TakenBrokerUnwind {
 impl PrivacyGate {
     fn new(closed: bool) -> Self {
         Self {
-            closed: AtomicBool::new(closed),
+            closed: Arc::new(AtomicBool::new(closed)),
             mcp_stop: Mutex::new(None),
         }
     }
@@ -866,10 +867,22 @@ impl PrivacyGate {
         self.closed.load(Ordering::Acquire)
     }
 
+    fn closed_flag(&self) -> Arc<AtomicBool> {
+        self.closed.clone()
+    }
+
+    fn signal_loss(&self) {
+        self.closed.store(true, Ordering::Release);
+    }
+
+    fn try_admit(&self) -> bool {
+        try_privacy_admission(&self.closed)
+    }
+
     fn close(&self) {
+        self.signal_loss();
         let guard = festerm_session::automation_admission_lock();
         let poisoned = guard.is_none();
-        self.closed.store(true, Ordering::Release);
         let stop = self
             .mcp_stop
             .lock()
@@ -924,26 +937,196 @@ impl PrivacyGate {
     }
 }
 
+fn try_privacy_admission(closed: &AtomicBool) -> bool {
+    // This RMW orders the final admission point against the one-way loss cut.
+    closed
+        .compare_exchange(false, false, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+}
+
 fn prepare_shared<P>(
     gate: &PrivacyGate,
     install: impl FnOnce() -> Result<P, StartFailure>,
     nonce: impl FnOnce() -> Result<[u8; 16], StartFailure>,
+    retire: impl FnOnce(P) -> bool,
 ) -> Result<(P, [u8; 16]), StartFailure> {
-    let result = (|| {
-        let privacy = install()?;
-        if gate.is_closed() {
-            return Err(StartFailure::Cancelled);
+    let privacy = match install() {
+        Ok(privacy) => privacy,
+        Err(failure) => {
+            gate.close();
+            return Err(failure);
         }
-        let instance = nonce()?;
-        if gate.is_closed() {
-            return Err(StartFailure::Cancelled);
+    };
+    let instance = if gate.is_closed() {
+        Err(StartFailure::Cancelled)
+    } else {
+        nonce().and_then(|instance| {
+            if gate.is_closed() {
+                Err(StartFailure::Cancelled)
+            } else {
+                Ok(instance)
+            }
+        })
+    };
+    match instance {
+        Ok(instance) => Ok((privacy, instance)),
+        Err(failure) => {
+            gate.close();
+            if retire(privacy) {
+                Err(failure)
+            } else {
+                Err(StartFailure::PrivacyCleanup)
+            }
         }
-        Ok((privacy, instance))
-    })();
-    if result.is_err() {
-        gate.close();
     }
-    result
+}
+
+#[cfg(any(windows, test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PrivacyCleanupProgress {
+    Pending,
+    Complete,
+    Unknown,
+}
+
+#[cfg(any(windows, test))]
+fn await_privacy_cleanup(
+    state: impl Fn() -> PrivacyCleanupProgress,
+    quarantine: impl FnOnce() -> bool,
+    timeout: Duration,
+) -> bool {
+    let started = Instant::now();
+    loop {
+        match state() {
+            PrivacyCleanupProgress::Complete => return true,
+            PrivacyCleanupProgress::Unknown => return false,
+            PrivacyCleanupProgress::Pending => {}
+        }
+        let remaining = timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return quarantine();
+        }
+        thread::sleep(remaining.min(Duration::from_millis(50)));
+    }
+}
+
+#[cfg(windows)]
+fn finish_privacy_cleanup(status: &festerm_windows_power::PrivacyCleanupStatus) -> bool {
+    use festerm_windows_power::{
+        privacy_monitor_ownership, PrivacyCleanupState, PrivacyOwnershipState,
+    };
+
+    let complete = await_privacy_cleanup(
+        || match status.state() {
+            PrivacyCleanupState::Active | PrivacyCleanupState::Pending => {
+                PrivacyCleanupProgress::Pending
+            }
+            PrivacyCleanupState::Complete => match privacy_monitor_ownership() {
+                PrivacyOwnershipState::Available => PrivacyCleanupProgress::Complete,
+                PrivacyOwnershipState::Occupied => PrivacyCleanupProgress::Pending,
+                PrivacyOwnershipState::Unknown => PrivacyCleanupProgress::Unknown,
+            },
+            PrivacyCleanupState::Unknown => PrivacyCleanupProgress::Unknown,
+        },
+        || {
+            status.quarantine_if_unresolved().is_ok()
+                && privacy_monitor_ownership() == PrivacyOwnershipState::Available
+        },
+        Duration::from_secs(5),
+    );
+    if !complete {
+        tracing::error!(
+            "Windows privacy cleanup or slot ownership is unresolved; restart is required"
+        );
+    }
+    complete
+}
+
+#[cfg(windows)]
+fn retire_privacy(privacy: PrivacyMonitor) -> bool {
+    finish_privacy_cleanup(&privacy.close())
+}
+
+#[cfg(not(windows))]
+fn retire_privacy(_privacy: PrivacyMonitor) -> bool {
+    true
+}
+
+fn install_privacy(
+    gate: &PrivacyGate,
+    callback: Arc<dyn Fn() + Send + Sync>,
+) -> Result<PrivacyMonitor, StartFailure> {
+    #[cfg(windows)]
+    let installed = PrivacyMonitor::install_with_loss_flag(callback, gate.closed_flag());
+    #[cfg(not(windows))]
+    let installed = PrivacyMonitor::install(callback);
+    match installed {
+        Ok(privacy) => Ok(privacy),
+        Err(error) => {
+            gate.close();
+            tracing::warn!(
+                "automation privacy monitor installation failed: {:?}",
+                error.kind()
+            );
+            #[cfg(windows)]
+            {
+                handle_windows_privacy_failure(error)
+            }
+            #[cfg(not(windows))]
+            {
+                Err(StartFailure::Privacy)
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn handle_windows_privacy_failure(
+    mut error: std::io::Error,
+) -> Result<PrivacyMonitor, StartFailure> {
+    use festerm_windows_power::{
+        privacy_monitor_ownership, PrivacyInstallFailure, PrivacyOwnershipState,
+    };
+
+    let (cleanup, rejected) = error
+        .get_mut()
+        .and_then(|source| source.downcast_mut::<PrivacyInstallFailure>())
+        .map(|failure| (failure.cleanup_status(), failure.take_rejected()))
+        .unwrap_or((None, None));
+    drop(error);
+    drop(rejected);
+    if cleanup
+        .as_ref()
+        .is_some_and(|status| !finish_privacy_cleanup(status))
+        || privacy_monitor_ownership() == PrivacyOwnershipState::Unknown
+    {
+        Err(StartFailure::PrivacyCleanup)
+    } else {
+        Err(StartFailure::Privacy)
+    }
+}
+
+fn retire_start<T>(starting: Starting<T>, retire: impl FnOnce(T) -> bool) -> bool {
+    let result = starting.result.recv();
+    let resource_ok = match result {
+        Ok(Ok(started)) => retire(started),
+        Ok(Err(failure)) => failure != StartFailure::PrivacyCleanup,
+        Err(_) => {
+            tracing::warn!("automation startup worker returned no result");
+            false
+        }
+    };
+    let worker_ok = if starting.thread.join().is_err() {
+        tracing::warn!("automation startup worker failed");
+        false
+    } else {
+        true
+    };
+    resource_ok && worker_ok
+}
+
+fn retire_shared_start(starting: Starting<Prepared>) -> bool {
+    retire_start(starting, |prepared| retire_privacy(prepared.privacy))
 }
 
 enum ReconcileError {
@@ -1244,6 +1427,7 @@ fn start_failure_status(failure: StartFailure) -> &'static str {
         StartFailure::Privacy => {
             "MCP unavailable: no qualified OS lock/suspend privacy monitor."
         }
+        StartFailure::PrivacyCleanup => CLEANUP_FAILED,
         StartFailure::PeerIdentity => {
             "MCP unavailable: private peer identity is not yet qualified."
         }
@@ -1438,17 +1622,9 @@ impl Coordinator {
                 &mut self.retiring,
                 "festerm-automation-cleanup",
                 move || {
-                    let startup_ok = starting.is_none_or(|starting| {
-                        drop(starting.result);
-                        if starting.thread.join().is_err() {
-                            tracing::warn!("automation startup worker failed");
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                    let _privacy = privacy;
-                    startup_ok
+                    let startup_ok = starting.is_none_or(retire_shared_start);
+                    let privacy_ok = privacy.is_none_or(retire_privacy);
+                    startup_ok && privacy_ok
                 },
             );
         }
@@ -1525,6 +1701,9 @@ impl Coordinator {
     fn shared_start_failed(&mut self, failure: StartFailure) {
         self.privacy_lost_this_tick = true;
         self.privacy_gate.close();
+        if failure == StartFailure::PrivacyCleanup {
+            self.retiring.failed = true;
+        }
         if self.want_start {
             self.stop_mcp();
             self.status = start_failure_status(failure);
@@ -1562,11 +1741,12 @@ impl Coordinator {
                 self.starting = None;
                 self.privacy_lost_this_tick = true;
                 self.privacy_gate.close();
+                self.retiring.failed = true;
                 if self.want_start {
                     self.stop_mcp();
-                    self.status = "MCP unavailable: startup worker failed.";
-                    tracing::warn!("{}", self.status);
                 }
+                self.status = CLEANUP_FAILED;
+                tracing::error!("automation startup worker exited without a cleanup result");
             }
             None => {}
         }
@@ -1622,16 +1802,32 @@ impl Coordinator {
                     let prepared = prepare_shared(
                         &gate,
                         || {
-                            PrivacyMonitor::install(Arc::new(move || {
-                                privacy_gate.close();
-                                privacy_notify.request_repaint();
-                            }))
-                            .map_err(|_| StartFailure::Privacy)
+                            install_privacy(
+                                &gate,
+                                Arc::new(move || {
+                                    privacy_gate.signal_loss();
+                                    privacy_notify.request_repaint();
+                                }),
+                            )
                         },
                         || random().map_err(|_| StartFailure::Randomness),
+                        retire_privacy,
                     )
                     .map(|(privacy, instance)| Prepared { privacy, instance });
-                    let _ = send.send(prepared);
+                    if let Err(mpsc::SendError(result)) = send.send(prepared) {
+                        gate.close();
+                        match result {
+                            Ok(prepared) => {
+                                if !retire_privacy(prepared.privacy) {
+                                    tracing::error!("automation startup privacy cleanup failed");
+                                }
+                            }
+                            Err(StartFailure::PrivacyCleanup) => {
+                                tracing::error!("automation startup privacy cleanup failed");
+                            }
+                            Err(_) => {}
+                        }
+                    }
                     notify.request_repaint();
                 }) {
                 Ok(thread) => {
@@ -1740,6 +1936,7 @@ impl Coordinator {
                 return;
             }
             let stop = self.stop.clone();
+            let privacy_closed = self.privacy_gate.closed_flag();
             let notify = context.clone();
             let (send, result) = mpsc::sync_channel(1);
             match thread::Builder::new()
@@ -1753,6 +1950,7 @@ impl Coordinator {
                         let server = ipc::Server::start(
                             Arc::new(move || server_notify.request_repaint()),
                             stop.clone(),
+                            privacy_closed,
                         )
                         .map_err(|error| {
                             if error.kind() == std::io::ErrorKind::Unsupported {

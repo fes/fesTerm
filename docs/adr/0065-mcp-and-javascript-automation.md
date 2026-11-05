@@ -138,9 +138,15 @@ to bypass another's restrictions.
    old grant; no silent lease reacquisition is allowed. Broker-owned completion
    closes admission and rejects unadmitted unawaited work; unresolved calls
    produce an explicit failure instead of false completion. Human input, lock,
-   suspension, disconnect, replacement
-   or grant revocation closes admission and invalidates queued effects. Existing
-   accepted writes may have executed and cannot be rolled back. Recovery never
+   suspension, disconnect, replacement or grant revocation closes admission and
+   invalidates queued effects. OS lock, suspension and client-exit revocation
+   are event-driven: the host cannot cut admission until it observes the loss,
+   and notification delay has no documented upper bound. Input or data may be
+   admitted between the actual OS event and its detection. Detected monitor
+   failure must fail closed; this timing policy does not waive reliable native
+   monitoring, authenticated caller identity or final-recipient qualification.
+   Effects admitted before the cut, including in-flight writes, can complete
+   with unknown outcomes; accepted writes cannot be rolled back. Recovery never
    silently retargets or replays a run; after takeover, revocation or recovery,
    a new run requires a fresh native grant. A still-live grant may authorize
    repeated **new intentional** invocations of the same approved action within
@@ -331,11 +337,17 @@ destructors; an unresolved cancellation is permanently quarantined rather than
 detached or reused. A listener spawn, wait or join failure attempts once-latched
 revocation outside native dispatch, and a failed reserved submission retains
 its complete job in the bounded quarantine. Closing the monitor is nonblocking
-and exposes a cleanup status. A callback may block on the admission lock while
-an already-admitted operation continues. Neither cleanup status nor callback
-delivery qualifies admission, privacy, or a physical final-recipient fence.
-Those boundaries and the application coordinator's shutdown remain separate
-qualification work; MCP bootstrap remains closed.
+and exposes a cleanup status. Native Windows loss dispatch marks the
+application's one-way privacy flag before waiting for admission or invoking
+the application callback, and private transport rechecks that flag for
+incoming events and physical writes. The coordinator retains cleanup through
+listener join and slot release off the UI thread, quarantining still-pending
+cleanup at its deadline and blocking restart if the slot remains occupied or
+unknown; failed or cancelled startup must also retire its monitor. Effects
+admitted before the cut can still complete. Neither
+cleanup status nor callback delivery qualifies native privacy, caller identity
+or a physical final-recipient fence. Those boundaries and the coordinator's
+remaining blocking paths require separate qualification; bootstrap remains closed.
 
 The owner has settled the language choice and separately authorized the P1-P3
 implementation campaign in [issue #501](https://github.com/fes/fesTerm/issues/501).
@@ -531,6 +543,11 @@ in the design must be visible in implementation/release review.
   actual join, bounded listener-slot acquisition, callback attempts and
   uncertain cleanup. They do not prove native API contracts, admission/privacy
   fencing or physical final-recipient writes; bootstrap remains closed.
+  Application regressions cover the observed-loss flag under a held admission
+  lock, a reserved input cut before broker admission, incoming and outgoing
+  transport cuts, partial direct writes and cancelled-start cleanup failure.
+  These do not qualify native notification
+  coverage or physical recipient identity.
   Run the traceability gate and documentation checks.
 - **Worker process entry:** The desktop executable has a private
   `--automation-worker` entry before application initialization, exercised by

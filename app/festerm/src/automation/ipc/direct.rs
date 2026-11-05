@@ -111,6 +111,7 @@ pub(super) struct PeerContext {
     pub(super) events: SyncSender<Event>,
     pub(super) wake_ui: Waker,
     pub(super) stop: Arc<AtomicBool>,
+    pub(super) privacy_closed: Arc<AtomicBool>,
     pub(super) wake: Wake,
 }
 
@@ -139,6 +140,7 @@ pub(super) struct Peer<S: Read + Write, N: TrustedNativeVerification, A: NativeA
     events: SyncSender<Event>,
     wake_ui: Waker,
     stop: Arc<AtomicBool>,
+    privacy_closed: Arc<AtomicBool>,
     owner_liveness: OwnerLiveness,
     pending: Option<HeldFrame>,
     announced: bool,
@@ -161,6 +163,7 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
             events,
             wake_ui,
             stop,
+            privacy_closed,
             wake,
         } = context;
         Self {
@@ -177,6 +180,7 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
             events,
             wake_ui,
             stop,
+            privacy_closed,
             owner_liveness,
             pending: None,
             announced: false,
@@ -220,6 +224,7 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
         // This wake-driven cut does not fence an effect already in flight.
         if self.connection.is_closed()
             || self.stop.load(Ordering::Acquire)
+            || self.privacy_closed.load(Ordering::Acquire)
             || !self.owner_liveness.is_alive()
         {
             return Ok(Step::Closed);
@@ -232,6 +237,7 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
             if self.connection.is_closed()
                 || self.stop.load(Ordering::Acquire)
                 || !self.owner_liveness.is_alive()
+                || !super::super::try_privacy_admission(&self.privacy_closed)
             {
                 return Ok(Step::Closed);
             }
@@ -263,6 +269,7 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
         let pending = self.pending.as_ref();
         let connection = &self.connection;
         let stop = &self.stop;
+        let privacy_closed = &self.privacy_closed;
         let owner_liveness = &self.owner_liveness;
         let mut admission_blocked = false;
         let progress = self.channel.poll(|| {
@@ -280,6 +287,7 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
                 || !owner_liveness.is_alive()
                 || pending
                     .is_some_and(|frame| Instant::now() >= frame.0.expires || !frame.0.is_valid())
+                || !super::super::try_privacy_admission(privacy_closed)
             {
                 return Err(io::ErrorKind::PermissionDenied.into());
             }
@@ -300,7 +308,7 @@ impl<S: Read + Write, N: TrustedNativeVerification, A: NativeAdmission> Peer<S, 
                 }
                 let native = admission.try_admit().map_err(|_| Error::Admission)?;
                 self.connection
-                    .enqueue_message(&self.events, bytes, &self.stop)
+                    .enqueue_message(&self.events, bytes, &self.stop, &self.privacy_closed)
                     .map_err(|_| Error::Events)?;
                 drop(native);
                 (self.wake_ui)();
@@ -529,6 +537,7 @@ mod tests {
                         events: sender,
                         wake_ui: Arc::new(|| {}),
                         stop: Arc::new(AtomicBool::new(false)),
+                        privacy_closed: Arc::new(AtomicBool::new(false)),
                         wake: wake.clone(),
                     },
                     host_native.owner_liveness.clone(),
@@ -762,6 +771,7 @@ mod tests {
                 events,
                 wake_ui: Arc::new(|| {}),
                 stop: coordinator.stop.clone(),
+                privacy_closed: coordinator.privacy_gate.closed_flag(),
                 wake: wake.clone(),
             },
             owner_liveness,
@@ -806,6 +816,7 @@ mod tests {
                 events,
                 wake_ui: Arc::new(|| {}),
                 stop,
+                privacy_closed: Arc::new(AtomicBool::new(false)),
                 wake,
             },
             Duration::from_secs(8),
@@ -883,6 +894,7 @@ mod tests {
                 events,
                 wake_ui: Arc::new(|| {}),
                 stop,
+                privacy_closed: Arc::new(AtomicBool::new(false)),
                 wake: wake.clone(),
             },
             owner_liveness,
@@ -1113,6 +1125,51 @@ mod tests {
     }
 
     #[test]
+    fn direct_peer_stops_partial_frame_after_observed_privacy_loss() {
+        let armed = Arc::new(AtomicBool::new(false));
+        let unused_valid = Arc::new(AtomicBool::new(true));
+        let privacy_closed = Arc::new(AtomicBool::new(false));
+        let mut fixture = Fixture::new(|stream| CutOnWrite {
+            stream,
+            armed: armed.clone(),
+            valid: unused_valid.clone(),
+            cut: privacy_closed.clone(),
+        });
+        fixture.host.privacy_closed = privacy_closed.clone();
+        let connection = fixture.establish();
+        connection
+            .send(
+                b"private response".to_vec(),
+                Instant::now() + MAX_FRAME_DURATION,
+                &[],
+            )
+            .unwrap();
+        armed.store(true, Ordering::Release);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !privacy_closed.load(Ordering::Acquire) {
+            fixture.pump();
+            assert!(Instant::now() < deadline, "partial write did not happen");
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(!fixture.host.stop.load(Ordering::Acquire));
+        assert_eq!(fixture.host.step(), Ok(Step::Closed));
+        assert!(connection.is_closed());
+        loop {
+            match fixture.client.poll(|| Ok(())) {
+                Ok(Progress::Frame(_)) => panic!("partial frame was delivered after privacy loss"),
+                Ok(_) => {}
+                Err(
+                    secure_transport::Error::PeerClosed
+                    | secure_transport::Error::Io(std::io::ErrorKind::ConnectionReset),
+                ) => break,
+                Err(error) => panic!("unexpected client error: {error}"),
+            }
+            assert!(Instant::now() < deadline, "privacy-cut peer did not close");
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
     fn direct_peer_reports_native_admission_cleanup_failure() {
         let mut fixture = Fixture::new(|socket| socket);
         fixture.host.admission.as_mut().unwrap().fail_cleanup = true;
@@ -1146,6 +1203,7 @@ mod tests {
                 events,
                 wake_ui: Arc::new(|| {}),
                 stop,
+                privacy_closed: Arc::new(AtomicBool::new(false)),
                 wake,
             },
             bootstrap_duration,
@@ -1323,6 +1381,7 @@ mod tests {
                 events: events_tx,
                 wake_ui: Arc::new(|| {}),
                 stop: Arc::new(AtomicBool::new(false)),
+                privacy_closed: Arc::new(AtomicBool::new(false)),
                 wake: host_wake.clone(),
             },
             Duration::from_secs(8),
@@ -1459,6 +1518,7 @@ mod tests {
                 events,
                 wake_ui: Arc::new(|| {}),
                 stop: stop.clone(),
+                privacy_closed: coordinator.privacy_gate.closed_flag(),
                 wake: host_wake.clone(),
             },
             Duration::from_secs(8),

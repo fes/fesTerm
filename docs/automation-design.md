@@ -892,19 +892,32 @@ quarantine. If submission or reaper startup fails before a listener is
 started, no callback runs on the submitting thread; the caller must keep
 admission closed and handle the returned unknown status. At its own deadline
 an owner can turn pending cleanup into sticky unknown quarantine without
-waiting; this timeout is not scheduled by the monitor or current coordinator.
+waiting. The application coordinator waits off the UI thread for cleanup and
+slot release for at most five seconds after it obtains a status, then
+quarantines cleanup still pending and blocks restart if the slot remains
+occupied or unknown. An installation or startup worker that has not returned
+can still delay retirement.
 The listener uses a 50 ms alertable wait to observe cancellation without a
 UI-side native-handle operation; its power/wakeup cost also needs native validation. Native
-APC/window callbacks only mark the listener's loss; the application callback
-runs outside native dispatch, so it cannot make SCM/RPC calls from inside an
-APC. The once latch prevents duplicate callback entry, not proof that a
+APC/window callbacks only atomically mark the listener's loss and the shared
+application privacy flag; the application callback runs outside native
+dispatch, so it cannot make SCM/RPC calls from inside an APC. The once latch
+prevents duplicate callback entry, not proof that a
 blocked or panicking callback completed.
 
-This is not an end-to-end privacy or UI-responsiveness qualification. The
-current application coordinator does not retain or present that cleanup status
-and still has separate blocking admission-lock and worker-join paths. A callback
-can itself wait on that admission lock while an already-admitted operation
-continues. An `Unknown` or `Complete` cleanup status, callback entry, or callback
+Native loss dispatch marks the privacy gate closed without acquiring the
+admission lock; supervisor failure marks it before invoking the callback.
+Reserved input and each private peer message or direct or
+legacy transport write make their final privacy admission with an atomic
+read-modify-write ordered against that cut. A request that wins admission before
+the cut can finish afterward; one that loses is refused. The coordinator retires successful, failed
+and cancelled monitor startups off the UI thread and blocks restart if cleanup
+is unknown. It shows a cleanup-failure message when a restart is attempted;
+the detailed pending state is not separately presented. Other coordinator
+admission-lock and worker-join paths can still block.
+
+This is not an end-to-end privacy or UI-responsiveness qualification. An
+`Unknown` or `Complete` cleanup status, callback entry, or callback
 completion does **not** qualify admission, privacy, or a physical final-recipient
 fence. Atomic monitor cancellation cannot fence a physical write already
 admitted, and the bounded local model tests are not evidence of such a fence.
@@ -1682,7 +1695,13 @@ uses either primitive yet.
 Lock, native suspension, explicit disconnect, tab close, attachment replacement,
 caller disconnect, expiry and worker crash close new-effect/data admission,
 cancel outstanding work and wake waiters. Invalidate grants/leases and discard
-pending disclosure. App privacy applies to automation, not just screen drawing.
+pending disclosure. OS lock, suspension and client-exit cuts are event-driven:
+until the host observes the loss, input or data may still be admitted, and the
+notification delay has no documented upper bound. Once detected, new admission
+closes; effects admitted before the cut can complete and their outcomes may be
+unknown. Detected monitoring failures fail closed. This timing decision
+does not qualify an unreliable or missing monitor, caller identity or physical
+final-recipient fencing. App privacy applies to automation, not just screen drawing.
 Previously released output cannot be erased from a client. Re-unlocking or
 transport recovery does not restart a script or restore a grant; the person
 must start a new run. The underlying session may recover under its existing
