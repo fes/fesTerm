@@ -2992,6 +2992,7 @@ pub(super) mod tests {
                 principal,
                 machine,
                 code: VerificationCode::new(&format!("{channel:016x}")).unwrap(),
+                identity: None,
                 grant: None,
                 waits: Vec::new(),
                 pending_completion: None,
