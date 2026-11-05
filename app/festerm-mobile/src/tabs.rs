@@ -278,6 +278,52 @@ impl MobileApp {
         }
     }
 
+    pub(super) fn request_tab_menu(&mut self, id: u64) {
+        self.cancel_dictation();
+        self.clear_sticky_modifiers();
+        self.terminal_keyboard.cancel();
+        self.tab_menu = Some(id);
+    }
+
+    pub(super) fn show_tab_menu(&mut self, ctx: &egui::Context, bounds: egui::Rect) {
+        let Some(id) = self.tab_menu else { return };
+        let Some(surface) = self.surfaces().into_iter().find(|surface| surface.id == id) else {
+            self.tab_menu = None;
+            return;
+        };
+        let document = self.documents.contains(id);
+        let mut activate = false;
+        let mut close = false;
+        let mut cancel = false;
+        let outcome = widgets::bottom_sheet(ctx, "work-tab-menu", bounds, |ui| {
+            cancel |= widgets::sheet_title(ui, &surface.title, None);
+            ui.label(&surface.status);
+            activate =
+                widgets::button(ui, widgets::ButtonKind::Secondary, "Activate", true).clicked();
+            close = widgets::button(
+                ui,
+                widgets::ButtonKind::Destructive,
+                if document {
+                    "Close document view"
+                } else {
+                    "Close tab..."
+                },
+                true,
+            )
+            .clicked();
+            cancel |= widgets::button(ui, widgets::ButtonKind::Secondary, "Cancel", true).clicked();
+        });
+        if activate {
+            self.tab_menu = None;
+            self.activate_tab(id);
+        } else if close {
+            self.tab_menu = None;
+            self.request_surface_close(id);
+        } else if cancel || outcome.dismissed {
+            self.tab_menu = None;
+        }
+    }
+
     pub(super) fn close_tab(&mut self, id: u64) {
         if self.documents.contains(id) {
             self.documents.request_close(id);

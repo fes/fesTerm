@@ -29,7 +29,7 @@ EXPECTED = {
     "external-link", "markdown-document", "new-profile", "new-session", "next-match", "outline",
     "overflow", "overflow-vertical", "parent-directory", "paste", "previous-match", "proceed",
     "profile", "reattach", "reconnect", "refresh", "remote-globe", "remote-tunnel", "rendered-view", "restore",
-    "running-sessions", "saved-profiles", "search", "secret-storage",
+    "running-sessions", "saved-profiles", "search", "secret-storage", "save", "undo", "redo",
     "section-collapsed", "section-expanded",
     "serial", "session-inspector", "settings", "sort-order", "source-view", "ssh-remote",
     "theme-appearance", "typography-font", "warning", "workspace",
