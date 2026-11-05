@@ -5,6 +5,8 @@ pub(crate) mod preferences;
 pub(crate) mod presentation;
 #[cfg(test)]
 mod tests;
+#[allow(dead_code)]
+pub(crate) mod verification;
 mod workflow_selection;
 
 #[cfg(test)]
@@ -87,6 +89,13 @@ pub(crate) enum NativeCommand {
     },
     Revoke {
         channel: u64,
+    },
+    CompareDirectPeer {
+        generation: u64,
+        fingerprint: String,
+    },
+    DenyDirectPeer {
+        generation: u64,
     },
     EnableControllerEnrollment,
     ChooseController {
@@ -180,6 +189,12 @@ impl NativeCommand {
                 .take(2)
                 .count()
                 == 2
+            || commands
+                .clone()
+                .filter(|command| command.is_verification())
+                .take(2)
+                .count()
+                == 2
             // Collection order must never choose between native enrollment actions.
             || commands.filter(|command| command.is_controller()).take(2).count() == 2
     }
@@ -188,6 +203,7 @@ impl NativeCommand {
         matches!(
             self,
             Self::ApproveObservation { .. }
+                | Self::CompareDirectPeer { .. }
                 | Self::EnableControllerEnrollment
                 | Self::ChooseController { .. }
                 | Self::SelectControllerTarget { .. }
@@ -205,6 +221,7 @@ impl NativeCommand {
             Self::RestartMcp
                 | Self::PreferenceChanged { .. }
                 | Self::Revoke { .. }
+                | Self::DenyDirectPeer { .. }
                 | Self::CancelController { .. }
                 | Self::UnregisterController { .. }
                 | Self::CancelControllerMetadata { .. }
@@ -232,6 +249,13 @@ impl NativeCommand {
                 | Self::ConfirmControllerInput { .. }
                 | Self::CancelControllerInput { .. }
                 | Self::DisarmControllerInput { .. }
+        )
+    }
+
+    fn is_verification(&self) -> bool {
+        matches!(
+            self,
+            Self::CompareDirectPeer { .. } | Self::DenyDirectPeer { .. }
         )
     }
 }
@@ -401,6 +425,7 @@ pub(crate) struct ControllerTargetRow {
 pub(crate) struct SettingsSnapshot {
     pub status: &'static str,
     pub channels: Vec<ChannelRow>,
+    pub direct_verification: Option<verification::View>,
     pub targets: Vec<(TargetRef, String)>,
     pub controllers: Vec<ControllerRow>,
     pub controller_targets: Vec<ControllerTargetRow>,
@@ -416,6 +441,7 @@ impl Default for SettingsSnapshot {
         Self {
             status: "MCP is off. No local adapter is listening.",
             channels: Vec::new(),
+            direct_verification: None,
             targets: Vec::new(),
             controllers: Vec::new(),
             controller_targets: Vec::new(),
@@ -431,6 +457,11 @@ impl Default for SettingsSnapshot {
 impl SettingsSnapshot {
     pub(crate) fn same_presentation(&self, other: &Self) -> bool {
         self.status == other.status
+            && match (&self.direct_verification, &other.direct_verification) {
+                (Some(left), Some(right)) => left.same_presentation(right),
+                (None, None) => true,
+                _ => false,
+            }
             && self.targets == other.targets
             && self.controller_targets == other.controller_targets
             && self.controller_targets_incomplete == other.controller_targets_incomplete
@@ -936,6 +967,7 @@ pub(crate) struct Coordinator {
         BTreeMap<festerm_automation::ApprovalId, presentation::BoundEnrollmentMetadataReview>,
     broker: Option<Broker>,
     server: Option<ipc::Server>,
+    verification: verification::Owner,
     privacy: Option<PrivacyMonitor>,
     starting: Option<Starting<Prepared>>,
     mcp_starting: Option<Starting<ipc::Server>>,
@@ -990,6 +1022,7 @@ impl Default for Coordinator {
             pending_enrollment_metadata_reviews: BTreeMap::new(),
             broker: None,
             server: None,
+            verification: verification::Owner::default(),
             privacy: None,
             starting: None,
             mcp_starting: None,
@@ -1029,6 +1062,13 @@ impl Default for Coordinator {
             #[cfg(test)]
             synthetic_direct_input_lost_after_commit: false,
         }
+    }
+}
+
+impl Coordinator {
+    #[allow(dead_code)]
+    fn direct_verification_surface(&self) -> verification::Surface {
+        self.verification.surface()
     }
 }
 
@@ -1314,6 +1354,7 @@ impl Coordinator {
         }
         let poisoned = needs_guard && guard.is_none();
         drop(guard);
+        self.verification.revoke();
         if poisoned {
             tracing::error!("automation admission lock poisoned; disclosure remains closed");
         }
@@ -1747,6 +1788,13 @@ impl Coordinator {
 
     pub(crate) fn tick(&mut self, context: &egui::Context, apps: &[&FesTermApp]) {
         let tick = CoordinatorUnwind { coordinator: self };
+        if tick.coordinator.stop.load(Ordering::Acquire)
+            || tick.coordinator.privacy_gate.is_closed()
+        {
+            tick.coordinator.verification.revoke();
+        } else {
+            tick.coordinator.verification.advance();
+        }
         tick.coordinator.tick_inner(context, apps);
     }
 
@@ -2374,6 +2422,10 @@ impl Coordinator {
             | NativeCommand::DisarmControllerInput { .. } => {
                 self.status = "Controller action refused without its originating native window.";
             }
+            NativeCommand::CompareDirectPeer { .. } | NativeCommand::DenyDirectPeer { .. } => {
+                self.status =
+                    "Direct MCP comparison refused without its originating native window.";
+            }
         }
         context.request_repaint();
     }
@@ -2417,6 +2469,7 @@ impl Coordinator {
     fn close_conflicting_admission_inner(&mut self) {
         self.workflow_unwind_disabled_seen = false;
         self.close_overflow_admission_inner();
+        self.verification.revoke();
         self.workflow.cancel();
     }
 
@@ -2497,7 +2550,30 @@ impl Coordinator {
                     self.javascript_enabled = true;
                 }
             }
-            if command.is_controller() {
+            if command.is_verification() {
+                let result = match command {
+                    NativeCommand::CompareDirectPeer {
+                        generation,
+                        fingerprint,
+                    } => self
+                        .verification
+                        .decide(window, generation, Some(&fingerprint)),
+                    NativeCommand::DenyDirectPeer { generation } => {
+                        self.verification.decide(window, generation, None)
+                    }
+                    _ => unreachable!(),
+                };
+                self.status = match result {
+                    Ok(()) => "Direct MCP comparison submitted; no terminal access was granted.",
+                    Err(verification::Error::Busy) => {
+                        "Direct MCP comparison is busy. Review and retry explicitly."
+                    }
+                    Err(verification::Error::Unavailable) => {
+                        "Direct MCP comparison refused or no longer available."
+                    }
+                };
+                context.request_repaint();
+            } else if command.is_controller() {
                 if self.privacy_lost_this_tick {
                     continue;
                 }
@@ -2528,7 +2604,7 @@ impl Coordinator {
             }
         }
         if suppressed && !self.privacy_lost_this_tick && !self.privacy_gate.is_closed() {
-            self.status = "Automation cancellation blocked a same-frame workflow capture, controller selection or grant approval. Review and retry the blocked action explicitly when available.";
+            self.status = "Automation cancellation blocked a same-frame fingerprint comparison, workflow capture, controller selection or grant approval. Review and retry the blocked action explicitly when available.";
             context.request_repaint();
         }
         suppressed
@@ -2797,7 +2873,9 @@ impl Coordinator {
         let privacy_closed = self.privacy_gate.is_closed();
         let mcp_stopped = self.stop.load(Ordering::Acquire);
         let mcp_open = !mcp_stopped && !privacy_closed;
-        let status = if self.unwind_stopped && self.enabled {
+        let status = if self.verification.quarantined() && self.enabled {
+            "Direct MCP comparison is unavailable after a cleanup failure. Restart the application."
+        } else if self.unwind_stopped && self.enabled {
             MCP_UNWIND_STOPPED
         } else if self.workflow_unwind_stopped && !self.enabled {
             "MCP is disabled. Workflow selection stopped after an internal error; turn JavaScript workflows off and on to resume."
@@ -2881,6 +2959,7 @@ impl Coordinator {
         SettingsSnapshot {
             status,
             channels,
+            direct_verification: self.verification.view(),
             targets,
             controllers,
             controller_targets,

@@ -7619,3 +7619,14 @@ other test backend. It verifies admission, simulated uncertainty without
 replay, and explicit refusal of unqualified presentation with JavaScript and
 observation disabled. All native decisions remain simulated; no production
 endpoint or platform boundary is qualified.
+
+## Dormant direct fingerprint comparison
+
+The direct host now has a bounded Settings comparison model for the complete
+handshake fingerprint. It requires an independently entered peer value and
+explicit attestation, binds decisions to the originating window and generation,
+and invalidates stale views on stop or retirement. Synthetic Settings and
+separate-process SDK tests exercise this path, including cleanup quarantine;
+their simulated human input is not proof of independent comparison. No
+production listener, caller identity, privacy monitor or recipient fence is
+qualified.

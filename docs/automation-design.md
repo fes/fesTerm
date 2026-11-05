@@ -813,9 +813,19 @@ obtained in production until qualification. The owner is not attached to a
 listener.
 Official SDK tests reach the actual coordinator and a controlled session both
 within one process and from a separate process using a test-only Unix listener.
-The separate process runs the test binary, and a test control channel supplies
-the comparisons and approval. Neither test qualifies process identity,
-screen-lock behavior, native UI or production end-to-end availability.
+The separate process runs the test binary, and a test control channel simulates
+human comparison and approval. The host now uses a bounded Settings comparison
+model: it displays the complete local fingerprint, requires the independently
+read peer value and an explicit attestation, and routes the decision through
+the originating window and prompt generation. Editing the value clears the
+attestation. The next Settings render discards entry and widget state for a
+retired or replaced prompt. Cancellation and privacy/stop cuts immediately
+invalidate retained views; cleanup failure
+quarantines the surface. The actual coordinator and verifier
+are exercised by the separate-process fixture, while an egui harness exercises
+the Settings controls. The test-supplied values do not prove a human obtained
+them independently. Neither test qualifies process identity, screen-lock
+behavior, native usability or production end-to-end availability.
 The separate-process controller fixture also enrolls two identically labelled
 test sessions, separately approves metadata, retires one association, and
 reviews input to the other test backend with JavaScript and observation

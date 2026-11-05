@@ -1120,6 +1120,7 @@ fn automation_settings(
     ui.add_space(10.0);
     ssh_paragraph(ui, snapshot.status);
     if !enabled {
+        clear_direct_comparison_input(ui, direct_comparison_state_id(ui, window));
         return None;
     }
     let mut command = None;
@@ -1129,11 +1130,14 @@ fn automation_settings(
     {
         record_automation_action(&mut command, NativeCommand::RestartMcp);
     }
+    if let Some(action) = direct_verification_settings(ui, snapshot, window) {
+        record_automation_action(&mut command, action);
+    }
     ssh_paragraph(
         ui,
         "Connect your MCP client using this installed executable with --mcp. \
          Compare the public verification code from festerm_pairing_status below. \
-         Connecting never opens an approval prompt or grants access.",
+         This code is not the direct-channel fingerprint; connecting never grants access.",
     );
     for channel in &snapshot.channels {
         ui.push_id(("automation_channel", channel.channel), |ui| {
@@ -1658,6 +1662,117 @@ fn automation_settings(
     command
 }
 
+#[derive(Clone, Default)]
+struct DirectComparisonInput {
+    generation: u64,
+    peer: String,
+    verified: bool,
+}
+
+fn direct_comparison_state_id(ui: &Ui, window: crate::application::WindowId) -> egui::Id {
+    ui.id().with(("direct_mcp_comparison_state", window))
+}
+
+fn clear_direct_comparison_input(ui: &Ui, state_id: egui::Id) {
+    ui.data_mut(|data| {
+        if let Some(previous) = data.remove_temp::<DirectComparisonInput>(state_id) {
+            data.remove::<egui::text_edit::TextEditState>(
+                state_id.with(("entry", previous.generation)),
+            );
+        }
+    });
+}
+
+fn direct_verification_settings(
+    ui: &mut Ui,
+    snapshot: &crate::automation::SettingsSnapshot,
+    window: crate::application::WindowId,
+) -> Option<crate::automation::NativeCommand> {
+    use crate::automation::{verification::valid_fingerprint, NativeCommand};
+
+    let state_id = direct_comparison_state_id(ui, window);
+    let Some(view) = snapshot
+        .direct_verification
+        .as_ref()
+        .filter(|view| view.window == window && view.is_current())
+    else {
+        clear_direct_comparison_input(ui, state_id);
+        return None;
+    };
+    let previous = ui.data(|data| data.get_temp::<DirectComparisonInput>(state_id));
+    let mut state = match previous {
+        Some(state) if state.generation == view.generation => state,
+        _ => {
+            clear_direct_comparison_input(ui, state_id);
+            DirectComparisonInput {
+                generation: view.generation,
+                ..DirectComparisonInput::default()
+            }
+        }
+    };
+    let entry_id = state_id.with(("entry", view.generation));
+    let mut command = None;
+    ui.push_id(("direct_mcp_comparison", view.generation), |ui| {
+        ui.separator();
+        ui.label("Compare the direct MCP connection");
+        ssh_paragraph(
+            ui,
+            "Read the complete fingerprint independently in your MCP client and enter it here. \
+             Do not copy the fingerprint shown below. This comparison alone does not grant access.",
+        );
+        ui.add(egui::Label::new(egui::RichText::new(&view.fingerprint).monospace()).wrap());
+        let label = ui.label("Fingerprint read from the MCP client");
+        let input = ui
+            .add(
+                egui::TextEdit::singleline(&mut state.peer)
+                    .id(entry_id)
+                    .char_limit(64)
+                    .hint_text("64 hexadecimal characters"),
+            )
+            .labelled_by(label.id);
+        if input.changed() {
+            state.verified = false;
+        }
+        let valid = valid_fingerprint(&state.peer);
+        ui.add_enabled(
+            valid && !input.changed(),
+            egui::Checkbox::new(
+                &mut state.verified,
+                "I read this complete fingerprint independently in my MCP client",
+            ),
+        );
+        if ui
+            .add_enabled(
+                state.verified && valid && view.is_current(),
+                egui::Button::new("Compare fingerprints"),
+            )
+            .clicked()
+        {
+            command = Some(NativeCommand::CompareDirectPeer {
+                generation: view.generation,
+                fingerprint: state.peer.clone(),
+            });
+            state.peer.clear();
+            state.verified = false;
+        }
+        if ui.button("Reject direct MCP connection").clicked() {
+            record_automation_action(
+                &mut command,
+                NativeCommand::DenyDirectPeer {
+                    generation: view.generation,
+                },
+            );
+            state.peer.clear();
+            state.verified = false;
+        }
+    });
+    if command.is_some() {
+        ui.data_mut(|data| data.remove::<egui::text_edit::TextEditState>(entry_id));
+    }
+    ui.data_mut(|data| data.insert_temp(state_id, state));
+    command
+}
+
 fn settings_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
     let _ = settings_card_response(ui, title, body);
 }
@@ -1932,7 +2047,10 @@ fn settings_clickstop_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui_kittest::{kittest::Queryable, Harness};
+    use egui_kittest::{
+        kittest::{NodeT, Queryable},
+        Harness,
+    };
 
     struct SettingsHarnessState {
         command: Option<AppCommand>,
@@ -2332,6 +2450,192 @@ mod tests {
             harness.state(),
             Some(crate::automation::NativeCommand::Revoke { channel: 7 })
         ));
+    }
+
+    #[test]
+    fn direct_comparison_requires_complete_peer_entry_and_fresh_attestation() {
+        use crate::application::WindowId;
+        use crate::automation::{verification::View, NativeCommand, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            window: WindowId,
+            command: Option<NativeCommand>,
+        }
+
+        let view = View::for_test(WindowId::PRIMARY);
+        let mut snapshot = SettingsSnapshot::default();
+        snapshot.direct_verification = Some(view.clone());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    if let Some(command) =
+                        direct_verification_settings(ui, &state.snapshot, state.window)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                State {
+                    snapshot,
+                    window: WindowId::for_test(1),
+                    command: None,
+                },
+            );
+        harness.run();
+        assert!(harness.query_by_label("Compare fingerprints").is_none());
+        harness.state_mut().window = WindowId::PRIMARY;
+        harness.run();
+
+        let entry = "Fingerprint read from the MCP client";
+        let attestation = "I read this complete fingerprint independently in my MCP client";
+        assert!(harness
+            .get_by_label(attestation)
+            .accesskit_node()
+            .is_disabled());
+        assert!(harness
+            .get_by_label("Compare fingerprints")
+            .accesskit_node()
+            .is_disabled());
+        harness
+            .get_by_role_and_label(accesskit::Role::TextInput, entry)
+            .focus();
+        harness
+            .get_by_role_and_label(accesskit::Role::TextInput, entry)
+            .type_text(&"B".repeat(64));
+        harness.run();
+        assert_eq!(
+            harness
+                .get_by_role_and_label(accesskit::Role::TextInput, entry)
+                .value(),
+            Some("B".repeat(64))
+        );
+        assert!(!harness
+            .get_by_label(attestation)
+            .accesskit_node()
+            .is_disabled());
+        harness.get_by_label(attestation).click();
+        harness.run();
+        assert_eq!(
+            harness.get_by_label(attestation).accesskit_node().toggled(),
+            Some(accesskit::Toggled::True)
+        );
+        assert!(!harness
+            .get_by_label("Compare fingerprints")
+            .accesskit_node()
+            .is_disabled());
+
+        harness
+            .get_by_role_and_label(accesskit::Role::TextInput, entry)
+            .click();
+        harness.key_press(egui::Key::End);
+        harness.key_press(egui::Key::Backspace);
+        harness.run();
+        harness
+            .get_by_role_and_label(accesskit::Role::TextInput, entry)
+            .type_text("c");
+        harness.run();
+        assert!(harness
+            .get_by_label("Compare fingerprints")
+            .accesskit_node()
+            .is_disabled());
+        harness.get_by_label(attestation).click();
+        harness.run();
+        harness.get_by_label("Compare fingerprints").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::CompareDirectPeer {
+                generation: 1,
+                fingerprint,
+            }) if fingerprint == &format!("{}c", "B".repeat(63))
+        ));
+
+        view.retire_for_test();
+        harness.step();
+        assert!(harness.query_by_label("Compare fingerprints").is_none());
+    }
+
+    #[test]
+    fn direct_comparison_reclaims_entry_state_when_prompt_changes() {
+        use crate::application::WindowId;
+        use crate::automation::{verification::View, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            enabled: bool,
+        }
+
+        let first = View::for_test(WindowId::PRIMARY);
+        let mut snapshot = SettingsSnapshot::default();
+        snapshot.direct_verification = Some(first);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 1000.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    let _ =
+                        automation_settings(ui, &state.snapshot, state.enabled, WindowId::PRIMARY);
+                },
+                State {
+                    snapshot,
+                    enabled: true,
+                },
+            );
+        harness.run();
+        let entry = "Fingerprint read from the MCP client";
+        let attestation = "I read this complete fingerprint independently in my MCP client";
+        harness
+            .get_by_role_and_label(accesskit::Role::TextInput, entry)
+            .focus();
+        harness
+            .get_by_role_and_label(accesskit::Role::TextInput, entry)
+            .type_text(&"b".repeat(64));
+        harness.run();
+        assert_eq!(
+            harness
+                .get_by_role_and_label(accesskit::Role::TextInput, entry)
+                .value(),
+            Some("b".repeat(64))
+        );
+        harness.get_by_label(attestation).click();
+        harness.run();
+        assert_eq!(
+            harness.get_by_label(attestation).accesskit_node().toggled(),
+            Some(accesskit::Toggled::True)
+        );
+
+        let mut second = View::for_test(WindowId::PRIMARY);
+        second.generation = 2;
+        harness.state_mut().snapshot.direct_verification = Some(second);
+        harness.run();
+        assert!(harness
+            .get_by_label(attestation)
+            .accesskit_node()
+            .is_disabled());
+        assert!(harness
+            .get_by_label("Compare fingerprints")
+            .accesskit_node()
+            .is_disabled());
+        assert_eq!(
+            harness
+                .ctx
+                .data(|data| data.count::<egui::text_edit::TextEditState>()),
+            1
+        );
+        harness.state_mut().enabled = false;
+        harness.step();
+        assert_eq!(
+            harness
+                .ctx
+                .data(|data| data.count::<egui::text_edit::TextEditState>()),
+            0
+        );
+        assert_eq!(
+            harness
+                .ctx
+                .data(|data| data.count::<DirectComparisonInput>()),
+            0
+        );
     }
 
     #[test]

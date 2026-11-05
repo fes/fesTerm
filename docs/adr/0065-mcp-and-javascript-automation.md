@@ -443,7 +443,11 @@ in the design must be visible in implementation/release review.
   exchanges MCP messages over that encrypted socket with a synthetic protocol
   host; bounded queue, cancellation and partial-write regressions do not prove
   trusted human comparison, caller liveness, native lock behavior, production
-  client interoperability, a confined engine or native input ordering. Coordinator
+  client interoperability, a confined engine or native input ordering. A
+  dormant Settings comparison model and simulated separate-process SDK test
+  exercise complete peer entry, explicit attestation, window/generation
+  binding, cancellation and cleanup quarantine; they do not prove independently
+  obtained human input or native usability. Coordinator
   lifecycle tests additionally distinguish
   MCP-only cleanup from global privacy revocation; they do not prove an
   integrated JavaScript adapter. Local PTY reservation tests exercise ordered

@@ -344,6 +344,8 @@ impl FesTermApp {
             ),
             NativeCommand::ClearWorkflow => self.automation_settings.workflow.disable(),
             NativeCommand::ApproveObservation { .. }
+            | NativeCommand::CompareDirectPeer { .. }
+            | NativeCommand::DenyDirectPeer { .. }
             | NativeCommand::EnableControllerEnrollment
             | NativeCommand::ChooseController { .. }
             | NativeCommand::SelectControllerTarget { .. }

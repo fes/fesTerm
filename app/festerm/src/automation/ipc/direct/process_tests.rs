@@ -1,4 +1,4 @@
-//! Separate-process interoperability with test-only comparison and approval.
+//! Separate-process interoperability with simulated human comparison and approval.
 
 mod controller;
 
@@ -19,7 +19,7 @@ use std::{
     path::PathBuf,
     process::Stdio,
     sync::{atomic::AtomicBool, mpsc, Arc},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -154,12 +154,41 @@ async fn parent_coordinator(scenario: Scenario) {
             panic!("SDK client did not connect: {result:?}");
         }
     };
-    let native = Arc::new(tests::NativeState::default());
     let wake = Wake::default();
+    let ui_wake = Arc::new(tokio::sync::Notify::new());
+    let wake_ui = {
+        let ui_wake = ui_wake.clone();
+        Arc::new(move || ui_wake.notify_one())
+    };
+    let wake_owner = {
+        let wake = wake.clone();
+        Arc::new(move || wake.notify())
+    };
+    let surface = coordinator.direct_verification_surface();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let native = loop {
+        match surface.reserve(
+            scenario.channel(),
+            crate::application::WindowId::PRIMARY,
+            coordinator.stop.clone(),
+            coordinator.privacy_gate.clone(),
+            wake_ui.clone(),
+            wake_owner.clone(),
+        ) {
+            Ok(native) => break native,
+            Err(super::super::super::verification::Error::Busy) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            Err(error) => {
+                terminate_child(&mut child).await;
+                panic!("could not reserve native comparison: {error:?}");
+            }
+        }
+    };
     let stop = coordinator.stop.clone();
     let owner = owner::Owner::new(
         host_socket,
-        tests::Native(native.clone()),
+        native,
         tests::Admission {
             open: Arc::new(AtomicBool::new(true)),
             cancelled: Arc::new(AtomicBool::new(false)),
@@ -186,7 +215,6 @@ async fn parent_coordinator(scenario: Scenario) {
     let host_task = tokio::spawn(host.run());
     let (read, mut write) = control.into_split();
     let mut lines = BufReader::new(read).lines();
-    let exchange_wake = wake.clone();
     let mut exchange_task = tokio::task::spawn_local(async move {
         let ready = lines
             .next_line()
@@ -198,21 +226,52 @@ async fn parent_coordinator(scenario: Scenario) {
         assert_eq!(fields.next().unwrap().parse::<u32>().unwrap(), client_pid);
         let client_code = fields.next().expect("client comparison code");
         assert!(fields.next().is_none());
-        let host_code = loop {
-            if let Some(code) = native.displayed.lock().unwrap().clone() {
-                break code;
+        let context = eframe::egui::Context::default();
+        let mut app = app;
+        let view = loop {
+            coordinator.tick(&context, &[&app]);
+            if let Some(view) = coordinator.settings(&[&app]).direct_verification {
+                break view;
             }
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            tokio::select! {
+                _ = ui_wake.notified() => {}
+                _ = tokio::time::sleep(Duration::from_millis(5)) => {}
+            }
         };
-        assert_eq!(client_code, host_code);
+        assert_eq!(view.channel, scenario.channel());
+        assert_eq!(view.window, crate::application::WindowId::PRIMARY);
+        assert_eq!(client_code, view.fingerprint);
         write
-            .write_all(format!("HOST {host_code}\n").as_bytes())
+            .write_all(format!("HOST {}\n", view.fingerprint).as_bytes())
             .await
             .unwrap();
-        *native.decision.lock().unwrap() = Some(client_code.as_bytes().try_into().unwrap());
-        exchange_wake.notify();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            coordinator.commands(
+                vec![super::super::super::NativeWindowCommand {
+                    window: view.window,
+                    command: super::super::super::NativeCommand::CompareDirectPeer {
+                        generation: view.generation,
+                        fingerprint: client_code.to_owned(),
+                    },
+                }],
+                &context,
+                &[&app],
+            );
+            if !view.is_current() {
+                assert_eq!(
+                    coordinator.status,
+                    "Direct MCP comparison submitted; no terminal access was granted."
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "native comparison stayed busy or unavailable"
+            );
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
 
-        let mut app = app;
         match host_scenario {
             HostScenario::Observation(tab) => {
                 observation_host(&mut coordinator, &app, tab, &mut lines, &mut write).await;

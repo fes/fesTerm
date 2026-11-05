@@ -2847,6 +2847,15 @@ not independent evidence for a metadata response immediately after preference
 change. A future metadata consumer must check shared stop/privacy/recipient and
 separate discovery-grant fences at actual publication.
 
+For AUTO-01/AUTO-04, once a qualified direct endpoint exists, compare the
+complete fingerprints on the actual independent client and application
+surfaces. Verify that Settings requires a complete peer value and a fresh
+attestation after every edit, rejects mismatches, and makes a rejected, retired,
+stopped or privacy-cut prompt non-actionable across windows. Exercise keyboard,
+screen-reader, display scaling and disconnect timing on each supported desktop.
+The egui harness and separate-process fixture use simulated human input; they
+do not establish independent provenance or native usability.
+
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
 | AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts; exercise the multi-window preference and failure scenarios above. | Deferred native + usability | Partial implementation: observation pairing/native grant UI, desktop file selection and non-authorizing captured-source review, frozen-workflow binding components, and shared preference/failure handling. Deterministic preference regressions do not replace native warning, retry or multi-window usability evidence. Desktop source-view usability, iOS security-scoped access, pending-approval invalidation and platform path behavior still need qualification. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. A future direct-input approval must explicitly explain the target, remote-state uncertainty, expiry/budgets and that the approved action may be intentionally repeated throughout the live grant; obtain native handoff rather than accepting a device's claimed gesture, and distinguish approval from an explicit ownership cut. No native evidence collected for intake or workflow approval. |
