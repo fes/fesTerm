@@ -2303,7 +2303,9 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-speech",
  "objc2-ui-kit 0.3.2",
+ "objc2-uniform-type-identifiers 0.3.2",
  "raw-window-handle",
+ "sha2 0.11.0",
  "zeroize",
 ]
 
@@ -2341,10 +2343,12 @@ dependencies = [
  "eframe",
  "egui_kittest",
  "festerm-core",
+ "festerm-document",
  "festerm-host-setup",
  "festerm-ios-lock",
  "festerm-ios-window",
  "festerm-markdown",
+ "festerm-mobile-docs",
  "festerm-mobile-profiles",
  "festerm-mobile-tunnels",
  "festerm-secret-store",
@@ -2367,6 +2371,7 @@ dependencies = [
 name = "festerm-mobile-docs"
 version = "0.14.2"
 dependencies = [
+ "festerm-document",
  "festerm-markdown",
 ]
 
@@ -4725,7 +4730,7 @@ dependencies = [
  "objc2-link-presentation",
  "objc2-quartz-core 0.2.2",
  "objc2-symbols",
- "objc2-uniform-type-identifiers",
+ "objc2-uniform-type-identifiers 0.2.2",
  "objc2-user-notifications",
 ]
 
@@ -4740,6 +4745,7 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
+ "objc2-uniform-type-identifiers 0.3.2",
 ]
 
 [[package]]
@@ -4751,6 +4757,16 @@ dependencies = [
  "block2 0.5.1",
  "objc2 0.5.2",
  "objc2-foundation 0.2.2",
+]
+
+[[package]]
+name = "objc2-uniform-type-identifiers"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7902ac02859fc1f7045f8b598c63f1ae0cc7efeaa06a9bc9f3d9a3c955974fa4"
+dependencies = [
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
 ]
 
 [[package]]

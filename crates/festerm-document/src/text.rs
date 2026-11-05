@@ -260,7 +260,7 @@ impl TextDocument {
         let decoded = std::str::from_utf8(body).map_err(|_| RefusalReason::NotUtf8)?;
 
         let line_ending = detect_line_ending(decoded);
-        let text = normalise(decoded);
+        let text = normalise_line_endings(decoded);
         let line_count = text.lines().count().max(1);
         if line_count > bounds.max_lines() {
             return Err(RefusalReason::TooManyLines {
@@ -602,7 +602,7 @@ impl TextDocument {
 }
 
 /// Normalises CRLF and lone CR to LF without changing anything else.
-fn normalise(text: &str) -> String {
+pub fn normalise_line_endings(text: &str) -> String {
     if !text.contains('\r') {
         return text.to_owned();
     }

@@ -44,6 +44,7 @@ pub struct KeyboardBridge {
     observers: Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>,
     terminal_responder: Retained<TerminalResponder>,
     field_responder: Retained<FieldResponder>,
+    repaint: Repaint,
 }
 
 struct TerminalResponderIvars {
@@ -714,7 +715,15 @@ impl KeyboardBridge {
             observers,
             terminal_responder,
             field_responder,
+            repaint,
         })
+    }
+
+    pub fn document_picker(&self) -> Option<crate::DocumentPicker> {
+        Some(crate::DocumentPicker::new(
+            self.view.clone(),
+            self.repaint.clone(),
+        ))
     }
 
     /// Docked keyboard occlusion in view-relative units. Hidden/hardware or

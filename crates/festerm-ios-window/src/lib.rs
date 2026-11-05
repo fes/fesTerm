@@ -16,6 +16,21 @@ pub use dictation::{
     dictation_permission_prompt_in_flight, Dictation, DictationPhase, DictationText,
     MAX_DICTATION_BYTES,
 };
+mod document;
+#[cfg(all(
+    target_os = "ios",
+    target_abi = "sim",
+    feature = "native-document-smoke"
+))]
+pub use document::DocumentSmoke;
+mod document_writer;
+pub use document::{
+    DocumentFile, DocumentFileError, DocumentFileEvent, DocumentFileSnapshot, DocumentPicker,
+    MAX_DOCUMENT_BYTES, MAX_NATIVE_DOCUMENTS,
+};
+pub use document_writer::{
+    local_file_mutation_epoch, try_local_file_mutation, DocumentWritePermit,
+};
 
 #[cfg(target_os = "ios")]
 mod speech;
@@ -54,6 +69,10 @@ impl KeyboardBridge {
 
     pub fn take_field_input(&self) -> Vec<FieldInput> {
         Vec::new()
+    }
+
+    pub fn document_picker(&self) -> Option<DocumentPicker> {
+        None
     }
 }
 

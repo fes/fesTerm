@@ -7,6 +7,52 @@ Companion to ADR 0031 and
 narrow-width precedent to phone/tablet form factors rather than introducing
 a separate device-specific layout system.
 
+## Shared iOS document editor
+
+The owner-approved November 4 handoff is tracked in
+[#570](https://github.com/fes/fesTerm/issues/570) and
+[ADR 0069](adr/0069-ios-authorized-shared-documents.md). Numbered PNGs and
+matching SVGs in `images/gui-mockups/ios-editor/` are proposed UI references,
+not screenshots of implemented or accepted native behavior. Their source is
+the owner-supplied `festerm-ios-editor-markdown.zip`, SHA-256
+`316ca725a604e09f2ed28f77bae6a2dd3bb01c59c97b76cefffeb36747f7b208`.
+
+**Owner override: do not implement Edit/Preview split panes at any size.**
+Screen 06 is deferred in full; screen 15 supplies wide typography, chrome
+and Contents-rail guidance only. The current registered UI and monospace
+fonts supersede the artwork's Inter/DejaVu stand-ins. Native keyboard
+drawings are schematic; actual safe area and UIKit occlusion govern layout.
+Use the existing mobile theme, first-party icons, 4/8/12/16/24-point spacing
+and minimum 44-point primary touch regions.
+
+The first implementation slice adds the portable registry in
+`festerm-mobile-docs`, reusing `festerm-document::TextDocument`. One canonical
+origin owns text, revision, encoding, undo, dirty/conflict and save state;
+views own selection, focus and scroll. Reopening an origin must not replace
+unsaved text. Guarded replacements reject stale revisions, selections,
+source/access epochs and closed views. One accepted replacement is one
+non-coalesced undo transaction; Unicode and original line endings survive undo.
+
+Reads and saves are token-bound. A changed clean source reloads; a changed
+dirty source conflicts. Keep edits neither writes nor enables automatic
+overwrite. Saves establish the history point actually written, not newer
+edits; permission revocation gates input immediately even while an admitted
+save is finishing. Only the last dirty view prompts on close.
+
+The native boundary stages bounded snapshots through UIDocument and a
+single-selection Files picker, with safe publication and app-owned writer
+admission tested independently of the UI. Native sources and the picker are
+not yet wired to mobile surfaces. A mobile editor surface, live Edit/Preview
+and Contents, Find/Replace and the shared keyboard-region dictation composer
+are subsequent slices, **not enabled by these foundations alone**.
+Files URLs require retained authorization and file-provider coordination;
+display paths never grant access. Remote SFTP remains read-only beneath
+the UI, and saving an editable local copy creates a distinct origin/history.
+No document path is interpolated into a terminal command.
+
+`MOB-08` owns the document workflow and its remaining native/visual gates;
+on-device speech remains separately qualified under `MOB-07`/#564.
+
 ## On-device dictation
 
 The experimental Hold symbols and Shell row keyboards add a microphone icon

@@ -36,6 +36,9 @@ pub use substitute::{
     SubstituteCommand, SubstituteError, SubstituteFlags, SubstitutePlan, SubstituteRange,
     SubstituteReplacement,
 };
-pub use text::{EditRefusal, Encoding, Indentation, LineEnding, SavePoint, TextDocument, TextEdit};
+pub use text::{
+    normalise_line_endings, EditRefusal, Encoding, Indentation, LineEnding, SavePoint,
+    TextDocument, TextEdit,
+};
 pub use undo::UndoHistory;
 pub use vi::{SearchIntent, ViAction, ViEngine, ViKey, ViMode, ViResponse};

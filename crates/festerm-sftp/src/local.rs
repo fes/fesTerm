@@ -17,6 +17,7 @@ use crate::{
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -26,6 +27,14 @@ pub(crate) const PARTIAL_SUFFIX: &str = ".part";
 #[derive(Clone, Debug)]
 pub struct LocalFs {
     root: PathBuf,
+    write_admission: Option<Arc<dyn LocalWriteAdmission>>,
+}
+
+/// Optional host admission around the complete local mutation, including
+/// asynchronous downloads. A lease is retained by the worker through commit.
+/// This neither grants filesystem access nor replaces sandbox confinement.
+pub trait LocalWriteAdmission: std::fmt::Debug + Send + Sync {
+    fn acquire(&self) -> Result<Box<dyn Send>>;
 }
 
 fn io_error(error: &std::io::Error, context: &str) -> SftpError {
@@ -72,7 +81,22 @@ impl LocalFs {
         if !root.is_dir() {
             return Err(SftpError::NotADirectory("sandbox root".into()));
         }
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            write_admission: None,
+        })
+    }
+
+    pub fn with_write_admission(mut self, admission: Arc<dyn LocalWriteAdmission>) -> Self {
+        self.write_admission = Some(admission);
+        self
+    }
+
+    pub(crate) fn admit_write(&self) -> Result<Option<Box<dyn Send>>> {
+        self.write_admission
+            .as_ref()
+            .map(|admission| admission.acquire())
+            .transpose()
     }
 
     pub fn root(&self) -> &Path {
@@ -226,6 +250,7 @@ impl LocalFs {
     /// (left behind when the app was terminated mid-transfer) in one
     /// directory; returns how many were removed.
     pub fn remove_stale_partials(&self, directory: &str, older_than: Duration) -> Result<usize> {
+        let _admission = self.admit_write()?;
         let dir = self.resolve_dir(directory)?;
         let mut removed = 0;
         let now = SystemTime::now();
@@ -329,11 +354,13 @@ impl PaneFs for LocalFs {
     }
 
     fn mkdir(&self, relative: &str) -> Result<()> {
+        let _admission = self.admit_write()?;
         let path = self.resolve_entry(relative)?;
         fs::create_dir(&path).map_err(|e| io_error(&e, relative))
     }
 
     fn rename(&self, from: &str, to: &str) -> Result<()> {
+        let _admission = self.admit_write()?;
         let source = self.resolve_entry(from)?;
         let target = self.resolve_entry(to)?;
         if fs::symlink_metadata(&target).is_ok() {
@@ -343,6 +370,7 @@ impl PaneFs for LocalFs {
     }
 
     fn delete(&self, relative: &str, recursive: bool) -> Result<()> {
+        let _admission = self.admit_write()?;
         let path = self.resolve_entry(relative)?;
         let metadata = fs::symlink_metadata(&path).map_err(|e| io_error(&e, relative))?;
         if !metadata.is_dir() {

@@ -3714,6 +3714,43 @@
       ]
     },
     {
+      "id": "ios-shared-documents",
+      "edges": ["MOB-08"],
+      "requirements": ["docs/mobile-layout-design.md#shared-ios-document-editor", "docs/text-editor-design.md"],
+      "decisions": ["ADR-0069", "ADR-0034", "ADR-0058"],
+      "automated_tests": [
+        "mobile_document_identity_and_undo_are_shared_without_shared_selection",
+        "mobile_document_multiline_replacement_is_one_exact_encoded_undo",
+        "mobile_document_rejects_stale_revision_selection_and_replayed_transactions",
+        "mobile_document_rejects_invalid_unicode_ranges_without_clamping",
+        "mobile_document_remote_origin_refuses_every_mutation_beneath_ui",
+        "mobile_document_revocation_and_reauthorization_invalidate_old_targets",
+        "mobile_document_external_change_never_silently_overwrites_dirty_text",
+        "mobile_document_clean_external_change_reloads_shared_identity",
+        "mobile_document_late_reads_cannot_replace_edits_or_newer_conflicts",
+        "mobile_document_reload_requires_conflict_and_discards_history_explicitly",
+        "mobile_document_save_completion_records_written_point_not_newer_edits",
+        "mobile_document_failed_or_busy_save_cannot_claim_clean_or_lose_last_view",
+        "mobile_document_only_last_dirty_view_prompts_and_handles_never_recycle",
+        "mobile_document_untitled_copy_is_unsaved_and_cannot_write_original_source",
+        "mobile_document_source_and_registry_limits_refuse_without_truncation",
+        "mobile_document_normalizes_pasted_newlines_and_refuses_binary_edits",
+        "mobile_document_edit_limits_include_original_encoded_line_endings",
+        "mobile_document_revocation_gates_edits_while_a_save_finishes",
+        "native_save_excludes_mutations_until_completion",
+        "all_detached_transfer_leases_must_finish_before_save",
+        "local_write_admission_refuses_download_and_mutations_without_touching_files",
+        "download_retains_local_admission_in_publication_worker"
+      ],
+      "manual_scenarios": ["MOB-08"],
+      "status": "partial",
+      "prerequisites": [
+        "Issue #570: portable registry and native UIDocument/picker boundaries exist, but the mobile source/editor surfaces, live Markdown views, Find/Replace and shared keyboard-region dictation composer are not wired.",
+        "Simulator fixture smoke passed actual native publication, 0600 permissions, stale overwrite refusal, refresh, failed-revert closed-instance refusal, fresh-instance recovery/save, superseded pending failures, unopened/in-flight-drop lease release and close/cleanup; production recovery requires fresh Files authority rather than reopening the failed instance. Portable and real OpenSSH tests cover app-owned writer exclusion. Picker grants/reacquisition, iCloud/third-party provider coordination, revocation/move/delete, file-protection metadata, storage failures, actual keyboard/safe-area/IME, physical iPhone/iPad accessibility and Claude-based real-capture visual review remain MOB-08 qualification; no Edit/Preview split panes at any viewport size.",
+        "On-device speech availability and privacy remain the separate MOB-07/#564 gate; online recognition remains deferred in #567."
+      ]
+    },
+    {
       "id": "ios-on-device-dictation",
       "edges": ["MOB-07"],
       "requirements": ["docs/mobile-layout-design.md#on-device-dictation"],

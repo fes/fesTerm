@@ -743,7 +743,44 @@ navigation grid to Home/Up/End/PgUp, Left/Down/Right/PgDn and
 Insert/Delete/Shift+Tab/Return. Actual-widget tests cover that order and narrow
 row fit, local Ctrl+Shift+C selection-copy output, Ctrl+Shift+P clipboard-read
 and paste ordering, and More → Force redraw without terminal input or reset.
-### On-device terminal dictation spike
+### Shared iOS documents
+
+The first #570/ADR 0069 slice implements the portable document registry and
+native I/O boundary, not the native editor or a wired Files picker.
+Its deterministic tests prove shared
+identity/history, independent selection targets, exact multiline Unicode/BOM/
+line-ending undo, read-only/revoked mutation refusal, encoded bounds, last-view
+close, stale reads and save completion. A Simulator-only native smoke proves
+actual BOM/CRLF/Unicode publication through a Unicode/space-bearing filename,
+preservation of 0600 permissions, stale
+overwrite refusal, external refresh and asynchronous close/fixture cleanup.
+The extended fixture induces a real oversized-file revert failure, verifies
+that refresh/save/reopen on the failed instance refuse without a UIKit
+exception, then recovers with a fresh native instance and verifies actual
+publication again. A deliberately seeded older failure must be superseded by
+the fresh read. Native lease counts prove unopened and in-flight-drop objects
+are released. Production recovery must reacquire authority through Files;
+reopening the failed instance is intentionally not supported.
+Writer-admission tests cover save/mutation exclusion and worker lifetimes;
+real OpenSSH integration additionally checks refused downloads/mutations leave
+existing files untouched and the blocking publication worker owns its lease.
+
+Run `python3 scripts/build-ios-spike.py --live-ssh --native-document-smoke --run`
+with the documented iOS toolchain to enable the smoke. Its console must reach
+`festerm-document-smoke: PASS`; a launch or build alone is not a pass.
+The fixture is freshly created under this app's Caches and removed after
+successful native close. The smoke is compiled out of normal and physical-device
+builds; rebuild without the opt-in flag before user testing.
+The iPhone 17 Pro/iOS 26.5 Simulator passed this fixture smoke on 2026-11-04.
+This does not qualify picker grants, iCloud/third-party providers, file
+protection metadata, background operation or UI behavior.
+Native provider and visual evidence remains open:
+
+| ID | Environment | Required evidence |
+|---|---|---|
+| MOB-08 | iPhone/iPad Simulator and physical devices; local, iCloud and an available third-party Files provider | Once the native surface is wired, open/reopen authorized files, revoke permission, move/delete/replace a source, edit across two views and undo/redo. Verify stable accessible saved/unsaved/conflict chip markers, local keyboard ownership with no terminal input, actual safe-area/keyboard occlusion at phone portrait/landscape, iPad and narrow Split View, and no Edit/Preview split panes. Exercise generation-checked saves, concurrent outside writes, simultaneous local transfers, storage denial/full-provider failures, Compare/Reload/Keep edits/Save As and final-dirty-view close. Remote SFTP must remain read-only, with an explicit distinct local copy. Compare real captures against numbered owner mockups using a Claude visual review; classify intentional no-Split/font/keyboard differences separately from true mismatches. Verify VoiceOver, Dynamic Type, hardware/floating keyboard, non-English IME and selection/context menus. A document dictation acceptance must be one Undo and must refuse stale targets; speech/model/privacy qualification is separately MOB-07/#564. |
+
+### On-device terminal dictation evidence
 
 | ID | Environment | Required evidence |
 |---|---|---|

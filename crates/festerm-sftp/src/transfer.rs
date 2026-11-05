@@ -593,6 +593,7 @@ impl Shared {
         request: &TransferRequest,
         cancel: &CancelToken,
     ) -> Result<Outcome> {
+        let admission = self.local.admit_write()?;
         let remote_path = path::normalize_remote(&request.source)?;
         let mut name = request.target_name()?;
         let directory = self.local.resolve_dir(&request.destination_dir)?;
@@ -673,6 +674,7 @@ impl Shared {
                     &directory,
                     &mut name,
                     &commit,
+                    admission,
                 )
                 .await
             }
@@ -1158,6 +1160,7 @@ async fn finalize_local(
     directory: &Path,
     name: &mut String,
     commit: &Commit,
+    admission: Option<Box<dyn Send>>,
 ) -> Result<String> {
     let std_file = file.into_std().await;
     let (temp, directory, base) = (temp.to_owned(), directory.to_owned(), name.clone());
@@ -1166,6 +1169,9 @@ async fn finalize_local(
         Commit::NoClobber { retry_numbered } => (false, *retry_numbered),
     };
     let committed = tokio::task::spawn_blocking(move || -> Result<String> {
+        // A dropped async waiter cannot release admission before this
+        // independently running publication finishes.
+        let _admission = admission;
         if let Some(seconds) = modified.and_then(|m| u64::try_from(m).ok()) {
             // Cosmetic: keeps conflict comparisons meaningful.
             let _ = std_file.set_modified(UNIX_EPOCH + Duration::from_secs(seconds));

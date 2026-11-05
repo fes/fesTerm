@@ -11,9 +11,9 @@
 
 use festerm_session::TerminalSize;
 use festerm_sftp::{
-    CancelToken, ClientConfig, ConflictPolicy, Direction, EntryKind, ListOptions, LocalFs, PaneFs,
-    SftpClient, SftpError, SortKey, SortOrder, TransferConfig, TransferEvent, TransferInfo,
-    TransferManager, TransferRequest, TransferState,
+    CancelToken, ClientConfig, ConflictPolicy, Direction, EntryKind, ListOptions, LocalFs,
+    LocalWriteAdmission, PaneFs, SftpClient, SftpError, SortKey, SortOrder, TransferConfig,
+    TransferEvent, TransferInfo, TransferManager, TransferRequest, TransferState,
 };
 use festerm_ssh::{
     connect_gui_sftp_session, GuiSftpSessionConnectOutcome, HostIdentity, HostTrustDecision,
@@ -26,7 +26,7 @@ use std::{
     os::unix::fs::{symlink, PermissionsExt},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     thread,
@@ -207,6 +207,108 @@ fn manager(client: &SftpClient, scratch: &Scratch) -> TransferManager {
         scratch.local_fs(),
         TransferConfig::default(),
     )
+}
+
+#[derive(Debug)]
+struct RefuseLocalWrites;
+
+impl LocalWriteAdmission for RefuseLocalWrites {
+    fn acquire(&self) -> festerm_sftp::Result<Box<dyn Send>> {
+        Err(SftpError::Io("document save is still finishing".into()))
+    }
+}
+
+#[derive(Debug, Default)]
+struct WriteLog {
+    active: AtomicUsize,
+    acquired: Mutex<Vec<thread::ThreadId>>,
+    released: Mutex<Vec<thread::ThreadId>>,
+}
+
+#[derive(Debug)]
+struct RecordedAdmission(Arc<WriteLog>);
+
+struct RecordedLease(Arc<WriteLog>);
+
+impl LocalWriteAdmission for RecordedAdmission {
+    fn acquire(&self) -> festerm_sftp::Result<Box<dyn Send>> {
+        self.0.active.fetch_add(1, Ordering::SeqCst);
+        self.0.acquired.lock().unwrap().push(thread::current().id());
+        Ok(Box::new(RecordedLease(self.0.clone())))
+    }
+}
+
+impl Drop for RecordedLease {
+    fn drop(&mut self) {
+        self.0.released.lock().unwrap().push(thread::current().id());
+        self.0.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[test]
+#[ignore = "needs scripts/run-sftp-integration.sh"]
+fn download_retains_local_admission_in_publication_worker() {
+    let scratch = Scratch::new("write-admission-publication");
+    fs::write(scratch.server.join("source.txt"), b"incoming").unwrap();
+    let log = Arc::new(WriteLog::default());
+    let local = scratch
+        .local_fs()
+        .with_write_admission(Arc::new(RecordedAdmission(log.clone())));
+    let manager = TransferManager::new(connect(), local, TransferConfig::default());
+    let id = manager
+        .enqueue(TransferRequest::download(scratch.remote("source.txt"), ""))
+        .unwrap();
+    assert_eq!(wait_finished(&manager, id).state, TransferState::Completed);
+    assert_eq!(
+        fs::read(scratch.sandbox.join("source.txt")).unwrap(),
+        b"incoming"
+    );
+    assert_eq!(log.active.load(Ordering::SeqCst), 0);
+    let acquired = log.acquired.lock().unwrap();
+    let released = log.released.lock().unwrap();
+    assert_eq!(acquired.len(), 1);
+    assert_eq!(released.len(), 1);
+    assert_ne!(
+        acquired[0], released[0],
+        "the blocking publication worker must own the lease"
+    );
+}
+
+#[test]
+#[ignore = "needs scripts/run-sftp-integration.sh"]
+fn local_write_admission_refuses_download_and_mutations_without_touching_files() {
+    let scratch = Scratch::new("write-admission");
+    fs::write(scratch.server.join("source.txt"), b"incoming").unwrap();
+    fs::write(scratch.sandbox.join("source.txt"), b"keep existing").unwrap();
+    let local = scratch
+        .local_fs()
+        .with_write_admission(Arc::new(RefuseLocalWrites));
+    assert!(matches!(local.mkdir("new"), Err(SftpError::Io(_))));
+    assert!(matches!(
+        local.rename("source.txt", "renamed.txt"),
+        Err(SftpError::Io(_))
+    ));
+    assert!(matches!(
+        local.delete("source.txt", false),
+        Err(SftpError::Io(_))
+    ));
+    assert!(matches!(
+        local.remove_stale_partials("", Duration::ZERO),
+        Err(SftpError::Io(_))
+    ));
+    let manager = TransferManager::new(connect(), local, TransferConfig::default());
+    let id = manager
+        .enqueue(TransferRequest::download(scratch.remote("source.txt"), ""))
+        .unwrap();
+    assert!(matches!(
+        wait_finished(&manager, id).state,
+        TransferState::Failed(SftpError::Io(_))
+    ));
+    assert_eq!(
+        fs::read(scratch.sandbox.join("source.txt")).unwrap(),
+        b"keep existing"
+    );
+    assert_eq!(fs::read_dir(&scratch.sandbox).unwrap().count(), 1);
 }
 
 fn wait_until(

@@ -1,10 +1,11 @@
-//! Read-only document viewer model for the iOS host (ADR 0059 note in 0058).
+//! Bounded document models for the iOS host (ADRs 0058 and 0069).
 //!
 //! Input is bytes from the app sandbox or an SFTP read (anything `Read`),
 //! read under a hard size cap. Output is a `festerm_markdown::MarkdownDocument`
 //! plus link/image *decisions*: this crate never touches the filesystem or the
 //! network, so every resource policy is deterministic and testable.
 
+mod editor;
 mod paths;
 mod render;
 
@@ -14,6 +15,11 @@ use festerm_markdown::{
 };
 use std::{fmt, io::Read};
 
+pub use editor::{
+    CloseOutcome, DocumentError, Documents, EditTarget, ExternalChange, OpenDocument, ReadTicket,
+    SaveTicket, SourceSnapshot, SourceVersion, ViewId, MAX_DOCUMENTS, MAX_VIEWS,
+    MOBILE_DOCUMENT_BOUNDS,
+};
 pub use paths::PathRejection;
 pub use render::render_plain_text;
 
