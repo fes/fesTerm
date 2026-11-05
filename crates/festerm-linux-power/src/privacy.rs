@@ -24,7 +24,7 @@
 use std::future::Future;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -54,8 +54,8 @@ pub(crate) const fn private(locked_hint: bool, active: bool) -> bool {
 }
 
 /// Whether a session is local and graphical, so a lock screen can exist.
-pub(crate) fn lockable(remote: bool, kind: &str) -> bool {
-    !remote && GRAPHICAL_TYPES.contains(&kind)
+pub(crate) fn lockable(remote: bool, kind: &str, seat: &str) -> bool {
+    !remote && !seat.is_empty() && GRAPHICAL_TYPES.contains(&kind)
 }
 
 async fn bounded<T>(call: impl Future<Output = io::Result<T>>) -> io::Result<T> {
@@ -71,13 +71,20 @@ async fn bounded<T>(call: impl Future<Output = io::Result<T>>) -> io::Result<T> 
 
 struct Shared {
     lost: AtomicBool,
-    callback: Arc<dyn Fn() + Send + Sync>,
+    /// Cleared by drop; held while invoking so drop waits out a running call.
+    callback: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl Shared {
     fn signal(&self) {
         if !self.lost.swap(true, Ordering::AcqRel) {
-            (self.callback)();
+            let callback = self
+                .callback
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(callback) = callback.as_ref() {
+                callback();
+            }
         }
     }
 }
@@ -108,7 +115,7 @@ impl PrivacyMonitor {
     {
         let shared = Arc::new(Shared {
             lost: AtomicBool::new(false),
-            callback,
+            callback: Mutex::new(Some(callback)),
         });
         let (shutdown, stop) = watch::channel(false);
         let (ready_send, ready) = mpsc::sync_channel(1);
@@ -156,11 +163,16 @@ impl PrivacyMonitor {
 
 impl Drop for PrivacyMonitor {
     fn drop(&mut self) {
-        // Latch first so a worker still finishing a bus call cannot invoke
-        // the callback after drop. The worker cancels any in-flight call on
-        // shutdown and exits on its own; it is detached rather than joined
-        // so a wedged bus cannot block the caller.
+        // Latch, then clear the callback under its lock: a callback already
+        // running finishes before drop returns and none can start afterwards.
+        // The worker cancels any in-flight bus call on shutdown and exits on
+        // its own; it is detached so a wedged bus cannot block the caller.
         self.shared.lost.store(true, Ordering::Release);
+        self.shared
+            .callback
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
         let _ = self.shutdown.send(true);
         drop(self.thread.take());
     }
@@ -282,10 +294,14 @@ impl Watched {
         if !lockable(
             watched_session.get::<bool>("Remote").await?,
             &watched_session.get::<String>("Type").await?,
+            &watched_session
+                .get::<(String, OwnedObjectPath)>("Seat")
+                .await?
+                .0,
         ) {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "logind session is remote or has no graphical lock screen",
+                "logind session is remote, seatless or has no graphical lock screen",
             ));
         }
         let signal = |path: &str, interface: &'static str, member: &'static str| {
@@ -421,6 +437,7 @@ mod tests {
         active: bool,
         remote: bool,
         kind: &'static str,
+        seat: &'static str,
     }
 
     #[zbus::interface(name = "org.freedesktop.login1.Session")]
@@ -438,6 +455,19 @@ mod tests {
         #[zbus(property)]
         fn remote(&self) -> bool {
             self.remote
+        }
+
+        #[zbus(property)]
+        fn seat(&self) -> (String, OwnedObjectPath) {
+            let path = if self.seat.is_empty() {
+                "/".to_owned()
+            } else {
+                format!("/org/freedesktop/login1/seat/{}", self.seat)
+            };
+            (
+                self.seat.to_owned(),
+                OwnedObjectPath::try_from(path).unwrap(),
+            )
         }
 
         #[zbus(property, name = "Type")]
@@ -465,6 +495,7 @@ mod tests {
                     active,
                     remote: false,
                     kind: "wayland",
+                    seat: "seat0",
                 },
             )
         }
@@ -552,9 +583,14 @@ mod tests {
     }
 
     #[test]
-    fn remote_or_non_graphical_sessions_fail_closed_once() {
-        assert!(lockable(false, "x11"));
-        for (remote, kind) in [(true, "wayland"), (false, "tty"), (false, "unspecified")] {
+    fn remote_seatless_or_non_graphical_sessions_fail_closed_once() {
+        assert!(lockable(false, "x11", "seat0"));
+        for (remote, kind, seat) in [
+            (true, "wayland", "seat0"),
+            (false, "tty", "seat0"),
+            (false, "unspecified", "seat0"),
+            (false, "wayland", ""),
+        ] {
             let fixture = Fixture::start_session(
                 true,
                 FakeSession {
@@ -562,6 +598,7 @@ mod tests {
                     active: true,
                     remote,
                     kind,
+                    seat,
                 },
             );
             assert!(fixture.monitor.is_err());

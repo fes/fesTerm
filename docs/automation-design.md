@@ -1816,7 +1816,7 @@ The owner accepted these beta gates (macOS, Linux and Windows only):
   and treats `Lock`, `PrepareForSleep(true)`, `LockedHint`, an inactive
   session, any D-Bus error or a closed stream as loss, polling every 250 ms.
   Desktops that never set `LockedHint` are unsupported unless they emit
-  `Lock`. Remote (SSH), headless and text-console sessions are refused
+  `Lock`. Remote (SSH), seatless/headless and text-console sessions are refused
   because they have no lock screen, and each logind call is bounded to 2 s.
   Windows uses its existing session/power monitor. Monitor install
   failure closes MCP. The polling wake-up/power cost is unmeasured. Loss ends access; requests admitted before the cut may
