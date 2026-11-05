@@ -349,6 +349,7 @@ pub(super) fn is_operation(operation: &Operation) -> bool {
     matches!(
         operation,
         Operation::ControllerCapabilities
+            | Operation::PresentationCapabilities
             | Operation::ControllerRegister { .. }
             | Operation::ControllerStatus { .. }
             | Operation::ControllerUnregister { .. }
@@ -385,7 +386,7 @@ pub(super) fn execute(
         let open =
             !privacy.is_closed() && !stop.load(Ordering::Acquire) && !peer.connection.is_closed();
         match request.operation {
-            Operation::ControllerCapabilities => {
+            Operation::ControllerCapabilities | Operation::PresentationCapabilities => {
                 Ok(Reply::plain(BackendResult::ControllerCapabilities {
                     enrollment_available: qualified && open,
                 }))
@@ -1754,6 +1755,154 @@ pub(super) mod tests {
         );
         assert!(!app.automation_javascript_enabled());
         assert!(coordinator.peers[&1].grant.is_none());
+    }
+
+    #[test]
+    fn combined_catalog_does_not_expose_a_native_metadata_grant() {
+        fn assert_unavailable(
+            coordinator: &mut Coordinator,
+            app: &FesTermApp,
+            receive: &impl Fn() -> Option<Vec<u8>>,
+            association: &str,
+        ) {
+            call(
+                coordinator,
+                1,
+                &[app],
+                "festerm_controller_capabilities",
+                json!({}),
+            );
+            assert_eq!(
+                response(receive)["result"]["structuredContent"]["data"],
+                json!({
+                    "enrollment_available": true,
+                    "metadata_available": false,
+                    "metadata_requires_separate_grant": true,
+                    "presentation_available": false,
+                    "input_available": false
+                })
+            );
+            call(
+                coordinator,
+                1,
+                &[app],
+                "festerm_presentation_capabilities",
+                json!({}),
+            );
+            let capabilities = response(receive);
+            let data = &capabilities["result"]["structuredContent"]["data"];
+            assert_eq!(data["enrollment_available"], true);
+            assert_eq!(data["presentation"]["available"], false);
+            assert_eq!(data["input_available"], false);
+            call(
+                coordinator,
+                1,
+                &[app],
+                "festerm_workspace_present",
+                json!({"enrollment_ref": association}),
+            );
+            assert_eq!(
+                response(receive)["result"]["structuredContent"]["code"],
+                "UNAVAILABLE"
+            );
+        }
+
+        let (app, tab) = FesTermApp::automation_local_fixture();
+        let mut coordinator = fixture(&[&app]);
+        let receive = add_peer(&mut coordinator, 1);
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_controller_register",
+            json!({"local_id": "metadata catalog"}),
+        );
+        response(&receive);
+        let registration = row(&coordinator, &[&app], 1).registration;
+        let target = coordinator.targets[&tab.chip_id()].reference;
+        let selection = review(
+            &mut coordinator,
+            &[&app],
+            WindowId::PRIMARY,
+            1,
+            registration,
+            target,
+        );
+        confirm(
+            &mut coordinator,
+            &[&app],
+            WindowId::PRIMARY,
+            registration,
+            selection,
+        );
+        let association = coordinator.peers[&1]
+            .controller
+            .registrations
+            .values()
+            .find(|record| record.internal == registration)
+            .unwrap()
+            .association
+            .unwrap();
+        let enrollment = association.enrollment;
+        let association = association.public.to_wire();
+        let principal = coordinator.peers[&1].principal;
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        metadata_command_with_retry(
+            &mut coordinator,
+            &app,
+            WindowId::PRIMARY,
+            NativeCommand::ReviewControllerMetadata {
+                channel: 1,
+                registration,
+                enrollment,
+            },
+        )
+        .unwrap();
+        let token = metadata_review_token(&coordinator, &app, registration);
+        assert_unavailable(&mut coordinator, &app, &receive, &association);
+        assert_eq!(
+            metadata_review_token(&coordinator, &app, registration),
+            token
+        );
+        metadata_command_with_retry(
+            &mut coordinator,
+            &app,
+            WindowId::PRIMARY,
+            NativeCommand::ConfirmControllerMetadata {
+                channel: 1,
+                registration,
+                review: token,
+            },
+        )
+        .unwrap();
+        assert!(coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .native_enrollment_metadata_grant(principal, registration, enrollment, Instant::now())
+            .is_ok());
+        assert_unavailable(&mut coordinator, &app, &receive, &association);
+        assert!(!app.automation_javascript_enabled());
+        assert!(coordinator.peers[&1].grant.is_none());
+
+        metadata_command_with_retry(
+            &mut coordinator,
+            &app,
+            WindowId::PRIMARY,
+            NativeCommand::RevokeControllerMetadata {
+                channel: 1,
+                registration,
+                enrollment,
+            },
+        )
+        .unwrap();
+        let mut broker = coordinator.broker.take().unwrap();
+        coordinator.reconcile(&mut broker, &[&app]);
+        assert!(broker
+            .native_enrollment_metadata_grant(principal, registration, enrollment, Instant::now())
+            .is_err());
+        coordinator.broker = Some(broker);
+        assert_unavailable(&mut coordinator, &app, &receive, &association);
     }
 
     #[test]
@@ -3191,13 +3340,67 @@ pub(super) mod tests {
             NativeCommand::EnableControllerEnrollment,
         );
         assert!(coordinator.controller_opted_in);
+        let mut machine = ready_controller_machine(coordinator.machine_for_new_peer());
+        let Event::Reply(tools) = machine.process_value(json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/list"
+        })) else {
+            panic!("expected combined tool catalog");
+        };
+        let catalog: Value = serde_json::from_slice(tools.as_bytes()).unwrap();
+        let names = catalog["result"]["tools"].as_array().unwrap();
+        assert!(names
+            .iter()
+            .any(|tool| tool["name"] == "festerm_controller_register"));
+        assert!(names
+            .iter()
+            .any(|tool| tool["name"] == "festerm_presentation_capabilities"));
+        assert!(names
+            .iter()
+            .any(|tool| tool["name"] == "festerm_workspace_present"));
+
         let receive = add_peer(&mut coordinator, 1);
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_presentation_capabilities",
+            json!({}),
+        );
+        let capabilities = response(&receive);
+        let data = &capabilities["result"]["structuredContent"]["data"];
+        assert_eq!(data["enrollment_available"], true);
+        assert_eq!(data["presentation"]["available"], false);
+        assert_eq!(data["input_available"], false);
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_workspace_present",
+            json!({"enrollment_ref": "untrusted"}),
+        );
+        assert_eq!(
+            response(&receive)["result"]["structuredContent"]["code"],
+            "UNAVAILABLE"
+        );
+        assert!(coordinator.peers[&1].controller.registrations.is_empty());
+
         coordinator.synthetic_controller_qualified = false;
         call(
             &mut coordinator,
             1,
             &[&app],
             "festerm_controller_capabilities",
+            json!({}),
+        );
+        assert_eq!(
+            response(&receive)["result"]["structuredContent"]["data"]["enrollment_available"],
+            false
+        );
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_presentation_capabilities",
             json!({}),
         );
         assert_eq!(
@@ -3233,6 +3436,17 @@ pub(super) mod tests {
             &mut coordinator,
             1,
             &[&app],
+            "festerm_presentation_capabilities",
+            json!({}),
+        );
+        assert_eq!(
+            response(&receive)["result"]["structuredContent"]["data"]["enrollment_available"],
+            false
+        );
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
             "festerm_controller_register",
             json!({"local_id": "untrusted"}),
         );
@@ -3247,6 +3461,17 @@ pub(super) mod tests {
             1,
             &[&app],
             "festerm_controller_capabilities",
+            json!({}),
+        );
+        assert_eq!(
+            response(&receive)["result"]["structuredContent"]["data"]["enrollment_available"],
+            false
+        );
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_presentation_capabilities",
             json!({}),
         );
         assert_eq!(

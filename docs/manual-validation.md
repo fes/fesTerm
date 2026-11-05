@@ -2711,8 +2711,8 @@ independent delivery liveness, shared quotas and explicit cross-slot closure.
 An inactive host seam freezes metadata source and control-sink guards before
 synthetic consent and revalidates the combined closure through modeled input
 publication. It refuses to compose with the legacy observation adapter until
-that adapter has per-slot frame-delivery fences. These tests do not implement
-metadata UI or an MCP route. AUTO-01 must
+that adapter has per-slot frame-delivery fences. These tests do not qualify
+production metadata UI or implement an MCP route. AUTO-01 must
 verify that users separately understand metadata disclosure, every approved
 metadata-to-control flow, grant lifetimes and repeatable intentional control.
 AUTO-03 must race each slot's expiry, takeover, target replacement and global
@@ -2750,9 +2750,10 @@ IME/preedit/paste, replacement and the first fresh proposal after takeover.
 Tests also freeze all approved readable-source guards before consent and
 exercise unreconciled source disconnect, attachment/lifecycle/registration
 changes, publication ordering and unrelated-principal survival after retirement.
-The later-stage MCP tools advertise unavailability and refuse presentation
-without prompting. Native selection of identically labelled
-local sessions, actual metadata delivery, real attachment/disconnect races,
+The combined opt-in MCP catalog has synthetic tests for current enrollment
+capability and still refuses metadata delivery and presentation before and
+after a modeled metadata grant. Native selection of identically labelled local
+sessions, actual metadata delivery, real attachment/disconnect races,
 actual activation confirmation (including Windows refusal), response/input
 ordering and explicit human handoff/disarm remain deferred under AUTO-01,
 AUTO-03, AUTO-04 and AUTO-05. No supported controller UI, real presentation

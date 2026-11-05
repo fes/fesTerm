@@ -7,6 +7,8 @@
 //! work on cancellation, disconnect, revocation, or expiry. Keep enablement off
 //! by default. [`Machine::new`] is observation-only. An explicitly selected
 //! catalog describes later controller registration, but does not implement it.
+//! The combined controller/presentation catalog asks the backend for current
+//! enrollment availability; presentation and input remain unavailable.
 //! The application currently refuses these operations; association handles have
 //! no metadata consumer. No HTTP, execution, workflows, resources, or prompts
 //! are exposed.
@@ -199,6 +201,7 @@ impl fmt::Debug for ControllerId {
 pub enum Operation {
     PairingStatus,
     ControllerCapabilities,
+    PresentationCapabilities,
     ControllerRegister {
         local_id: String,
     },
@@ -347,9 +350,10 @@ impl Refusal {
 
 pub enum BackendResult {
     PairingStatus(PairingStatus),
-    /// The backend must independently establish enrollment feature availability,
-    /// not authorization. Metadata via association handles remains unavailable
-    /// regardless of grants until its consumer is implemented.
+    /// The backend must independently establish enrollment feature availability
+    /// for either capability request, not authorization. Metadata via
+    /// association handles remains unavailable regardless of grants until its
+    /// consumer is implemented.
     ControllerCapabilities {
         enrollment_available: bool,
     },
@@ -445,6 +449,16 @@ impl Machine {
         Self {
             controller_enrollment: true,
             ..Self::new()
+        }
+    }
+
+    /// Selects both later-stage catalogs for an explicitly opted-in host.
+    /// Presentation remains refusal-only, and its enrollment availability is
+    /// requested from the backend rather than inferred from catalog selection.
+    pub fn with_controller_enrollment_and_unavailable_presentation() -> Self {
+        Self {
+            controller_enrollment: true,
+            ..Self::with_unavailable_presentation()
         }
     }
 
@@ -564,39 +578,45 @@ impl Machine {
                 }
                 let mut tools = schema::tools(self.controller_enrollment);
                 if self.unavailable_presentation {
-                    tools.extend(presentation::tools());
+                    tools.extend(presentation::tools(self.controller_enrollment));
                 }
                 Event::Reply(success(&id, json!({"tools": tools})))
             }
             "tools/call" => {
-                if self.unavailable_presentation {
-                    if let Some(result) = presentation::call(params) {
-                        return match result {
-                            Ok(presentation::Call::Capabilities) => Event::Reply(tool_result(
-                                &id,
-                                json!({"status": "ok", "data": presentation::unavailable()}),
-                                false,
-                            )),
-                            Ok(presentation::Call::Present) => {
-                                Event::Reply(tool_refusal(&id, Refusal::Unavailable))
-                            }
-                            Err(schema::CallError::Protocol) => {
-                                self.error(Some(&id), ProtocolError::InvalidParams)
-                            }
-                            Err(schema::CallError::Arguments) => {
-                                Event::Reply(tool_refusal(&id, Refusal::InvalidArguments))
-                            }
-                        };
+                let presentation = if self.unavailable_presentation {
+                    presentation::call(params)
+                } else {
+                    None
+                };
+                let operation = match presentation {
+                    Some(Ok(presentation::Call::Capabilities)) if self.controller_enrollment => {
+                        Operation::PresentationCapabilities
                     }
-                }
-                let operation = match schema::call(params, self.controller_enrollment) {
-                    Ok(operation) => operation,
-                    Err(schema::CallError::Protocol) => {
+                    Some(Ok(presentation::Call::Capabilities)) => {
+                        return Event::Reply(tool_result(
+                            &id,
+                            json!({"status": "ok", "data": presentation::unavailable(false)}),
+                            false,
+                        ));
+                    }
+                    Some(Ok(presentation::Call::Present)) => {
+                        return Event::Reply(tool_refusal(&id, Refusal::Unavailable));
+                    }
+                    Some(Err(schema::CallError::Protocol)) => {
                         return self.error(Some(&id), ProtocolError::InvalidParams);
                     }
-                    Err(schema::CallError::Arguments) => {
+                    Some(Err(schema::CallError::Arguments)) => {
                         return Event::Reply(tool_refusal(&id, Refusal::InvalidArguments));
                     }
+                    None => match schema::call(params, self.controller_enrollment) {
+                        Ok(operation) => operation,
+                        Err(schema::CallError::Protocol) => {
+                            return self.error(Some(&id), ProtocolError::InvalidParams);
+                        }
+                        Err(schema::CallError::Arguments) => {
+                            return Event::Reply(tool_refusal(&id, Refusal::InvalidArguments));
+                        }
+                    },
                 };
                 if self.pending.len() >= MAX_IN_FLIGHT {
                     return self.error(Some(&id), ProtocolError::Busy);
@@ -665,6 +685,12 @@ impl Machine {
                 "presentation_available": false,
                 "input_available": false,
             }),
+            (
+                Operation::PresentationCapabilities,
+                BackendResult::ControllerCapabilities {
+                    enrollment_available,
+                },
+            ) => presentation::unavailable(enrollment_available),
             (
                 Operation::ControllerRegister { .. },
                 BackendResult::ControllerStatus {

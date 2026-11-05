@@ -412,7 +412,10 @@ in the design must be visible in implementation/release review.
   selection, confirmation and cancellation, and guarded non-authorizing status;
   they do not establish native usability or metadata authorization. Protocol
   tests cover bounded inputs, typed results and default-catalog compatibility,
-  not authenticated clients or an association-handle consumer.
+  not authenticated clients or an association-handle consumer. A combined
+  opt-in catalog exposes enrollment and refusal-only presentation together,
+  using the same live backend qualification for both capability reports; it
+  does not enable presentation, input or metadata.
   Presentation tests inject
   a continuous event source and freshness barrier, check exact app-command tab
   routing, loss/regain and selection ABA, and exercise the modeled reserved-input

@@ -4701,7 +4701,7 @@ fn response(receive: &impl Fn() -> Option<Vec<u8>>) -> Value {
 fn controller_operations_never_enter_observation_grant_path() {
     let (mut coordinator, mut app, id, receive) = fixture();
     coordinator.peers.get_mut(&1).unwrap().machine =
-        ready_with(Machine::with_controller_enrollment());
+        ready_with(Machine::with_controller_enrollment_and_unavailable_presentation());
     let principal = coordinator.peers[&1].principal;
     let guard = festerm_session::automation_admission_lock().unwrap();
     let retained = coordinator
@@ -4716,6 +4716,7 @@ fn controller_operations_never_enter_observation_grant_path() {
     let registration_id = registration.to_wire();
     for operation in [
         Operation::ControllerCapabilities,
+        Operation::PresentationCapabilities,
         Operation::ControllerRegister {
             local_id: "client".into(),
         },
@@ -4738,6 +4739,7 @@ fn controller_operations_never_enter_observation_grant_path() {
         }
         for (tool, arguments) in [
             ("festerm_controller_capabilities", json!({})),
+            ("festerm_presentation_capabilities", json!({})),
             (
                 "festerm_controller_status",
                 json!({"registration_id": registration_id.as_str()}),

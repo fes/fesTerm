@@ -1085,7 +1085,7 @@ impl Coordinator {
 
     fn machine_for_new_peer(&self) -> Machine {
         if self.controller_opted_in && self.controller_qualified() {
-            Machine::with_controller_enrollment()
+            Machine::with_controller_enrollment_and_unavailable_presentation()
         } else {
             Machine::with_unavailable_presentation()
         }
@@ -2822,6 +2822,7 @@ fn direct_binding(
         ),
         Operation::PairingStatus => return Err(Refusal::InvalidArguments),
         Operation::ControllerCapabilities
+        | Operation::PresentationCapabilities
         | Operation::ControllerRegister { .. }
         | Operation::ControllerStatus { .. }
         | Operation::ControllerUnregister { .. } => return Err(Refusal::Unavailable),
@@ -2844,6 +2845,7 @@ fn admit_request(
     if matches!(
         operation,
         Operation::ControllerCapabilities
+            | Operation::PresentationCapabilities
             | Operation::ControllerRegister { .. }
             | Operation::ControllerStatus { .. }
             | Operation::ControllerUnregister { .. }
@@ -2877,6 +2879,7 @@ fn admit_request(
         }
         Operation::PairingStatus => return Err(Refusal::InvalidArguments),
         Operation::ControllerCapabilities
+        | Operation::PresentationCapabilities
         | Operation::ControllerRegister { .. }
         | Operation::ControllerStatus { .. }
         | Operation::ControllerUnregister { .. } => return Err(Refusal::Unavailable),

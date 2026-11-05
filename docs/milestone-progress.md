@@ -1,5 +1,13 @@
 # Milestone Progress Narrative
 
+## Combining metadata review with capability discovery
+
+The combined controller and refusal-only presentation catalog now composes with
+the dormant exact-enrollment metadata review. A synthetic regression checks
+pending, approved and revoked reviews on the same connection: enrollment may
+be available, but a metadata grant does not make metadata delivery,
+presentation or input available. Production qualification remains closed.
+
 ## Modeling native enrollment metadata review
 
 The dormant Settings route now models a separate same-window review for one
@@ -7440,3 +7448,13 @@ complete supplied configuration for later saves without restoring the primary
 window's tabs. When restore is off, stale workspace metadata remains scrubbed.
 Focused regressions cover both cases; cross-window save ordering and
 configuration-generation ownership remain unresolved.
+
+## Consistent controller and presentation discovery
+
+The opt-in controller and refusal-only presentation catalogs were mutually
+exclusive, so one controller connection could not discover both contracts.
+The combined catalog now asks the same bounded backend path for enrollment
+availability in either capability response and continues to refuse presentation.
+Synthetic tests cover qualification changes, cancellation and pending limits;
+the default observation-only catalog is unchanged. This adds neither native
+qualification nor metadata delivery, presentation or input.

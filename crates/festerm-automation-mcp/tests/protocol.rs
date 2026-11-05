@@ -1621,6 +1621,153 @@ fn controller_and_presentation_opt_ins_remain_separate_and_fail_closed() {
 }
 
 #[test]
+fn combined_controller_catalog_reflects_live_capabilities_and_refuses_presentation() {
+    let mut machine = Machine::with_controller_enrollment_and_unavailable_presentation();
+    initialize(&mut machine, PROTOCOL_VERSION);
+    assert!(matches!(
+        machine.process_value(json!({"jsonrpc":"2.0","method":"notifications/initialized"})),
+        Event::NoReply
+    ));
+    let catalog = reply(machine.process_value(request(json!(2), "tools/list", json!({}))));
+    let tools = catalog["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 13);
+    assert!(tools
+        .iter()
+        .any(|tool| tool["name"] == "festerm_controller_register"));
+    let capability = tools
+        .iter()
+        .find(|tool| tool["name"] == "festerm_presentation_capabilities")
+        .unwrap();
+    let schema = &capability["outputSchema"];
+    assert!(tools
+        .iter()
+        .any(|tool| tool["name"] == "festerm_workspace_present"));
+
+    for (id, enrollment_available) in [(3, true), (4, false)] {
+        let pending = backend(machine.process_value(call(
+            json!(id),
+            "festerm_presentation_capabilities",
+            json!({}),
+        )));
+        assert_eq!(pending.operation, Operation::PresentationCapabilities);
+        let response = decode(
+            machine
+                .complete(
+                    &pending.key,
+                    BackendResult::ControllerCapabilities {
+                        enrollment_available,
+                    },
+                )
+                .unwrap(),
+        );
+        let structured = &response["result"]["structuredContent"];
+        assert_eq!(
+            structured["data"],
+            json!({
+                "presentation": {"available": false, "reason": "NATIVE_EVIDENCE_UNQUALIFIED"},
+                "backends": {
+                    "local_pty": "NATIVE_EVIDENCE_UNQUALIFIED",
+                    "other": "UNSUPPORTED_BACKEND"
+                },
+                "enrollment_available": enrollment_available,
+                "input_available": false
+            })
+        );
+        assert!(schema_matches(schema, structured));
+    }
+
+    let pending = backend(machine.process_value(call(
+        json!(5),
+        "festerm_presentation_capabilities",
+        json!({}),
+    )));
+    tool_error(
+        machine.process_value(call(
+            json!(6),
+            "festerm_workspace_present",
+            json!({"enrollment_ref": "untrusted"}),
+        )),
+        "UNAVAILABLE",
+    );
+    assert_eq!(machine.in_flight(), 1);
+    let Event::Cancelled(cancelled) = machine.process_value(json!({
+        "jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 5}
+    })) else {
+        panic!("expected cancellation");
+    };
+    assert_eq!(cancelled, pending.key);
+    assert!(machine
+        .complete(
+            &pending.key,
+            BackendResult::ControllerCapabilities {
+                enrollment_available: true,
+            },
+        )
+        .is_none());
+
+    let pending = backend(machine.process_value(call(
+        json!(7),
+        "festerm_presentation_capabilities",
+        json!({}),
+    )));
+    let response = decode(
+        machine
+            .complete(
+                &pending.key,
+                BackendResult::AuthorizedObservation(json!({"private": "must not leak"})),
+            )
+            .unwrap(),
+    );
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["code"], "INVALID_BACKEND_RESULT");
+    assert!(!response.to_string().contains("must not leak"));
+    assert!(schema_matches(schema, structured));
+
+    for refusal in [
+        Refusal::NotAuthorized,
+        Refusal::StaleTarget,
+        Refusal::Closed,
+        Refusal::BudgetExceeded,
+        Refusal::InvalidArguments,
+        Refusal::InvalidBackendResult,
+        Refusal::ResponseTooLarge,
+        Refusal::Unavailable,
+    ] {
+        let pending = backend(machine.process_value(call(
+            json!(8),
+            "festerm_presentation_capabilities",
+            json!({}),
+        )));
+        let response = decode(
+            machine
+                .complete(&pending.key, BackendResult::Refused(refusal))
+                .unwrap(),
+        );
+        assert!(schema_matches(
+            schema,
+            &response["result"]["structuredContent"]
+        ));
+    }
+
+    for id in 10..10 + MAX_IN_FLIGHT {
+        backend(machine.process_value(call(
+            json!(id),
+            "festerm_presentation_capabilities",
+            json!({}),
+        )));
+    }
+    error(
+        machine.process_value(call(
+            json!(20),
+            "festerm_presentation_capabilities",
+            json!({}),
+        )),
+        -32004,
+    );
+    assert_eq!(machine.close().len(), MAX_IN_FLIGHT);
+}
+
+#[test]
 fn controller_catalog_is_opt_in_and_preserves_observation_compatibility() {
     let mut original = ready();
     let mut controller = ready_controller();

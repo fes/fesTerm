@@ -343,6 +343,7 @@
         "wire_catalog_contains_only_exact_observation_schemas_and_hints",
         "controller_catalog_is_opt_in_and_preserves_observation_compatibility",
         "controller_and_presentation_opt_ins_remain_separate_and_fail_closed",
+        "combined_controller_catalog_reflects_live_capabilities_and_refuses_presentation",
         "controller_inputs_are_bounded_and_do_not_accept_authority_claims",
         "controller_results_are_typed_and_expose_only_correlation_ids",
         "controller_metadata_capability_is_unavailable_even_with_enrollment",
@@ -388,6 +389,7 @@
         "enrollment_metadata_host_refuses_unreviewed_control_composition",
         "enrollment_metadata_host_never_waits_for_admission",
         "native_enrollment_metadata_review_binds_window_and_explicit_confirmation",
+        "combined_catalog_does_not_expose_a_native_metadata_grant",
         "native_enrollment_metadata_review_rejects_changed_display",
         "native_enrollment_metadata_snapshot_is_disarmed_by_safety_cuts",
         "native_enrollment_metadata_disconnect_disarms_stale_snapshots",
@@ -506,7 +508,10 @@
         "reservation_capture_refuses_busy_or_unavailable_attachment",
         "local_pty_automation_reservation_cannot_send_cancelled_bytes",
         "presentation_contract_advertises_refusal_without_changing_p1_or_starting_work",
-        "controller_and_presentation_opt_ins_remain_separate_and_fail_closed"
+        "controller_and_presentation_opt_ins_remain_separate_and_fail_closed",
+        "combined_controller_catalog_reflects_live_capabilities_and_refuses_presentation",
+        "controller_catalog_requires_qualified_native_opt_in_and_resets_on_stop",
+        "combined_catalog_does_not_expose_a_native_metadata_grant"
       ],
       "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04", "AUTO-05"],
       "status": "partial",

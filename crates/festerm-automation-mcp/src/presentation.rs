@@ -10,7 +10,7 @@ pub(crate) enum Call {
     Present,
 }
 
-pub(crate) fn unavailable() -> Value {
+pub(crate) fn unavailable(enrollment_available: bool) -> Value {
     json!({
         "presentation": {
             "available": false,
@@ -20,7 +20,7 @@ pub(crate) fn unavailable() -> Value {
             "local_pty": "NATIVE_EVIDENCE_UNQUALIFIED",
             "other": "UNSUPPORTED_BACKEND"
         },
-        "enrollment_available": false,
+        "enrollment_available": enrollment_available,
         "input_available": false
     })
 }
@@ -56,7 +56,15 @@ fn output_schema(data: Value, codes: &[&str]) -> Value {
     })
 }
 
-pub(crate) fn tools() -> Vec<Value> {
+pub(crate) fn tools(backend_capabilities: bool) -> Vec<Value> {
+    let capability_codes = if backend_capabilities {
+        crate::Refusal::ALL
+            .into_iter()
+            .map(crate::Refusal::code)
+            .collect::<Vec<_>>()
+    } else {
+        vec!["INVALID_ARGUMENTS", "UNAVAILABLE"]
+    };
     let availability = json!({
         "type": "object",
         "oneOf": [
@@ -112,7 +120,7 @@ pub(crate) fn tools() -> Vec<Value> {
                 },
                 "required": ["presentation", "backends", "enrollment_available", "input_available"],
                 "additionalProperties": false
-            }), &["INVALID_ARGUMENTS", "UNAVAILABLE"]),
+            }), &capability_codes),
             "annotations": {
                 "readOnlyHint": true, "destructiveHint": false,
                 "openWorldHint": false, "idempotentHint": true
