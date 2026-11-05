@@ -1554,6 +1554,18 @@ fn install(_spec: &ServiceSpec, _create: bool) -> io::Result<()> {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    fn run_windows_read_only_fixture(expression: &str, stage: &'static str) -> io::Result<Vec<u8>> {
+        // Hosted runners can be elevated: these read-only fixtures need OS
+        // tools, not permission to install an unelevated per-user service.
+        let system = festerm_windows_security::system_directory()?;
+        run(
+            &system.join("WindowsPowerShell\\v1.0\\powershell.exe"),
+            &args(&["-NoProfile", "-NonInteractive", "-Command", expression]),
+            stage,
+        )
+    }
+
     fn spec() -> ServiceSpec {
         ServiceSpec {
             id: "c17273e0-a8a3-4fce-b3cd-49f112d8b15c".into(),
@@ -2030,13 +2042,7 @@ mod tests {
                 script.replace('\'', "''"),
             ));
         }
-        let (_, system) = festerm_windows_security::current_user_service_context().unwrap();
-        run(
-            &system.join("WindowsPowerShell\\v1.0\\powershell.exe"),
-            &args(&["-NoProfile", "-NonInteractive", "-Command", &expression]),
-            "service.script_parse_fixture",
-        )
-        .unwrap();
+        run_windows_read_only_fixture(&expression, "service.script_parse_fixture").unwrap();
     }
 
     #[cfg(windows)]
@@ -2194,19 +2200,12 @@ mod tests {
                 powershell_literal(&command_line).unwrap(),
             ));
         }
-        let (_, system) = festerm_windows_security::current_user_service_context().unwrap();
-        run(
-            &system.join("WindowsPowerShell\\v1.0\\powershell.exe"),
-            &args(&["-NoProfile", "-NonInteractive", "-Command", &expression]),
-            "service.native_argv_fixture",
-        )
-        .unwrap();
+        run_windows_read_only_fixture(&expression, "service.native_argv_fixture").unwrap();
     }
 
     #[cfg(windows)]
     #[test]
     fn service_windows_creation_identity_matches_only_cim_microsecond_precision() {
-        let (_, system) = festerm_windows_security::current_user_service_context().unwrap();
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--ignored",
@@ -2237,11 +2236,7 @@ mod tests {
             child.id(),
             child.id(),
         );
-        let result = run(
-            &system.join("WindowsPowerShell\\v1.0\\powershell.exe"),
-            &args(&["-NoProfile", "-NonInteractive", "-Command", &expression]),
-            "service.identity_fixture",
-        );
+        let result = run_windows_read_only_fixture(&expression, "service.identity_fixture");
         // The probe is read-only. Cleanup is through this newly spawned
         // child's owned handle, never through an enumerated or preexisting PID.
         let _ = child.kill();
