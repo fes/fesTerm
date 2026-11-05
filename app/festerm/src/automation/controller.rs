@@ -2026,7 +2026,7 @@ pub(super) mod tests {
             response(&other_receive)["result"]["structuredContent"]["code"],
             "NOT_AUTHORIZED"
         );
-        let (principal, liveness) = frame.disclosure.as_ref().unwrap();
+        let (principal, liveness) = frame.disclosure.as_deref().unwrap();
         assert!(liveness.is_live(*principal, Instant::now()));
         assert!(!liveness.is_live(coordinator.peers[&2].principal, Instant::now()));
 
@@ -2287,8 +2287,8 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn enrollment_metadata_queued_reply_expires_or_follows_attachment_replacement() {
-        for change in ["expiry", "attachment"] {
+    fn enrollment_metadata_queued_reply_is_invalidated_by_expiry_attachment_or_rebind() {
+        for change in ["expiry", "attachment", "rebind"] {
             let (mut coordinator, app, tab, registration, enrollment, receive) =
                 metadata_fixture_with_frames();
             coordinator.synthetic_enrollment_metadata_ui_qualified = true;
@@ -2330,6 +2330,25 @@ pub(super) mod tests {
                         panic!("expected synthetic local attachment");
                     };
                     backend.replace_attachment_without_event();
+                }
+                "rebind" => {
+                    let target = coordinator.targets[&tab.chip_id()].reference;
+                    let token = review(
+                        &mut coordinator,
+                        &[&app],
+                        WindowId::PRIMARY,
+                        1,
+                        registration,
+                        target,
+                    );
+                    confirm(
+                        &mut coordinator,
+                        &[&app],
+                        WindowId::PRIMARY,
+                        registration,
+                        token,
+                    );
+                    assert_ne!(metadata_handle(&coordinator, registration), handle);
                 }
                 _ => unreachable!(),
             }

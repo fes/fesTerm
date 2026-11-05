@@ -107,7 +107,7 @@ impl Connection {
             expires,
             targets: targets.to_vec(),
             flags: flags.to_vec(),
-            disclosure: Some(disclosure),
+            disclosure: Some(Box::new(disclosure)),
         })
     }
 

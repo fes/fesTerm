@@ -36,7 +36,7 @@ pub struct OutboundFrame {
     pub expires: Instant,
     pub targets: Vec<OutboundTargetGuard>,
     pub flags: Vec<Arc<AtomicBool>>,
-    pub disclosure: Option<(ConnectionId, DisclosureLiveness)>,
+    pub disclosure: Option<Box<(ConnectionId, DisclosureLiveness)>>,
 }
 
 impl OutboundFrame {
@@ -46,7 +46,7 @@ impl OutboundFrame {
             && self.flags.iter().all(|flag| flag.load(Ordering::Acquire))
             && self
                 .disclosure
-                .as_ref()
+                .as_deref()
                 .is_none_or(|(connection, liveness)| liveness.is_live(*connection, Instant::now()))
     }
 }

@@ -396,7 +396,7 @@
         "enrollment_metadata_route_requires_separate_approval_and_original_liveness",
         "enrollment_metadata_route_keeps_identical_labels_independent",
         "enrollment_metadata_route_scopes_colliding_handles_to_each_connection",
-        "enrollment_metadata_queued_reply_expires_or_follows_attachment_replacement",
+        "enrollment_metadata_queued_reply_is_invalidated_by_expiry_attachment_or_rebind",
         "enrollment_metadata_route_preserves_legacy_observation_get",
         "native_enrollment_metadata_review_binds_window_and_explicit_confirmation",
         "combined_catalog_does_not_expose_a_native_metadata_grant",
