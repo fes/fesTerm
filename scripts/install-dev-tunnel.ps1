@@ -6,11 +6,16 @@ param(
     # Switch an existing host's service to this release's helpers, keeping its
     # tunnel, host key and running daemon session.
     [switch]$Upgrade,
+    [switch]$RestartUnexpected,
+    [switch]$NoRestartUnexpected,
     [string]$FriendlyName = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($RestartUnexpected -and $NoRestartUnexpected) {
+    throw 'Choose only one unexpected-failure restart policy.'
+}
 if ([Security.Principal.WindowsIdentity]::GetCurrent().IsSystem) {
     throw 'Run setup as your normal user, not SYSTEM.'
 }
@@ -178,6 +183,8 @@ try {
     $setupArguments = @('--managed', '--devtunnel', $cli, '--state-dir', (Join-Path $root 'state'))
     if ($NoTakeover) { $setupArguments += '--no-takeover' }
     if ($Upgrade) { $setupArguments += '--upgrade' }
+    if ($RestartUnexpected) { $setupArguments += '--restart-unexpected' }
+    if ($NoRestartUnexpected) { $setupArguments += '--no-restart-unexpected' }
     if ($FriendlyName) {
         $setupArguments += @('--friendly-name', $FriendlyName.Trim())
     }

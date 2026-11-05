@@ -1,5 +1,24 @@
 # Milestone Progress Narrative
 
+## Diagnosing dead tunnel targets and opting into fresh-shell recovery
+
+A healthy Windows relay outlived its exported daemon. iOS presented the daemon
+attachment failure as disabled takeover even though takeover was enabled, while
+the surviving host lacked evidence explaining the daemon's disappearance.
+Lifecycle journals now preserve bounded, private, content-free startup, Windows
+breakaway, shell-exit, panic, failure and stop/shutdown evidence. The worker
+watches the exact daemon lease independently of relay connectivity and withdraws
+stale hosting. Undifferentiated host refusals no longer claim takeover is off.
+
+The owner selected opt-in recovery of unexpected daemon loss, not resurrection
+of an ended shell. ADR 0066 records the narrow change: a persisted three-start
+budget and exact-generation launch reservation can create a fresh default shell
+from the managed worker while keeping the tunnel and host key. Deliberate exit,
+operator stop, missing evidence and uncertain creation refuse; automatic client
+reconnect remains pinned to the original session. Isolated regressions cover the
+policy and publication boundaries; signed service and physical-iOS qualification
+remain in DT-05/07. The existing live installation was not changed.
+
 ## 0.14.2: iOS field editing and Dev Tunnel resiliency
 
 This patch packages five fixes. iOS profile form fields now support the native

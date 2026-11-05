@@ -558,7 +558,7 @@ pub async fn serve_with_reclaim(
             && (!file_service.allows_read() || hello.files.windows_paths != cfg!(windows)))
     {
         write_frame(&mut stream, REFUSED, &[]).await?;
-        return Err(invalid());
+        return Err(io::Error::other("daemon.hello_incompatible"));
     }
     // Reclaiming needs the same host consent as takeover; it is advertised only
     // with it. The check and the daemon admission below are not atomic: a
@@ -577,6 +577,19 @@ pub async fn serve_with_reclaim(
         &[u8::from(file_read_admitted), u8::from(cfg!(windows))],
     )
     .await?;
+    let root = festerm_sessiond::runtime_root()
+        .map_err(|_| io::Error::other("daemon.runtime_unavailable"))?;
+    if !festerm_sessiond::daemon_generation_is_live(
+        &root,
+        selected.pid,
+        selected.created_at_unix_ms,
+        &selected.endpoint,
+    )
+    .map_err(|_| io::Error::other("daemon.identity_unavailable"))?
+    {
+        write_frame(&mut stream, REFUSED, &[]).await?;
+        return Err(io::Error::other("daemon.session_unavailable"));
+    }
     let notify = Arc::new(tokio::sync::Notify::new());
     struct Wake(Arc<tokio::sync::Notify>);
     impl SessionEventNotifier for Wake {
@@ -602,7 +615,7 @@ pub async fn serve_with_reclaim(
             Ok(session) => session,
             Err(_) => {
                 write_frame(&mut stream, REFUSED, &[]).await?;
-                return Err(invalid());
+                return Err(io::Error::other("daemon.attach_refused"));
             }
         };
     let _held = holder.claim(hello.client);

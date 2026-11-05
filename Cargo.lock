@@ -2461,6 +2461,7 @@ dependencies = [
  "festerm-session",
  "festerm-ssh",
  "festerm-tunnel-bridge",
+ "festerm-unix-security",
  "festerm-windows-job",
  "festerm-windows-runtime",
  "festerm-windows-security",
@@ -2472,7 +2473,9 @@ dependencies = [
  "socket2",
  "tokio",
  "tracing",
+ "uuid",
  "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]

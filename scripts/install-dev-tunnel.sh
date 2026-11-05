@@ -3,18 +3,23 @@ set -euo pipefail
 umask 077
 
 fail() { printf 'fesTerm tunnel setup: %s\n' "$*" >&2; exit 1; }
-usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade] [--friendly-name NAME]'
+usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected]'
 version=
 install_dependencies=false
 no_takeover=false
 upgrade=false
 friendly_name=
+restart_unexpected=
 while (($#)); do
     if [[ $1 == --install-dependencies ]]; then
         install_dependencies=true
         shift
     elif [[ $1 == --no-takeover ]]; then
         no_takeover=true
+        shift
+    elif [[ $1 == --restart-unexpected || $1 == --no-restart-unexpected ]]; then
+        [[ -z $restart_unexpected ]] || fail 'Choose only one unexpected-failure restart policy.'
+        restart_unexpected=$1
         shift
     elif [[ $1 == --upgrade ]]; then
         # Switch an existing host's service to this release's helpers,
@@ -34,6 +39,7 @@ done
 setup_extra=()
 if "$no_takeover"; then setup_extra+=(--no-takeover); fi
 if "$upgrade"; then setup_extra+=(--upgrade); fi
+if [[ -n $restart_unexpected ]]; then setup_extra+=("$restart_unexpected"); fi
 if [[ -n $friendly_name ]]; then
     "$upgrade" && fail '--friendly-name applies only when creating a new host; rename an existing tunnel in fesTerm.'
     setup_extra+=(--friendly-name "$friendly_name")
