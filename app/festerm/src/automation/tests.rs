@@ -3022,12 +3022,15 @@ fn presentation_control_review_rejects_typing_after_prior_handoff_pruned() {
     let _serial = presentation_admission_test_guard();
     let mut fixture = presented_input_fixture();
     let principal = fixture.coordinator.peers[&1].principal;
-    fixture
-        .coordinator
-        .broker
-        .as_mut()
-        .unwrap()
-        .revoke(principal);
+    {
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        fixture
+            .coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .revoke(principal, &guard);
+    }
     let (request, _, _) = presentation_control_request(fixture.barrier.target);
     let review = prepare_control_review(
         &mut fixture.coordinator,
@@ -3605,7 +3608,14 @@ fn presentation_control_review_slots_are_reclaimed_after_cancel_revocation_and_e
         &request,
         &mut app.automation_session_mut(tab).controller,
     );
-    coordinator.broker.as_mut().unwrap().revoke(principal);
+    {
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        coordinator
+            .broker
+            .as_mut()
+            .unwrap()
+            .revoke(principal, &guard);
+    }
     let fresh = prepare_control_review(
         &mut coordinator,
         1,

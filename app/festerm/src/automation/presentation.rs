@@ -521,7 +521,7 @@ impl Coordinator {
             })
             .collect();
         for principal in unbound {
-            broker.revoke_ordinary(principal);
+            broker.revoke_ordinary(principal, guard);
         }
         self.control_handoffs.retain(|principal, handoff| {
             broker.native_control_grant(*principal, handoff.target, now) == Ok(handoff.grant)
@@ -831,14 +831,14 @@ impl Coordinator {
         self.pending_metadata_reviews
             .retain(|id, pending| broker.pending_approval_is_active(pending.principal, *id, now));
         let Some(bound) = bound else {
-            broker.revoke_ordinary(principal);
+            broker.revoke_ordinary(principal, &guard);
             self.control_handoffs.remove(&principal);
             return Err(Error::Revoked);
         };
         let grant = match broker.native_control_grant(principal, review.target, Instant::now()) {
             Ok(grant) => grant,
             Err(error) => {
-                broker.revoke_ordinary(principal);
+                broker.revoke_ordinary(principal, &guard);
                 self.control_handoffs.remove(&principal);
                 return Err(error);
             }
@@ -1126,7 +1126,7 @@ impl Coordinator {
         let bound = self.pending_metadata_reviews.remove(&review.approval_id);
         let grant = broker.native_metadata_grant(principal, Instant::now());
         let (Some(bound), Ok(grant)) = (bound, grant) else {
-            broker.revoke_metadata(principal);
+            broker.revoke_metadata(principal, &guard);
             self.metadata_grants.remove(&principal);
             return Err(Error::Revoked);
         };
@@ -1450,7 +1450,7 @@ impl Coordinator {
             return Err(Error::Unavailable);
         }
         let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
-        broker.revoke_ordinary(principal);
+        broker.revoke_ordinary(principal, &guard);
         self.control_handoffs.remove(&principal);
         let now = Instant::now();
         self.pending_control_reviews
@@ -1465,7 +1465,7 @@ impl Coordinator {
         let guard = try_admission()?;
         let principal = self.admission_principal_locked(channel, &guard)?;
         let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
-        broker.revoke_metadata(principal);
+        broker.revoke_metadata(principal, &guard);
         self.metadata_grants.remove(&principal);
         let now = Instant::now();
         self.pending_control_reviews

@@ -15,11 +15,12 @@ enrollment or fence every revocation. A future bound metadata path must prevent
 bypass through the legacy sender and establish its own publication and delivery
 prerequisites.
 
-`Broker::cancel_run` requires the shared admission guard; callers must pass an
-already-held guard rather than acquire it recursively. Other grant/run cuts and
-expiry paths are not uniformly guarded, and broker/epoch destruction still
-invalidates liveness without that guard. This partial migration does not fence
-publication or physical delivery.
+`Broker::cancel_run` and explicit ordinary-slot, legacy metadata-slot and
+whole-principal revocations require the shared admission guard. Callers must
+pass an already-held guard rather than acquire it recursively. Other grant/run
+cuts, grant replacement and expiry are not uniformly guarded, and broker/epoch
+destruction still invalidates liveness without that guard. This partial
+migration does not fence publication or physical delivery.
 
 ## Application integration
 

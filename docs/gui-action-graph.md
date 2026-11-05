@@ -330,6 +330,9 @@ profile fields may be sensitive; trusted code must not blindly log or disclose
 them to a worker, and redacted snapshot Debug does not sanitize those fields.
 `AUT-01` and `AUT-06` do not yet include a creation review,
 fresh-target binding or session-open edge; native review and launch remain gated.
+Explicit ordinary-slot, legacy metadata-slot and whole-principal broker
+revocations share admission, but presentation revocation, other cuts and
+physical delivery are not yet uniformly fenced.
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
