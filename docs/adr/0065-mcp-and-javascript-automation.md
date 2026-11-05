@@ -201,9 +201,15 @@ to bypass another's restrictions.
    enrollment metadata only when its explicit readable-source scope contains
    every active enrollment target. It freezes and revalidates the exact grant
    epochs and acknowledges both sides of each source-to-control flow.
-   A production handoff UI must display that full decision; native consent and
+   A synthetic-only input-review stage queues at most one request per peer,
+   freezes the exact association and all current metadata sources, and shows
+   the complete escaped action and source-to-sink disclosure in Settings.
+   Cancellation, expiry, human/IME fences, terminal mode changes and
+   association retirement invalidate the review; a cancelled or retired
+   associated handoff is revoked without cutting unrelated grants.
+   This stage has no approval or publication action. Production consent and
    per-slot delivery fencing remain unqualified. A separate current-window
-   Settings review is exercised with synthetic qualification only:
+   metadata Settings review is exercised with synthetic qualification only:
    cancellation invalidates stale
    snapshots immediately, and proposal cleanup and scoped revocation defer
    under admission. It describes only label and lifecycle status for at most
@@ -429,6 +435,11 @@ in the design must be visible in implementation/release review.
   opt-in catalog exposes enrollment and refusal-only presentation together,
   using the same live backend qualification for both capability reports; it
   does not enable presentation, input or metadata.
+  Synthetic input-review tests cover bounded request staging, complete escaped
+  action and metadata-source display, stale pointer/accessibility actions,
+  cancellation, source expiry, human/IME and mode changes, association
+  movement and scoped handoff retirement. They do not prove native consent or
+  input publication.
   Presentation tests inject
   a continuous event source and freshness barrier, check exact app-command tab
   routing, loss/regain and selection ABA, and exercise the modeled reserved-input

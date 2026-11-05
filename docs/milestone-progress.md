@@ -1,5 +1,15 @@
 # Milestone Progress Narrative
 
+## Staging direct-input reviews
+
+The synthetic-only adapter stages one exact-enrollment input request per peer
+and displays the complete escaped action, sink and current metadata-source
+closure after an explicit review request. Cancellation, source expiry,
+human/IME or mode changes, enrollment retirement and stale UI actions
+invalidate the staged decision.
+The Settings view cannot approve or publish input; production qualification
+and end-to-end control remain open.
+
 ## Defining bounded direct-input protocol
 
 An unselected MCP catalog defines exact-enrollment text/key operations with

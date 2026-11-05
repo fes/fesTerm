@@ -324,6 +324,12 @@ future work. Returning to A0 revokes all test
 principals/leases, stops owned workers and closes only fixture-owned sessions.
 Do not construct it with personal profiles, output or credentials.
 
+A synthetic-only `AUT-08` input-review stage displays the complete escaped
+action, exact sink and every current metadata source after an explicit review
+request. Cancellation, stale actions, human/IME input, terminal mode changes
+and source expiry or retirement reject the staged review. It offers no approval
+or input publication; native consent and usability remain deferred.
+
 Prospective scoped-creation review has only non-authorizing profile/policy
 snapshot tests. Capture does not retrieve secret-store contents, but full
 profile fields may be sensitive; trusted code must not blindly log or disclose

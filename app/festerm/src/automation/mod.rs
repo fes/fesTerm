@@ -53,6 +53,7 @@ type PrivacyMonitor = festerm_windows_power::PrivacyMonitor;
 #[cfg(target_os = "linux")]
 type PrivacyMonitor = festerm_linux_power::PrivacyMonitor;
 
+pub(crate) use controller::DirectInputPreparation;
 pub(crate) use ipc::run_stdio;
 pub(crate) use presentation::WorkspaceRevision;
 pub(crate) use workflow_selection::{Status as WorkflowStatus, View as WorkflowView};
@@ -131,6 +132,16 @@ pub(crate) enum NativeCommand {
         registration: ControllerRegistrationId,
         enrollment: ControllerEnrollmentId,
     },
+    ReviewControllerInput {
+        channel: u64,
+        registration: ControllerRegistrationId,
+        input: u64,
+    },
+    CancelControllerInput {
+        channel: u64,
+        registration: ControllerRegistrationId,
+        input: u64,
+    },
     CaptureWorkflow(SelectedWorkflow),
     ClearWorkflow,
 }
@@ -173,6 +184,7 @@ impl NativeCommand {
                 | Self::ConfirmController { .. }
                 | Self::ReviewControllerMetadata { .. }
                 | Self::ConfirmControllerMetadata { .. }
+                | Self::ReviewControllerInput { .. }
         )
     }
 
@@ -186,6 +198,7 @@ impl NativeCommand {
                 | Self::UnregisterController { .. }
                 | Self::CancelControllerMetadata { .. }
                 | Self::RevokeControllerMetadata { .. }
+                | Self::CancelControllerInput { .. }
                 | Self::ClearWorkflow
         )
     }
@@ -203,6 +216,8 @@ impl NativeCommand {
                 | Self::ConfirmControllerMetadata { .. }
                 | Self::CancelControllerMetadata { .. }
                 | Self::RevokeControllerMetadata { .. }
+                | Self::ReviewControllerInput { .. }
+                | Self::CancelControllerInput { .. }
         )
     }
 }
@@ -253,6 +268,28 @@ pub(crate) enum ControllerMetadataView {
     Revoking,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum ControllerInputView {
+    Unavailable,
+    Requested {
+        token: u64,
+        window: WindowId,
+        target: TargetRef,
+    },
+    Preparing {
+        token: u64,
+        window: WindowId,
+    },
+    Reviewing {
+        token: u64,
+        window: WindowId,
+        target: TargetRef,
+        action: presentation::DirectActionDisplay,
+        metadata_sources: Vec<String>,
+    },
+    Cancelling,
+}
+
 #[derive(Clone)]
 pub(crate) struct ControllerRow {
     pub channel: u64,
@@ -262,9 +299,11 @@ pub(crate) struct ControllerRow {
     pub associated_target: Option<TargetRef>,
     pub selection: ControllerSelectionView,
     pub metadata: ControllerMetadataView,
+    pub input: ControllerInputView,
     valid: Arc<AtomicBool>,
     // Review presentation and confirmation are confined to the UI thread.
     metadata_review_valid: Option<Rc<Cell<bool>>>,
+    input_review_valid: Option<Rc<Cell<bool>>>,
 }
 
 impl ControllerRow {
@@ -287,6 +326,40 @@ impl ControllerRow {
             target,
         };
         self.metadata_review_valid = Some(Rc::new(Cell::new(true)));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_input_review_for_test(
+        &mut self,
+        token: u64,
+        window: WindowId,
+        target: TargetRef,
+        action: presentation::DirectActionDisplay,
+        metadata_sources: Vec<String>,
+    ) {
+        self.input = ControllerInputView::Reviewing {
+            token,
+            window,
+            target,
+            action,
+            metadata_sources,
+        };
+        self.input_review_valid = Some(Rc::new(Cell::new(true)));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_input_requested_for_test(
+        &mut self,
+        token: u64,
+        window: WindowId,
+        target: TargetRef,
+    ) {
+        self.input = ControllerInputView::Requested {
+            token,
+            window,
+            target,
+        };
+        self.input_review_valid = Some(Rc::new(Cell::new(true)));
     }
 }
 
@@ -349,6 +422,7 @@ impl SettingsSnapshot {
                         && left.associated_target == right.associated_target
                         && left.selection == right.selection
                         && left.metadata == right.metadata
+                        && left.input == right.input
                 })
             && self.workflow.same_presentation(&other.workflow)
             && self.channels.len() == other.channels.len()
@@ -369,6 +443,9 @@ impl SettingsSnapshot {
             if let Some(valid) = &row.metadata_review_valid {
                 valid.set(false);
             }
+            if let Some(valid) = &row.input_review_valid {
+                valid.set(false);
+            }
         }
         set_admission_flag(&self.stop, true);
     }
@@ -376,6 +453,9 @@ impl SettingsSnapshot {
     pub(crate) fn revoke(&self, channel: u64) {
         for row in self.controllers.iter().filter(|row| row.channel == channel) {
             if let Some(valid) = &row.metadata_review_valid {
+                valid.set(false);
+            }
+            if let Some(valid) = &row.input_review_valid {
                 valid.set(false);
             }
         }
@@ -395,6 +475,9 @@ impl SettingsSnapshot {
             .find(|row| row.channel == channel && row.registration == registration)
         {
             if let Some(valid) = &row.metadata_review_valid {
+                valid.set(false);
+            }
+            if let Some(valid) = &row.input_review_valid {
                 valid.set(false);
             }
             set_admission_flag(&row.valid, false);
@@ -425,6 +508,40 @@ impl SettingsSnapshot {
         !self.stop.load(Ordering::Acquire)
             && row.valid.load(Ordering::Acquire)
             && row.metadata_review_is_current()
+            && self.channels.iter().any(|channel| {
+                channel.channel == row.channel && !channel.closed.load(Ordering::Acquire)
+            })
+    }
+
+    pub(crate) fn cancel_controller_input_review(
+        &self,
+        channel: u64,
+        registration: ControllerRegistrationId,
+        input: u64,
+    ) {
+        if let Some(row) = self.controllers.iter().find(|row| {
+            row.channel == channel
+                && row.registration == registration
+                && matches!(
+                    &row.input,
+                    ControllerInputView::Requested { token, .. }
+                        | ControllerInputView::Preparing { token, .. }
+                        | ControllerInputView::Reviewing { token, .. } if *token == input
+                )
+        }) {
+            if let Some(valid) = &row.input_review_valid {
+                valid.set(false);
+            }
+        }
+    }
+
+    pub(crate) fn controller_input_review_is_current(&self, row: &ControllerRow) -> bool {
+        !self.stop.load(Ordering::Acquire)
+            && row.valid.load(Ordering::Acquire)
+            && row
+                .input_review_valid
+                .as_ref()
+                .is_some_and(|valid| valid.get())
             && self.channels.iter().any(|channel| {
                 channel.channel == row.channel && !channel.closed.load(Ordering::Acquire)
             })
@@ -490,8 +607,10 @@ impl SettingsSnapshot {
                     associated_target: None,
                     selection: ControllerSelectionView::Idle,
                     metadata: ControllerMetadataView::Unavailable,
+                    input: ControllerInputView::Unavailable,
                     valid: Arc::new(AtomicBool::new(true)),
                     metadata_review_valid: None,
+                    input_review_valid: None,
                 }],
                 controller_targets: vec![
                     ControllerTargetRow {
@@ -822,6 +941,8 @@ pub(crate) struct Coordinator {
     synthetic_enrollment_metadata_ui_qualified: bool,
     #[cfg(test)]
     synthetic_enrollment_metadata_delivery_qualified: bool,
+    #[cfg(test)]
+    synthetic_direct_input_qualified: bool,
 }
 
 impl Default for Coordinator {
@@ -872,6 +993,8 @@ impl Default for Coordinator {
             synthetic_enrollment_metadata_ui_qualified: false,
             #[cfg(test)]
             synthetic_enrollment_metadata_delivery_qualified: false,
+            #[cfg(test)]
+            synthetic_direct_input_qualified: false,
         }
     }
 }
@@ -913,24 +1036,36 @@ fn bounded_approval_label(value: &str, quoted: bool) -> String {
     let mut characters = value.chars();
     let mut label = String::new();
     for character in characters.by_ref().take(128) {
-        let spoofing_control = character.is_control()
-            || matches!(
-                character,
-                '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}'
-                    | '\u{2060}'..='\u{206f}' | '\u{feff}'
-            );
-        if quoted && (spoofing_control || matches!(character, '"' | '\'' | '\\')) {
-            label.extend(character.escape_default());
-        } else if spoofing_control {
-            label.extend(character.escape_unicode());
-        } else {
-            label.push(character);
-        }
+        append_approval_character(&mut label, character, quoted);
     }
     if characters.next().is_some() {
         label.push_str("...");
     }
     label
+}
+
+fn append_approval_character(output: &mut String, character: char, quoted: bool) {
+    let spoofing_control = character.is_control()
+        || matches!(
+            character,
+            '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}'
+                | '\u{2060}'..='\u{206f}' | '\u{feff}'
+        );
+    if quoted && (spoofing_control || matches!(character, '"' | '\'' | '\\')) {
+        output.extend(character.escape_default());
+    } else if spoofing_control {
+        output.extend(character.escape_unicode());
+    } else {
+        output.push(character);
+    }
+}
+
+fn quoted_approval_input(value: &str) -> String {
+    let mut display = String::new();
+    for character in value.chars() {
+        append_approval_character(&mut display, character, true);
+    }
+    display
 }
 
 fn stamp(session: &SessionTab) -> Stamp {
@@ -1095,9 +1230,21 @@ impl Coordinator {
         delivery_qualified && self.enrollment_metadata_ui_qualified()
     }
 
+    fn direct_input_qualified(&self) -> bool {
+        #[cfg(test)]
+        let native_qualified = self.synthetic_direct_input_qualified;
+        #[cfg(not(test))]
+        let native_qualified = false;
+        native_qualified && self.controller_qualified()
+    }
+
     fn machine_for_new_peer(&self) -> Machine {
         if self.controller_opted_in && self.controller_qualified() {
-            Machine::with_controller_enrollment_and_unavailable_presentation()
+            if self.direct_input_qualified() {
+                Machine::with_direct_input_catalog()
+            } else {
+                Machine::with_controller_enrollment_and_unavailable_presentation()
+            }
         } else {
             Machine::with_unavailable_presentation()
         }
@@ -1657,6 +1804,12 @@ impl Coordinator {
             return;
         }
         let now = Instant::now();
+        for peer in self.peers.values_mut() {
+            controller::expire_direct_input(peer, now);
+            if let Some(input) = &peer.controller.direct_input {
+                context.request_repaint_after(input.next_deadline().saturating_duration_since(now));
+            }
+        }
         let cancellation = self.peers.values_mut().try_for_each(|peer| {
             retry_completion(&mut broker, peer, now)?;
             retry_cancelled_waits(&mut broker, peer, now)
@@ -1788,6 +1941,7 @@ impl Coordinator {
                 ipc::Event::Message { key, bytes } => {
                     let controller_qualified =
                         self.controller_qualified() && self.controller_opted_in;
+                    let input_qualified = self.direct_input_qualified() && controller_qualified;
                     let metadata = EnrollmentMetadataContext {
                         grants: &self.enrollment_metadata_grants,
                         qualified: self.enrollment_metadata_delivery_qualified()
@@ -1804,6 +1958,7 @@ impl Coordinator {
                             &self.privacy_gate,
                             &self.stop,
                             controller_qualified,
+                            input_qualified,
                             now,
                         )
                     } else {
@@ -1827,6 +1982,42 @@ impl Coordinator {
                         }
                     }
                 }
+            }
+        }
+        let cleanup_now = Instant::now();
+        if presentation::has_cancelled_direct_reviews(&self.pending_control_reviews, cleanup_now)
+            || presentation::has_cancelled_direct_handoffs(&self.control_handoffs, cleanup_now)
+        {
+            let guard = match festerm_session::try_automation_admission_lock() {
+                Ok(guard) => guard,
+                Err(festerm_session::AutomationAdmissionTryError::Busy) => {
+                    self.reconciliation_deferred = true;
+                    context.request_repaint_after(Duration::from_millis(50));
+                    self.broker = Some(broker);
+                    return;
+                }
+                Err(festerm_session::AutomationAdmissionTryError::Poisoned) => {
+                    self.privacy_lost_with_taken_broker(&mut broker);
+                    return;
+                }
+            };
+            let result = presentation::prune_cancelled_direct_reviews_locked(
+                &mut self.pending_control_reviews,
+                &mut broker,
+                cleanup_now,
+                &guard,
+            );
+            presentation::revoke_cancelled_direct_handoffs_locked(
+                &mut self.control_handoffs,
+                &mut broker,
+                cleanup_now,
+                &guard,
+            );
+            drop(guard);
+            if let Err(error) = result {
+                self.privacy_lost_with_taken_broker(&mut broker);
+                tracing::error!(?error, "cancelled direct input review cleanup failed");
+                return;
             }
         }
         let waits = self.peers.values_mut().try_for_each(|peer| {
@@ -1994,6 +2185,19 @@ impl Coordinator {
                 .and_then(WorkspaceRevision::current),
             &guard,
         );
+        presentation::prune_cancelled_direct_reviews_locked(
+            &mut self.pending_control_reviews,
+            broker,
+            Instant::now(),
+            &guard,
+        )
+        .map_err(ReconcileError::Authority)?;
+        presentation::revoke_cancelled_direct_handoffs_locked(
+            &mut self.control_handoffs,
+            broker,
+            Instant::now(),
+            &guard,
+        );
         let metadata_retired = controller::retire_metadata_actions_locked(
             &mut self.peers,
             &mut self.pending_enrollment_metadata_reviews,
@@ -2103,7 +2307,9 @@ impl Coordinator {
             | NativeCommand::ReviewControllerMetadata { .. }
             | NativeCommand::ConfirmControllerMetadata { .. }
             | NativeCommand::CancelControllerMetadata { .. }
-            | NativeCommand::RevokeControllerMetadata { .. } => {
+            | NativeCommand::RevokeControllerMetadata { .. }
+            | NativeCommand::ReviewControllerInput { .. }
+            | NativeCommand::CancelControllerInput { .. } => {
                 self.status = "Controller action refused without its originating native window.";
             }
         }
@@ -2302,6 +2508,51 @@ impl Coordinator {
     pub(crate) fn controller_target_moving(&mut self, tab: TabId) {
         let guard = CoordinatorUnwind { coordinator: self };
         guard.coordinator.controller_target_moving_inner(tab);
+    }
+
+    pub(crate) fn direct_input_preparations(&self) -> Vec<DirectInputPreparation> {
+        controller::direct_input_preparations(self)
+    }
+
+    pub(crate) fn prepare_direct_input_review(
+        &mut self,
+        preparation: DirectInputPreparation,
+        tab: &mut SessionTab,
+        context: &egui::Context,
+    ) {
+        let guard = CoordinatorUnwind { coordinator: self };
+        match controller::prepare_direct_input_review(guard.coordinator, preparation, tab) {
+            Ok(()) => context.request_repaint(),
+            Err(festerm_automation::Error::Busy) => {
+                context.request_repaint_after(Duration::from_millis(50));
+            }
+            Err(error) => {
+                tracing::warn!(?error, "direct input review preparation refused");
+                controller::refuse_direct_input_preparation(
+                    guard.coordinator,
+                    preparation,
+                    refusal(error),
+                );
+                guard.coordinator.status =
+                    "Direct input could not be prepared; no input was admitted.";
+                context.request_repaint();
+            }
+        }
+    }
+
+    pub(crate) fn missing_direct_input_target(
+        &mut self,
+        preparation: DirectInputPreparation,
+        context: &egui::Context,
+    ) {
+        let guard = CoordinatorUnwind { coordinator: self };
+        controller::refuse_direct_input_preparation(
+            guard.coordinator,
+            preparation,
+            Refusal::StaleTarget,
+        );
+        guard.coordinator.status = "The selected terminal changed; no input was admitted.";
+        context.request_repaint();
     }
 
     fn controller_target_moving_inner(&mut self, tab: TabId) {
@@ -2620,6 +2871,7 @@ fn retry_completion(
         tracing::warn!(?error, "automation completion cleanup failed; closing peer");
         peer.machine.close();
         peer.waits.clear();
+        peer.controller.direct_input = None;
     }
     peer.pending_completion = None;
     Ok(())
@@ -2667,6 +2919,7 @@ fn retry_cancelled_waits(
         );
         peer.machine.close();
         peer.waits.clear();
+        peer.controller.direct_input = None;
     }
     Ok(())
 }
@@ -2704,6 +2957,7 @@ fn process_peer_message(
     privacy: &PrivacyGate,
     stop: &AtomicBool,
     controller_qualified: bool,
+    input_qualified: bool,
     now: Instant,
 ) -> Result<(), festerm_session::AutomationAdmissionTryError> {
     retry_completion(broker, peer, now)?;
@@ -2727,6 +2981,24 @@ fn process_peer_message(
             );
         }
         Event::Backend(request)
+            if matches!(
+                &request.operation,
+                Operation::TerminalSendText { .. } | Operation::TerminalSendKeys { .. }
+            ) =>
+        {
+            controller::enqueue_direct_input(
+                broker,
+                targets,
+                peer,
+                request,
+                apps,
+                privacy,
+                stop,
+                input_qualified,
+                now,
+            );
+        }
+        Event::Backend(request)
             if metadata.qualified
                 && peer.grant.is_none()
                 && matches!(request.operation, Operation::SessionsGet { .. }) =>
@@ -2736,7 +3008,11 @@ fn process_peer_message(
             );
         }
         Event::Backend(request) => execute(broker, targets, peer, request, apps, now),
-        Event::Cancelled(key) => return cancel_wait(broker, peer, &key, now),
+        Event::Cancelled(key) => {
+            if !controller::cancel_direct_input(peer, &key) {
+                return cancel_wait(broker, peer, &key, now);
+            }
+        }
         Event::NoReply => {}
     }
     retry_completion(broker, peer, Instant::now())

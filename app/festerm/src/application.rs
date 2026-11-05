@@ -987,6 +987,33 @@ impl FesTermApplication {
             app.report_automation_action_conflict();
             context.request_repaint();
         }
+        let preparations = if conflicted {
+            Vec::new()
+        } else {
+            self.automation.direct_input_preparations()
+        };
+        drop(apps);
+        for preparation in preparations {
+            let tab = self
+                .windows
+                .iter_mut()
+                .find(|window| window.id == preparation.window)
+                .and_then(|window| {
+                    window
+                        .app
+                        .automation_control_session_mut(crate::tabs::TabId::from_chip_id(
+                            preparation.target.session(),
+                        ))
+                });
+            if let Some(tab) = tab {
+                self.automation
+                    .prepare_direct_input_review(preparation, tab, context);
+            } else {
+                self.automation
+                    .missing_direct_input_target(preparation, context);
+            }
+        }
+        let apps: Vec<_> = self.windows.iter().map(|window| &window.app).collect();
         let snapshot = self.automation.settings(&apps);
         let mut changed = false;
         for window in &mut self.windows {

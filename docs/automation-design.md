@@ -264,8 +264,10 @@ The host may explicitly propose readable sources as part of the ordinary
 handoff review. Existing metadata sources must fit that reviewed closure;
 they are never added automatically. The native decision freezes the exact
 cross-flow and grant epochs, and ordinary-grant expiry also cuts presentation.
-The host seam models these checks but does not install a writer epoch, handle
-MCP cancellation or response delivery, or qualify native UI or recipients.
+The host seam models these checks but does not install a writer epoch or
+qualify native UI or recipients. A synthetic-only adapter stages and cancels
+pending MCP input reviews before publication; it does not dispatch input or
+deliver an admitted response.
 
 This direct-input binding is a prerequisite, not a feature. #524's P1
 checkpoint remains observation-only. A separately selected protocol catalog
@@ -274,10 +276,18 @@ calls against exact enrollment handles, with an optional host-owned
 presentation revision. Refusal means definitely not admitted, admission means
 queue admission only, and a mismatched or uncertain backend result is unknown.
 Cancellation or response loss does not prove non-admission or authorize replay.
-The application does not select this catalog and explicitly refuses these
-operations in its observation path. There is no native control approval UI,
-MCP input adapter or feature activation; the modeled enrollment and presentation
-foundations do not qualify those paths or a desktop.
+The production application does not select this catalog and explicitly refuses
+these operations in its observation path. Synthetic tests alone select it to
+stage one bounded request per peer. After a current-window review is requested,
+the host freezes the exact association, full escaped action and all separately
+approved metadata sources before displaying them. Cancellation, source expiry,
+human/IME fences, terminal mode changes or retirement invalidate the review and
+reclaim its pending proposal. A pending request's approved handoff is cut on
+cancellation; a handoff tied to an enrollment is revoked when that enrollment
+is replaced or removed. This stage has no approval or send action. There is no
+production control approval UI, MCP input publication or feature activation;
+the modeled enrollment and presentation foundations do not qualify those paths
+or a desktop.
 
 The kernel also has a separately native-approved, discovery-only metadata slot
 on the same connection. It binds exact target generations and has its own epoch,

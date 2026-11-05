@@ -2741,6 +2741,13 @@ metadata review still refuses active control and legacy observation. The
 dormant metadata-first direct-action review requires the entire active
 enrollment-source closure and tests rejection after grant replacement or a
 source-window move. Its simulated decision is not a native handoff UI.
+A synthetic-only input-review stage shows the complete escaped action and all
+metadata sources, bounds each peer to one pending request, and exercises
+cancellation, expiry, human/IME and terminal-mode changes, source retirement
+and stale pointer/accessibility actions. The review has no approval or send
+action. Native usability must verify that long actions and every source can
+actually be read, and a future approval must explain repetition, budgets and
+uncertainty before publication.
 A synthetic-qualified
 current-window Settings review separately describes label and lifecycle status,
 requires explicit confirmation and models cancellation and queued scoped

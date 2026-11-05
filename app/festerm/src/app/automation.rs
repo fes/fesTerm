@@ -246,6 +246,10 @@ impl FesTermApp {
         self.state.session_tab(id)
     }
 
+    pub(crate) fn automation_control_session_mut(&mut self, id: TabId) -> Option<&mut SessionTab> {
+        self.state.session_tab_mut(id)
+    }
+
     pub(crate) fn automation_sessions(&self) -> impl Iterator<Item = (TabId, &SessionTab)> {
         self.state
             .tabs()
@@ -329,6 +333,15 @@ impl FesTermApp {
                 *registration,
                 *review,
             ),
+            NativeCommand::CancelControllerInput {
+                channel,
+                registration,
+                input,
+            } => self.automation_settings.cancel_controller_input_review(
+                *channel,
+                *registration,
+                *input,
+            ),
             NativeCommand::ClearWorkflow => self.automation_settings.workflow.disable(),
             NativeCommand::ApproveObservation { .. }
             | NativeCommand::EnableControllerEnrollment
@@ -339,6 +352,7 @@ impl FesTermApp {
             | NativeCommand::ReviewControllerMetadata { .. }
             | NativeCommand::ConfirmControllerMetadata { .. }
             | NativeCommand::RevokeControllerMetadata { .. }
+            | NativeCommand::ReviewControllerInput { .. }
             | NativeCommand::CaptureWorkflow(_) => {}
         }
         if self.automation_command_overflow {

@@ -970,6 +970,10 @@ fn direct_action_review_freezes_real_key_encoding_and_supersedes_old_action() {
         )
     })
     .unwrap();
+    assert_eq!(
+        review.direct_action_display(),
+        Some(&presentation::DirectActionDisplay::Keys(keys.clone()))
+    );
     let binding = *review.request().bindings.first().unwrap();
     assert!(matches!(
         binding.invocation,
@@ -992,6 +996,35 @@ fn direct_action_review_freezes_real_key_encoding_and_supersedes_old_action() {
         ))
     ));
     assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+}
+
+#[test]
+fn direct_action_review_preserves_and_escapes_the_entire_input_display() {
+    let _serial = presentation_admission_test_guard();
+    let (mut coordinator, mut app, tab, _ime, target) = control_review_fixture();
+    let text = format!("{}\n\"\\\u{202e}done", "x".repeat(130));
+    let review = retry_automation_busy(|| {
+        coordinator.prepare_direct_action_review(
+            1,
+            target,
+            DirectAction::Text {
+                text: &text,
+                submit: true,
+            },
+            Duration::from_secs(60),
+            app.automation_session_mut(tab),
+        )
+    })
+    .unwrap();
+    let display = review.direct_action_display().unwrap();
+    assert_eq!(
+        display,
+        &presentation::DirectActionDisplay::Text {
+            escaped: format!("{}\\n\\\"\\\\\\u{{202e}}done", "x".repeat(130)),
+            submit: true,
+        }
+    );
+    assert!(!format!("{display:?}").contains("done"));
 }
 
 #[test]
@@ -8100,6 +8133,7 @@ fn automation_cancelled_wait_poison_closes_privacy_without_output() {
         &coordinator.privacy_gate,
         &coordinator.stop,
         false,
+        false,
         Instant::now(),
     );
     assert_eq!(
@@ -8259,6 +8293,7 @@ fn automation_cancelled_wait_with_missing_run_closes_peer_without_output() {
         &[&app],
         &coordinator.privacy_gate,
         &coordinator.stop,
+        false,
         false,
         Instant::now(),
     );

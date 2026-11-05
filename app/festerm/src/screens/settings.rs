@@ -1081,6 +1081,27 @@ fn record_automation_action(
     });
 }
 
+fn cancel_controller_input_button(
+    ui: &mut Ui,
+    command: &mut Option<crate::automation::NativeCommand>,
+    channel: u64,
+    registration: festerm_automation::ControllerRegistrationId,
+    token: u64,
+) {
+    ui.push_id(("controller-input-cancel", token), |ui| {
+        if ui.button("Cancel requested input").clicked() {
+            record_automation_action(
+                command,
+                crate::automation::NativeCommand::CancelControllerInput {
+                    channel,
+                    registration,
+                    input: token,
+                },
+            );
+        }
+    });
+}
+
 /// A titled card matching the launcher/profile-editor "quiet section" visual
 /// language (`ssh_section_heading` + a bordered, rounded surface), so
 /// Settings groups related controls the same way the rest of the app does
@@ -1091,7 +1112,10 @@ fn automation_settings(
     enabled: bool,
     window: crate::application::WindowId,
 ) -> Option<crate::automation::NativeCommand> {
-    use crate::automation::{ControllerMetadataView, ControllerSelectionView, NativeCommand};
+    use crate::automation::{
+        presentation::DirectActionDisplay, ControllerInputView, ControllerMetadataView,
+        ControllerSelectionView, NativeCommand,
+    };
     use festerm_automation::TargetRef;
     ui.add_space(10.0);
     ssh_paragraph(ui, snapshot.status);
@@ -1440,6 +1464,123 @@ fn automation_settings(
                     }
                     ControllerMetadataView::Revoking => {
                         ssh_paragraph(ui, "Revoking metadata access.");
+                    }
+                }
+                match &row.input {
+                    ControllerInputView::Unavailable => {}
+                    ControllerInputView::Requested {
+                        token,
+                        window: input_window,
+                        target,
+                    } => {
+                        if *input_window == window
+                            && snapshot.controller_input_review_is_current(row)
+                        {
+                            if let Some(candidate) = snapshot.controller_targets.iter().find(|candidate| {
+                                candidate.reference == *target && candidate.window == window
+                            }) {
+                                ui.label(format!("Client {code} requested input for {}", candidate.label));
+                                ui.push_id(("controller-input-review", *token), |ui| {
+                                    if ui
+                                        .add_enabled(
+                                            !snapshot.controller_targets_incomplete,
+                                            egui::Button::new("Review requested input"),
+                                        )
+                                        .clicked()
+                                    {
+                                        record_automation_action(
+                                            &mut command,
+                                            NativeCommand::ReviewControllerInput {
+                                                channel: row.channel,
+                                                registration: row.registration,
+                                                input: *token,
+                                            },
+                                        );
+                                    }
+                                });
+                            }
+                        } else {
+                            ssh_paragraph(ui, "Review this input in the associated window, or cancel.");
+                        }
+                        cancel_controller_input_button(
+                            ui, &mut command, row.channel, row.registration, *token,
+                        );
+                    }
+                    ControllerInputView::Preparing { token, window: input_window } => {
+                        if *input_window == window {
+                            ssh_paragraph(ui, "Preparing the exact input and existing metadata disclosures.");
+                        }
+                        cancel_controller_input_button(
+                            ui, &mut command, row.channel, row.registration, *token,
+                        );
+                    }
+                    ControllerInputView::Reviewing {
+                        token,
+                        window: input_window,
+                        target,
+                        action,
+                        metadata_sources,
+                    } => {
+                        let candidate = snapshot.controller_targets.iter().find(|candidate| {
+                            candidate.reference == *target && candidate.window == window
+                        });
+                        if *input_window != window {
+                            ssh_paragraph(ui, "Review this input in the associated window, or cancel.");
+                        } else if let Some(candidate) = candidate.filter(|_| {
+                            snapshot.controller_input_review_is_current(row)
+                        }) {
+                            ui.label(format!(
+                                "Client {code}; input target: {} (session {}, attachment {})",
+                                candidate.label,
+                                target.session(),
+                                target.generation(),
+                            ));
+                            ssh_paragraph(
+                                ui,
+                                "Review the complete escaped input below. Text can execute even without Enter.",
+                            );
+                            egui::ScrollArea::vertical()
+                                .id_salt(("controller-input", row.channel, *token))
+                                .max_height(240.0)
+                                .show(ui, |ui| match action {
+                                    DirectActionDisplay::Text { escaped, submit } => {
+                                        ui.add(egui::Label::new(format!("Text: \"{escaped}\"")).wrap());
+                                        ui.label(if *submit {
+                                            "Enter will be sent after the text."
+                                        } else {
+                                            "No extra Enter will be sent."
+                                        });
+                                    }
+                                    DirectActionDisplay::Keys(keys) => {
+                                        for (index, key) in keys.iter().enumerate() {
+                                            ui.add(
+                                                egui::Label::new(format!("Key {}: \"{}\"", index + 1, key))
+                                                    .wrap(),
+                                            );
+                                        }
+                                    }
+                                });
+                            if metadata_sources.is_empty() {
+                                ssh_paragraph(ui, "No independently approved metadata sources are included.");
+                            } else {
+                                ssh_paragraph(
+                                    ui,
+                                    "Information available from each metadata source below can influence input at this target:",
+                                );
+                                for source in metadata_sources {
+                                    ui.add(egui::Label::new(source).wrap());
+                                }
+                            }
+                            ssh_paragraph(ui, "Input publication is not available in this build.");
+                        } else {
+                            ssh_paragraph(ui, "This input review is no longer current.");
+                        }
+                        cancel_controller_input_button(
+                            ui, &mut command, row.channel, row.registration, *token,
+                        );
+                    }
+                    ControllerInputView::Cancelling => {
+                        ssh_paragraph(ui, "Cancelling requested input.");
                     }
                 }
             },
@@ -2333,6 +2474,97 @@ mod tests {
     }
 
     #[test]
+    fn controller_input_settings_show_the_review_and_cancel_stale_snapshots() {
+        use crate::application::WindowId;
+        use crate::automation::{
+            presentation::DirectActionDisplay, NativeCommand, SettingsSnapshot,
+        };
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            window: WindowId,
+            command: Option<NativeCommand>,
+        }
+        let (mut snapshot, registration, _, target, _, _) =
+            SettingsSnapshot::with_controller_for_test();
+        snapshot.controllers[0].associated_target = Some(target);
+        snapshot.controllers[0].set_input_requested_for_test(53, WindowId::PRIMARY, target);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 1800.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    if let Some(command) =
+                        automation_settings(ui, &state.snapshot, true, state.window)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                State {
+                    snapshot,
+                    window: WindowId::PRIMARY,
+                    command: None,
+                },
+            );
+        harness.run();
+        harness.get_by_label("Review requested input").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::ReviewControllerInput {
+                channel: 7,
+                registration: actual,
+                input: 53,
+            }) if *actual == registration
+        ));
+        harness.state_mut().command = None;
+        harness.state_mut().snapshot.controllers[0].set_input_review_for_test(
+            53,
+            WindowId::PRIMARY,
+            target,
+            DirectActionDisplay::Text {
+                escaped: "long escaped text\\nend".into(),
+                submit: true,
+            },
+            vec!["Enrollment source: exact metadata terminal".into()],
+        );
+        harness.state_mut().window = WindowId::for_test(2);
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("Text: \"long escaped")
+            .is_none());
+        harness.state_mut().window = WindowId::PRIMARY;
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("Text: \"long escaped text\\nend\"")
+            .is_some());
+        assert!(harness
+            .query_by_label("Enter will be sent after the text.")
+            .is_some());
+        assert!(harness
+            .query_by_label("Enrollment source: exact metadata terminal")
+            .is_some());
+        assert!(harness
+            .query_by_label("Input publication is not available in this build.")
+            .is_some());
+        let other_window_snapshot = harness.state().snapshot.clone();
+        other_window_snapshot.cancel_controller_input_review(7, registration, 53);
+        harness.run();
+        assert!(harness
+            .query_by_label_contains("Text: \"long escaped")
+            .is_none());
+        harness.get_by_label("Cancel requested input").click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::CancelControllerInput {
+                channel: 7,
+                registration: actual,
+                input: 53,
+            }) if *actual == registration
+        ));
+    }
+
+    #[test]
     fn controller_metadata_review_ignores_stale_pointer_and_accessibility_actions() {
         use crate::application::WindowId;
         use crate::automation::{NativeCommand, SettingsSnapshot};
@@ -2401,6 +2633,95 @@ mod tests {
                     review: 43,
                 }) if *actual == registration
             ));
+        }
+    }
+
+    #[test]
+    fn controller_input_review_ignores_stale_pointer_and_accessibility_actions() {
+        use crate::application::WindowId;
+        use crate::automation::{NativeCommand, SettingsSnapshot};
+
+        struct State {
+            snapshot: SettingsSnapshot,
+            command: Option<NativeCommand>,
+        }
+        for (accessibility, cancel) in [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let (mut snapshot, registration, _, target, _, _) =
+                SettingsSnapshot::with_controller_for_test();
+            snapshot.controllers[0].associated_target = Some(target);
+            snapshot.controllers[0].set_input_requested_for_test(53, WindowId::PRIMARY, target);
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(900.0, 1800.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        if let Some(command) =
+                            automation_settings(ui, &state.snapshot, true, WindowId::PRIMARY)
+                        {
+                            state.command = Some(command);
+                        }
+                    },
+                    State {
+                        snapshot,
+                        command: None,
+                    },
+                );
+            harness.run();
+            let label = if cancel {
+                "Cancel requested input"
+            } else {
+                "Review requested input"
+            };
+            let position = harness.get_by_label(label).rect().center();
+            if accessibility {
+                harness.get_by_label(label).click_accesskit();
+            } else {
+                harness.event(egui::Event::PointerMoved(position));
+                harness.event(egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.step();
+            }
+            harness.state_mut().snapshot.controllers[0].set_input_requested_for_test(
+                54,
+                WindowId::PRIMARY,
+                target,
+            );
+            if !accessibility {
+                harness.event(egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            harness.step();
+            assert!(harness.state().command.is_none());
+            harness.get_by_label(label).click();
+            harness.step();
+            let correct = if cancel {
+                matches!(
+                    &harness.state().command,
+                    Some(NativeCommand::CancelControllerInput {
+                        channel: 7,
+                        registration: actual,
+                        input: 54,
+                    }) if *actual == registration
+                )
+            } else {
+                matches!(
+                    &harness.state().command,
+                    Some(NativeCommand::ReviewControllerInput {
+                        channel: 7,
+                        registration: actual,
+                        input: 54,
+                    }) if *actual == registration
+                )
+            };
+            assert!(correct);
         }
     }
 

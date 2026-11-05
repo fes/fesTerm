@@ -22,6 +22,18 @@ pub(crate) enum DirectAction<'a> {
     Keys(&'a [String]),
 }
 
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) enum DirectActionDisplay {
+    Text { escaped: String, submit: bool },
+    Keys(Vec<String>),
+}
+
+impl std::fmt::Debug for DirectActionDisplay {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("DirectActionDisplay(<redacted>)")
+    }
+}
+
 struct FrozenDirectAction {
     binding: InvocationBinding,
     input: festerm_core::PreparedInput,
@@ -95,6 +107,14 @@ pub(super) struct BoundControlHandoff {
     sources: Vec<FrozenSource>,
     lease: Option<LeaseRef>,
     direct_action: Option<FrozenDirectAction>,
+    association: Option<controller::FrozenAssociation>,
+    pending_request: Option<DirectRequestFence>,
+}
+
+struct DirectRequestFence {
+    association: controller::FrozenAssociation,
+    valid: Rc<Cell<bool>>,
+    deadline: Instant,
 }
 
 pub(super) struct BoundControlReview {
@@ -105,11 +125,13 @@ pub(super) struct BoundControlReview {
     metadata: Option<NativeMetadataGrant>,
     enrollment_metadata: NativeOrdinaryEnrollmentReview,
     direct_action: Option<FrozenDirectAction>,
+    direct_request: Option<DirectRequestFence>,
 }
 
 pub(super) struct BoundMetadataGrant {
     pub(super) grant: NativeMetadataGrant,
     sources: Vec<FrozenSource>,
+    expires: Instant,
 }
 
 pub(super) struct BoundMetadataReview {
@@ -140,7 +162,7 @@ impl BoundEnrollmentMetadataGrant {
         (self.source.guard.clone(), self.association.valid_flag())
     }
 
-    fn is_bound(
+    pub(super) fn is_bound(
         &self,
         broker: &Broker,
         targets: &BTreeMap<u64, Target>,
@@ -221,7 +243,9 @@ pub(crate) struct PendingControlReview {
     request: GrantRequest,
     lifetime: Duration,
     metadata_sources: BTreeSet<TargetRef>,
+    metadata: Option<NativeMetadataGrant>,
     enrollment_metadata: NativeOrdinaryEnrollmentReview,
+    direct_action_display: Option<DirectActionDisplay>,
 }
 
 /// A native decision for one review, never a caller-provided credential.
@@ -283,9 +307,17 @@ impl PendingControlReview {
         &self.metadata_sources
     }
 
+    pub(super) fn metadata_grant(&self) -> Option<NativeMetadataGrant> {
+        self.metadata
+    }
+
     /// Exact separately approved enrollment grants shown in this handoff.
     pub(crate) fn enrollment_metadata_grants(&self) -> &[NativeEnrollmentMetadataGrant] {
         self.enrollment_metadata.grants()
+    }
+
+    pub(crate) fn direct_action_display(&self) -> Option<&DirectActionDisplay> {
+        self.direct_action_display.as_ref()
     }
 
     /// Only a native consent callback displaying the exact enrollment grants,
@@ -386,6 +418,88 @@ pub(super) fn prune_stale_enrollment_metadata_reviews_locked(
     Ok(())
 }
 
+pub(super) fn prune_cancelled_direct_reviews_locked(
+    pending: &mut BTreeMap<ApprovalId, BoundControlReview>,
+    broker: &mut Broker,
+    now: Instant,
+    _guard: &AutomationAdmissionGuard,
+) -> festerm_automation::Result<()> {
+    let stale: Vec<_> = pending
+        .iter()
+        .filter_map(|(id, review)| {
+            review
+                .direct_request
+                .as_ref()
+                .filter(|fence| !fence.valid.get() || now >= fence.deadline)
+                .map(|_| (*id, review.principal))
+        })
+        .collect();
+    for (id, principal) in stale {
+        if broker.pending_approval_is_active(principal, id, now) {
+            broker.reject_approval(principal, id)?;
+        }
+        pending.remove(&id);
+    }
+    Ok(())
+}
+
+pub(super) fn has_cancelled_direct_reviews(
+    pending: &BTreeMap<ApprovalId, BoundControlReview>,
+    now: Instant,
+) -> bool {
+    pending.values().any(|review| {
+        review
+            .direct_request
+            .as_ref()
+            .is_some_and(|fence| !fence.valid.get() || now >= fence.deadline)
+    })
+}
+
+pub(super) fn has_cancelled_direct_handoffs(
+    handoffs: &BTreeMap<ConnectionId, BoundControlHandoff>,
+    now: Instant,
+) -> bool {
+    handoffs.values().any(|handoff| {
+        handoff
+            .pending_request
+            .as_ref()
+            .is_some_and(|fence| !fence.valid.get() || now >= fence.deadline)
+    })
+}
+
+pub(super) fn revoke_cancelled_direct_handoffs_locked(
+    handoffs: &mut BTreeMap<ConnectionId, BoundControlHandoff>,
+    broker: &mut Broker,
+    now: Instant,
+    guard: &AutomationAdmissionGuard,
+) {
+    let cancelled: Vec<_> = handoffs
+        .iter()
+        .filter_map(|(principal, handoff)| {
+            handoff
+                .pending_request
+                .as_ref()
+                .filter(|fence| !fence.valid.get() || now >= fence.deadline)
+                .map(|_| (*principal, handoff.target, handoff.grant))
+        })
+        .collect();
+    for (principal, target, grant) in cancelled {
+        if broker.native_control_grant(principal, target, now) == Ok(grant) {
+            broker.revoke_ordinary(principal, guard);
+        }
+        handoffs.remove(&principal);
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct DirectInputSources {
+    pub(super) metadata: Option<NativeMetadataGrant>,
+    pub(super) metadata_expires: Option<Instant>,
+    pub(super) metadata_targets: BTreeSet<TargetRef>,
+    pub(super) enrollments: Vec<NativeEnrollmentMetadataGrant>,
+    pub(super) scope: Scope,
+}
+
 fn try_admission() -> festerm_automation::Result<AutomationAdmissionGuard> {
     festerm_session::try_automation_admission_lock().map_err(|error| match error {
         AutomationAdmissionTryError::Busy => Error::Busy,
@@ -447,6 +561,49 @@ impl Coordinator {
                     current.attachment_generation,
                 )
             })
+    }
+
+    pub(super) fn staged_direct_review_is_current_locked(
+        &self,
+        channel: u64,
+        review: &PendingControlReview,
+        apps: &[&FesTermApp],
+        guard: &AutomationAdmissionGuard,
+    ) -> bool {
+        let (Some(peer), Some(broker)) = (self.peers.get(&channel), self.broker.as_ref()) else {
+            return false;
+        };
+        let Some(bound) = self.pending_control_reviews.get(&review.approval_id) else {
+            return false;
+        };
+        let (Some(request), Some(action)) = (&bound.direct_request, &bound.direct_action) else {
+            return false;
+        };
+        let now = Instant::now();
+        if bound.principal != peer.principal
+            || bound.principal != review.principal
+            || bound.target != review.target
+            || !request.valid.get()
+            || now >= request.deadline
+            || !broker.pending_approval_is_active(peer.principal, review.approval_id, now)
+            || !request
+                .association
+                .is_current(broker, &self.targets, peer, apps, guard)
+            || !self.live_control_fence_locked(bound.target, &bound.fence, guard)
+            || !bound
+                .sources
+                .iter()
+                .all(|source| source.is_current(&self.targets, guard))
+        {
+            return false;
+        }
+        let mut sessions = apps
+            .iter()
+            .filter_map(|app| app.automation_session(TabId::from_chip_id(bound.target.session())));
+        let Some(session) = sessions.next() else {
+            return false;
+        };
+        sessions.next().is_none() && session.terminal.modes() == action.input.modes()
     }
 
     fn freeze_readable_sources_locked(
@@ -530,6 +687,79 @@ impl Coordinator {
         )))
     }
 
+    pub(super) fn direct_input_sources_locked(
+        &self,
+        channel: u64,
+        now: Instant,
+        guard: &AutomationAdmissionGuard,
+    ) -> festerm_automation::Result<DirectInputSources> {
+        let peer = self.peers.get(&channel).ok_or(Error::Closed)?;
+        let broker = self.broker.as_ref().ok_or(Error::Unavailable)?;
+        let metadata = self.metadata_snapshot_locked(peer.principal, now, guard)?;
+        let metadata_targets = metadata
+            .as_ref()
+            .map_or_else(BTreeSet::new, |(_, sources)| sources.clone());
+        let metadata_expires = match &metadata {
+            Some((grant, _)) => Some(
+                self.metadata_grants
+                    .get(&peer.principal)
+                    .filter(|bound| bound.grant == *grant)
+                    .ok_or(Error::Revoked)?
+                    .expires,
+            ),
+            None => None,
+        };
+        let mut enrollments = Vec::new();
+        let mut scope = Scope {
+            discover: metadata_targets.clone(),
+            ..Scope::default()
+        };
+        for ((principal, _, _), bound) in &self.enrollment_metadata_grants {
+            if *principal == peer.principal {
+                if !bound.is_bound(broker, &self.targets, peer, now, guard) {
+                    return Err(Error::Revoked);
+                }
+                enrollments.push(bound.grant);
+                scope.discover.insert(bound.grant.target());
+            }
+        }
+        enrollments.sort_unstable();
+        Ok(DirectInputSources {
+            metadata: metadata.as_ref().map(|(grant, _)| *grant),
+            metadata_expires,
+            metadata_targets,
+            enrollments,
+            scope,
+        })
+    }
+
+    pub(super) fn bind_direct_request_review(
+        &mut self,
+        review: &PendingControlReview,
+        association: controller::FrozenAssociation,
+        valid: Rc<Cell<bool>>,
+        deadline: Instant,
+    ) -> festerm_automation::Result<()> {
+        let bound = self
+            .pending_control_reviews
+            .get_mut(&review.approval_id)
+            .ok_or(Error::Revoked)?;
+        if bound.principal != review.principal
+            || bound.target != review.target
+            || bound.target != association.target()
+            || bound.direct_action.is_none()
+            || bound.direct_request.is_some()
+        {
+            return Err(Error::BindingMismatch);
+        }
+        bound.direct_request = Some(DirectRequestFence {
+            association,
+            valid,
+            deadline,
+        });
+        Ok(())
+    }
+
     fn enrollment_sources_locked(
         &self,
         channel: u64,
@@ -569,6 +799,7 @@ impl Coordinator {
             .and_then(WorkspaceRevision::current);
         let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
         broker.poll_expiry(now);
+        revoke_cancelled_direct_handoffs_locked(&mut self.control_handoffs, broker, now, guard);
         prune_stale_enrollment_metadata_reviews_locked(
             &mut self.pending_enrollment_metadata_reviews,
             broker,
@@ -870,9 +1101,10 @@ impl Coordinator {
                 target,
                 fence,
                 sources,
-                metadata: metadata.map(|(grant, _)| grant),
+                metadata: metadata.as_ref().map(|(grant, _)| *grant),
                 enrollment_metadata: enrollment_review.clone(),
                 direct_action: None,
+                direct_request: None,
             },
         );
         Ok(PendingControlReview {
@@ -882,7 +1114,9 @@ impl Coordinator {
             request,
             lifetime,
             metadata_sources,
+            metadata: metadata.map(|(grant, _)| grant),
             enrollment_metadata: enrollment_review,
+            direct_action_display: None,
         })
     }
 
@@ -916,6 +1150,18 @@ impl Coordinator {
         if bound.principal != principal || bound.target != review.target {
             return Err(Error::Unauthorized);
         }
+        if let Some(fence) = &bound.direct_request {
+            let peer = self.peers.get(&channel).ok_or(Error::Closed)?;
+            let broker = self.broker.as_ref().ok_or(Error::Unavailable)?;
+            if !fence.valid.get()
+                || now >= fence.deadline
+                || !fence
+                    .association
+                    .is_bound(broker, &self.targets, peer, &guard)
+            {
+                return Err(Error::Revoked);
+            }
+        }
         let metadata = self.metadata_snapshot_locked(principal, now, &guard)?;
         let mut metadata_sources = metadata
             .as_ref()
@@ -941,9 +1187,21 @@ impl Coordinator {
             .union(&review.request.scope.observe)
             .copied()
             .collect();
+        let approval_now = Instant::now();
+        let lifetime = bound
+            .direct_request
+            .as_ref()
+            .map_or(review.lifetime, |fence| {
+                review
+                    .lifetime
+                    .min(fence.deadline.saturating_duration_since(approval_now))
+            });
+        if lifetime.is_zero() {
+            return Err(Error::Expired);
+        }
         let mut approval = NativeApproval::new_for_enrollment(
             review.request.clone(),
-            review.lifetime,
+            lifetime,
             bound.enrollment_metadata.clone(),
         )
         .accept_control_handoff(review.target, readable_sources);
@@ -968,7 +1226,7 @@ impl Coordinator {
         {
             return Err(Error::QuotaExceeded);
         }
-        let now = Instant::now();
+        let now = approval_now;
         let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
         if let Err(error) = broker.approve(principal, review.approval_id, approval, now, &guard) {
             let _ = broker.reject_approval(principal, review.approval_id);
@@ -993,6 +1251,22 @@ impl Coordinator {
                 return Err(error);
             }
         };
+        let pending_request = bound.direct_request;
+        let association = pending_request
+            .as_ref()
+            .map(|fence| fence.association.clone());
+        if let Some(association) = &association {
+            let result = self
+                .peers
+                .get_mut(&channel)
+                .ok_or(Error::Closed)
+                .and_then(|peer| association.bind_direct_control_grant(peer, grant));
+            if let Err(error) = result {
+                broker.revoke_ordinary(principal, &guard);
+                self.control_handoffs.remove(&principal);
+                return Err(error);
+            }
+        }
         self.control_handoffs.insert(
             principal,
             BoundControlHandoff {
@@ -1002,6 +1276,8 @@ impl Coordinator {
                 sources: bound.sources,
                 lease: None,
                 direct_action: bound.direct_action,
+                association,
+                pending_request,
             },
         );
         Ok(())
@@ -1050,7 +1326,7 @@ impl Coordinator {
         {
             return Err(Error::BindingMismatch);
         }
-        let (input, canonical) = match action {
+        let (input, canonical, display) = match action {
             DirectAction::Text { text, submit } => {
                 if text.is_empty() || text.len() > festerm_automation::MAX_INPUT_BYTES as usize {
                     return Err(Error::InvalidRequest);
@@ -1066,6 +1342,10 @@ impl Coordinator {
                 (
                     input,
                     serde_json::json!({"version": 1, "operation": "send_text", "text": text, "submit": submit}),
+                    DirectActionDisplay::Text {
+                        escaped: quoted_approval_input(text),
+                        submit,
+                    },
                 )
             }
             DirectAction::Keys(keys) => {
@@ -1077,6 +1357,9 @@ impl Coordinator {
                 (
                     input,
                     serde_json::json!({"version": 1, "operation": "send_keys", "keys": keys}),
+                    DirectActionDisplay::Keys(
+                        keys.iter().map(|key| quoted_approval_input(key)).collect(),
+                    ),
                 )
             }
         };
@@ -1104,7 +1387,7 @@ impl Coordinator {
             bindings: BTreeSet::from([binding]),
             direct_read_calls: BTreeSet::new(),
         };
-        let review = self.prepare_control_handoff_review(
+        let mut review = self.prepare_control_handoff_review(
             channel,
             target,
             request,
@@ -1116,6 +1399,7 @@ impl Coordinator {
             .get_mut(&review.approval_id)
             .ok_or(Error::Revoked)?;
         bound.direct_action = Some(FrozenDirectAction { binding, input });
+        review.direct_action_display = Some(display);
         Ok(review)
     }
 
@@ -1267,6 +1551,9 @@ impl Coordinator {
             approval = approval.accept_control_disclosure(target, review.request.targets.clone());
         }
         let now = Instant::now();
+        let expires = now
+            .checked_add(review.lifetime)
+            .ok_or(Error::InvalidRequest)?;
         let broker = self.broker.as_mut().ok_or(Error::Unavailable)?;
         if let Err(error) =
             broker.approve_metadata(principal, review.approval_id, approval, now, &guard)
@@ -1287,6 +1574,7 @@ impl Coordinator {
             BoundMetadataGrant {
                 grant,
                 sources: bound.sources,
+                expires,
             },
         );
         self.pending_control_reviews
@@ -1665,10 +1953,11 @@ impl Coordinator {
         if handoff.target != target {
             return Err(Error::BindingMismatch);
         }
-        if !handoff
-            .sources
-            .iter()
-            .all(|source| source.is_current(&self.targets, &guard))
+        if !self.handoff_association_is_bound(channel, handoff, &guard)
+            || !handoff
+                .sources
+                .iter()
+                .all(|source| source.is_current(&self.targets, &guard))
         {
             return Err(Error::Revoked);
         }
@@ -1683,6 +1972,28 @@ impl Coordinator {
             .ok_or(Error::Revoked)?
             .lease = Some(lease);
         Ok(lease)
+    }
+
+    fn handoff_association_is_bound(
+        &self,
+        channel: u64,
+        handoff: &BoundControlHandoff,
+        guard: &AutomationAdmissionGuard,
+    ) -> bool {
+        if handoff
+            .pending_request
+            .as_ref()
+            .is_some_and(|fence| !fence.valid.get() || Instant::now() >= fence.deadline)
+        {
+            return false;
+        }
+        handoff.association.as_ref().is_none_or(|association| {
+            let (Some(peer), Some(broker)) = (self.peers.get(&channel), self.broker.as_ref())
+            else {
+                return false;
+            };
+            association.is_bound(broker, &self.targets, peer, guard)
+        })
     }
 
     /// The application binds its one shared UI workspace before use. Rebinding
@@ -1935,10 +2246,11 @@ impl Coordinator {
         if handoff.target != target || handoff.grant != grant || handoff.lease != Some(lease) {
             return Err(Error::BindingMismatch);
         }
-        if !handoff
-            .sources
-            .iter()
-            .all(|source| source.is_current(&self.targets, guard))
+        if !self.handoff_association_is_bound(channel, handoff, guard)
+            || !handoff
+                .sources
+                .iter()
+                .all(|source| source.is_current(&self.targets, guard))
             || !self.live_presentation_target(target, guard)
         {
             return Err(Error::StaleTarget);
@@ -2069,10 +2381,11 @@ impl Coordinator {
         if handoff.target != target || handoff.grant != grant || handoff.lease != Some(lease) {
             return Err(refused(Error::BindingMismatch));
         }
-        if !handoff
-            .sources
-            .iter()
-            .all(|source| source.is_current(&self.targets, &guard))
+        if !self.handoff_association_is_bound(channel, handoff, &guard)
+            || !handoff
+                .sources
+                .iter()
+                .all(|source| source.is_current(&self.targets, &guard))
         {
             return Err(refused(Error::Revoked));
         }
