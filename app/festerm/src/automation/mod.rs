@@ -30,8 +30,8 @@ use eframe::egui;
 use festerm_automation::{
     Broker, Budget, Completion, ConnectionId, ControllerEnrollmentId, ControllerEnrollmentProposal,
     ControllerRegistrationId, Digest, DirectKind, GrantRequest, Invocation, InvocationBinding,
-    NativeApproval, NativeControllerEnrollment, Operation as AuthorityOperation, RequestId, RunId,
-    RunSpec, Scope, TargetRef,
+    MetadataRunSpec, NativeApproval, NativeControllerEnrollment, Operation as AuthorityOperation,
+    RequestId, RunId, RunSpec, Scope, TargetRef,
 };
 use festerm_automation_mcp::{
     BackendRequest, BackendResult, ControllerId, Event, Machine, Operation, PairingStatus, Refusal,
@@ -820,6 +820,8 @@ pub(crate) struct Coordinator {
     synthetic_controller_qualified: bool,
     #[cfg(test)]
     synthetic_enrollment_metadata_ui_qualified: bool,
+    #[cfg(test)]
+    synthetic_enrollment_metadata_delivery_qualified: bool,
 }
 
 impl Default for Coordinator {
@@ -868,6 +870,8 @@ impl Default for Coordinator {
             synthetic_controller_qualified: false,
             #[cfg(test)]
             synthetic_enrollment_metadata_ui_qualified: false,
+            #[cfg(test)]
+            synthetic_enrollment_metadata_delivery_qualified: false,
         }
     }
 }
@@ -1081,6 +1085,14 @@ impl Coordinator {
         #[cfg(not(test))]
         let native_qualified = false;
         native_qualified && self.controller_qualified()
+    }
+
+    fn enrollment_metadata_delivery_qualified(&self) -> bool {
+        #[cfg(test)]
+        let delivery_qualified = self.synthetic_enrollment_metadata_delivery_qualified;
+        #[cfg(not(test))]
+        let delivery_qualified = false;
+        delivery_qualified && self.enrollment_metadata_ui_qualified()
     }
 
     fn machine_for_new_peer(&self) -> Machine {
@@ -1776,10 +1788,16 @@ impl Coordinator {
                 ipc::Event::Message { key, bytes } => {
                     let controller_qualified =
                         self.controller_qualified() && self.controller_opted_in;
+                    let metadata = EnrollmentMetadataContext {
+                        grants: &self.enrollment_metadata_grants,
+                        qualified: self.enrollment_metadata_delivery_qualified()
+                            && controller_qualified,
+                    };
                     let result = if let Some(peer) = self.peers.get_mut(&key) {
                         process_peer_message(
                             &mut broker,
                             &self.targets,
+                            metadata,
                             peer,
                             &bytes,
                             apps,
@@ -2666,10 +2684,20 @@ fn cancel_wait(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct EnrollmentMetadataContext<'a> {
+    grants: &'a BTreeMap<
+        presentation::EnrollmentMetadataKey,
+        presentation::BoundEnrollmentMetadataGrant,
+    >,
+    qualified: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn process_peer_message(
     broker: &mut Broker,
     targets: &BTreeMap<u64, Target>,
+    metadata: EnrollmentMetadataContext<'_>,
     peer: &mut Peer,
     bytes: &[u8],
     apps: &[&FesTermApp],
@@ -2694,7 +2722,17 @@ fn process_peer_message(
                 privacy,
                 stop,
                 controller_qualified,
+                metadata.qualified,
                 now,
+            );
+        }
+        Event::Backend(request)
+            if metadata.qualified
+                && peer.grant.is_none()
+                && matches!(request.operation, Operation::SessionsGet { .. }) =>
+        {
+            controller::execute_metadata(
+                broker, targets, metadata, peer, request, apps, privacy, stop,
             );
         }
         Event::Backend(request) => execute(broker, targets, peer, request, apps, now),

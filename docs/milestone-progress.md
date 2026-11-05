@@ -1,12 +1,25 @@
 # Milestone Progress Narrative
 
+## Routing exact-enrollment metadata in synthetic integration
+
+The test-qualified controller route now resolves an association only within its
+connection, uses its separately reviewed grant for a charged exact-target
+discovery, and returns bounded label/lifecycle metadata without a raw target
+reference. Queued frames retain the original disclosure, association and
+attachment liveness; synthetic tests exercise independent identical labels,
+cross-connection collisions, revocation, expiry and legacy observation.
+Production metadata availability remains false: authenticated bootstrap,
+native privacy and consent, all cancellation/revocation/expiry cuts and the
+physical-recipient boundary are not qualified.
+
 ## Combining metadata review with capability discovery
 
 The combined controller and refusal-only presentation catalog now composes with
 the dormant exact-enrollment metadata review. A synthetic regression checks
 pending, approved and revoked reviews on the same connection: enrollment may
-be available, but a metadata grant does not make metadata delivery,
-presentation or input available. Production qualification remains closed.
+be available, but a metadata grant alone does not make production metadata
+delivery, presentation or input available. Production qualification remains
+closed.
 
 ## Modeling native enrollment metadata review
 
@@ -378,11 +391,11 @@ typed controller registration and status requests. The default observation
 catalog is unchanged. At that checkpoint the application refused controller
 operations even with the optional catalog; the later local adapter above
 routes them only behind native opt-in and qualification. Requests cannot open
-a native prompt or grant authority. No listener is enabled, production
-qualification remains closed, and association IDs have no metadata consumer.
-The metadata feature is reported unavailable regardless of enrollment or grant
-status. Private bootstrap, privacy qualification and client integration remain
-open.
+a native prompt or grant authority. At that checkpoint association IDs had no
+metadata consumer; the later synthetic-only route is described above. No
+production listener is enabled, and production metadata remains unavailable
+regardless of enrollment or grant status. Private bootstrap, privacy
+qualification and client integration remain open.
 
 ## Selecting exact controller targets without granting authority
 

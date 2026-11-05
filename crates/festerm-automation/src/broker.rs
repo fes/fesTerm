@@ -98,6 +98,7 @@ impl Principal {
                     enrollment: enrollment.id,
                     target: enrollment.target,
                     epoch: grant.epoch,
+                    expires: grant.expires,
                 })
             })
             .collect()

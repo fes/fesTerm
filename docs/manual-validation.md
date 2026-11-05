@@ -2739,10 +2739,11 @@ active control and legacy observation composition. A synthetic-qualified
 current-window Settings review separately describes label and lifecycle status,
 requires explicit confirmation and models cancellation and queued scoped
 revocation. Stale snapshot, cross-window and admission-contention cases are
-automated; qualified native usability and metadata delivery remain unverified.
+automated; qualified native usability and production metadata delivery remain
+unverified. A test-qualified consumer enforces the reviewed label/lifecycle
+scope and retains original grant, run, association and attachment liveness.
 AUTO-01 must assess whether the exact disclosed fields, client code, target,
-lifetime and exclusions are understandable; a future delivery route must enforce
-that reviewed field scope. AUTO-03 and AUTO-04 must verify physical revocation
+lifetime and exclusions are understandable. AUTO-03 and AUTO-04 must verify physical revocation
 and recipient fencing, not merely the deferred broker cut.
 The separately granted presentation state machine, app-command routing,
 workspace revision and presented-input admission seam have deterministic
@@ -2754,14 +2755,15 @@ Tests also freeze all approved readable-source guards before consent and
 exercise unreconciled source disconnect, attachment/lifecycle/registration
 changes, publication ordering and unrelated-principal survival after retirement.
 The combined opt-in MCP catalog has synthetic tests for current enrollment
-capability and still refuses metadata delivery and presentation before and
-after a modeled metadata grant. Native selection of identically labelled local
+capability and refuses production metadata delivery and presentation before
+and after a modeled metadata grant. Separately enabled synthetic tests exercise
+metadata reads and guarded queued writes. Native selection of identically labelled local
 sessions, actual metadata delivery, real attachment/disconnect races,
 actual activation confirmation (including Windows refusal), response/input
 ordering and explicit human handoff/disarm remain deferred under AUTO-01,
 AUTO-03, AUTO-04 and AUTO-05. No supported controller UI, real presentation
-operation, direct-input adapter, association-handle metadata consumer or
-native-platform evidence is claimed.
+operation, direct-input adapter, production metadata consumer or native-platform
+evidence is claimed.
 
 Once an authenticated private bootstrap and privacy monitor are qualified, use
 two disposable windows with identically named local PTYs and a controlled MCP

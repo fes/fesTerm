@@ -1173,31 +1173,34 @@ nonblocking write. A queued status invalidated before or during a frame closes
 the connection rather than substituting a reply or extending the frame
 deadline. Any previously delivered status is only a snapshot, not authority.
 
-**No association-handle metadata consumer is implemented.** In particular,
-`festerm_sessions_get` does not resolve an association ID in this slice.
-`metadata_available` is always false, even when enrollment is available or a
-separate metadata grant exists; it reports feature availability, not grant
-status. A separate grant alone does not make the handle usable here. Future
-integration must capture the exact connection,
-registration and enrollment, resolve that same enrollment at preparation and
-disclosure, and enforce the separately reviewed grant, shared stop/privacy,
-recipient and physical-write liveness fences at **actual publication**, not
-merely broker liveness. The assembly's preference-disable regression checks
-metadata liveness after a direct-input commit triggers revocation; it is not an
-independent metadata-publication test or qualification. No name, position or
-current-association fallback is permitted. Registration and status must never
-return terminal metadata or other clients' records.
+An association-handle `festerm_sessions_get` consumer is wired behind a
+test-only delivery qualification. It resolves only the requesting connection's
+exact association and separately reviewed grant, admits and charges an exact
+discovery run, and returns bounded label/lifecycle data with the association
+reference rather than the internal target. Its queued frame retains the
+original grant/run liveness, connection, association and attachment guards;
+the existing writer rechecks those guards on each nonblocking write. A
+synthetic test exercises scoped revocation and expiry of queued replies. No
+name, position or current-association fallback is permitted. Registration and
+status never return terminal metadata or other clients' records.
+
+This is not a qualified delivery fence. Cancellation after completion, all
+expiry/destruction and revocation ordering, authenticated recipients,
+privacy monitoring and the final physical recipient still require proof.
+The existing stdio boundary is not qualified. Production delivery remains
+unconditionally unavailable, and a separate grant alone does not enable it.
+`metadata_available` reports feature availability, not grant status.
 
 The combined catalog reports enrollment availability through the same bounded
 backend path as controller capability requests. A changed opt-in, qualification,
 workspace revision source or privacy/connection state therefore cannot be
 inferred from the catalog selected at connection creation. Capability results
 are snapshots, not grants; every registration still checks live authority.
-Presentation stays unavailable and the combined catalog supplies no
-association-handle metadata consumer. A synthetic native metadata review or
-grant does not change those availability responses, and presentation continues
-to refuse during review, after approval and after revocation. These modeled
-grants do not qualify a transport or native platform.
+Presentation stays unavailable. Production metadata availability remains
+false even after a modeled native metadata review or grant; controlled tests
+can separately enable the synthetic consumer. Presentation continues to
+refuse during review, after approval and after revocation. These modeled grants
+and synthetic writes do not qualify a transport or native platform.
 
 The remaining #524 contract is deliberately open:
 

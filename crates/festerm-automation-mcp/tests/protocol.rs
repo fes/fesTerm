@@ -1656,6 +1656,7 @@ fn combined_controller_catalog_reflects_live_capabilities_and_refuses_presentati
                     &pending.key,
                     BackendResult::ControllerCapabilities {
                         enrollment_available,
+                        metadata_available: false,
                     },
                 )
                 .unwrap(),
@@ -1701,6 +1702,7 @@ fn combined_controller_catalog_reflects_live_capabilities_and_refuses_presentati
             &pending.key,
             BackendResult::ControllerCapabilities {
                 enrollment_available: true,
+                metadata_available: false,
             },
         )
         .is_none());
@@ -1807,7 +1809,7 @@ fn controller_catalog_is_opt_in_and_preserves_observation_compatibility() {
     assert!(tools[9]["description"]
         .as_str()
         .unwrap()
-        .contains("no association-handle metadata consumer"));
+        .contains("Metadata requires separate native authorization"));
     assert_eq!(
         tools[8]["annotations"],
         json!({
@@ -1981,6 +1983,7 @@ fn controller_results_are_typed_and_expose_only_correlation_ids() {
             json!({}),
             BackendResult::ControllerCapabilities {
                 enrollment_available: false,
+                metadata_available: false,
             },
             json!({
                 "enrollment_available":false, "metadata_available":false,
@@ -2092,7 +2095,7 @@ fn controller_results_are_typed_and_expose_only_correlation_ids() {
 }
 
 #[test]
-fn controller_metadata_capability_is_unavailable_even_with_enrollment() {
+fn controller_metadata_capability_requires_backend_and_enrollment_qualification() {
     let mut machine = ready_controller();
     let catalog = reply(machine.process_value(request(json!(1), "tools/list", json!({}))));
     let capability = catalog["result"]["tools"]
@@ -2105,40 +2108,40 @@ fn controller_metadata_capability_is_unavailable_even_with_enrollment() {
     let metadata_schema =
         &schema["oneOf"][0]["properties"]["data"]["properties"]["metadata_available"];
     assert_eq!(metadata_schema["type"], "boolean");
-    assert_eq!(metadata_schema["const"], false);
 
-    let pending = backend(machine.process_value(call(
-        json!(2),
-        "festerm_controller_capabilities",
-        json!({}),
-    )));
-    let response = decode(
-        machine
-            .complete(
-                &pending.key,
-                BackendResult::ControllerCapabilities {
-                    enrollment_available: true,
-                },
-            )
-            .unwrap(),
-    );
-    assert_eq!(response["result"]["isError"], false);
-    let structured = &response["result"]["structuredContent"];
-    assert_eq!(
-        structured,
-        &json!({
-            "status":"ok",
-            "data":{
-                "enrollment_available":true, "metadata_available":false,
-                "metadata_requires_separate_grant":true,
-                "presentation_available":false, "input_available":false
-            }
-        })
-    );
-    assert!(schema_matches(schema, structured));
-    let mut incorrect = structured.clone();
-    incorrect["data"]["metadata_available"] = json!(true);
-    assert!(!schema_matches(schema, &incorrect));
+    for (enrollment_available, metadata_available) in [(true, false), (true, true), (false, true)] {
+        let pending = backend(machine.process_value(call(
+            json!(2),
+            "festerm_controller_capabilities",
+            json!({}),
+        )));
+        let response = decode(
+            machine
+                .complete(
+                    &pending.key,
+                    BackendResult::ControllerCapabilities {
+                        enrollment_available,
+                        metadata_available,
+                    },
+                )
+                .unwrap(),
+        );
+        assert_eq!(response["result"]["isError"], false);
+        let structured = &response["result"]["structuredContent"];
+        assert_eq!(
+            structured,
+            &json!({
+                "status":"ok",
+                "data":{
+                    "enrollment_available":enrollment_available,
+                    "metadata_available":enrollment_available && metadata_available,
+                    "metadata_requires_separate_grant":true,
+                    "presentation_available":false, "input_available":false
+                }
+            })
+        );
+        assert!(schema_matches(schema, structured));
+    }
 }
 
 #[test]

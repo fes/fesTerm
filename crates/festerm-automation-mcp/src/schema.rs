@@ -147,9 +147,9 @@ impl Tool {
     fn description(self) -> &'static str {
         match self {
             Self::PairingStatus => "Bootstrap pairing metadata and a public channel verification code for matching in native Settings. Not a credential, principal or grant. Does not trigger approval.",
-            Self::ControllerCapabilities => "Report qualified enrollment feature availability, not grant status. Production bootstrap and native qualification remain unavailable. Metadata via association handles, presentation and input are unavailable.",
+            Self::ControllerCapabilities => "Report qualified enrollment and metadata feature availability, not grant status. Presentation and input are unavailable.",
             Self::ControllerRegister => "Request an untrusted connection-local registration after native opt-in and qualification. Does not select a terminal, open a prompt, or grant authority.",
-            Self::ControllerStatus => "Inspect only this connection's registration and optional non-authorizing association identifier. There is no association-handle metadata consumer.",
+            Self::ControllerStatus => "Inspect only this connection's registration and optional non-authorizing association identifier. Metadata requires separate native authorization.",
             Self::ControllerUnregister => "Remove only this connection's registration and association. The identifier is not authority.",
             Self::SessionsList => "List only explicitly shared session metadata.",
             Self::SessionsGet => "Get authorized metadata for an opaque session reference.",
@@ -308,12 +308,12 @@ impl Tool {
                         "description": "Backend-qualified enrollment feature availability, not authorization or grant status."
                     },
                     "metadata_available": {
-                        "type": "boolean", "const": false,
-                        "description": "Availability of metadata access via an association handle, not grant status. Always false until the association-handle metadata consumer is implemented."
+                        "type": "boolean",
+                        "description": "Qualified availability of metadata access via an association handle, not grant status."
                     },
                     "metadata_requires_separate_grant": {
                         "type": "boolean", "const": true,
-                        "description": "Future metadata access requires a separate native-authorized discover grant; this does not assert a grant exists."
+                        "description": "Metadata access requires a separate native-authorized discover grant; this does not assert a grant exists."
                     },
                     "presentation_available": {"type": "boolean", "const": false},
                     "input_available": {"type": "boolean", "const": false}

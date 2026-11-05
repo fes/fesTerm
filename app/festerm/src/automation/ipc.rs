@@ -82,12 +82,36 @@ impl Connection {
         targets: &[TargetGuard],
         flags: &[Arc<AtomicBool>],
     ) -> io::Result<()> {
-        let frame = OutboundFrame {
+        self.send_frame(OutboundFrame {
             bytes,
             expires,
             targets: targets.to_vec(),
             flags: flags.to_vec(),
-        };
+            disclosure: None,
+        })
+    }
+
+    pub fn send_disclosure(
+        &self,
+        bytes: Vec<u8>,
+        expires: Instant,
+        targets: &[TargetGuard],
+        flags: &[Arc<AtomicBool>],
+        disclosure: (
+            festerm_automation::ConnectionId,
+            festerm_automation::DisclosureLiveness,
+        ),
+    ) -> io::Result<()> {
+        self.send_frame(OutboundFrame {
+            bytes,
+            expires,
+            targets: targets.to_vec(),
+            flags: flags.to_vec(),
+            disclosure: Some(disclosure),
+        })
+    }
+
+    fn send_frame(&self, frame: OutboundFrame) -> io::Result<()> {
         let Some(guard) = festerm_session::automation_admission_lock() else {
             self.close();
             return Err(io::ErrorKind::BrokenPipe.into());
@@ -331,6 +355,11 @@ fn prepare_writer(writer: &mut Stream) -> io::Result<()> {
 #[cfg(test)]
 fn write_frame(writer: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
     write_frame_until(writer, bytes, Instant::now() + FRAME_DEADLINE, || true)
+}
+
+#[cfg(test)]
+pub(super) fn write_test_frame(writer: &mut impl Write, frame: &OutboundFrame) -> io::Result<()> {
+    write_frame_until(writer, &frame.bytes, frame.expires, || frame.is_valid())
 }
 
 fn write_frame_until(
@@ -898,7 +927,9 @@ pub(super) fn test_server(stop: Arc<AtomicBool>) -> (Server, SyncSender<Event>) 
 }
 
 #[cfg(test)]
-pub(super) fn test_connection(key: u64) -> (Connection, impl Fn() -> Option<Vec<u8>>) {
+pub(super) fn test_connection_with_frames(
+    key: u64,
+) -> (Connection, impl Fn() -> Option<OutboundFrame>) {
     let (output, receiver) = outbound_channel();
     (
         Connection {
@@ -906,8 +937,14 @@ pub(super) fn test_connection(key: u64) -> (Connection, impl Fn() -> Option<Vec<
             closed: Arc::new(AtomicBool::new(false)),
             output,
         },
-        move || receiver.try_recv().ok().map(|frame| frame.bytes),
+        move || receiver.try_recv().ok(),
     )
+}
+
+#[cfg(test)]
+pub(super) fn test_connection(key: u64) -> (Connection, impl Fn() -> Option<Vec<u8>>) {
+    let (connection, receive) = test_connection_with_frames(key);
+    (connection, move || receive().map(|frame| frame.bytes))
 }
 
 #[cfg(test)]

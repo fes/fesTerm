@@ -35,6 +35,14 @@ impl FrozenAssociation {
         self.target
     }
 
+    pub(super) fn matches_handle(&self, handle: ControllerId) -> bool {
+        self.public == handle
+    }
+
+    pub(super) fn valid_flag(&self) -> Arc<AtomicBool> {
+        self.valid.clone()
+    }
+
     pub(super) fn is_current(
         &self,
         broker: &Broker,
@@ -356,6 +364,166 @@ pub(super) fn is_operation(operation: &Operation) -> bool {
     )
 }
 
+struct MetadataDisclosure {
+    data: serde_json::Value,
+    expires: Instant,
+    liveness: festerm_automation::DisclosureLiveness,
+    target: ipc::TargetGuard,
+    association: Arc<AtomicBool>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_metadata_disclosure(
+    broker: &mut Broker,
+    targets: &BTreeMap<u64, Target>,
+    metadata: EnrollmentMetadataContext<'_>,
+    peer: &mut Peer,
+    session_ref: String,
+    apps: &[&FesTermApp],
+    guard: &festerm_session::AutomationAdmissionGuard,
+) -> Result<MetadataDisclosure, Refusal> {
+    let handle = ControllerId::parse(&session_ref).ok_or(Refusal::NotAuthorized)?;
+    let bound = metadata
+        .grants
+        .iter()
+        .find(|((principal, _, _), bound)| {
+            *principal == peer.principal && bound.matches_handle(handle)
+        })
+        .map(|(_, bound)| bound)
+        .ok_or(Refusal::NotAuthorized)?;
+    let now = Instant::now();
+    if !bound.is_current(broker, targets, peer, apps, now, guard) {
+        return Err(Refusal::NotAuthorized);
+    }
+
+    let target = bound.grant.target();
+    let binding = direct_binding(&Operation::SessionsGet { session_ref }, Some(target))?;
+    let run = broker
+        .admit_enrollment_metadata_run(
+            peer.principal,
+            bound.grant.registration(),
+            bound.grant.enrollment(),
+            MetadataRunSpec {
+                parameters: binding.parameters,
+                targets: BTreeSet::from([target]),
+                budget: Budget::default(),
+                deadline: bound.grant.expires(),
+            },
+            now,
+        )
+        .map_err(refusal)?;
+    retain_completion(peer, run, None);
+    let ticket = broker
+        .prepare_request(
+            peer.principal,
+            run,
+            AuthorityOperation::Discover { max_bytes: 32_768 },
+            Instant::now(),
+        )
+        .map_err(refusal)?;
+    peer.pending_completion
+        .as_mut()
+        .expect("metadata run retains its completion")
+        .request = Some(ticket);
+    let visible = broker
+        .discovery_targets(peer.principal, ticket, Instant::now())
+        .map_err(refusal)?;
+    if visible.as_slice() != [target] {
+        return Err(Refusal::NotAuthorized);
+    }
+    let session = session(apps, target).ok_or(Refusal::StaleTarget)?;
+    let data = observation::bounded(
+        serde_json::json!({
+            "sessions": [{
+                "session_ref": handle.to_wire(),
+                "label": session.label.chars().take(128).collect::<String>(),
+                "lifecycle": "running",
+                "untrusted": true,
+            }],
+            "untrusted": true,
+        }),
+        32_768,
+    )?;
+    let encoded = serde_json::to_vec(&data).map_err(|_| Refusal::InvalidBackendResult)?;
+    let encoded_bytes = u32::try_from(encoded.len()).map_err(|_| Refusal::ResponseTooLarge)?;
+    let now = Instant::now();
+    broker
+        .commit_disclosure(peer.principal, ticket, encoded_bytes, now)
+        .map_err(refusal)?;
+    let liveness = broker
+        .disclosure_liveness(peer.principal, ticket, now)
+        .map_err(refusal)?;
+    let (target, association) = bound.delivery_guards();
+    Ok(MetadataDisclosure {
+        data,
+        expires: bound.grant.expires(),
+        liveness,
+        target,
+        association,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn execute_metadata(
+    broker: &mut Broker,
+    targets: &BTreeMap<u64, Target>,
+    metadata: EnrollmentMetadataContext<'_>,
+    peer: &mut Peer,
+    request: BackendRequest,
+    apps: &[&FesTermApp],
+    privacy: &PrivacyGate,
+    stop: &AtomicBool,
+) {
+    let Operation::SessionsGet { session_ref } = request.operation else {
+        finish(
+            peer,
+            &request.key,
+            BackendResult::Refused(Refusal::InvalidArguments),
+            Instant::now(),
+        );
+        return;
+    };
+    let result = if let Some(guard) = festerm_session::automation_admission_lock() {
+        if metadata.qualified && peer_is_open(peer, privacy, stop) {
+            prepare_metadata_disclosure(broker, targets, metadata, peer, session_ref, apps, &guard)
+        } else {
+            Err(Refusal::Unavailable)
+        }
+    } else {
+        peer.connection.close();
+        return;
+    };
+    match result {
+        Ok(disclosure) => {
+            if let Some(response) = peer.machine.complete(
+                &request.key,
+                BackendResult::AuthorizedObservation(disclosure.data),
+            ) {
+                if peer
+                    .connection
+                    .send_disclosure(
+                        response.into_bytes(),
+                        disclosure.expires,
+                        &[disclosure.target],
+                        &[disclosure.association],
+                        (peer.principal, disclosure.liveness),
+                    )
+                    .is_err()
+                {
+                    peer.connection.close();
+                    tracing::warn!("automation metadata delivery admission failed");
+                }
+            }
+        }
+        Err(error) => finish(
+            peer,
+            &request.key,
+            BackendResult::Refused(error),
+            Instant::now(),
+        ),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn execute(
     broker: &mut Broker,
@@ -366,6 +534,7 @@ pub(super) fn execute(
     privacy: &PrivacyGate,
     stop: &AtomicBool,
     qualified: bool,
+    metadata_qualified: bool,
     now: Instant,
 ) {
     if peer.controller.requests >= MAX_CONTROLLER_REQUESTS {
@@ -389,6 +558,7 @@ pub(super) fn execute(
             Operation::ControllerCapabilities | Operation::PresentationCapabilities => {
                 Ok(Reply::plain(BackendResult::ControllerCapabilities {
                     enrollment_available: qualified && open,
+                    metadata_available: metadata_qualified && qualified && open,
                 }))
             }
             _ if !open || !qualified => Err(Refusal::Unavailable),
@@ -1402,14 +1572,17 @@ pub(super) mod tests {
         fixture_with_workspace(apps, &WorkspaceRevision::default())
     }
 
-    fn add_peer(coordinator: &mut Coordinator, channel: u64) -> impl Fn() -> Option<Vec<u8>> {
+    fn add_peer_with_frames(
+        coordinator: &mut Coordinator,
+        channel: u64,
+    ) -> impl Fn() -> Option<festerm_automation::OutboundFrame> {
         let principal = coordinator
             .broker
             .as_mut()
             .unwrap()
             .accept_connection()
             .unwrap();
-        let (connection, receive) = ipc::test_connection(channel);
+        let (connection, receive) = ipc::test_connection_with_frames(channel);
         let machine = ready_controller_machine(coordinator.machine_for_new_peer());
         let controller = PeerState {
             next_test_id: Some((u128::from(channel) << 64) | 1),
@@ -1432,6 +1605,11 @@ pub(super) mod tests {
         receive
     }
 
+    fn add_peer(coordinator: &mut Coordinator, channel: u64) -> impl Fn() -> Option<Vec<u8>> {
+        let receive = add_peer_with_frames(coordinator, channel);
+        move || receive().map(|frame| frame.bytes)
+    }
+
     fn call(
         coordinator: &mut Coordinator,
         channel: u64,
@@ -1445,9 +1623,14 @@ pub(super) mod tests {
         }))
         .unwrap();
         let qualified = coordinator.controller_qualified() && coordinator.controller_opted_in;
+        let metadata = EnrollmentMetadataContext {
+            grants: &coordinator.enrollment_metadata_grants,
+            qualified: coordinator.enrollment_metadata_delivery_qualified() && qualified,
+        };
         process_peer_message(
             coordinator.broker.as_mut().unwrap(),
             &coordinator.targets,
+            metadata,
             coordinator.peers.get_mut(&channel).unwrap(),
             &bytes,
             apps,
@@ -1599,16 +1782,17 @@ pub(super) mod tests {
         );
     }
 
-    fn metadata_fixture() -> (
+    fn metadata_fixture_with_frames() -> (
         Coordinator,
         FesTermApp,
         TabId,
         ControllerRegistrationId,
         ControllerEnrollmentId,
+        impl Fn() -> Option<festerm_automation::OutboundFrame>,
     ) {
         let (app, tab) = FesTermApp::automation_local_fixture();
         let mut coordinator = fixture(&[&app]);
-        let receive = add_peer(&mut coordinator, 1);
+        let receive = add_peer_with_frames(&mut coordinator, 1);
         call(
             &mut coordinator,
             1,
@@ -1616,7 +1800,7 @@ pub(super) mod tests {
             "festerm_controller_register",
             json!({"local_id": "metadata fixture"}),
         );
-        response(&receive);
+        receive().expect("registration response");
         let registration = row(&coordinator, &[&app], 1).registration;
         let target = coordinator.targets[&tab.chip_id()].reference;
         let token = review(
@@ -1643,6 +1827,18 @@ pub(super) mod tests {
             .association
             .unwrap()
             .enrollment;
+        (coordinator, app, tab, registration, enrollment, receive)
+    }
+
+    fn metadata_fixture() -> (
+        Coordinator,
+        FesTermApp,
+        TabId,
+        ControllerRegistrationId,
+        ControllerEnrollmentId,
+    ) {
+        let (coordinator, app, tab, registration, enrollment, _receive) =
+            metadata_fixture_with_frames();
         (coordinator, app, tab, registration, enrollment)
     }
 
@@ -1672,6 +1868,510 @@ pub(super) mod tests {
             ControllerMetadataView::Reviewing { token, .. } => token,
             _ => panic!("expected metadata review"),
         }
+    }
+
+    fn approve_metadata_for_delivery(
+        coordinator: &mut Coordinator,
+        app: &FesTermApp,
+        channel: u64,
+        registration: ControllerRegistrationId,
+        enrollment: ControllerEnrollmentId,
+        lifetime: Duration,
+    ) {
+        let review = retry_automation_busy(|| {
+            coordinator.prepare_enrollment_metadata_review(
+                channel,
+                registration,
+                enrollment,
+                lifetime,
+                &[app],
+            )
+        })
+        .unwrap();
+        let decision = review.accept_from_native();
+        retry_automation_busy(|| {
+            coordinator.approve_enrollment_metadata_review(channel, &review, &decision, &[app])
+        })
+        .unwrap();
+    }
+
+    fn metadata_handle(
+        coordinator: &Coordinator,
+        registration: ControllerRegistrationId,
+    ) -> String {
+        coordinator.peers[&1]
+            .controller
+            .registrations
+            .values()
+            .find(|record| record.internal == registration)
+            .unwrap()
+            .association
+            .unwrap()
+            .public
+            .to_wire()
+    }
+
+    fn frame_response(frame: &festerm_automation::OutboundFrame) -> Value {
+        serde_json::from_slice(&frame.bytes).unwrap()
+    }
+
+    #[test]
+    fn enrollment_metadata_route_requires_separate_approval_and_original_liveness() {
+        let (mut coordinator, app, tab, registration, enrollment, receive) =
+            metadata_fixture_with_frames();
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        coordinator.synthetic_enrollment_metadata_delivery_qualified = true;
+        assert!(!app.automation_javascript_enabled());
+        assert!(!coordinator.javascript_enabled);
+        assert!(coordinator.peers[&1].grant.is_none());
+        let handle = metadata_handle(&coordinator, registration);
+
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_controller_capabilities",
+            json!({}),
+        );
+        let capabilities = frame_response(&receive().unwrap());
+        assert_eq!(
+            capabilities["result"]["structuredContent"]["data"]["metadata_available"],
+            true
+        );
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_sessions_get",
+            json!({"session_ref": handle}),
+        );
+        assert_eq!(
+            frame_response(&receive().unwrap())["result"]["structuredContent"]["code"],
+            "NOT_AUTHORIZED"
+        );
+
+        metadata_command_with_retry(
+            &mut coordinator,
+            &app,
+            WindowId::PRIMARY,
+            NativeCommand::ReviewControllerMetadata {
+                channel: 1,
+                registration,
+                enrollment,
+            },
+        )
+        .unwrap();
+        let token = metadata_review_token(&coordinator, &app, registration);
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_sessions_get",
+            json!({"session_ref": handle}),
+        );
+        assert_eq!(
+            frame_response(&receive().unwrap())["result"]["structuredContent"]["code"],
+            "NOT_AUTHORIZED"
+        );
+        metadata_command_with_retry(
+            &mut coordinator,
+            &app,
+            WindowId::PRIMARY,
+            NativeCommand::ConfirmControllerMetadata {
+                channel: 1,
+                registration,
+                review: token,
+            },
+        )
+        .unwrap();
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_sessions_get",
+            json!({"session_ref": handle}),
+        );
+        let frame = receive().expect("metadata response");
+        assert!(frame.is_valid());
+        let mut delivered = Vec::new();
+        ipc::write_test_frame(&mut delivered, &frame).unwrap();
+        assert_eq!(&delivered[4..], frame.bytes.as_slice());
+        let metadata_response = frame_response(&frame);
+        assert_eq!(
+            metadata_response["result"]["structuredContent"]["data"],
+            json!({
+                "sessions": [{
+                    "session_ref": handle,
+                    "label": app.automation_session(tab).unwrap().label.as_str(),
+                    "lifecycle": "running",
+                    "untrusted": true,
+                }],
+                "untrusted": true,
+            })
+        );
+        let raw_target =
+            serde_json::to_string(&coordinator.targets[&tab.chip_id()].reference).unwrap();
+        assert!(!String::from_utf8_lossy(&frame.bytes).contains(&raw_target));
+        assert!(coordinator.peers[&1].pending_completion.is_none());
+
+        let other_receive = add_peer(&mut coordinator, 2);
+        call(
+            &mut coordinator,
+            2,
+            &[&app],
+            "festerm_sessions_get",
+            json!({"session_ref": handle}),
+        );
+        assert_eq!(
+            response(&other_receive)["result"]["structuredContent"]["code"],
+            "NOT_AUTHORIZED"
+        );
+        let (principal, liveness) = frame.disclosure.as_ref().unwrap();
+        assert!(liveness.is_live(*principal, Instant::now()));
+        assert!(!liveness.is_live(coordinator.peers[&2].principal, Instant::now()));
+
+        retry_automation_busy(|| {
+            coordinator.revoke_enrollment_metadata_grant(1, registration, enrollment)
+        })
+        .unwrap();
+        assert!(!frame.is_valid());
+        let mut refused = Vec::new();
+        assert_eq!(
+            ipc::write_test_frame(&mut refused, &frame)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::Interrupted
+        );
+        assert!(refused.is_empty());
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_sessions_get",
+            json!({"session_ref": handle}),
+        );
+        assert_eq!(
+            frame_response(&receive().unwrap())["result"]["structuredContent"]["code"],
+            "NOT_AUTHORIZED"
+        );
+    }
+
+    #[test]
+    fn enrollment_metadata_route_keeps_identical_labels_independent() {
+        let (mut app, first_tab) = FesTermApp::automation_local_fixture();
+        let (mut donor, second_tab) = FesTermApp::automation_local_fixture();
+        app.automation_session_mut(first_tab).label = "identical".into();
+        donor.automation_session_mut(second_tab).label = "identical".into();
+        app.adopt_tab(donor.detach_tab(second_tab).unwrap(), None);
+        let mut coordinator = fixture(&[&app]);
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        coordinator.synthetic_enrollment_metadata_delivery_qualified = true;
+        let receive = add_peer(&mut coordinator, 1);
+        let mut bindings = Vec::new();
+        for (index, tab) in [first_tab, second_tab].into_iter().enumerate() {
+            call(
+                &mut coordinator,
+                1,
+                &[&app],
+                "festerm_controller_register",
+                json!({"local_id": format!("route-{index}")}),
+            );
+            response(&receive);
+            let registration = coordinator.peers[&1]
+                .controller
+                .registrations
+                .values()
+                .map(|record| record.internal)
+                .find(|registration| {
+                    !bindings
+                        .iter()
+                        .any(|(previous, _, _)| previous == registration)
+                })
+                .unwrap();
+            let target = coordinator.targets[&tab.chip_id()].reference;
+            let token = review(
+                &mut coordinator,
+                &[&app],
+                WindowId::PRIMARY,
+                1,
+                registration,
+                target,
+            );
+            confirm(
+                &mut coordinator,
+                &[&app],
+                WindowId::PRIMARY,
+                registration,
+                token,
+            );
+            let association = coordinator.peers[&1]
+                .controller
+                .registrations
+                .values()
+                .find(|record| record.internal == registration)
+                .unwrap()
+                .association
+                .unwrap();
+            bindings.push((
+                registration,
+                association.enrollment,
+                association.public.to_wire(),
+            ));
+        }
+        approve_metadata_for_delivery(
+            &mut coordinator,
+            &app,
+            1,
+            bindings[0].0,
+            bindings[0].1,
+            Duration::from_secs(60),
+        );
+        for (index, (_, _, handle)) in bindings.iter().enumerate() {
+            call(
+                &mut coordinator,
+                1,
+                &[&app],
+                "festerm_sessions_get",
+                json!({"session_ref": handle}),
+            );
+            let data = response(&receive);
+            if index == 0 {
+                assert_eq!(
+                    data["result"]["structuredContent"]["data"]["sessions"][0]["session_ref"],
+                    *handle
+                );
+                assert_eq!(
+                    data["result"]["structuredContent"]["data"]["sessions"][0]["label"],
+                    "identical"
+                );
+            } else {
+                assert_eq!(
+                    data["result"]["structuredContent"]["code"],
+                    "NOT_AUTHORIZED"
+                );
+            }
+        }
+        approve_metadata_for_delivery(
+            &mut coordinator,
+            &app,
+            1,
+            bindings[1].0,
+            bindings[1].1,
+            Duration::from_secs(60),
+        );
+        retry_automation_busy(|| {
+            coordinator.revoke_enrollment_metadata_grant(1, bindings[0].0, bindings[0].1)
+        })
+        .unwrap();
+        for (index, (_, _, handle)) in bindings.iter().enumerate() {
+            call(
+                &mut coordinator,
+                1,
+                &[&app],
+                "festerm_sessions_get",
+                json!({"session_ref": handle}),
+            );
+            let data = response(&receive);
+            if index == 0 {
+                assert_eq!(
+                    data["result"]["structuredContent"]["code"],
+                    "NOT_AUTHORIZED"
+                );
+            } else {
+                assert_eq!(
+                    data["result"]["structuredContent"]["data"]["sessions"][0]["session_ref"],
+                    *handle
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn enrollment_metadata_route_scopes_colliding_handles_to_each_connection() {
+        let (mut app, first_tab) = FesTermApp::automation_local_fixture();
+        let (mut donor, second_tab) = FesTermApp::automation_local_fixture();
+        app.automation_session_mut(first_tab).label = "first".into();
+        donor.automation_session_mut(second_tab).label = "second".into();
+        app.adopt_tab(donor.detach_tab(second_tab).unwrap(), None);
+        let mut coordinator = fixture(&[&app]);
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        coordinator.synthetic_enrollment_metadata_delivery_qualified = true;
+        let first_receive = add_peer(&mut coordinator, 1);
+        let second_receive = add_peer(&mut coordinator, 2);
+        let mut shared_handle = None;
+        for (channel, tab, receive) in [
+            (1, first_tab, &first_receive),
+            (2, second_tab, &second_receive),
+        ] {
+            call(
+                &mut coordinator,
+                channel,
+                &[&app],
+                "festerm_controller_register",
+                json!({"local_id": "colliding-id"}),
+            );
+            response(receive);
+            let registration = row(&coordinator, &[&app], channel).registration;
+            let target = coordinator.targets[&tab.chip_id()].reference;
+            let token = review(
+                &mut coordinator,
+                &[&app],
+                WindowId::PRIMARY,
+                channel,
+                registration,
+                target,
+            );
+            native(
+                &mut coordinator,
+                &[&app],
+                WindowId::PRIMARY,
+                NativeCommand::ConfirmController {
+                    channel,
+                    registration,
+                    selection: token,
+                },
+            );
+            let record = coordinator
+                .peers
+                .get_mut(&channel)
+                .unwrap()
+                .controller
+                .registrations
+                .values_mut()
+                .find(|record| record.internal == registration)
+                .unwrap();
+            let association = record.association.as_mut().unwrap();
+            if let Some(handle) = shared_handle {
+                association.public = handle;
+            } else {
+                shared_handle = Some(association.public);
+            }
+            let enrollment = association.enrollment;
+            if channel == 2 {
+                call(
+                    &mut coordinator,
+                    channel,
+                    &[&app],
+                    "festerm_sessions_get",
+                    json!({"session_ref": shared_handle.unwrap().to_wire()}),
+                );
+                assert_eq!(
+                    response(receive)["result"]["structuredContent"]["code"],
+                    "NOT_AUTHORIZED"
+                );
+            }
+            approve_metadata_for_delivery(
+                &mut coordinator,
+                &app,
+                channel,
+                registration,
+                enrollment,
+                Duration::from_secs(60),
+            );
+        }
+        for (channel, expected, receive) in
+            [(1, "first", &first_receive), (2, "second", &second_receive)]
+        {
+            call(
+                &mut coordinator,
+                channel,
+                &[&app],
+                "festerm_sessions_get",
+                json!({"session_ref": shared_handle.unwrap().to_wire()}),
+            );
+            assert_eq!(
+                response(receive)["result"]["structuredContent"]["data"]["sessions"][0]["label"],
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn enrollment_metadata_queued_reply_expires_or_follows_attachment_replacement() {
+        for change in ["expiry", "attachment"] {
+            let (mut coordinator, app, tab, registration, enrollment, receive) =
+                metadata_fixture_with_frames();
+            coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+            coordinator.synthetic_enrollment_metadata_delivery_qualified = true;
+            let lifetime = if change == "expiry" {
+                Duration::from_secs(1)
+            } else {
+                Duration::from_secs(60)
+            };
+            approve_metadata_for_delivery(
+                &mut coordinator,
+                &app,
+                1,
+                registration,
+                enrollment,
+                lifetime,
+            );
+            let handle = metadata_handle(&coordinator, registration);
+            call(
+                &mut coordinator,
+                1,
+                &[&app],
+                "festerm_sessions_get",
+                json!({"session_ref": handle}),
+            );
+            let frame = receive().unwrap();
+            assert!(frame.is_valid(), "{change}");
+            match change {
+                "expiry" => {
+                    std::thread::sleep(
+                        frame.expires.saturating_duration_since(Instant::now())
+                            + Duration::from_millis(1),
+                    );
+                }
+                "attachment" => {
+                    let Some(crate::tabs::ApplicationSession::TestLocal(backend)) =
+                        app.automation_session(tab).unwrap().controller.session()
+                    else {
+                        panic!("expected synthetic local attachment");
+                    };
+                    backend.replace_attachment_without_event();
+                }
+                _ => unreachable!(),
+            }
+            assert!(!frame.is_valid(), "{change}");
+            call(
+                &mut coordinator,
+                1,
+                &[&app],
+                "festerm_sessions_get",
+                json!({"session_ref": handle}),
+            );
+            assert_eq!(
+                frame_response(&receive().unwrap())["result"]["structuredContent"]["code"],
+                "NOT_AUTHORIZED",
+                "{change}"
+            );
+        }
+    }
+
+    #[test]
+    fn enrollment_metadata_route_preserves_legacy_observation_get() {
+        let (mut coordinator, app, tab, _, _, receive) = metadata_fixture_with_frames();
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        coordinator.synthetic_enrollment_metadata_delivery_qualified = true;
+        let target = coordinator.targets[&tab.chip_id()].reference;
+        super::super::tests::approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+        let reference = serde_json::to_string(&target).unwrap();
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_sessions_get",
+            json!({"session_ref": reference}),
+        );
+        let frame = receive().unwrap();
+        assert!(frame.is_valid());
+        assert!(frame.disclosure.is_none());
+        assert_eq!(
+            frame_response(&frame)["result"]["structuredContent"]["data"]["sessions"][0]
+                ["session_ref"],
+            reference
+        );
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! These types do not authorize a disclosure. The host still owns admission,
 //! connection closure, frame limits and the final transport checks.
 
+use crate::{ConnectionId, DisclosureLiveness};
 use festerm_admission::{AutomationAdmissionGuard, AutomationEpoch};
 use std::{
     sync::{
@@ -35,6 +36,7 @@ pub struct OutboundFrame {
     pub expires: Instant,
     pub targets: Vec<OutboundTargetGuard>,
     pub flags: Vec<Arc<AtomicBool>>,
+    pub disclosure: Option<(ConnectionId, DisclosureLiveness)>,
 }
 
 impl OutboundFrame {
@@ -42,6 +44,10 @@ impl OutboundFrame {
     pub fn is_valid(&self) -> bool {
         self.targets.iter().all(OutboundTargetGuard::is_valid)
             && self.flags.iter().all(|flag| flag.load(Ordering::Acquire))
+            && self
+                .disclosure
+                .as_ref()
+                .is_none_or(|(connection, liveness)| liveness.is_live(*connection, Instant::now()))
     }
 }
 
@@ -97,6 +103,7 @@ mod tests {
             expires: Instant::now() + Duration::from_secs(60),
             targets: Vec::new(),
             flags: Vec::new(),
+            disclosure: None,
         }
     }
 

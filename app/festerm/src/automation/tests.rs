@@ -8056,6 +8056,10 @@ fn automation_cancelled_wait_poison_closes_privacy_without_output() {
     let result = process_peer_message(
         coordinator.broker.as_mut().unwrap(),
         &coordinator.targets,
+        EnrollmentMetadataContext {
+            grants: &coordinator.enrollment_metadata_grants,
+            qualified: false,
+        },
         coordinator.peers.get_mut(&1).unwrap(),
         br#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}"#,
         &[&app],
@@ -8212,6 +8216,10 @@ fn automation_cancelled_wait_with_missing_run_closes_peer_without_output() {
     let result = process_peer_message(
         coordinator.broker.as_mut().unwrap(),
         &coordinator.targets,
+        EnrollmentMetadataContext {
+            grants: &coordinator.enrollment_metadata_grants,
+            qualified: false,
+        },
         coordinator.peers.get_mut(&1).unwrap(),
         br#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}"#,
         &[&app],

@@ -10,6 +10,7 @@ pub struct NativeEnrollmentMetadataGrant {
     pub(super) enrollment: ControllerEnrollmentId,
     pub(super) target: TargetRef,
     pub(super) epoch: u64,
+    pub(super) expires: Instant,
 }
 
 impl NativeEnrollmentMetadataGrant {
@@ -23,6 +24,10 @@ impl NativeEnrollmentMetadataGrant {
 
     pub fn target(self) -> TargetRef {
         self.target
+    }
+
+    pub fn expires(self) -> Instant {
+        self.expires
     }
 }
 
@@ -461,6 +466,7 @@ impl Broker {
             enrollment,
             target,
             epoch: grant.epoch,
+            expires: grant.expires,
         })
     }
 

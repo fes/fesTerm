@@ -4506,7 +4506,7 @@ fn ordinary_legacy_metadata_and_principal_revocations_share_admission() {
 #[test]
 fn ordinary_and_metadata_replacement_wait_for_guarded_enqueue() {
     enum Replacement {
-        Ordinary(ApprovalId, NativeApproval),
+        Ordinary(ApprovalId, Box<NativeApproval>),
         Metadata(ApprovalId, NativeMetadataApproval),
     }
 
@@ -4544,7 +4544,10 @@ fn ordinary_and_metadata_replacement_wait_for_guarded_enqueue() {
                 .broker
                 .request_approval(f.connection, request.clone(), f.now)
                 .unwrap();
-            Replacement::Ordinary(id, NativeApproval::new(request, MAX_GRANT_LIFETIME))
+            Replacement::Ordinary(
+                id,
+                Box::new(NativeApproval::new(request, MAX_GRANT_LIFETIME)),
+            )
         };
         let connection = f.connection;
         let now = f.now;
@@ -4561,7 +4564,7 @@ fn ordinary_and_metadata_replacement_wait_for_guarded_enqueue() {
             let guard = automation_admission_lock().unwrap();
             let result = match replacement {
                 Replacement::Ordinary(id, approval) => {
-                    broker.approve(connection, id, approval, now, &guard)
+                    broker.approve(connection, id, *approval, now, &guard)
                 }
                 Replacement::Metadata(id, approval) => {
                     broker.approve_metadata(connection, id, approval, now, &guard)
@@ -4581,6 +4584,7 @@ fn ordinary_and_metadata_replacement_wait_for_guarded_enqueue() {
                 expires: now + Duration::from_secs(30),
                 targets: Vec::new(),
                 flags: Vec::new(),
+                disclosure: None,
             },
             &guard,
         );

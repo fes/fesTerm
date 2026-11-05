@@ -351,7 +351,7 @@
         "combined_controller_catalog_reflects_live_capabilities_and_refuses_presentation",
         "controller_inputs_are_bounded_and_do_not_accept_authority_claims",
         "controller_results_are_typed_and_expose_only_correlation_ids",
-        "controller_metadata_capability_is_unavailable_even_with_enrollment",
+        "controller_metadata_capability_requires_backend_and_enrollment_qualification",
         "controller_requests_share_pending_limits_and_cancellation",
         "controller_operations_never_enter_observation_grant_path",
         "controller_quoted_labels_preserve_unicode_escape_spoofing_and_bound_length",
@@ -393,6 +393,11 @@
         "enrollment_metadata_stale_reviews_do_not_block_observation",
         "enrollment_metadata_host_refuses_unreviewed_control_composition",
         "enrollment_metadata_host_never_waits_for_admission",
+        "enrollment_metadata_route_requires_separate_approval_and_original_liveness",
+        "enrollment_metadata_route_keeps_identical_labels_independent",
+        "enrollment_metadata_route_scopes_colliding_handles_to_each_connection",
+        "enrollment_metadata_queued_reply_expires_or_follows_attachment_replacement",
+        "enrollment_metadata_route_preserves_legacy_observation_get",
         "native_enrollment_metadata_review_binds_window_and_explicit_confirmation",
         "combined_catalog_does_not_expose_a_native_metadata_grant",
         "native_enrollment_metadata_review_rejects_changed_display",
@@ -418,8 +423,8 @@
       "status": "partial",
       "prerequisites": [
         "The native current-window chooser and opt-in protocol adapter have synthetic tests only; private bootstrap, native authentication, privacy and controller qualification remain closed in production",
-        "The enrollment metadata Settings review is synthetic-qualified only; native consent, an MCP delivery route and composition with control or legacy observation require separate qualification, reviewed cross-consent and delivery fences",
-        "Association-handle resolution by sessions.get is not implemented and requires separately reviewed discovery grants and shared stop/privacy/recipient and liveness fences at actual publication, not just broker liveness",
+        "The enrollment metadata Settings review and MCP consumer are synthetic-qualified only; native consent, production delivery and composition with control or legacy observation require separate qualification, reviewed cross-consent and delivery fences",
+        "The association-handle sessions.get route requires a separate discovery grant and retains original grant/run/association/attachment liveness, but cancellation, all revocation and expiry cuts, privacy, recipient and physical delivery remain unqualified",
         "Confirmed presentation, admission-time presentation revalidation, native handoff and explicit disarm require independent implementation and native lifecycle evidence",
         "No-replay uncertainty handling, real JavaScript-independent client operation, native usability and platform/backend capability reporting remain unqualified"
       ]

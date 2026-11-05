@@ -199,8 +199,8 @@ to bypass another's restrictions.
    exercised with synthetic qualification only: cancellation invalidates stale
    snapshots immediately, and proposal cleanup and scoped revocation defer
    under admission. It describes only label and lifecycle status for at most
-   five minutes; a future route must enforce that scope. This is not qualified
-   native consent and does not enable a metadata consumer.
+   five minutes. A test-qualified-only consumer enforces that scope; this is
+   not qualified native consent or production delivery.
    The existing capacity-four app outbound channel and its frame and target
    guards reside in the authority crate and feed the same app writer. The app
    now retains the shared admission guard from its connection, frame-size,
@@ -209,9 +209,10 @@ to bypass another's restrictions.
    app closes the connection under the guard, without a callback. The legacy
    sender still accepts host-constructed frames and does not enforce broker
    authority or bind an enrollment. Other broker cuts remain unguarded. This is
-   not an enrollment witness, a general revocation guarantee or a
-   final-recipient delivery fence. Future metadata paths must prevent bypass
-   and account for all liveness and physical-delivery cuts. The standard
+   not a general revocation guarantee or a final-recipient delivery fence.
+   A synthetic-only metadata route binds its frames to the original grant/run,
+   connection, association and attachment liveness. Other cancellation,
+   expiry, destruction and physical-delivery cuts remain unqualified. The standard
    channel retains its capacity and FIFO behavior. This extends, rather than
    supersedes, this decision.
    At the real input queue publication boundary the future application adapter
@@ -263,9 +264,10 @@ to bypass another's restrictions.
    supported client. Registration and associations remain non-authorizing.
    Pending reviews capture the application's tracked tab/window revision,
    rejecting away-and-back changes; this is not native presentation evidence.
-   No association-handle metadata consumer exists, so metadata feature
-   availability remains false regardless of enrollment or grants. No new
-   listener, observation, presentation, input or worker effect is enabled.
+   Association-handle metadata consumption is test-qualified only; production
+   metadata availability remains false regardless of enrollment or grants.
+   No new production listener, observation, presentation, input or worker
+   effect is enabled.
 8. **Gate execution and platform claims in stages.** The full contract,
    capability matrix, limits, threat model, outcomes and validation plan live
    in [the companion design](../automation-design.md), which is part of this
@@ -413,7 +415,9 @@ in the design must be visible in implementation/release review.
   selection, confirmation and cancellation, and guarded non-authorizing status;
   they do not establish native usability or metadata authorization. Protocol
   tests cover bounded inputs, typed results and default-catalog compatibility,
-  not authenticated clients or an association-handle consumer. A combined
+  not authenticated clients. Synthetic application tests exercise a separately
+  granted association-handle metadata consumer and queued liveness cuts, not
+  native or final-recipient qualification. A combined
   opt-in catalog exposes enrollment and refusal-only presentation together,
   using the same live backend qualification for both capability reports; it
   does not enable presentation, input or metadata.

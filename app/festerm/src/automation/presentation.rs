@@ -129,6 +129,38 @@ pub(super) struct BoundEnrollmentMetadataGrant {
     source: FrozenSource,
 }
 
+impl BoundEnrollmentMetadataGrant {
+    pub(super) fn matches_handle(&self, handle: ControllerId) -> bool {
+        self.association.matches_handle(handle)
+    }
+
+    pub(super) fn delivery_guards(&self) -> (ipc::TargetGuard, Arc<AtomicBool>) {
+        (self.source.guard.clone(), self.association.valid_flag())
+    }
+
+    pub(super) fn is_current(
+        &self,
+        broker: &Broker,
+        targets: &BTreeMap<u64, Target>,
+        peer: &Peer,
+        apps: &[&FesTermApp],
+        now: Instant,
+        guard: &AutomationAdmissionGuard,
+    ) -> bool {
+        peer.grant.is_none()
+            && self.source.is_current(targets, guard)
+            && self
+                .association
+                .is_current(broker, targets, peer, apps, guard)
+            && broker.native_enrollment_metadata_grant(
+                peer.principal,
+                self.grant.registration(),
+                self.grant.enrollment(),
+                now,
+            ) == Ok(self.grant)
+    }
+}
+
 pub(super) struct BoundEnrollmentMetadataReview {
     pub(super) principal: ConnectionId,
     association: controller::FrozenAssociation,
@@ -1465,17 +1497,7 @@ impl Coordinator {
             && !self.privacy_gate.is_closed()
             && !self.stop.load(Ordering::Acquire)
             && !peer.connection.is_closed()
-            && peer.grant.is_none()
-            && bound.source.is_current(&self.targets, guard)
-            && bound
-                .association
-                .is_current(broker, &self.targets, peer, apps, guard)
-            && broker.native_enrollment_metadata_grant(
-                peer.principal,
-                registration,
-                enrollment,
-                now,
-            ) == Ok(bound.grant)
+            && bound.is_current(broker, &self.targets, peer, apps, now, guard)
     }
 
     #[allow(dead_code)]

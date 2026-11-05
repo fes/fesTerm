@@ -350,12 +350,10 @@ impl Refusal {
 
 pub enum BackendResult {
     PairingStatus(PairingStatus),
-    /// The backend must independently establish enrollment feature availability
-    /// for either capability request, not authorization. Metadata via
-    /// association handles remains unavailable regardless of grants until its
-    /// consumer is implemented.
+    /// Backend-qualified feature availability, not authorization or grant status.
     ControllerCapabilities {
         enrollment_available: bool,
+        metadata_available: bool,
     },
     /// Only the submitting connection's non-authorizing correlation identifiers.
     ControllerStatus {
@@ -677,10 +675,11 @@ impl Machine {
                 Operation::ControllerCapabilities,
                 BackendResult::ControllerCapabilities {
                     enrollment_available,
+                    metadata_available,
                 },
             ) => json!({
                 "enrollment_available": enrollment_available,
-                "metadata_available": false,
+                "metadata_available": enrollment_available && metadata_available,
                 "metadata_requires_separate_grant": true,
                 "presentation_available": false,
                 "input_available": false,
@@ -689,6 +688,7 @@ impl Machine {
                 Operation::PresentationCapabilities,
                 BackendResult::ControllerCapabilities {
                     enrollment_available,
+                    metadata_available: _,
                 },
             ) => presentation::unavailable(enrollment_available),
             (
