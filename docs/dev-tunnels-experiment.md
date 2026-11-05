@@ -340,6 +340,19 @@ Observed shell exit (even nonzero), operator termination and normal shutdown
 stay stopped. Legacy/missing/corrupt lifecycle evidence also refuses; a bridge
 upgrade cannot retrofit diagnostics into an already-running old daemon.
 
+If a legacy host is already dead, upgrade alone refuses rather than replacing
+its shell. Explicit `--repair-session` (`-RepairSession` on Windows), combined
+with upgrade when desired, authorizes a **new default shell** while preserving
+the existing tunnel, account, host key and grants (ADR 0071). This does not
+restore programs/state or enable automatic recovery. The daemon beside the
+selected `--devtunnel` CLI is used. A live target refuses; pending repairs adopt
+only their journaled generation and never retry an uncertain launch. Rerun
+with the repair flag to reconcile interruption; ordinary setup refuses while
+its journal remains. Apply grant/restart-policy changes separately. Refresh
+generation-pinned connection JSON and explicitly reconnect afterward.
+With repair plus upgrade, the setup/worker bundle beside that CLI is selected.
+This also upgrades legacy Windows installations that lack a windowless worker.
+
 The worker checks daemon liveness every second independently of relay health,
 stops advertising a dead target and, when opted in, retries after 15 seconds.
 New daemons retain a private `lifecycle/<session-name>.json` under their original

@@ -25,6 +25,15 @@ pub(super) use profile::request_file as profile_request_file;
 const CONFIG: &str = "installation.json";
 const READY: &str = "ready.json";
 const PROFILE_JSON: &str = "festerm-profile.json";
+const SESSION_REPAIR: &str = "session-repair.json";
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SessionRepair {
+    installation: String,
+    previous: Target,
+    generation: u128,
+}
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -481,6 +490,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         state,
         no_takeover,
         upgrade,
+        repair_session,
         friendly_name,
         filesystem,
         observation,
@@ -520,7 +530,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                 "setup.friendly_name_only_applies_to_new_hosts_rename_existing_tunnels_in_festerm",
             ));
         }
-        if upgrade && create {
+        if (upgrade || repair_session) && create {
             return Err(refused("setup.upgrade_requires_an_existing_installation"));
         }
         Ok(create)
@@ -528,7 +538,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     let create = presence()?;
     super::service_install::ensure_unprivileged_user()?;
     #[cfg(windows)]
-    super::service_install::check_windows_worker(&std::env::current_exe()?)?;
+    preflight_install_worker(repair_session, &std::env::current_exe()?)?;
     let namespace_installer = management::setup_namespace_lock(&state)?;
     let create = if namespace_installer.is_some() {
         presence()?
@@ -543,7 +553,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     let record = match read_json::<Installation>(&directory, CONFIG) {
         Ok(record) => record,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            if upgrade {
+            if upgrade || repair_session {
                 return Err(refused("setup.upgrade_requires_an_existing_installation"));
             }
             refuse_orphaned_state(&state)?;
@@ -691,7 +701,20 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     if let Some(error) = management_guidance(&record) {
         return Err(error);
     }
-    let executable = std::env::current_exe()?;
+    let record = if repair_session {
+        repair_installation(&directory, &state, record, &cli_path, upgrade).await?
+    } else {
+        match read_json::<SessionRepair>(&directory, SESSION_REPAIR) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            _ => return Err(refused("setup.session_repair_pending_rerun_repair_session")),
+        }
+        record
+    };
+    let executable = if repair_session && upgrade {
+        record.executable.clone()
+    } else {
+        std::env::current_exe()?
+    };
     let changing_filesystem = updates
         .filesystem
         .as_ref()
@@ -810,6 +833,7 @@ struct ManagedArguments {
     state: PathBuf,
     no_takeover: bool,
     upgrade: bool,
+    repair_session: bool,
     friendly_name: Option<String>,
     filesystem: Option<Option<festerm_tunnel_bridge::file_protocol::Policy>>,
     observation: Option<Option<festerm_tunnel_bridge::observation_protocol::Policy>>,
@@ -843,7 +867,7 @@ impl GrantUpdates {
 fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
     let usage = || {
         refused(
-            "usage: --managed --devtunnel PATH --state-dir PRIVATE_DIRECTORY [--no-takeover] [--upgrade] [--friendly-name NAME] [--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files] [--observe-root ABSOLUTE_DIRECTORY ... | --disable-observation] [--restart-unexpected|--no-restart-unexpected]",
+            "usage: --managed --devtunnel PATH --state-dir PRIVATE_DIRECTORY [--no-takeover] [--upgrade] [--repair-session] [--friendly-name NAME] [--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files] [--observe-root ABSOLUTE_DIRECTORY ... | --disable-observation] [--restart-unexpected|--no-restart-unexpected]",
         )
     };
     let [flag, cli, state_flag, state, options @ ..] = args else {
@@ -853,6 +877,7 @@ fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
         return Err(refused("setup.managed_arguments"));
     }
     let (mut no_takeover, mut upgrade, mut friendly_name) = (false, false, None);
+    let mut repair_session = false;
     let (mut file_root, mut file_write, mut disable_files) = (None, false, false);
     let (mut observation_roots, mut disable_observation) = (Vec::new(), false);
     let mut restart_unexpected = None;
@@ -872,6 +897,8 @@ fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
             &mut no_takeover
         } else if option == "--upgrade" {
             &mut upgrade
+        } else if option == "--repair-session" {
+            &mut repair_session
         } else if option == "--allow-file-write" {
             &mut file_write
         } else if option == "--disable-files" {
@@ -946,11 +973,21 @@ fn managed_arguments(args: &[OsString]) -> io::Result<ManagedArguments> {
             roots: observation_roots,
         }))
     };
+    if repair_session
+        && (no_takeover
+            || friendly_name.is_some()
+            || filesystem.is_some()
+            || observation.is_some()
+            || restart_unexpected.is_some())
+    {
+        return Err(refused("setup.repair_session_cannot_change_policy"));
+    }
     Ok(ManagedArguments {
         cli: PathBuf::from(cli),
         state: PathBuf::from(state),
         no_takeover,
         upgrade,
+        repair_session,
         friendly_name,
         filesystem,
         observation,
@@ -1149,6 +1186,254 @@ async fn wait_worker_stopped(directory: &File) -> io::Result<()> {
     .map_err(|_| refused("setup.previous_worker_still_running"))?
 }
 
+async fn stop_owned_workers(
+    directory: &File,
+    state: &Path,
+    record: &Installation,
+) -> io::Result<()> {
+    let previous: Vec<_> = record
+        .upgrading_from
+        .iter()
+        .map(|executable| super::service_install::ServiceSpec {
+            id: record.id.clone(),
+            executable: executable.clone(),
+            state: state.into(),
+        })
+        .collect();
+    super::service_install::stop_and_replace(&previous, &service(record, state))?;
+    wait_worker_stopped(directory).await
+}
+
+async fn repair_installation(
+    directory: &File,
+    state: &Path,
+    record: Installation,
+    cli: &Path,
+    upgrade: bool,
+) -> io::Result<Installation> {
+    if record.phase != "configured" && record.phase != UPGRADING {
+        return Err(refused("setup.incomplete_installation"));
+    }
+    let daemon = cli.with_file_name(format!("festerm-sessiond{}", std::env::consts::EXE_SUFFIX));
+    if !daemon.is_file() {
+        return Err(refused("setup.repair_daemon_helper_missing"));
+    }
+    if verify_account(cli).await? != record.account {
+        return Err(refused("setup.changed_cli_account"));
+    }
+    let identity = HostIdentity::load(&state.join("host-identity.key"))?;
+    if identity.fingerprint()? != record.fingerprint {
+        return Err(refused("setup.changed_host_identity"));
+    }
+    let qualified = record
+        .tunnel
+        .as_deref()
+        .ok_or_else(|| refused("setup.tunnel_missing"))?;
+    let bytes = super::cli(
+        cli,
+        &["token", qualified, "--scopes", "host", "--json"],
+        "setup.host_token",
+    )
+    .await?;
+    drop(decode_token(&bytes)?);
+    drop(bytes);
+    if verify_account(cli).await? != record.account {
+        return Err(refused("setup.changed_cli_account_after_token"));
+    }
+    match read_json::<SessionRepair>(directory, SESSION_REPAIR) {
+        Ok(journal) => validate_session_repair(&journal, &record)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            require_dead_repair_target(&record)?;
+        }
+        Err(error) => return Err(error),
+    }
+    let mut next = repair_record(&record, cli, upgrade)?;
+    checkpoint(directory, &next)?;
+    stop_owned_workers(directory, state, &next).await?;
+    let health = lock(directory, "health.lock")?;
+    health
+        .try_lock_exclusive()
+        .map_err(|_| refused("setup.health_publication_busy"))?;
+    let log = WorkerLog::new(state);
+    println!("Explicit session repair: starting a NEW default shell. Programs and terminal state are not restored. Tunnel, account, host key and grants are preserved.");
+    repair_session_generation(directory, state, &mut next, &daemon, |start| {
+        launch_replacement(start, &log)
+    })
+    .await?;
+    Ok(next)
+}
+
+#[cfg(windows)]
+fn preflight_install_worker(repair_session: bool, executable: &Path) -> io::Result<()> {
+    if !repair_session {
+        super::service_install::check_windows_worker(executable)?;
+    }
+    Ok(())
+}
+
+fn repair_record(record: &Installation, cli: &Path, upgrade: bool) -> io::Result<Installation> {
+    let executable = if upgrade {
+        cli.with_file_name(format!(
+            "festerm-tunnel-setup{}",
+            std::env::consts::EXE_SUFFIX
+        ))
+    } else {
+        record.executable.clone()
+    };
+    let next = pending_upgrade(
+        record,
+        executable,
+        if upgrade {
+            cli.into()
+        } else {
+            record.cli.clone()
+        },
+        record.no_takeover,
+        &GrantUpdates::default(),
+    )?;
+    #[cfg(windows)]
+    super::service_install::check_windows_worker(&next.executable)?;
+    Ok(next)
+}
+
+fn require_dead_repair_target(record: &Installation) -> io::Result<()> {
+    let target = record
+        .target
+        .as_ref()
+        .ok_or_else(|| refused("setup.target_missing"))?;
+    match exact_target_alive(&record.runtime_root, target) {
+        Ok(()) => Err(refused("setup.session_repair_requires_dead_target")),
+        Err(error) if error.to_string() == "setup.exact_daemon_gone_no_replacement_created" => {
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+async fn repair_session_generation<F, R>(
+    directory: &File,
+    state: &Path,
+    record: &mut Installation,
+    daemon: &Path,
+    launch: F,
+) -> io::Result<()>
+where
+    F: FnOnce(Command) -> R,
+    R: std::future::Future<Output = io::Result<()>>,
+{
+    if record.phase != UPGRADING {
+        return Err(refused("setup.incomplete_installation"));
+    }
+    let target = record
+        .target
+        .clone()
+        .ok_or_else(|| refused("setup.target_missing"))?;
+    let journal = match read_json::<SessionRepair>(directory, SESSION_REPAIR) {
+        Ok(journal) => journal,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            require_dead_repair_target(record)?;
+            let generation = festerm_sessiond::lifecycle::now_ms().max(
+                target
+                    .generation
+                    .checked_add(1)
+                    .ok_or_else(|| refused("setup.daemon_restart_identity"))?,
+            );
+            let journal = SessionRepair {
+                installation: record.id.clone(),
+                previous: target.clone(),
+                generation,
+            };
+            setup_storage::write_new_private(
+                directory,
+                Path::new(SESSION_REPAIR),
+                &serde_json::to_vec(&journal).map_err(|_| refused("setup.managed_state_encode"))?,
+            )?;
+            let start = replacement_command(record, state, daemon, generation)?;
+            launch(start).await?;
+            journal
+        }
+        Err(error) => return Err(error),
+    };
+    validate_session_repair(&journal, record)?;
+    let selected = festerm_sessiond::list_unattached_sessions_in(&record.runtime_root)
+        .map_err(|_| refused("setup.daemon_restart_identity"))?
+        .into_iter()
+        .find(|session| {
+            session.name == target.name && session.created_at_unix_ms == journal.generation
+        })
+        .ok_or_else(|| refused("setup.session_repair_interrupted_no_duplicate_created"))?;
+    record.target = Some(Target {
+        name: selected.name,
+        pid: selected.pid,
+        generation: selected.created_at_unix_ms,
+        endpoint: selected.endpoint,
+    });
+    if let Some(recovery) = &mut record.recovery {
+        recovery.pending_generation = None;
+    }
+    record.phase = "configured".into();
+    record.upgrading_from.clear();
+    validate_record(record)?;
+    checkpoint(directory, record)?;
+    fs::remove_file(state.join(SESSION_REPAIR))?;
+    println!("Fresh shell ready: generation {}. Reconnect explicitly; old generation-pinned connection JSON must be refreshed.", journal.generation);
+    Ok(())
+}
+
+fn validate_session_repair(journal: &SessionRepair, record: &Installation) -> io::Result<()> {
+    let target = record
+        .target
+        .as_ref()
+        .ok_or_else(|| refused("setup.target_missing"))?;
+    if journal.installation != record.id
+        || journal.previous.name != target.name
+        || journal.generation <= journal.previous.generation
+        || (journal.previous != *target && target.generation != journal.generation)
+    {
+        return Err(refused("setup.session_repair_identity"));
+    }
+    Ok(())
+}
+
+fn replacement_command(
+    record: &Installation,
+    state: &Path,
+    daemon: &Path,
+    generation: u128,
+) -> io::Result<Command> {
+    let target = record
+        .target
+        .as_ref()
+        .ok_or_else(|| refused("setup.target_missing"))?;
+    let (variable, base) = daemon_namespace(&record.runtime_root)?;
+    let mut start = super::background_command(daemon);
+    start
+        .env(variable, base)
+        .env("FESTERM_SESSIOND_GENERATION", generation.to_string())
+        .args([
+            "start",
+            "--name",
+            &target.name,
+            "--cols",
+            "80",
+            "--rows",
+            "24",
+            "--scrollback-limit-bytes",
+            "1048576",
+        ])
+        .current_dir(state)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    super::shell_command(&mut start);
+    if let Some(home) = super::shell_home() {
+        start.arg("--cwd").arg(home);
+    }
+    Ok(start)
+}
+
 async fn upgrade_installation(
     directory: &File,
     state: &Path,
@@ -1179,17 +1464,7 @@ async fn upgrade_installation(
         target.name,
         target.pid,
     );
-    let previous: Vec<_> = next
-        .upgrading_from
-        .iter()
-        .map(|executable| super::service_install::ServiceSpec {
-            id: next.id.clone(),
-            executable: executable.clone(),
-            state: state.into(),
-        })
-        .collect();
-    super::service_install::stop_and_replace(&previous, &service(&next, state))?;
-    wait_worker_stopped(directory).await?;
+    stop_owned_workers(directory, state, &next).await?;
     let next = upgrade_completed(&next, updates);
     validate_record(&next)?;
     checkpoint(directory, &next)?;
@@ -1296,32 +1571,7 @@ where
             .parent()
             .ok_or_else(|| refused("setup.helpers"))?
             .join(format!("festerm-sessiond{}", std::env::consts::EXE_SUFFIX));
-        let (variable, base) = daemon_namespace(&record.runtime_root)?;
-        let mut start = super::background_command(&daemon);
-        start
-            .env(variable, base)
-            .env("FESTERM_SESSIOND_GENERATION", generation.to_string())
-            .args([
-                "start",
-                "--name",
-                &old.name,
-                "--cols",
-                "80",
-                "--rows",
-                "24",
-                "--scrollback-limit-bytes",
-                "1048576",
-            ])
-            .current_dir(state)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        #[cfg(unix)]
-        super::shell_command(&mut start);
-        if let Some(home) = super::shell_home() {
-            start.arg("--cwd").arg(home);
-        }
+        let start = replacement_command(record, state, &daemon, generation)?;
         launch(start).await?;
         generation
     };
@@ -2778,10 +3028,206 @@ mod tests {
         fs::remove_dir_all(state).unwrap();
     }
 
+    #[test]
+    fn managed_session_repair_is_explicit_and_cannot_change_policy() {
+        let base: Vec<OsString> = ["--devtunnel", "cli", "--state-dir", "state"]
+            .into_iter()
+            .map(OsString::from)
+            .collect();
+        assert!(!managed_arguments(&base).unwrap().repair_session);
+        let mut repair = base;
+        repair.push("--repair-session".into());
+        assert!(managed_arguments(&repair).unwrap().repair_session);
+        let mut upgrade = repair.clone();
+        upgrade.push("--upgrade".into());
+        assert!(managed_arguments(&upgrade).unwrap().upgrade);
+        for option in [
+            "--repair-session",
+            "--restart-unexpected",
+            "--no-restart-unexpected",
+            "--disable-files",
+            "--disable-observation",
+            "--no-takeover",
+        ] {
+            let mut invalid = repair.clone();
+            invalid.push(option.into());
+            assert!(managed_arguments(&invalid).is_err(), "{option}");
+        }
+    }
+
+    #[tokio::test]
+    async fn managed_session_repair_journals_one_fresh_generation_without_changing_grants() {
+        let state = crate::test_support::private_directory("festerm-session-repair");
+        let directory = setup_storage::private_directory(&state, false).unwrap();
+        let application_path = state.join(if cfg!(windows) { "fesTerm" } else { "festerm" });
+        let application = setup_storage::private_directory(&application_path, true).unwrap();
+        let runtime_path = application_path.join("sessiond");
+        let runtime = setup_storage::private_directory(&runtime_path, true).unwrap();
+        let mut record = configured_fixture(old_executable());
+        record.runtime_root = runtime_path.clone();
+        record.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            root: state.clone(),
+            write: true,
+        });
+        record.observation = Some(festerm_tunnel_bridge::observation_protocol::Policy {
+            roots: vec![state.clone()],
+        });
+        record.phase = UPGRADING.into();
+        record.upgrading_from = vec![record.executable.clone()];
+        let before = serde_json::to_value(&record).unwrap();
+        let old = record.target.clone().unwrap();
+        let daemon = std::env::current_exe().unwrap();
+        let mut leases = Vec::new();
+        repair_session_generation(&directory, &state, &mut record, &daemon, |start| {
+            assert_eq!(start.as_std().get_program(), daemon.as_os_str());
+            let journal: SessionRepair = read_json(&directory, SESSION_REPAIR).unwrap();
+            assert!(journal.previous == old);
+            assert!(journal.generation > old.generation);
+            let generation = journal.generation;
+            let pid = std::process::id();
+            let lease = setup_storage::open_private_file(
+                &runtime,
+                Path::new(&format!("lease-{pid}-{generation}")),
+                true,
+            )
+            .unwrap();
+            lease.try_lock_exclusive().unwrap();
+            leases.push(lease);
+            let socket = runtime_path.join(format!("fixture-{pid}-{generation}.sock"));
+            fs::write(&socket, b"").unwrap();
+            fs::write(
+                runtime_path.join("registry.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "sessions": { (old.name.clone()): {
+                        "name": old.name, "pid": pid, "created_at_unix_ms": generation,
+                        "socket": socket.to_string_lossy(),
+                        "protocol_version": 3, "snapshot_schema_version": 3
+                    }}
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            std::future::ready(Ok(()))
+        })
+        .await
+        .unwrap();
+        assert!(require_dead_repair_target(&record).is_err());
+        assert!(!state.join(SESSION_REPAIR).exists());
+        let after = serde_json::to_value(&record).unwrap();
+        for key in [
+            "id",
+            "account",
+            "tunnel",
+            "fingerprint",
+            "cli",
+            "executable",
+            "no_takeover",
+            "filesystem",
+            "observation",
+            "recovery",
+        ] {
+            assert_eq!(before[key], after[key], "{key} must not change");
+        }
+        let fresh = record.target.clone().unwrap();
+        record.target = Some(old.clone());
+        record.phase = UPGRADING.into();
+        record.upgrading_from = vec![record.executable.clone()];
+        let journal = SessionRepair {
+            installation: record.id.clone(),
+            previous: old.clone(),
+            generation: fresh.generation,
+        };
+        setup_storage::write_new_private(
+            &directory,
+            Path::new(SESSION_REPAIR),
+            &serde_json::to_vec(&journal).unwrap(),
+        )
+        .unwrap();
+        repair_session_generation(&directory, &state, &mut record, &daemon, |_| async {
+            panic!("an interrupted repair must adopt, not launch again")
+        })
+        .await
+        .unwrap();
+        assert!(record.target == Some(fresh.clone()));
+        record.target = Some(old.clone());
+        record.phase = UPGRADING.into();
+        record.upgrading_from = vec![record.executable.clone()];
+        let mut journal = journal;
+        journal.generation = fresh.generation + 1;
+        setup_storage::write_new_private(
+            &directory,
+            Path::new(SESSION_REPAIR),
+            &serde_json::to_vec(&journal).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            repair_session_generation(&directory, &state, &mut record, &daemon, |_| async {
+                panic!("an uncertain prior launch must never be repeated")
+            })
+            .await
+            .is_err()
+        );
+        assert!(record.target == Some(old));
+        drop(leases);
+        drop(runtime);
+        drop(application);
+        drop(directory);
+        fs::remove_dir_all(state).unwrap();
+    }
+
     fn old_executable() -> PathBuf {
         std::env::current_dir()
             .unwrap()
             .join("releases/0.0.1-fixture/festerm-tunnel-setup")
+    }
+
+    #[test]
+    fn managed_session_repair_validates_the_selected_helper_bundle() {
+        let root = crate::test_support::private_directory("festerm-repair-bundles");
+        let stored = root.join("stored");
+        let release = root.join("release");
+        fs::create_dir(&stored).unwrap();
+        fs::create_dir(&release).unwrap();
+        let setup_name = format!("festerm-tunnel-setup{}", std::env::consts::EXE_SUFFIX);
+        let record = configured_fixture(stored.join(&setup_name));
+        let cli = release.join(format!("devtunnel{}", std::env::consts::EXE_SUFFIX));
+        #[cfg(windows)]
+        {
+            let utility = root.join(&setup_name);
+            assert_eq!(
+                preflight_install_worker(false, &utility)
+                    .unwrap_err()
+                    .to_string(),
+                "service.worker_executable"
+            );
+            preflight_install_worker(true, &utility).unwrap();
+            for upgrade in [false, true] {
+                assert_eq!(
+                    repair_record(&record, &cli, upgrade)
+                        .err()
+                        .unwrap()
+                        .to_string(),
+                    "service.worker_executable"
+                );
+            }
+            fs::write(release.join("festerm-tunnel-worker.exe"), b"fixture").unwrap();
+            assert!(repair_record(&record, &cli, false).is_err());
+        }
+        let upgraded = repair_record(&record, &cli, true).unwrap();
+        assert_eq!(upgraded.executable, release.join(&setup_name));
+        assert_eq!(upgraded.cli, cli);
+        #[cfg(windows)]
+        {
+            fs::remove_file(release.join("festerm-tunnel-worker.exe")).unwrap();
+            fs::write(stored.join("festerm-tunnel-worker.exe"), b"fixture").unwrap();
+            assert!(repair_record(&record, &cli, true).is_err());
+        }
+        let retained = repair_record(&record, &cli, false).unwrap();
+        assert_eq!(retained.executable, record.executable);
+        assert_eq!(retained.cli, record.cli);
+        assert_eq!(record.phase, "configured");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

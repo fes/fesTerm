@@ -6,6 +6,7 @@ param(
     # Switch an existing host's service to this release's helpers, keeping its
     # tunnel, host key and running daemon session.
     [switch]$Upgrade,
+    [switch]$RepairSession,
     [string]$FileRoot = '',
     [switch]$AllowFileWrite,
     [switch]$DisableFiles,
@@ -87,7 +88,7 @@ $local = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicat
 $root = Join-Path $local 'fesTerm-tunnels'
 $releases = Join-Path $root 'releases'
 if ($Manage) {
-    if ($NoTakeover -or $Upgrade -or $FileRoot -or $AllowFileWrite -or $DisableFiles -or
+    if ($NoTakeover -or $Upgrade -or $RepairSession -or $FileRoot -or $AllowFileWrite -or $DisableFiles -or
         $ObserveRoot.Count -or $DisableObservation -or $RestartUnexpected -or
         $NoRestartUnexpected -or $FriendlyName) {
         throw 'Management cannot be combined with setup/upgrade options.'
@@ -287,6 +288,7 @@ try {
     $setupArguments = @('--managed', '--devtunnel', $cli, '--state-dir', (Join-Path $root 'state'))
     if ($NoTakeover) { $setupArguments += '--no-takeover' }
     if ($Upgrade) { $setupArguments += '--upgrade' }
+    if ($RepairSession) { $setupArguments += '--repair-session' }
     if ($FileRoot) { $setupArguments += @('--file-root', $FileRoot) }
     if ($AllowFileWrite) { $setupArguments += '--allow-file-write' }
     if ($DisableFiles) { $setupArguments += '--disable-files' }

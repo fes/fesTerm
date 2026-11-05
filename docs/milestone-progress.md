@@ -28,6 +28,23 @@ versioned private copies so package updates need not replace running images;
 old-cache collection remains #619. Deterministic fixtures are not signed
 servicing or physical-client acceptance: those remain DT-08.
 
+## Repairing an already-dead legacy tunnel host
+
+A 0.15.0 helper upgrade encountered a dead 0.14.1 daemon. The refusal was
+correct for generation-preserving upgrade, but neither upgrade nor conservative
+automatic recovery offered an explicit operator recovery path for missing
+legacy lifecycle evidence. ADR 0071 adds separately authorized fresh-shell
+repair, keeping the tunnel, host key and grants. One generation is journaled
+before launch; interruption reconciles that exact shell or refuses without
+creating another. Live sessions remain untouched and clients reconnect
+explicitly. Signed/native cross-platform qualification remains DT-05 work.
+
+Review caught a standalone Windows repair utility unnecessarily requiring its
+own adjacent worker. Repair now validates the selected stored/release worker
+before checkpointing or stopping anything; ordinary setup/upgrade still
+requires the utility's bundle. Deterministic bundle-selection and worker refusal
+regressions cover that distinction without bypassing account verification.
+
 ## Sharing iOS input and separating saved profiles from active work
 
 The P1–P4 follow-up above draft #621 reuses the custom keyboard and native local
