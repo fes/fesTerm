@@ -210,6 +210,16 @@ pub enum Progress {
     Frame(Vec<u8>),
 }
 
+/// Socket readiness to await after `Progress::Blocked`.
+///
+/// Native decisions and write-admission changes need separate wakeups. Retry
+/// immediately after any other progress, subject to a bounded fairness budget.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IoInterest {
+    pub readable: bool,
+    pub writable: bool,
+}
+
 impl fmt::Debug for Progress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -415,6 +425,59 @@ impl<S: Read + Write, N: TrustedNativeVerification> SecureTransport<S, N> {
 
     pub fn has_pending_output(&self) -> bool {
         self.output.is_some()
+    }
+
+    pub fn io_interest(&self) -> IoInterest {
+        match self.phase {
+            Phase::Handshake => match self.handshake.as_ref().map(HandshakeIo::interest) {
+                Some(Interest::Read) => IoInterest {
+                    readable: true,
+                    writable: false,
+                },
+                Some(Interest::Write) => IoInterest {
+                    readable: false,
+                    writable: true,
+                },
+                _ => IoInterest {
+                    readable: false,
+                    writable: false,
+                },
+            },
+            Phase::NativeDecision => IoInterest {
+                readable: true,
+                writable: false,
+            },
+            Phase::Confirming => IoInterest {
+                readable: !self.receipt_received,
+                writable: self.output.is_some(),
+            },
+            Phase::Active => IoInterest {
+                readable: true,
+                writable: self.output.is_some(),
+            },
+            Phase::Closed => IoInterest {
+                readable: false,
+                writable: false,
+            },
+        }
+    }
+
+    /// Earliest deadline the owner must wake for, including idle connections.
+    pub fn next_deadline(&self) -> Option<Instant> {
+        if self.phase == Phase::Closed {
+            return None;
+        }
+        let mut deadline = self.lifetime_deadline;
+        if self.phase != Phase::Active {
+            deadline = deadline.min(self.bootstrap_deadline);
+        }
+        if let Some(read) = self.read_deadline {
+            deadline = deadline.min(read);
+        }
+        if let Some(write) = self.write_deadline {
+            deadline = deadline.min(write);
+        }
+        Some(deadline)
     }
 
     pub fn cleanup_status(&self) -> CleanupStatus {

@@ -770,13 +770,27 @@ I/O, deadlines and one pending frame per direction; every physical write still
 requires a caller-supplied live admission guard. The direct and stdio handshake
 domains cannot authenticate each other's replies. A Unix socket-pair test uses
 simulated comparisons, not a native verifier or a separate client process.
-The driver does not create an endpoint, connect an MCP SDK, identify the
-process holding the other end, qualify lock/privacy monitoring or fence a
-recipient. A relay can forward a valid handshake unchanged and delay previously
+The driver does not create an endpoint, identify the process holding the other
+end, qualify lock/privacy monitoring or fence a recipient. A relay can forward
+a valid handshake unchanged and delay previously
 sent ciphertext after the real client exits. Direct delivery removes the extra
 stdio proxy only when a future integration establishes its actual recipient;
 it does not itself solve that relay or caller-liveness problem. Production
 bootstrap, observation and control remain closed.
+
+The separate experimental `festerm-automation-mcp-client` crate adapts an
+already-connected Unix socket to the official Rust SDK without adding that SDK
+as an application dependency. It waits on socket readiness and explicit native
+or admission wakeups, bounds each direction to four queued messages, and closes
+on backpressure, invalid frames or cancellation. A send completes only after
+the encrypted frame's physical socket write; it is not an admission receipt.
+The client retains a separate completion/cleanup handle and can disconnect on
+a local lifecycle cut. Its native verifier and per-write privacy fence are
+caller-supplied and unqualified. Socket-pair tests use simulated comparisons and
+a synthetic protocol host, not a production listener, separate process or native
+authority. Windows transport and iOS cross-application feasibility remain
+unqualified. Unknown actions are not replayed; #524's durable uncertainty
+interlock remains the external client's responsibility.
 
 Once bootstrap is qualified, the application binds a distinct broker principal
 to the accepted handle; neither `clientInfo`, a wire ID nor a copied code owns

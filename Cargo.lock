@@ -2337,6 +2337,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "festerm-automation-mcp-client"
+version = "0.14.1"
+dependencies = [
+ "festerm-automation-mcp",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "socket2",
+ "tokio",
+]
+
+[[package]]
 name = "festerm-automation-workflow"
 version = "0.14.1"
 dependencies = [

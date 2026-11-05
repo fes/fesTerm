@@ -7570,3 +7570,13 @@ availability in either capability response and continues to refuse presentation.
 Synthetic tests cover qualification changes, cancellation and pending limits;
 the default observation-only catalog is unchanged. This adds neither native
 qualification nor metadata delivery, presentation or input.
+
+## Experimental Rust MCP connector
+
+The official Rust SDK can now drive the bounded direct channel through a
+separate Unix client crate without adding the SDK to the application. An
+event-driven socket-pair test exercises protocol initialization and an unknown
+input outcome against a synthetic host; cancellation, partial writes and queue
+limits close the connection without automatic replay. This does not open a
+listener or qualify human verification, privacy, the real peer or caller
+liveness. Windows and iOS transport feasibility remain open.

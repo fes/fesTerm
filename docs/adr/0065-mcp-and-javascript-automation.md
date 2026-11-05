@@ -100,7 +100,15 @@ to bypass another's restrictions.
    authenticated private IPC. The owner also authorized an additional direct
    authenticated local-socket binding for clients using a fesTerm-specific
    connector; it can be pursued first but does not replace stdio or relax its
-   gates. Neither binding grants session access on connection. The P1 checkpoint
+   gates. An experimental Unix-only `festerm-automation-mcp-client` crate
+   depends on the MCP protocol/channel crate and the official Rust SDK, not the
+   application; the application does not depend on the client crate. Its
+   bounded, readiness-driven connector takes an already-connected socket,
+   independent native verifier and client-side write fence. It closes on
+   cancelled sends and reports physical-write completion separately from broker
+   admission; it does not authenticate the peer, qualify privacy or provide a
+   production endpoint. Windows and iOS feasibility remain unqualified.
+   Neither binding grants session access on connection. The P1 checkpoint
    exposes bounded observation only. Named, reviewed workflow invocation follows
    P2 runtime qualification and the P3 control/authorization gates; no tool
    evaluates caller-supplied JavaScript. HTTP/network service, fesTerm acting as
@@ -423,9 +431,11 @@ in the design must be visible in implementation/release review.
   unverified channel until outbound handshake bytes are physically written.
   The experimental direct channel adds a separate handshake domain, mutual
   confirmation and bounded physical I/O, including a Unix socket-pair test
-  with simulated decisions. These do not prove trusted human comparison, caller
-  liveness, native lock behavior, production client interoperability, a
-  confined engine or native input ordering. Coordinator
+  with simulated decisions. An official Rust SDK connector additionally
+  exchanges MCP messages over that encrypted socket with a synthetic protocol
+  host; bounded queue, cancellation and partial-write regressions do not prove
+  trusted human comparison, caller liveness, native lock behavior, production
+  client interoperability, a confined engine or native input ordering. Coordinator
   lifecycle tests additionally distinguish
   MCP-only cleanup from global privacy revocation; they do not prove an
   integrated JavaScript adapter. Local PTY reservation tests exercise ordered
