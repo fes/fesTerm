@@ -632,6 +632,7 @@
         "dropping_the_ui_owner_before_display_retires_the_reservation",
         "stale_reservation_is_bounded_and_reclaimed_before_reuse",
         "queued_stale_prompt_is_reclaimed_before_surface_reuse",
+        "reservation_replacement_during_advance_reclaims_old_state",
         "rejection_wakes_and_denies_the_current_comparison",
         "same_frame_cancellation_cannot_confirm_a_direct_comparison",
         "failed_cleanup_quarantines_the_surface",

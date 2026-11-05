@@ -112,6 +112,19 @@ struct Reservation {
     wake_owner: Wake,
 }
 
+#[cfg(test)]
+struct AdvanceTestGate {
+    entered: SyncSender<()>,
+    resume: Receiver<()>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static ADVANCE_TEST_GATE: std::cell::RefCell<Option<AdvanceTestGate>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
 struct Shared {
     pending: SyncSender<Prompt>,
     // A cancelled verifier may leave its prompt queued after releasing the reservation.
@@ -166,34 +179,37 @@ impl Owner {
     }
 
     pub(super) fn advance(&mut self) {
-        if self
-            .current
-            .as_ref()
-            .is_some_and(|prompt| !prompt.view.live.alive())
-        {
-            let prompt = self.current.take().expect("current prompt was checked");
-            self.dismiss(prompt);
-        }
-        if self
-            .active
-            .as_ref()
-            .is_some_and(|reservation| !reservation.live.alive())
-        {
-            let reservation = self.active.take().expect("active reservation was checked");
-            self.retire(reservation);
-        }
+        self.dismiss_retired_prompt();
+        self.retire_dead_reservation();
+        #[cfg(test)]
+        ADVANCE_TEST_GATE.with(|slot| {
+            if let Some(gate) = slot.borrow_mut().take() {
+                gate.entered
+                    .send(())
+                    .expect("enter comparison advance gate");
+                gate.resume
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .expect("resume comparison advance");
+            }
+        });
         match self.reservations.try_recv() {
             Ok(reservation) if !reservation.live.alive() => self.retire(reservation),
-            Ok(reservation) if self.active.is_none() => self.active = Some(reservation),
             Ok(reservation) => {
-                self.retire(reservation);
-                self.quarantine();
+                // Replacement can arrive after the initial liveness sweep.
+                self.retire_dead_reservation();
+                if self.active.is_none() {
+                    self.active = Some(reservation);
+                } else {
+                    self.retire(reservation);
+                    self.quarantine();
+                }
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => self.quarantine(),
         }
         match self.take_prompt() {
             Ok(prompt) if prompt.view.is_current() => {
+                self.dismiss_retired_prompt();
                 if self.current.is_some() {
                     self.dismiss(prompt);
                     self.quarantine();
@@ -276,6 +292,28 @@ impl Owner {
     fn dismiss(&self, prompt: Prompt) {
         if prompt.view.live.invalidate() {
             self.surface.wake(&prompt.wake_owner);
+        }
+    }
+
+    fn dismiss_retired_prompt(&mut self) {
+        if self
+            .current
+            .as_ref()
+            .is_some_and(|prompt| !prompt.view.live.alive())
+        {
+            let prompt = self.current.take().expect("current prompt was checked");
+            self.dismiss(prompt);
+        }
+    }
+
+    fn retire_dead_reservation(&mut self) {
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|reservation| !reservation.live.alive())
+        {
+            let reservation = self.active.take().expect("active reservation was checked");
+            self.retire(reservation);
         }
     }
 
@@ -936,6 +974,54 @@ mod tests {
         display(&mut next, &"b".repeat(64));
         owner.advance();
         assert_eq!(owner.view().unwrap().fingerprint, "b".repeat(64));
+    }
+
+    #[test]
+    fn reservation_replacement_during_advance_reclaims_old_state() {
+        let (mut owner, mut verifier, _, stop) = fixture();
+        let privacy = verifier.live.privacy.clone();
+        let surface = owner.surface();
+        display(&mut verifier, &"a".repeat(64));
+        owner.advance();
+        let (entered, entered_rx) = mpsc::sync_channel(1);
+        let (resume, resume_rx) = mpsc::sync_channel(1);
+        ADVANCE_TEST_GATE.with(|slot| {
+            *slot.borrow_mut() = Some(AdvanceTestGate {
+                entered,
+                resume: resume_rx,
+            });
+        });
+        let worker = thread::spawn(move || {
+            entered_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("comparison advance did not start");
+            verifier.cancel().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut next = loop {
+                match surface.reserve(
+                    8,
+                    WindowId::PRIMARY,
+                    stop.clone(),
+                    privacy.clone(),
+                    Arc::new(|| {}),
+                    Arc::new(|| {}),
+                ) {
+                    Ok(verifier) => break verifier,
+                    Err(Error::Busy) if Instant::now() < deadline => {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(error) => panic!("could not replace comparison: {error:?}"),
+                }
+            };
+            display(&mut next, &"b".repeat(64));
+            resume.send(()).unwrap();
+            next
+        });
+        owner.advance();
+        let mut next = worker.join().unwrap();
+        assert!(!owner.quarantined());
+        assert_eq!(owner.view().unwrap().fingerprint, "b".repeat(64));
+        assert!(matches!(next.poll_decision(), NativeDecision::Pending));
     }
 
     #[test]
