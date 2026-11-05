@@ -9,9 +9,10 @@
 //! catalog describes later controller registration, but does not implement it.
 //! The combined controller/presentation catalog asks the backend for current
 //! enrollment availability. The application has a test-qualified consumer for
-//! association metadata, but production metadata, presentation, and input
-//! remain unavailable. No HTTP, execution, workflows, resources, or prompts
-//! are exposed.
+//! association metadata. An explicitly selected catalog describes direct input
+//! without implementing or qualifying it. Production metadata, presentation,
+//! and input remain unavailable. No HTTP, workflows, resources, or prompts are
+//! exposed.
 //!
 //! Backend observation data is explicitly authorized **untrusted content**, not
 //! instructions. Neither input, output nor client cancellation reasons are logged.
@@ -49,6 +50,11 @@
 //!   `{"status":"refused","code":"..."}` and `isError: true`. Data semantics
 //!   (revision, absent selection, truncation/gap, wait outcome) belong to the
 //!   backend; no completion status or terminal content is invented here.
+//! * For direct input, return [`BackendResult::Refused`] only when admission
+//!   definitely did not occur. [`InputDisposition::Admitted`] means queue
+//!   admission, not execution; use [`InputDisposition::OutcomeUnknown`] when
+//!   publication may have happened. Cancellation or lost response bytes do not
+//!   prove non-admission. Never automatically replay an uncertain action.
 //! * On [`Event::Cancelled`], cancel that exact backend key without replying.
 //!   [`Machine::close`] returns all remaining keys (at most four); cancel those
 //!   on EOF/disconnect, revocation, lock, expiry or fatal framing failure.
@@ -78,6 +84,7 @@ use std::fmt;
 use std::io::{self, BufRead, Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod direct_input;
 mod presentation;
 mod schema;
 pub mod secure_channel;
@@ -97,6 +104,9 @@ pub const MAX_REFERENCE_CHARS: usize = 256;
 pub const MAX_ID_BYTES: usize = 256;
 pub const VERIFICATION_CODE_LEN: usize = 16;
 pub const MAX_CONTROLLER_LOCAL_ID_BYTES: usize = 128;
+pub const MAX_DIRECT_INPUT_BYTES: usize = 16_384;
+pub const MAX_DIRECT_INPUT_KEYS: usize = 64;
+pub const MAX_DIRECT_INPUT_KEY_BYTES: usize = 64;
 
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(0);
 
@@ -233,6 +243,17 @@ pub enum Operation {
         after_revision: u64,
         timeout_ms: u32,
     },
+    TerminalSendText {
+        enrollment_ref: String,
+        text: String,
+        submit: bool,
+        presentation_revision: Option<String>,
+    },
+    TerminalSendKeys {
+        enrollment_ref: String,
+        keys: Vec<String>,
+        presentation_revision: Option<String>,
+    },
 }
 
 impl fmt::Debug for Operation {
@@ -367,7 +388,25 @@ pub enum BackendResult {
     /// Must be an object; all fields remain untrusted data. Do not pass a raw
     /// backend error here. Reads count encoded data bytes against max_bytes.
     AuthorizedObservation(Value),
+    /// A direct input's admission disposition, never shell completion.
+    InputDisposition(InputDisposition),
+    /// A refusal must mean the input was definitely not admitted.
     Refused(Refusal),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputDisposition {
+    Admitted,
+    OutcomeUnknown,
+}
+
+impl InputDisposition {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Admitted => "admitted",
+            Self::OutcomeUnknown => "outcome_unknown",
+        }
+    }
 }
 
 /// Already encoded, single-line JSON-RPC plus LF, at most 64 KiB including LF.
@@ -411,6 +450,7 @@ pub struct Machine {
     pending: Vec<Pending>,
     unavailable_presentation: bool,
     controller_enrollment: bool,
+    direct_input: bool,
 }
 
 impl Default for Machine {
@@ -426,6 +466,7 @@ impl Machine {
             pending: Vec::with_capacity(MAX_IN_FLIGHT),
             unavailable_presentation: false,
             controller_enrollment: false,
+            direct_input: false,
         }
     }
 
@@ -441,8 +482,8 @@ impl Machine {
     }
 
     /// Selects the controller schema for an explicitly opted-in host.
-    /// This does not register clients, open prompts, qualify private bootstrap,
-    /// implement a consumer for association handles, or enable presentation.
+    /// This does not register clients, open prompts, qualify private bootstrap
+    /// or enable presentation.
     pub fn with_controller_enrollment() -> Self {
         Self {
             controller_enrollment: true,
@@ -457,6 +498,18 @@ impl Machine {
         Self {
             controller_enrollment: true,
             ..Self::with_unavailable_presentation()
+        }
+    }
+
+    /// Selects the direct-input schemas for an explicitly qualified host. This
+    /// catalog is not a grant, native decision, platform qualification or
+    /// permission to replay input. Existing constructors remain unchanged. The
+    /// application must keep this catalog disabled until its separate input
+    /// and delivery qualifications are satisfied.
+    pub fn with_direct_input_catalog() -> Self {
+        Self {
+            direct_input: true,
+            ..Self::with_controller_enrollment_and_unavailable_presentation()
         }
     }
 
@@ -578,6 +631,9 @@ impl Machine {
                 if self.unavailable_presentation {
                     tools.extend(presentation::tools(self.controller_enrollment));
                 }
+                if self.direct_input {
+                    tools.extend(direct_input::tools());
+                }
                 Event::Reply(success(&id, json!({"tools": tools})))
             }
             "tools/call" => {
@@ -606,15 +662,24 @@ impl Machine {
                     Some(Err(schema::CallError::Arguments)) => {
                         return Event::Reply(tool_refusal(&id, Refusal::InvalidArguments));
                     }
-                    None => match schema::call(params, self.controller_enrollment) {
-                        Ok(operation) => operation,
-                        Err(schema::CallError::Protocol) => {
-                            return self.error(Some(&id), ProtocolError::InvalidParams);
+                    None => {
+                        let direct_input = if self.direct_input {
+                            direct_input::call(params)
+                        } else {
+                            None
+                        };
+                        let parsed = direct_input
+                            .unwrap_or_else(|| schema::call(params, self.controller_enrollment));
+                        match parsed {
+                            Ok(operation) => operation,
+                            Err(schema::CallError::Protocol) => {
+                                return self.error(Some(&id), ProtocolError::InvalidParams);
+                            }
+                            Err(schema::CallError::Arguments) => {
+                                return Event::Reply(tool_refusal(&id, Refusal::InvalidArguments));
+                            }
                         }
-                        Err(schema::CallError::Arguments) => {
-                            return Event::Reply(tool_refusal(&id, Refusal::InvalidArguments));
-                        }
-                    },
+                    }
                 };
                 if self.pending.len() >= MAX_IN_FLIGHT {
                     return self.error(Some(&id), ProtocolError::Busy);
@@ -725,6 +790,25 @@ impl Machine {
                 if operation.is_observation() =>
             {
                 data
+            }
+            (
+                Operation::TerminalSendText { .. } | Operation::TerminalSendKeys { .. },
+                BackendResult::InputDisposition(disposition),
+            ) => {
+                let unknown = disposition == InputDisposition::OutcomeUnknown;
+                let status = if unknown { "unknown" } else { "ok" };
+                return Some(tool_result(
+                    &key.id,
+                    json!({"status": status, "data": {"disposition": disposition.as_str()}}),
+                    unknown,
+                ));
+            }
+            (Operation::TerminalSendText { .. } | Operation::TerminalSendKeys { .. }, _) => {
+                return Some(tool_result(
+                    &key.id,
+                    json!({"status": "unknown", "data": {"disposition": "outcome_unknown"}}),
+                    true,
+                ));
             }
             _ => return Some(tool_refusal(&key.id, Refusal::InvalidBackendResult)),
         };

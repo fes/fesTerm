@@ -2864,7 +2864,9 @@ fn direct_binding(
         | Operation::PresentationCapabilities
         | Operation::ControllerRegister { .. }
         | Operation::ControllerStatus { .. }
-        | Operation::ControllerUnregister { .. } => return Err(Refusal::Unavailable),
+        | Operation::ControllerUnregister { .. }
+        | Operation::TerminalSendText { .. }
+        | Operation::TerminalSendKeys { .. } => return Err(Refusal::Unavailable),
     };
     let canonical = serde_json::to_vec(&parameters).map_err(|_| Refusal::InvalidArguments)?;
     Ok(InvocationBinding {
@@ -2888,6 +2890,8 @@ fn admit_request(
             | Operation::ControllerRegister { .. }
             | Operation::ControllerStatus { .. }
             | Operation::ControllerUnregister { .. }
+            | Operation::TerminalSendText { .. }
+            | Operation::TerminalSendKeys { .. }
     ) {
         return Err(Refusal::Unavailable);
     }
@@ -2921,7 +2925,9 @@ fn admit_request(
         | Operation::PresentationCapabilities
         | Operation::ControllerRegister { .. }
         | Operation::ControllerStatus { .. }
-        | Operation::ControllerUnregister { .. } => return Err(Refusal::Unavailable),
+        | Operation::ControllerUnregister { .. }
+        | Operation::TerminalSendText { .. }
+        | Operation::TerminalSendKeys { .. } => return Err(Refusal::Unavailable),
     };
     let scope = if discovery {
         Scope {

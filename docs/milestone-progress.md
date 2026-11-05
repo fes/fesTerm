@@ -1,5 +1,13 @@
 # Milestone Progress Narrative
 
+## Defining bounded direct-input protocol
+
+An unselected MCP catalog defines exact-enrollment text/key operations with
+bounded arguments and explicit refused, queue-admitted and unknown results.
+Cancellation and late completions do not replay an action. Existing catalogs
+remain unchanged, and the app explicitly refuses input in its observation
+path. No input adapter, native handoff or production qualification is enabled.
+
 ## Reviewing direct input after enrollment metadata
 
 The dormant direct-action review can follow separately approved enrollment

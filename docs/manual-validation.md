@@ -2704,8 +2704,10 @@ liveness or a physical recipient is fenced.
 Terminal-request encoding has deterministic text, key, mode and refusal tests.
 The broker's exact direct-input binding, single-request rule and explicit human
 takeover cuts have deterministic state tests, with no JS or observation scope.
-Approval alone does not transfer another writer. These tests add no MCP tool,
-native consent UI or input dispatch. Actual queue
+Approval alone does not transfer another writer. An opt-in protocol catalog
+models bounded input arguments and admission/unknown/refusal outcomes, but
+the app does not select it and explicitly refuses input in the observation
+path. These tests add no native consent UI or input dispatch. Actual queue
 publication, takeover and platform behavior still require AUTO-03; P1 remains
 observation-only.
 

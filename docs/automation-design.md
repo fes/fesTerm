@@ -268,9 +268,16 @@ The host seam models these checks but does not install a writer epoch, handle
 MCP cancellation or response delivery, or qualify native UI or recipients.
 
 This direct-input binding is a prerequisite, not a feature. #524's P1
-checkpoint remains observation-only: there is no MCP input tool, native control
-approval UI, real terminal write or feature activation. The separate modeled
-enrollment and presentation foundations do not qualify those paths or a desktop.
+checkpoint remains observation-only. A separately selected protocol catalog
+defines bounded `festerm_terminal_send_text` and `festerm_terminal_send_keys`
+calls against exact enrollment handles, with an optional host-owned
+presentation revision. Refusal means definitely not admitted, admission means
+queue admission only, and a mismatched or uncertain backend result is unknown.
+Cancellation or response loss does not prove non-admission or authorize replay.
+The application does not select this catalog and explicitly refuses these
+operations in its observation path. There is no native control approval UI,
+MCP input adapter or feature activation; the modeled enrollment and presentation
+foundations do not qualify those paths or a desktop.
 
 The kernel also has a separately native-approved, discovery-only metadata slot
 on the same connection. It binds exact target generations and has its own epoch,

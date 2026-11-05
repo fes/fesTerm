@@ -4825,6 +4825,40 @@ fn controller_operations_never_enter_observation_grant_path() {
 }
 
 #[test]
+fn direct_input_catalog_never_enters_observation_grant_path() {
+    let (mut coordinator, mut app, id, receive) = fixture();
+    coordinator.peers.get_mut(&1).unwrap().machine =
+        ready_with(Machine::with_direct_input_catalog());
+    let target = coordinator.targets[&id.chip_id()].reference;
+    for approved in [false, true] {
+        if approved {
+            approve_for_test(&mut coordinator, 1, vec![target]).unwrap();
+        }
+        for (tool, arguments) in [
+            (
+                "festerm_terminal_send_text",
+                json!({"enrollment_ref": "a".repeat(32), "text": "private input"}),
+            ),
+            (
+                "festerm_terminal_send_keys",
+                json!({"enrollment_ref": "a".repeat(32), "keys": ["ctrl:c"]}),
+            ),
+        ] {
+            call(&mut coordinator, &[&app], tool, arguments);
+            let reply = response(&receive);
+            assert_eq!(
+                reply["result"]["structuredContent"],
+                json!({"status": "refused", "code": "UNAVAILABLE"})
+            );
+            assert!(!reply.to_string().contains("private input"));
+            assert_eq!(coordinator.peers[&1].grant.is_some(), approved);
+            assert!(coordinator.peers[&1].waits.is_empty());
+            assert!(app.take_automation_command().is_none());
+        }
+    }
+}
+
+#[test]
 fn automation_approval_labels_escape_spoofing_controls_and_mark_truncation() {
     assert_eq!(
         approval_label("café 日本語 \"terminal\" \\path"),

@@ -1,8 +1,10 @@
 use festerm_automation_mcp::{
-    read_bounded_line, BackendRequest, BackendResult, ControllerId, Event, Lifecycle, LineError,
-    Machine, Operation, PairingStatus, Refusal, Response, VerificationCode, MAX_COLLECTION_ITEMS,
-    MAX_CONTROLLER_LOCAL_ID_BYTES, MAX_DEPTH, MAX_ID_BYTES, MAX_IN_FLIGHT, MAX_MESSAGE_BYTES,
-    MAX_READ_BYTES, MAX_STRING_BYTES, MAX_VALUE_NODES, MAX_WAIT_MS, PROTOCOL_VERSION,
+    read_bounded_line, BackendRequest, BackendResult, ControllerId, Event, InputDisposition,
+    Lifecycle, LineError, Machine, Operation, PairingStatus, Refusal, Response, VerificationCode,
+    MAX_COLLECTION_ITEMS, MAX_CONTROLLER_LOCAL_ID_BYTES, MAX_DEPTH, MAX_DIRECT_INPUT_BYTES,
+    MAX_DIRECT_INPUT_KEYS, MAX_DIRECT_INPUT_KEY_BYTES, MAX_ID_BYTES, MAX_IN_FLIGHT,
+    MAX_MESSAGE_BYTES, MAX_READ_BYTES, MAX_STRING_BYTES, MAX_VALUE_NODES, MAX_WAIT_MS,
+    PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use std::{cmp::Ordering, collections::BTreeSet, io::Cursor};
@@ -109,6 +111,7 @@ fn schema_matches(schema: &Value, value: &Value) -> bool {
             | "maximum"
             | "minLength"
             | "maxLength"
+            | "minItems"
             | "maxItems"
             | "pattern"
             | "default"
@@ -204,8 +207,11 @@ fn schema_matches(schema: &Value, value: &Value) -> bool {
     }
     if let Some(values) = value.as_array() {
         if schema
-            .get("maxItems")
-            .is_some_and(|maximum| values.len() as u64 > maximum.as_u64().unwrap())
+            .get("minItems")
+            .is_some_and(|minimum| (values.len() as u64) < minimum.as_u64().unwrap())
+            || schema
+                .get("maxItems")
+                .is_some_and(|maximum| values.len() as u64 > maximum.as_u64().unwrap())
             || schema
                 .get("items")
                 .is_some_and(|items| !values.iter().all(|item| schema_matches(items, item)))
@@ -1568,6 +1574,280 @@ fn ready_controller() -> Machine {
         Event::NoReply
     ));
     machine
+}
+
+fn ready_direct_input() -> Machine {
+    let mut machine = Machine::with_direct_input_catalog();
+    initialize(&mut machine, PROTOCOL_VERSION);
+    assert!(matches!(
+        machine.process_value(json!({"jsonrpc":"2.0","method":"notifications/initialized"})),
+        Event::NoReply
+    ));
+    machine
+}
+
+#[test]
+fn direct_input_catalog_is_explicit_and_does_not_claim_qualification() {
+    let mut combined = Machine::with_controller_enrollment_and_unavailable_presentation();
+    initialize(&mut combined, PROTOCOL_VERSION);
+    assert!(matches!(
+        combined.process_value(json!({"jsonrpc":"2.0","method":"notifications/initialized"})),
+        Event::NoReply
+    ));
+    let original = reply(combined.process_value(request(json!(2), "tools/list", json!({}))));
+    assert!(!original["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| matches!(
+            tool["name"].as_str(),
+            Some("festerm_terminal_send_text" | "festerm_terminal_send_keys")
+        )));
+    error(
+        combined.process_value(call(
+            json!(3),
+            "festerm_terminal_send_text",
+            json!({"enrollment_ref": "a".repeat(32), "text": "hello"}),
+        )),
+        -32602,
+    );
+
+    let mut machine = ready_direct_input();
+    let catalog = reply(machine.process_value(request(json!(2), "tools/list", json!({}))));
+    let tools = catalog["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 15);
+    for name in ["festerm_terminal_send_text", "festerm_terminal_send_keys"] {
+        let tool = tools.iter().find(|tool| tool["name"] == name).unwrap();
+        assert_eq!(
+            tool["annotations"],
+            json!({
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "openWorldHint": true,
+                "idempotentHint": false
+            })
+        );
+        for result in [
+            json!({"status":"ok", "data":{"disposition":"admitted"}}),
+            json!({"status":"unknown", "data":{"disposition":"outcome_unknown"}}),
+            json!({"status":"refused", "code":"NOT_AUTHORIZED"}),
+        ] {
+            assert!(schema_matches(&tool["outputSchema"], &result));
+        }
+    }
+
+    let pending = backend(machine.process_value(call(
+        json!(3),
+        "festerm_controller_capabilities",
+        json!({}),
+    )));
+    let capability = decode(
+        machine
+            .complete(
+                &pending.key,
+                BackendResult::ControllerCapabilities {
+                    enrollment_available: true,
+                    metadata_available: true,
+                },
+            )
+            .unwrap(),
+    );
+    assert_eq!(
+        capability["result"]["structuredContent"]["data"]["input_available"],
+        false
+    );
+}
+
+#[test]
+fn direct_input_validates_exact_references_and_bounded_arguments() {
+    let mut machine = ready_direct_input();
+    let reference = "a".repeat(32);
+    let text = "é".repeat(MAX_DIRECT_INPUT_BYTES / 2);
+    let pending = backend(machine.process_value(call(
+        json!(2),
+        "festerm_terminal_send_text",
+        json!({"enrollment_ref": reference, "text": text}),
+    )));
+    assert!(matches!(
+        &pending.operation,
+        Operation::TerminalSendText {
+            enrollment_ref,
+            text,
+            submit: false,
+            presentation_revision: None,
+        } if enrollment_ref == &reference && text.len() == MAX_DIRECT_INPUT_BYTES
+    ));
+    assert!(!format!("{:?}", pending.operation).contains(&text));
+    machine.complete(
+        &pending.key,
+        BackendResult::InputDisposition(InputDisposition::Admitted),
+    );
+
+    for arguments in [
+        json!({"enrollment_ref": reference, "text": ""}),
+        json!({"enrollment_ref": reference, "text": "é".repeat(MAX_DIRECT_INPUT_BYTES / 2 + 1)}),
+        json!({"enrollment_ref": reference, "text": "x", "submit": "yes"}),
+        json!({"enrollment_ref": reference, "text": "x", "extra": true}),
+        json!({"enrollment_ref": "A".repeat(32), "text": "x"}),
+        json!({"enrollment_ref": reference, "text": "x", "presentation_revision": "A".repeat(48)}),
+        json!({"enrollment_ref": reference, "text": "x", "presentation_revision": null}),
+    ] {
+        tool_error(
+            machine.process_value(call(json!(3), "festerm_terminal_send_text", arguments)),
+            "INVALID_ARGUMENTS",
+        );
+    }
+    let revision = "f".repeat(48);
+    let pending = backend(machine.process_value(call(
+        json!(4),
+        "festerm_terminal_send_text",
+        json!({
+            "enrollment_ref": reference,
+            "text": "x",
+            "submit": true,
+            "presentation_revision": revision,
+        }),
+    )));
+    assert!(matches!(
+        &pending.operation,
+        Operation::TerminalSendText {
+            submit: true,
+            presentation_revision: Some(value),
+            ..
+        } if value == &revision
+    ));
+    machine.complete(
+        &pending.key,
+        BackendResult::InputDisposition(InputDisposition::Admitted),
+    );
+    let pending = backend(machine.process_value(call(
+        json!(5),
+        "festerm_terminal_send_keys",
+        json!({
+            "enrollment_ref": reference,
+            "keys": vec!["Enter"; MAX_DIRECT_INPUT_KEYS],
+            "presentation_revision": revision,
+        }),
+    )));
+    assert!(matches!(
+        &pending.operation,
+        Operation::TerminalSendKeys { keys, presentation_revision: Some(value), .. }
+            if keys.len() == MAX_DIRECT_INPUT_KEYS && value == &revision
+    ));
+    machine.complete(
+        &pending.key,
+        BackendResult::InputDisposition(InputDisposition::Admitted),
+    );
+    for keys in [
+        json!([]),
+        json!(vec!["x"; MAX_DIRECT_INPUT_KEYS + 1]),
+        json!(["x".repeat(MAX_DIRECT_INPUT_KEY_BYTES + 1)]),
+        json!(["é"]),
+        json!([""]),
+    ] {
+        tool_error(
+            machine.process_value(call(
+                json!(6),
+                "festerm_terminal_send_keys",
+                json!({"enrollment_ref": reference, "keys": keys}),
+            )),
+            "INVALID_ARGUMENTS",
+        );
+    }
+}
+
+#[test]
+fn direct_input_outcomes_are_explicit_and_completions_are_single_use() {
+    let mut machine = ready_direct_input();
+    let arguments = json!({"enrollment_ref": "a".repeat(32), "text": "private input"});
+    for (id, disposition, expected, is_error) in [
+        (2, InputDisposition::Admitted, "admitted", false),
+        (3, InputDisposition::OutcomeUnknown, "outcome_unknown", true),
+    ] {
+        let pending = backend(machine.process_value(call(
+            json!(id),
+            "festerm_terminal_send_text",
+            arguments.clone(),
+        )));
+        let response = decode(
+            machine
+                .complete(&pending.key, BackendResult::InputDisposition(disposition))
+                .unwrap(),
+        );
+        assert_eq!(response["result"]["isError"], is_error);
+        assert_eq!(
+            response["result"]["structuredContent"]["data"]["disposition"],
+            expected
+        );
+        assert!(!response.to_string().contains("private input"));
+        assert!(machine
+            .complete(&pending.key, BackendResult::InputDisposition(disposition))
+            .is_none());
+    }
+
+    let pending = backend(machine.process_value(call(
+        json!(4),
+        "festerm_terminal_send_text",
+        arguments.clone(),
+    )));
+    let mismatch = decode(
+        machine
+            .complete(
+                &pending.key,
+                BackendResult::AuthorizedObservation(json!({"secret":"must not leak"})),
+            )
+            .unwrap(),
+    );
+    assert_eq!(mismatch["result"]["isError"], true);
+    assert_eq!(
+        mismatch["result"]["structuredContent"]["data"]["disposition"],
+        "outcome_unknown"
+    );
+    assert!(!mismatch.to_string().contains("must not leak"));
+
+    let pending =
+        backend(machine.process_value(call(json!(5), "festerm_terminal_send_text", arguments)));
+    let refused = decode(
+        machine
+            .complete(&pending.key, BackendResult::Refused(Refusal::NotAuthorized))
+            .unwrap(),
+    );
+    assert_eq!(
+        refused["result"]["structuredContent"],
+        json!({"status":"refused", "code":"NOT_AUTHORIZED"})
+    );
+}
+
+#[test]
+fn direct_input_cancellation_does_not_replay_or_accept_late_completion() {
+    let mut machine = ready_direct_input();
+    let arguments = json!({"enrollment_ref": "a".repeat(32), "text": "once"});
+    let first = backend(machine.process_value(call(
+        json!("input"),
+        "festerm_terminal_send_text",
+        arguments.clone(),
+    )));
+    let Event::Cancelled(cancelled) = machine.process_value(json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {"requestId": "input"}
+    })) else {
+        panic!("expected cancellation");
+    };
+    assert_eq!(cancelled, first.key);
+    assert_eq!(machine.in_flight(), 0);
+    assert!(machine
+        .complete(
+            &first.key,
+            BackendResult::InputDisposition(InputDisposition::Admitted)
+        )
+        .is_none());
+    let later = backend(machine.process_value(call(
+        json!("input"),
+        "festerm_terminal_send_text",
+        arguments,
+    )));
+    assert_ne!(first.key, later.key);
 }
 
 #[test]

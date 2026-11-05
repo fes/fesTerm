@@ -58,7 +58,10 @@ to bypass another's restrictions.
    binding and control scope with explicit handoff. Such a root needs neither
    JavaScript nor observation scope and can prepare only one control request;
    abort, settlement or commit does not permit a second effect in that run.
-   This primitive adds no MCP tool, native approval UI or terminal write path.
+   This primitive adds no native approval UI or terminal write path. A separate
+   opt-in, unselected MCP catalog defines bounded direct-input requests and
+   distinguishes refusal, queue admission and unknown outcomes; it does not
+   enable an input adapter or change the observation-only checkpoint.
    A separate kernel-only metadata grant can authorize direct discovery of exact
    target generations without observation or workflow authority. It has its own
    epoch, expiry and delivery-liveness fence, but shares principal/global
