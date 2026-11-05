@@ -85,7 +85,7 @@ impl Connection {
         }
         if self
             .pending_input
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 count.checked_add(1)
             })
             .is_err()
@@ -107,11 +107,11 @@ impl Connection {
     }
 
     pub fn finish_message(&self) -> io::Result<()> {
-        let updated =
-            self.pending_input
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                    count.checked_sub(1)
-                });
+        let updated = self
+            .pending_input
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                count.checked_sub(1)
+            });
         #[cfg(test)]
         if updated == Err(0) {
             // Some coordinator fixtures inject events without an IPC reader.
