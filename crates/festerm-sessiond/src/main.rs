@@ -2681,7 +2681,9 @@ fn kill_registered_session(
             &record.socket,
         )?
     {
-        lifecycle::record(
+        // Best effort: without this record recovery refuses to restart, which
+        // is the safe direction, so a diagnostics failure must not block kill.
+        if let Err(error) = lifecycle::record(
             root,
             &festerm_sessiond::NativeSessionIdentity {
                 name: record.name.clone(),
@@ -2690,7 +2692,9 @@ fn kill_registered_session(
                 endpoint: record.socket.clone(),
             },
             LifecycleEvent::StopRequested,
-        )?;
+        ) {
+            eprintln!("festerm-sessiond: could not record stop request for '{name}': {error}");
+        }
         terminate(record.pid).map_err(|error| {
             format!("could not terminate session '{name}': {error}; record retained; retry kill")
         })?;

@@ -783,7 +783,15 @@ impl TunnelClient {
                 &cancel.0,
             )
             .await
-            .map_err(TunnelError::from)?;
+            .map_err(|error| match error {
+                // A refused reclaim of a session the host reported as held
+                // without takeover is still occupancy; other refusals do not
+                // say why, so they must not claim takeover is off.
+                mobile::AttachError::Refused if held.is_some() && !takeover => {
+                    TunnelError::SessionInUse { by: held }
+                }
+                other => other.into(),
+            })?;
             let session = TunnelSession::spawn(self.runtime.handle(), handshake, notifier);
             Ok(Attachment {
                 probe: stream.probe,

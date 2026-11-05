@@ -1843,12 +1843,15 @@ mod tests {
             .unwrap();
             lease.try_lock_exclusive().unwrap();
             leases.push(lease);
+            // Unix discovery ignores a record whose socket does not exist.
+            let socket = runtime_path.join(format!("fixture-{pid}-{generation}.sock"));
+            fs::write(&socket, b"").unwrap();
             fs::write(
                 runtime_path.join("registry.json"),
                 serde_json::to_vec(&serde_json::json!({
                     "sessions": { (old.name.clone()): {
                         "name": old.name, "pid": pid, "created_at_unix_ms": generation,
-                        "socket": format!("fixture-{pid}-{generation}.sock"),
+                        "socket": socket.to_string_lossy(),
                         "protocol_version": 3, "snapshot_schema_version": 3
                     }}
                 }))
