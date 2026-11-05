@@ -87,17 +87,19 @@ impl ClientWriteAdmission for ClientAdmission {
     }
 }
 
-fn native() -> (
-    Native,
-    async_mpsc::Receiver<String>,
-    Arc<Mutex<Option<[u8; 64]>>>,
-    Arc<AtomicBool>,
-) {
+struct NativeFixture {
+    native: Native,
+    displayed: async_mpsc::Receiver<String>,
+    decision: Arc<Mutex<Option<[u8; 64]>>>,
+    cancelled: Arc<AtomicBool>,
+}
+
+fn native() -> NativeFixture {
     let (display, displayed) = async_mpsc::channel(1);
     let decision = Arc::new(Mutex::new(None));
     let cancelled = Arc::new(AtomicBool::new(false));
-    (
-        Native {
+    NativeFixture {
+        native: Native {
             display,
             decision: decision.clone(),
             cancelled: cancelled.clone(),
@@ -106,7 +108,7 @@ fn native() -> (
         displayed,
         decision,
         cancelled,
-    )
+    }
 }
 
 async fn next_event(events: &mpsc::Receiver<Event>, wake: &Notify) -> Event {
@@ -132,8 +134,18 @@ async fn windows_direct_pipe_exchanges_sdk_frames_and_cuts_queued_output() {
     client_pipe.verify_server_user().unwrap();
     let host_pipe = listener.accept(&AtomicBool::new(false)).unwrap();
 
-    let (host_native, mut host_display, host_decision, host_cancelled) = native();
-    let (client_native, mut client_display, client_decision, client_cancelled) = native();
+    let NativeFixture {
+        native: host_native,
+        displayed: mut host_display,
+        decision: host_decision,
+        cancelled: host_cancelled,
+    } = native();
+    let NativeFixture {
+        native: client_native,
+        displayed: mut client_display,
+        decision: client_decision,
+        cancelled: client_cancelled,
+    } = native();
     let host_wake = Wake::default();
     let ui_wake = Arc::new(Notify::new());
     let notify_ui = ui_wake.clone();
