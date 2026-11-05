@@ -133,7 +133,11 @@ client reconnection still require separate qualification.
 - **Automated tests required:** Detached ensure/fingerprint/launch-reservation
   fixtures; configuration, editor and composition save/disable/delete tests;
   structured helper ownership, update, no-resurrection and teardown fixtures;
-  installer and package regressions specified in #618.
+  installer and package regressions specified in #618. Missing registration
+  directories still require exact native-service absence; unsafe ancestors
+  and unknown/foreign loaded state refuse cleanup. Executable publication
+  sets private execution permissions before rename, and cached CLI recovery
+  repairs only an already pin-verified handle.
 - **Native/manual evidence required:** DT-08 signed desktop lifecycle,
   GitHub browser sign-in, live helper updates and physical-client reconnect;
   deterministic tests do not promote acceptance.

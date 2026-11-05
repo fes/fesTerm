@@ -77,7 +77,7 @@ pub(super) fn stage() -> io::Result<Helpers> {
     }
     let cli = cache.join(format!("devtunnel{}", std::env::consts::EXE_SUFFIX));
     match cli_pins::verify(&cli) {
-        Ok(_) => {}
+        Ok(verified) => verified.make_executable()?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let pin = cli_pins::current()?;
             let client = reqwest::blocking::Client::builder()
@@ -229,6 +229,30 @@ fn install_executable(
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            #[cfg(unix)]
+            {
+                use std::{io::Write, os::unix::fs::PermissionsExt};
+                let staging = PathBuf::from(format!(
+                    ".{}.staging-{}",
+                    name.display(),
+                    uuid::Uuid::new_v4().simple()
+                ));
+                let mut output =
+                    festerm_unix_security::open_private_file(directory, &staging, true)?;
+                let result = (|| {
+                    output.write_all(bytes)?;
+                    output.set_permissions(std::fs::Permissions::from_mode(0o700))?;
+                    output.sync_all()?;
+                    festerm_unix_security::replace_private_file(directory, &staging, name)?;
+                    directory.sync_all()
+                })();
+                if result.is_err() {
+                    let _ = festerm_unix_security::remove_private_staging_file(directory, &staging);
+                }
+                result?;
+                return Ok(());
+            }
+            #[cfg(not(unix))]
             setup_storage::replace_private(directory, name, bytes)?;
         }
         Err(error) => return Err(error),
@@ -325,6 +349,34 @@ fn verify_signature(path: &Path, app: Option<&Path>) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_helpers_publish_executable_bytes_and_recover_interrupted_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::Builder::new()
+            .prefix("festerm-helper-mode-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let directory = setup_storage::private_directory(root.path(), false).unwrap();
+        let name = Path::new("festerm-tunnel-setup");
+        let path = root.path().join(name);
+        let bytes = b"#!/bin/sh\nexit 0\n";
+        install_executable(&directory, root.path(), name, bytes).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        checked(Command::new(&path)).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        install_executable(&directory, root.path(), name, bytes).unwrap();
+        checked(Command::new(&path)).unwrap();
+        assert!(install_executable(&directory, root.path(), name, b"foreign").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+    }
 
     fn digest(bytes: &[u8]) -> String {
         Sha256::digest(bytes)

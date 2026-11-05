@@ -636,6 +636,14 @@ and widget tests do not promote native theme/scale/accessibility acceptance.
 | `TUNNEL-15` | Local native persistent profile -> consented detached host | Explicitly enable **Expose via Dev Tunnel**, then Save. Save may start the configured command without opening a tab; Cancel is inert. | Prepared/config/Requested transaction; exact argv/cwd/native name and one-shot generation reservation; no frontend admission, automatic shell replacement, file or observation grant. Only foreground browser sign-in may authenticate; startup and helper updates preserve host-local consent, account, key and target. Details appear only after readiness. | Failed save retains draft. Retry cannot renew shell consent or recreate a missing cloud object; those require separate confirmation. | P,H,N,security; partial |
 | `TUNNEL-16` | Hosted profile or locally owned cloud entry -> revoked exposure and owned cleanup | Disable and Save, remove native persistence, delete the profile, or confirm deletion of its locally owned cloud entry. | Protected revocation precedes config write and wins even on save failure; stop only exact owned relay images, then delete only the verified recorded cloud identity/account. Never terminate the daemon, sweep cloud prefixes, clear global credentials or resurrect from stale config. | Pending local inventory survives profile deletion with foreground sign-in/Retry; uncertainty retains records and refuses destructive guesses. A fresh explicit enable creates new consent, not authority to discard an uncertain old reservation. | P,H,N,security; partial |
 
+For `TUNNEL-15`/`TUNNEL-16`, interrupted staging is retryable: executable
+permissions precede atomic publication, and a cached CLI's mode is repaired only
+after pin verification. An absent service-registration directory does not block
+cleanup when the exact native service is also absent; unsafe paths and unknown
+or foreign loaded state still refuse. Deterministic regressions cover missing
+directories, unsafe/symlink ancestors, executable-mode recovery and tampered
+CLI refusal; native DT-08 acceptance remains separate.
+
 The host-only filesystem extension for `TUNNEL-01`, `TUNNEL-03` and `TUNNEL-05`
 is defined by ADR 0067 and `docs/dev-tunnel-files-protocol.md`: explicit rooted
 read/write grants, same-host enable/reconfigure/revoke, independent bounded file

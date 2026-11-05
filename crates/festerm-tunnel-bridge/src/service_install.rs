@@ -576,6 +576,15 @@ fn trusted_directory(path: &Path, create: bool) -> io::Result<File> {
     Ok(directory)
 }
 
+#[cfg(unix)]
+fn existing_registration_directory(path: &Path) -> io::Result<Option<File>> {
+    match trusted_directory(path, false) {
+        Ok(directory) => Ok(Some(directory)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn registration_directory_path() -> io::Result<PathBuf> {
     let home =
@@ -736,7 +745,10 @@ pub fn uninstall(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()>
     replace(previous, spec)?;
     #[cfg(target_os = "linux")]
     {
-        let directory = trusted_directory(&registration_directory_path()?, false)?;
+        let Some(directory) = existing_registration_directory(&registration_directory_path()?)?
+        else {
+            return Ok(());
+        };
         let name = format!("festerm-tunnel-{}.service", spec.id);
         let accepted = [linux_definition(spec)?, legacy_linux_definition(spec)?];
         if owned_definition(&directory, Path::new(&name), &accepted)?.is_none() {
@@ -756,7 +768,10 @@ pub fn uninstall(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()>
     }
     #[cfg(target_os = "macos")]
     {
-        let directory = trusted_directory(&registration_directory_path()?, false)?;
+        let Some(directory) = existing_registration_directory(&registration_directory_path()?)?
+        else {
+            return Ok(());
+        };
         let name = format!("dev.fes.festerm.tunnel.{}.plist", spec.id);
         remove_owned_registration(&directory, Path::new(&name))?;
     }
@@ -885,7 +900,7 @@ fn publish_definition(directory: &File, name: &Path, expected: &[u8]) -> io::Res
 fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
     let _state = spec.validate()?;
     let directory_path = registration_directory_path()?;
-    let directory = trusted_directory(&directory_path, false)?;
+    let directory = existing_registration_directory(&directory_path)?;
     let name = format!("festerm-tunnel-{}.service", spec.id);
     let path = directory_path.join(&name);
     let expected = linux_definition(spec)?;
@@ -908,7 +923,12 @@ fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
     )?
     .bytes;
     linux_loaded_matches(&shown, &path, true)?;
-    let Some(existing) = owned_definition(&directory, Path::new(&name), &accepted)? else {
+    let existing = directory
+        .as_ref()
+        .map(|directory| owned_definition(directory, Path::new(&name), &accepted))
+        .transpose()?
+        .flatten();
+    let Some(existing) = existing else {
         // Never registered: nothing runs, and a normal install creates it.
         return linux_loaded_matches(&shown, &path, false)
             .map_or(Ok(()), |()| Err(refused("service.foreign_definition")));
@@ -929,7 +949,13 @@ fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
         return Err(refused("service.systemd_stop"));
     }
     if existing != expected.as_bytes() {
-        publish_definition(&directory, Path::new(&name), expected.as_bytes())?;
+        publish_definition(
+            directory
+                .as_ref()
+                .ok_or_else(|| refused("service.registration_directory"))?,
+            Path::new(&name),
+            expected.as_bytes(),
+        )?;
     }
     run(
         tool,
@@ -945,7 +971,7 @@ fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
     let uid =
         festerm_unix_security::current_user_id().map_err(|_| refused("service.user_context"))?;
     let directory_path = registration_directory_path()?;
-    let directory = trusted_directory(&directory_path, false)?;
+    let directory = existing_registration_directory(&directory_path)?;
     let label = format!("dev.fes.festerm.tunnel.{}", spec.id);
     let name = format!("{label}.plist");
     let path = directory_path.join(&name);
@@ -963,7 +989,11 @@ fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
         .map(mac_definition)
         .chain([Ok(expected.clone())])
         .collect::<io::Result<Vec<_>>>()?;
-    let existing = owned_definition(&directory, Path::new(&name), &accepted)?;
+    let existing = directory
+        .as_ref()
+        .map(|directory| owned_definition(directory, Path::new(&name), &accepted))
+        .transpose()?
+        .flatten();
     let loaded = native(tool, &args(&["print", &target]), "service.launchd_inspect")?;
     if loaded.success {
         if existing.is_none()
@@ -986,9 +1016,13 @@ fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
         }
     }
     match existing {
-        Some(existing) if existing != expected.as_bytes() => {
-            publish_definition(&directory, Path::new(&name), expected.as_bytes())
-        }
+        Some(existing) if existing != expected.as_bytes() => publish_definition(
+            directory
+                .as_ref()
+                .ok_or_else(|| refused("service.registration_directory"))?,
+            Path::new(&name),
+            expected.as_bytes(),
+        ),
         _ => Ok(()),
     }
 }
@@ -1553,6 +1587,27 @@ fn install(_spec: &ServiceSpec, _create: bool) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn service_missing_registration_directory_preserves_unknown_and_unsafe_refusals() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let root = crate::test_support::private_directory("festerm-registration-absence");
+        let missing = root.join("missing/user");
+        assert!(existing_registration_directory(&missing).unwrap().is_none());
+        assert!(!root.join("missing").exists());
+        let unsafe_parent = root.join("unsafe");
+        std::fs::create_dir(&unsafe_parent).unwrap();
+        std::fs::set_permissions(&unsafe_parent, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(existing_registration_directory(&unsafe_parent.join("user")).is_err());
+        let link = root.join("link");
+        symlink(&root, &link).unwrap();
+        assert!(existing_registration_directory(&link.join("missing")).is_err());
+        std::fs::remove_file(link).unwrap();
+        std::fs::remove_dir(unsafe_parent).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
 
     #[cfg(windows)]
     fn run_windows_read_only_fixture(expression: &str, stage: &'static str) -> io::Result<Vec<u8>> {

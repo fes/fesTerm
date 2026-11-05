@@ -41,7 +41,17 @@ class UnixInstallerTests(unittest.TestCase):
         self.script = self.root / "installer.sh"
         self.script.write_text(source)
         self.write_tool("uname", 'case "$1" in -s) echo Linux;; -m) echo x86_64;; esac')
-        self.write_tool("id", "echo 1000")
+        self.write_tool("id", f"echo {os.getuid()}")
+        # The Linux fixture must read real permissions on BSD hosts too.
+        stat = self.bin / "stat"
+        stat.write_text(
+            f"#!{shutil.which('python3') or shutil.which('python')}\n"
+            "import os, stat, sys\n"
+            "assert sys.argv[1:3] == ['-c', '%u %a']\n"
+            "metadata = os.stat(sys.argv[-1])\n"
+            "print(metadata.st_uid, format(stat.S_IMODE(metadata.st_mode), 'o'))\n"
+        )
+        stat.chmod(0o700)
         self.write_tool("getconf", "echo 'glibc 2.39'")
         self.write_tool("sudo", "echo UNEXPECTED-SUDO >&2; exit 99")
         curl = self.bin / "curl"

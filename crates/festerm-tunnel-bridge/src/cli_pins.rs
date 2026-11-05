@@ -59,10 +59,25 @@ impl VerifiedCli {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Recover an interrupted staging chmod on the already verified file handle.
+    pub fn make_executable(&self) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            self._executable
+                .set_permissions(std::fs::Permissions::from_mode(0o700))?;
+            self._executable.sync_all()?;
+        }
+        Ok(())
+    }
 }
 
 pub fn verify(path: &Path) -> io::Result<VerifiedCli> {
-    let pin = current()?;
+    verify_with_pin(path, &current()?)
+}
+
+fn verify_with_pin(path: &Path, pin: &CliPin) -> io::Result<VerifiedCli> {
     let name = format!("devtunnel{}", std::env::consts::EXE_SUFFIX);
     if !path.is_absolute() || path.file_name() != Some(std::ffi::OsStr::new(&name)) {
         return Err(io::Error::other("profile_host.cli_path"));
@@ -101,6 +116,50 @@ pub fn verify(path: &Path) -> io::Result<VerifiedCli> {
         _directory: directory,
         _executable: executable,
     })
+}
+
+#[cfg(all(test, unix))]
+mod unix_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn verified_cli_repairs_interrupted_mode_only_after_pin_verification() {
+        let root = crate::test_support::private_directory("festerm-cli-mode");
+        let directory = setup_storage::private_directory(&root, false).unwrap();
+        let path = root.join("devtunnel");
+        let bytes = b"#!/bin/sh\nexit 0\n";
+        setup_storage::replace_private(&directory, Path::new("devtunnel"), bytes).unwrap();
+        let mut pin = current().unwrap();
+        pin.executable_sha256 = Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let verified = verify_with_pin(&path, &pin).unwrap();
+        verified.make_executable().unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert!(std::process::Command::new(verified.path())
+            .status()
+            .unwrap()
+            .success());
+        drop(verified);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&path, b"tampered").unwrap();
+        assert!(verify_with_pin(&path, &pin).is_err());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        drop(directory);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 pub fn matches_digest(reader: impl Read, expected: &str) -> io::Result<bool> {

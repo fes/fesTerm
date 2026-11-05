@@ -1,5 +1,17 @@
 # Milestone Progress Narrative
 
+## Keeping interrupted host provisioning retryable
+
+Independent merge review found two first-install interruption traps: cleanup
+assumed the native service-registration directory already existed, and a
+downloaded CLI could be published before its executable mode was durable.
+Cleanup now tolerates a genuinely absent directory only through the existing
+exact native-service checks, while unsafe paths and uncertain ownership still
+refuse. Helpers receive executable permissions before atomic publication;
+retry repairs an old private CLI's mode only after verifying its pinned bytes.
+Real permission/handle regressions cover these paths without operating a live
+service. This does not promote DT-08 native qualification.
+
 ## Hosting an installed persistent profile without a second shell
 
 The standalone Dev Tunnel installer remains useful for headless hosts, but it
