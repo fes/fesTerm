@@ -177,20 +177,20 @@ fn require_request(store: &Store, request: &BindExistingRequest) -> io::Result<C
 }
 
 #[derive(Deserialize)]
-struct CloudReply {
-    tunnel: CloudSnapshot,
+pub(super) struct CloudReply {
+    pub(super) tunnel: CloudSnapshot,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CloudSnapshot {
-    tunnel_id: String,
+pub(super) struct CloudSnapshot {
+    pub(super) tunnel_id: String,
     #[serde(default)]
-    labels: Vec<String>,
-    created: Option<String>,
+    pub(super) labels: Vec<String>,
+    pub(super) created: Option<String>,
 }
 
-enum Lookup {
+pub(super) enum Lookup {
     Found(CloudSnapshot),
     Missing,
     Uncertain,
@@ -235,7 +235,7 @@ fn exact_not_found(code: Option<i32>, stdout: &[u8], stderr: &[u8], qualified: &
         && ((stdout.is_empty() && matches(stderr)) || (stderr.is_empty() && matches(stdout)))
 }
 
-async fn lookup(cli: &Path, id: &str) -> io::Result<Lookup> {
+pub(super) async fn lookup(cli: &Path, id: &str) -> io::Result<Lookup> {
     let response =
         super::super::cli_captured(cli, &["show", id, "--json"], "profile_host.lookup").await?;
     if exact_not_found(response.code, &response.stdout, &response.stderr, id) {

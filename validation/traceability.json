@@ -71,7 +71,14 @@
         "failed_local_host_save_retains_the_draft_and_ignores_stale_replies",
         "local_draft_preserves_ordered_argument_boundaries_when_only_renamed",
         "edited_profile_rename_updates_all_windows_and_usage_without_overwriting_another_profile",
-        "hosted_profile_rename_updates_live_and_sibling_workspace_metadata_only"
+        "hosted_profile_rename_updates_live_and_sibling_workspace_metadata_only",
+        "management_inventory_distinguishes_absence_from_unknown_and_bulk_delete_refuses",
+        "management_legacy_missing_or_mismatched_confirmation_never_reaches_cli",
+        "management_legacy_optional_incarnation_requires_reconfirmation_and_never_retroactively_pins",
+        "management_archive_requires_complete_cleanup_preserves_receipts_and_allows_fresh_setup",
+        "management_exact_delete_preserves_shell_and_offline_evidence_then_retries",
+        "management_delete_all_snapshot_revalidates_ownership_and_keeps_uncertain_creation",
+        "private_directory_archive_refuses_open_children_and_existing_target"
       ],
       "manual_scenarios": ["DT-08"],
       "status": "partial",

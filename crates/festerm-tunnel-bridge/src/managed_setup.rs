@@ -17,7 +17,9 @@ use std::{
 };
 use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
 
+mod management;
 mod profile;
+pub(super) use management::manage;
 pub(super) use profile::request_file as profile_request_file;
 
 const CONFIG: &str = "installation.json";
@@ -210,7 +212,9 @@ fn validate_record(record: &Installation) -> io::Result<()> {
     {
         return Err(refused("setup.installation_identity"));
     }
-    if (record.phase == UPGRADING) == record.upgrading_from.is_empty()
+    if (record.phase == UPGRADING && record.upgrading_from.is_empty())
+        || (!matches!(record.phase.as_str(), UPGRADING | "deleting" | "deleted")
+            && !record.upgrading_from.is_empty())
         || record.upgrading_from.len() > MAX_UPGRADE_SOURCES
         || !record.upgrading_from.iter().all(|path| path.is_absolute())
     {
@@ -505,22 +509,32 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     if !cli_path.is_absolute() || !state.is_absolute() {
         return Err(refused("setup.absolute_paths_required"));
     }
-    let create = match fs::symlink_metadata(&state) {
-        Ok(_) => false,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => true,
-        Err(error) => return Err(error),
+    let presence = || -> io::Result<bool> {
+        let create = match fs::symlink_metadata(&state) {
+            Ok(_) => false,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => true,
+            Err(error) => return Err(error),
+        };
+        if !create && friendly_name.is_some() {
+            return Err(refused(
+                "setup.friendly_name_only_applies_to_new_hosts_rename_existing_tunnels_in_festerm",
+            ));
+        }
+        if upgrade && create {
+            return Err(refused("setup.upgrade_requires_an_existing_installation"));
+        }
+        Ok(create)
     };
-    if !create && friendly_name.is_some() {
-        return Err(refused(
-            "setup.friendly_name_only_applies_to_new_hosts_rename_existing_tunnels_in_festerm",
-        ));
-    }
-    if upgrade && create {
-        return Err(refused("setup.upgrade_requires_an_existing_installation"));
-    }
+    let create = presence()?;
     super::service_install::ensure_unprivileged_user()?;
     #[cfg(windows)]
     super::service_install::check_windows_worker(&std::env::current_exe()?)?;
+    let namespace_installer = management::setup_namespace_lock(&state)?;
+    let create = if namespace_installer.is_some() {
+        presence()?
+    } else {
+        create
+    };
     let directory = setup_storage::private_directory(&state, create)?;
     let installer = lock(&directory, "installer.lock")?;
     installer
@@ -579,6 +593,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                     .simple()
             );
             let description = friendly_name.unwrap_or_else(default_friendly_name);
+            let ownership = management::reserve_creation(&directory, &record)?;
             println!("Provisioning only this new private tunnel/session: {name}. Interrupted cloud mutations are journaled and never blindly retried.");
             let response = cli(
                 &record.cli,
@@ -589,6 +604,8 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
                     "30d",
                     "--description",
                     &description,
+                    "--labels",
+                    &ownership,
                     "--json",
                 ],
                 "setup.create_tunnel",
@@ -597,6 +614,7 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
             let created: Created =
                 serde_json::from_slice(&response).map_err(|_| refused("setup.create_response"))?;
             super::split_created_id(&created.tunnel.tunnel_id, &name)?;
+            management::record_creation(&directory, &record, &response)?;
             let mut record = record;
             record.tunnel = Some(created.tunnel.tunnel_id);
             record.phase = "creating-port".into();
@@ -670,6 +688,9 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
         Err(error) => return Err(error),
     };
     validate_record(&record)?;
+    if let Some(error) = management_guidance(&record) {
+        return Err(error);
+    }
     let executable = std::env::current_exe()?;
     let changing_filesystem = updates
         .filesystem
@@ -990,6 +1011,9 @@ fn rerun_plan(
     no_takeover: bool,
     upgrade: bool,
 ) -> io::Result<Rerun> {
+    if let Some(error) = management_guidance(record) {
+        return Err(error);
+    }
     if record.phase == UPGRADING && !upgrade {
         return Err(io::Error::other(
             "setup.upgrade_interrupted: re-run the installer with --upgrade (-Upgrade on Windows) to finish switching this host's helpers",
@@ -1011,6 +1035,36 @@ fn rerun_plan(
     } else {
         Rerun::AlreadyCurrent
     })
+}
+
+fn management_guidance(record: &Installation) -> Option<io::Error> {
+    let helper = format!("festerm-tunnel-setup{}", std::env::consts::EXE_SUFFIX);
+    let action = match record.phase.as_str() {
+        "deleted" => format!(
+            "run {helper} --manage archive {} --yes to retain completed cleanup evidence, then run normal explicit setup for a fresh installation; the persistent shell is preserved",
+            record.id
+        ),
+        "deleting" | "creating-tunnel" | "creating-port" | "starting-session" => {
+            let mut action = format!(
+                "run {helper} --manage delete {} --yes to stop only the exact owned host and reconcile cleanup; preserve uncertain journals and never archive unresolved creation",
+                record.id
+            );
+            if record.origin.is_none() {
+                if let Some(tunnel) = &record.tunnel {
+                    action.push_str(&format!(
+                        "; if legacy confirmation is required for recorded GitHub account {}, run {helper} --manage delete {} --yes --confirm-legacy-cloud-id {tunnel}",
+                        record.account, record.id
+                    ));
+                }
+            }
+            action
+        }
+        _ => return None,
+    };
+    Some(io::Error::other(format!(
+        "setup.phase_{}: {action}",
+        record.phase
+    )))
 }
 
 /// Journals the switch to new helpers. Only `executable`/`cli` (and an

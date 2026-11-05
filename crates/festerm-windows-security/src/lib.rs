@@ -1617,6 +1617,22 @@ mod imp {
         Ok(file)
     }
 
+    /// Retains an exact owner-only directory with the access needed for a
+    /// handle-relative no-replace archive. No reparse point is followed.
+    pub fn open_private_directory_for_move(directory: &File, name: &Path) -> io::Result<File> {
+        let file = open_relative(
+            directory,
+            name,
+            GENERIC_READ | DELETE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            FILE_OPEN,
+            FILE_DIRECTORY_FILE,
+            ptr::null(),
+        )?;
+        verify_private_object(&file, directory, true)?;
+        Ok(file)
+    }
+
     /// Rejects mapped network drives before a terminal hyperlink opens its root.
     pub fn require_local_disk_root(root: &Path) -> io::Result<()> {
         let root: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -1860,6 +1876,17 @@ mod imp {
         target_directory: &File,
         target: &Path,
     ) -> io::Result<()> {
+        rename_file(source, target_directory, target, false)
+    }
+
+    /// Archives an exact private directory without replacement. Callers must
+    /// retain their operation lock outside the directory being moved.
+    pub fn rename_private_directory_noreplace(
+        source: &File,
+        target_directory: &File,
+        target: &Path,
+    ) -> io::Result<()> {
+        verify_private_object(source, target_directory, true)?;
         rename_file(source, target_directory, target, false)
     }
 
@@ -3285,6 +3312,32 @@ mod imp {
         }
 
         #[test]
+        fn private_directory_archive_refuses_open_children_and_existing_target() {
+            let directory = TemporaryDirectory::new();
+            let parent = directory.handle();
+            let source = create_current_user_only_directory(&parent, Path::new("source")).unwrap();
+            let mover = open_private_directory_for_move(&parent, Path::new("source")).unwrap();
+            rename_private_directory_noreplace(&mover, &parent, Path::new("empty-archive"))
+                .unwrap();
+            let child =
+                create_current_user_only_file(&source, Path::new("installer.lock")).unwrap();
+            assert!(
+                rename_private_directory_noreplace(&mover, &parent, Path::new("archive")).is_err()
+            );
+            drop(child);
+            rename_private_directory_noreplace(&mover, &parent, Path::new("archive")).unwrap();
+            let collision =
+                create_current_user_only_directory(&parent, Path::new("collision")).unwrap();
+            assert!(
+                rename_private_directory_noreplace(&mover, &parent, Path::new("collision"))
+                    .is_err()
+            );
+            assert!(directory.0.join("archive").join("installer.lock").exists());
+            assert!(same_file_identity(&source, &mover).unwrap());
+            drop((mover, source, collision));
+        }
+
+        #[test]
         fn unprotected_created_child_is_rejected_before_caller_bytes_can_be_written() {
             let directory = TemporaryDirectory::new();
             let directory_handle = directory.handle();
@@ -3764,8 +3817,9 @@ pub use imp::{
     lock_directory_path_without_delete_sharing, open_directory_no_reparse, open_file_no_reparse,
     open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
     open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
-    open_file_no_reparse_for_verification, open_file_read_write_no_reparse, opened_file_path,
-    remove_private_staging_file, rename_file_noreplace, replace_private_file,
+    open_file_no_reparse_for_verification, open_file_read_write_no_reparse,
+    open_private_directory_for_move, opened_file_path, remove_private_staging_file,
+    rename_file_noreplace, rename_private_directory_noreplace, replace_private_file,
     require_local_disk_root, restrict_default_dacl_to_current_user, restrict_to_current_user,
     same_file_identity, secure_staging_parent, security_metadata, security_metadata_matches,
     staging_parent_matches, system_directory, trusted_private_storage_ancestor, DefaultDaclGuard,

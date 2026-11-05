@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 
 fail() { printf 'fesTerm tunnel setup: %s\n' "$*" >&2; exit 1; }
-usage='Usage: bash install-dev-tunnel.sh [VERSION] [--install-dependencies] [--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected] [--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files] [--observe-root ABSOLUTE_DIRECTORY ... | --disable-observation]'
+usage='Usage: bash install-dev-tunnel.sh [VERSION] [--manage {list|delete UUID --yes [--confirm-legacy-cloud-id QUALIFIED_ID]|delete-all --yes|archive UUID --yes} [--json] [--install-management-tools] | setup options: --install-dependencies --no-takeover --upgrade --friendly-name NAME --restart-unexpected --no-restart-unexpected --file-root ABSOLUTE_DIRECTORY --allow-file-write --disable-files --observe-root ABSOLUTE_DIRECTORY --disable-observation]'
 version=
 install_dependencies=false
 no_takeover=false
@@ -15,8 +15,33 @@ disable_files=false
 observe_roots=()
 disable_observation=false
 restart_unexpected=
+manage=
+installation_id=
+yes=false
+json=false
+confirm_legacy_cloud_id=
+install_management_tools=false
 while (($#)); do
-    if [[ $1 == --install-dependencies ]]; then
+    if [[ $1 == --manage && $# -ge 2 && -z $manage ]]; then
+        manage=$2
+        shift 2
+        if [[ ( $manage == delete || $manage == archive ) && $# -ge 1 && $1 != --* ]]; then
+            installation_id=$1
+            shift
+        fi
+    elif [[ $1 == --yes ]] && ! "$yes"; then
+        yes=true
+        shift
+    elif [[ $1 == --json ]] && ! "$json"; then
+        json=true
+        shift
+    elif [[ $1 == --confirm-legacy-cloud-id && $# -ge 2 && -z $confirm_legacy_cloud_id ]]; then
+        confirm_legacy_cloud_id=$2
+        shift 2
+    elif [[ $1 == --install-management-tools ]] && ! "$install_management_tools"; then
+        install_management_tools=true
+        shift
+    elif [[ $1 == --install-dependencies ]]; then
         install_dependencies=true
         shift
     elif [[ $1 == --no-takeover ]]; then
@@ -56,6 +81,107 @@ while (($#)); do
         fail "$usage"
     fi
 done
+if [[ -n $manage ]]; then
+    [[ $manage == list || $manage == delete || $manage == delete-all || $manage == archive ]] ||
+        fail 'Use --manage list, --manage delete/archive UUID --yes, or --manage delete-all --yes.'
+    if "$install_dependencies" || "$no_takeover" || "$upgrade" || [[ -n $friendly_name || -n $file_root || -n $restart_unexpected ]] ||
+        "$file_write" || "$disable_files" || "$disable_observation" || ((${#observe_roots[@]})); then
+        fail 'Management cannot be combined with setup/upgrade options.'
+    fi
+    if [[ $manage == list ]]; then
+        ! "$yes" || fail '--yes applies only to deletion.'
+    else
+        "$yes" || fail 'Deletion requires explicit --yes confirmation.'
+    fi
+    if [[ $manage == delete || $manage == archive ]]; then
+        [[ $installation_id =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] ||
+            fail 'Delete requires an exact local installation UUID.'
+    fi
+    if [[ -n $confirm_legacy_cloud_id ]]; then
+        [[ $manage == delete && ${#confirm_legacy_cloud_id} -le 256 &&
+            $confirm_legacy_cloud_id =~ ^[a-zA-Z0-9.-]+$ ]] ||
+            fail '--confirm-legacy-cloud-id is an exact qualified ID for --manage delete only.'
+    fi
+    management_arguments=(--manage "$manage")
+    if [[ -n $installation_id ]]; then management_arguments+=("$installation_id"); fi
+    if "$yes"; then management_arguments+=(--yes); fi
+    if "$json"; then management_arguments+=(--json); fi
+    if [[ -n $confirm_legacy_cloud_id ]]; then management_arguments+=(--confirm-legacy-cloud-id "$confirm_legacy_cloud_id"); fi
+    [[ $(id -u) != 0 ]] || fail 'Run as your normal user, not root.'
+    management_root="$HOME/.local/share/festerm-tunnels"
+    # Execute only a previously installed private helper, never a download or a
+    # JSON-supplied executable path. The native helper owns inventory authority.
+    management_os=$(uname -s)
+    trusted_management_path() {
+        local path=$1 private=$2 component= part details owner mode
+        [[ $path == /* ]] || fail 'Management helper path must be absolute.'
+        local -a parts
+        IFS='/' read -r -a parts <<< "$path"
+        for part in "${parts[@]}"; do
+            [[ -n $part ]] || continue
+            [[ $part != . && $part != .. ]] || fail 'Management path is not normalized.'
+            component="$component/$part"
+            [[ ! -L $component ]] || fail 'Management path must not be a symbolic link.'
+            if [[ $management_os == Darwin ]]; then details=$(stat -f '%u %Lp' "$component");
+            else details=$(stat -c '%u %a' "$component"); fi
+            read -r owner mode <<< "$details"
+            [[ $owner == "$UID" || $owner == 0 ]] || fail 'Management path has a foreign owner.'
+            (( (8#$mode & 0022) == 0 )) || fail 'Management path permits foreign writes.'
+            if [[ -d $component ]]; then
+                [[ -x $component ]] || fail 'Management path cannot be searched; inventory is unknown.'
+            fi
+        done
+        if [[ $private == true ]]; then
+            [[ $owner == "$UID" ]] && (( (8#$mode & 0077) == 0 )) ||
+                fail 'Management cache must be private to the current user.'
+        fi
+    }
+    management_parent=$management_root
+    while [[ ! -e $management_parent && ! -L $management_parent ]]; do
+        management_parent=${management_parent%/*}
+        [[ -n $management_parent ]] || fail 'Management path is not absolute or verifiable.'
+    done
+    trusted_management_path "$management_parent" false
+    if ! "$install_management_tools" && [[ ! -e $management_root && ! -L $management_root ]]; then
+        [[ $manage != delete && $manage != archive ]] || fail 'No verified local installation.'
+        if "$json"; then printf '%s\n' '{"version":1,"scope":"verified-local-script-installations","hosts":[]}';
+        else printf 'No verified local script installations. Desktop hosts are managed in fesTerm.\n'; fi
+        exit 0
+    fi
+    if "$install_management_tools"; then
+        if [[ -e $management_root || -L $management_root ]]; then
+            trusted_management_path "$management_root" true
+        fi
+        if [[ -e $management_root/releases || -L $management_root/releases ]]; then
+            trusted_management_path "$management_root/releases" true
+        fi
+    else
+    trusted_management_path "$management_root" true
+    trusted_management_path "$management_root/releases" true
+    management_helper=
+    management_count=0
+    for candidate in "$management_root"/releases/*; do
+        name=${candidate##*/}
+        [[ $name =~ ^[0-9]+\.[0-9]+\.[0-9]+-(linux|macos)-(x86_64|aarch64)$ ]] || continue
+        if [[ -n $version && $name != "$version-"* ]]; then continue; fi
+        management_count=$((management_count + 1))
+        ((management_count <= 1000)) || fail 'Local helper inventory limit exceeded.'
+        trusted_management_path "$candidate" true
+        helper="$candidate/festerm-tunnel-setup"
+        [[ -f $helper && -x $helper ]] || fail 'Cached management helper is missing.'
+        trusted_management_path "$helper" true
+        if [[ $management_os == Darwin ]]; then codesign --verify --strict "$helper"; fi
+        help_text=$("$helper" --help) || fail 'Cached helper help failed.'
+        if [[ $help_text == *'--manage {list'* ]]; then management_helper=$helper; fi
+    done
+    [[ -n $management_helper ]] ||
+        fail 'No cached management helper. Rerun this command with --install-management-tools to stage verified tools only; no setup, login or service operation is required.'
+    exec "$management_helper" "${management_arguments[@]}"
+    fi
+fi
+if [[ -z $manage ]] && { "$yes" || "$json" || "$install_management_tools" || [[ -n $confirm_legacy_cloud_id ]]; }; then
+    fail '--yes, --json, --confirm-legacy-cloud-id and --install-management-tools require --manage.'
+fi
 setup_extra=()
 if "$disable_files" && { [[ -n $file_root ]] || "$file_write"; }; then
     fail 'Use --file-root with optional --allow-file-write, or --disable-files.'
@@ -213,7 +339,7 @@ fi
 [[ $(sha "$install/devtunnel") == "$cli_file_sha" ]] || fail 'Official CLI executable hash mismatch.'
 if [[ $platform == macos ]]; then codesign --verify --strict "$install/devtunnel"; fi
 chmod 700 "$install/devtunnel"
-"$install/devtunnel" --version
+if [[ -z $manage ]]; then "$install/devtunnel" --version; fi
 if [[ -e $cached || -L $cached ]]; then
     [[ -d $cached && ! -L $cached ]] || fail 'Cached release is not a regular directory.'
     for member in LICENSE THIRD_PARTY_NOTICES.txt VERSION festerm-sessiond festerm-tunnel-bridge festerm-tunnel-setup devtunnel; do
@@ -227,12 +353,20 @@ else
     mv -- "$install" "$cached"
 fi
 install=$cached
-printf 'Installed private helpers: %s\n' "$install"
-printf 'Setup reuses this user installation and its exact tunnel/session; a dedicated per-user service hosts it.\n'
+if [[ -z $manage ]]; then
+    printf 'Installed private helpers: %s\n' "$install"
+    printf 'Setup reuses this user installation and its exact tunnel/session; a dedicated per-user service hosts it.\n'
+fi
 # Each release has its own cache directory; an upgrade leaves the previous
 # release's helpers in place next to it.
 cleanup
 trap - EXIT
+if [[ -n $manage ]]; then
+    help_text=$("$install/festerm-tunnel-setup" --help) || fail 'Verified management helper help failed.'
+    [[ $help_text == *'--manage {list'* ]] ||
+        fail 'The verified release lacks management support; no setup, login or service operation was performed.'
+    exec "$install/festerm-tunnel-setup" "${management_arguments[@]}"
+fi
 "$install/festerm-tunnel-setup" --managed --devtunnel "$install/devtunnel" --state-dir "$root/state" ${setup_extra[@]+"${setup_extra[@]}"}
 profile="$root/state/festerm-profile.json"
 if [[ ! -e $profile && ! -L $profile ]] && { "$disable_files" || "$disable_observation"; }; then

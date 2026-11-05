@@ -68,10 +68,28 @@ services, global credentials and foreign tunnels are never removal targets.
 Unmanaged cloud disappearance is distinct from a local revocation tombstone.
 
 The desktop implementation supplies profile and owned-browser removal plus a
-bounded local cleanup inventory. Standalone list/delete/delete-all command and
-installer entry points are a separate delivery step under #618, not claimed by
-the initial desktop implementation. An active unreferenced grant may belong to
-another configuration document: inventory warns and requires explicit confirmed
+bounded local cleanup inventory. The standalone `--manage` and installer
+entry points cover only the separate schema-1 script namespace, sharing exact
+native-service teardown and cloud lookup verification without weakening the
+desktop consent contract. Desktop removal remains canonical in the GUI.
+Script deletion journals revocation before stopping and retains cleanup receipts;
+new creates reserve a private random cloud ownership label before submission.
+Original script records require an additional typed exact-qualified-ID deletion
+confirmation, not automatic/bulk ownership adoption. A separate deletion-only
+receipt pins the returned cloud incarnation when available. The pinned CLI can
+omit creation time: explicit null/unavailable evidence requires renewed full-ID
+confirmation for every attempt, never inferred incarnation continuity or a
+retroactive pin. A previously pinned incarnation cannot disappear/change.
+Completed,
+locally stopped and cloud-gone state may be explicitly archived with a private
+no-replace rename before a separately requested fresh setup; uncertain evidence
+is never archived. Destructive script management and canonical script setup share
+a protected namespace installer lock. Archive verifies completed receipts under
+the state-local lock too, releasing that child handle only on Windows before
+rename while retaining the namespace lock (Windows refuses open-child directory
+renames). Opt-in management-tool bootstrap stages verified immutable
+helpers without servicing/provisioning an existing host. An active unreferenced grant may
+belong to another configuration document: inventory warns and requires explicit confirmed
 revocation rather than adopting it or automatically stopping exposure.
 
 Linux packaged-source paths must not be group/world-writable; custom

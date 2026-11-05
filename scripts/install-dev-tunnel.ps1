@@ -13,7 +13,14 @@ param(
     [switch]$DisableObservation,
     [switch]$RestartUnexpected,
     [switch]$NoRestartUnexpected,
-    [string]$FriendlyName = ''
+    [string]$FriendlyName = '',
+    [ValidateSet('list', 'delete', 'delete-all', 'archive')]
+    [string]$Manage = '',
+    [string]$InstallationId = '',
+    [switch]$Yes,
+    [switch]$Json,
+    [string]$ConfirmLegacyCloudId = '',
+    [switch]$InstallManagementTools
 )
 
 Set-StrictMode -Version Latest
@@ -34,29 +41,6 @@ $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.
 if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Use an unelevated PowerShell window.'
 }
-$architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
-switch ($architecture) {
-    'X64' { $arch = 'x86_64' }
-    'Arm64' {
-        $arch = 'aarch64'
-        Write-Host 'The official Dev Tunnels CLI uses Windows x64 emulation; fesTerm helpers are native ARM64.'
-    }
-    default { throw "Unsupported Windows architecture: $architecture" }
-}
-$curl = (Get-Command curl.exe -CommandType Application -ErrorAction Stop).Source
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-
-if (-not $Version) {
-    # The newest published release; its redirect names the tag without the API.
-    $latest = & $curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' `
-        --connect-timeout 20 --max-time 60 --output NUL --write-out '%{url_effective}' `
-        'https://github.com/fes/fesTerm/releases/latest'
-    if ($LASTEXITCODE -ne 0 -or $latest -notmatch '/tag/v([0-9]+\.[0-9]+\.[0-9]+)\z') {
-        throw 'No published fesTerm release was found; pass -Version explicitly.'
-    }
-    $Version = $Matches[1]
-}
-
 function Get-Download([string]$Url, [string]$Path, [long]$Limit) {
     & $curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' `
         --connect-timeout 20 --max-time 180 --max-filesize $Limit $Url -o $Path
@@ -78,13 +62,18 @@ function New-PrivateDirectory([string]$Path) {
 }
 
 function Assert-PrivateDirectory([string]$Path) {
+    Assert-PrivateItem $Path $true
+}
+
+function Assert-PrivateItem([string]$Path, [bool]$IsDirectory) {
     $item = Get-Item -LiteralPath $Path
-    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-        throw 'Installation directory is substituted or not a directory.'
+    if ($item.PSIsContainer -ne $IsDirectory -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Installation path is substituted or has the wrong type.'
     }
     $acl = Get-Acl -LiteralPath $Path
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-    if ($acl.GetOwner([Security.Principal.SecurityIdentifier]) -ne $sid -or -not $acl.AreAccessRulesProtected) {
+    if ($acl.GetOwner([Security.Principal.SecurityIdentifier]) -ne $sid -or
+        ($IsDirectory -and -not $acl.AreAccessRulesProtected)) {
         throw 'Installation directory is not protected for this user.'
     }
     foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
@@ -96,9 +85,101 @@ function Assert-PrivateDirectory([string]$Path) {
 
 $local = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
 $root = Join-Path $local 'fesTerm-tunnels'
+$releases = Join-Path $root 'releases'
+if ($Manage) {
+    if ($NoTakeover -or $Upgrade -or $FileRoot -or $AllowFileWrite -or $DisableFiles -or
+        $ObserveRoot.Count -or $DisableObservation -or $RestartUnexpected -or
+        $NoRestartUnexpected -or $FriendlyName) {
+        throw 'Management cannot be combined with setup/upgrade options.'
+    }
+    if (($Manage -eq 'list' -and ($Yes -or $InstallationId)) -or
+        ($Manage -eq 'delete-all' -and ($InstallationId -or -not $Yes)) -or
+        ($Manage -in @('delete', 'archive') -and (-not $Yes -or $InstallationId -cnotmatch
+            '\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z'))) {
+        throw 'Use -Manage list, -Manage delete/archive -InstallationId UUID -Yes, or -Manage delete-all -Yes.'
+    }
+    if ($ConfirmLegacyCloudId -and ($Manage -ne 'delete' -or
+        $ConfirmLegacyCloudId.Length -gt 256 -or $ConfirmLegacyCloudId -cnotmatch '\A[a-zA-Z0-9.-]+\z')) {
+        throw '-ConfirmLegacyCloudId is an exact qualified ID for -Manage delete only.'
+    }
+    $managementArguments = @('--manage', $Manage)
+    if ($InstallationId) { $managementArguments += $InstallationId }
+    if ($Yes) { $managementArguments += '--yes' }
+    if ($Json) { $managementArguments += '--json' }
+    if ($ConfirmLegacyCloudId) { $managementArguments += @('--confirm-legacy-cloud-id', $ConfirmLegacyCloudId) }
+    if (-not $InstallManagementTools) {
+    if (-not (Test-Path -LiteralPath $root)) {
+        if ($Manage -in @('delete', 'archive')) { throw 'No verified local installation.' }
+        if ($Json) { '{"version":1,"scope":"verified-local-script-installations","hosts":[]}' }
+        else { Write-Host 'No verified local script installations. Desktop hosts are managed in fesTerm.' }
+        return
+    }
+    Assert-PrivateDirectory $root
+    Assert-PrivateDirectory $releases
+    $candidates = @(Get-ChildItem -LiteralPath $releases -Directory |
+        Where-Object { $_.Name -cmatch '\A[0-9]+\.[0-9]+\.[0-9]+-windows-(x86_64|aarch64)\z' } |
+        Sort-Object { [version]($_.Name -split '-')[0] } -Descending)
+    if ($candidates.Count -gt 1000) { throw 'Local helper inventory limit exceeded.' }
+    $managementHelper = $null
+    foreach ($candidate in $candidates) {
+        if ($Version -and -not $candidate.Name.StartsWith("$Version-windows-")) { continue }
+        Assert-PrivateDirectory $candidate.FullName
+        $helper = Join-Path $candidate.FullName 'festerm-tunnel-setup.exe'
+        if (-not (Test-Path -LiteralPath $helper -PathType Leaf) -or
+            ((Get-Item -LiteralPath $helper).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Cached management helper is missing or substituted.'
+        }
+        Assert-PrivateItem $helper $false
+        $ancestor = Split-Path -Parent $helper
+        while ($ancestor) {
+            if ((Get-Item -LiteralPath $ancestor).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw 'Management path contains a substituted ancestor.'
+            }
+            $ancestor = Split-Path -Parent $ancestor
+        }
+        if ((Get-AuthenticodeSignature -LiteralPath $helper).Status -ne 'Valid') {
+            throw 'Cached management helper is not Authenticode-valid.'
+        }
+        $helpText = & $helper --help
+        if ($LASTEXITCODE -eq 0 -and ($helpText -join "`n").Contains('--manage {list')) {
+            $managementHelper = $helper
+            break
+        }
+    }
+    if (-not $managementHelper) {
+        throw 'No cached management helper. Rerun this command with -InstallManagementTools to stage verified tools only; no setup, login or service operation is required.'
+    }
+    & $managementHelper @managementArguments
+    if ($LASTEXITCODE -ne 0) { throw 'Management refused or cleanup remains pending; private evidence retained.' }
+    return
+    }
+}
+if (-not $Manage -and ($InstallationId -or $Yes -or $Json -or $ConfirmLegacyCloudId -or $InstallManagementTools)) {
+    throw '-InstallationId, -Yes, -Json, -ConfirmLegacyCloudId and -InstallManagementTools require -Manage.'
+}
+$architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+switch ($architecture) {
+    'X64' { $arch = 'x86_64' }
+    'Arm64' {
+        $arch = 'aarch64'
+        if (-not $Manage) { Write-Host 'The official Dev Tunnels CLI uses Windows x64 emulation; fesTerm helpers are native ARM64.' }
+    }
+    default { throw "Unsupported Windows architecture: $architecture" }
+}
+$curl = (Get-Command curl.exe -CommandType Application -ErrorAction Stop).Source
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+if (-not $Version) {
+    # The newest published release; its redirect names the tag without the API.
+    $latest = & $curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' `
+        --connect-timeout 20 --max-time 60 --output NUL --write-out '%{url_effective}' `
+        'https://github.com/fes/fesTerm/releases/latest'
+    if ($LASTEXITCODE -ne 0 -or $latest -notmatch '/tag/v([0-9]+\.[0-9]+\.[0-9]+)\z') {
+        throw 'No published fesTerm release was found; pass -Version explicitly.'
+    }
+    $Version = $Matches[1]
+}
 if (-not (Test-Path -LiteralPath $root)) { New-PrivateDirectory $root | Out-Null }
 Assert-PrivateDirectory $root
-$releases = Join-Path $root 'releases'
 if (-not (Test-Path -LiteralPath $releases)) { New-PrivateDirectory $releases | Out-Null }
 Assert-PrivateDirectory $releases
 $install = New-PrivateDirectory (Join-Path $root ("staging-" + [Guid]::NewGuid().ToString('N')))
@@ -164,8 +245,10 @@ try {
         $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -ne 'Microsoft Corporation') {
         throw 'Official Dev Tunnels CLI does not have a valid Microsoft Authenticode signature.'
     }
-    & $cli --version
-    if ($LASTEXITCODE -ne 0) { throw 'Official Dev Tunnels CLI runtime prerequisites are unavailable.' }
+    if (-not $Manage) {
+        & $cli --version
+        if ($LASTEXITCODE -ne 0) { throw 'Official Dev Tunnels CLI runtime prerequisites are unavailable.' }
+    }
     if (Test-Path -LiteralPath $cached) {
         Assert-PrivateDirectory $cached
         foreach ($member in @($allowed) + @('devtunnel.exe')) {
@@ -184,6 +267,16 @@ try {
         [IO.Directory]::Move($helpers, $cached)
     }
     $cli = Join-Path $cached 'devtunnel.exe'
+    if ($Manage) {
+        $helper = Join-Path $cached 'festerm-tunnel-setup.exe'
+        $helpText = & $helper --help
+        if ($LASTEXITCODE -ne 0 -or -not ($helpText -join "`n").Contains('--manage {list')) {
+            throw 'The verified release lacks management support; no setup, login or service operation was performed.'
+        }
+        & $helper @managementArguments
+        if ($LASTEXITCODE -ne 0) { throw 'Management refused or cleanup remains pending; private evidence retained.' }
+        return
+    }
     Write-Host "Installed private helpers: $cached"
     if ($FriendlyName -and ($FriendlyName.Trim().Length -eq 0 -or $FriendlyName.Trim().Length -gt 100 -or $FriendlyName -match '[\x00-\x1f\x7f]')) {
         throw 'FriendlyName must be non-empty and contain no control characters.'

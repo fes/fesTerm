@@ -450,6 +450,12 @@ fn main() {
             "[--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected] ",
             "[--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files]\n",
             "Default: new foreground-only setup in a new directory.\n",
+            "--manage {{list | delete INSTALLATION_ID --yes [--confirm-legacy-cloud-id QUALIFIED_ID] | delete-all --yes | archive INSTALLATION_ID --yes}} [--json]: ",
+            "manage only verified local script installations, without setup, login or downloads. ",
+            "Desktop hosts must be removed through fesTerm's consent-aware GUI. ",
+            "Deletion preserves the persistent shell and retains pending cloud-cleanup evidence.\n",
+            "Legacy confirmation applies only to exact-ID deletion of a verified script installation, never delete-all. ",
+            "Archive retains only completed, locally stopped and cloud-gone state; normal explicit setup can then create a fresh installation.\n",
             "--managed: explicit per-user service setup; healthy reruns reuse the original private tunnel, ",
             "host identity and exact shell generation, printing public profile JSON without credentials. ",
             "By default stale/partial/foreign state refuses, never creates a replacement. ",
@@ -491,6 +497,7 @@ fn main() {
             runtime.block_on(async {
                 match args.first().and_then(|arg| arg.to_str()) {
                     Some("--profile-host") => managed_setup::profile_request_file(&args[1..]).await,
+                    Some("--manage") => managed_setup::manage(&args[1..]).await,
                     Some("--managed") => managed_setup::install(&args[1..]).await,
                     Some("--serve") => managed_setup::serve(&args[1..]).await,
                     _ => run().await,
@@ -498,7 +505,11 @@ fn main() {
             })
         });
     if let Err(error) = result {
-        eprintln!("Experimental tunnel setup refused/stopped: {error}. Any explicitly reported new tunnel/session remains; existing resources were not removed.");
+        if args.first().is_some_and(|arg| arg == "--manage") {
+            eprintln!("Tunnel management refused or incomplete: {error}. Follow per-host results; private cleanup evidence is retained. The persistent shell was not targeted.");
+        } else {
+            eprintln!("Experimental tunnel setup refused/stopped: {error}. Any explicitly reported new tunnel/session remains; existing resources were not removed.");
+        }
         let serving = args.first().is_some_and(|arg| arg == "--serve");
         std::process::exit(if serving && managed_setup::is_permanent_refusal(&error) {
             service_install::PERMANENT_REFUSAL_EXIT

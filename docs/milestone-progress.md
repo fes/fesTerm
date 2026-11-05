@@ -7969,3 +7969,25 @@ established peer instead of waiting for socket activity or the bootstrap
 deadline. Synthetic tests cover both states. This does not serialize owner
 destruction with effects already in flight, qualify other lifecycle cuts or
 open a production endpoint.
+
+## Removing installer hosts without removing their shells
+
+The standalone Dev Tunnel installer now has explicit list, exact-installation
+delete and confirmed delete-all entry points that branch before provisioning.
+They inspect only protected local script inventory and share the hardened
+native-service teardown authority; desktop hosts stay behind GUI consent
+revocation. New script creates reserve a random cloud ownership label before
+submission. Deletion journals disabled intent, stops only verified hosting
+workers, and retains exact ownership/cleanup evidence when cloud access or
+identity is unavailable. Repeated deletion cannot restart hosting or terminate
+the independent shell. Original 0.15 script hosts gain an explicit typed
+qualified-ID deletion confirmation with a deletion-only receipt: available
+creation time stays pinned; the real thin CLI's absent time stays explicitly
+unavailable and requires renewed confirmation, not inferred continuity or
+automatic ownership adoption. Tools-only bootstrap can stage verified
+management helpers without repairing or restarting the old host. Only completed
+stopped/cloud-gone evidence can be explicitly archived before a separately
+requested fresh setup; uncertain records remain visible and blocked. Helper
+garbage collection remains deferred to #619. Isolated fixtures cover forwarding,
+refusal, interruption and retry; native signed/live-service teardown remains a
+manual qualification gate.
