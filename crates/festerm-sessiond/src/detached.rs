@@ -703,6 +703,9 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
+            #[cfg(windows)]
+            let root = storage::test_directory();
+            #[cfg(not(windows))]
             let root = std::env::current_dir()
                 .unwrap()
                 .join(format!("nd-{}", &Uuid::new_v4().simple().to_string()[..8],));
