@@ -176,6 +176,10 @@ separate timeout wrapper. A synchronous request timeout cancels the entire
 observation provider without replay. Generation/coalescing checks run on a
 100-ms tick and again before notices/DATA release. Idle watch receiving has no
 ordinary frame timeout. Native watch
+generation checks share the blocking-job budget; contention can conservatively
+end a subscription even when the generation is still live. Clients must handle
+explicit retirement and deliberately resubscribe rather than infer continuity.
+Native watch
 coverage limits refuse explicitly; filesystem permissions are never repaired.
 No remote content enters application configuration, logs, ordinary caches,
 workspaces or status persistence. The external controller owns status derivation
