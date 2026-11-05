@@ -126,6 +126,9 @@ async fn setup_help_distinguishes_managed_service_from_foreground_mode() {
         "--file-root",
         "--allow-file-write",
         "--disable-files",
+        "--observe-root",
+        "--disable-observation",
+        "MCP enrollment or JavaScript",
     ] {
         assert!(help.contains(contract), "missing help contract: {contract}");
     }

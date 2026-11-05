@@ -40,6 +40,7 @@ fn run() -> io::Result<()> {
         return Ok(());
     }
     if args.iter().any(|arg| arg == "--help") {
+        println!("Rooted transfers: --file-root ABSOLUTE_DIRECTORY with optional --allow-file-write. Independent read-only observation: --observe-root ABSOLUTE_DIRECTORY (repeatable, at most four). Observation never grants browsing, writes, MCP or JavaScript.");
         println!("festerm-tunnel-bridge --experimental --tunnel-id ID --cluster CLUSTER --port PORT --session NAME --destination PATH [--token-stdin] [--allow-file-read] [--takeover] [--host-identity ABSOLUTE_PRIVATE_PATH [--existing-host-identity]] [--session-pid PID --session-generation U128]\nPrivate GitHub-authenticated Dev Tunnels provisioning first; runtime takes only a scoped host token. The configured session must already exist and be unattached. Optional exact pid/generation pins refuse name reuse. A host identity file contains a dedicated unencrypted signing key protected for this OS user, never a bearer token. --existing-host-identity requires --host-identity and refuses a missing key instead of creating one. Without a host identity path identity remains ephemeral. Ctrl+C detaches, never terminates. File reads are opt-in and grant remote-user-readable regular files, not a directory sandbox. Takeover is off unless --takeover lets a remote connection displace a local or other client (it never reattaches on its own). No create/inventory/terminate or automatic reconnect.");
         return Ok(());
     }
@@ -57,6 +58,7 @@ fn run() -> io::Result<()> {
     let mut allow_file_read = false;
     let mut file_root = None;
     let mut allow_file_write = false;
+    let mut observation_roots = Vec::new();
     let mut takeover = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -67,6 +69,13 @@ fn run() -> io::Result<()> {
             "--allow-file-write" if !allow_file_write => allow_file_write = true,
             "--file-root" if file_root.is_none() => {
                 file_root = Some(PathBuf::from(iter.next().ok_or_else(invalid)?));
+            }
+            "--observe-root" if observation_roots.len() < 4 => {
+                let root = PathBuf::from(iter.next().ok_or_else(invalid)?);
+                if observation_roots.contains(&root) {
+                    return Err(invalid());
+                }
+                observation_roots.push(root);
             }
             "--takeover" => takeover = true,
             "--existing-host-identity" => existing_host_identity = true,
@@ -109,18 +118,27 @@ fn run() -> io::Result<()> {
     if !experimental {
         return Err(invalid());
     }
-    if (allow_file_write && file_root.is_none()) || (allow_file_read && file_root.is_some()) {
+    if (allow_file_write && file_root.is_none())
+        || (allow_file_read && (file_root.is_some() || !observation_roots.is_empty()))
+    {
         return Err(invalid());
     }
-    let files = if let Some(root) = file_root {
-        festerm_tunnel_bridge::files::FileService::rooted(
-            &festerm_tunnel_bridge::file_protocol::Policy {
-                root,
-                write: allow_file_write,
-            },
-        )?
-    } else {
+    let filesystem = file_root.map(|root| festerm_tunnel_bridge::file_protocol::Policy {
+        root,
+        write: allow_file_write,
+    });
+    let observation = (!observation_roots.is_empty()).then_some(
+        festerm_tunnel_bridge::observation_protocol::Policy {
+            roots: observation_roots,
+        },
+    );
+    let files = if allow_file_read {
         festerm_tunnel_bridge::files::FileService::new(allow_file_read)
+    } else {
+        festerm_tunnel_bridge::files::FileService::configured(
+            filesystem.as_ref(),
+            observation.as_ref(),
+        )?
     };
     validate_host_identity_options(host_identity.as_deref(), existing_host_identity)?;
     let expected_session = exact_session_pin(expected_pid, expected_generation)?;

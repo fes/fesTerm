@@ -1428,6 +1428,15 @@ mod imp {
         Ok(unsafe { File::from_raw_handle(handle) })
     }
 
+    /// Native stable identity obtained from the supplied open handle.
+    pub fn file_identity(file: &File) -> io::Result<(u32, u64)> {
+        let information = file_information(file)?;
+        Ok((
+            information.dwVolumeSerialNumber,
+            (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow),
+        ))
+    }
+
     fn file_information(file: &File) -> io::Result<BY_HANDLE_FILE_INFORMATION> {
         let mut information = BY_HANDLE_FILE_INFORMATION::default();
         if unsafe {
@@ -3689,14 +3698,14 @@ pub use imp::{
     create_current_user_only_file_exclusive, create_current_user_only_file_exclusive_with_audit,
     create_current_user_only_file_with_audit, current_user_service_context,
     delete_directory_by_handle, disable_std_handle_inheritance, enable_security_privilege,
-    file_change_time, is_current_user_only, lock_directory_path_without_delete_sharing,
-    open_directory_no_reparse, open_file_no_reparse, open_file_no_reparse_for_capture,
-    open_file_no_reparse_for_move, open_file_no_reparse_for_security_capture,
-    open_file_no_reparse_for_security_verification, open_file_no_reparse_for_verification,
-    open_file_read_write_no_reparse, opened_file_path, remove_private_staging_file,
-    rename_file_noreplace, replace_private_file, require_local_disk_root,
-    restrict_default_dacl_to_current_user, restrict_to_current_user, same_file_identity,
-    secure_staging_parent, security_metadata, security_metadata_matches, staging_parent_matches,
-    trusted_private_storage_ancestor, DefaultDaclGuard, SecurityMetadata, SecurityPrivilegeGuard,
-    StagingParentSecurity, UnsupportedSecurityMetadata,
+    file_change_time, file_identity, is_current_user_only,
+    lock_directory_path_without_delete_sharing, open_directory_no_reparse, open_file_no_reparse,
+    open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
+    open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
+    open_file_no_reparse_for_verification, open_file_read_write_no_reparse, opened_file_path,
+    remove_private_staging_file, rename_file_noreplace, replace_private_file,
+    require_local_disk_root, restrict_default_dacl_to_current_user, restrict_to_current_user,
+    same_file_identity, secure_staging_parent, security_metadata, security_metadata_matches,
+    staging_parent_matches, trusted_private_storage_ancestor, DefaultDaclGuard, SecurityMetadata,
+    SecurityPrivilegeGuard, StagingParentSecurity, UnsupportedSecurityMetadata,
 };
