@@ -421,6 +421,15 @@ impl SettingsSnapshot {
         }
     }
 
+    pub(crate) fn controller_metadata_review_is_current(&self, row: &ControllerRow) -> bool {
+        !self.stop.load(Ordering::Acquire)
+            && row.valid.load(Ordering::Acquire)
+            && row.metadata_review_is_current()
+            && self.channels.iter().any(|channel| {
+                channel.channel == row.channel && !channel.closed.load(Ordering::Acquire)
+            })
+    }
+
     #[cfg(test)]
     pub(crate) fn with_pending_channel_for_test(channel: u64) -> Self {
         Self {

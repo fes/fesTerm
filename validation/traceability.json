@@ -390,6 +390,7 @@
         "native_enrollment_metadata_review_binds_window_and_explicit_confirmation",
         "native_enrollment_metadata_review_rejects_changed_display",
         "native_enrollment_metadata_snapshot_is_disarmed_by_safety_cuts",
+        "native_enrollment_metadata_disconnect_disarms_stale_snapshots",
         "native_enrollment_metadata_batch_conflicts_stop_before_confirmation",
         "native_enrollment_metadata_cancellation_and_revocation_defer_without_blocking",
         "native_enrollment_metadata_queued_revocation_does_not_follow_rebinding",

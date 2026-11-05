@@ -1386,7 +1386,7 @@ fn automation_settings(
                         if review_window != window {
                             ssh_paragraph(ui, "Confirm metadata in the originating window, or cancel.");
                         } else if let Some(candidate) = candidate {
-                            if row.metadata_review_is_current() {
+                            if snapshot.controller_metadata_review_is_current(row) {
                                 ui.label(format!(
                                     "Review metadata for client {code}: {}",
                                     candidate.label

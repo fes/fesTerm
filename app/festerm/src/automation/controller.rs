@@ -146,6 +146,12 @@ struct MetadataReview {
     valid: Rc<Cell<bool>>,
 }
 
+impl Drop for MetadataReview {
+    fn drop(&mut self) {
+        self.valid.set(false);
+    }
+}
+
 #[derive(Default)]
 pub(super) struct PeerState {
     registrations: BTreeMap<ControllerId, Registration>,
@@ -1822,6 +1828,42 @@ pub(super) mod tests {
             }
             assert!(!snapshot.controllers[0].metadata_review_is_current());
         }
+    }
+
+    #[test]
+    fn native_enrollment_metadata_disconnect_disarms_stale_snapshots() {
+        let (mut coordinator, mut app, _tab, registration, enrollment) = metadata_fixture();
+        let settings = festerm_config::InterfaceSettings::DEFAULT.with_mcp_enabled(true);
+        app.adopt_broadcast_configuration(
+            festerm_config::Configuration::empty()
+                .with_interface_settings(settings)
+                .unwrap(),
+        );
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        metadata_command_with_retry(
+            &mut coordinator,
+            &app,
+            WindowId::PRIMARY,
+            NativeCommand::ReviewControllerMetadata {
+                channel: 1,
+                registration,
+                enrollment,
+            },
+        )
+        .unwrap();
+        let snapshot = stable_settings(&coordinator, &[&app]);
+        let row = &snapshot.controllers[0];
+        assert!(snapshot.controller_metadata_review_is_current(row));
+        coordinator.peers[&1].connection.close();
+        assert!(!snapshot.controller_metadata_review_is_current(row));
+        let context = egui::Context::default();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while coordinator.peers.contains_key(&1) {
+            coordinator.tick(&context, &[&app]);
+            assert!(Instant::now() < deadline, "closed peer was not retired");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(!row.metadata_review_is_current());
     }
 
     #[test]
