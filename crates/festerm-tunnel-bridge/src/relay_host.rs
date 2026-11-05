@@ -689,6 +689,8 @@ mod tests {
         ClientConnection {
             stream: channel,
             _session: Arc::new(client),
+            port: 47461,
+            observation_expiry: None,
         }
         .close()
         .await

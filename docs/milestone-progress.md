@@ -1,5 +1,25 @@
 # Milestone Progress Narrative
 
+## Read-only remote evidence for external controllers
+
+An external Copilot-status controller needs to tail large remote logs without
+whole-file copies or terminal scraping. The rooted transfer service alone
+could not authorize disclosure to an MCP caller or guarantee safe saved-offset
+reads after replacement. ADR 0070 separates default-off observation roots from
+browsing/writes, checks native identity and revision before releasing chunks,
+and bounds native watches with explicit rescan/ended results.
+
+New daemon generations inject a non-authorizing correlation marker into the
+actual shell environment instead of exposing machine-wide process arguments.
+Pending changes to both grants are journaled with the upgrade marker, so a bare
+retry after interruption cannot restore revoked access.
+Managed root changes preserve the tunnel, host key and shell; old shells do not
+gain a marker through a helper upgrade. A stacked broker slice adds independent
+native per-controller/exact-tab/root approval and completion-time revocation
+fences, with JavaScript disabled. External controllers still own parsing,
+offsets and privacy. Signed-host, native grant/lock, live controller and
+physical-device qualification remain explicit gates, not inferred from fixtures.
+
 ## Diagnosing dead tunnel targets and opting into fresh-shell recovery
 
 A healthy Windows relay outlived its exported daemon. iOS presented the daemon

@@ -89,7 +89,7 @@ impl Filesystem {
         }
     }
 
-    fn directory(&self, path: &str) -> io::Result<Dir> {
+    pub(crate) fn directory(&self, path: &str) -> io::Result<Dir> {
         let names = names(path)?;
         let mut directory = self.root.try_clone()?;
         for name in names {
@@ -99,7 +99,7 @@ impl Filesystem {
         Ok(directory)
     }
 
-    fn parent(&self, path: &str) -> io::Result<(Dir, String)> {
+    pub(crate) fn parent(&self, path: &str) -> io::Result<(Dir, String)> {
         let mut names = names(path)?;
         let name = names.pop().ok_or_else(invalid)?.to_owned();
         let parent = format!("/{}", names.join("/"));
@@ -121,7 +121,7 @@ fn names(path: &str) -> io::Result<Vec<&str>> {
     Ok(names)
 }
 
-fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_name(name: &str) -> bool {
     if name.is_empty()
         || name.len() > 255
         || matches!(name, "." | "..")
@@ -142,7 +142,15 @@ fn valid_name(name: &str) -> bool {
         && stem.as_bytes()[3].is_ascii_digit())
 }
 
-fn open_file(parent: &Dir, name: &str) -> io::Result<File> {
+pub(crate) fn open_file(parent: &Dir, name: &str) -> io::Result<File> {
+    let parent = parent.try_clone()?.into_std_file();
+    #[cfg(unix)]
+    return festerm_unix_security::open_file_nofollow(&parent, Path::new(name));
+    #[cfg(windows)]
+    return festerm_windows_security::open_file_no_reparse(&parent, Path::new(name));
+}
+
+pub(crate) fn open_observation_file(parent: &Dir, name: &str) -> io::Result<File> {
     let parent = parent.try_clone()?.into_std_file();
     #[cfg(unix)]
     return festerm_unix_security::open_file_nofollow(&parent, Path::new(name));

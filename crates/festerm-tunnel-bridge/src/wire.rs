@@ -80,6 +80,8 @@ pub(crate) async fn read_frame_inner(
                 | crate::file_protocol::OPEN
                 | crate::file_protocol::REQUEST
                 | crate::file_protocol::DATA
+                | crate::observation_protocol::OPEN
+                | crate::observation_protocol::REQUEST
         )
     {
         return Err(invalid());

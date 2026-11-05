@@ -606,6 +606,16 @@ read/write grants, same-host enable/reconfigure/revoke, independent bounded file
 streams and no reconnect replay. Existing GUI actions remain unchanged; client
 browsing/recursive-transfer UI and native DT-07 evidence are separate work.
 
+ADR 0070 and `docs/remote-observation-protocol.md` extend those same host
+edges with independent read-only roots, identity/revision-checked offset reads,
+bounded native watches and non-authorizing daemon generation correlation.
+Omitted consent is preserved; explicit revocation stops owned observation
+workers before the revised policy becomes runnable. Observation reuses the
+exact authenticated connection and retires on expiry/disconnect/replacement,
+without terminal admission or reconnect replay. Per-caller/root MCP disclosure
+is a separate stacked native-enrollment/broker slice, not implied by hosting.
+Native DT-05/07 and external-controller qualification remain open.
+
 ## E. Serial lifecycle
 
 Serial session creation is implemented. Linux virtual-loopback automation now covers the cross-connected open/byte path, while macOS and Windows still require representative hardware per `docs/native-smoke-policy.md` and `CP-04`.

@@ -188,6 +188,8 @@ pub(crate) fn outer_client_config() -> client::Config {
 pub struct ClientConnection {
     pub stream: ChannelStream<client::Msg>,
     pub(crate) _session: Arc<client::Handle<VerifiedHost>>,
+    pub(crate) port: u16,
+    pub(crate) observation_expiry: Option<tokio::time::Instant>,
 }
 
 impl tokio::io::AsyncRead for ClientConnection {
@@ -255,6 +257,26 @@ impl crate::mobile::HostLiveness for HostProbe {
 }
 
 impl ClientConnection {
+    pub(crate) fn observation_binding(&self) -> ForwardingBinding {
+        ForwardingBinding {
+            session: Arc::downgrade(&self._session),
+            port: self.port,
+        }
+    }
+    /// Bind portable observation to this verified transport and its attachment
+    /// cancellation. Unknown token expiry refuses observation without affecting
+    /// terminal transport.
+    pub fn observation_requestor(
+        &self,
+        target: Target,
+        cancellation: &tokio_util::sync::CancellationToken,
+    ) -> crate::observation_client::ObservationRequestor {
+        let (requestor, driver) =
+            crate::observation_client::ObservationRequestor::pending(cancellation);
+        driver.fence_expiry(self.observation_expiry);
+        tokio::spawn(driver.run(self.observation_binding(), target));
+        requestor
+    }
     /// Shares only the authenticated host handle, without opening another stream.
     pub fn host_liveness(&self) -> Arc<dyn crate::mobile::HostLiveness> {
         Arc::new(HostProbe(Arc::downgrade(&self._session)))
@@ -271,6 +293,29 @@ impl ClientConnection {
                 .map_err(|_| invalid())?;
         }
         Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ForwardingBinding {
+    session: std::sync::Weak<client::Handle<VerifiedHost>>,
+    port: u16,
+}
+
+impl ForwardingBinding {
+    pub(crate) fn available(&self) -> bool {
+        self.session.strong_count() != 0
+    }
+    pub(crate) async fn open(&self) -> io::Result<ChannelStream<client::Msg>> {
+        // Only the bounded opening job retains a handle, never the provider or stream.
+        let session = self.session.upgrade().ok_or_else(invalid)?;
+        let stream = session
+            .channel_open_direct_tcpip("127.0.0.1", u32::from(self.port), "127.0.0.1", 0)
+            .await
+            .map_err(|_| invalid())?
+            .into_stream();
+        drop(session);
+        Ok(stream)
     }
 }
 
@@ -315,6 +360,8 @@ pub async fn connect_endpoint(
     Ok(ClientConnection {
         stream,
         _session: Arc::new(session),
+        port,
+        observation_expiry: crate::observation_client::ObservationDriver::token_expiry(token),
     })
 }
 
