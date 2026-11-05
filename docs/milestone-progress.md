@@ -1,5 +1,14 @@
 # Milestone Progress Narrative
 
+## Reviewing direct input after enrollment metadata
+
+The dormant direct-action review can follow separately approved enrollment
+metadata only after the explicit readable-source scope includes every active
+enrollment. Its modeled decision binds both sides of each exact grant's flow
+to the control sink; grant replacement or association retirement invalidates
+a pending review. This metadata-first integration remains synthetic: native
+handoff UI, delivery qualification and production control are unavailable.
+
 ## Routing exact-enrollment metadata in synthetic integration
 
 The test-qualified controller route now resolves an association only within its

@@ -3,7 +3,8 @@ use festerm_automation::{
     ApprovalId, ControllerEnrollmentId, ControllerRegistrationId, EnrollmentMetadataGrantProposal,
     Error, LeaseRef, MetadataGrantRequest, NativeControlGrant, NativeEnrollmentMetadataGrant,
     NativeEnrollmentMetadataGrantApproval, NativeMetadataApproval, NativeMetadataGrant,
-    NativePresentationObservation, PresentationAttempt, PresentationWindowId,
+    NativeOrdinaryEnrollmentReview, NativePresentationObservation, PresentationAttempt,
+    PresentationWindowId,
 };
 use festerm_session::{
     AutomationAdmissionGuard, AutomationAdmissionTryError, CommitAutomationInputError,
@@ -102,6 +103,7 @@ pub(super) struct BoundControlReview {
     fence: AutomationInputFence,
     sources: Vec<FrozenSource>,
     metadata: Option<NativeMetadataGrant>,
+    enrollment_metadata: NativeOrdinaryEnrollmentReview,
     direct_action: Option<FrozenDirectAction>,
 }
 
@@ -138,6 +140,25 @@ impl BoundEnrollmentMetadataGrant {
         (self.source.guard.clone(), self.association.valid_flag())
     }
 
+    fn is_bound(
+        &self,
+        broker: &Broker,
+        targets: &BTreeMap<u64, Target>,
+        peer: &Peer,
+        now: Instant,
+        guard: &AutomationAdmissionGuard,
+    ) -> bool {
+        peer.grant.is_none()
+            && self.source.is_current(targets, guard)
+            && self.association.is_bound(broker, targets, peer, guard)
+            && broker.native_enrollment_metadata_grant(
+                peer.principal,
+                self.grant.registration(),
+                self.grant.enrollment(),
+                now,
+            ) == Ok(self.grant)
+    }
+
     pub(super) fn is_current(
         &self,
         broker: &Broker,
@@ -147,17 +168,10 @@ impl BoundEnrollmentMetadataGrant {
         now: Instant,
         guard: &AutomationAdmissionGuard,
     ) -> bool {
-        peer.grant.is_none()
-            && self.source.is_current(targets, guard)
+        self.is_bound(broker, targets, peer, now, guard)
             && self
                 .association
                 .is_current(broker, targets, peer, apps, guard)
-            && broker.native_enrollment_metadata_grant(
-                peer.principal,
-                self.grant.registration(),
-                self.grant.enrollment(),
-                now,
-            ) == Ok(self.grant)
     }
 }
 
@@ -207,6 +221,7 @@ pub(crate) struct PendingControlReview {
     request: GrantRequest,
     lifetime: Duration,
     metadata_sources: BTreeSet<TargetRef>,
+    enrollment_metadata: NativeOrdinaryEnrollmentReview,
 }
 
 /// A native decision for one review, never a caller-provided credential.
@@ -268,8 +283,14 @@ impl PendingControlReview {
         &self.metadata_sources
     }
 
-    /// Only a native consent callback for this displayed review may call this.
-    /// The decision accepts the full readable-source closure in that review.
+    /// Exact separately approved enrollment grants shown in this handoff.
+    pub(crate) fn enrollment_metadata_grants(&self) -> &[NativeEnrollmentMetadataGrant] {
+        self.enrollment_metadata.grants()
+    }
+
+    /// Only a native consent callback displaying the exact enrollment grants,
+    /// control sink and their cross-disclosure may call this. The decision
+    /// accepts the full readable-source closure in that review.
     pub(crate) fn accept_from_native(&self) -> NativeControlDecision {
         NativeControlDecision {
             principal: self.principal,
@@ -509,6 +530,31 @@ impl Coordinator {
         )))
     }
 
+    fn enrollment_sources_locked(
+        &self,
+        channel: u64,
+        review: &NativeOrdinaryEnrollmentReview,
+        now: Instant,
+        guard: &AutomationAdmissionGuard,
+    ) -> festerm_automation::Result<BTreeSet<TargetRef>> {
+        let peer = self.peers.get(&channel).ok_or(Error::Closed)?;
+        let broker = self.broker.as_ref().ok_or(Error::Unavailable)?;
+        let mut sources = BTreeSet::new();
+        for grant in review.grants() {
+            let key = (peer.principal, grant.registration(), grant.enrollment());
+            let bound = self
+                .enrollment_metadata_grants
+                .get(&key)
+                .filter(|bound| bound.grant == *grant)
+                .ok_or(Error::Revoked)?;
+            if !bound.is_bound(broker, &self.targets, peer, now, guard) {
+                return Err(Error::Revoked);
+            }
+            sources.insert(grant.target());
+        }
+        Ok(sources)
+    }
+
     /// Cuts stale handoffs and native reviews before a new proposal snapshots
     /// broker ownership. Human takeover affects controllers of the exact
     /// target; source retirement affects only scopes containing that source.
@@ -727,11 +773,24 @@ impl Coordinator {
         if self.peers[&channel].grant.is_some() {
             return Err(Error::Unavailable);
         }
-        if self
+        let has_enrollment_metadata = self
             .enrollment_metadata_grants
             .keys()
-            .any(|(connection, _, _)| *connection == principal)
-        {
+            .any(|(connection, _, _)| *connection == principal);
+        let direct_input_only = request.bindings.len() == 1
+            && request.bindings.iter().all(|binding| {
+                matches!(
+                    binding.invocation,
+                    Invocation::DirectInput {
+                        target: approved_target,
+                        ..
+                    } if approved_target == target
+                )
+            })
+            && request.direct_read_calls.is_empty()
+            && !request.scope.invoke_workflows
+            && !request.scope.return_results;
+        if has_enrollment_metadata && !direct_input_only {
             return Err(Error::Unavailable);
         }
         if request.scope.control.len() != 1 || !request.scope.control.contains(&target) {
@@ -762,7 +821,7 @@ impl Coordinator {
         }
         let sources = self.freeze_readable_sources_locked(target, &request, &guard)?;
         let metadata = self.metadata_snapshot_locked(principal, now, &guard)?;
-        let metadata_sources = metadata
+        let mut metadata_sources = metadata
             .as_ref()
             .map_or_else(BTreeSet::new, |(_, sources)| sources.clone());
         let readable_sources: BTreeSet<_> = sources.iter().map(|source| source.reference).collect();
@@ -774,6 +833,36 @@ impl Coordinator {
             .as_mut()
             .ok_or(Error::Unavailable)?
             .request_approval(principal, request.clone(), now)?;
+        let enrollment_review = (|| {
+            let review = self
+                .broker
+                .as_ref()
+                .ok_or(Error::Unavailable)?
+                .prepare_ordinary_enrollment_review(
+                    principal,
+                    approval_id,
+                    BTreeSet::from([target]),
+                    now,
+                    &guard,
+                )?;
+            let enrollment_sources =
+                self.enrollment_sources_locked(channel, &review, now, &guard)?;
+            if !enrollment_sources.is_subset(&readable_sources) {
+                return Err(Error::Unauthorized);
+            }
+            metadata_sources.extend(enrollment_sources);
+            Ok(review)
+        })();
+        let enrollment_review = match enrollment_review {
+            Ok(review) => review,
+            Err(error) => {
+                self.broker
+                    .as_mut()
+                    .ok_or(Error::Unavailable)?
+                    .reject_approval(principal, approval_id)?;
+                return Err(error);
+            }
+        };
         self.pending_control_reviews.insert(
             approval_id,
             BoundControlReview {
@@ -782,6 +871,7 @@ impl Coordinator {
                 fence,
                 sources,
                 metadata: metadata.map(|(grant, _)| grant),
+                enrollment_metadata: enrollment_review.clone(),
                 direct_action: None,
             },
         );
@@ -792,6 +882,7 @@ impl Coordinator {
             request,
             lifetime,
             metadata_sources,
+            enrollment_metadata: enrollment_review,
         })
     }
 
@@ -826,11 +917,20 @@ impl Coordinator {
             return Err(Error::Unauthorized);
         }
         let metadata = self.metadata_snapshot_locked(principal, now, &guard)?;
+        let mut metadata_sources = metadata
+            .as_ref()
+            .map_or_else(BTreeSet::new, |(_, sources)| sources.clone());
+        metadata_sources.extend(self.enrollment_sources_locked(
+            channel,
+            &bound.enrollment_metadata,
+            now,
+            &guard,
+        )?);
         if metadata.as_ref().map(|(grant, _)| *grant) != bound.metadata
-            || metadata
-                .as_ref()
-                .map_or_else(BTreeSet::new, |(_, sources)| sources.clone())
-                != review.metadata_sources
+            || metadata_sources != review.metadata_sources
+            || bound.enrollment_metadata.grants() != review.enrollment_metadata.grants()
+            || bound.enrollment_metadata.control_sinks()
+                != review.enrollment_metadata.control_sinks()
         {
             return Err(Error::Revoked);
         }
@@ -841,8 +941,17 @@ impl Coordinator {
             .union(&review.request.scope.observe)
             .copied()
             .collect();
-        let approval = NativeApproval::new(review.request.clone(), review.lifetime)
-            .accept_control_handoff(review.target, readable_sources);
+        let mut approval = NativeApproval::new_for_enrollment(
+            review.request.clone(),
+            review.lifetime,
+            bound.enrollment_metadata.clone(),
+        )
+        .accept_control_handoff(review.target, readable_sources);
+        for grant in bound.enrollment_metadata.grants() {
+            approval = approval
+                .accept_enrollment_metadata(*grant)
+                .accept_metadata_control_sink(*grant, review.target);
+        }
         if !approval.is_single_control_handoff(review.target) {
             return Err(Error::Unauthorized);
         }

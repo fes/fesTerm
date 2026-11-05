@@ -44,12 +44,11 @@ impl FrozenAssociation {
         self.valid.clone()
     }
 
-    pub(super) fn is_current(
+    pub(super) fn is_bound(
         &self,
         broker: &Broker,
         targets: &BTreeMap<u64, Target>,
         peer: &Peer,
-        apps: &[&FesTermApp],
         _guard: &festerm_session::AutomationAdmissionGuard,
     ) -> bool {
         peer.principal == self.principal
@@ -69,6 +68,20 @@ impl FrozenAssociation {
                 self.registration,
                 self.enrollment,
             ) == Ok(self.target)
+            && targets.get(&self.target.session()).is_some_and(|target| {
+                target.reference == self.target && target.local_pty && target.guard().is_valid()
+            })
+    }
+
+    pub(super) fn is_current(
+        &self,
+        broker: &Broker,
+        targets: &BTreeMap<u64, Target>,
+        peer: &Peer,
+        apps: &[&FesTermApp],
+        guard: &festerm_session::AutomationAdmissionGuard,
+    ) -> bool {
+        self.is_bound(broker, targets, peer, guard)
             && exact_target(targets, self.target, self.window, apps).is_some()
     }
 }
@@ -2080,6 +2093,267 @@ pub(super) mod tests {
             frame_response(&receive().unwrap())["result"]["structuredContent"]["code"],
             "NOT_AUTHORIZED"
         );
+    }
+
+    #[test]
+    fn enrollment_metadata_and_direct_input_require_reviewed_cross_disclosure() {
+        use festerm_automation::Error;
+        use presentation::DirectAction;
+
+        let (mut coordinator, mut app, tab, registration, enrollment, receive) =
+            metadata_fixture_with_frames();
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        coordinator.synthetic_enrollment_metadata_delivery_qualified = true;
+        let ime = Arc::new(festerm_session::AutomationEpoch::new());
+        ime.transition(true);
+        app.set_automation_ime_epoch(&ime);
+        approve_metadata_for_delivery(
+            &mut coordinator,
+            &app,
+            1,
+            registration,
+            enrollment,
+            Duration::from_secs(60),
+        );
+        let principal = coordinator.peers[&1].principal;
+        let target = coordinator.targets[&tab.chip_id()].reference;
+        let metadata = coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .native_enrollment_metadata_grant(principal, registration, enrollment, Instant::now())
+            .unwrap();
+
+        assert!(matches!(
+            retry_automation_busy(|| coordinator.prepare_direct_action_review(
+                1,
+                target,
+                DirectAction::Text {
+                    text: "hello",
+                    submit: false,
+                },
+                Duration::from_secs(60),
+                app.automation_session_mut(tab),
+            )),
+            Err(Error::Unauthorized)
+        ));
+        assert!(coordinator.pending_control_reviews.is_empty());
+
+        let sources = Scope {
+            discover: BTreeSet::from([target]),
+            ..Scope::default()
+        };
+        let review = retry_automation_busy(|| {
+            coordinator.prepare_direct_action_review_with_sources(
+                1,
+                target,
+                DirectAction::Text {
+                    text: "hello",
+                    submit: false,
+                },
+                Duration::from_secs(60),
+                app.automation_session_mut(tab),
+                &sources,
+            )
+        })
+        .unwrap();
+        assert_eq!(review.metadata_sources(), &BTreeSet::from([target]));
+        assert_eq!(review.enrollment_metadata_grants(), &[metadata]);
+        let decision = review.accept_from_native();
+        retry_automation_busy(|| coordinator.approve_control_handoff(1, &review, &decision))
+            .unwrap();
+        assert!(coordinator.peers[&1].grant.is_none());
+        assert!(!coordinator.javascript_enabled);
+
+        let handle = metadata_handle(&coordinator, registration);
+        call(
+            &mut coordinator,
+            1,
+            &[&app],
+            "festerm_sessions_get",
+            json!({"session_ref": handle}),
+        );
+        let response = frame_response(&receive().unwrap());
+        assert_eq!(response["result"]["structuredContent"]["status"], "ok");
+        assert_eq!(
+            coordinator
+                .broker
+                .as_ref()
+                .unwrap()
+                .native_enrollment_metadata_grant(
+                    principal,
+                    registration,
+                    enrollment,
+                    Instant::now(),
+                ),
+            Ok(metadata)
+        );
+    }
+
+    #[test]
+    fn direct_input_cross_disclosure_review_does_not_follow_metadata_replacement() {
+        use festerm_automation::Error;
+        use presentation::DirectAction;
+
+        let (mut coordinator, mut app, tab, registration, enrollment) = metadata_fixture();
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        let ime = Arc::new(festerm_session::AutomationEpoch::new());
+        ime.transition(true);
+        app.set_automation_ime_epoch(&ime);
+        approve_metadata_for_delivery(
+            &mut coordinator,
+            &app,
+            1,
+            registration,
+            enrollment,
+            Duration::from_secs(60),
+        );
+        let target = coordinator.targets[&tab.chip_id()].reference;
+        let sources = Scope {
+            discover: BTreeSet::from([target]),
+            ..Scope::default()
+        };
+        let review = retry_automation_busy(|| {
+            coordinator.prepare_direct_action_review_with_sources(
+                1,
+                target,
+                DirectAction::Keys(&["ctrl:c".to_owned()]),
+                Duration::from_secs(60),
+                app.automation_session_mut(tab),
+                &sources,
+            )
+        })
+        .unwrap();
+        let decision = review.accept_from_native();
+        retry_automation_busy(|| {
+            coordinator.revoke_enrollment_metadata_grant(1, registration, enrollment)
+        })
+        .unwrap();
+        approve_metadata_for_delivery(
+            &mut coordinator,
+            &app,
+            1,
+            registration,
+            enrollment,
+            Duration::from_secs(60),
+        );
+        assert!(matches!(
+            retry_automation_busy(|| coordinator.approve_control_handoff(1, &review, &decision)),
+            Err(Error::Revoked | Error::Unauthorized)
+        ));
+        assert!(coordinator.control_handoffs.is_empty());
+    }
+
+    #[test]
+    fn direct_input_review_requires_all_enrollments_and_rejects_moved_source() {
+        use festerm_automation::Error;
+        use presentation::DirectAction;
+
+        let (mut app, first_tab) = FesTermApp::automation_local_fixture();
+        let (mut donor, second_tab) = FesTermApp::automation_local_fixture();
+        app.adopt_tab(donor.detach_tab(second_tab).unwrap(), None);
+        let mut coordinator = fixture(&[&app]);
+        coordinator.synthetic_enrollment_metadata_ui_qualified = true;
+        let receive = add_peer(&mut coordinator, 1);
+        let ime = Arc::new(festerm_session::AutomationEpoch::new());
+        ime.transition(true);
+        app.set_automation_ime_epoch(&ime);
+        let mut bindings = Vec::new();
+        for (index, tab) in [first_tab, second_tab].into_iter().enumerate() {
+            call(
+                &mut coordinator,
+                1,
+                &[&app],
+                "festerm_controller_register",
+                json!({"local_id": format!("cross-consent-{index}")}),
+            );
+            response(&receive);
+            let registration = coordinator.peers[&1]
+                .controller
+                .registrations
+                .values()
+                .map(|record| record.internal)
+                .find(|registration| !bindings.contains(registration))
+                .unwrap();
+            let target = coordinator.targets[&tab.chip_id()].reference;
+            let token = review(
+                &mut coordinator,
+                &[&app],
+                WindowId::PRIMARY,
+                1,
+                registration,
+                target,
+            );
+            confirm(
+                &mut coordinator,
+                &[&app],
+                WindowId::PRIMARY,
+                registration,
+                token,
+            );
+            let enrollment = coordinator.peers[&1]
+                .controller
+                .registrations
+                .values()
+                .find(|record| record.internal == registration)
+                .unwrap()
+                .association
+                .unwrap()
+                .enrollment;
+            approve_metadata_for_delivery(
+                &mut coordinator,
+                &app,
+                1,
+                registration,
+                enrollment,
+                Duration::from_secs(60),
+            );
+            bindings.push(registration);
+        }
+        let target = coordinator.targets[&first_tab.chip_id()].reference;
+        let other = coordinator.targets[&second_tab.chip_id()].reference;
+        let mut sources = Scope {
+            discover: BTreeSet::from([target]),
+            ..Scope::default()
+        };
+        assert!(matches!(
+            retry_automation_busy(|| coordinator.prepare_direct_action_review_with_sources(
+                1,
+                target,
+                DirectAction::Text {
+                    text: "hello",
+                    submit: false,
+                },
+                Duration::from_secs(60),
+                app.automation_session_mut(first_tab),
+                &sources,
+            )),
+            Err(Error::Unauthorized)
+        ));
+        sources.discover.insert(other);
+        let review = retry_automation_busy(|| {
+            coordinator.prepare_direct_action_review_with_sources(
+                1,
+                target,
+                DirectAction::Text {
+                    text: "hello",
+                    submit: false,
+                },
+                Duration::from_secs(60),
+                app.automation_session_mut(first_tab),
+                &sources,
+            )
+        })
+        .unwrap();
+        assert_eq!(review.metadata_sources(), &BTreeSet::from([target, other]));
+        assert_eq!(review.enrollment_metadata_grants().len(), 2);
+        let decision = review.accept_from_native();
+        coordinator.controller_target_moving(second_tab);
+        assert!(matches!(
+            retry_automation_busy(|| coordinator.approve_control_handoff(1, &review, &decision)),
+            Err(Error::Revoked | Error::Unauthorized | Error::StaleTarget)
+        ));
+        assert!(coordinator.control_handoffs.is_empty());
     }
 
     #[test]

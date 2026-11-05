@@ -193,10 +193,15 @@ to bypass another's restrictions.
    recipients or qualify native consent.
    A dormant host review now binds a separate metadata decision to the exact
    peer, enrollment, local attachment and workspace revision before installing
-   its broker grant. It refuses to compose with active control or the legacy
-   observation adapter; host-side two-sided consent and per-slot delivery
-   fencing are still required. A separate current-window Settings review is
-   exercised with synthetic qualification only: cancellation invalidates stale
+   its broker grant. A metadata review still refuses active control and legacy
+   observation. A dormant direct-input review can follow separately approved
+   enrollment metadata only when its explicit readable-source scope contains
+   every active enrollment target. It freezes and revalidates the exact grant
+   epochs and acknowledges both sides of each source-to-control flow.
+   A production handoff UI must display that full decision; native consent and
+   per-slot delivery fencing remain unqualified. A separate current-window
+   Settings review is exercised with synthetic qualification only:
+   cancellation invalidates stale
    snapshots immediately, and proposal cleanup and scoped revocation defer
    under admission. It describes only label and lifecycle status for at most
    five minutes. A test-qualified-only consumer enforces that scope; this is

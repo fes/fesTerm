@@ -2734,8 +2734,12 @@ qualification and private bootstrap are still closed, so no real controller
 client is supported. A separate synthetic host review now installs an
 exact-enrollment metadata grant only after revalidating its association,
 attachment and workspace revision. Tests cover two identically labelled
-enrollments, scoped revocation and stale/cross-connection decisions. It refuses
-active control and legacy observation composition. A synthetic-qualified
+enrollments, scoped revocation and stale/cross-connection decisions. A new
+metadata review still refuses active control and legacy observation. The
+dormant metadata-first direct-action review requires the entire active
+enrollment-source closure and tests rejection after grant replacement or a
+source-window move. Its simulated decision is not a native handoff UI.
+A synthetic-qualified
 current-window Settings review separately describes label and lifecycle status,
 requires explicit confirmation and models cancellation and queued scoped
 revocation. Stale snapshot, cross-window and admission-contention cases are
@@ -2743,7 +2747,8 @@ automated; qualified native usability and production metadata delivery remain
 unverified. A test-qualified consumer enforces the reviewed label/lifecycle
 scope and retains original grant, run, association and attachment liveness.
 AUTO-01 must assess whether the exact disclosed fields, client code, target,
-lifetime and exclusions are understandable. AUTO-03 and AUTO-04 must verify physical revocation
+lifetime, exclusions and every metadata-to-control flow are understandable.
+AUTO-03 and AUTO-04 must verify physical revocation
 and recipient fencing, not merely the deferred broker cut.
 The separately granted presentation state machine, app-command routing,
 workspace revision and presented-input admission seam have deterministic

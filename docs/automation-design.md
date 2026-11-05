@@ -888,8 +888,15 @@ association, local target and attachment, plus the workspace revision at
 review, and revalidates them before installing the grant under admission.
 The host retains that binding with the exact broker grant epoch. Cancellation,
 stale decisions and cross-connection decisions do not authorize a replacement.
-For now the seam refuses active control and legacy observation composition;
-both need their own reviewed host integration and delivery fences. A dormant
+An enrollment metadata review still refuses active control and legacy
+observation composition. A later dormant direct-input review can compose the
+already approved enrollment grants only when the explicit readable-source
+scope includes every active enrollment target. It freezes and revalidates
+each exact grant and association, and the modeled native decision acknowledges
+both sides of every source-to-control flow. Metadata replacement or association
+retirement invalidates an earlier review. This metadata-first path does not
+provide a handoff UI or qualify delivery; other control and legacy observation
+composition remain unavailable. A dormant
 Settings review models a separate confirmation in the association's window.
 It shows the connection code, untrusted client identifier and exact local
 terminal, and describes only label and lifecycle-status access for at most five
@@ -897,9 +904,9 @@ minutes, without terminal contents, input or a JavaScript dependency. It
 explicitly says delivery is unavailable. Cancellation immediately invalidates
 cloned review snapshots; proposal cleanup and scoped revocation wait for the
 admission boundary and report their pending state. This UI is exercised only
-with synthetic qualification, not qualified native consent. A future route
-must enforce the exact displayed field scope, and a binding check is not
-disclosure authority. Qualified privacy, application revalidation at
+with synthetic qualification, not qualified native consent. The test-qualified
+metadata consumer enforces the displayed field scope, but a binding check is
+not disclosure authority. Qualified privacy, application revalidation at
 publication and enrollment-bound per-write recipient fencing remain
 unimplemented; no production gate or metadata capability is enabled.
 
