@@ -768,6 +768,9 @@ remains blocked on this gate and a hosting go/no-go decision.
 P0 unlock recovery and the outstanding physical `MOB-09` acceptance are tracked
 in [#620](https://github.com/fes/fesTerm/issues/620). Compilation and synthetic
 widget evidence do not close that native gate.
+Include the complete recovery error at 320-point width and scroll to both
+48-point actions in very short views; a truncated passcode instruction is not
+acceptable even when the buttons themselves remain reachable.
 
 The owner-provided iOS boards are the visual reference described in
 `docs/mobile-layout-design.md#owner-provided-product-mock-ups`. Compare navy

@@ -332,6 +332,8 @@ Passcode entry is exclusively system-owned. A full-screen input barrier sits
 behind, not on top of, these controls.
 Short-height views use compact spacing; smaller bounds scroll rather than
 overlapping the title/error or shrinking the touch targets.
+Actionable authentication errors wrap instead of ellipsizing the passcode
+recovery instruction at narrow widths.
 
 Authentication-dialog inactivity cannot start a retry loop or consume grace.
 Real background/device lock cancels outstanding requests; old replies cannot

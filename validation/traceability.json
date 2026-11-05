@@ -4267,7 +4267,7 @@
       "status": "partial",
       "prerequisites": [
         "Provisioned physical iPhone: automatic Face ID success/failure/cancellation, explicit system passcode, unavailable biometrics, repeated rapid app switches, phone lock/unlock and return from system prompts without stuck controls or stale authorization",
-        "Native compositor/opaque-cover removal and app-switcher snapshots, VoiceOver/touch and healthy active/parked tunnel identity remain manual evidence; portable tests, headless widget captures and Apple-target compilation do not establish device acceptance; no deployment authorized"
+        "Native compositor/opaque-cover removal and app-switcher snapshots, complete narrow-width recovery errors, VoiceOver/touch and healthy active/parked tunnel identity remain manual evidence; portable tests, headless widget captures and Apple-target compilation do not establish device acceptance; no deployment authorized"
       ]
     },
     {
