@@ -839,10 +839,7 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
-            let root = std::env::current_dir()
-                .unwrap()
-                .join(format!("management-fixture-{}", uuid::Uuid::new_v4()));
-            setup_storage::private_directory(&root, true).unwrap();
+            let root = crate::test_support::private_directory("management-fixture");
             setup_storage::private_directory(&root.join("state"), true).unwrap();
             Self(root)
         }
