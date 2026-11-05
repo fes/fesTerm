@@ -154,7 +154,7 @@ fn main() -> eframe::Result<()> {
         }
         if let Err(error) = automation::run_stdio() {
             if error.kind() == std::io::ErrorKind::Unsupported {
-                eprintln!("fesTerm MCP unavailable: private peer identity is not yet qualified.");
+                eprintln!("fesTerm MCP beta is unavailable on this platform.");
             } else {
                 eprintln!(
                     "fesTerm MCP unavailable or disconnected: check local MCP and client I/O."

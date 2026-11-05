@@ -9523,7 +9523,7 @@ mod tests {
         harness.run();
 
         harness
-            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable local MCP")
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable local MCP (Beta)")
             .click();
         harness.run();
         let settings = Configuration::load_from_path(&file.path).unwrap();
@@ -9542,7 +9542,7 @@ mod tests {
             .configuration_reloader
             .fail_next_save_for_test(TestSaveFailure::BeforeWrite);
         harness
-            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable local MCP")
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable local MCP (Beta)")
             .click();
         harness.run();
         assert!(!harness.state().automation_mcp_enabled());

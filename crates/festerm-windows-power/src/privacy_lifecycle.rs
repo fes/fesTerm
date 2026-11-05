@@ -32,7 +32,7 @@ pub enum PrivacyOwnershipState {
 }
 
 /// Monitor cleanup only. Neither this state nor callback delivery qualifies
-/// admission, privacy, or recipient fencing; MCP bootstrap remains closed.
+/// admission, privacy, or recipient fencing; the MCP beta accepts that risk.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PrivacyCleanupState {
     Active,
@@ -184,13 +184,13 @@ impl Lifecycle {
 /// `Unknown` is sticky and permanently prevents reuse of the process slot.
 /// Neither this status nor callback entry or completion establishes an
 /// admission fence, qualified privacy, or a physical final-recipient fence.
-/// A callback can block on the admission lock. MCP bootstrap remains closed.
+/// A callback can block on the admission lock; the MCP beta accepts that risk.
 #[derive(Clone, Debug)]
 pub struct PrivacyCleanupStatus(Arc<Lifecycle>);
 
 impl PrivacyCleanupStatus {
     /// Observes cleanup only, not admission, privacy, or recipient fencing.
-    /// Callback delivery does not qualify those fences; bootstrap remains closed.
+    /// Callback delivery does not qualify those fences.
     pub fn state(&self) -> PrivacyCleanupState {
         self.0.state()
     }

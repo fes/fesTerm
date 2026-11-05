@@ -381,7 +381,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             if ui.push_id(("mcp_preference", viewport, mcp_enabled, automation_mcp_ui_revision), |ui| {
                                 settings_toggle_row(
                                     ui,
-                                    "Enable local MCP",
+                                    "Enable local MCP (Beta)",
                                     "Allow a local assistant adapter to request access. Each connection \
                                      still needs a separate native grant for exact terminals. Terminal \
                                      output can contain secrets. Off by default.",
@@ -390,7 +390,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             }).inner {
                                 automation_command.record(AppCommand::ToggleMcpEnabled);
                             }
-                            ssh_paragraph(ui, "MCP activation is unavailable until private peer authentication is qualified; an enabled preference grants no terminal access.");
+                            ssh_paragraph(ui, "Beta: any process running as your user can connect, so always match the verification code before approving. Access stops when the screen locks or the computer sleeps, but an action already in flight may still complete. Enabling grants no terminal access by itself.");
                             ui.add_space(10.0);
                             ui.separator();
                             ui.add_space(10.0);
@@ -1196,10 +1196,9 @@ fn automation_settings(
     ui.label("Controller registrations");
     ssh_paragraph(
         ui,
-        "Controller enrollment is unavailable until private bootstrap and native privacy are qualified. \
-         Client identifiers and terminal names are untrusted. Registration does not choose a terminal, \
-         open a prompt or grant access. Choose and confirm a local terminal in this window. \
-         Metadata, presentation and input through an association are unavailable.",
+        "Beta: client identifiers and terminal names are untrusted. Registration does not choose a terminal, \
+         open a prompt or grant access. Choose and confirm a local terminal in this window, then review \
+         each requested input before it is sent. Metadata delivery and presentation are unavailable.",
     );
     if snapshot.controller_opted_in {
         ssh_paragraph(
@@ -2224,7 +2223,7 @@ mod tests {
         let mut harness = settings_harness();
         harness.run();
         harness
-            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable local MCP")
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable local MCP (Beta)")
             .click();
         harness.step();
         assert!(matches!(
@@ -3323,7 +3322,7 @@ mod tests {
 
     #[test]
     fn automation_toggle_release_cannot_reenable_a_changed_preference() {
-        for label in ["Enable local MCP", "Enable JavaScript workflows"] {
+        for label in ["Enable local MCP (Beta)", "Enable JavaScript workflows"] {
             let mut harness = settings_harness();
             harness.state_mut().mcp_enabled = true;
             harness.state_mut().javascript_enabled = true;
@@ -3340,7 +3339,7 @@ mod tests {
                 modifiers: egui::Modifiers::NONE,
             });
             harness.step();
-            if label == "Enable local MCP" {
+            if label == "Enable local MCP (Beta)" {
                 harness.state_mut().mcp_enabled = false;
             } else {
                 harness.state_mut().javascript_enabled = false;
@@ -3360,11 +3359,13 @@ mod tests {
             harness.step();
             assert!(matches!(
                 (&harness.state().command, label),
-                (Some(AppCommand::ToggleMcpEnabled), "Enable local MCP")
-                    | (
-                        Some(AppCommand::ToggleJavascriptEnabled),
-                        "Enable JavaScript workflows"
-                    )
+                (
+                    Some(AppCommand::ToggleMcpEnabled),
+                    "Enable local MCP (Beta)"
+                ) | (
+                    Some(AppCommand::ToggleJavascriptEnabled),
+                    "Enable JavaScript workflows"
+                )
             ));
         }
     }
@@ -3374,7 +3375,7 @@ mod tests {
         use crate::automation::preferences::{Feature, Shared, Values};
 
         for (label, feature) in [
-            ("Enable local MCP", Feature::Mcp),
+            ("Enable local MCP (Beta)", Feature::Mcp),
             ("Enable JavaScript workflows", Feature::Javascript),
         ] {
             let preferences = Shared::new(Values {

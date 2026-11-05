@@ -2687,14 +2687,36 @@ confinement, protocol interoperability or native usability. Use only owned
 fixtures once the named prerequisite implementation exists.
 
 The P1 implementation adds native settings/pairing, private local transport
-and bounded observation (`AUT-05`–`AUT-07`), but refuses activation on every
-platform until private peer authentication is qualified. macOS and Linux also
-require reliable lock monitoring. Windows requires its native privacy guard to
-initialize; its real-platform behavior is not yet validated. Neither monitor
-cleanup status nor callback delivery qualifies admission, privacy, or physical
-final-recipient fencing; bootstrap remains closed. Deterministic tests are not
+and bounded observation (`AUT-05`–`AUT-07`). The owner-accepted desktop beta
+activates it on macOS, Linux and Windows behind **Enable local MCP (Beta)**,
+with native lock/sleep monitors that fail closed. Deterministic tests are not
 native pairing, settings usability, containment or input-ordering evidence.
-JavaScript and terminal control remain unavailable.
+JavaScript remains unavailable.
+
+### Desktop MCP beta checks
+
+Use a disposable configuration (`FESTERM_CONFIG_PATH`, plus `XDG_STATE_HOME`
+on Unix to isolate the broker endpoint) containing `schema_version = 1` and
+`[settings] mcp_enabled = true`, and a disposable local shell.
+
+1. Launch fesTerm, then connect an MCP client to `festerm --mcp` with the same
+   environment. Expect `initialize`, `tools/list` and `festerm_pairing_status`
+   to succeed and `festerm_sessions_list` to return `NOT_AUTHORIZED`.
+   *Partial probe (macOS, 2026-11-05):* passed with a custom JSON-RPC driver
+   and the official TypeScript SDK client 1.32.2. Native approval was not
+   exercised.
+2. Match the verification code in Settings, share one terminal and approve.
+   Expect reads of only that terminal; revoke and expect refusal.
+3. With controller registration enabled, register, associate one local
+   terminal, request input, verify the escaped review text and approve. Expect
+   exactly one write; cancel a second request and expect no write.
+4. While a grant is live, lock the screen (macOS `Ctrl-Cmd-Q`; Linux
+   `loginctl lock-session`; Windows `Win-L`) and separately sleep the machine.
+   Expect Settings to show privacy loss, the channel to close and no access
+   after unlock until a new pairing and approval. On Linux also try a desktop
+   that does not set `LockedHint` and record the result.
+
+Not yet run: steps 2–4 on every platform.
 
 The Windows monitor's ownership model has local fault-injection fixtures for
 stalled TLS destruction, a held model admission lock, repeated monitor-slot
@@ -2714,8 +2736,8 @@ detection without claiming a cutoff at the actual OS event. Effects admitted
 before the cut can complete. The fixtures cannot qualify admission, privacy,
 or final-recipient fencing, and
 callback delivery is not proof of those fences. Panic hooks may observe caught
-callback payloads. Bootstrap remains closed, and native privacy remains
-unqualified.
+callback payloads. The desktop beta accepts these gaps as residual risk;
+native privacy remains unqualified.
 
 The record-framing tests cover a writer panic after an unknown partial write
 and prevent channel reuse. Qualified native stream disposal and per-write

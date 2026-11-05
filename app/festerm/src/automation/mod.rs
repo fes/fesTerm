@@ -1422,15 +1422,21 @@ fn cleanup_ready(retiring: &mut Retirement, context: &egui::Context, waiting: bo
 const CLEANUP_FAILED: &str =
     "Automation cleanup failed. Restart fesTerm before starting this service.";
 
+/// Beta qualification (ADR 0065) of controller enrollment, enrollment
+/// metadata review/delivery and direct input for local terminals. The
+/// coordinator still requires the setting, privacy monitor, verification
+/// match, native approvals and every admission fence. Tests use synthetic
+/// per-feature flags instead.
+#[cfg(not(test))]
+const BETA_NATIVE_QUALIFIED: bool = true;
+
 fn start_failure_status(failure: StartFailure) -> &'static str {
     match failure {
         StartFailure::Privacy => {
             "MCP unavailable: no qualified OS lock/suspend privacy monitor."
         }
         StartFailure::PrivacyCleanup => CLEANUP_FAILED,
-        StartFailure::PeerIdentity => {
-            "MCP unavailable: private peer identity is not yet qualified."
-        }
+        StartFailure::PeerIdentity => "MCP beta is unavailable on this platform.",
         StartFailure::Randomness => "MCP unavailable: secure randomness failed.",
         StartFailure::Endpoint => {
             "MCP unavailable: private endpoint refused. Check another app instance or private state-directory permissions."
@@ -1466,7 +1472,7 @@ impl Coordinator {
         #[cfg(test)]
         let native_qualified = self.synthetic_controller_qualified;
         #[cfg(not(test))]
-        let native_qualified = false;
+        let native_qualified = BETA_NATIVE_QUALIFIED;
         native_qualified
             && self
                 .presentation_workspace
@@ -1479,7 +1485,7 @@ impl Coordinator {
         #[cfg(test)]
         let native_qualified = self.synthetic_enrollment_metadata_ui_qualified;
         #[cfg(not(test))]
-        let native_qualified = false;
+        let native_qualified = BETA_NATIVE_QUALIFIED;
         native_qualified && self.controller_qualified()
     }
 
@@ -1487,7 +1493,7 @@ impl Coordinator {
         #[cfg(test)]
         let delivery_qualified = self.synthetic_enrollment_metadata_delivery_qualified;
         #[cfg(not(test))]
-        let delivery_qualified = false;
+        let delivery_qualified = BETA_NATIVE_QUALIFIED;
         delivery_qualified && self.enrollment_metadata_ui_qualified()
     }
 
@@ -1495,7 +1501,7 @@ impl Coordinator {
         #[cfg(test)]
         let native_qualified = self.synthetic_direct_input_qualified;
         #[cfg(not(test))]
-        let native_qualified = false;
+        let native_qualified = BETA_NATIVE_QUALIFIED;
         native_qualified && self.controller_qualified()
     }
 

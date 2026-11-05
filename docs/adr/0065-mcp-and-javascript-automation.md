@@ -350,7 +350,8 @@ unknown; failed or cancelled startup must also retire its monitor. Effects
 admitted before the cut can still complete. Neither
 cleanup status nor callback delivery qualifies native privacy, caller identity
 or a physical final-recipient fence. Those boundaries and the coordinator's
-remaining blocking paths require separate qualification; bootstrap remains closed.
+remaining blocking paths require separate qualification; the desktop beta
+accepts them as residual risk.
 
 The owner has settled the language choice and separately authorized the P1-P3
 implementation campaign in [issue #501](https://github.com/fes/fesTerm/issues/501).
@@ -401,11 +402,13 @@ per-stage acceptance, independent reviews or platform evidence.
 The staged implementation adds an application-owned security boundary,
 independent default-off settings, and automation crate/application dependencies.
 P1 is observation-only and preserves existing terminal semantics and the
-sessiond wire protocol. MCP activation is unavailable until private peer
-authentication is qualified; macOS and Linux also require qualified screen-lock
-monitoring. Windows requires its native privacy monitor and real-platform
-validation, but monitor status and callback delivery do not qualify admission,
-privacy, or final-recipient fencing; bootstrap remains closed. iOS exposure
+sessiond wire protocol. The owner accepted a desktop MCP beta on macOS, Linux
+and Windows: the same-user private endpoint plus human verification-code
+matching serves as the bootstrap, and native lock/sleep monitors (macOS session
+dictionary polling plus notifications, Linux logind, the Windows session/power
+monitor) must install before admission and fail closed. This is an accepted
+beta risk, not process-identity or final-recipient qualification; presentation
+and metadata delivery stay unavailable. iOS exposure
 remains deferred. Later stages would add worker packaging and workflow-specific grant, queuing,
 cancellation and protocol conformance obligations. The engine and platform
 containment remain substantial qualification work, not checklist claims.

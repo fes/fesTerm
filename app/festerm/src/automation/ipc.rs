@@ -714,11 +714,27 @@ fn forward_stdio_input(
     let _ = output.try_send(StdioInput::Stop);
 }
 
+/// Desktop platforms with a beta privacy monitor and private endpoint.
+const BETA_PLATFORM: bool = cfg!(any(target_os = "macos", target_os = "linux", windows));
+
+/// Beta bootstrap (ADR 0065). The peer is accepted only through the current
+/// user's private socket or pipe, then must be matched by its public
+/// verification code and approved in native Settings. No OS process identity
+/// is attested. Unit tests keep it refused so they never bind the real
+/// endpoint; they inject a bootstrap result instead.
 pub(super) fn require_qualified_bootstrap() -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "MCP private peer identity is not yet qualified",
-    ))
+    beta_bootstrap(BETA_PLATFORM && !cfg!(test))
+}
+
+fn beta_bootstrap(supported: bool) -> io::Result<()> {
+    if supported {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "MCP beta is unavailable on this platform",
+        ))
+    }
 }
 
 #[cfg(unix)]
@@ -1322,6 +1338,19 @@ mod tests {
             receiver.try_recv(),
             Err(mpsc::TryRecvError::Empty)
         ));
+    }
+
+    #[test]
+    fn beta_bootstrap_requires_a_supported_platform() {
+        assert!(beta_bootstrap(true).is_ok());
+        assert_eq!(
+            beta_bootstrap(false).unwrap_err().kind(),
+            io::ErrorKind::Unsupported
+        );
+        assert_eq!(
+            BETA_PLATFORM,
+            cfg!(any(target_os = "macos", target_os = "linux", windows))
+        );
     }
 
     #[test]

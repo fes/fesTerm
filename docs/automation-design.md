@@ -1,17 +1,19 @@
 # MCP and JavaScript Automation Design
 
-**Status: Staged implementation; experimental observation only.** The owner selected
+**Status: Staged implementation; desktop MCP beta.** The owner selected
 JavaScript as the internal scripting language. [ADR 0065](adr/0065-mcp-and-javascript-automation.md)
 records the proposed authority and isolation decisions. This document defines
 their contracts and qualification gates. The owner authorized P1-P3 delivery in
 [#501](https://github.com/fes/fesTerm/issues/501). The memory-only
 `festerm-automation` authority kernel, independent default-off settings and a
-local MCP observation adapter are implemented. The adapter refuses activation
-on every platform until private peer authentication is qualified; macOS and
-Linux also require qualified screen-lock monitoring. No JavaScript interpreter
-or terminal control is enabled. Native
-platform/client qualification remains open; later APIs, manifests and sandbox
-policies below are contracts, not claims of shipping functionality.
+local MCP adapter are implemented. The owner accepted a desktop **beta** on
+macOS, Linux and Windows (see [Desktop MCP beta](#desktop-mcp-beta)): the
+user-enabled stdio broker plus native verification-code matching admits
+observation and per-input-reviewed control of exact local terminals, guarded by
+native lock/sleep monitors that fail closed. No JavaScript interpreter is
+enabled. Full native platform/client qualification remains open; later APIs,
+manifests and sandbox policies below are contracts, not claims of shipping
+functionality.
 
 ## Product intent and scope
 
@@ -716,10 +718,13 @@ Windows transport prototype uses a current-user-only local pipe and rejects
 remote clients, but this alone does not authenticate another process belonging
 to the same user. Resolving and reopening an OS-reported executable path also
 does not prove the identity of the image a process actually loaded if the path
-was replaced. The bootstrap is therefore unqualified and both listener and
-stdio adapter refuse activation on every platform. MCP checks this gate before
-requesting shared startup, and the listener checks it again before binding.
-This does not replace the independently required privacy-monitor qualification.
+was replaced. The bootstrap is therefore not process-authenticated. For the
+desktop beta the owner accepted the same-user private endpoint plus the human
+matching the stream's public verification code in native Settings as the
+bootstrap on macOS, Linux and Windows; other platforms still refuse. MCP checks
+this gate before requesting shared startup, and the listener checks it again
+before binding. This does not replace the independently required privacy
+monitor, which must install successfully before admission opens.
 
 An unused channel primitive explores `Noise_NN_25519_ChaChaPoly_SHA256` with
 fresh ephemeral keys and the complete SHA-256 handshake fingerprint. Noise NN
@@ -927,7 +932,7 @@ This is not an end-to-end privacy or UI-responsiveness qualification. An
 completion does **not** qualify admission, privacy, or a physical final-recipient
 fence. Atomic monitor cancellation cannot fence a physical write already
 admitted, and the bounded local model tests are not evidence of such a fence.
-MCP bootstrap remains closed. The process panic hook runs before
+The desktop beta accepts this as residual risk. The process panic hook runs before
 `catch_unwind` and may record a callback's panic payload, so catching a panic
 does not establish content-free hook handling. Native callback behavior,
 notification cancellation and the complete admission/recipient boundary
@@ -1324,8 +1329,8 @@ for an **explicitly selected controller catalog**. `Machine::new()` retains the
 observation-only catalog. The desktop host normally selects the separate
 refusal-only presentation catalog. A native Settings action can select the
 controller catalog for *new* connections only when a separately qualified
-native controller path is available; that qualification is currently
-unconditionally false in production, and private bootstrap remains closed.
+native controller path is available; the desktop beta enables it on macOS,
+Linux and Windows as an owner-accepted risk, without process authentication.
 The disabled control cannot start a listener. Restart or disabling MCP clears
 the ephemeral opt-in and all connection-owned records. Those new controller
 connections use the combined controller and refusal-only presentation catalog.
@@ -1795,13 +1800,34 @@ availability is independent. iOS has neither a qualified separate worker nor the
 desktop stdio/private-IPC hosting model. JavaScript and MCP server exposure stay
 unavailable there; a simulator build or enabled preference cannot change that.
 
-The P1 application integration refuses observation on every platform until its
-private peer bootstrap is qualified. macOS and Linux also lack qualified
-screen-lock monitoring. Neither an enabled preference nor a successful build
-overrides those failures. Native Windows lock/suspend, packaging and
-real-client interoperability remain unverified.
+### Desktop MCP beta
 
-After those gates are met, enable **local MCP** in Settings, configure the
+The owner accepted these beta gates (macOS, Linux and Windows only):
+
+- **Bootstrap:** any same-user process can reach the private broker endpoint
+  (`broker.sock`, mode 0600, or a current-user Windows pipe). The only caller
+  check is the human matching the public verification code; there is no OS
+  process-identity check. A same-user process that can control or relay the
+  approved client is outside the containment claim.
+- **Privacy:** macOS polls `CGSessionCopyCurrentDictionary` (screen locked or
+  session off console) every 100 ms, accelerated by the
+  `com.apple.screenIsLocked` distributed notification and NSWorkspace
+  will-sleep/session-resign notifications. Linux resolves its logind session
+  and treats `Lock`, `PrepareForSleep(true)`, `LockedHint`, an inactive
+  session, any D-Bus error or a closed stream as loss, polling every 250 ms.
+  Desktops that never set `LockedHint` are unsupported unless they emit
+  `Lock`. Windows uses its existing session/power monitor. Monitor install
+  failure closes MCP. Loss ends access; requests admitted before the cut may
+  still complete.
+- **Label:** Settings shows **Enable local MCP (Beta)**, off by default.
+
+Presentation/focus changes and metadata delivery remain unavailable; control is
+limited to non-persistent local PTY terminals. The adapter negotiates only MCP
+`2025-11-25`; clients that cannot accept it disconnect. The official TypeScript
+SDK client 1.32 was verified against a real macOS broker for initialize,
+`tools/list`, `festerm_pairing_status` and an unpaired refusal.
+
+Enable **local MCP (Beta)** in Settings, configure the
 client to launch the installed `festerm` executable with `--mcp`, call
 `festerm_pairing_status`, and compare its public verification code with the
 matching Settings row. Explicitly select the exact terminal attachments to
@@ -1810,6 +1836,29 @@ the selected terminals' output, history, selection and labels, which may contain
 secrets. Disconnect, revoke, replacement, expiry or privacy loss ends access;
 no automatic regrant occurs. JavaScript's separate preference does not enable
 execution at this checkpoint.
+
+A typical agent MCP configuration is:
+
+```json
+{
+  "mcpServers": {
+    "festerm": {
+      "command": "/Applications/fesTerm.app/Contents/MacOS/festerm",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+On Linux and Windows use the installed `festerm` / `festerm.exe` path. fesTerm
+must already be running with the beta enabled; `--mcp` only relays stdio to the
+running instance. For control, select **Enable controller registration for new
+connections** before the client connects, let the client call
+`festerm_controller_register`, choose and confirm the exact local terminal in
+Settings, then review and approve each requested input. Text can execute even
+without Enter.
+
+### Delivery stages
 
 1. **P0 — design acceptance:** resolve the ADR, protocol/SDK scope, adversarial
    reviews and authority UX. No implementation enabled by merging documents.

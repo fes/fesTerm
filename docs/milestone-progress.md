@@ -1,5 +1,15 @@
 # Milestone Progress Narrative
 
+## Opening the desktop MCP beta
+
+The owner accepted a desktop MCP beta. macOS now has a privacy monitor that
+polls the session dictionary and listens for lock/sleep notifications; Linux
+watches its logind session. Both fail closed. The stdio bootstrap and the
+controller, metadata-review and reviewed-input gates are open on macOS, Linux
+and Windows behind a default-off **Enable local MCP (Beta)** setting. A real
+macOS broker served initialize, tool listing and pairing status to the official
+TypeScript SDK client. Native approval, lock and sleep checks remain manual.
+
 ## Extending the dormant direct transport to Windows pipes
 
 The experimental Rust SDK connector and dormant host owner can use an
