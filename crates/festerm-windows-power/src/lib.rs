@@ -65,37 +65,13 @@ impl PrivacyRevocation {
 }
 
 #[cfg(any(windows, test))]
-const MAX_PRIVACY_LISTENERS: usize = 4;
+mod privacy_lifecycle;
 
-#[cfg(any(windows, test))]
-struct PrivacyListenerPermit<'a>(&'a std::sync::atomic::AtomicUsize);
-
-#[cfg(any(windows, test))]
-impl<'a> PrivacyListenerPermit<'a> {
-    fn acquire(count: &'a std::sync::atomic::AtomicUsize) -> Option<Self> {
-        count
-            .try_update(
-                std::sync::atomic::Ordering::AcqRel,
-                std::sync::atomic::Ordering::Acquire,
-                |current| {
-                    if current < MAX_PRIVACY_LISTENERS {
-                        Some(current + 1)
-                    } else {
-                        None
-                    }
-                },
-            )
-            .ok()
-            .map(|_| Self(count))
-    }
-}
-
-#[cfg(any(windows, test))]
-impl Drop for PrivacyListenerPermit<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
-    }
-}
+#[cfg(windows)]
+pub use privacy_lifecycle::{
+    privacy_monitor_ownership, PrivacyCleanupState, PrivacyCleanupStatus, PrivacyInstallFailure,
+    PrivacyOwnershipState, RejectedPrivacyInstall,
+};
 
 #[cfg(any(windows, test))]
 const fn session_is_available(
@@ -312,27 +288,40 @@ impl WakeMonitor {
     }
 }
 
-/// Fail-closed Windows privacy-loss notification guard.
+/// Windows privacy-loss notification monitor; native qualification is pending.
 ///
 /// Requires an active, unlocked WTS session, working WTS service, and native
 /// suspend registration (Windows 8+). A dedicated message-only window receives
 /// session lock/logoff, console/remote disconnection (including user switch),
 /// and `PBT_APMSUSPEND`. Suspend is explicitly registered: message-only windows
 /// do not receive ordinary broadcast messages. Service stop and message-loop
-/// failure also revoke. The first loss permanently ends this guard; resume
-/// and unlock never grant authority.
+/// failure also request shutdown and attempt a loss callback. A loss does not
+/// itself establish revocation; resume and unlock never grant authority.
 ///
-/// The callback runs synchronously on the listener thread and must not block,
-/// panic, or drop this guard. Native message payloads are never logged or
-/// dereferenced. Synthetic loss messages can only revoke, never grant.
-/// Installation errors may invoke the callback on the installing thread.
-/// Loss can precede `install` returning; latch it and retain this guard for
-/// the entire time automation admission is open.
-/// Reinstall before reopening admission: ordinary loss and fatal monitor
-/// failure deliberately use the same callback, with no recovery notification.
-/// Installation and teardown have bounded waits; a stalled native call may
-/// leave a detached listener until that call returns. Outstanding listeners,
-/// including stalled ones, are bounded per process.
+/// The callback runs outside native dispatch, on the listener or, on a
+/// supervisor failure, the reaper. It and its captured destructors must not
+/// block or panic, but a callback can block on the application's admission
+/// lock. A caught panic can still reach the process-wide panic hook. Native
+/// message payloads are never logged or dereferenced. Synthetic loss messages
+/// cannot grant authority. A loss can precede `install` returning; neither
+/// callback entry nor completion proves admission closed.
+///
+/// Installation can block and must run off the UI thread. Dropping or closing
+/// the monitor only requests shutdown; it never waits for the listener. The
+/// owner must independently close admission before requesting shutdown and
+/// retain a [`PrivacyCleanupStatus`] until cleanup completes. An installation
+/// error can contain [`PrivacyInstallFailure`] with the same status. Pending
+/// or unknown cleanup prevents another monitor from being installed. A single
+/// process-lifetime reaper owns the listener through actual thread join,
+/// including TLS destruction; uncertain native cancellation is quarantined.
+/// Inputs rejected before acquiring that slot are returned in the installation
+/// error; dropping those inputs may block or panic and remains the caller's
+/// responsibility.
+/// At its own deadline the owner can permanently quarantine a still-pending
+/// cleanup using [`PrivacyCleanupStatus::quarantine_if_unresolved`].
+/// Any non-active state is unavailable. Neither cleanup status nor callback
+/// delivery qualifies admission, privacy, or a physical final-recipient fence.
+/// No monitor state authorizes disclosure; MCP bootstrap remains closed.
 #[cfg(windows)]
 pub use privacy::PrivacyMonitor;
 
@@ -351,15 +340,15 @@ impl PrivacyMonitor {
 
 #[cfg(windows)]
 mod privacy {
-    use std::cell::{Cell, RefCell};
+    use std::cell::{Cell, RefCell, UnsafeCell};
     use std::io;
-    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-    use std::sync::{mpsc, Arc};
-    use std::thread::{self, JoinHandle};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{mpsc, Arc, OnceLock};
+    use std::thread;
     use std::time::Duration;
 
     use windows_sys::Win32::Foundation::{
-        CloseHandle, HANDLE, HWND, LPARAM, LRESULT, WAIT_IO_COMPLETION, WAIT_OBJECT_0, WPARAM,
+        HANDLE, HWND, LPARAM, LRESULT, WAIT_IO_COMPLETION, WAIT_OBJECT_0, WAIT_TIMEOUT, WPARAM,
     };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Power::{
@@ -377,7 +366,7 @@ mod privacy {
         SERVICE_NOTIFY_PAUSE_PENDING, SERVICE_NOTIFY_STOPPED, SERVICE_NOTIFY_STOP_PENDING,
         SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_STATUS_PROCESS,
     };
-    use windows_sys::Win32::System::Threading::{CreateEventW, SetEvent, SleepEx, INFINITE};
+    use windows_sys::Win32::System::Threading::SleepEx;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
         MsgWaitForMultipleObjectsEx, PeekMessageW, RegisterClassExW, TranslateMessage,
@@ -388,31 +377,38 @@ mod privacy {
         WTS_SESSION_LOGOFF,
     };
 
-    use super::{session_is_available, PrivacyListenerPermit, PrivacyRevocation};
+    use super::privacy_lifecycle::{self, invoke_revocation, Lifecycle, PrivacyCleanupStatus};
+    use super::{session_is_available, PrivacyRevocation};
 
     const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
-    const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
     const STARTUP_MESSAGE_LIMIT: usize = 64;
+    const SHUTDOWN_POLL_MILLIS: u32 = 50;
 
     static NEXT_CLASS: AtomicU64 = AtomicU64::new(0);
-    static LIVE_LISTENERS: AtomicUsize = AtomicUsize::new(0);
+
+    struct Callback {
+        lifecycle: Arc<Lifecycle>,
+    }
 
     thread_local! {
-        static CALLBACK: RefCell<Option<Arc<PrivacyRevocation>>> = const { RefCell::new(None) };
+        static CALLBACK: RefCell<Option<Callback>> = const { RefCell::new(None) };
         static FAILED: Cell<bool> = const { Cell::new(false) };
     }
 
-    fn revoke() {
-        FAILED.set(true);
-        CALLBACK.with(|slot| {
-            if let Some(callback) = slot.borrow().as_ref() {
-                callback.revoke();
+    fn note_loss() {
+        let _ = FAILED.try_with(|failed| failed.set(true));
+        let _ = CALLBACK.try_with(|slot| {
+            let Ok(callback) = slot.try_borrow() else {
+                return;
+            };
+            if let Some(callback) = callback.as_ref() {
+                let _ = callback.lifecycle.stop();
             }
         });
     }
 
     unsafe extern "system" fn service_failed(_notification: *const core::ffi::c_void) {
-        revoke();
+        note_loss();
     }
 
     fn loss(message: u32, wparam: usize) -> bool {
@@ -436,11 +432,11 @@ mod privacy {
         lparam: LPARAM,
     ) -> LRESULT {
         if loss(message, wparam) {
-            revoke();
+            note_loss();
             return 1;
         }
         if message == WM_CLOSE || message == WM_DESTROY {
-            revoke();
+            note_loss();
             // Only our orderly teardown destroys the window. An unsolicited
             // WM_CLOSE must not silently disable the listener.
             return 0;
@@ -449,38 +445,91 @@ mod privacy {
         unsafe { DefWindowProcW(window, message, wparam, lparam) }
     }
 
+    struct NotificationBuffer(UnsafeCell<SERVICE_NOTIFY_2W>);
+
+    // The single process slot permits access only on its listener. Reuse
+    // requires successful service cancellation and the listener's actual
+    // join; APCs already queued to that thread are lost when it terminates.
+    // The storage itself persists even if cancellation cannot be established.
+    unsafe impl Send for NotificationBuffer {}
+    unsafe impl Sync for NotificationBuffer {}
+
+    static SERVICE_NOTIFICATION: OnceLock<NotificationBuffer> = OnceLock::new();
+
+    fn service_notification() -> *const SERVICE_NOTIFY_2W {
+        let buffer = SERVICE_NOTIFICATION
+            .get_or_init(|| NotificationBuffer(UnsafeCell::new(SERVICE_NOTIFY_2W::default())));
+        // SAFETY: this listener exclusively holds the process slot. A previous
+        // listener cannot release that slot before its join and cancellation.
+        unsafe {
+            buffer.0.get().write(SERVICE_NOTIFY_2W {
+                dwVersion: 2,
+                pfnNotifyCallback: Some(service_failed),
+                ..Default::default()
+            });
+        }
+        buffer.0.get()
+    }
+
     struct Registration {
+        lifecycle: Arc<Lifecycle>,
+        revocation: Arc<PrivacyRevocation>,
         class: Vec<u16>,
+        class_registered: bool,
         instance: HANDLE,
         window: HWND,
         power: HPOWERNOTIFY,
         wts: bool,
+        manager: SC_HANDLE,
         service: SC_HANDLE,
-        service_notification: Option<Box<SERVICE_NOTIFY_2W>>,
+    }
+
+    impl Registration {
+        fn quarantine(&self) -> ! {
+            self.lifecycle.unknown();
+            invoke_revocation(&self.revocation, &self.lifecycle);
+            loop {
+                std::hint::black_box(self);
+                thread::park();
+            }
+        }
     }
 
     impl Drop for Registration {
         fn drop(&mut self) {
-            // SAFETY: all non-null handles belong to this thread. Closing the
-            // service cancels its APC subscription before its buffer is freed.
+            if self.lifecycle.stop() || FAILED.get() {
+                invoke_revocation(&self.revocation, &self.lifecycle);
+            }
+            // SAFETY: the handles and window belong to this listener thread.
+            // Any uncertain cancellation retains this entire registration;
+            // the service notification buffer is process-lifetime storage.
             unsafe {
                 if !self.service.is_null() && CloseServiceHandle(self.service) == 0 {
-                    // A failed cancellation cannot prove that the OS has
-                    // stopped using the notification buffer.
-                    if let Some(buffer) = self.service_notification.take() {
-                        let _ = Box::leak(buffer);
-                    }
+                    self.quarantine();
                 }
-                if self.power != 0 {
-                    UnregisterSuspendResumeNotification(self.power);
+                self.service = std::ptr::null_mut();
+                if !self.manager.is_null() && CloseServiceHandle(self.manager) == 0 {
+                    self.quarantine();
                 }
-                if self.wts {
-                    WTSUnRegisterSessionNotification(self.window);
+                self.manager = std::ptr::null_mut();
+                if self.power != 0 && UnregisterSuspendResumeNotification(self.power) == 0 {
+                    self.quarantine();
                 }
-                if !self.window.is_null() {
-                    DestroyWindow(self.window);
+                self.power = 0;
+                if self.wts && WTSUnRegisterSessionNotification(self.window) == 0 {
+                    self.quarantine();
                 }
-                UnregisterClassW(self.class.as_ptr(), self.instance);
+                self.wts = false;
+                if !self.window.is_null() && DestroyWindow(self.window) == 0 {
+                    self.quarantine();
+                }
+                self.window = std::ptr::null_mut();
+                if self.class_registered
+                    && UnregisterClassW(self.class.as_ptr(), self.instance) == 0
+                {
+                    self.quarantine();
+                }
+                self.class_registered = false;
             }
         }
     }
@@ -540,40 +589,51 @@ mod privacy {
     }
 
     impl Registration {
-        fn install() -> io::Result<Self> {
+        fn install(
+            lifecycle: Arc<Lifecycle>,
+            revocation: Arc<PrivacyRevocation>,
+        ) -> io::Result<Self> {
+            let class_id = NEXT_CLASS
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    current.checked_add(1)
+                })
+                .map_err(|_| unavailable())?;
             let class: Vec<u16> = format!(
                 "fesTermPrivacyMonitor-{}-{}\0",
                 std::process::id(),
-                NEXT_CLASS.fetch_add(1, Ordering::Relaxed)
+                class_id
             )
             .encode_utf16()
             .collect();
             // SAFETY: null requests the current executable's module handle.
             let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
-            let descriptor = WNDCLASSEXW {
-                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-                lpfnWndProc: Some(window_procedure),
-                hInstance: instance,
-                lpszClassName: class.as_ptr(),
-                ..Default::default()
-            };
-            // SAFETY: the class has a valid procedure and NUL-terminated name.
-            if unsafe { RegisterClassExW(&descriptor) } == 0 {
+            if instance.is_null() {
                 return Err(unavailable());
             }
             let mut registration = Self {
+                lifecycle,
+                revocation,
                 class,
+                class_registered: false,
                 instance,
                 window: std::ptr::null_mut(),
                 power: 0,
                 wts: false,
+                manager: std::ptr::null_mut(),
                 service: std::ptr::null_mut(),
-                service_notification: Some(Box::new(SERVICE_NOTIFY_2W {
-                    dwVersion: 2,
-                    pfnNotifyCallback: Some(service_failed),
-                    ..Default::default()
-                })),
             };
+            let descriptor = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                lpfnWndProc: Some(window_procedure),
+                hInstance: instance,
+                lpszClassName: registration.class.as_ptr(),
+                ..Default::default()
+            };
+            // SAFETY: the class has a valid procedure and NUL-terminated name.
+            if unsafe { RegisterClassExW(&descriptor) } == 0 {
+                registration.quarantine();
+            }
+            registration.class_registered = true;
             // SAFETY: class/instance remain alive through window destruction.
             registration.window = unsafe {
                 CreateWindowExW(
@@ -599,7 +659,7 @@ mod privacy {
             unsafe {
                 if WTSRegisterSessionNotification(registration.window, NOTIFY_FOR_THIS_SESSION) == 0
                 {
-                    return Err(unavailable());
+                    registration.quarantine();
                 }
                 registration.wts = true;
                 registration.power = RegisterSuspendResumeNotification(
@@ -607,20 +667,28 @@ mod privacy {
                     DEVICE_NOTIFY_WINDOW_HANDLE,
                 );
                 if registration.power == 0 {
-                    return Err(unavailable());
+                    registration.quarantine();
                 }
-                let manager =
+                registration.manager =
                     OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT);
-                if manager.is_null() {
+                if registration.manager.is_null() {
                     return Err(unavailable());
                 }
                 let service_name: Vec<u16> = "TermService\0".encode_utf16().collect();
-                registration.service =
-                    OpenServiceW(manager, service_name.as_ptr(), SERVICE_QUERY_STATUS);
-                CloseServiceHandle(manager);
+                registration.service = OpenServiceW(
+                    registration.manager,
+                    service_name.as_ptr(),
+                    SERVICE_QUERY_STATUS,
+                );
+                if CloseServiceHandle(registration.manager) == 0 {
+                    registration.quarantine();
+                }
+                registration.manager = std::ptr::null_mut();
                 if registration.service.is_null() {
                     return Err(unavailable());
                 }
+                // This service-only mask excludes CREATED/DELETED, whose
+                // notification would allocate a service-name list.
                 if NotifyServiceStatusChangeW(
                     registration.service,
                     SERVICE_NOTIFY_STOPPED
@@ -628,10 +696,7 @@ mod privacy {
                         | SERVICE_NOTIFY_DELETE_PENDING
                         | SERVICE_NOTIFY_PAUSED
                         | SERVICE_NOTIFY_PAUSE_PENDING,
-                    registration
-                        .service_notification
-                        .as_deref()
-                        .expect("service notification buffer exists"),
+                    service_notification(),
                 ) != 0
                 {
                     return Err(unavailable());
@@ -655,8 +720,11 @@ mod privacy {
         }
     }
 
-    fn drain_startup_messages() -> bool {
+    fn drain_startup_messages(lifecycle: &Lifecycle) -> bool {
         for _ in 0..STARTUP_MESSAGE_LIMIT {
+            if lifecycle.cancelled() {
+                return false;
+            }
             // SAFETY: an alertable zero-duration wait dispatches any already
             // queued service notification APC on this listener thread.
             let result = unsafe { SleepEx(0, 1) };
@@ -686,197 +754,196 @@ mod privacy {
         false
     }
 
-    struct ShutdownEvent(usize);
-
-    impl ShutdownEvent {
-        fn signal(&self) {
-            // SAFETY: the event stays open while this reference exists.
-            unsafe { SetEvent(self.0 as HANDLE) };
-        }
-    }
-
-    impl Drop for ShutdownEvent {
-        fn drop(&mut self) {
-            // SAFETY: this is the last owner of the event handle.
-            unsafe { CloseHandle(self.0 as HANDLE) };
-        }
-    }
-
-    struct CompletionSignal(mpsc::SyncSender<()>);
-
-    impl Drop for CompletionSignal {
-        fn drop(&mut self) {
-            let _ = self.0.try_send(());
-        }
-    }
-
     pub struct PrivacyMonitor {
-        shutdown: Arc<ShutdownEvent>,
-        finished: mpsc::Receiver<()>,
-        thread: Option<JoinHandle<()>>,
+        cleanup: PrivacyCleanupStatus,
     }
 
     struct FailureGuard {
         revocation: Arc<PrivacyRevocation>,
+        lifecycle: Arc<Lifecycle>,
         armed: bool,
+    }
+
+    impl FailureGuard {
+        fn should_stop(&mut self, failed: bool) -> bool {
+            if failed {
+                return true;
+            }
+            if self.lifecycle.cancelled() {
+                self.armed = false;
+                return true;
+            }
+            false
+        }
     }
 
     impl Drop for FailureGuard {
         fn drop(&mut self) {
+            let _ = self.lifecycle.stop();
             if self.armed {
-                self.revocation.revoke();
+                invoke_revocation(&self.revocation, &self.lifecycle);
             }
         }
     }
 
+    fn listen(
+        lifecycle: Arc<Lifecycle>,
+        revocation: Arc<PrivacyRevocation>,
+        ready: mpsc::SyncSender<bool>,
+    ) -> bool {
+        CALLBACK.with(|slot| {
+            *slot.borrow_mut() = Some(Callback {
+                lifecycle: lifecycle.clone(),
+            });
+        });
+        let mut failure = FailureGuard {
+            revocation: revocation.clone(),
+            lifecycle: lifecycle.clone(),
+            armed: true,
+        };
+        if lifecycle.cancelled() {
+            failure.armed = false;
+            return true;
+        }
+        let registration = match Registration::install(lifecycle.clone(), revocation) {
+            Ok(registration) => registration,
+            Err(_) => {
+                let _ = ready.try_send(false);
+                return true;
+            }
+        };
+        // On every later return, report loss before native teardown can stall.
+        let mut failure = failure;
+        if !drain_startup_messages(&lifecycle) || !lifecycle.activate() {
+            return true;
+        }
+        if ready.try_send(true).is_err() {
+            return true;
+        }
+        'listen: loop {
+            if failure.should_stop(FAILED.get()) {
+                break;
+            }
+            // SAFETY: the alertable wait dispatches this thread's service
+            // APCs. The finite timeout observes shutdown without a UI-side
+            // native handle operation.
+            let result = unsafe {
+                MsgWaitForMultipleObjectsEx(
+                    0,
+                    std::ptr::null(),
+                    SHUTDOWN_POLL_MILLIS,
+                    QS_ALLINPUT,
+                    MWMO_ALERTABLE | MWMO_INPUTAVAILABLE,
+                )
+            };
+            if failure.should_stop(FAILED.get()) {
+                break;
+            }
+            if result == WAIT_IO_COMPLETION || result == WAIT_TIMEOUT {
+                continue;
+            }
+            if result != WAIT_OBJECT_0 {
+                break;
+            }
+            let mut message = MSG::default();
+            // Process one message per wait so shutdown and service failure
+            // cannot be starved by a message flood.
+            // SAFETY: message is valid writable local storage.
+            if unsafe { PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) } != 0 {
+                if message.message == WM_QUIT {
+                    break 'listen;
+                }
+                // SAFETY: PeekMessageW initialized the message.
+                unsafe {
+                    TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+        }
+        drop(failure);
+        CALLBACK.with(|slot| *slot.borrow_mut() = None);
+        drop(registration);
+        true
+    }
+
     impl PrivacyMonitor {
+        /// Starts monitor ownership off the UI thread. Neither its status nor
+        /// callback delivery qualifies admission, privacy, or recipient
+        /// fencing; MCP bootstrap remains closed.
         pub fn install(callback: Arc<dyn Fn() + Send + Sync>) -> io::Result<Self> {
             let revocation = Arc::new(PrivacyRevocation::new(callback));
-            let Some(permit) = PrivacyListenerPermit::acquire(&LIVE_LISTENERS) else {
-                revocation.revoke();
-                return Err(unavailable());
-            };
-            // SAFETY: unnamed manual-reset event; no inherited/security state.
-            let shutdown = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
-            if shutdown.is_null() {
-                revocation.revoke();
-                return Err(unavailable());
-            }
-            let shutdown = Arc::new(ShutdownEvent(shutdown as usize));
-            let thread_shutdown = shutdown.clone();
-            let thread_revocation = revocation.clone();
             let (ready, started) = mpsc::sync_channel(1);
-            let (done, finished) = mpsc::sync_channel(1);
-            let thread = thread::Builder::new()
-                .name("festerm-privacy-monitor".into())
-                .spawn(move || {
-                    let _completion = CompletionSignal(done);
-                    let _permit = permit;
-                    CALLBACK.with(|slot| *slot.borrow_mut() = Some(thread_revocation.clone()));
-                    let registration = Registration::install();
-                    let Ok(registration) = registration else {
-                        thread_revocation.revoke();
-                        CALLBACK.with(|slot| *slot.borrow_mut() = None);
-                        let _ = ready.send(Err(unavailable()));
-                        return;
-                    };
-                    // This guard is dropped before native subscriptions.
-                    let mut failure = FailureGuard {
-                        revocation: thread_revocation,
-                        armed: true,
-                    };
-                    if !drain_startup_messages() {
-                        return;
-                    }
-                    if ready.send(Ok(())).is_err() {
-                        return;
-                    }
-                    let event = thread_shutdown.0 as HANDLE;
-                    'listen: loop {
-                        if FAILED.get() {
-                            break;
-                        }
-                        // SAFETY: event outlives this thread. Alertable wait
-                        // delivers the service-stop APC on this same thread.
-                        let result = unsafe {
-                            MsgWaitForMultipleObjectsEx(
-                                1,
-                                &event,
-                                INFINITE,
-                                QS_ALLINPUT,
-                                MWMO_ALERTABLE | MWMO_INPUTAVAILABLE,
-                            )
-                        };
-                        if result == WAIT_OBJECT_0 {
-                            failure.armed = false;
-                            break;
-                        }
-                        if FAILED.get() {
-                            break;
-                        }
-                        if result == WAIT_IO_COMPLETION {
-                            continue;
-                        }
-                        if result != WAIT_OBJECT_0 + 1 {
-                            break;
-                        }
-                        let mut message = MSG::default();
-                        // Process one message per wait so neither shutdown nor
-                        // service failure can be starved by a message flood.
-                        // SAFETY: message is valid writable local storage.
-                        if unsafe {
-                            PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE)
-                        } != 0
-                        {
-                            if message.message == WM_QUIT {
-                                break 'listen;
-                            }
-                            // SAFETY: PeekMessageW initialized the message.
-                            unsafe {
-                                TranslateMessage(&message);
-                                DispatchMessageW(&message);
-                            }
-                        }
-                    }
-                    drop(failure);
-                    CALLBACK.with(|slot| *slot.borrow_mut() = None);
-                    drop(registration);
-                });
-            let thread = match thread {
-                Ok(thread) => thread,
-                Err(error) => {
-                    revocation.revoke();
-                    return Err(error);
-                }
-            };
-            let monitor = Self {
-                shutdown,
-                finished,
-                thread: Some(thread),
-            };
+            let cleanup = privacy_lifecycle::launch(revocation, move |lifecycle, revocation| {
+                listen(lifecycle, revocation, ready)
+            })?;
             match started.recv_timeout(STARTUP_TIMEOUT) {
-                Ok(Ok(())) => Ok(monitor),
+                Ok(true) if cleanup.is_active() => Ok(Self { cleanup }),
                 _ => {
-                    revocation.revoke();
-                    Err(unavailable())
+                    cleanup.stop();
+                    Err(privacy_lifecycle::unavailable(Some(cleanup)))
                 }
             }
+        }
+
+        /// Observes monitor cleanup only. Neither this status nor callback
+        /// delivery qualifies admission, privacy, or recipient fencing; MCP
+        /// bootstrap remains closed.
+        pub fn cleanup_status(&self) -> PrivacyCleanupStatus {
+            self.cleanup.clone()
+        }
+
+        /// Requests shutdown without waiting; retain the returned status until
+        /// cleanup is complete or treated as unknown. Neither that status nor
+        /// callback delivery qualifies admission, privacy, or physical
+        /// recipient fencing; MCP bootstrap remains closed.
+        pub fn close(self) -> PrivacyCleanupStatus {
+            let cleanup = self.cleanup_status();
+            drop(self);
+            cleanup
         }
     }
 
     impl Drop for PrivacyMonitor {
         fn drop(&mut self) {
-            self.shutdown.signal();
-            if let Some(thread) = self.thread.take() {
-                let _ = self.finished.recv_timeout(SHUTDOWN_TIMEOUT);
-                if thread.is_finished() {
-                    let _ = thread.join();
-                }
-                // A stuck native call cannot hold the caller indefinitely.
-                // The detached thread retains the event until it exits.
-            }
+            self.cleanup.stop();
         }
     }
 
     #[cfg(test)]
     mod tests {
+        // These simulated notifications do not qualify admission, privacy, or
+        // final-recipient fencing. Callback delivery is not a fence; bootstrap
+        // remains closed.
         use super::*;
 
         #[test]
-        fn native_loss_dispatch_revokes_once_and_stops_the_listener() {
+        fn native_loss_dispatch_attempts_callback_once_after_dispatch() {
             use std::sync::atomic::AtomicUsize;
 
             FAILED.set(false);
             let calls = Arc::new(AtomicUsize::new(0));
             let counter = calls.clone();
+            let lifecycle = privacy_lifecycle::test_lifecycle();
+            let revocation = Arc::new(PrivacyRevocation::new(Arc::new(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+            })));
             CALLBACK.with(|slot| {
-                *slot.borrow_mut() = Some(Arc::new(PrivacyRevocation::new(Arc::new(move || {
-                    counter.fetch_add(1, Ordering::SeqCst);
-                }))));
+                *slot.borrow_mut() = Some(Callback {
+                    lifecycle: lifecycle.clone(),
+                });
             });
-            // SAFETY: both messages are handled without dereferencing hwnd or
-            // lparam, and exercise the same dispatch as the native window.
+            CALLBACK.with(|slot| {
+                let _borrow = slot.borrow_mut();
+                // SAFETY: the service callback ignores its native argument.
+                unsafe { service_failed(std::ptr::null()) };
+            });
+            assert!(FAILED.get());
+            assert!(!lifecycle.cancelled());
+            FAILED.set(false);
+            // SAFETY: these callbacks do not dereference their native
+            // arguments and use the listener thread's test-local state.
             unsafe {
+                service_failed(std::ptr::null());
                 window_procedure(
                     std::ptr::null_mut(),
                     WM_WTSSESSION_CHANGE,
@@ -891,13 +958,45 @@ mod privacy {
                 );
             }
             assert!(FAILED.get());
+            assert!(lifecycle.cancelled());
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            let mut failure = FailureGuard {
+                revocation: revocation.clone(),
+                lifecycle: lifecycle.clone(),
+                armed: true,
+            };
+            assert!(failure.should_stop(FAILED.get()));
+            drop(failure);
+            invoke_revocation(&revocation, &lifecycle);
             assert_eq!(calls.load(Ordering::SeqCst), 1);
             CALLBACK.with(|slot| *slot.borrow_mut() = None);
             FAILED.set(false);
         }
 
         #[test]
-        fn loss_events_revoke_but_resume_and_unlock_do_not() {
+        fn ordinary_active_shutdown_disarms_the_failure_guard() {
+            use std::sync::atomic::AtomicUsize;
+
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = calls.clone();
+            let lifecycle = privacy_lifecycle::test_lifecycle();
+            assert!(lifecycle.activate());
+            let mut failure = FailureGuard {
+                revocation: Arc::new(PrivacyRevocation::new(Arc::new(move || {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                }))),
+                lifecycle: lifecycle.clone(),
+                armed: true,
+            };
+            assert!(!failure.should_stop(false));
+            assert!(lifecycle.stop());
+            assert!(failure.should_stop(false));
+            drop(failure);
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+        }
+
+        #[test]
+        fn loss_event_classification_excludes_resume_and_unlock() {
             use windows_sys::Win32::UI::WindowsAndMessaging::{
                 PBT_APMRESUMEAUTOMATIC, WTS_SESSION_UNLOCK,
             };
@@ -921,9 +1020,11 @@ mod privacy {
 
 #[cfg(test)]
 mod tests {
+    // Test callbacks and their completion do not qualify admission, privacy,
+    // or final-recipient fencing; MCP bootstrap remains closed.
     use super::{
-        classify_windows_power_event, session_is_available, PrivacyListenerPermit,
-        PrivacyRevocation, WakeEvent, WindowsPowerEventCodes, MAX_PRIVACY_LISTENERS,
+        classify_windows_power_event, session_is_available, PrivacyRevocation, WakeEvent,
+        WindowsPowerEventCodes,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier};
@@ -963,7 +1064,7 @@ mod tests {
     }
 
     #[test]
-    fn privacy_loss_synchronously_and_permanently_revokes() {
+    fn privacy_loss_invokes_test_callback_once() {
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = calls.clone();
         let revocation = PrivacyRevocation::new(Arc::new(move || {
@@ -995,20 +1096,6 @@ mod tests {
             start.wait();
         });
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn stalled_listeners_cannot_exhaust_unbounded_slots() {
-        let count = AtomicUsize::new(0);
-        let mut permits: Vec<_> = (0..MAX_PRIVACY_LISTENERS)
-            .map(|_| PrivacyListenerPermit::acquire(&count).unwrap())
-            .collect();
-        assert!(PrivacyListenerPermit::acquire(&count).is_none());
-        drop(permits.pop());
-        assert!(PrivacyListenerPermit::acquire(&count).is_some());
-        drop(permits);
-        assert_eq!(count.load(Ordering::SeqCst), 0);
-        assert!(PrivacyListenerPermit::acquire(&AtomicUsize::new(usize::MAX)).is_none());
     }
 
     #[cfg(not(windows))]
