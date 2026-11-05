@@ -214,6 +214,8 @@ impl<S> WindowsAttachmentInbox<S> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct SessionRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    correlation_id: Option<String>,
     name: String,
     pid: u32,
     socket: String,
@@ -999,9 +1001,10 @@ fn run_daemon(
             let listener = bind_unix_listener(socket_path)?;
             *socket_owned = true;
             set_file_mode(socket_path, 0o600)?;
-            let mut spawned = spawn_shell(&shell, cols, rows).inspect_err(|error| {
-                lifecycle_failure(FailureStage::ShellSpawn, error.as_ref());
-            })?;
+            let mut spawned = spawn_shell(&shell, cols, rows, record.correlation_id.as_deref())
+                .inspect_err(|error| {
+                    lifecycle_failure(FailureStage::ShellSpawn, error.as_ref());
+                })?;
             let mut terminal = Terminal::with_scrollback_limit(
                 Dimensions::new(cols as usize, rows as usize)?,
                 scrollback_limit_bytes,
@@ -1017,9 +1020,10 @@ fn run_daemon(
         {
             let _ = socket_owned;
             let initial_listener = create_secure_pipe_listener(&record.socket, true)?;
-            let mut spawned = spawn_shell(&shell, cols, rows).inspect_err(|error| {
-                lifecycle_failure(FailureStage::ShellSpawn, error.as_ref());
-            })?;
+            let mut spawned = spawn_shell(&shell, cols, rows, record.correlation_id.as_deref())
+                .inspect_err(|error| {
+                    lifecycle_failure(FailureStage::ShellSpawn, error.as_ref());
+                })?;
             let mut terminal = Terminal::with_scrollback_limit(
                 Dimensions::new(cols as usize, rows as usize)?,
                 scrollback_limit_bytes,
@@ -1085,6 +1089,7 @@ fn generation_record(
         session_pipe_name(&identity)
     };
     Ok(SessionRecord {
+        correlation_id: Some(format!("fesTerm:{pid}:{generation}")),
         name,
         pid,
         socket,
@@ -3540,6 +3545,7 @@ fn spawn_shell(
     shell: &ShellSpec,
     cols: u16,
     rows: u16,
+    correlation: Option<&str>,
 ) -> Result<SpawnedShell, Box<dyn std::error::Error>> {
     #[cfg(windows)]
     {
@@ -3563,7 +3569,7 @@ fn spawn_shell(
         Some(working_directory) => PathBuf::from(working_directory),
         None => env::current_dir()?,
     });
-    apply_terminal_environment(&mut command);
+    apply_terminal_environment(&mut command, correlation);
     let child = pair.slave.spawn_command(command)?;
     let master = pair.master;
     Ok(SpawnedShell {
@@ -3572,11 +3578,15 @@ fn spawn_shell(
     })
 }
 
-fn apply_terminal_environment(command: &mut CommandBuilder) {
+fn apply_terminal_environment(command: &mut CommandBuilder, correlation: Option<&str>) {
     command.env("TERM", "xterm-256color");
     command.env("TERM_PROGRAM", "fesTerm");
     command.env("COLORTERM", "truecolor");
     command.env_remove("TERM_SESSION_ID");
+    command.env_remove(festerm_sessiond::SESSION_CORRELATION_ENV);
+    if let Some(marker) = correlation {
+        command.env(festerm_sessiond::SESSION_CORRELATION_ENV, marker);
+    }
 }
 
 fn terminate_pid(pid: u32) -> Result<(), Box<dyn std::error::Error>> {
@@ -5277,6 +5287,7 @@ mod tests {
                 "demo".to_owned(),
                 SessionRecord {
                     name: "demo".to_owned(),
+                    correlation_id: None,
                     pid: 22,
                     socket: "demo.sock".to_owned(),
                     shell: "shell".to_owned(),
@@ -5962,6 +5973,7 @@ mod tests {
     fn registry_round_trip_is_stable() {
         let record = SessionRecord {
             name: "demo".to_owned(),
+            correlation_id: None,
             pid: 1234,
             socket: "/tmp/festerm-sessiond/demo.sock".to_owned(),
             shell: "/bin/bash".to_owned(),
@@ -6006,6 +6018,7 @@ mod tests {
             "mine".to_owned(),
             SessionRecord {
                 name: "mine".to_owned(),
+                correlation_id: None,
                 pid: 7,
                 socket: "mine.sock".to_owned(),
                 shell: "/bin/sh".to_owned(),
@@ -6058,14 +6071,20 @@ mod tests {
     fn spawned_shell_honors_the_configured_working_directory() {
         let directory = unique_test_directory("cwd");
         fs::create_dir_all(&directory).unwrap();
+        let correlation = format!("fesTerm:{}:{}", process::id(), now_ms());
         let mut spawned = spawn_shell(
             &ShellSpec {
                 executable: "/bin/sh".to_owned(),
-                arguments: vec!["-c".to_owned(), "pwd; read -r acknowledgement".to_owned()],
+                arguments: vec![
+                    "-c".to_owned(),
+                    "pwd; printf '%s\\n' \"$FESTERM_SESSION_CORRELATION\"; read -r acknowledgement"
+                        .to_owned(),
+                ],
                 working_directory: Some(directory.to_string_lossy().into_owned()),
             },
             80,
             24,
+            Some(&correlation),
         )
         .unwrap();
         let reader = spawned.master().unwrap().try_clone_reader().unwrap();
@@ -6074,7 +6093,9 @@ mod tests {
         let reader_thread = thread::spawn(move || {
             let mut reader = io::BufReader::new(reader);
             let mut output = String::new();
-            let result = io::BufRead::read_line(&mut reader, &mut output).map(|_| output);
+            let result = io::BufRead::read_line(&mut reader, &mut output)
+                .and_then(|_| io::BufRead::read_line(&mut reader, &mut output))
+                .map(|_| output);
             let _ = output_tx.send(result);
             io::copy(&mut reader, &mut io::sink()).map(|_| ())
         });
@@ -6103,10 +6124,12 @@ mod tests {
             .expect("working-directory output before deadline")
             .unwrap();
         assert!(status.success());
+        let mut lines = output.lines();
         assert_eq!(
-            Path::new(output.trim()),
+            Path::new(lines.next().unwrap().trim()),
             directory.canonicalize().unwrap().as_path()
         );
+        assert_eq!(lines.next().unwrap().trim(), correlation);
         fs::remove_dir(directory).unwrap();
     }
 
@@ -6118,7 +6141,11 @@ mod tests {
         command.env("COLORTERM", "stale");
         command.env("TERM_SESSION_ID", "stale-session");
 
-        apply_terminal_environment(&mut command);
+        command.env(
+            festerm_sessiond::SESSION_CORRELATION_ENV,
+            "stale-correlation",
+        );
+        apply_terminal_environment(&mut command, None);
 
         assert_eq!(
             command.get_env("TERM"),
@@ -6133,6 +6160,15 @@ mod tests {
             Some(std::ffi::OsStr::new("truecolor"))
         );
         assert_eq!(command.get_env("TERM_SESSION_ID"), None);
+        assert_eq!(
+            command.get_env(festerm_sessiond::SESSION_CORRELATION_ENV),
+            None
+        );
+        apply_terminal_environment(&mut command, Some("fesTerm:123:456"));
+        assert_eq!(
+            command.get_env(festerm_sessiond::SESSION_CORRELATION_ENV),
+            Some(std::ffi::OsStr::new("fesTerm:123:456"))
+        );
     }
 
     #[cfg(unix)]

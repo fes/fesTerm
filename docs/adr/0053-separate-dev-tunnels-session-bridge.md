@@ -35,6 +35,13 @@ Those boundaries must survive the addition of remote access.
 
 ## Decision
 
+The owner-requested rooted host filesystem extension is specified separately
+in [ADR 0067](0067-rooted-dev-tunnel-host-filesystem.md) and its
+[wire contract](../dev-tunnel-files-protocol.md). It adds explicit, default-off
+listing/download/upload/mkdir grants without moving filesystem or network
+ownership into sessiond, changing legacy terminal frames or implementing client
+file-manager policy.
+
 The no-shell-replacement statements below remain the default. Owner-requested
 [ADR 0066](0066-opt-in-managed-daemon-recovery.md) adds explicit host opt-in to
 bounded fresh-shell replacement after instrumented unexpected daemon loss;
