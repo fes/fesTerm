@@ -56,6 +56,8 @@
         "panes_ime_and_deferred_input_are_isolated_between_viewports",
         "panes_retired_ime_without_old_commit_requires_reentry_but_not_ordinary_input",
         "panes_equalize_refuses_without_changing_a_minimum_constrained_tree",
+        "panes_preserve_terminal_padding_and_resize_only_the_inset_content",
+        "pane_minimum_preserves_terminal_cell_budget_after_padding",
         "panes_passive_surfaces_preserve_full_opacity",
         "panes_unread_details_preserve_member_shape_and_accent",
         "panes_pinned_details_and_layout_dialog_block_terminal_input",

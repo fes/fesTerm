@@ -35,6 +35,68 @@ fn grouped_app() -> (
 }
 
 #[test]
+fn panes_preserve_terminal_padding_and_resize_only_the_inset_content() {
+    let (mut app, first, second, _, _) = grouped_app();
+    let context = egui::Context::default();
+    app.state
+        .dispatch(AppCommand::SeparatePaneGroup(second), &context);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1600.0, 960.0))
+        .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+    harness.run();
+    let pane = harness.state().pane_rects[0].1;
+    let grid = harness
+        .state()
+        .state
+        .session_tab(second)
+        .unwrap()
+        .view
+        .diagnostics()
+        .grid_rect
+        .unwrap();
+    let padding = grid.min - pane.min;
+    assert!(padding.x > 0.0 && padding.y > 0.0);
+
+    for side in [PaneSide::Right, PaneSide::Below] {
+        let context = harness.ctx.clone();
+        let revision = harness.state().state.pane_revision();
+        harness.state_mut().state.dispatch(
+            AppCommand::CombinePanes {
+                source: first,
+                target: second,
+                side,
+                expected_revision: revision,
+            },
+            &context,
+        );
+        harness.run();
+        assert_eq!(harness.state().pane_rects.len(), 2);
+        for (view, pane) in &harness.state().pane_rects {
+            let session = harness.state().state.session_tab(*view).unwrap();
+            let diagnostics = session.view.diagnostics();
+            let grid = diagnostics.grid_rect.unwrap();
+            assert_eq!(
+                grid.min - pane.min,
+                padding,
+                "focused and passive panes must retain the single-view inset"
+            );
+            let dimensions = session.terminal.dimensions();
+            assert_eq!(diagnostics.calculated_dimensions, Some(dimensions));
+            let cell =
+                grid.size() / egui::vec2(dimensions.columns() as f32, dimensions.rows() as f32);
+            let remaining = pane.size() - padding * 2.0 - grid.size();
+            assert!(remaining.x >= -0.01 && remaining.x < cell.x + 0.01);
+            assert!(remaining.y >= -0.01 && remaining.y < cell.y + 0.01);
+        }
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::SeparatePaneGroup(second), &context);
+        harness.run();
+    }
+}
+
+#[test]
 fn panes_pinned_details_and_layout_dialog_block_terminal_input() {
     let (app, _, second, first_transport, second_transport) = grouped_app();
     let mut harness = Harness::builder()

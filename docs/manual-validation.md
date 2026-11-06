@@ -6,7 +6,7 @@
 
 | ID | Scenario | Evidence / status |
 | --- | --- | --- |
-| PN-01 | Desktop 2/4-pane geometry and keyboard/accessibility workflow | Pending Windows/macOS/Linux: integrated chrome, 1x/1.25x/1.5x/2x dividers/intersection, focus, narrow windows, long names, mixed surfaces and unread; compare to reviewed split-pane mockups |
+| PN-01 | Desktop 2/4-pane geometry and keyboard/accessibility workflow | Pending Windows/macOS/Linux: integrated chrome, 1x/1.25x/1.5x/2x dividers/intersection, terminal padding on every edge, focus, narrow windows, long names, mixed surfaces and unread; compare to reviewed split-pane mockups |
 | PN-02 | Live pane lifecycle and workspace recovery | Pending controlled native PTY/SSH/serial/SFTP continuity, shared dirty documents across windows, cancellation, secondary/primary close, all-window restore and corrupt/save-failure recovery; do not infer acceptance from headless tests |
 
 Headless production four-pane and pinned-details/unread captures are available

@@ -60,7 +60,8 @@ Newer metadata is refused by older strict readers rather than misinterpreted.
   atomic edits, exact input owner, transport continuity, metadata-only recovery.
 - **GUI/action edges affected:** PANE-01 through PANE-07.
 - **Automated tests required:** tree/reducer, generation/input continuity,
-  geometry, cross-window refusal, dirty close and workspace roundtrip.
+  geometry including single-view-equivalent terminal padding and minimum
+  content cells, cross-window refusal, dirty close and workspace roundtrip.
 - **Native/manual evidence required:** PN-01 and PN-02 across desktop platforms
   and display scales. Headless checks do not qualify native behavior.
 - **Coverage superseded:** None; existing session/document/transfer tests remain.

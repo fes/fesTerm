@@ -6950,7 +6950,7 @@ impl FesTermApp {
                             };
                             let rectangle_was_active = session.view.rectangle_copy_active();
                             if self.pane_rects.len() > 1 {
-                                session.view.show_in_ui_with_options(
+                                session.view.show_in_pane_with_options(
                                     ui,
                                     &mut session.terminal,
                                     &mut session.controller,

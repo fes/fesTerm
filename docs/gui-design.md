@@ -217,7 +217,10 @@ Separate must not restart any session, transfer or document.
 
 Single/group chips remain in the integrated upper chrome. Adjacent panes
 share one physical-pixel rule with no gutter; focused panes have a subtle
-inset edge. Resize uses real cell metrics (52 columns by 12 rows minimum).
+inset edge. Each terminal retains the single-view eight-point content padding
+on all four sides, inside its pane; this does not add a divider gutter.
+Resize uses the inset viewport and real cell metrics (52 columns by 12 rows
+minimum, excluding padding).
 A narrow window temporarily presents the focused member without changing the
 saved tree. Focus acknowledges only that member's unread output.
 
