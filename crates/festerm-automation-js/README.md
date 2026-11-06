@@ -215,13 +215,39 @@ container profile, missing JS globals or absent privileges are assumed to
 provide the boundary.
 
 Every worker actually probes denied file read/write-open, TCP/raw/Unix socket
-creation, clone/exec, ptrace/process memory, signals, executable mappings,
-IPC, unexpected descriptors, shared futex operations and foreign clocks. It
-requires `EPERM`; an outer policy or native privileges can also produce that
-error, so these probes complement filter review and testing with the container
-profile disabled. Process and signal probes target the worker itself. A native
-mmap probe must fail with `ENOMEM` beyond the hard ceiling. Probes do not
-modify files, contact services, or spawn grandchildren.
+creation, clone/clone3, execve/execveat, re-registering its existing
+parent-death signal, pidfd descriptor duplication, ptrace/process memory,
+signals, executable mappings, IPC, unexpected descriptors, shared futex
+operations and foreign clocks. It requires `EPERM`; an outer policy or native
+privileges can also produce that error, so these probes complement filter review
+and testing with the container profile disabled. The parent-death probe only
+reasserts `SIGKILL`; if erroneously admitted, it does not clear the signal.
+This single safe argument does not prove that every `prctl` option is denied.
+Process and signal probes target the worker itself or use invalid arguments.
+A native mmap probe must fail with `ENOMEM` beyond the hard ceiling. Probes do
+not modify files, contact services, or spawn grandchildren.
+
+Fault-injection tests require an unfiltered test thread and the expected inert
+kernel results before installing the worker filter. They verify the exact
+syscall and result that failed, and report a filtered or unsupported environment
+as inconclusive rather than treating it as evidence. This does not qualify an
+untrusted or otherwise restricted host.
+
+The ordinary suite checks that masked evidence is inconclusive, but ignores the
+unfiltered-only hole-injection test. Required Linux CI runs that test explicitly
+and verifies that it actually ran. On an unfiltered Linux host, run:
+
+```sh
+cargo test --locked -p festerm-automation-js --lib platform::tests::native_probes_refuse_holes_in_process_escape_denials -- --exact --ignored
+```
+
+Default container test success is not evidence that the worker's filter caught
+the injected holes.
+
+These denial checks are not proof that the worker's creator-death or process
+ownership protocol is race-free. The Linux launcher and application startup
+remain blocked pending separately qualified ownership, executable provenance,
+and lifecycle evidence.
 
 Limits: 64 MiB QuickJS heap, 1 MiB JS stack (512 KiB on Windows), 128 MiB process address space;
 5s cumulative process CPU, at most 5 minutes/run. Engine interrupt callbacks
@@ -242,7 +268,8 @@ and <=49,152 encoded bytes. Oversize/backpressure fails closed.
   tests passed, including a compromised-native tight loop killed by the kernel's
   cumulative CPU ceiling, active native denial/memory probes, and setup failure.
 - The same Linux suite passed with Docker's seccomp profile **disabled** for the
-  owned qualification container, proving the crate's own filter supplies denial.
+  owned qualification container, providing evidence that the crate's filter
+  supplies those denials.
 - Infinite loop, recursion, regex backtracking, allocation storm, microtask
   storm, unawaited host calls, private exceptions, cancellation and a watchdog
   with no application event polling are covered.

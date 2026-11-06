@@ -200,6 +200,14 @@ jobs:
         run: python -m unittest discover -s scripts/tests -p "test_windows_*.py" -v
       - if: matrix.os != 'windows-latest'
         run: cargo test --workspace
+      - name: Check native worker fault-injection probes
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked -p festerm-automation-js --lib platform::tests::native_probes_refuse_holes_in_process_escape_denials -- --exact --ignored \
+            | tee "$RUNNER_TEMP/festerm-native-fault-probes.log"
+          grep -F 'test platform::tests::native_probes_refuse_holes_in_process_escape_denials ... ok' "$RUNNER_TEMP/festerm-native-fault-probes.log"
       - name: Run Windows workspace tests with native exit metadata
         if: matrix.os == 'windows-latest'
         shell: pwsh
