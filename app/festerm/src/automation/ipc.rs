@@ -2147,6 +2147,31 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn authenticate_anonymous_test_peer(
+        client: &mut std::os::unix::net::UnixStream,
+        incoming: &Receiver<Event>,
+    ) {
+        client.set_read_timeout(Some(IO_SLICE)).unwrap();
+        client.set_write_timeout(Some(IO_SLICE)).unwrap();
+        let closed = AtomicBool::new(false);
+        let stop = AtomicBool::new(false);
+        let deadline = Instant::now() + FRAME_DEADLINE;
+        let mut prefix = [0; 4];
+        read_until(client, &mut prefix, deadline, &closed, &stop).unwrap();
+        let length = u32::from_be_bytes(prefix) as usize;
+        assert!((1..=1024).contains(&length));
+        let mut challenge = vec![0; length];
+        read_until(client, &mut challenge, deadline, &closed, &stop).unwrap();
+        let _: festerm_automation_mcp::identity::AuthChallenge =
+            serde_json::from_slice(&challenge).unwrap();
+        write_frame(client, b"null").unwrap();
+        assert!(matches!(
+            incoming.recv_timeout(FRAME_DEADLINE).unwrap(),
+            Event::Connected { identity: None, .. }
+        ));
+    }
+
+    #[cfg(unix)]
     #[test]
     fn queued_reply_is_dropped_when_target_is_replaced_before_dispatch() {
         let (server, mut client) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -2176,7 +2201,7 @@ mod tests {
             )
             .unwrap();
         target.attachment.transition(false);
-        let (events, _incoming) = mpsc::sync_channel(4);
+        let (events, incoming) = mpsc::sync_channel(4);
         let worker = thread::spawn(move || {
             serve_peer(
                 server,
@@ -2188,6 +2213,7 @@ mod tests {
                 Arc::new(AtomicBool::new(false)),
             )
         });
+        authenticate_anonymous_test_peer(&mut client, &incoming);
         worker.join().unwrap();
         let mut bytes = [0; 16];
         assert_eq!(client.read(&mut bytes).unwrap(), 0);
@@ -2216,7 +2242,7 @@ mod tests {
             )
             .unwrap();
         super::super::set_admission_flag(&valid, false);
-        let (events, _incoming) = mpsc::sync_channel(4);
+        let (events, incoming) = mpsc::sync_channel(4);
         let observed = connection.clone();
         let worker = thread::spawn(move || {
             serve_peer(
@@ -2229,6 +2255,7 @@ mod tests {
                 Arc::new(AtomicBool::new(false)),
             )
         });
+        authenticate_anonymous_test_peer(&mut client, &incoming);
         worker.join().unwrap();
         let mut bytes = [0; 16];
         assert_eq!(client.read(&mut bytes).unwrap(), 0);
