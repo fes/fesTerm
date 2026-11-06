@@ -347,6 +347,30 @@ impl Drop for OwnedChild {
     }
 }
 
+#[cfg(not(windows))]
+fn spawn_worker(program: &Path) -> Result<Child, Error> {
+    let mut command = Command::new(program);
+    command
+        .arg("--automation-worker")
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "linux")]
+    command.env("MALLOC_ARENA_MAX", "1");
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    Ok(command.spawn()?)
+}
+
+#[cfg(windows)]
+fn spawn_worker(program: &Path) -> Result<Child, Error> {
+    Child::spawn(program)
+}
+
 /// Any unreaped owned worker poisons execution for this application process.
 /// The application should surface this condition and require a clean restart.
 pub fn cleanup_failed() -> bool {
@@ -441,26 +465,7 @@ impl Supervisor {
         let deadline = Instant::now()
             .checked_add(Duration::from_millis(limits.run_ms))
             .ok_or(Error::Deadline)?;
-        #[cfg(not(windows))]
-        let child = {
-            let mut command = Command::new(&program.0);
-            command
-                .arg("--automation-worker")
-                .env_clear()
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null());
-            #[cfg(target_os = "linux")]
-            command.env("MALLOC_ARENA_MAX", "1");
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::CommandExt;
-                command.process_group(0);
-            }
-            OwnedChild(command.spawn()?, false)
-        };
-        #[cfg(windows)]
-        let child = OwnedChild(Child::spawn(&program.0)?, false);
+        let program = program.0.clone();
         let (controls, receiver) = mpsc::sync_channel(MAX_PENDING_CALLS);
         // 64 host calls plus a reserved terminal event.
         let (sender, events) = mpsc::sync_channel(MAX_PENDING_CALLS + 1);
@@ -475,6 +480,7 @@ impl Supervisor {
         let join = thread::Builder::new()
             .name("automation-js-watchdog".into())
             .spawn(move || {
+                let child = OwnedChild(spawn_worker(&program)?, false);
                 supervise(child, frames, limits, receiver, sender, startup, open, wake)
             })?;
         match ready.recv_timeout(STARTUP_QUALIFICATION + Duration::from_secs(1)) {
